@@ -99,6 +99,16 @@ idCVar r_gammaInShader( "r_gammaInShader", "1", CVAR_RENDERER | CVAR_ARCHIVE | C
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_useGLSL( "r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use modern GLSL backend instead of ARB assembly programs (requires OpenGL 2.0)" );
 
+// Vulkan / Ray Tracing backend CVars
+idCVar r_backend( "r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"" );
+idCVar r_useRayTracing( "r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "enable hardware ray tracing (requires Vulkan backend and RTX hardware)" );
+idCVar r_rtShadows( "r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)" );
+idCVar r_rtAO( "r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion" );
+idCVar r_rtReflections( "r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced reflections (expensive)" );
+idCVar r_rtShadowSamples( "r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shadow rays per pixel (1=hard shadows, 4+=soft shadows)" );
+idCVar r_rtAOSamples( "r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel" );
+idCVar r_rtDenoise( "r_rtDenoise", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "enable temporal denoising for RT effects" );
+
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
 
 idCVar r_skipSuppress( "r_skipSuppress", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the per-view suppressions" );
@@ -865,6 +875,15 @@ void R_InitOpenGL( void ) {
 
 	// Initialize the GLSL backend (always try, activated via r_useGLSL)
 	R_GLSL_Init();
+
+#ifdef DHEWM3_VULKAN
+	// If r_backend "vulkan" is requested, also spin up the Vulkan device.
+	// VKimp_InitFromGlimp reuses the SDL window already created by GLimp_Init.
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		extern void VKimp_InitFromGlimp( int width, int height );
+		VKimp_InitFromGlimp( glConfig.vidWidth, glConfig.vidHeight );
+	}
+#endif
 
 	// allocate the vertex array range or vertex objects
 	vertexCache.Init();
@@ -2508,6 +2527,13 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	// as the input is tied to the window, it should be shut down when the window
 	// is destroyed (relevant when starting a mod which also recreates window)
 	Sys_ShutdownInput();
+
+#ifdef DHEWM3_VULKAN
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		extern void VKimp_ShutdownFromGlimp( void );
+		VKimp_ShutdownFromGlimp();
+	}
+#endif
 
 	// free the context and close the window
 	GLimp_Shutdown();
