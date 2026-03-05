@@ -400,6 +400,7 @@ void VKimp_PostInit( int width, int height ) {
 
 	if ( vk.rayTracingSupported ) {
 		VK_RT_Init();
+		VK_RT_InitShadows();   // build shadow RT pipeline + shadow mask images
 	}
 
 	common->Printf( "VK: Backend ready\n" );

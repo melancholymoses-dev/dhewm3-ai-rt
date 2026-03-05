@@ -110,6 +110,9 @@ void VK_RT_LoadFunctionPointers( void );
 void VK_RT_Init( void );
 void VK_RT_Shutdown( void );
 
+// Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
+void VK_RT_InitShadows( void );
+
 // Build/update BLAS for a mesh (called when geometry is added to the scene)
 vkBLAS_t *VK_RT_BuildBLAS( const srfTriangles_t *tri );
 void       VK_RT_DestroyBLAS( vkBLAS_t *blas );

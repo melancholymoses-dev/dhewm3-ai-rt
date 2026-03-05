@@ -51,9 +51,20 @@ idRenderEntityLocal::idRenderEntityLocal() {
 	firstInteraction		= NULL;
 	lastInteraction			= NULL;
 	needsPortalSky			= false;
+#ifdef DHEWM3_RAYTRACING
+	blas					= NULL;
+	blasFrameCount			= 0;
+#endif
 }
 
 void idRenderEntityLocal::FreeRenderEntity() {
+#ifdef DHEWM3_RAYTRACING
+	if ( blas ) {
+		extern void VK_RT_DestroyBLAS( struct vkBLAS_t * );
+		VK_RT_DestroyBLAS( blas );
+		blas = NULL;
+	}
+#endif
 }
 
 void idRenderEntityLocal::UpdateRenderEntity( const renderEntity_t *re, bool forceUpdate ) {

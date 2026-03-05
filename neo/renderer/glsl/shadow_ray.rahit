@@ -1,0 +1,31 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+// ---------------------------------------------------------------------------
+// shadow_ray.rahit  —  Any-Hit shader
+//
+// Invoked when the shadow ray intersects a triangle.
+// For opaque surfaces: write 0.0 (shadowed) and terminate the ray.
+// For alpha-tested surfaces: discard below the alpha threshold so the ray
+// continues through the transparent portion.
+// ---------------------------------------------------------------------------
+
+layout(location = 0) rayPayloadInEXT float shadowFactor;
+
+// Alpha mask texture for the hit surface (optional; binding used only when
+// the surface uses alpha testing).  If not bound, the hit is always opaque.
+layout(set = 1, binding = 0) uniform sampler2D alphaMask;
+
+// Hit attributes passed from the built-in triangle intersection stage
+hitAttributeEXT vec2 baryCoords;
+
+// Per-instance / per-geometry custom data pushed via instance custom index
+// For now we assume opaque geometry only (Phase 4 baseline).
+// Alpha-tested support can be added by reading material flags from a SSBO.
+void main() {
+    // Opaque hit: this pixel is fully in shadow.
+    shadowFactor = 0.0;
+    // terminateRayEXT is called implicitly once any-hit shader returns without
+    // calling ignoreIntersectionEXT.  We explicitly call it for clarity.
+    terminateRayEXT();
+}

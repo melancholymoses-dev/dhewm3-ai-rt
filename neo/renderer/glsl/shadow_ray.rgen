@@ -1,0 +1,150 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : enable
+
+// ---------------------------------------------------------------------------
+// shadow_ray.rgen  —  Ray Generation shader for RT shadow pass
+//
+// For every screen pixel:
+//   1. Reconstruct world-space position from the depth buffer.
+//   2. For each active light shoot a shadow ray toward the light.
+//   3. Write 1.0 (lit) or 0.0 (shadowed) to the shadow mask image.
+//
+// Soft shadows: when r_rtShadowSamples > 1 the ray direction is jittered
+// within the light's angular subtended cone.
+// ---------------------------------------------------------------------------
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 1, r8) uniform image2D shadowMask;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+layout(set = 0, binding = 3) uniform ShadowParams {
+    mat4  invViewProj;          // inverse view-projection to reconstruct world pos
+    vec4  lightOrigin;          // xyz = world pos, w = light radius (for soft shadows)
+    float lightFalloffRadius;   // point light falloff range
+    int   numSamples;           // shadow rays per pixel (1 = hard, 4+ = soft)
+    uint  frameIndex;           // for temporal jitter
+    float pad;
+} params;
+
+layout(location = 0) rayPayloadEXT float shadowFactor;
+
+// ---------------------------------------------------------------------------
+// Simple pseudo-random helper (Wang hash)
+// ---------------------------------------------------------------------------
+uint wang_hash( uint seed ) {
+    seed = (seed ^ 61u) ^ (seed >> 16u);
+    seed *= 9u;
+    seed = seed ^ (seed >> 4u);
+    seed *= 0x27d4eb2du;
+    seed = seed ^ (seed >> 15u);
+    return seed;
+}
+
+float randFloat( uint seed ) {
+    return float( wang_hash(seed) ) / 4294967296.0;
+}
+
+// ---------------------------------------------------------------------------
+// Reconstruct world-space position from depth
+// ---------------------------------------------------------------------------
+vec3 reconstructWorldPos( ivec2 coord, ivec2 size ) {
+    vec2 uv = (vec2(coord) + 0.5) / vec2(size);
+    float depth = texelFetch( depthSampler, coord, 0 ).r;
+
+    // NDC: [-1,1] in XY, depth in [0,1] for Vulkan
+    vec4 clipPos = vec4( uv * 2.0 - 1.0, depth, 1.0 );
+    vec4 worldPos = params.invViewProj * clipPos;
+    return worldPos.xyz / worldPos.w;
+}
+
+// ---------------------------------------------------------------------------
+// Cosine-weighted hemisphere sample (not needed here; kept for RTAO reference)
+// For shadow rays we jitter within a cone around the light direction.
+// ---------------------------------------------------------------------------
+vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed ) {
+    if ( radius <= 0.0 || params.numSamples <= 1 ) return dir;
+
+    float sinHalfAngle = clamp( radius / max( dist, 0.001 ), 0.0, 1.0 );
+    float cosHalfAngle = sqrt( max( 0.0, 1.0 - sinHalfAngle * sinHalfAngle ) );
+
+    float r1 = randFloat( seed );
+    float r2 = randFloat( seed + 1u );
+
+    // Sample a direction within the cone
+    float cosTheta = mix( cosHalfAngle, 1.0, r1 );
+    float sinTheta = sqrt( max( 0.0, 1.0 - cosTheta * cosTheta ) );
+    float phi      = r2 * 2.0 * 3.14159265;
+
+    // Build local frame around `dir`
+    vec3 up    = abs(dir.y) < 0.9 ? vec3(0,1,0) : vec3(1,0,0);
+    vec3 right = normalize( cross(up, dir) );
+    vec3 fwd   = cross(dir, right);
+
+    return normalize( right * (sinTheta * cos(phi))
+                    + fwd   * (sinTheta * sin(phi))
+                    + dir   * cosTheta );
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+void main() {
+    ivec2 coord = ivec2( gl_LaunchIDEXT.xy );
+    ivec2 size  = ivec2( gl_LaunchSizeEXT.xy );
+
+    // Reconstruct world position
+    vec3 worldPos = reconstructWorldPos( coord, size );
+
+    // Light direction and distance
+    vec3  toLight = params.lightOrigin.xyz - worldPos;
+    float dist    = length( toLight );
+
+    // Beyond light range — fully lit (the light interaction code handles attenuation)
+    if ( dist >= params.lightFalloffRadius ) {
+        imageStore( shadowMask, coord, vec4(1.0) );
+        return;
+    }
+
+    vec3 lightDir = toLight / dist;
+
+    // Offset origin slightly along the normal to avoid self-intersection.
+    // Without a dedicated normal buffer we use a fixed epsilon.
+    const float tMin    = 0.5;      // 0.5 units (Doom 3 units ≈ 2.54 cm)
+    const float tMax    = dist - tMin;
+
+    if ( tMax <= 0.0 ) {
+        imageStore( shadowMask, coord, vec4(1.0) );
+        return;
+    }
+
+    // Accumulate shadow over multiple samples (soft shadows)
+    float occluded = 0.0;
+    int N = max( 1, params.numSamples );
+    uint baseSeed = wang_hash( uint(coord.x)
+                             + wang_hash( uint(coord.y) + params.frameIndex * 7919u ) );
+
+    for ( int s = 0; s < N; s++ ) {
+        uint seed = wang_hash( baseSeed + uint(s) * 1013u );
+        vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed );
+
+        shadowFactor = 1.0; // miss shader writes 1.0 (lit)
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+            0xFF,   // cull mask
+            0,      // SBT offset
+            0,      // SBT stride
+            0,      // miss index
+            worldPos + rayDir * tMin,
+            0.0,
+            rayDir,
+            tMax,
+            0       // payload location
+        );
+        occluded += (1.0 - shadowFactor); // shadowFactor 0.0 from any-hit → hit → occluded
+    }
+
+    float shadow = 1.0 - (occluded / float(N));
+    imageStore( shadowMask, coord, vec4(shadow) );
+}
