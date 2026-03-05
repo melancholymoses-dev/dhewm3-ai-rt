@@ -607,6 +607,80 @@ set(src_renderer
 	renderer/stblib_impls.c
 )
 
+# ---------------------------------------------------------------------------
+# Vulkan backend sources (only compiled when DHEWM3_VULKAN is ON)
+# ---------------------------------------------------------------------------
+if(DHEWM3_VULKAN)
+	find_package(Vulkan REQUIRED)
+
+	set(src_vulkan
+		renderer/Vulkan/vk_instance.cpp
+		renderer/Vulkan/vk_swapchain.cpp
+		renderer/Vulkan/vk_buffer.cpp
+		renderer/Vulkan/vk_shader.cpp
+		renderer/Vulkan/vk_pipeline.cpp
+		renderer/Vulkan/vk_backend.cpp
+	)
+
+	if(DHEWM3_RAYTRACING)
+		list(APPEND src_vulkan
+			renderer/Vulkan/vk_accelstruct.cpp
+			renderer/Vulkan/vk_shadows.cpp
+		)
+	endif()
+
+	list(APPEND src_renderer ${src_vulkan})
+
+	# Locate glslc for SPIR-V compilation
+	find_program(GLSLC_EXECUTABLE glslc
+		HINTS "${Vulkan_GLSLC_EXECUTABLE}" ENV VULKAN_SDK
+		PATH_SUFFIXES bin)
+	if(NOT GLSLC_EXECUTABLE)
+		message(FATAL_ERROR "glslc not found. Install the Vulkan SDK and ensure glslc is in PATH.")
+	endif()
+
+	# GLSL shaders to compile to SPIR-V
+	set(GLSL_SHADER_SOURCES
+		renderer/glsl/interaction.vert
+		renderer/glsl/interaction.frag
+		renderer/glsl/shadow.vert
+		renderer/glsl/depth.vert
+		renderer/glsl/depth.frag
+	)
+	if(DHEWM3_RAYTRACING)
+		list(APPEND GLSL_SHADER_SOURCES
+			renderer/glsl/shadow_ray.rgen
+			renderer/glsl/shadow_ray.rmiss
+			renderer/glsl/shadow_ray.rahit
+		)
+	endif()
+
+	set(SPV_OUTPUT_DIR "${CMAKE_BINARY_DIR}/glprogs/glsl")
+	file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
+
+	set(SPIRV_BINARIES "")
+	foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
+		get_filename_component(GLSL_NAME "${GLSL_SRC}" NAME)
+		set(SPV_FILE "${SPV_OUTPUT_DIR}/${GLSL_NAME}.spv")
+
+		add_custom_command(
+			OUTPUT  "${SPV_FILE}"
+			COMMAND "${GLSLC_EXECUTABLE}"
+			        --target-env=vulkan1.2
+			        "$<IF:$<BOOL:${DHEWM3_RAYTRACING}>,--target-spv=spv1.4,>"
+			        -o "${SPV_FILE}"
+			        "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
+			DEPENDS "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
+			COMMENT "Compiling ${GLSL_SRC} -> ${GLSL_NAME}.spv"
+			VERBATIM
+		)
+		list(APPEND SPIRV_BINARIES "${SPV_FILE}")
+	endforeach()
+
+	add_custom_target(dhewm3_spirv ALL DEPENDS ${SPIRV_BINARIES})
+
+endif() # DHEWM3_VULKAN
+
 always_optimize_sourcefile(renderer/stblib_impls.c)
 
 # I'm a bit sloppy with headers and just glob them in..
@@ -1293,6 +1367,19 @@ endif()
 		${SDLx_LIBRARY}
 		${sys_libs}
 	)
+
+	if(DHEWM3_VULKAN)
+		target_link_libraries(${DHEWM3BINARY} Vulkan::Vulkan)
+		target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_VULKAN)
+		if(DHEWM3_RAYTRACING)
+			target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
+		endif()
+		add_dependencies(${DHEWM3BINARY} dhewm3_spirv)
+		# Install compiled SPIR-V next to the binary
+		install(DIRECTORY "${CMAKE_BINARY_DIR}/glprogs/glsl/"
+		        DESTINATION "${bindir}/glprogs/glsl"
+		        FILES_MATCHING PATTERN "*.spv")
+	endif()
 
 	if(NOT APPLE AND NOT WIN32)
 		install(TARGETS ${DHEWM3BINARY}
