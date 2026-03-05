@@ -63,6 +63,10 @@ option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for
 
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
+# Vulkan rendering backend (required for ray tracing)
+option(DHEWM3_VULKAN     "Enable Vulkan rendering backend" OFF)
+option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing (requires DHEWM3_VULKAN)" OFF)
+
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)
 	option(ASAN		"Enable GCC/Clang Adress Sanitizer (ASan)" OFF) # TODO: MSVC might also support this, somehow?
