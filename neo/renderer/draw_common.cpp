@@ -1977,6 +1977,9 @@ void	RB_STD_DrawView( void ) {
 
 	// main light renderer
 	switch( tr.backEndRenderer ) {
+	case BE_GLSL:
+		RB_GLSL_DrawInteractions();
+		break;
 	case BE_ARB2:
 		RB_ARB2_DrawInteractions();
 		break;

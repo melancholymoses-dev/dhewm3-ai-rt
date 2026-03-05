@@ -674,6 +674,7 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 
 typedef enum {
 	BE_ARB2,
+	BE_GLSL,    // modern GLSL backend (OpenGL 2.0+), replaces ARB assembly programs
 	BE_BAD
 } backEndName_t;
 
@@ -847,6 +848,7 @@ extern idCVar r_brightness;				// changes gamma tables
 extern idCVar r_gammaInShader;			// set gamma+brightness in shader instead of modifying system gamma tables
 
 extern idCVar r_renderer;				// arb2, etc
+extern idCVar r_useGLSL;				// use GLSL backend instead of ARB assembly programs
 
 extern idCVar r_checkBounds;			// compare all surface bounds with precalculated ones
 
@@ -1397,6 +1399,89 @@ typedef enum {
 	PP_PARTICLE_COLCHAN_MASK = 24,
 } programParameter_t;
 
+
+/*
+============================================================
+
+GLSL PROGRAM SYSTEM
+
+Modern GLSL backend to replace the ARB assembly programs.
+Enabled via r_useGLSL cvar.
+
+============================================================
+*/
+
+// Uniform locations for the interaction GLSL program
+struct glslInteractionUniforms_t {
+	int u_LightOrigin;
+	int u_ViewOrigin;
+	int u_LightProjectionS;
+	int u_LightProjectionT;
+	int u_LightProjectionQ;
+	int u_LightFalloffS;
+	int u_BumpMatrixS;
+	int u_BumpMatrixT;
+	int u_DiffuseMatrixS;
+	int u_DiffuseMatrixT;
+	int u_SpecularMatrixS;
+	int u_SpecularMatrixT;
+	int u_ColorModulate;
+	int u_ColorAdd;
+	int u_ModelViewProjection;
+	int u_DiffuseColor;
+	int u_SpecularColor;
+	int u_GammaBrightness;
+	int u_ApplyGamma;
+	// Texture samplers
+	int u_BumpMap;
+	int u_LightFalloff;
+	int u_LightProjection;
+	int u_DiffuseMap;
+	int u_SpecularMap;
+	int u_SpecularTable;
+};
+
+// Uniform locations for the shadow volume GLSL program
+struct glslShadowUniforms_t {
+	int u_LightOrigin;
+	int u_ModelViewProjection;
+};
+
+// Uniform locations for the depth pre-pass GLSL program
+struct glslDepthUniforms_t {
+	int u_ModelViewProjection;
+	int u_TextureMatrixS;
+	int u_TextureMatrixT;
+	int u_DiffuseMap;
+	int u_AlphaTest;
+	int u_AlphaTestThreshold;
+};
+
+// Handle to a compiled and linked GLSL program
+struct glslProgram_t {
+	unsigned int	progId;         // glCreateProgram() result
+	bool			isValid;
+};
+
+// The three GLSL programs used by the interaction renderer
+struct glslPrograms_t {
+	glslProgram_t		interaction;
+	glslProgram_t		shadow;
+	glslProgram_t		depth;
+
+	glslInteractionUniforms_t interactionUniforms;
+	glslShadowUniforms_t      shadowUniforms;
+	glslDepthUniforms_t       depthUniforms;
+};
+
+// Global GLSL programs object (initialized by R_GLSL_Init)
+extern glslPrograms_t glslProgs;
+
+// GLSL backend interface
+void R_GLSL_Init( void );
+void R_GLSL_Shutdown( void );
+void RB_GLSL_DrawInteractions( void );
+bool R_GLSL_Available( void );
 
 /*
 ============================================================

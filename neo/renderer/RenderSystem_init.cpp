@@ -97,6 +97,7 @@ idCVar r_brightness( "r_brightness", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FL
 idCVar r_gammaInShader( "r_gammaInShader", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "Set gamma and brightness in shaders instead using hardware gamma" );
 
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
+idCVar r_useGLSL( "r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use modern GLSL backend instead of ARB assembly programs (requires OpenGL 2.0)" );
 
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
 
@@ -861,6 +862,9 @@ void R_InitOpenGL( void ) {
 
 	cmdSystem->AddCommand( "reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs" );
 	R_ReloadARBPrograms_f( idCmdArgs() );
+
+	// Initialize the GLSL backend (always try, activated via r_useGLSL)
+	R_GLSL_Init();
 
 	// allocate the vertex array range or vertex objects
 	vertexCache.Init();
