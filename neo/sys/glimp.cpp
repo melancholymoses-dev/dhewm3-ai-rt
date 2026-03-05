@@ -1108,6 +1108,58 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 #endif // SDL2 and SDL1.2
 }
 
+// ============================================================================
+// Vulkan init/shutdown stubs — compiled only when DHEWM3_VULKAN is defined.
+// Called from RenderSystem_init.cpp after GLimp_Init returns, when
+// r_backend == "vulkan".
+// ============================================================================
+
+#ifdef DHEWM3_VULKAN
+
+#include "renderer/Vulkan/vk_common.h"
+
+// Forward declarations (defined in vk_instance.cpp / vk_backend.cpp)
+void VKimp_Init( SDL_Window *sdlWindow );
+void VKimp_PostInit( int width, int height );
+void VKimp_PreShutdown( void );
+void VKimp_Shutdown( void );
+
+extern idCVar r_backend;
+
+/*
+===================
+VKimp_InitFromGlimp
+
+Called from RenderSystem_init.cpp (R_InitOpenGL / equivalent) when
+r_backend is set to "vulkan". Creates a Vulkan surface from the already-
+created SDL window, then completes device and swapchain setup.
+===================
+*/
+void VKimp_InitFromGlimp( int width, int height ) {
+	if ( !window ) {
+		common->Warning( "VKimp_InitFromGlimp: SDL window not yet created" );
+		return;
+	}
+	common->Printf( "Initializing Vulkan subsystem\n" );
+	VKimp_Init( window );
+	VKimp_PostInit( width, height );
+}
+
+/*
+===================
+VKimp_ShutdownFromGlimp
+
+Tears down Vulkan before the SDL window is destroyed.
+===================
+*/
+void VKimp_ShutdownFromGlimp( void ) {
+	common->Printf( "Shutting down Vulkan subsystem\n" );
+	VKimp_PreShutdown();
+	VKimp_Shutdown();
+}
+
+#endif // DHEWM3_VULKAN
+
 /*
 =================
 GLimp_ResetGamma
