@@ -1,0 +1,100 @@
+/*
+===========================================================================
+
+Doom 3 GPL Source Code
+Copyright (C) 1999-2011 id Software LLC, a ZeniMax Media company.
+dhewm3 GLSL adaptation.
+
+This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+
+Doom 3 Source Code is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+===========================================================================
+*/
+
+// Interaction vertex shader - replaces interaction.vfp ARB program
+// Computes per-vertex light/view vectors in tangent space and texture coordinates.
+
+#version 330 core
+
+// Vertex attributes (matching ARB attrib indices for compatibility)
+layout(location = 0) in vec3 in_Position;
+layout(location = 3) in vec4 in_Color;        // GL_COLOR_ARRAY, normalized [0,1]
+layout(location = 8) in vec2 in_TexCoord;     // ARB attrib 8 = st
+layout(location = 9) in vec3 in_Tangent;      // ARB attrib 9 = tangents[0]
+layout(location = 10) in vec3 in_BiTangent;   // ARB attrib 10 = tangents[1]
+layout(location = 11) in vec3 in_Normal;      // ARB attrib 11 = normal
+
+// Uniforms matching the ARB program.env layout
+// Vertex program parameters (c[4] through c[17])
+uniform vec4 u_LightOrigin;         // c[4]  PP_LIGHT_ORIGIN
+uniform vec4 u_ViewOrigin;          // c[5]  PP_VIEW_ORIGIN
+uniform vec4 u_LightProjectionS;    // c[6]  PP_LIGHT_PROJECT_S
+uniform vec4 u_LightProjectionT;    // c[7]  PP_LIGHT_PROJECT_T
+uniform vec4 u_LightProjectionQ;    // c[8]  PP_LIGHT_PROJECT_Q
+uniform vec4 u_LightFalloffS;       // c[9]  PP_LIGHT_FALLOFF_S
+uniform vec4 u_BumpMatrixS;         // c[10] PP_BUMP_MATRIX_S
+uniform vec4 u_BumpMatrixT;         // c[11] PP_BUMP_MATRIX_T
+uniform vec4 u_DiffuseMatrixS;      // c[12] PP_DIFFUSE_MATRIX_S
+uniform vec4 u_DiffuseMatrixT;      // c[13] PP_DIFFUSE_MATRIX_T
+uniform vec4 u_SpecularMatrixS;     // c[14] PP_SPECULAR_MATRIX_S
+uniform vec4 u_SpecularMatrixT;     // c[15] PP_SPECULAR_MATRIX_T
+uniform vec4 u_ColorModulate;       // c[16] PP_COLOR_MODULATE
+uniform vec4 u_ColorAdd;            // c[17] PP_COLOR_ADD
+
+uniform mat4 u_ModelViewProjection;
+
+// Varyings to fragment shader
+out vec4 vary_TexCoord_Bump;        // xy = bump texcoord
+out vec4 vary_TexCoord_Diffuse;     // xy = diffuse texcoord
+out vec4 vary_TexCoord_Specular;    // xy = specular texcoord
+out vec4 vary_LightProjection;      // xyzw = projective light tex coords (S,T,_,Q)
+out vec2 vary_LightFalloff;         // x = falloff S
+out vec3 vary_LightDir;             // tangent-space light direction (unnormalized)
+out vec3 vary_ViewDir;              // tangent-space view direction (unnormalized)
+out vec4 vary_Color;                // vertex color after modulate/add
+
+void main() {
+    vec4 pos = vec4(in_Position, 1.0);
+
+    // --- Texture coordinate transforms ---
+    // Bump map texcoords: dot(texcoord, bumpMatrix row)
+    vec4 tc = vec4(in_TexCoord, 0.0, 1.0);
+    vary_TexCoord_Bump.x     = dot(tc, u_BumpMatrixS);
+    vary_TexCoord_Bump.y     = dot(tc, u_BumpMatrixT);
+
+    vary_TexCoord_Diffuse.x  = dot(tc, u_DiffuseMatrixS);
+    vary_TexCoord_Diffuse.y  = dot(tc, u_DiffuseMatrixT);
+
+    vary_TexCoord_Specular.x = dot(tc, u_SpecularMatrixS);
+    vary_TexCoord_Specular.y = dot(tc, u_SpecularMatrixT);
+
+    // --- Projective light texture coords ---
+    vary_LightProjection.x = dot(pos, u_LightProjectionS);
+    vary_LightProjection.y = dot(pos, u_LightProjectionT);
+    vary_LightProjection.z = 0.0;
+    vary_LightProjection.w = dot(pos, u_LightProjectionQ);
+
+    // --- Light falloff (1D texture) ---
+    vary_LightFalloff.x = dot(pos, u_LightFalloffS);
+    vary_LightFalloff.y = 0.5; // center of 1D texture
+
+    // --- Tangent-space light and view directions ---
+    vec3 lightVec = u_LightOrigin.xyz - in_Position;
+    vary_LightDir.x = dot(lightVec, in_Tangent);
+    vary_LightDir.y = dot(lightVec, in_BiTangent);
+    vary_LightDir.z = dot(lightVec, in_Normal);
+
+    vec3 viewVec = u_ViewOrigin.xyz - in_Position;
+    vary_ViewDir.x = dot(viewVec, in_Tangent);
+    vary_ViewDir.y = dot(viewVec, in_BiTangent);
+    vary_ViewDir.z = dot(viewVec, in_Normal);
+
+    // --- Vertex color ---
+    vary_Color = in_Color * u_ColorModulate + u_ColorAdd;
+
+    gl_Position = u_ModelViewProjection * pos;
+}
