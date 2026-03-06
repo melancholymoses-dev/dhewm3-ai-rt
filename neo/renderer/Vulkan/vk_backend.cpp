@@ -232,19 +232,32 @@ static void VK_RB_DrawInteraction( const drawInteraction_t *din ) {
 
 	vkUpdateDescriptorSets( vk.device, 7, writes, 0, NULL );
 
-	// Bind descriptor set and draw
+	// Bind descriptor set
 	vkCmdBindDescriptorSets( s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 	                          vkPipes.interactionLayout, 0, 1, &ds, 0, NULL );
 
-	// Bind vertex/index buffers from vertex cache
-	idDrawVert *ac = (idDrawVert *)vertexCache.Position( din->surf->geo->ambientCache );
-	// NOTE: In a full Vulkan implementation, ambientCache would reference a VkBuffer.
-	// For this phase, we record the draw call with the assumption that VBO migration
-	// to Vulkan is handled by vk_buffer.cpp. The interface point is here.
+	// Bind vertex and index buffers from the vertex cache
+	extern bool VK_VertexCache_GetBuffer( vertCache_t *, VkBuffer *, VkDeviceSize * );
+	const srfTriangles_t *geo = din->surf->geo;
 
-	vkCmdDrawIndexed( s_cmd,
-	                  din->surf->geo->numIndexes,
-	                  1, 0, 0, 0 );
+	VkBuffer     vertBuf;
+	VkDeviceSize vertOffset;
+	if ( !VK_VertexCache_GetBuffer( geo->ambientCache, &vertBuf, &vertOffset ) ) {
+		return; // vertex data not ready — skip this surface
+	}
+	vkCmdBindVertexBuffers( s_cmd, 0, 1, &vertBuf, &vertOffset );
+
+	VkBuffer     idxBuf;
+	VkDeviceSize idxOffset;
+	if ( !VK_VertexCache_GetBuffer( geo->indexCache, &idxBuf, &idxOffset ) ) {
+		return; // index data not ready — skip this surface
+	}
+	const VkIndexType idxType = ( sizeof(glIndex_t) == 4 )
+	                          ? VK_INDEX_TYPE_UINT32
+	                          : VK_INDEX_TYPE_UINT16;
+	vkCmdBindIndexBuffer( s_cmd, idxBuf, idxOffset, idxType );
+
+	vkCmdDrawIndexed( s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0 );
 }
 
 // ---------------------------------------------------------------------------
