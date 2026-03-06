@@ -279,9 +279,19 @@ public:
 	idImage *			hashNext;				// for hash chains to speed lookup
 
 	int					refCount;				// overall ref count
+
+#ifdef DHEWM3_VULKAN
+	// Opaque handle to Vulkan image resources (vkImageData_t, defined in vk_image.cpp).
+	// Populated by VK_Image_Upload(), freed by VK_Image_Purge().
+	// Using an opaque pointer avoids pulling <vulkan/vulkan.h> into every translation unit.
+	struct vkImageData_t *	vkData;
+#endif
 };
 
 ID_INLINE idImage::idImage() {
+#ifdef DHEWM3_VULKAN
+	vkData = NULL;
+#endif
 	texnum = TEXTURE_NOT_LOADED;
 	partialImage = NULL;
 	type = TT_DISABLED;
