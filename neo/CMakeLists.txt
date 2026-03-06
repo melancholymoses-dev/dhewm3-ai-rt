@@ -645,6 +645,7 @@ if(DHEWM3_VULKAN)
 		renderer/glsl/interaction.vert
 		renderer/glsl/interaction.frag
 		renderer/glsl/shadow.vert
+		renderer/glsl/shadow.frag
 		renderer/glsl/depth.vert
 		renderer/glsl/depth.frag
 	)

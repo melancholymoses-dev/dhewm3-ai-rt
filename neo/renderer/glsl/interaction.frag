@@ -18,7 +18,7 @@ the Free Software Foundation, either version 3 of the License, or
 // Interaction fragment shader - replaces interaction.vfp ARB fragment program.
 // Computes per-pixel lighting using normal/diffuse/specular maps.
 
-#version 330 core
+#version 450
 
 // Varyings from vertex shader
 in vec4 vary_TexCoord_Bump;
@@ -30,23 +30,44 @@ in vec3 vary_LightDir;          // tangent-space, unnormalized
 in vec3 vary_ViewDir;           // tangent-space, unnormalized
 in vec4 vary_Color;
 
-// Textures (matching ARB texture unit indices)
-uniform sampler2D   u_BumpMap;          // texture 1: per-surface normal map
-uniform sampler2D   u_LightFalloff;     // texture 2: 1D falloff (as 2D with height=1)
-uniform sampler2D   u_LightProjection;  // texture 3: projected light cookie/spot map
-uniform sampler2D   u_DiffuseMap;       // texture 4: diffuse albedo
-uniform sampler2D   u_SpecularMap;      // texture 5: specular intensity/color
-uniform sampler2D   u_SpecularTable;    // texture 6: NdotH -> specular power lookup
-uniform sampler2D   u_ShadowMask;       // texture 7: RT shadow mask (1=lit, 0=shadowed)
+// Samplers with explicit Vulkan bindings (set=0, binding=1..7)
+layout(set=0, binding=1) uniform sampler2D u_BumpMap;         // per-surface normal map
+layout(set=0, binding=2) uniform sampler2D u_LightFalloff;    // 1D radial falloff
+layout(set=0, binding=3) uniform sampler2D u_LightProjection; // projected light cookie
+layout(set=0, binding=4) uniform sampler2D u_DiffuseMap;      // diffuse albedo
+layout(set=0, binding=5) uniform sampler2D u_SpecularMap;     // specular intensity/color
+layout(set=0, binding=6) uniform sampler2D u_SpecularTable;   // NdotH -> specular power
+layout(set=0, binding=7) uniform sampler2D u_ShadowMask;      // RT shadow mask (1=lit, 0=shadowed)
 
-// Fragment program constants
-uniform vec4 u_DiffuseColor;    // c[0] diffuseColor from material
-uniform vec4 u_SpecularColor;   // c[1] specularColor from material
-uniform vec4 u_GammaBrightness; // c[4] PP_GAMMA_BRIGHTNESS: xyz=brightness, w=1/gamma
-
-uniform bool  u_ApplyGamma;     // whether to apply gamma in shader
-uniform vec2  u_ScreenSize;     // framebuffer dimensions, used to compute shadow mask UV
-uniform bool  u_UseShadowMask;  // true when RT shadow mask is valid this frame
+// Shared UBO — binding 0, both vertex and fragment stages.
+// Field order matches VkInteractionUBO in vk_pipeline.cpp (std140).
+layout(set=0, binding=0) uniform InteractionParams {
+    // vertex stage parameters (unused in this stage, kept for shared layout)
+    vec4  u_LightOrigin;
+    vec4  u_ViewOrigin;
+    vec4  u_LightProjectionS;
+    vec4  u_LightProjectionT;
+    vec4  u_LightProjectionQ;
+    vec4  u_LightFalloffS;
+    vec4  u_BumpMatrixS;
+    vec4  u_BumpMatrixT;
+    vec4  u_DiffuseMatrixS;
+    vec4  u_DiffuseMatrixT;
+    vec4  u_SpecularMatrixS;
+    vec4  u_SpecularMatrixT;
+    vec4  u_ColorModulate;
+    vec4  u_ColorAdd;
+    mat4  u_ModelViewProjection;
+    // fragment stage parameters
+    vec4  u_DiffuseColor;
+    vec4  u_SpecularColor;
+    vec4  u_GammaBrightness;    // xyz=brightness, w=1/gamma
+    int   u_ApplyGamma;
+    float u_ScreenWidth;
+    float u_ScreenHeight;
+    int   u_UseShadowMask;
+    float _ubo_pad;
+};
 
 out vec4 fragColor;
 
@@ -86,8 +107,8 @@ void main() {
 
     // --- RT shadow mask ---
     float shadow = 1.0;
-    if (u_UseShadowMask) {
-        vec2 shadowUV = gl_FragCoord.xy / u_ScreenSize;
+    if (u_UseShadowMask != 0) {
+        vec2 shadowUV = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
         shadow = texture(u_ShadowMask, shadowUV).r;
     }
 
@@ -98,7 +119,7 @@ void main() {
     vec4 result = vec4(color, vary_Color.a);
 
     // --- Optional gamma correction (mirrors ARB gamma injection) ---
-    if (u_ApplyGamma) {
+    if (u_ApplyGamma != 0) {
         // result.rgb = pow(result.rgb * brightness, vec3(1/gamma))
         vec3 brightened = clamp(result.rgb * u_GammaBrightness.rgb, 0.0, 1.0);
         result.rgb = pow(brightened, vec3(u_GammaBrightness.w)); // .w = 1/gamma
