@@ -18,14 +18,16 @@ the Free Software Foundation, either version 3 of the License, or
 // Shadow volume vertex shader - replaces shadow.vp ARB vertex program.
 // Extrudes shadow volume geometry toward the light (for stencil shadow volumes).
 
-#version 330 core
+#version 450
 
 // Shadow vertices have a 4th component: w=0 means vertex at infinity (extruded),
 // w=1 means regular vertex. This encodes the extrusion in the .w of position.
 layout(location = 0) in vec4 in_Position;  // xyz = position, w = 0 (infinity) or 1 (cap)
 
-uniform vec4 u_LightOrigin;             // local-space light origin
-uniform mat4 u_ModelViewProjection;
+layout(set=0, binding=0) uniform ShadowParams {
+    vec4  u_LightOrigin;             // local-space light origin
+    mat4  u_ModelViewProjection;
+};
 
 void main() {
     // If w == 0, this vertex is at "infinity" in the direction away from the light.
