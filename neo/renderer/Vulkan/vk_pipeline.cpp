@@ -79,7 +79,7 @@ vkPipelines_t vkPipes;
 // ---------------------------------------------------------------------------
 
 static VkDescriptorSetLayout VK_CreateInteractionDescLayout( void ) {
-	VkDescriptorSetLayoutBinding bindings[7] = {};
+	VkDescriptorSetLayoutBinding bindings[8] = {};
 
 	// Binding 0: UBO
 	bindings[0].binding            = 0;
@@ -95,9 +95,15 @@ static VkDescriptorSetLayout VK_CreateInteractionDescLayout( void ) {
 		bindings[i].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 	}
 
+	// Binding 7: shadow mask (RT shadow output, or 1x1 white fallback when RT is off)
+	bindings[7].binding         = 7;
+	bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	bindings[7].descriptorCount = 1;
+	bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
 	VkDescriptorSetLayoutCreateInfo info = {};
 	info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-	info.bindingCount = 7;
+	info.bindingCount = 8;
 	info.pBindings    = bindings;
 
 	VkDescriptorSetLayout layout;
@@ -431,7 +437,7 @@ void VK_InitPipelines( void ) {
 	poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	poolSizes[0].descriptorCount = 4096;
 	poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	poolSizes[1].descriptorCount = 4096 * 6;
+	poolSizes[1].descriptorCount = 4096 * 7;  // 6 material textures + 1 shadow mask per draw
 
 	VkDescriptorPoolCreateInfo poolInfo = {};
 	poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

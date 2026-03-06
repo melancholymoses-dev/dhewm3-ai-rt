@@ -258,6 +258,19 @@ static void VK_RT_InitShadowPipeline( void ) {
 	dsAlloc.pSetLayouts        = layouts;
 	VK_CHECK( vkAllocateDescriptorSets( vk.device, &dsAlloc, vkRT.shadowDescSets ) );
 
+	// --- Shadow mask sampler (used by the lighting pass to read the shadow mask) ---
+	{
+		VkSamplerCreateInfo si = {};
+		si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		si.magFilter    = VK_FILTER_NEAREST;
+		si.minFilter    = VK_FILTER_NEAREST;
+		si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+		si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		VK_CHECK( vkCreateSampler( vk.device, &si, NULL, &vkRT.shadowMaskSampler ) );
+	}
+
 	vkRT.isInitialized = true;
 	common->Printf( "VK RT: shadow ray pipeline initialized\n" );
 }

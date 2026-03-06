@@ -560,6 +560,9 @@ void VK_RT_Shutdown( void ) {
 		vkDestroyBuffer( vk.device, vkRT.sbtBuffer, NULL );
 		vkFreeMemory(    vk.device, vkRT.sbtMemory, NULL );
 	}
+	if ( vkRT.shadowMaskSampler != VK_NULL_HANDLE ) {
+		vkDestroySampler( vk.device, vkRT.shadowMaskSampler, NULL );
+	}
 
 	memset( &vkRT, 0, sizeof(vkRT) );
 }
