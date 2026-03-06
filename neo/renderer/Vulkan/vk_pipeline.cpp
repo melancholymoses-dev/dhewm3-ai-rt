@@ -44,14 +44,19 @@ struct VkInteractionUBO {
 	float specularColor[4];
 	float gammaBrightness[4];
 	int   applyGamma;
-	float _pad[3];
+	float screenWidth;          // framebuffer width  (for shadow mask UV)
+	float screenHeight;         // framebuffer height (for shadow mask UV)
+	int   useShadowMask;        // 1 when RT shadow mask is valid this frame
+	float _pad;
 };
+// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE = 384.
 
 // ---------------------------------------------------------------------------
 // Pipeline layout for the interaction pass
 // Binding layout:
 //   set 0 binding 0: UBO (VkInteractionUBO)
 //   set 0 binding 1..6: combined image samplers (bump, falloff, proj, diffuse, specular, specTable)
+//   set 0 binding 7:    shadow mask sampler (RT output or 1x1 white fallback)
 // ---------------------------------------------------------------------------
 
 struct vkPipelines_t {
