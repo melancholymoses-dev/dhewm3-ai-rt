@@ -37,13 +37,16 @@ uniform sampler2D   u_LightProjection;  // texture 3: projected light cookie/spo
 uniform sampler2D   u_DiffuseMap;       // texture 4: diffuse albedo
 uniform sampler2D   u_SpecularMap;      // texture 5: specular intensity/color
 uniform sampler2D   u_SpecularTable;    // texture 6: NdotH -> specular power lookup
+uniform sampler2D   u_ShadowMask;       // texture 7: RT shadow mask (1=lit, 0=shadowed)
 
 // Fragment program constants
 uniform vec4 u_DiffuseColor;    // c[0] diffuseColor from material
 uniform vec4 u_SpecularColor;   // c[1] specularColor from material
 uniform vec4 u_GammaBrightness; // c[4] PP_GAMMA_BRIGHTNESS: xyz=brightness, w=1/gamma
 
-uniform bool u_ApplyGamma;      // whether to apply gamma in shader
+uniform bool  u_ApplyGamma;     // whether to apply gamma in shader
+uniform vec2  u_ScreenSize;     // framebuffer dimensions, used to compute shadow mask UV
+uniform bool  u_UseShadowMask;  // true when RT shadow mask is valid this frame
 
 out vec4 fragColor;
 
@@ -81,8 +84,15 @@ void main() {
     vec3 specular = texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb;
     specular *= u_SpecularColor.rgb * specLookup;
 
+    // --- RT shadow mask ---
+    float shadow = 1.0;
+    if (u_UseShadowMask) {
+        vec2 shadowUV = gl_FragCoord.xy / u_ScreenSize;
+        shadow = texture(u_ShadowMask, shadowUV).r;
+    }
+
     // --- Combine ---
-    vec3 color = (diffuse + specular) * attenuation;
+    vec3 color = (diffuse + specular) * attenuation * shadow;
     color *= vary_Color.rgb;
 
     vec4 result = vec4(color, vary_Color.a);
