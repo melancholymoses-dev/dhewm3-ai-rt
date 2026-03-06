@@ -80,6 +80,13 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 			Mem_Free( block->virtMem );
 			block->virtMem = NULL;
 		}
+
+#ifdef DHEWM3_VULKAN
+		if ( block->vkBuffer ) {
+			extern void VK_VertexCache_Free( vertCache_t * );
+			VK_VertexCache_Free( block );
+		}
+#endif
 	}
 	block->tag = TAG_FREE;		// mark as free
 
@@ -297,6 +304,16 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 		block->virtMem = Mem_Alloc( size );
 		SIMDProcessor->Memcpy( block->virtMem, data, size );
 	}
+
+#ifdef DHEWM3_VULKAN
+	// For static (non-temp) allocations in the Vulkan path, also create a device-local VkBuffer.
+	block->vkBuffer = 0;
+	block->vkMemory = 0;
+	if ( !allocatingTempBuffer && data ) {
+		extern void VK_VertexCache_Alloc( vertCache_t *, const void *, int, bool );
+		VK_VertexCache_Alloc( block, data, size, indexBuffer );
+	}
+#endif
 }
 
 /*

@@ -52,6 +52,14 @@ typedef struct vertCache_s {
 	struct vertCache_s	**	user;				// will be set to zero when purged
 	struct vertCache_s *next, *prev;	// may be on the static list or one of the frame lists
 	int				frameUsed;			// it can't be purged if near the current frame
+
+#ifdef DHEWM3_VULKAN
+	// Vulkan device-local buffer backing.  uint64_t matches the underlying type
+	// of VkBuffer / VkDeviceMemory (non-dispatchable handles) without pulling
+	// <vulkan/vulkan.h> into every file that includes VertexCache.h.
+	uint64_t		vkBuffer;			// VkBuffer handle  (0 = not allocated)
+	uint64_t		vkMemory;			// VkDeviceMemory handle
+#endif
 } vertCache_t;
 
 
