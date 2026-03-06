@@ -680,6 +680,15 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 		qglTexImage2D( GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, scaledBuffer );
 	}
 
+#ifdef DHEWM3_VULKAN
+	// Upload to Vulkan using the RGBA8 mip-0 data before the mip loop frees scaledBuffer.
+	// VK_Image_Upload generates the full mip chain on the GPU via vkCmdBlitImage.
+	if ( r_backend.GetString()[0] == 'v' ) {
+		extern void VK_Image_Upload( idImage *, const byte *, int, int );
+		VK_Image_Upload( this, scaledBuffer, scaled_width, scaled_height );
+	}
+#endif
+
 	// create and upload the mip map levels, which we do in all cases, even if we don't think they are needed
 	int		miplevel;
 
@@ -1742,6 +1751,12 @@ void idImage::PurgeImage() {
 		qglDeleteTextures( 1, &texnum );	// this should be the ONLY place it is ever called!
 		texnum = TEXTURE_NOT_LOADED;
 	}
+#ifdef DHEWM3_VULKAN
+	if ( vkData ) {
+		extern void VK_Image_Purge( idImage * );
+		VK_Image_Purge( this );
+	}
+#endif
 
 	// clear all the current binding caches, so the next bind will do a real one
 	for ( int i = 0 ; i < MAX_MULTITEXTURE_UNITS ; i++ ) {

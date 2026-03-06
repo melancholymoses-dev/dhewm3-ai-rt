@@ -618,6 +618,7 @@ if(DHEWM3_VULKAN)
 		renderer/Vulkan/vk_swapchain.cpp
 		renderer/Vulkan/vk_buffer.cpp
 		renderer/Vulkan/vk_shader.cpp
+		renderer/Vulkan/vk_image.cpp
 		renderer/Vulkan/vk_pipeline.cpp
 		renderer/Vulkan/vk_backend.cpp
 	)

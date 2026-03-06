@@ -189,19 +189,48 @@ static void VK_RB_DrawInteraction( const drawInteraction_t *din ) {
 	bufInfo.offset = uboOffset;
 	bufInfo.range  = INTERACTION_UBO_SIZE;
 
+	// Collect the 6 texture images in binding order (matches interaction.frag samplers):
+	//  1=bump, 2=lightFalloff, 3=lightProjection, 4=diffuse, 5=specular, 6=specularTable
+	idImage *texImages[6] = {
+		din->bumpImage,
+		din->lightFalloffImage,
+		din->lightImage,          // light projection
+		din->diffuseImage,
+		din->specularImage,
+		globalImages->specularTableImage,
+	};
+
+	extern bool VK_Image_GetDescriptorInfo( idImage *, VkDescriptorImageInfo * );
+	extern void VK_Image_GetFallbackDescriptorInfo( VkDescriptorImageInfo * );
+
+	VkDescriptorImageInfo imgInfos[6] = {};
+	for ( int i = 0; i < 6; i++ ) {
+		if ( !texImages[i] || !VK_Image_GetDescriptorInfo( texImages[i], &imgInfos[i] ) ) {
+			VK_Image_GetFallbackDescriptorInfo( &imgInfos[i] );
+		}
+	}
+
 	VkWriteDescriptorSet writes[7] = {};
+
+	// Binding 0: UBO
 	writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	writes[0].dstSet           = ds;
-	writes[0].dstBinding       = 0;
-	writes[0].descriptorType   = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	writes[0].descriptorCount  = 1;
-	writes[0].pBufferInfo      = &bufInfo;
+	writes[0].dstSet          = ds;
+	writes[0].dstBinding      = 0;
+	writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	writes[0].descriptorCount = 1;
+	writes[0].pBufferInfo     = &bufInfo;
 
-	// Write texture descriptors — currently placeholder (TODO: proper Vulkan image handles)
-	// In a full implementation, idImage* would carry a VkImageView + VkSampler.
-	// For now we skip texture binding; the pipeline will use default samplers.
+	// Bindings 1-6: combined image samplers
+	for ( int i = 0; i < 6; i++ ) {
+		writes[1 + i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[1 + i].dstSet          = ds;
+		writes[1 + i].dstBinding      = (uint32_t)(1 + i);
+		writes[1 + i].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		writes[1 + i].descriptorCount = 1;
+		writes[1 + i].pImageInfo      = &imgInfos[i];
+	}
 
-	vkUpdateDescriptorSets( vk.device, 1, writes, 0, NULL );
+	vkUpdateDescriptorSets( vk.device, 7, writes, 0, NULL );
 
 	// Bind descriptor set and draw
 	vkCmdBindDescriptorSets( s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -393,10 +422,15 @@ void VK_RB_DrawView( const void *data ) {
 void VKimp_Init( SDL_Window *window );
 void VKimp_Shutdown( void );
 
+// Forward declarations (vk_image.cpp)
+extern void VK_Image_Init( void );
+extern void VK_Image_Shutdown( void );
+
 void VKimp_PostInit( int width, int height ) {
 	VK_CreateSwapchain( width, height );
 	VK_InitPipelines();
 	VK_CreateUBORings();
+	VK_Image_Init();
 
 	if ( vk.rayTracingSupported ) {
 		VK_RT_Init();
@@ -414,6 +448,7 @@ void VKimp_PreShutdown( void ) {
 		VK_RT_Shutdown();
 	}
 
+	VK_Image_Shutdown();
 	VK_DestroyUBORings();
 	VK_ShutdownPipelines();
 	VK_DestroySwapchain();
