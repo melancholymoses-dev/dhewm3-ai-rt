@@ -76,8 +76,9 @@ struct vkShadowMask_t {
 
 // Global RT state
 struct vkRTState_t {
-	vkTLAS_t      tlas;
+	vkTLAS_t       tlas;
 	vkShadowMask_t shadowMask[VK_MAX_FRAMES_IN_FLIGHT];
+	VkSampler      shadowMaskSampler;  // nearest-clamp, used when sampling shadow mask in lighting pass
 
 	// RT pipeline for shadow rays
 	VkPipeline              shadowPipeline;

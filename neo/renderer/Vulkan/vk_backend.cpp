@@ -50,8 +50,10 @@ struct vkUBORing_t {
 
 static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 
-// Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp)
-static const uint32_t INTERACTION_UBO_SIZE = 256;  // padded to min alignment
+// Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
+// Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
+// + screenSize vec2 + useShadowMask int + pad = 356 bytes -> round to 384.
+static const uint32_t INTERACTION_UBO_SIZE = 384;
 
 static void VK_CreateUBORings( void ) {
 	VkPhysicalDeviceProperties devProps;
@@ -169,6 +171,21 @@ static void VK_RB_DrawInteraction( const drawInteraction_t *din ) {
 	int *ip = (int *)f;
 	*ip = r_gammaInShader.GetBool() ? 1 : 0;
 
+	// screenSize (used by shader to compute shadow mask UV from gl_FragCoord)
+	float *fsz = (float *)(ip + 1);
+	fsz[0] = (float)vk.swapchainExtent.width;
+	fsz[1] = (float)vk.swapchainExtent.height;
+
+	// useShadowMask: 1 when RT shadow mask is valid this frame
+#ifdef DHEWM3_RAYTRACING
+	int *useSM = (int *)(fsz + 2);
+	*useSM = ( vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool() &&
+	           vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE ) ? 1 : 0;
+#else
+	int *useSM = (int *)(fsz + 2);
+	*useSM = 0;
+#endif
+
 	// Allocate descriptor set from pool
 	VkDescriptorSetAllocateInfo dsAlloc = {};
 	dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -210,7 +227,23 @@ static void VK_RB_DrawInteraction( const drawInteraction_t *din ) {
 		}
 	}
 
-	VkWriteDescriptorSet writes[7] = {};
+	// Binding 7: shadow mask
+#ifdef DHEWM3_RAYTRACING
+	VkDescriptorImageInfo shadowMaskInfo = {};
+	if ( vk.rayTracingSupported && vkRT.isInitialized &&
+	     vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE ) {
+		shadowMaskInfo.sampler     = vkRT.shadowMaskSampler;
+		shadowMaskInfo.imageView   = vkRT.shadowMask[vk.currentFrame].view;
+		shadowMaskInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	} else {
+		VK_Image_GetFallbackDescriptorInfo( &shadowMaskInfo );
+	}
+#else
+	VkDescriptorImageInfo shadowMaskInfo = {};
+	VK_Image_GetFallbackDescriptorInfo( &shadowMaskInfo );
+#endif
+
+	VkWriteDescriptorSet writes[8] = {};
 
 	// Binding 0: UBO
 	writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -230,7 +263,15 @@ static void VK_RB_DrawInteraction( const drawInteraction_t *din ) {
 		writes[1 + i].pImageInfo      = &imgInfos[i];
 	}
 
-	vkUpdateDescriptorSets( vk.device, 7, writes, 0, NULL );
+	// Binding 7: shadow mask
+	writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	writes[7].dstSet          = ds;
+	writes[7].dstBinding      = 7;
+	writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	writes[7].descriptorCount = 1;
+	writes[7].pImageInfo      = &shadowMaskInfo;
+
+	vkUpdateDescriptorSets( vk.device, 8, writes, 0, NULL );
 
 	// Bind descriptor set
 	vkCmdBindDescriptorSets( s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
