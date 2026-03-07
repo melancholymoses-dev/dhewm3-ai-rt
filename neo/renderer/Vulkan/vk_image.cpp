@@ -59,7 +59,6 @@ static uint32_t CalcMipLevels( int w, int h ) {
 static VkFilter MapFilter( textureFilter_t f ) {
 	switch ( f ) {
 		case TF_NEAREST:
-		case TF_NEAREST_MIPMAP:
 			return VK_FILTER_NEAREST;
 		default:
 			return VK_FILTER_LINEAR;
@@ -78,7 +77,6 @@ static VkSamplerAddressMode MapRepeat( textureRepeat_t r ) {
 static VkSamplerMipmapMode MapMipmapMode( textureFilter_t f ) {
 	switch ( f ) {
 		case TF_NEAREST:
-		case TF_NEAREST_MIPMAP:
 			return VK_SAMPLER_MIPMAP_MODE_NEAREST;
 		default:
 			return VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -186,6 +184,9 @@ void VK_Image_GetFallbackDescriptorInfo( VkDescriptorImageInfo *out ) {
 	out->imageView   = s_fallback.view;
 	out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
+
+// Forward declaration — defined later in this file
+void VK_Image_Purge( idImage *img );
 
 // ---------------------------------------------------------------------------
 // VK_Image_Upload

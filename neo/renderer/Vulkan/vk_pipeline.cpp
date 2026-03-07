@@ -17,7 +17,9 @@ the Free Software Foundation, either version 3 of the License, or
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
-#include "renderer/Vulkan/vk_shader.cpp"   // inline for now
+
+extern VkShaderModule VK_LoadSPIRV( const char *path );
+extern VkShaderModule VK_LoadSPIRVFromMemory( const uint32_t *code, size_t codeSize );
 
 // ---------------------------------------------------------------------------
 // Per-interaction uniform block (matches draw_glsl.cpp uniforms)
@@ -59,24 +61,7 @@ struct VkInteractionUBO {
 //   set 0 binding 7:    shadow mask sampler (RT output or 1x1 white fallback)
 // ---------------------------------------------------------------------------
 
-struct vkPipelines_t {
-	VkDescriptorSetLayout   interactionDescLayout;
-	VkPipelineLayout        interactionLayout;
-	VkPipeline              interactionPipeline;
-
-	VkDescriptorSetLayout   shadowDescLayout;
-	VkPipelineLayout        shadowLayout;
-	VkPipeline              shadowPipeline;
-
-	VkDescriptorSetLayout   depthDescLayout;
-	VkPipelineLayout        depthLayout;
-	VkPipeline              depthPipeline;
-
-	VkDescriptorPool        descPool;
-
-	bool isValid;
-};
-
+// vkPipelines_t declared in vk_common.h
 vkPipelines_t vkPipes;
 
 // ---------------------------------------------------------------------------

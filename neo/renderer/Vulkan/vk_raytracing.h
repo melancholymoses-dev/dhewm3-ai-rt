@@ -21,8 +21,11 @@ the Free Software Foundation, either version 3 of the License, or
 
 // ---------------------------------------------------------------------------
 // RT extension function pointers (loaded at device init)
+// Only declared here when the Vulkan SDK does NOT provide its own prototypes
+// (i.e. when VK_NO_PROTOTYPES is defined). SDK 1.4+ exposes these directly.
 // ---------------------------------------------------------------------------
 
+#ifdef VK_NO_PROTOTYPES
 extern PFN_vkCreateAccelerationStructureKHR             vkCreateAccelerationStructureKHR;
 extern PFN_vkDestroyAccelerationStructureKHR            vkDestroyAccelerationStructureKHR;
 extern PFN_vkGetAccelerationStructureBuildSizesKHR      vkGetAccelerationStructureBuildSizesKHR;
@@ -32,6 +35,7 @@ extern PFN_vkCreateRayTracingPipelinesKHR               vkCreateRayTracingPipeli
 extern PFN_vkGetRayTracingShaderGroupHandlesKHR         vkGetRayTracingShaderGroupHandlesKHR;
 extern PFN_vkCmdTraceRaysKHR                            vkCmdTraceRaysKHR;
 extern PFN_vkGetBufferDeviceAddressKHR                  vkGetBufferDeviceAddressKHR;
+#endif // VK_NO_PROTOTYPES
 
 // ---------------------------------------------------------------------------
 // BLAS (Bottom-Level Acceleration Structure) - one per unique mesh

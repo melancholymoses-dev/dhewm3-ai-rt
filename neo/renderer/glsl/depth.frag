@@ -20,7 +20,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 #version 450
 
-in vec2 vary_TexCoord;
+layout(location = 0) in vec2 vary_TexCoord;
 
 // Shared UBO with depth.vert — binding 0, both stages.
 layout(set=0, binding=0) uniform DepthParams {
@@ -33,7 +33,7 @@ layout(set=0, binding=0) uniform DepthParams {
 };
 layout(set=0, binding=1) uniform sampler2D u_DiffuseMap;  // alpha-test surfaces only
 
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
 
 void main() {
     if (u_AlphaTest != 0) {

@@ -101,6 +101,40 @@ struct vkState_t {
 extern vkState_t vk;
 
 // ---------------------------------------------------------------------------
+// Graphics pipeline objects — defined in vk_pipeline.cpp
+// ---------------------------------------------------------------------------
+
+struct vkPipelines_t {
+	VkDescriptorSetLayout   interactionDescLayout;
+	VkPipelineLayout        interactionLayout;
+	VkPipeline              interactionPipeline;
+
+	VkDescriptorSetLayout   shadowDescLayout;
+	VkPipelineLayout        shadowLayout;
+	VkPipeline              shadowPipeline;
+
+	VkDescriptorSetLayout   depthDescLayout;
+	VkPipelineLayout        depthLayout;
+	VkPipeline              depthPipeline;
+
+	VkDescriptorPool        descPool;
+
+	bool isValid;
+};
+
+extern vkPipelines_t vkPipes;
+
+// ---------------------------------------------------------------------------
+// Buffer helper — defined in vk_buffer.cpp
+// ---------------------------------------------------------------------------
+
+void VK_CreateBuffer( VkDeviceSize size,
+                      VkBufferUsageFlags usage,
+                      VkMemoryPropertyFlags memProps,
+                      VkBuffer *outBuffer,
+                      VkDeviceMemory *outMemory );
+
+// ---------------------------------------------------------------------------
 // Memory helper: find a memory type satisfying requirements
 // ---------------------------------------------------------------------------
 
@@ -128,8 +162,8 @@ void            VK_EndSingleTimeCommands( VkCommandBuffer cmd );
 
 void VK_TransitionImageLayout( VkCommandBuffer cmd,
                                 VkImage image,
-                                VkFormat format,
                                 VkImageLayout oldLayout,
-                                VkImageLayout newLayout );
+                                VkImageLayout newLayout,
+                                VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT );
 
 #endif // __VK_COMMON_H__
