@@ -59,14 +59,14 @@ layout(set=0, binding=0) uniform InteractionParams {
 };
 
 // Varyings to fragment shader
-out vec4 vary_TexCoord_Bump;        // xy = bump texcoord
-out vec4 vary_TexCoord_Diffuse;     // xy = diffuse texcoord
-out vec4 vary_TexCoord_Specular;    // xy = specular texcoord
-out vec4 vary_LightProjection;      // xyzw = projective light tex coords (S,T,_,Q)
-out vec2 vary_LightFalloff;         // x = falloff S
-out vec3 vary_LightDir;             // tangent-space light direction (unnormalized)
-out vec3 vary_ViewDir;              // tangent-space view direction (unnormalized)
-out vec4 vary_Color;                // vertex color after modulate/add
+layout(location = 0) out vec4 vary_TexCoord_Bump;        // xy = bump texcoord
+layout(location = 1) out vec4 vary_TexCoord_Diffuse;     // xy = diffuse texcoord
+layout(location = 2) out vec4 vary_TexCoord_Specular;    // xy = specular texcoord
+layout(location = 3) out vec4 vary_LightProjection;      // xyzw = projective light tex coords (S,T,_,Q)
+layout(location = 4) out vec2 vary_LightFalloff;         // x = falloff S
+layout(location = 5) out vec3 vary_LightDir;             // tangent-space light direction (unnormalized)
+layout(location = 6) out vec3 vary_ViewDir;              // tangent-space view direction (unnormalized)
+layout(location = 7) out vec4 vary_Color;                // vertex color after modulate/add
 
 void main() {
     vec4 pos = vec4(in_Position, 1.0);

@@ -28,6 +28,7 @@ the Free Software Foundation, either version 3 of the License, or
 // RT extension function pointer definitions (declared extern in vk_raytracing.h)
 // ---------------------------------------------------------------------------
 
+#ifdef VK_NO_PROTOTYPES
 PFN_vkCreateAccelerationStructureKHR            vkCreateAccelerationStructureKHR            = NULL;
 PFN_vkDestroyAccelerationStructureKHR           vkDestroyAccelerationStructureKHR           = NULL;
 PFN_vkGetAccelerationStructureBuildSizesKHR     vkGetAccelerationStructureBuildSizesKHR     = NULL;
@@ -37,6 +38,7 @@ PFN_vkCreateRayTracingPipelinesKHR              vkCreateRayTracingPipelinesKHR  
 PFN_vkGetRayTracingShaderGroupHandlesKHR        vkGetRayTracingShaderGroupHandlesKHR        = NULL;
 PFN_vkCmdTraceRaysKHR                           vkCmdTraceRaysKHR                           = NULL;
 PFN_vkGetBufferDeviceAddressKHR                 vkGetBufferDeviceAddressKHR                 = NULL;
+#endif // VK_NO_PROTOTYPES
 
 // Global RT state
 vkRTState_t vkRT;
@@ -47,6 +49,9 @@ vkRTState_t vkRT;
 // ---------------------------------------------------------------------------
 
 void VK_RT_LoadFunctionPointers( void ) {
+	// Vulkan SDK 1.4+ provides these as direct function prototypes via the loader.
+	// Manual PFN loading is only needed when VK_NO_PROTOTYPES is defined.
+#ifdef VK_NO_PROTOTYPES
 #define LOAD_RT_FN( name ) \
 	name = (PFN_ ## name)vkGetDeviceProcAddr( vk.device, #name ); \
 	if ( !name ) common->Warning( "VK RT: could not load " #name );
@@ -62,6 +67,7 @@ void VK_RT_LoadFunctionPointers( void ) {
 	LOAD_RT_FN( vkGetBufferDeviceAddressKHR )
 
 #undef LOAD_RT_FN
+#endif // VK_NO_PROTOTYPES
 }
 
 // ---------------------------------------------------------------------------

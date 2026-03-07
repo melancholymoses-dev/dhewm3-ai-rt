@@ -22,10 +22,10 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
+#include <SDL.h>
 
 // Forward declarations (defined in vk_pipeline.cpp)
-struct vkPipelines_t;
-extern vkPipelines_t vkPipes;
+// vkPipelines_t and vkPipes are declared in vk_common.h
 void VK_InitPipelines( void );
 void VK_ShutdownPipelines( void );
 
@@ -424,6 +424,7 @@ void VK_RB_DrawView( const void *data ) {
 	vkCmdSetScissor( cmdBuf, 0, 1, &fullScissor );
 
 	// If RT is available and r_rtShadows is on, dispatch shadow rays before interaction pass
+#ifdef DHEWM3_RAYTRACING
 	if ( vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool() ) {
 		vkCmdEndRenderPass( cmdBuf );  // RT dispatch happens outside render pass
 		VK_RT_RebuildTLAS( cmdBuf, backEnd.viewDef );
@@ -433,6 +434,7 @@ void VK_RB_DrawView( const void *data ) {
 		vkCmdSetViewport( cmdBuf, 0, 1, &viewport );
 		vkCmdSetScissor( cmdBuf, 0, 1, &fullScissor );
 	}
+#endif
 
 	// Draw all light interactions
 	VK_RB_DrawInteractions( cmdBuf );
@@ -486,10 +488,12 @@ void VKimp_PostInit( int width, int height ) {
 	VK_CreateUBORings();
 	VK_Image_Init();
 
+#ifdef DHEWM3_RAYTRACING
 	if ( vk.rayTracingSupported ) {
 		VK_RT_Init();
 		VK_RT_InitShadows();   // build shadow RT pipeline + shadow mask images
 	}
+#endif
 
 	common->Printf( "VK: Backend ready\n" );
 }
@@ -498,9 +502,11 @@ void VKimp_PreShutdown( void ) {
 	if ( !vk.isInitialized ) return;
 	vkDeviceWaitIdle( vk.device );
 
+#ifdef DHEWM3_RAYTRACING
 	if ( vk.rayTracingSupported && vkRT.isInitialized ) {
 		VK_RT_Shutdown();
 	}
+#endif
 
 	VK_Image_Shutdown();
 	VK_DestroyUBORings();

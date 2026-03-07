@@ -387,9 +387,9 @@ void VK_EndSingleTimeCommands( VkCommandBuffer cmd ) {
 
 void VK_TransitionImageLayout( VkCommandBuffer cmd,
                                 VkImage image,
-                                VkFormat format,
                                 VkImageLayout oldLayout,
-                                VkImageLayout newLayout ) {
+                                VkImageLayout newLayout,
+                                VkImageAspectFlags aspect ) {
 	VkImageMemoryBarrier barrier = {};
 	barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
 	barrier.oldLayout           = oldLayout;
@@ -397,18 +397,11 @@ void VK_TransitionImageLayout( VkCommandBuffer cmd,
 	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	barrier.image               = image;
-	barrier.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.aspectMask     = aspect;
 	barrier.subresourceRange.baseMipLevel   = 0;
 	barrier.subresourceRange.levelCount     = 1;
 	barrier.subresourceRange.baseArrayLayer = 0;
 	barrier.subresourceRange.layerCount     = 1;
-
-	if ( newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ) {
-		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-		if ( format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT ) {
-			barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
-		}
-	}
 
 	VkPipelineStageFlags srcStage, dstStage;
 
