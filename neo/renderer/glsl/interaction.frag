@@ -21,14 +21,14 @@ the Free Software Foundation, either version 3 of the License, or
 #version 450
 
 // Varyings from vertex shader
-in vec4 vary_TexCoord_Bump;
-in vec4 vary_TexCoord_Diffuse;
-in vec4 vary_TexCoord_Specular;
-in vec4 vary_LightProjection;   // projective (S, T, 0, Q)
-in vec2 vary_LightFalloff;
-in vec3 vary_LightDir;          // tangent-space, unnormalized
-in vec3 vary_ViewDir;           // tangent-space, unnormalized
-in vec4 vary_Color;
+layout(location = 0) in vec4 vary_TexCoord_Bump;
+layout(location = 1) in vec4 vary_TexCoord_Diffuse;
+layout(location = 2) in vec4 vary_TexCoord_Specular;
+layout(location = 3) in vec4 vary_LightProjection;   // projective (S, T, 0, Q)
+layout(location = 4) in vec2 vary_LightFalloff;
+layout(location = 5) in vec3 vary_LightDir;          // tangent-space, unnormalized
+layout(location = 6) in vec3 vary_ViewDir;           // tangent-space, unnormalized
+layout(location = 7) in vec4 vary_Color;
 
 // Samplers with explicit Vulkan bindings (set=0, binding=1..7)
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;         // per-surface normal map
@@ -69,7 +69,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     float _ubo_pad;
 };
 
-out vec4 fragColor;
+layout(location = 0) out vec4 fragColor;
 
 void main() {
     // --- Normal from bump map (tangent space) ---

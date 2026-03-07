@@ -33,7 +33,7 @@ layout(set=0, binding=0) uniform DepthParams {
     vec2  _pad;
 };
 
-out vec2 vary_TexCoord;
+layout(location = 0) out vec2 vary_TexCoord;
 
 void main() {
     vec4 tc = vec4(in_TexCoord, 0.0, 1.0);

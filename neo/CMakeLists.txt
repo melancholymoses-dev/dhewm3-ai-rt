@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.6...3.22 FATAL_ERROR)
-project(dhewm3)
+project(dhewm3_rtx)
 
 # TODO
 
@@ -42,7 +42,7 @@ else()
 	set(CMAKE_SKIP_RPATH ON CACHE BOOL "Skip RPATH" FORCE)
 endif()
 
-set(DHEWM3BINARY "dhewm3")
+set(DHEWM3BINARY "dhewm3_rtx")
 
 include(CheckCXXCompilerFlag)
 include(GNUInstallDirs OPTIONAL RESULT_VARIABLE GNUINSTALLDIRS)
@@ -66,7 +66,7 @@ option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 # Vulkan rendering backend (required for ray tracing)
 option(DHEWM3_VULKAN     "Enable Vulkan rendering backend" OFF)
 option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing (requires DHEWM3_VULKAN)" OFF)
-
+ 
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)
 	option(ASAN		"Enable GCC/Clang Adress Sanitizer (ASan)" OFF) # TODO: MSVC might also support this, somehow?
@@ -660,6 +660,11 @@ if(DHEWM3_VULKAN)
 	set(SPV_OUTPUT_DIR "${CMAKE_BINARY_DIR}/glprogs/glsl")
 	file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
 
+	set(GLSLC_FLAGS --target-env=vulkan1.2)
+	if(DHEWM3_RAYTRACING)
+		list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
+	endif()
+
 	set(SPIRV_BINARIES "")
 	foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
 		get_filename_component(GLSL_NAME "${GLSL_SRC}" NAME)
@@ -668,8 +673,7 @@ if(DHEWM3_VULKAN)
 		add_custom_command(
 			OUTPUT  "${SPV_FILE}"
 			COMMAND "${GLSLC_EXECUTABLE}"
-			        --target-env=vulkan1.2
-			        "$<IF:$<BOOL:${DHEWM3_RAYTRACING}>,--target-spv=spv1.4,>"
+			        ${GLSLC_FLAGS}
 			        -o "${SPV_FILE}"
 			        "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
 			DEPENDS "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
