@@ -1286,6 +1286,22 @@ elseif(WIN32)
 		set(src_sys_core ${src_sys_core} "${CMAKE_SOURCE_DIR}/sys/win32/rc/dhewm3.rc" )
 	endif()
 
+	if(MSVC)
+		# The .rc files only reference an icon and need no include directories or
+		# preprocessor definitions. The global include list contains a malformed
+		# OpenAL path (embedded quotes from the CMake cache) that rc.exe cannot
+		# parse, causing RC1107. VS_SETTINGS writes per-file MSBuild metadata in
+		# the .vcxproj that overrides the project-level ResourceCompile settings
+		# for this file only, so rc.exe sees an empty include/define list.
+		if(TOOLS)
+			set_source_files_properties("sys/win32/rc/doom.rc"
+				PROPERTIES VS_SETTINGS "AdditionalIncludeDirectories=;PreprocessorDefinitions=")
+		else()
+			set_source_files_properties("${CMAKE_SOURCE_DIR}/sys/win32/rc/dhewm3.rc"
+				PROPERTIES VS_SETTINGS "AdditionalIncludeDirectories=;PreprocessorDefinitions=")
+		endif()
+	endif()
+
 else()
 	set(src_sys_base
 		sys/cpu.cpp

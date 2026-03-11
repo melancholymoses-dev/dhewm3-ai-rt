@@ -27,5 +27,5 @@ void main() {
     shadowFactor = 0.0;
     // terminateRayEXT is called implicitly once any-hit shader returns without
     // calling ignoreIntersectionEXT.  We explicitly call it for clarity.
-    terminateRayEXT();
+    terminateRayEXT;
 }
