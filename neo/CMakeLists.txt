@@ -64,8 +64,8 @@ option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
 # Vulkan rendering backend (required for ray tracing)
-option(DHEWM3_VULKAN     "Enable Vulkan rendering backend" OFF)
-option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing (requires DHEWM3_VULKAN)" OFF)
+option(DHEWM3_VULKAN     "Enable Vulkan rendering backend" ON)
+option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing (requires DHEWM3_VULKAN)" ON)
  
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)
@@ -606,7 +606,6 @@ set(src_renderer
 
 	renderer/stblib_impls.c
 )
-
 # ---------------------------------------------------------------------------
 # Vulkan backend sources (only compiled when DHEWM3_VULKAN is ON)
 # ---------------------------------------------------------------------------
@@ -1375,7 +1374,21 @@ endif()
 	)
 
 	if(DHEWM3_VULKAN)
-		target_link_libraries(${DHEWM3BINARY} Vulkan::Vulkan)
+		if(MSVC)
+			# rc.exe (RC1107) fails when the last AdditionalIncludeDirectory lacks a
+			# trailing path separator. Append "/" to the Vulkan include dir and link
+			# the library directly rather than via Vulkan::Vulkan, which would
+			# propagate its bare INTERFACE_INCLUDE_DIRECTORIES to the RC compiler.
+			set(_vk_inc "${Vulkan_INCLUDE_DIR}")
+			if(NOT _vk_inc MATCHES "/$")
+				string(APPEND _vk_inc "/")
+			endif()
+			# string(REGEX REPLACE "[/\\\\]?$" "/" _vk_inc "${Vulkan_INCLUDE_DIR}")
+			target_include_directories(${DHEWM3BINARY} PRIVATE "${_vk_inc}")
+			target_link_libraries(${DHEWM3BINARY} ${Vulkan_LIBRARY})
+		else()
+			target_link_libraries(${DHEWM3BINARY} Vulkan::Vulkan)
+		endif()
 		target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_VULKAN)
 		if(DHEWM3_RAYTRACING)
 			target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
