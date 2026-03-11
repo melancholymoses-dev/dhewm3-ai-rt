@@ -266,6 +266,7 @@ Loads 3 point sizes, 12, 24, and 48
 ============
 */
 bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font ) {
+	common->Printf( "      RegisterFont: %s\n", fontName ); fflush(NULL);
 #ifdef BUILD_FREETYPE
 	FT_Face face;
 	int j, k, xOut, yOut, lastStart, imageNumber;
@@ -329,9 +330,10 @@ bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font
 
 		idStr::Copynz( outFont->name, name, sizeof( outFont->name ) );
 
+		common->Printf( "      RegisterFont: reading %s\n", name ); fflush(NULL);
 		len = fileSystem->ReadFile( name, NULL, &ftime );
 		if ( len != FILESIZE_fontInfo_t ) {
-			common->Warning( "RegisterFont: couldn't find font: '%s'", name );
+			common->Warning( "RegisterFont: couldn't find font: '%s' (len=%d, expected=%d)", name, len, (int)FILESIZE_fontInfo_t );
 			return false;
 		}
 
@@ -359,6 +361,7 @@ bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font
 
 		int mw = 0;
 		int mh = 0;
+		common->Printf( "      RegisterFont: loading %d glyphs for size %d\n", GLYPH_END - GLYPH_START, pointSize ); fflush(NULL);
 		for (i = GLYPH_START; i < GLYPH_END; i++) {
 			idStr::snPrintf(name, sizeof(name), "%s/%s", fontName, outFont->glyphs[i].shaderName);
 			outFont->glyphs[i].glyph = declManager->FindMaterial(name);
@@ -380,11 +383,13 @@ bool idRenderSystemLocal::RegisterFont( const char *fontName, fontInfoEx_t &font
 			font.maxWidthLarge = mw;
 			font.maxHeightLarge = mh;
 		}
+			common->Printf( "      RegisterFont: done with size %d\n", pointSize ); fflush(NULL);
 		fileSystem->FreeFile( faceData );
 	}
 
 	//memcpy( &registeredFont[registeredFontCount++], &font, sizeof( fontInfoEx_t ) );
 
+	common->Printf( "      RegisterFont: success\n" ); fflush(NULL);
 	return true ;
 
 #ifndef BUILD_FREETYPE

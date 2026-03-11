@@ -535,6 +535,18 @@ void idImage::GenerateImage( const byte *pic, int width, int height,
 		return;
 	}
 
+#ifdef DHEWM3_VULKAN
+	if ( glConfig.isVulkan ) {
+		// No GL textures in Vulkan mode — upload to VkImage instead.
+		// uploadWidth/Height let the rest of the engine read image dimensions.
+		uploadWidth  = width;
+		uploadHeight = height;
+		extern void VK_Image_Upload( idImage *img, const byte *pic, int w, int h );
+		VK_Image_Upload( this, pic, width, height );
+		return;
+	}
+#endif
+
 	// don't let mip mapping smear the texture into the clamped border
 	if ( repeat == TR_CLAMP_TO_ZERO ) {
 		preserveBorder = true;
@@ -762,6 +774,8 @@ void idImage::Generate3DImage( const byte *pic, int width, int height, int picDe
 		return;
 	}
 
+	if ( glConfig.isVulkan ) { return; }
+
 	// make sure it is a power of 2
 	scaled_width = MakePowerOfTwo( width );
 	scaled_height = MakePowerOfTwo( height );
@@ -897,7 +911,7 @@ void idImage::GenerateCubeImage( const byte *pic[6], int size,
 	// have filled in the parms.  We must have the values set, or
 	// an image match from a shader before OpenGL starts would miss
 	// the generated texture
-	if ( !glConfig.isInitialized ) {
+	if ( !glConfig.isInitialized || glConfig.isVulkan ) {
 		return;
 	}
 
@@ -1062,7 +1076,7 @@ void idImage::WritePrecompressedImage() {
 		}
 	}
 
-	if ( !glConfig.isInitialized ) {
+	if ( !glConfig.isInitialized || glConfig.isVulkan ) {
 		return;
 	}
 

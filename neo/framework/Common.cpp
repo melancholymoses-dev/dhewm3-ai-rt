@@ -2389,6 +2389,8 @@ void idCommonLocal::InitRenderSystem( void ) {
 
 	renderSystem->InitOpenGL();
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04343" ) );
+	common->Printf( "Initialized Render System\n" ); fflush(NULL); Sleep(10);
+
 }
 
 /*
@@ -3285,11 +3287,13 @@ void idCommonLocal::InitGame( void ) {
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04349" ) );
 
 	// initialize the user interfaces
+	common->Printf( "UiManager\n" ); fflush(NULL); Sleep(10);
 	uiManager->Init();
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04350" ) );
 
 	// load the game dll
+	common->Printf( "LoadGameDLL\n" ); fflush(NULL); Sleep(10);	
 	LoadGameDLL();
 
 	// startup the script debugger
@@ -3299,6 +3303,7 @@ void idCommonLocal::InitGame( void ) {
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04351" ) );
 
 	// init the session
+	common->Printf( "Init Session\n" ); fflush(NULL); Sleep(10);
 	session->Init();
 
 	// have to do this twice.. first one sets the correct r_mode for the renderer init

@@ -91,6 +91,7 @@ typedef struct glconfig_s {
 	bool				allowARB2Path;
 
 	bool				isInitialized;
+	bool				isVulkan;   // true when using the Vulkan backend; GL image/texture functions must be skipped
 
 	// DG: current video backend is known to need opaque default framebuffer
 	//     used if r_fillWindowAlphaChan == -1
