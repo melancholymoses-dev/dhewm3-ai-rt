@@ -483,15 +483,21 @@ extern void VK_Image_Init( void );
 extern void VK_Image_Shutdown( void );
 
 void VKimp_PostInit( int width, int height ) {
+	common->Printf( "VK: creating swapchain\n" );
 	VK_CreateSwapchain( width, height );
+	common->Printf( "VK: creating pipelines\n" );
 	VK_InitPipelines();
+	common->Printf( "VK: creating UBO rings\n" );
 	VK_CreateUBORings();
+	common->Printf( "VK: initializing images\n" );
 	VK_Image_Init();
 
 #ifdef DHEWM3_RAYTRACING
 	if ( vk.rayTracingSupported ) {
+		common->Printf( "VK: initializing RT\n" );
 		VK_RT_Init();
-		VK_RT_InitShadows();   // build shadow RT pipeline + shadow mask images
+		common->Printf( "VK: initializing RT shadows\n" );
+		VK_RT_InitShadows();
 	}
 #endif
 
