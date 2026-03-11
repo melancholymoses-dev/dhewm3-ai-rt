@@ -184,7 +184,14 @@ bool GLimp_Init(glimpParms_t parms) {
 
 	assert(SDL_WasInit(SDL_INIT_VIDEO));
 
-	My_SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
+#ifdef DHEWM3_VULKAN
+	extern idCVar r_backend;
+	const bool usingVulkan = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+#else
+	const bool usingVulkan = false;
+#endif
+
+	My_SDL_WindowFlags flags = usingVulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL;
 
 	if (parms.fullScreen == 1)
 	{
@@ -573,7 +580,13 @@ try_again:
 		}
 	#endif // SDL2
 
-		context = SDL_GL_CreateContext(window);
+		if ( usingVulkan ) {
+			// Vulkan windows cannot have an OpenGL context — surface is created later by VKimp_Init.
+			context = NULL;
+			common->Printf( "VK: SDL Vulkan window created (%dx%d)\n", glConfig.vidWidth, glConfig.vidHeight );
+		} else {
+			context = SDL_GL_CreateContext(window);
+		}
 
 		GLimp_SetSwapInterval( r_swapInterval.GetInteger() );
 		r_swapInterval.ClearModified();
@@ -1142,7 +1155,9 @@ void VKimp_InitFromGlimp( int width, int height ) {
 	}
 	common->Printf( "Initializing Vulkan subsystem\n" );
 	VKimp_Init( window );
+	common->Printf( "VK: instance/device init done, starting post-init (%dx%d)\n", width, height );
 	VKimp_PostInit( width, height );
+	common->Printf( "VK: post-init done\n" );
 }
 
 /*
