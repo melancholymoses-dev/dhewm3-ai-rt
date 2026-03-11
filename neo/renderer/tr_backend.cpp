@@ -651,8 +651,16 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 
 	backEndStartTime = Sys_Milliseconds();
 
-	// needed for editor rendering
-	RB_SetDefaultGLState();
+#ifdef DHEWM3_VULKAN
+	const bool usingVulkan = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+#else
+	const bool usingVulkan = false;
+#endif
+
+	// needed for editor rendering (GL only; Vulkan has no fixed-function GL state)
+	if ( !usingVulkan ) {
+		RB_SetDefaultGLState();
+	}
 
 	// upload any image loads that have completed
 	globalImages->CompleteBackgroundImageLoads();
@@ -663,7 +671,7 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			break;
 		case RC_DRAW_VIEW:
 #ifdef DHEWM3_VULKAN
-			if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+			if ( usingVulkan ) {
 				extern void VK_RB_DrawView( const void *data );
 				VK_RB_DrawView( cmds );
 			} else
@@ -679,15 +687,25 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 			}
 			break;
 		case RC_SET_BUFFER:
-			RB_SetBuffer( cmds );
+			// GL-specific draw buffer setup; Vulkan has no equivalent
+			if ( !usingVulkan ) {
+				RB_SetBuffer( cmds );
+			}
 			c_setBuffers++;
 			break;
 		case RC_SWAP_BUFFERS:
-			RB_SwapBuffers( cmds );
+			// Vulkan present is handled inside VK_RB_DrawView (vkQueuePresentKHR);
+			// calling RB_SwapBuffers here would double-present and call GLimp_SwapBuffers.
+			if ( !usingVulkan ) {
+				RB_SwapBuffers( cmds );
+			}
 			c_swapBuffers++;
 			break;
 		case RC_COPY_RENDER:
-			RB_CopyRender( cmds );
+			// CopyFramebuffer uses GL; skip for Vulkan
+			if ( !usingVulkan ) {
+				RB_CopyRender( cmds );
+			}
 			c_copyRenders++;
 			break;
 		default:
@@ -697,8 +715,10 @@ void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds ) {
 	}
 
 	// go back to the default texture so the editor doesn't mess up a bound image
-	qglBindTexture( GL_TEXTURE_2D, 0 );
-	backEnd.glState.tmu[0].current2DMap = -1;
+	if ( !usingVulkan ) {
+		qglBindTexture( GL_TEXTURE_2D, 0 );
+		backEnd.glState.tmu[0].current2DMap = -1;
+	}
 
 	// stop rendering on this thread
 	backEndFinishTime = Sys_Milliseconds();

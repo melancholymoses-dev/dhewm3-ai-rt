@@ -928,6 +928,8 @@ void R_InitOpenGL( void ) {
 		glConfig.textureCompressionAvailable = false;
 		VK_SetGlConfigStrings();
 		common->Printf( "VK: render system fully initialized\n" );
+		fflush(NULL);
+		Sleep(100);
 	}
 #endif
 
@@ -938,11 +940,22 @@ void R_InitOpenGL( void ) {
 	soundSystem->InitHW();
 
 	// allocate the vertex array range or vertex objects
+
+	common->Printf( "Initialize Vertex Cache\n");
+	fflush(NULL);
+	Sleep(100);	
 	vertexCache.Init();
 
 	// select which renderSystem we are going to use
+	common->Printf( "Try to set renderer\n");
+	fflush(NULL);
+	Sleep(100);	
+
 	r_renderer.SetModified();
 	tr.SetBackEndRenderer();
+	common->Printf( "Try to initialize frame\n");
+	fflush(NULL);
+	Sleep(100);	
 
 	// allocate the frame data, which may be more if smp is enabled
 	R_InitFrameData();
@@ -986,6 +999,13 @@ GL_CheckErrors
 ==================
 */
 void GL_CheckErrors( void ) {
+#ifdef DHEWM3_VULKAN
+	// Vulkan errors are caught synchronously at each call site via VK_CHECK.
+	// qglGetError is a null pointer in Vulkan mode, so bail out immediately.
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		return;
+	}
+#endif
 	int		err;
 	char	s[64];
 	int		i;
@@ -2258,9 +2278,14 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	R_RegenerateWorld_f( idCmdArgs() );
 
 	// check for problems
-	err = qglGetError();
-	if ( err != GL_NO_ERROR ) {
-		common->Printf( "glGetError() = 0x%x\n", err );
+#ifdef DHEWM3_VULKAN
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) != 0 )
+#endif
+	{
+		err = qglGetError();
+		if ( err != GL_NO_ERROR ) {
+			common->Printf( "glGetError() = 0x%x\n", err );
+		}
 	}
 
 	// start sound playing again
@@ -2556,14 +2581,22 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 	// if OpenGL isn't started, start it now
 	if ( !glConfig.isInitialized ) {
 		int	err;
-
+		common->Printf( "Initializing OpenGl/Vulkan \n" );
 		R_InitOpenGL();
 
-		globalImages->ReloadAllImages();
+#ifdef DHEWM3_VULKAN
+		bool usingVK = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+		common->Printf( "usingVK: %d\n", usingVK ? 1 : 0 );
+		if ( !usingVK )
+#endif
+		{
+			common->Printf( "Reloading Images" );
+			globalImages->ReloadAllImages();
 
-		err = qglGetError();
-		if ( err != GL_NO_ERROR ) {
-			common->Printf( "glGetError() = 0x%x\n", err );
+			err = qglGetError();
+			if ( err != GL_NO_ERROR ) {
+				common->Printf( "glGetError() = 0x%x\n", err );
+			}
 		}
 	}
 }
