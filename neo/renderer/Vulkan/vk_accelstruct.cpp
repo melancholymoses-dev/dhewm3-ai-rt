@@ -28,17 +28,15 @@ the Free Software Foundation, either version 3 of the License, or
 // RT extension function pointer definitions (declared extern in vk_raytracing.h)
 // ---------------------------------------------------------------------------
 
-#ifdef VK_NO_PROTOTYPES
-PFN_vkCreateAccelerationStructureKHR            vkCreateAccelerationStructureKHR            = NULL;
-PFN_vkDestroyAccelerationStructureKHR           vkDestroyAccelerationStructureKHR           = NULL;
-PFN_vkGetAccelerationStructureBuildSizesKHR     vkGetAccelerationStructureBuildSizesKHR     = NULL;
-PFN_vkCmdBuildAccelerationStructuresKHR         vkCmdBuildAccelerationStructuresKHR         = NULL;
-PFN_vkGetAccelerationStructureDeviceAddressKHR  vkGetAccelerationStructureDeviceAddressKHR  = NULL;
-PFN_vkCreateRayTracingPipelinesKHR              vkCreateRayTracingPipelinesKHR              = NULL;
-PFN_vkGetRayTracingShaderGroupHandlesKHR        vkGetRayTracingShaderGroupHandlesKHR        = NULL;
-PFN_vkCmdTraceRaysKHR                           vkCmdTraceRaysKHR                           = NULL;
-PFN_vkGetBufferDeviceAddressKHR                 vkGetBufferDeviceAddressKHR                 = NULL;
-#endif // VK_NO_PROTOTYPES
+PFN_vkCreateAccelerationStructureKHR            pfn_vkCreateAccelerationStructureKHR            = NULL;
+PFN_vkDestroyAccelerationStructureKHR           pfn_vkDestroyAccelerationStructureKHR           = NULL;
+PFN_vkGetAccelerationStructureBuildSizesKHR     pfn_vkGetAccelerationStructureBuildSizesKHR     = NULL;
+PFN_vkCmdBuildAccelerationStructuresKHR         pfn_vkCmdBuildAccelerationStructuresKHR         = NULL;
+PFN_vkGetAccelerationStructureDeviceAddressKHR  pfn_vkGetAccelerationStructureDeviceAddressKHR  = NULL;
+PFN_vkCreateRayTracingPipelinesKHR              pfn_vkCreateRayTracingPipelinesKHR              = NULL;
+PFN_vkGetRayTracingShaderGroupHandlesKHR        pfn_vkGetRayTracingShaderGroupHandlesKHR        = NULL;
+PFN_vkCmdTraceRaysKHR                           pfn_vkCmdTraceRaysKHR                           = NULL;
+PFN_vkGetBufferDeviceAddressKHR                 pfn_vkGetBufferDeviceAddressKHR                 = NULL;
 
 // Global RT state
 vkRTState_t vkRT;
@@ -49,12 +47,9 @@ vkRTState_t vkRT;
 // ---------------------------------------------------------------------------
 
 void VK_RT_LoadFunctionPointers( void ) {
-	// Vulkan SDK 1.4+ provides these as direct function prototypes via the loader.
-	// Manual PFN loading is only needed when VK_NO_PROTOTYPES is defined.
-#ifdef VK_NO_PROTOTYPES
 #define LOAD_RT_FN( name ) \
-	name = (PFN_ ## name)vkGetDeviceProcAddr( vk.device, #name ); \
-	if ( !name ) common->Warning( "VK RT: could not load " #name );
+	pfn_ ## name = (PFN_ ## name)vkGetDeviceProcAddr( vk.device, #name ); \
+	if ( !pfn_ ## name ) common->Warning( "VK RT: could not load " #name );
 
 	LOAD_RT_FN( vkCreateAccelerationStructureKHR )
 	LOAD_RT_FN( vkDestroyAccelerationStructureKHR )
@@ -67,7 +62,6 @@ void VK_RT_LoadFunctionPointers( void ) {
 	LOAD_RT_FN( vkGetBufferDeviceAddressKHR )
 
 #undef LOAD_RT_FN
-#endif // VK_NO_PROTOTYPES
 }
 
 // ---------------------------------------------------------------------------
