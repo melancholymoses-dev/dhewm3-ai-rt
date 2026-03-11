@@ -81,8 +81,10 @@ void idDeviceContext::SetupFonts() {
 		fontLang = "english";
 	}
 
+	common->Printf( "    SetupFonts: calling FindFont(fonts), lang=%s\n", fontLang.c_str() ); fflush(NULL);
 	// Default font has to be added first
-	FindFont( "fonts" );
+	int idx = FindFont( "fonts" );
+	common->Printf( "    SetupFonts: FindFont returned %d\n", idx ); fflush(NULL);
 }
 
 void idDeviceContext::SetFont( int num ) {
@@ -95,12 +97,16 @@ void idDeviceContext::SetFont( int num ) {
 
 
 void idDeviceContext::Init() {
+	common->Printf( "  dc.Init: SetSize\n" ); fflush(NULL);
 	xScale = 0.0;
 	SetSize(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+	common->Printf( "  dc.Init: FindMaterial white\n" ); fflush(NULL);
 	whiteImage = declManager->FindMaterial("guis/assets/white.tga");
 	whiteImage->SetSort( SS_GUI );
 	mbcs = false;
+	common->Printf( "  dc.Init: SetupFonts\n" ); fflush(NULL);
 	SetupFonts();
+	common->Printf( "  dc.Init: activeFont\n" ); fflush(NULL);
 	activeFont = &fonts[0];
 	colorPurple = idVec4(1, 0, 1, 1);
 	colorOrange = idVec4(1, 1, 0, 1);
@@ -111,6 +117,7 @@ void idDeviceContext::Init() {
 	colorWhite = idVec4(1, 1, 1, 1);
 	colorBlack = idVec4(0, 0, 0, 1);
 	colorNone = idVec4(0, 0, 0, 0);
+	common->Printf( "  dc.Init: cursor/scrollbar materials\n" ); fflush(NULL);
 	cursorImages[CURSOR_ARROW] = declManager->FindMaterial("ui/assets/guicursor_arrow.tga");
 	cursorImages[CURSOR_HAND] = declManager->FindMaterial("ui/assets/guicursor_hand.tga");
 	scrollBarImages[SCROLLBAR_HBACK] = declManager->FindMaterial("ui/assets/scrollbarh.tga");
@@ -139,6 +146,7 @@ void idDeviceContext::Init() {
 	// DG: this is used for the "make sure menus are rendered as 4:3" hack
 	fixScaleForMenu.Set(1, 1);
 	fixOffsetForMenu.Set(0, 0);
+	common->Printf( "  dc.Init: done\n" ); fflush(NULL);
 }
 
 void idDeviceContext::Shutdown() {
