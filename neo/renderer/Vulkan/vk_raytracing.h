@@ -20,22 +20,33 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/Vulkan/vk_common.h"
 
 // ---------------------------------------------------------------------------
-// RT extension function pointers (loaded at device init)
-// Only declared here when the Vulkan SDK does NOT provide its own prototypes
-// (i.e. when VK_NO_PROTOTYPES is defined). SDK 1.4+ exposes these directly.
+// RT extension function pointers (always loaded at runtime via vkGetDeviceProcAddr)
+//
+// vulkan-1.lib does not export KHR extension symbols — they must be fetched
+// from the driver at runtime regardless of SDK version.  We use a pfn_ prefix
+// to avoid clashing with the SDK's own function declarations, then redirect
+// all call sites via the macros below.
 // ---------------------------------------------------------------------------
 
-#ifdef VK_NO_PROTOTYPES
-extern PFN_vkCreateAccelerationStructureKHR             vkCreateAccelerationStructureKHR;
-extern PFN_vkDestroyAccelerationStructureKHR            vkDestroyAccelerationStructureKHR;
-extern PFN_vkGetAccelerationStructureBuildSizesKHR      vkGetAccelerationStructureBuildSizesKHR;
-extern PFN_vkCmdBuildAccelerationStructuresKHR          vkCmdBuildAccelerationStructuresKHR;
-extern PFN_vkGetAccelerationStructureDeviceAddressKHR   vkGetAccelerationStructureDeviceAddressKHR;
-extern PFN_vkCreateRayTracingPipelinesKHR               vkCreateRayTracingPipelinesKHR;
-extern PFN_vkGetRayTracingShaderGroupHandlesKHR         vkGetRayTracingShaderGroupHandlesKHR;
-extern PFN_vkCmdTraceRaysKHR                            vkCmdTraceRaysKHR;
-extern PFN_vkGetBufferDeviceAddressKHR                  vkGetBufferDeviceAddressKHR;
-#endif // VK_NO_PROTOTYPES
+extern PFN_vkCreateAccelerationStructureKHR             pfn_vkCreateAccelerationStructureKHR;
+extern PFN_vkDestroyAccelerationStructureKHR            pfn_vkDestroyAccelerationStructureKHR;
+extern PFN_vkGetAccelerationStructureBuildSizesKHR      pfn_vkGetAccelerationStructureBuildSizesKHR;
+extern PFN_vkCmdBuildAccelerationStructuresKHR          pfn_vkCmdBuildAccelerationStructuresKHR;
+extern PFN_vkGetAccelerationStructureDeviceAddressKHR   pfn_vkGetAccelerationStructureDeviceAddressKHR;
+extern PFN_vkCreateRayTracingPipelinesKHR               pfn_vkCreateRayTracingPipelinesKHR;
+extern PFN_vkGetRayTracingShaderGroupHandlesKHR         pfn_vkGetRayTracingShaderGroupHandlesKHR;
+extern PFN_vkCmdTraceRaysKHR                            pfn_vkCmdTraceRaysKHR;
+extern PFN_vkGetBufferDeviceAddressKHR                  pfn_vkGetBufferDeviceAddressKHR;
+
+#define vkCreateAccelerationStructureKHR            pfn_vkCreateAccelerationStructureKHR
+#define vkDestroyAccelerationStructureKHR           pfn_vkDestroyAccelerationStructureKHR
+#define vkGetAccelerationStructureBuildSizesKHR     pfn_vkGetAccelerationStructureBuildSizesKHR
+#define vkCmdBuildAccelerationStructuresKHR         pfn_vkCmdBuildAccelerationStructuresKHR
+#define vkGetAccelerationStructureDeviceAddressKHR  pfn_vkGetAccelerationStructureDeviceAddressKHR
+#define vkCreateRayTracingPipelinesKHR              pfn_vkCreateRayTracingPipelinesKHR
+#define vkGetRayTracingShaderGroupHandlesKHR        pfn_vkGetRayTracingShaderGroupHandlesKHR
+#define vkCmdTraceRaysKHR                           pfn_vkCmdTraceRaysKHR
+#define vkGetBufferDeviceAddressKHR                 pfn_vkGetBufferDeviceAddressKHR
 
 // ---------------------------------------------------------------------------
 // BLAS (Bottom-Level Acceleration Structure) - one per unique mesh
