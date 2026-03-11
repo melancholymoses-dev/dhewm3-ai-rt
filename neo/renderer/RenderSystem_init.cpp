@@ -50,6 +50,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "stb_image_write.h"
 
+#ifdef DHEWM3_VULKAN
+#include "renderer/Vulkan/vk_common.h"
+#endif
+
 // functions that are not called every frame
 
 glconfig_t	glConfig;
@@ -765,6 +769,37 @@ idStr R_GetVidModeValsString(bool addCustom)
 // DG end
 
 
+#ifdef DHEWM3_VULKAN
+// Populate glConfig string fields and print device info for the Vulkan backend.
+// Called once after VKimp_InitFromGlimp succeeds.
+static void VK_SetGlConfigStrings( void ) {
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties( vk.physicalDevice, &props );
+
+	// Re-use the glConfig string fields so existing GfxInfo_f output works.
+	static char deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+	static char apiVer[32];
+	idStr::snPrintf( deviceName, sizeof(deviceName), "%s", props.deviceName );
+	idStr::snPrintf( apiVer, sizeof(apiVer), "Vulkan %u.%u.%u",
+	                 VK_API_VERSION_MAJOR(props.apiVersion),
+	                 VK_API_VERSION_MINOR(props.apiVersion),
+	                 VK_API_VERSION_PATCH(props.apiVersion) );
+
+	glConfig.vendor_string   = deviceName;
+	glConfig.renderer_string = deviceName;
+	glConfig.version_string  = apiVer;
+
+	common->Printf( "Vulkan device:  %s\n", props.deviceName );
+	common->Printf( "Vulkan API:     %u.%u.%u\n",
+	                VK_API_VERSION_MAJOR(props.apiVersion),
+	                VK_API_VERSION_MINOR(props.apiVersion),
+	                VK_API_VERSION_PATCH(props.apiVersion) );
+	common->Printf( "Vulkan driver:  %u\n", props.driverVersion );
+	common->Printf( "Vendor ID:      0x%04X\n", props.vendorID );
+	common->Printf( "RT supported:   %s\n", vk.rayTracingSupported ? "yes" : "no" );
+}
+#endif
+
 /*
 ==================
 R_InitOpenGL
@@ -830,17 +865,16 @@ void R_InitOpenGL( void ) {
 		r_multiSamples.SetInteger( 0 );
 	}
 
+	const bool usingVulkanBackend = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+	if ( !usingVulkanBackend ) {
 // load qgl function pointers
 #define QGLPROC(name, rettype, args) \
 	q##name = (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
 	if (!q##name) \
 		common->FatalError("Unable to initialize OpenGL (%s)", #name);
-
+	
 #include "renderer/qgl_proc.h"
-
-	// input and sound systems need to be tied to the new window
-	Sys_InitInput();
-	soundSystem->InitHW();
+#undef QGLPROC
 
 	// get our config strings
 	glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
@@ -875,15 +909,33 @@ void R_InitOpenGL( void ) {
 
 	// Initialize the GLSL backend (always try, activated via r_useGLSL)
 	R_GLSL_Init();
+	} // !usingVulkanBackend
 
 #ifdef DHEWM3_VULKAN
 	// If r_backend "vulkan" is requested, also spin up the Vulkan device.
 	// VKimp_InitFromGlimp reuses the SDL window already created by GLimp_Init.
-	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+	if ( usingVulkanBackend ) {
 		extern void VKimp_InitFromGlimp( int width, int height );
+		common->Printf( "VK: calling VKimp_InitFromGlimp (%dx%d)\n", glConfig.vidWidth, glConfig.vidHeight );
 		VKimp_InitFromGlimp( glConfig.vidWidth, glConfig.vidHeight );
+		common->Printf( "VK: VKimp_InitFromGlimp returned\n" );
+
+		// Mark the render system as initialized so that InitOpenGL() (called
+		// during game startup) does not attempt to re-initialize the backend.
+		// Provide safe defaults for GL config fields used elsewhere.
+		glConfig.isInitialized = true;
+		glConfig.maxTextureSize = 8192;
+		glConfig.textureCompressionAvailable = false;
+		VK_SetGlConfigStrings();
+		common->Printf( "VK: render system fully initialized\n" );
 	}
 #endif
+
+	// input and sound systems need to be tied to the new window
+	// (placed after full graphics init so both GL and Vulkan paths have their
+	// window fully set up before input/sound are attached)
+	Sys_InitInput();
+	soundSystem->InitHW();
 
 	// allocate the vertex array range or vertex objects
 	vertexCache.Init();
@@ -926,6 +978,7 @@ void R_InitOpenGL( void ) {
 	}
 #endif
 }
+
 
 /*
 ==================
