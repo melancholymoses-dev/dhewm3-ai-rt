@@ -1410,6 +1410,24 @@ endif()
 			target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
 		endif()
 		add_dependencies(${DHEWM3BINARY} dhewm3_spirv)
+
+		# Copy compiled SPIR-V into <build_output>/base/glprogs/glsl/ so the
+		# game finds them at runtime (Sys_GetPath(PATH_BASE) checks <exe>/base/).
+		# Copy compiled SPIR-V to the user config base dir so the game finds them
+		# at runtime without affecting the game's basepath detection (which would
+		# be hijacked if we created <exe>/base/).  The user config path is always
+		# in the file-system search list ahead of the game installation.
+		set(SPIRV_USER_DIR "$ENV{USERPROFILE}/Documents/My Games/dhewm3/base/glprogs/glsl")
+		if(WIN32 AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
+			add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+				COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPIRV_USER_DIR}"
+				COMMAND "${CMAKE_COMMAND}" -E copy_directory
+				        "${CMAKE_BINARY_DIR}/glprogs/glsl"
+				        "${SPIRV_USER_DIR}"
+				COMMENT "Copying SPIR-V shaders to user config base dir"
+			)
+		endif()
+
 		# Install compiled SPIR-V next to the binary
 		install(DIRECTORY "${CMAKE_BINARY_DIR}/glprogs/glsl/"
 		        DESTINATION "${bindir}/glprogs/glsl"

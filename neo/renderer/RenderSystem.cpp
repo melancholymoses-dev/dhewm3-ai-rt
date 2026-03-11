@@ -525,6 +525,20 @@ void idRenderSystemLocal::SetBackEndRenderer() {
 		return;
 	}
 
+#ifdef DHEWM3_VULKAN
+	// Vulkan has its own render dispatch (VK_RB_DrawView); it does not go through
+	// the GL interaction renderers, so just mark as initialized and return early.
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		backEndRenderer = BE_VULKAN;
+		backEndRendererHasVertexPrograms = true;
+		backEndRendererMaxLight = 999;
+		r_renderer.ClearModified();
+		r_useGLSL.ClearModified();
+		common->Printf( "using Vulkan renderSystem\n" );
+		return;
+	}
+#endif
+
 	bool oldVPstate = backEndRendererHasVertexPrograms;
 
 	backEndRenderer = BE_BAD;
