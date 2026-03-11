@@ -924,6 +924,7 @@ void R_InitOpenGL( void ) {
 		// during game startup) does not attempt to re-initialize the backend.
 		// Provide safe defaults for GL config fields used elsewhere.
 		glConfig.isInitialized = true;
+		glConfig.isVulkan = true;
 		glConfig.maxTextureSize = 8192;
 		glConfig.textureCompressionAvailable = false;
 		VK_SetGlConfigStrings();
@@ -959,6 +960,7 @@ void R_InitOpenGL( void ) {
 
 	// allocate the frame data, which may be more if smp is enabled
 	R_InitFrameData();
+	common->Printf( "R_InitFrameData returned OK\n" ); fflush(NULL); Sleep(10);
 
 	// Reset our gamma
 	r_gammaInShader.ClearModified();
@@ -970,6 +972,8 @@ void R_InitOpenGL( void ) {
 	}
 
 #ifdef _WIN32
+	common->Printf( "Checking Windows/OpenGL versions\n" ); fflush(NULL); Sleep(10);
+
 	static bool glCheck = false;
 	if ( !glCheck && win32.osversion.dwMajorVersion == 6 ) {
 		glCheck = true;
@@ -2179,6 +2183,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	if ( !glConfig.isInitialized ) {
 		return;
 	}
+	common->Printf( "In R_Vidrestart_f\n" ); fflush(NULL); Sleep(10);
 
 	bool full = true;
 	bool forceWindow = false;
@@ -2236,6 +2241,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	// this could take a while, so give them the cursor back ASAP
 	Sys_GrabMouseCursor( false );
 
+	common->Printf( "Dropping caches, frames and vertexes\n" ); fflush(NULL); Sleep(10);
 	// dump ambient caches
 	renderModelManager->FreeModelVertexCaches();
 
@@ -2256,6 +2262,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	Sys_ShutdownInput();
 	globalImages->PurgeAllImages();
 	// free the context and close the window
+	common->Printf( "Calling shutdown\n" ); fflush(NULL); Sleep(10);	
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 
@@ -2264,6 +2271,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	if ( forceWindow ) {
 		cvarSystem->SetCVarBool( "r_fullscreen", false );
 	}
+	common->Printf( "Re-initialize InitOpenGL\n" ); fflush(NULL); Sleep(10);
 	R_InitOpenGL();
 	cvarSystem->SetCVarBool( "r_fullscreen", latch );
 
