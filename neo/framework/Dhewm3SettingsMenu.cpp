@@ -1696,6 +1696,26 @@ static CVarOption videoOptionsImmediately[] = {
 	CVarOption( "r_skipSpecular", "Disable Specular", OT_BOOL ),
 	CVarOption( "r_skipBump", "Disable Bump Maps", OT_BOOL ),
 
+#ifdef DHEWM3_RAYTRACING
+	CVarOption( "r_rtShadows", []( idCVar& cvar ) {
+		bool isVulkan = ( idStr::Icmpn( r_backend.GetString(), "vulkan", 6 ) == 0 );
+		if ( !isVulkan ) {
+			ImGui::BeginDisabled();
+		}
+		bool enabled = cvar.GetBool();
+		if ( ImGui::Checkbox( "Ray Traced Shadows (RTX)", &enabled ) ) {
+			cvar.SetBool( enabled );
+		}
+		if ( !isVulkan ) {
+			ImGui::EndDisabled();
+		}
+		const char* descr = isVulkan
+			? "Replace stencil shadow volumes with hardware ray traced shadows.\nRequires an RTX-capable GPU."
+			: "Ray traced shadows require the Vulkan backend (r_backend vulkan).";
+		AddCVarOptionTooltips( cvar, descr );
+	} ),
+#endif // DHEWM3_RAYTRACING
+
 };
 
 idList<VidMode> vidModes;
