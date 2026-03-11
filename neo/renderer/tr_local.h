@@ -682,6 +682,9 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 typedef enum {
 	BE_ARB2,
 	BE_GLSL,    // modern GLSL backend (OpenGL 2.0+), replaces ARB assembly programs
+#ifdef DHEWM3_VULKAN
+	BE_VULKAN,  // Vulkan/RTX backend; rendering dispatched via VK_RB_DrawView
+#endif
 	BE_BAD
 } backEndName_t;
 
