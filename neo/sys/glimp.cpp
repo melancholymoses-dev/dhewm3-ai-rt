@@ -184,7 +184,14 @@ bool GLimp_Init(glimpParms_t parms) {
 
 	assert(SDL_WasInit(SDL_INIT_VIDEO));
 
-	My_SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
+#ifdef DHEWM3_VULKAN
+	extern idCVar r_backend;
+	const bool usingVulkan = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+#else
+	const bool usingVulkan = false;
+#endif
+
+	My_SDL_WindowFlags flags = usingVulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL;
 
 	if (parms.fullScreen == 1)
 	{
@@ -573,7 +580,13 @@ try_again:
 		}
 	#endif // SDL2
 
-		context = SDL_GL_CreateContext(window);
+		if ( usingVulkan ) {
+			// Vulkan windows cannot have an OpenGL context — surface is created later by VKimp_Init.
+			context = NULL;
+			common->Printf( "VK: SDL Vulkan window created (%dx%d)\n", glConfig.vidWidth, glConfig.vidHeight );
+		} else {
+			context = SDL_GL_CreateContext(window);
+		}
 
 		GLimp_SetSwapInterval( r_swapInterval.GetInteger() );
 		r_swapInterval.ClearModified();
@@ -1107,6 +1120,60 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 		common->Warning("Couldn't set gamma ramp: %s", SDL_GetError());
 #endif // SDL2 and SDL1.2
 }
+
+// ============================================================================
+// Vulkan init/shutdown stubs — compiled only when DHEWM3_VULKAN is defined.
+// Called from RenderSystem_init.cpp after GLimp_Init returns, when
+// r_backend == "vulkan".
+// ============================================================================
+
+#ifdef DHEWM3_VULKAN
+
+#include "renderer/Vulkan/vk_common.h"
+
+// Forward declarations (defined in vk_instance.cpp / vk_backend.cpp)
+void VKimp_Init( SDL_Window *sdlWindow );
+void VKimp_PostInit( int width, int height );
+void VKimp_PreShutdown( void );
+void VKimp_Shutdown( void );
+
+extern idCVar r_backend;
+
+/*
+===================
+VKimp_InitFromGlimp
+
+Called from RenderSystem_init.cpp (R_InitOpenGL / equivalent) when
+r_backend is set to "vulkan". Creates a Vulkan surface from the already-
+created SDL window, then completes device and swapchain setup.
+===================
+*/
+void VKimp_InitFromGlimp( int width, int height ) {
+	if ( !window ) {
+		common->Warning( "VKimp_InitFromGlimp: SDL window not yet created" );
+		return;
+	}
+	common->Printf( "Initializing Vulkan subsystem\n" );
+	VKimp_Init( window );
+	common->Printf( "VK: instance/device init done, starting post-init (%dx%d)\n", width, height );
+	VKimp_PostInit( width, height );
+	common->Printf( "VK: post-init done\n" );
+}
+
+/*
+===================
+VKimp_ShutdownFromGlimp
+
+Tears down Vulkan before the SDL window is destroyed.
+===================
+*/
+void VKimp_ShutdownFromGlimp( void ) {
+	common->Printf( "Shutting down Vulkan subsystem\n" );
+	VKimp_PreShutdown();
+	VKimp_Shutdown();
+}
+
+#endif // DHEWM3_VULKAN
 
 /*
 =================

@@ -368,8 +368,8 @@ static void R_BorderClampImage( idImage *image ) {
 	image->GenerateImage( (byte *)data, BORDER_CLAMP_SIZE, BORDER_CLAMP_SIZE,
 		TF_LINEAR /* TF_NEAREST */, false, TR_CLAMP_TO_BORDER, TD_DEFAULT );
 
-	if ( !glConfig.isInitialized ) {
-		// can't call qglTexParameterfv yet
+	if ( !glConfig.isInitialized || glConfig.isVulkan ) {
+		// can't call qglTexParameterfv yet (or Vulkan: no GL textures)
 		return;
 	}
 	// explicit zero border
@@ -997,6 +997,10 @@ static const filterName_t textureFilters[] = {
 	textureLODBias = image_lodbias.GetFloat();
 
 	// change all the existing mipmap texture objects with default filtering
+	// (skip entirely for Vulkan — no GL texture objects exist)
+	if ( glConfig.isVulkan ) {
+		return;
+	}
 
 	for ( i = 0 ; i < images.Num() ; i++ ) {
 		unsigned int	texEnum = GL_TEXTURE_2D;

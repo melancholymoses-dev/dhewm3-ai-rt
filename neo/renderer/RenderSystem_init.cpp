@@ -50,6 +50,10 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "stb_image_write.h"
 
+#ifdef DHEWM3_VULKAN
+#include "renderer/Vulkan/vk_common.h"
+#endif
+
 // functions that are not called every frame
 
 glconfig_t	glConfig;
@@ -98,6 +102,16 @@ idCVar r_gammaInShader( "r_gammaInShader", "1", CVAR_RENDERER | CVAR_ARCHIVE | C
 
 idCVar r_renderer( "r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use", r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs> );
 idCVar r_useGLSL( "r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "use modern GLSL backend instead of ARB assembly programs (requires OpenGL 2.0)" );
+
+// Vulkan / Ray Tracing backend CVars
+idCVar r_backend( "r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"" );
+idCVar r_useRayTracing( "r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "enable hardware ray tracing (requires Vulkan backend and RTX hardware)" );
+idCVar r_rtShadows( "r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)" );
+idCVar r_rtAO( "r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion" );
+idCVar r_rtReflections( "r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced reflections (expensive)" );
+idCVar r_rtShadowSamples( "r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "shadow rays per pixel (1=hard shadows, 4+=soft shadows)" );
+idCVar r_rtAOSamples( "r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel" );
+idCVar r_rtDenoise( "r_rtDenoise", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "enable temporal denoising for RT effects" );
 
 idCVar r_jitter( "r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix" );
 
@@ -755,6 +769,37 @@ idStr R_GetVidModeValsString(bool addCustom)
 // DG end
 
 
+#ifdef DHEWM3_VULKAN
+// Populate glConfig string fields and print device info for the Vulkan backend.
+// Called once after VKimp_InitFromGlimp succeeds.
+static void VK_SetGlConfigStrings( void ) {
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties( vk.physicalDevice, &props );
+
+	// Re-use the glConfig string fields so existing GfxInfo_f output works.
+	static char deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+	static char apiVer[32];
+	idStr::snPrintf( deviceName, sizeof(deviceName), "%s", props.deviceName );
+	idStr::snPrintf( apiVer, sizeof(apiVer), "Vulkan %u.%u.%u",
+	                 VK_API_VERSION_MAJOR(props.apiVersion),
+	                 VK_API_VERSION_MINOR(props.apiVersion),
+	                 VK_API_VERSION_PATCH(props.apiVersion) );
+
+	glConfig.vendor_string   = deviceName;
+	glConfig.renderer_string = deviceName;
+	glConfig.version_string  = apiVer;
+
+	common->Printf( "Vulkan device:  %s\n", props.deviceName );
+	common->Printf( "Vulkan API:     %u.%u.%u\n",
+	                VK_API_VERSION_MAJOR(props.apiVersion),
+	                VK_API_VERSION_MINOR(props.apiVersion),
+	                VK_API_VERSION_PATCH(props.apiVersion) );
+	common->Printf( "Vulkan driver:  %u\n", props.driverVersion );
+	common->Printf( "Vendor ID:      0x%04X\n", props.vendorID );
+	common->Printf( "RT supported:   %s\n", vk.rayTracingSupported ? "yes" : "no" );
+}
+#endif
+
 /*
 ==================
 R_InitOpenGL
@@ -820,17 +865,16 @@ void R_InitOpenGL( void ) {
 		r_multiSamples.SetInteger( 0 );
 	}
 
+	const bool usingVulkanBackend = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+	if ( !usingVulkanBackend ) {
 // load qgl function pointers
 #define QGLPROC(name, rettype, args) \
 	q##name = (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
 	if (!q##name) \
 		common->FatalError("Unable to initialize OpenGL (%s)", #name);
-
+	
 #include "renderer/qgl_proc.h"
-
-	// input and sound systems need to be tied to the new window
-	Sys_InitInput();
-	soundSystem->InitHW();
+#undef QGLPROC
 
 	// get our config strings
 	glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
@@ -865,16 +909,58 @@ void R_InitOpenGL( void ) {
 
 	// Initialize the GLSL backend (always try, activated via r_useGLSL)
 	R_GLSL_Init();
+	} // !usingVulkanBackend
+
+#ifdef DHEWM3_VULKAN
+	// If r_backend "vulkan" is requested, also spin up the Vulkan device.
+	// VKimp_InitFromGlimp reuses the SDL window already created by GLimp_Init.
+	if ( usingVulkanBackend ) {
+		extern void VKimp_InitFromGlimp( int width, int height );
+		common->Printf( "VK: calling VKimp_InitFromGlimp (%dx%d)\n", glConfig.vidWidth, glConfig.vidHeight );
+		VKimp_InitFromGlimp( glConfig.vidWidth, glConfig.vidHeight );
+		common->Printf( "VK: VKimp_InitFromGlimp returned\n" );
+
+		// Mark the render system as initialized so that InitOpenGL() (called
+		// during game startup) does not attempt to re-initialize the backend.
+		// Provide safe defaults for GL config fields used elsewhere.
+		glConfig.isInitialized = true;
+		glConfig.isVulkan = true;
+		glConfig.maxTextureSize = 8192;
+		glConfig.textureCompressionAvailable = false;
+		VK_SetGlConfigStrings();
+		common->Printf( "VK: render system fully initialized\n" );
+		fflush(NULL);
+		Sleep(100);
+	}
+#endif
+
+	// input and sound systems need to be tied to the new window
+	// (placed after full graphics init so both GL and Vulkan paths have their
+	// window fully set up before input/sound are attached)
+	Sys_InitInput();
+	soundSystem->InitHW();
 
 	// allocate the vertex array range or vertex objects
+
+	common->Printf( "Initialize Vertex Cache\n");
+	fflush(NULL);
+	Sleep(100);	
 	vertexCache.Init();
 
 	// select which renderSystem we are going to use
+	common->Printf( "Try to set renderer\n");
+	fflush(NULL);
+	Sleep(100);	
+
 	r_renderer.SetModified();
 	tr.SetBackEndRenderer();
+	common->Printf( "Try to initialize frame\n");
+	fflush(NULL);
+	Sleep(100);	
 
 	// allocate the frame data, which may be more if smp is enabled
 	R_InitFrameData();
+	common->Printf( "R_InitFrameData returned OK\n" ); fflush(NULL); Sleep(10);
 
 	// Reset our gamma
 	r_gammaInShader.ClearModified();
@@ -886,6 +972,8 @@ void R_InitOpenGL( void ) {
 	}
 
 #ifdef _WIN32
+	common->Printf( "Checking Windows/OpenGL versions\n" ); fflush(NULL); Sleep(10);
+
 	static bool glCheck = false;
 	if ( !glCheck && win32.osversion.dwMajorVersion == 6 ) {
 		glCheck = true;
@@ -908,12 +996,20 @@ void R_InitOpenGL( void ) {
 #endif
 }
 
+
 /*
 ==================
 GL_CheckErrors
 ==================
 */
 void GL_CheckErrors( void ) {
+#ifdef DHEWM3_VULKAN
+	// Vulkan errors are caught synchronously at each call site via VK_CHECK.
+	// qglGetError is a null pointer in Vulkan mode, so bail out immediately.
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		return;
+	}
+#endif
 	int		err;
 	char	s[64];
 	int		i;
@@ -2087,6 +2183,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	if ( !glConfig.isInitialized ) {
 		return;
 	}
+	common->Printf( "In R_Vidrestart_f\n" ); fflush(NULL); Sleep(10);
 
 	bool full = true;
 	bool forceWindow = false;
@@ -2144,6 +2241,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	// this could take a while, so give them the cursor back ASAP
 	Sys_GrabMouseCursor( false );
 
+	common->Printf( "Dropping caches, frames and vertexes\n" ); fflush(NULL); Sleep(10);
 	// dump ambient caches
 	renderModelManager->FreeModelVertexCaches();
 
@@ -2164,6 +2262,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	Sys_ShutdownInput();
 	globalImages->PurgeAllImages();
 	// free the context and close the window
+	common->Printf( "Calling shutdown\n" ); fflush(NULL); Sleep(10);	
 	GLimp_Shutdown();
 	glConfig.isInitialized = false;
 
@@ -2172,6 +2271,7 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	if ( forceWindow ) {
 		cvarSystem->SetCVarBool( "r_fullscreen", false );
 	}
+	common->Printf( "Re-initialize InitOpenGL\n" ); fflush(NULL); Sleep(10);
 	R_InitOpenGL();
 	cvarSystem->SetCVarBool( "r_fullscreen", latch );
 
@@ -2186,9 +2286,14 @@ void R_VidRestart_f( const idCmdArgs &args ) {
 	R_RegenerateWorld_f( idCmdArgs() );
 
 	// check for problems
-	err = qglGetError();
-	if ( err != GL_NO_ERROR ) {
-		common->Printf( "glGetError() = 0x%x\n", err );
+#ifdef DHEWM3_VULKAN
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) != 0 )
+#endif
+	{
+		err = qglGetError();
+		if ( err != GL_NO_ERROR ) {
+			common->Printf( "glGetError() = 0x%x\n", err );
+		}
 	}
 
 	// start sound playing again
@@ -2484,14 +2589,22 @@ void idRenderSystemLocal::InitOpenGL( void ) {
 	// if OpenGL isn't started, start it now
 	if ( !glConfig.isInitialized ) {
 		int	err;
-
+		common->Printf( "Initializing OpenGl/Vulkan \n" );
 		R_InitOpenGL();
 
-		globalImages->ReloadAllImages();
+#ifdef DHEWM3_VULKAN
+		bool usingVK = ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 );
+		common->Printf( "usingVK: %d\n", usingVK ? 1 : 0 );
+		if ( !usingVK )
+#endif
+		{
+			common->Printf( "Reloading Images" );
+			globalImages->ReloadAllImages();
 
-		err = qglGetError();
-		if ( err != GL_NO_ERROR ) {
-			common->Printf( "glGetError() = 0x%x\n", err );
+			err = qglGetError();
+			if ( err != GL_NO_ERROR ) {
+				common->Printf( "glGetError() = 0x%x\n", err );
+			}
 		}
 	}
 }
@@ -2508,6 +2621,13 @@ void idRenderSystemLocal::ShutdownOpenGL( void ) {
 	// as the input is tied to the window, it should be shut down when the window
 	// is destroyed (relevant when starting a mod which also recreates window)
 	Sys_ShutdownInput();
+
+#ifdef DHEWM3_VULKAN
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		extern void VKimp_ShutdownFromGlimp( void );
+		VKimp_ShutdownFromGlimp();
+	}
+#endif
 
 	// free the context and close the window
 	GLimp_Shutdown();

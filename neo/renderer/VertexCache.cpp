@@ -80,6 +80,13 @@ void idVertexCache::ActuallyFree( vertCache_t *block ) {
 			Mem_Free( block->virtMem );
 			block->virtMem = NULL;
 		}
+
+#ifdef DHEWM3_VULKAN
+		if ( block->vkBuffer ) {
+			extern void VK_VertexCache_Free( vertCache_t * );
+			VK_VertexCache_Free( block );
+		}
+#endif
 	}
 	block->tag = TAG_FREE;		// mark as free
 
@@ -160,6 +167,15 @@ void idVertexCache::Init() {
 	virtualMemory = false;
 
 	// use ARB_vertex_buffer_object unless explicitly disabled
+#ifdef DHEWM3_VULKAN
+	if ( idStr::Icmp( r_backend.GetString(), "vulkan" ) == 0 ) {
+		// Vulkan manages GPU buffers separately (VK_VertexCache_Alloc); use CPU-side
+		// virtual memory here so that GL function pointers are never called.
+		virtualMemory = true;
+		r_useIndexBuffers.SetBool( false );
+		common->Printf( "Vulkan: vertex cache using CPU-side virtual memory (GPU buffers managed separately)\n" );
+	} else
+#endif
 	if( r_useVertexBuffers.GetInteger() && glConfig.ARBVertexBufferObjectAvailable ) {
 		common->Printf( "using ARB_vertex_buffer_object memory\n" );
 	} else {
@@ -244,8 +260,18 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 			block->next->prev = block;
 			block->prev->next = block;
 
+			// idBlockAlloc does not zero-initialize; explicitly clear handle fields
+			// so vbo/virtMem checks below work correctly (especially for Vulkan where
+			// virtualMemory=true and qgl function pointers are null).
+			block->vbo = 0;
+			block->virtMem = NULL;
+#ifdef DHEWM3_VULKAN
+			block->vkBuffer = 0;
+			block->vkMemory = 0;
+#endif
+
 			if( !virtualMemory ) {
-				qglGenBuffersARB( 1, & block->vbo );
+				qglGenBuffersARB( 1, &block->vbo );
 			}
 		}
 	}
@@ -297,6 +323,16 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 		block->virtMem = Mem_Alloc( size );
 		SIMDProcessor->Memcpy( block->virtMem, data, size );
 	}
+
+#ifdef DHEWM3_VULKAN
+	// For static (non-temp) allocations in the Vulkan path, also create a device-local VkBuffer.
+	block->vkBuffer = 0;
+	block->vkMemory = 0;
+	if ( !allocatingTempBuffer && data ) {
+		extern void VK_VertexCache_Alloc( vertCache_t *, const void *, int, bool );
+		VK_VertexCache_Alloc( block, data, size, indexBuffer );
+	}
+#endif
 }
 
 /*

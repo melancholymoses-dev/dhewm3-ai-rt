@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.6...3.22 FATAL_ERROR)
-project(dhewm3)
+project(dhewm3_rtx)
 
 # TODO
 
@@ -42,7 +42,7 @@ else()
 	set(CMAKE_SKIP_RPATH ON CACHE BOOL "Skip RPATH" FORCE)
 endif()
 
-set(DHEWM3BINARY "dhewm3")
+set(DHEWM3BINARY "dhewm3_rtx")
 
 include(CheckCXXCompilerFlag)
 include(GNUInstallDirs OPTIONAL RESULT_VARIABLE GNUINSTALLDIRS)
@@ -63,6 +63,10 @@ option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for
 
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
+# Vulkan rendering backend (required for ray tracing)
+option(DHEWM3_VULKAN     "Enable Vulkan rendering backend" ON)
+option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing (requires DHEWM3_VULKAN)" ON)
+ 
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)
 	option(ASAN		"Enable GCC/Clang Adress Sanitizer (ASan)" OFF) # TODO: MSVC might also support this, somehow?
@@ -602,6 +606,85 @@ set(src_renderer
 
 	renderer/stblib_impls.c
 )
+# ---------------------------------------------------------------------------
+# Vulkan backend sources (only compiled when DHEWM3_VULKAN is ON)
+# ---------------------------------------------------------------------------
+if(DHEWM3_VULKAN)
+	find_package(Vulkan REQUIRED)
+
+	set(src_vulkan
+		renderer/Vulkan/vk_instance.cpp
+		renderer/Vulkan/vk_swapchain.cpp
+		renderer/Vulkan/vk_buffer.cpp
+		renderer/Vulkan/vk_shader.cpp
+		renderer/Vulkan/vk_image.cpp
+		renderer/Vulkan/vk_pipeline.cpp
+		renderer/Vulkan/vk_backend.cpp
+	)
+
+	if(DHEWM3_RAYTRACING)
+		list(APPEND src_vulkan
+			renderer/Vulkan/vk_accelstruct.cpp
+			renderer/Vulkan/vk_shadows.cpp
+		)
+	endif()
+
+	list(APPEND src_renderer ${src_vulkan})
+
+	# Locate glslc for SPIR-V compilation
+	find_program(GLSLC_EXECUTABLE glslc
+		HINTS "${Vulkan_GLSLC_EXECUTABLE}" ENV VULKAN_SDK
+		PATH_SUFFIXES bin)
+	if(NOT GLSLC_EXECUTABLE)
+		message(FATAL_ERROR "glslc not found. Install the Vulkan SDK and ensure glslc is in PATH.")
+	endif()
+
+	# GLSL shaders to compile to SPIR-V
+	set(GLSL_SHADER_SOURCES
+		renderer/glsl/interaction.vert
+		renderer/glsl/interaction.frag
+		renderer/glsl/shadow.vert
+		renderer/glsl/shadow.frag
+		renderer/glsl/depth.vert
+		renderer/glsl/depth.frag
+	)
+	if(DHEWM3_RAYTRACING)
+		list(APPEND GLSL_SHADER_SOURCES
+			renderer/glsl/shadow_ray.rgen
+			renderer/glsl/shadow_ray.rmiss
+			renderer/glsl/shadow_ray.rahit
+		)
+	endif()
+
+	set(SPV_OUTPUT_DIR "${CMAKE_BINARY_DIR}/glprogs/glsl")
+	file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
+
+	set(GLSLC_FLAGS --target-env=vulkan1.2)
+	if(DHEWM3_RAYTRACING)
+		list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
+	endif()
+
+	set(SPIRV_BINARIES "")
+	foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
+		get_filename_component(GLSL_NAME "${GLSL_SRC}" NAME)
+		set(SPV_FILE "${SPV_OUTPUT_DIR}/${GLSL_NAME}.spv")
+
+		add_custom_command(
+			OUTPUT  "${SPV_FILE}"
+			COMMAND "${GLSLC_EXECUTABLE}"
+			        ${GLSLC_FLAGS}
+			        -o "${SPV_FILE}"
+			        "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
+			DEPENDS "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
+			COMMENT "Compiling ${GLSL_SRC} -> ${GLSL_NAME}.spv"
+			VERBATIM
+		)
+		list(APPEND SPIRV_BINARIES "${SPV_FILE}")
+	endforeach()
+
+	add_custom_target(dhewm3_spirv ALL DEPENDS ${SPIRV_BINARIES})
+
+endif() # DHEWM3_VULKAN
 
 always_optimize_sourcefile(renderer/stblib_impls.c)
 
@@ -1203,6 +1286,22 @@ elseif(WIN32)
 		set(src_sys_core ${src_sys_core} "${CMAKE_SOURCE_DIR}/sys/win32/rc/dhewm3.rc" )
 	endif()
 
+	if(MSVC)
+		# The .rc files only reference an icon and need no include directories or
+		# preprocessor definitions. The global include list contains a malformed
+		# OpenAL path (embedded quotes from the CMake cache) that rc.exe cannot
+		# parse, causing RC1107. VS_SETTINGS writes per-file MSBuild metadata in
+		# the .vcxproj that overrides the project-level ResourceCompile settings
+		# for this file only, so rc.exe sees an empty include/define list.
+		if(TOOLS)
+			set_source_files_properties("sys/win32/rc/doom.rc"
+				PROPERTIES VS_SETTINGS "AdditionalIncludeDirectories=;PreprocessorDefinitions=")
+		else()
+			set_source_files_properties("${CMAKE_SOURCE_DIR}/sys/win32/rc/dhewm3.rc"
+				PROPERTIES VS_SETTINGS "AdditionalIncludeDirectories=;PreprocessorDefinitions=")
+		endif()
+	endif()
+
 else()
 	set(src_sys_base
 		sys/cpu.cpp
@@ -1289,6 +1388,51 @@ endif()
 		${SDLx_LIBRARY}
 		${sys_libs}
 	)
+
+	if(DHEWM3_VULKAN)
+		if(MSVC)
+			# rc.exe (RC1107) fails when the last AdditionalIncludeDirectory lacks a
+			# trailing path separator. Append "/" to the Vulkan include dir and link
+			# the library directly rather than via Vulkan::Vulkan, which would
+			# propagate its bare INTERFACE_INCLUDE_DIRECTORIES to the RC compiler.
+			set(_vk_inc "${Vulkan_INCLUDE_DIR}")
+			if(NOT _vk_inc MATCHES "/$")
+				string(APPEND _vk_inc "/")
+			endif()
+			# string(REGEX REPLACE "[/\\\\]?$" "/" _vk_inc "${Vulkan_INCLUDE_DIR}")
+			target_include_directories(${DHEWM3BINARY} PRIVATE "${_vk_inc}")
+			target_link_libraries(${DHEWM3BINARY} ${Vulkan_LIBRARY})
+		else()
+			target_link_libraries(${DHEWM3BINARY} Vulkan::Vulkan)
+		endif()
+		target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_VULKAN)
+		if(DHEWM3_RAYTRACING)
+			target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
+		endif()
+		add_dependencies(${DHEWM3BINARY} dhewm3_spirv)
+
+		# Copy compiled SPIR-V into <build_output>/base/glprogs/glsl/ so the
+		# game finds them at runtime (Sys_GetPath(PATH_BASE) checks <exe>/base/).
+		# Copy compiled SPIR-V to the user config base dir so the game finds them
+		# at runtime without affecting the game's basepath detection (which would
+		# be hijacked if we created <exe>/base/).  The user config path is always
+		# in the file-system search list ahead of the game installation.
+		set(SPIRV_USER_DIR "$ENV{USERPROFILE}/Documents/My Games/dhewm3/base/glprogs/glsl")
+		if(WIN32 AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
+			add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+				COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPIRV_USER_DIR}"
+				COMMAND "${CMAKE_COMMAND}" -E copy_directory
+				        "${CMAKE_BINARY_DIR}/glprogs/glsl"
+				        "${SPIRV_USER_DIR}"
+				COMMENT "Copying SPIR-V shaders to user config base dir"
+			)
+		endif()
+
+		# Install compiled SPIR-V next to the binary
+		install(DIRECTORY "${CMAKE_BINARY_DIR}/glprogs/glsl/"
+		        DESTINATION "${bindir}/glprogs/glsl"
+		        FILES_MATCHING PATTERN "*.spv")
+	endif()
 
 	if(NOT APPLE AND NOT WIN32)
 		install(TARGETS ${DHEWM3BINARY}

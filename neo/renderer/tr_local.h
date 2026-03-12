@@ -291,6 +291,13 @@ public:
 	idInteraction *			lastInteraction;
 
 	bool					needsPortalSky;
+
+#ifdef DHEWM3_RAYTRACING
+	// Per-entity Bottom-Level Acceleration Structure (Vulkan RT).
+	// Allocated by VK_RT_BuildBLAS() when the entity is first seen; freed on FreeRenderEntity().
+	struct vkBLAS_t *		blas;						// NULL until built; rebuilt each frame for animated models
+	int						blasFrameCount;				// frame number when blas was last built
+#endif
 };
 
 
@@ -675,6 +682,9 @@ const int MAX_GUI_SURFACES	= 1024;		// default size of the drawSurfs list for gu
 typedef enum {
 	BE_ARB2,
 	BE_GLSL,    // modern GLSL backend (OpenGL 2.0+), replaces ARB assembly programs
+#ifdef DHEWM3_VULKAN
+	BE_VULKAN,  // Vulkan/RTX backend; rendering dispatched via VK_RB_DrawView
+#endif
 	BE_BAD
 } backEndName_t;
 
@@ -849,6 +859,16 @@ extern idCVar r_gammaInShader;			// set gamma+brightness in shader instead of mo
 
 extern idCVar r_renderer;				// arb2, etc
 extern idCVar r_useGLSL;				// use GLSL backend instead of ARB assembly programs
+
+// Vulkan / Ray Tracing backend
+extern idCVar r_backend;				// "opengl" or "vulkan"
+extern idCVar r_useRayTracing;			// enable hardware ray tracing
+extern idCVar r_rtShadows;				// ray traced shadows
+extern idCVar r_rtAO;					// ray traced ambient occlusion
+extern idCVar r_rtReflections;			// ray traced reflections
+extern idCVar r_rtShadowSamples;		// shadow rays per pixel
+extern idCVar r_rtAOSamples;			// AO rays per pixel
+extern idCVar r_rtDenoise;				// temporal denoising
 
 extern idCVar r_checkBounds;			// compare all surface bounds with precalculated ones
 

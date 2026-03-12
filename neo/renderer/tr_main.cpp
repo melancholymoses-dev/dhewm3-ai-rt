@@ -184,6 +184,7 @@ R_ToggleSmpFrame
 ====================
 */
 void R_ToggleSmpFrame( void ) {
+	common->Printf( "  R_ToggleSmpFrame: FreeDeferredTriSurfs\n" ); fflush(NULL); Sleep(10);
 	R_FreeDeferredTriSurfs( frameData );
 
 	// clear frame-temporary data
@@ -191,6 +192,7 @@ void R_ToggleSmpFrame( void ) {
 	frameMemoryBlock_t	*block;
 
 	// update the highwater mark
+	common->Printf( "  R_ToggleSmpFrame: CountFrameData\n" ); fflush(NULL); Sleep(10);
 	R_CountFrameData();
 
 	frame = frameData;
@@ -203,7 +205,9 @@ void R_ToggleSmpFrame( void ) {
 		block->used = 0;
 	}
 
+	common->Printf( "  R_ToggleSmpFrame: ClearCommandChain\n" ); fflush(NULL); Sleep(10);
 	R_ClearCommandChain();
+	common->Printf( "  R_ToggleSmpFrame: done\n" ); fflush(NULL); Sleep(10);
 }
 
 
@@ -247,14 +251,20 @@ void R_InitFrameData( void ) {
 	frameData_t *frame;
 	frameMemoryBlock_t *block;
 
+	common->Printf( "R_InitFrameData: frameData ptr before shutdown: %p\n", (void*)frameData ); fflush(NULL);
 	R_ShutdownFrameData();
 
+	common->Printf( "R_InitFrameData: allocating frameData struct\n" ); fflush(NULL);
 	frameData = (frameData_t *)Mem_ClearedAlloc( sizeof( *frameData ));
+	if ( !frameData ) {
+		common->FatalError( "R_InitFrameData: Mem_ClearedAlloc() failed for frameData\n" );
+	}
 	frame = frameData;
 	size = MEMORY_BLOCK_SIZE;
+	common->Printf( "R_InitFrameData: allocating memory block (%d bytes)\n", size ); fflush(NULL);
 	block = (frameMemoryBlock_t *)Mem_Alloc( size + sizeof( *block ) );
 	if ( !block ) {
-		common->FatalError( "R_InitFrameData: Mem_Alloc() failed" );
+		common->FatalError( "R_InitFrameData: Mem_Alloc() failed\n" );
 	}
 	block->size = size;
 	block->used = 0;
@@ -262,7 +272,9 @@ void R_InitFrameData( void ) {
 	frame->memory = block;
 	frame->memoryHighwater = 0;
 
+	common->Printf( "R_InitFrameData: calling R_ToggleSmpFrame\n" ); fflush(NULL); Sleep(10);
 	R_ToggleSmpFrame();
+	common->Printf( "R_InitFrameData: done\n" ); fflush(NULL); Sleep(10);
 }
 
 /*
