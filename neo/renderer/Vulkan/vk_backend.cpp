@@ -22,8 +22,10 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
-#include <SDL.h>
 #include "renderer/Vulkan/vk_backend.h"
+#include "renderer/Vulkan/vk_image.h"
+#include "renderer/Vulkan/vk_buffer.h"
+#include <SDL.h>
 
 // Forward declarations (defined in vk_pipeline.cpp)
 // vkPipelines_t and vkPipes are declared in vk_common.h
@@ -597,49 +599,3 @@ void VKimp_PreShutdown(void)
 	VK_DestroySwapchain();
 }
 
-void VKBackend::Init()
-{
-	common->Printf("Starting GLBackend");
-	VKimp_Init();
-	VKimp_PostInit();
-}
-
-void VKBackend::Shutdown()
-{
-	common->Printf("Shutting down GLBackend");
-	VKimp_PreShutdown();
-}
-void GLBackend::PostSwapBuffers()
-{
-	GLimp_SwapBuffers();
-}
-
-void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h)
-{
-	VK_Image_Upload(img, data, w, h);
-}
-
-void GLBackend::Image_Purge(idImage *img)
-{
-	VK_Image_Purge(img);
-}
-void GLBackend::VertexCache_Alloc(vertCache_t **vc, const void *data, int size, bool indexBuffer)
-{
-	vertexCache.Alloc(data, size, vc, indexBuffer);
-}
-void GLBackend::VertexCache_Free(vertCache_t *vc)
-{
-	vertexCache.Free(vc);
-}
-
-// Frame dispatch
-
-void VKBackend::DrawView(const viewDef_t *view)
-{
-	RB_DrawView(view); // just delegate to the existing function
-}
-
-void VKBackend::CopyRender(const copyRenderCommand_t &cmd)
-{
-	RB_CopyRender(&cmd);
-}

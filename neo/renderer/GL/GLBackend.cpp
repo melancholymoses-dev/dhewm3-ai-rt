@@ -8,11 +8,11 @@
 // (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
 extern void RB_DrawView(const void *);
 
-// might be the function we're messing with?
 void GLBackend::Init()
 {
     common->Printf("Starting GLBackend");
-    GLimp_Init();
+    // TODO: Is this the correct function?  this one needs parms?
+    R_InitOpenGL()
 }
 
 void GLBackend::Shutdown()
