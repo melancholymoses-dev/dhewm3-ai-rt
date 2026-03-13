@@ -604,6 +604,7 @@ set(src_renderer
 	renderer/tr_trisurf.cpp
 	renderer/tr_turboshadow.cpp
 
+	renderer/GL/GLBackend.cpp
 	renderer/stblib_impls.c
 )
 # ---------------------------------------------------------------------------
@@ -620,6 +621,7 @@ if(DHEWM3_VULKAN)
 		renderer/Vulkan/vk_image.cpp
 		renderer/Vulkan/vk_pipeline.cpp
 		renderer/Vulkan/vk_backend.cpp
+		renderer/Vulkan/VKBackend.cpp
 	)
 
 	if(DHEWM3_RAYTRACING)
