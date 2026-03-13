@@ -1732,7 +1732,7 @@ void RB_ShowImages( void );
 
 void RB_ExecuteBackEndCommands( const emptyCommand_t *cmds );
 
-
+const void RB_CopyRender( const void *data );
 /*
 =============================================================
 
