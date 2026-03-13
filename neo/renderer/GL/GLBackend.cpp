@@ -7,12 +7,12 @@
 // Forward declarations of the existing GL free functions
 // (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
 extern void RB_DrawView(const void *);
+extern const void RB_CopyRender(const void *);
 
 void GLBackend::Init()
 {
     common->Printf("Starting GLBackend");
-    // TODO: Is this the correct function?  this one needs parms?
-    R_InitOpenGL()
+    R_InitOpenGL();
 }
 
 void GLBackend::Shutdown()
@@ -54,5 +54,5 @@ void GLBackend::DrawView(const viewDef_t *view)
 
 void GLBackend::CopyRender(const copyRenderCommand_t &cmd)
 {
-    RB_CopyRender(&cmd);
+    RB_CopyRender((const void *)&cmd);
 }

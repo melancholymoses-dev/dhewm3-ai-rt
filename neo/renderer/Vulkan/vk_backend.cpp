@@ -22,7 +22,6 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
-#include "renderer/Vulkan/vk_backend.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
 #include <SDL.h>

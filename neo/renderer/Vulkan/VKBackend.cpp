@@ -9,8 +9,10 @@
 void VKBackend::Init()
 {
 	common->Printf("Starting Vulkan Backend");
-	VKimp_Init();
-	VKimp_PostInit();
+    // Reuses SDL window created by GL init; handles VKimp_Init + VKimp_PostInit internally
+    // TODO: decouple window creation from GLimp
+    extern void VKimp_InitFromGlimp(int width, int height);
+    VKimp_InitFromGlimp(glConfig.vidWidth, glConfig.vidHeight);    
 }
 
 void VKBackend::Shutdown()
@@ -20,7 +22,7 @@ void VKBackend::Shutdown()
 }
 void VKBackend::PostSwapBuffers()
 {
-	PostSwapBuffers();
+	// this space left as no-op
 }
 
 void VKBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t, bool, textureRepeat_t, textureDepth_t)
@@ -35,8 +37,7 @@ void VKBackend::Image_Purge(idImage *img)
 }
 void VKBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool indexBuffer)
 {
-	VK_VertexCache_Alloc(vc, data, size, indexBuffer)
-	//	VK_VertexCache_Alloc(data, size, vc, indexBuffer);
+	VK_VertexCache_Alloc(*vc, data, size, indexBuffer);
 }
 void VKBackend::VertexCache_Free(vertCache_t *vc)
 {
@@ -47,9 +48,9 @@ void VKBackend::VertexCache_Free(vertCache_t *vc)
 
 void VKBackend::DrawView(const viewDef_t *view)
 {
-	VK_RB_DrawView(view); // just delegate to the existing function
+	VK_RB_DrawView((const void *)view); 
 }
 
 void VKBackend::CopyRender(const copyRenderCommand_t &cmd)
-{
+{// no op
 }
