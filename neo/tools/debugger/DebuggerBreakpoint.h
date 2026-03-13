@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -32,47 +38,45 @@ class idProgram;
 
 class rvDebuggerBreakpoint
 {
-public:
+  public:
+    rvDebuggerBreakpoint(const char *filename, int linenumber, int id = -1, bool onceOnly = false);
+    rvDebuggerBreakpoint(rvDebuggerBreakpoint &bp);
+    ~rvDebuggerBreakpoint(void);
 
-	rvDebuggerBreakpoint ( const char* filename, int linenumber, int id = -1, bool onceOnly = false );
-	rvDebuggerBreakpoint ( rvDebuggerBreakpoint& bp );
-	~rvDebuggerBreakpoint ( void );
+    const char *GetFilename(void);
+    int GetLineNumber(void);
+    int GetID(void);
+    bool GetOnceOnly(void);
 
-	const char*		GetFilename		( void );
-	int				GetLineNumber	( void );
-	int				GetID			( void );
-	bool			GetOnceOnly     ( void );
+  protected:
+    bool mEnabled;
+    bool mOnceOnly;
+    int mID;
+    int mLineNumber;
+    idStr mFilename;
 
-protected:
-
-	bool	mEnabled;
-	bool	mOnceOnly;
-	int		mID;
-	int		mLineNumber;
-	idStr	mFilename;
-private:
-
-	static int	mNextID;
+  private:
+    static int mNextID;
 };
 
-ID_INLINE const char* rvDebuggerBreakpoint::GetFilename ( void )
+ID_INLINE const char *rvDebuggerBreakpoint::GetFilename(void)
 {
-	return mFilename;
+    return mFilename;
 }
 
-ID_INLINE int rvDebuggerBreakpoint::GetLineNumber ( void )
+ID_INLINE int rvDebuggerBreakpoint::GetLineNumber(void)
 {
-	return mLineNumber;
+    return mLineNumber;
 }
 
-ID_INLINE int rvDebuggerBreakpoint::GetID ( void )
+ID_INLINE int rvDebuggerBreakpoint::GetID(void)
 {
-	return mID;
+    return mID;
 }
 
-ID_INLINE bool rvDebuggerBreakpoint::GetOnceOnly( void )
+ID_INLINE bool rvDebuggerBreakpoint::GetOnceOnly(void)
 {
-	return mOnceOnly;
+    return mOnceOnly;
 }
 
 #endif // DEBUGGERBREAKPOINT_H_

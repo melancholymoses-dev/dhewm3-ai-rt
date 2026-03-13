@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -34,82 +40,83 @@ If you have questions concerning this license or the applicable additional terms
 /*
 ===================================================================================
 
-	Actor physics base class
+        Actor physics base class
 
-	An actor typically uses one collision model which is aligned with the gravity
-	direction. The collision model is usually a simple box with the origin at the
-	bottom center.
+        An actor typically uses one collision model which is aligned with the
+gravity direction. The collision model is usually a simple box with the origin
+at the bottom center.
 
 ===================================================================================
 */
 
-class idPhysics_Actor : public idPhysics_Base {
+class idPhysics_Actor : public idPhysics_Base
+{
 
-public:
-	CLASS_PROTOTYPE( idPhysics_Actor );
+  public:
+    CLASS_PROTOTYPE(idPhysics_Actor);
 
-							idPhysics_Actor( void );
-							~idPhysics_Actor( void );
+    idPhysics_Actor(void);
+    ~idPhysics_Actor(void);
 
-	void					Save( idSaveGame *savefile ) const;
-	void					Restore( idRestoreGame *savefile );
+    void Save(idSaveGame *savefile) const;
+    void Restore(idRestoreGame *savefile);
 
-							// get delta yaw of master
-	float					GetMasterDeltaYaw( void ) const;
-							// returns the ground entity
-	idEntity *				GetGroundEntity( void ) const;
-							// align the clip model with the gravity direction
-	void					SetClipModelAxis( void );
+    // get delta yaw of master
+    float GetMasterDeltaYaw(void) const;
+    // returns the ground entity
+    idEntity *GetGroundEntity(void) const;
+    // align the clip model with the gravity direction
+    void SetClipModelAxis(void);
 
-public:	// common physics interface
-	void					SetClipModel( idClipModel *model, float density, int id = 0, bool freeOld = true );
-	idClipModel *			GetClipModel( int id = 0 ) const;
-	int						GetNumClipModels( void ) const;
+  public: // common physics interface
+    void SetClipModel(idClipModel *model, float density, int id = 0, bool freeOld = true);
+    idClipModel *GetClipModel(int id = 0) const;
+    int GetNumClipModels(void) const;
 
-	void					SetMass( float mass, int id = -1 );
-	float					GetMass( int id = -1 ) const;
+    void SetMass(float mass, int id = -1);
+    float GetMass(int id = -1) const;
 
-	void					SetContents( int contents, int id = -1 );
-	int						GetContents( int id = -1 ) const;
+    void SetContents(int contents, int id = -1);
+    int GetContents(int id = -1) const;
 
-	const idBounds &		GetBounds( int id = -1 ) const;
-	const idBounds &		GetAbsBounds( int id = -1 ) const;
+    const idBounds &GetBounds(int id = -1) const;
+    const idBounds &GetAbsBounds(int id = -1) const;
 
-	bool					IsPushable( void ) const;
+    bool IsPushable(void) const;
 
-	const idVec3 &			GetOrigin( int id = 0 ) const;
-	const idMat3 &			GetAxis( int id = 0 ) const;
+    const idVec3 &GetOrigin(int id = 0) const;
+    const idMat3 &GetAxis(int id = 0) const;
 
-	void					SetGravity( const idVec3 &newGravity );
-	const idMat3 &			GetGravityAxis( void ) const;
+    void SetGravity(const idVec3 &newGravity);
+    const idMat3 &GetGravityAxis(void) const;
 
-	void					ClipTranslation( trace_t &results, const idVec3 &translation, const idClipModel *model ) const;
-	void					ClipRotation( trace_t &results, const idRotation &rotation, const idClipModel *model ) const;
-	int						ClipContents( const idClipModel *model ) const;
+    void ClipTranslation(trace_t &results, const idVec3 &translation, const idClipModel *model) const;
+    void ClipRotation(trace_t &results, const idRotation &rotation, const idClipModel *model) const;
+    int ClipContents(const idClipModel *model) const;
 
-	void					DisableClip( void );
-	void					EnableClip( void );
+    void DisableClip(void);
+    void EnableClip(void);
 
-	void					UnlinkClip( void );
-	void					LinkClip( void );
+    void UnlinkClip(void);
+    void LinkClip(void);
 
-	bool					EvaluateContacts( void );
+    bool EvaluateContacts(void);
 
-protected:
-	idClipModel *			clipModel;			// clip model used for collision detection
-	idMat3					clipModelAxis;		// axis of clip model aligned with gravity direction
+  protected:
+    idClipModel *clipModel; // clip model used for collision detection
+    idMat3 clipModelAxis;   // axis of clip model aligned with gravity direction
 
-	// derived properties
-	float					mass;
-	float					invMass;
+    // derived properties
+    float mass;
+    float invMass;
 
-	// master
-	idEntity *				masterEntity;
-	float					masterYaw;
-	float					masterDeltaYaw;
+    // master
+    idEntity *masterEntity;
+    float masterYaw;
+    float masterDeltaYaw;
 
-	// results of last evaluate
-	idEntityPtr<idEntity>	groundEntityPtr;
+    // results of last evaluate
+    idEntityPtr<idEntity> groundEntityPtr;
 };
 
 #endif /* !__PHYSICS_ACTOR_H__ */
