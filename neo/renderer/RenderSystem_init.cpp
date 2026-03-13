@@ -39,6 +39,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/UserInterface.h"
 
 #include "renderer/tr_local.h"
+#include "renderer/GL/GLBackend.h"
+#include "renderer/Vulkan/VKBackend.h"
 
 #include "framework/GameCallbacks_local.h"
 #include "framework/Game.h"
