@@ -1,3 +1,4 @@
+#pragma once
 #include "renderer/RendererBackend.h"
 
 class VKBackend : public IBackend
