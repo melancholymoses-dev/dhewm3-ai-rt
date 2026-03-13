@@ -1,14 +1,12 @@
 #include "renderer/RendererBackend.h"
-#include "renderer/tr_local.h" // whatever GL headers you need
+#include "renderer/tr_local.h"
 #include "renderer/VertexCache.h"
 #include "renderer/Image.h"
-#include "renderer/draw_common.h"
 #include "renderer/GL/GLBackend.h"
 
 // Forward declarations of the existing GL free functions
 // (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
 extern void RB_DrawView(const void *);
-extern void GL_UploadTexture(idImage *, const byte *, int, int);
 
 // might be the function we're messing with?
 void GLBackend::Init()
@@ -27,16 +25,18 @@ void GLBackend::PostSwapBuffers()
     GLimp_SwapBuffers();
 }
 
-void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h)
+void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm, bool allowDownSizeParm,
+                             textureRepeat_t repeatParm, textureDepth_t depthParm)
 {
-    GL_UploadTexture(img, data, w, h);
+    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm,
+                       repeatParm, depthParm);
 }
 
 void GLBackend::Image_Purge(idImage *img)
 {
     img->PurgeImage();
 }
-void GLBackend::VertexCache_Alloc(vertCache_t **vc, const void *data, int size, bool indexBuffer)
+void GLBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool indexBuffer)
 {
     vertexCache.Alloc(data, size, vc, indexBuffer);
 }
@@ -49,7 +49,7 @@ void GLBackend::VertexCache_Free(vertCache_t *vc)
 
 void GLBackend::DrawView(const viewDef_t *view)
 {
-    RB_DrawView(view); // just delegate to the existing function
+    RB_DrawView(view);
 }
 
 void GLBackend::CopyRender(const copyRenderCommand_t &cmd)
