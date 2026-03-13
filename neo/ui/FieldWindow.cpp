@@ -19,84 +19,102 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "sys/platform.h"
 #include "ui/DeviceContext.h"
-#include "ui/Window.h"
 #include "ui/UserInterfaceLocal.h"
+#include "ui/Window.h"
 
 #include "ui/FieldWindow.h"
 
-void idFieldWindow::CommonInit() {
-	cursorPos = 0;
-	lastTextLength = 0;
-	lastCursorPos = 0;
-	paintOffset = 0;
-	showCursor = false;
+void idFieldWindow::CommonInit()
+{
+    cursorPos = 0;
+    lastTextLength = 0;
+    lastCursorPos = 0;
+    paintOffset = 0;
+    showCursor = false;
 }
 
-idFieldWindow::idFieldWindow(idDeviceContext *d, idUserInterfaceLocal *g) : idWindow(d, g) {
-	dc = d;
-	gui = g;
-	CommonInit();
+idFieldWindow::idFieldWindow(idDeviceContext *d, idUserInterfaceLocal *g) : idWindow(d, g)
+{
+    dc = d;
+    gui = g;
+    CommonInit();
 }
 
-idFieldWindow::idFieldWindow(idUserInterfaceLocal *g) : idWindow(g) {
-	gui = g;
-	CommonInit();
+idFieldWindow::idFieldWindow(idUserInterfaceLocal *g) : idWindow(g)
+{
+    gui = g;
+    CommonInit();
 }
 
-idFieldWindow::~idFieldWindow() {
-
+idFieldWindow::~idFieldWindow()
+{
 }
 
-bool idFieldWindow::ParseInternalVar(const char *_name, idParser *src) {
-	if (idStr::Icmp(_name, "cursorvar") == 0) {
-		ParseString(src, cursorVar);
-		return true;
-	}
-	if (idStr::Icmp(_name, "showcursor") == 0) {
-		showCursor = src->ParseBool();
-		return true;
-	}
-	return idWindow::ParseInternalVar(_name, src);
+bool idFieldWindow::ParseInternalVar(const char *_name, idParser *src)
+{
+    if (idStr::Icmp(_name, "cursorvar") == 0)
+    {
+        ParseString(src, cursorVar);
+        return true;
+    }
+    if (idStr::Icmp(_name, "showcursor") == 0)
+    {
+        showCursor = src->ParseBool();
+        return true;
+    }
+    return idWindow::ParseInternalVar(_name, src);
 }
 
-
-void idFieldWindow::CalcPaintOffset(int len) {
-	lastCursorPos = cursorPos;
-	lastTextLength = len;
-	paintOffset = 0;
-	int tw = dc->TextWidth(text, textScale, -1);
-	if (tw < textRect.w) {
-		return;
-	}
-	while (tw > textRect.w && len > 0) {
-		tw = dc->TextWidth(text, textScale, --len);
-		paintOffset++;
-	}
+void idFieldWindow::CalcPaintOffset(int len)
+{
+    lastCursorPos = cursorPos;
+    lastTextLength = len;
+    paintOffset = 0;
+    int tw = dc->TextWidth(text, textScale, -1);
+    if (tw < textRect.w)
+    {
+        return;
+    }
+    while (tw > textRect.w && len > 0)
+    {
+        tw = dc->TextWidth(text, textScale, --len);
+        paintOffset++;
+    }
 }
 
-
-void idFieldWindow::Draw(int time, float x, float y) {
-	float scale = textScale;
-	int len = text.Length();
-	cursorPos = gui->State().GetInt( cursorVar );
-	if (len != lastTextLength || cursorPos != lastCursorPos) {
-		CalcPaintOffset(len);
-	}
-	idRectangle rect = textRect;
-	if (paintOffset >= len) {
-		paintOffset = 0;
-	}
-	if (cursorPos > len) {
-		cursorPos = len;
-	}
-	dc->DrawText(&text[paintOffset], scale, 0, foreColor, rect, false, ((flags & WIN_FOCUS) || showCursor) ? cursorPos - paintOffset : -1);
+void idFieldWindow::Draw(int time, float x, float y)
+{
+    float scale = textScale;
+    int len = text.Length();
+    cursorPos = gui->State().GetInt(cursorVar);
+    if (len != lastTextLength || cursorPos != lastCursorPos)
+    {
+        CalcPaintOffset(len);
+    }
+    idRectangle rect = textRect;
+    if (paintOffset >= len)
+    {
+        paintOffset = 0;
+    }
+    if (cursorPos > len)
+    {
+        cursorPos = len;
+    }
+    dc->DrawText(&text[paintOffset], scale, 0, foreColor, rect, false,
+                 ((flags & WIN_FOCUS) || showCursor) ? cursorPos - paintOffset : -1);
 }

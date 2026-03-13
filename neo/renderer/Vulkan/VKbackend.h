@@ -3,11 +3,12 @@
 
 class VKBackend : public IBackend
 {
-public:
+  public:
     void Init() override;
     void Shutdown() override;
     void PostSwapBuffers() override;
-    void Image_Upload(idImage *, const byte *, int w, int h, textureFilter_t, bool, textureRepeat_t, textureDepth_t) override;
+    void Image_Upload(idImage *, const byte *, int w, int h, textureFilter_t, bool, textureRepeat_t,
+                      textureDepth_t) override;
     void Image_Purge(idImage *) override;
     void VertexCache_Alloc(vertCache_t **, void *, int size, bool indexBuffer) override;
     void VertexCache_Free(vertCache_t *) override;

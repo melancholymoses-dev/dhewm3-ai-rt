@@ -19,15 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "sys/platform.h"
 #include "idlib/math/Math.h"
+#include "sys/platform.h"
 
 #include "framework/DeclTable.h"
 
@@ -36,44 +42,54 @@ If you have questions concerning this license or the applicable additional terms
 idDeclTable::TableLookup
 =================
 */
-float idDeclTable::TableLookup( float index ) const {
-	int iIndex;
-	float iFrac;
+float idDeclTable::TableLookup(float index) const
+{
+    int iIndex;
+    float iFrac;
 
-	int domain = values.Num() - 1;
+    int domain = values.Num() - 1;
 
-	if ( domain <= 1 ) {
-		return 1.0f;
-	}
+    if (domain <= 1)
+    {
+        return 1.0f;
+    }
 
-	if ( clamp ) {
-		index *= (domain-1);
-		if ( index >= domain - 1 ) {
-			return values[domain - 1];
-		} else if ( index <= 0 ) {
-			return values[0];
-		}
-		iIndex = idMath::Ftoi( index );
-		iFrac = index - iIndex;
-	} else {
-		index *= domain;
+    if (clamp)
+    {
+        index *= (domain - 1);
+        if (index >= domain - 1)
+        {
+            return values[domain - 1];
+        }
+        else if (index <= 0)
+        {
+            return values[0];
+        }
+        iIndex = idMath::Ftoi(index);
+        iFrac = index - iIndex;
+    }
+    else
+    {
+        index *= domain;
 
-		if ( index < 0 ) {
-			index += domain * idMath::Ceil( -index / domain );
-		}
+        if (index < 0)
+        {
+            index += domain * idMath::Ceil(-index / domain);
+        }
 
-		iIndex = idMath::FtoiFast( idMath::Floor( index ) );
-		iFrac = index - iIndex;
-		iIndex = iIndex % domain;
-	}
+        iIndex = idMath::FtoiFast(idMath::Floor(index));
+        iFrac = index - iIndex;
+        iIndex = iIndex % domain;
+    }
 
-	if ( !snap ) {
-		// we duplicated the 0 index at the end at creation time, so we
-		// don't need to worry about wrapping the filter
-		return values[iIndex] * ( 1.0f - iFrac ) + values[iIndex + 1] * iFrac;
-	}
+    if (!snap)
+    {
+        // we duplicated the 0 index at the end at creation time, so we
+        // don't need to worry about wrapping the filter
+        return values[iIndex] * (1.0f - iFrac) + values[iIndex + 1] * iFrac;
+    }
 
-	return values[iIndex];
+    return values[iIndex];
 }
 
 /*
@@ -81,8 +97,9 @@ float idDeclTable::TableLookup( float index ) const {
 idDeclTable::Size
 =================
 */
-size_t idDeclTable::Size( void ) const {
-	return sizeof( idDeclTable ) + values.Allocated();
+size_t idDeclTable::Size(void) const
+{
+    return sizeof(idDeclTable) + values.Allocated();
 }
 
 /*
@@ -90,10 +107,11 @@ size_t idDeclTable::Size( void ) const {
 idDeclTable::FreeData
 =================
 */
-void idDeclTable::FreeData( void ) {
-	snap = false;
-	clamp = false;
-	values.Clear();
+void idDeclTable::FreeData(void)
+{
+    snap = false;
+    clamp = false;
+    values.Clear();
 }
 
 /*
@@ -101,8 +119,9 @@ void idDeclTable::FreeData( void ) {
 idDeclTable::DefaultDefinition
 =================
 */
-const char *idDeclTable::DefaultDefinition( void ) const {
-	return "{ { 0 } }";
+const char *idDeclTable::DefaultDefinition(void) const
+{
+    return "{ { 0 } }";
 }
 
 /*
@@ -110,69 +129,83 @@ const char *idDeclTable::DefaultDefinition( void ) const {
 idDeclTable::Parse
 =================
 */
-bool idDeclTable::Parse( const char *text, const int textLength ) {
-	idLexer src;
-	idToken token;
-	float v;
+bool idDeclTable::Parse(const char *text, const int textLength)
+{
+    idLexer src;
+    idToken token;
+    float v;
 
-	src.LoadMemory( text, textLength, GetFileName(), GetLineNum() );
-	src.SetFlags( DECL_LEXER_FLAGS );
-	src.SkipUntilString( "{" );
+    src.LoadMemory(text, textLength, GetFileName(), GetLineNum());
+    src.SetFlags(DECL_LEXER_FLAGS);
+    src.SkipUntilString("{");
 
-	snap = false;
-	clamp = false;
-	values.Clear();
+    snap = false;
+    clamp = false;
+    values.Clear();
 
-	while ( 1 ) {
-		if ( !src.ReadToken( &token ) ) {
-			break;
-		}
+    while (1)
+    {
+        if (!src.ReadToken(&token))
+        {
+            break;
+        }
 
-		if ( token == "}" ) {
-			break;
-		}
+        if (token == "}")
+        {
+            break;
+        }
 
-		if ( token.Icmp( "snap" ) == 0 ) {
-			snap = true;
-		} else if ( token.Icmp( "clamp" ) == 0 ) {
-			clamp = true;
-		} else if ( token.Icmp( "{" ) == 0 ) {
+        if (token.Icmp("snap") == 0)
+        {
+            snap = true;
+        }
+        else if (token.Icmp("clamp") == 0)
+        {
+            clamp = true;
+        }
+        else if (token.Icmp("{") == 0)
+        {
 
-			while ( 1 ) {
-				bool errorFlag;
+            while (1)
+            {
+                bool errorFlag;
 
-				v = src.ParseFloat( &errorFlag );
-				if ( errorFlag ) {
-					// we got something non-numeric
-					MakeDefault();
-					return false;
-				}
+                v = src.ParseFloat(&errorFlag);
+                if (errorFlag)
+                {
+                    // we got something non-numeric
+                    MakeDefault();
+                    return false;
+                }
 
-				values.Append( v );
+                values.Append(v);
 
-				src.ReadToken( &token );
-				if ( token == "}" ) {
-					break;
-				}
-				if ( token == "," ) {
-					continue;
-				}
-				src.Warning( "expected comma or brace" );
-				MakeDefault();
-				return false;
-			}
+                src.ReadToken(&token);
+                if (token == "}")
+                {
+                    break;
+                }
+                if (token == ",")
+                {
+                    continue;
+                }
+                src.Warning("expected comma or brace");
+                MakeDefault();
+                return false;
+            }
+        }
+        else
+        {
+            src.Warning("unknown token '%s'", token.c_str());
+            MakeDefault();
+            return false;
+        }
+    }
 
-		} else {
-			src.Warning( "unknown token '%s'", token.c_str() );
-			MakeDefault();
-			return false;
-		}
-	}
+    // copy the 0 element to the end, so lerping doesn't
+    // need to worry about the wrap case
+    float val = values[0]; // template bug requires this to not be in the Append()?
+    values.Append(val);
 
-	// copy the 0 element to the end, so lerping doesn't
-	// need to worry about the wrap case
-	float val = values[0];		// template bug requires this to not be in the Append()?
-	values.Append( val );
-
-	return true;
+    return true;
 }

@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,7 +42,9 @@ QGLPROC(glAreTexturesResident, GLboolean, (GLsizei n, const GLuint *textures, GL
 QGLPROC(glArrayElement, void, (GLint i))
 QGLPROC(glBegin, void, (GLenum mode))
 QGLPROC(glBindTexture, void, (GLenum target, GLuint texture))
-QGLPROC(glBitmap, void, (GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove, const GLubyte *bitmap))
+QGLPROC(glBitmap, void,
+        (GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove,
+         const GLubyte *bitmap))
 QGLPROC(glBlendFunc, void, (GLenum sfactor, GLenum dfactor))
 QGLPROC(glBlendEquation, void, (GLenum mode))
 QGLPROC(glCallList, void, (GLuint list))
@@ -84,10 +92,14 @@ QGLPROC(glColorMask, void, (GLboolean red, GLboolean green, GLboolean blue, GLbo
 QGLPROC(glColorMaterial, void, (GLenum face, GLenum mode))
 QGLPROC(glColorPointer, void, (GLint size, GLenum type, GLsizei stride, const GLvoid *pointer))
 QGLPROC(glCopyPixels, void, (GLint x, GLint y, GLsizei width, GLsizei height, GLenum type))
-QGLPROC(glCopyTexImage1D, void, (GLenum target, GLint level, GLenum internalFormat, GLint x, GLint y, GLsizei width, GLint border))
-QGLPROC(glCopyTexImage2D, void, (GLenum target, GLint level, GLenum internalFormat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border))
+QGLPROC(glCopyTexImage1D, void,
+        (GLenum target, GLint level, GLenum internalFormat, GLint x, GLint y, GLsizei width, GLint border))
+QGLPROC(glCopyTexImage2D, void,
+        (GLenum target, GLint level, GLenum internalFormat, GLint x, GLint y, GLsizei width, GLsizei height,
+         GLint border))
 QGLPROC(glCopyTexSubImage1D, void, (GLenum target, GLint level, GLint xoffset, GLint x, GLint y, GLsizei width))
-QGLPROC(glCopyTexSubImage2D, void, (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height))
+QGLPROC(glCopyTexSubImage2D, void,
+        (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height))
 QGLPROC(glCullFace, void, (GLenum mode))
 QGLPROC(glDeleteLists, void, (GLuint list, GLsizei range))
 QGLPROC(glDeleteTextures, void, (GLsizei n, const GLuint *textures))
@@ -146,8 +158,8 @@ QGLPROC(glGetMaterialiv, void, (GLenum face, GLenum pname, GLint *params))
 QGLPROC(glGetPixelMapfv, void, (GLenum map, GLfloat *values))
 QGLPROC(glGetPixelMapuiv, void, (GLenum map, GLuint *values))
 QGLPROC(glGetPixelMapusv, void, (GLenum map, GLushort *values))
-QGLPROC(glGetPointerv, void, (GLenum pname, GLvoid* *params))
-QGLPROC(glGetPolygonStipple, void, (GLubyte *mask))
+QGLPROC(glGetPointerv, void, (GLenum pname, GLvoid **params))
+QGLPROC(glGetPolygonStipple, void, (GLubyte * mask))
 QGLPROC(glGetString, const GLubyte *, (GLenum name))
 QGLPROC(glGetTexEnvfv, void, (GLenum target, GLenum pname, GLfloat *params))
 QGLPROC(glGetTexEnviv, void, (GLenum target, GLenum pname, GLint *params))
@@ -195,8 +207,12 @@ QGLPROC(glLoadName, void, (GLuint name))
 QGLPROC(glLogicOp, void, (GLenum opcode))
 QGLPROC(glMap1d, void, (GLenum target, GLdouble u1, GLdouble u2, GLint stride, GLint order, const GLdouble *points))
 QGLPROC(glMap1f, void, (GLenum target, GLfloat u1, GLfloat u2, GLint stride, GLint order, const GLfloat *points))
-QGLPROC(glMap2d, void, (GLenum target, GLdouble u1, GLdouble u2, GLint ustride, GLint uorder, GLdouble v1, GLdouble v2, GLint vstride, GLint vorder, const GLdouble *points))
-QGLPROC(glMap2f, void, (GLenum target, GLfloat u1, GLfloat u2, GLint ustride, GLint uorder, GLfloat v1, GLfloat v2, GLint vstride, GLint vorder, const GLfloat *points))
+QGLPROC(glMap2d, void,
+        (GLenum target, GLdouble u1, GLdouble u2, GLint ustride, GLint uorder, GLdouble v1, GLdouble v2, GLint vstride,
+         GLint vorder, const GLdouble *points))
+QGLPROC(glMap2f, void,
+        (GLenum target, GLfloat u1, GLfloat u2, GLint ustride, GLint uorder, GLfloat v1, GLfloat v2, GLint vstride,
+         GLint vorder, const GLfloat *points))
 QGLPROC(glMapGrid1d, void, (GLint un, GLdouble u1, GLdouble u2))
 QGLPROC(glMapGrid1f, void, (GLint un, GLfloat u1, GLfloat u2))
 QGLPROC(glMapGrid2d, void, (GLint un, GLdouble u1, GLdouble u2, GLint vn, GLdouble v1, GLdouble v2))
@@ -268,7 +284,8 @@ QGLPROC(glRasterPos4iv, void, (const GLint *v))
 QGLPROC(glRasterPos4s, void, (GLshort x, GLshort y, GLshort z, GLshort w))
 QGLPROC(glRasterPos4sv, void, (const GLshort *v))
 QGLPROC(glReadBuffer, void, (GLenum mode))
-QGLPROC(glReadPixels, void, (GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels))
+QGLPROC(glReadPixels, void,
+        (GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid *pixels))
 QGLPROC(glRectd, void, (GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2))
 QGLPROC(glRectdv, void, (const GLdouble *v1, const GLdouble *v2))
 QGLPROC(glRectf, void, (GLfloat x1, GLfloat y1, GLfloat x2, GLfloat y2))
@@ -331,14 +348,21 @@ QGLPROC(glTexGenf, void, (GLenum coord, GLenum pname, GLfloat param))
 QGLPROC(glTexGenfv, void, (GLenum coord, GLenum pname, const GLfloat *params))
 QGLPROC(glTexGeni, void, (GLenum coord, GLenum pname, GLint param))
 QGLPROC(glTexGeniv, void, (GLenum coord, GLenum pname, const GLint *params))
-QGLPROC(glTexImage1D, void, (GLenum target, GLint level, GLint internalformat, GLsizei width, GLint border, GLenum format, GLenum type, const GLvoid *pixels))
-QGLPROC(glTexImage2D, void, (GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels))
+QGLPROC(glTexImage1D, void,
+        (GLenum target, GLint level, GLint internalformat, GLsizei width, GLint border, GLenum format, GLenum type,
+         const GLvoid *pixels))
+QGLPROC(glTexImage2D, void,
+        (GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format,
+         GLenum type, const GLvoid *pixels))
 QGLPROC(glTexParameterf, void, (GLenum target, GLenum pname, GLfloat param))
 QGLPROC(glTexParameterfv, void, (GLenum target, GLenum pname, const GLfloat *params))
 QGLPROC(glTexParameteri, void, (GLenum target, GLenum pname, GLint param))
 QGLPROC(glTexParameteriv, void, (GLenum target, GLenum pname, const GLint *params))
-QGLPROC(glTexSubImage1D, void, (GLenum target, GLint level, GLint xoffset, GLsizei width, GLenum format, GLenum type, const GLvoid *pixels))
-QGLPROC(glTexSubImage2D, void, (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels))
+QGLPROC(glTexSubImage1D, void,
+        (GLenum target, GLint level, GLint xoffset, GLsizei width, GLenum format, GLenum type, const GLvoid *pixels))
+QGLPROC(glTexSubImage2D, void,
+        (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format,
+         GLenum type, const GLvoid *pixels))
 QGLPROC(glTranslated, void, (GLdouble x, GLdouble y, GLdouble z))
 QGLPROC(glTranslatef, void, (GLfloat x, GLfloat y, GLfloat z))
 QGLPROC(glVertex2d, void, (GLdouble x, GLdouble y))

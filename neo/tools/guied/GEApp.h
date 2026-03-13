@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -32,8 +38,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "../../sys/win32/win_local.h"
 
 #include "../../ui/Rectangle.h"
-#include "../../ui/Window.h"
 #include "../../ui/UserInterfaceLocal.h"
+#include "../../ui/Window.h"
 
 #ifndef GEOPTIONS_H_
 #include "GEOptions.h"
@@ -64,127 +70,122 @@ If you have questions concerning this license or the applicable additional terms
 #endif // GESTATUSBAR_H_
 
 // Utility functions
-const char *StringFromVec4	( idVec4& vec );
-bool		IsExpression	( const char* s );
-
+const char *StringFromVec4(idVec4 &vec);
+bool IsExpression(const char *s);
 
 class rvGEViewer;
 
 class rvGEApp
 {
-public:
+  public:
+    rvGEApp();
+    ~rvGEApp();
 
-	rvGEApp ( );
-	~rvGEApp ( );
+    bool Initialize(void);
+    void RunFrame(void);
+    //	bool				Uninitialize			( void
+    //);
 
-	bool				Initialize				( void );
-	void				RunFrame				( void );
-//	bool				Uninitialize			( void );
+    bool TranslateAccelerator(LPMSG msg);
 
-	bool				TranslateAccelerator	( LPMSG msg );
+    rvGEWorkspace *GetActiveWorkspace(HWND *retwnd = NULL);
+    rvGENavigator &GetNavigator(void);
+    rvGEProperties &GetProperties(void);
+    rvGETransformer &GetTransformer(void);
+    rvGEOptions &GetOptions(void);
+    HINSTANCE GetInstance(void);
+    HWND GetMDIFrame(void);
+    HWND GetMDIClient(void);
+    rvGEStatusBar &GetStatusBar(void);
 
-	rvGEWorkspace*		GetActiveWorkspace		( HWND* retwnd = NULL );
-	rvGENavigator&		GetNavigator			( void );
-	rvGEProperties&		GetProperties			( void );
-	rvGETransformer&	GetTransformer			( void );
-	rvGEOptions&		GetOptions				( void );
-	HINSTANCE			GetInstance				( void );
-	HWND				GetMDIFrame				( void );
-	HWND				GetMDIClient			( void );
-	rvGEStatusBar&		GetStatusBar			( void );
+    bool OpenFile(const char *filename);
+    bool SaveFile(const char *filename);
+    bool NewFile(void);
 
-	bool				OpenFile				( const char* filename );
-	bool				SaveFile				( const char* filename );
-	bool				NewFile					( void );
+    bool IsActive(void);
 
-	bool				IsActive				( void );
+    void CloseViewer(void);
 
-	void				CloseViewer				( void );
+    int ToolWindowActivate(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-	int					ToolWindowActivate		( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam );
+    int MessageBox(const char *text, int flags);
 
-	int					MessageBox				( const char* text, int flags );
+  protected:
+    int HandleCommand(WPARAM wParam, LPARAM lParam);
+    int HandleInitMenu(WPARAM wParam, LPARAM lParam);
 
-protected:
+    void HandleCommandSave(rvGEWorkspace *workspace, const char *filename);
 
-	int						HandleCommand				( WPARAM wParam, LPARAM lParam );
-	int						HandleInitMenu				( WPARAM wParam, LPARAM lParam );
+    bool InitRecentFiles(void);
+    void UpdateRecentFiles(void);
 
-	void					HandleCommandSave			( rvGEWorkspace* workspace, const char* filename );
+    HWND mMDIFrame;
+    HWND mMDIClient;
+    HINSTANCE mInstance;
+    rvGEOptions mOptions;
+    HACCEL mAccelerators;
+    rvGENavigator mNavigator;
+    rvGETransformer mTransformer;
+    rvGEStatusBar mStatusBar;
+    rvGEProperties mProperties;
 
-	bool					InitRecentFiles				( void );
-	void					UpdateRecentFiles			( void );
+    HMENU mRecentFileMenu;
+    int mRecentFileInsertPos;
 
-	HWND					mMDIFrame;
-	HWND					mMDIClient;
-	HINSTANCE				mInstance;
-	rvGEOptions				mOptions;
-	HACCEL					mAccelerators;
-	rvGENavigator			mNavigator;
-	rvGETransformer			mTransformer;
-	rvGEStatusBar			mStatusBar;
-	rvGEProperties			mProperties;
+    rvGEViewer *mViewer;
 
-	HMENU					mRecentFileMenu;
-	int						mRecentFileInsertPos;
+    idList<rvGEWorkspace *> mWorkspaces;
+    idList<HWND> mToolWindows;
 
-	rvGEViewer*				mViewer;
-
-	idList<rvGEWorkspace*>	mWorkspaces;
-	idList<HWND>			mToolWindows;
-
-private:
-
-	static LRESULT CALLBACK	FrameWndProc			( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
-	static LRESULT CALLBACK	MDIChildProc			( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
-
+  private:
+    static LRESULT CALLBACK FrameWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK MDIChildProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 };
 
-ID_INLINE bool rvGEApp::IsActive ( void )
+ID_INLINE bool rvGEApp::IsActive(void)
 {
-	return mMDIFrame ? true : false;
+    return mMDIFrame ? true : false;
 }
 
-ID_INLINE rvGENavigator& rvGEApp::GetNavigator ( void )
+ID_INLINE rvGENavigator &rvGEApp::GetNavigator(void)
 {
-	return mNavigator;
+    return mNavigator;
 }
 
-ID_INLINE rvGEProperties& rvGEApp::GetProperties ( void )
+ID_INLINE rvGEProperties &rvGEApp::GetProperties(void)
 {
-	return mProperties;
+    return mProperties;
 }
 
-ID_INLINE rvGETransformer& rvGEApp::GetTransformer ( void )
+ID_INLINE rvGETransformer &rvGEApp::GetTransformer(void)
 {
-	return mTransformer;
+    return mTransformer;
 }
 
-ID_INLINE rvGEOptions& rvGEApp::GetOptions ( void )
+ID_INLINE rvGEOptions &rvGEApp::GetOptions(void)
 {
-	return mOptions;
+    return mOptions;
 }
 
-ID_INLINE HINSTANCE rvGEApp::GetInstance ( void )
+ID_INLINE HINSTANCE rvGEApp::GetInstance(void)
 {
-	return mInstance;
+    return mInstance;
 }
 
-ID_INLINE rvGEStatusBar& rvGEApp::GetStatusBar ( void )
+ID_INLINE rvGEStatusBar &rvGEApp::GetStatusBar(void)
 {
-	return mStatusBar;
+    return mStatusBar;
 }
 
-ID_INLINE HWND rvGEApp::GetMDIFrame ( void )
+ID_INLINE HWND rvGEApp::GetMDIFrame(void)
 {
-	return mMDIFrame;
+    return mMDIFrame;
 }
 
-ID_INLINE HWND rvGEApp::GetMDIClient ( void )
+ID_INLINE HWND rvGEApp::GetMDIClient(void)
 {
-	return mMDIClient;
+    return mMDIClient;
 }
-
 
 extern rvGEApp gApp;
 

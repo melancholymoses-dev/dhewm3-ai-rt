@@ -19,21 +19,26 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-
 #include "../../sys/win32/rc/Common_resource.h"
 #include "../../sys/win32/rc/DeclEditor_resource.h"
 
-#include "../comafx/DialogGoToLine.h"
 #include "../comafx/CPathTreeCtrl.h"
+#include "../comafx/DialogGoToLine.h"
 #include "DialogDeclBrowser.h"
 #include "DialogDeclEditor.h"
 
@@ -43,18 +48,12 @@ If you have questions concerning this license or the applicable additional terms
 #define DEBUG_NEW new
 #endif
 
-
 // DialogDeclEditor dialog
 
-static UINT FindDialogMessage = ::RegisterWindowMessage( FINDMSGSTRING );
+static UINT FindDialogMessage = ::RegisterWindowMessage(FINDMSGSTRING);
 
 toolTip_t DialogDeclEditor::toolTips[] = {
-	{ IDC_DECLEDITOR_BUTTON_TEST, "test decl" },
-	{ IDOK, "save decl" },
-	{ IDCANCEL, "cancel" },
-	{ 0, NULL }
-};
-
+    {IDC_DECLEDITOR_BUTTON_TEST, "test decl"}, {IDOK, "save decl"}, {IDCANCEL, "cancel"}, {0, NULL}};
 
 IMPLEMENT_DYNAMIC(DialogDeclEditor, CDialog)
 
@@ -63,13 +62,9 @@ IMPLEMENT_DYNAMIC(DialogDeclEditor, CDialog)
 DialogDeclEditor::DialogDeclEditor
 ================
 */
-DialogDeclEditor::DialogDeclEditor( CWnd* pParent /*=NULL*/ )
-	: CDialog(DialogDeclEditor::IDD, pParent)
-	, findDlg(NULL)
-	, matchCase(false)
-	, matchWholeWords(false)
-	, decl(NULL)
-	, firstLine(0)
+DialogDeclEditor::DialogDeclEditor(CWnd *pParent /*=NULL*/)
+    : CDialog(DialogDeclEditor::IDD, pParent), findDlg(NULL), matchCase(false), matchWholeWords(false), decl(NULL),
+      firstLine(0)
 {
 }
 
@@ -78,7 +73,8 @@ DialogDeclEditor::DialogDeclEditor( CWnd* pParent /*=NULL*/ )
 DialogDeclEditor::~DialogDeclEditor
 ================
 */
-DialogDeclEditor::~DialogDeclEditor() {
+DialogDeclEditor::~DialogDeclEditor()
+{
 }
 
 /*
@@ -86,14 +82,15 @@ DialogDeclEditor::~DialogDeclEditor() {
 DialogDeclEditor::DoDataExchange
 ================
 */
-void DialogDeclEditor::DoDataExchange(CDataExchange* pDX) {
-	CDialog::DoDataExchange(pDX);
-	//{{AFX_DATA_MAP(DialogDeclEditor)
-	DDX_Control(pDX, IDC_DECLEDITOR_EDIT_TEXT, declEdit);
-	DDX_Control(pDX, IDC_DECLEDITOR_BUTTON_TEST, testButton);
-	DDX_Control(pDX, IDOK, okButton);
-	DDX_Control(pDX, IDCANCEL, cancelButton);
-	//}}AFX_DATA_MAP
+void DialogDeclEditor::DoDataExchange(CDataExchange *pDX)
+{
+    CDialog::DoDataExchange(pDX);
+    //{{AFX_DATA_MAP(DialogDeclEditor)
+    DDX_Control(pDX, IDC_DECLEDITOR_EDIT_TEXT, declEdit);
+    DDX_Control(pDX, IDC_DECLEDITOR_BUTTON_TEST, testButton);
+    DDX_Control(pDX, IDOK, okButton);
+    DDX_Control(pDX, IDCANCEL, cancelButton);
+    //}}AFX_DATA_MAP
 }
 
 /*
@@ -101,13 +98,16 @@ void DialogDeclEditor::DoDataExchange(CDataExchange* pDX) {
 DialogDeclEditor::PreTranslateMessage
 ================
 */
-BOOL DialogDeclEditor::PreTranslateMessage( MSG* pMsg ) {
-	if ( WM_KEYFIRST <= pMsg->message && pMsg->message <= WM_KEYLAST ) {
-		if ( m_hAccel && ::TranslateAccelerator( m_hWnd, m_hAccel, pMsg ) ) {
-			return TRUE;
-		}
-	}
-	return CWnd::PreTranslateMessage(pMsg);
+BOOL DialogDeclEditor::PreTranslateMessage(MSG *pMsg)
+{
+    if (WM_KEYFIRST <= pMsg->message && pMsg->message <= WM_KEYLAST)
+    {
+        if (m_hAccel && ::TranslateAccelerator(m_hWnd, m_hAccel, pMsg))
+        {
+            return TRUE;
+        }
+    }
+    return CWnd::PreTranslateMessage(pMsg);
 }
 
 /*
@@ -115,31 +115,38 @@ BOOL DialogDeclEditor::PreTranslateMessage( MSG* pMsg ) {
 DialogDeclEditor::TestDecl
 ================
 */
-bool DialogDeclEditor::TestDecl( const idStr &declText ) {
-	idLexer src( LEXFL_NOSTRINGCONCAT );
-	idToken token;
-	int indent;
+bool DialogDeclEditor::TestDecl(const idStr &declText)
+{
+    idLexer src(LEXFL_NOSTRINGCONCAT);
+    idToken token;
+    int indent;
 
-	src.LoadMemory( declText, declText.Length(), "decl text" );
+    src.LoadMemory(declText, declText.Length(), "decl text");
 
-	indent = 0;
-	while( src.ReadToken( &token ) ) {
-		if ( token == "{" ) {
-			indent++;
-		} else if ( token == "}" ) {
-			indent--;
-		}
-	}
+    indent = 0;
+    while (src.ReadToken(&token))
+    {
+        if (token == "{")
+        {
+            indent++;
+        }
+        else if (token == "}")
+        {
+            indent--;
+        }
+    }
 
-	if ( indent < 0 ) {
-		MessageBox( "Missing opening brace!", va( "Error saving %s", decl->GetFileName() ), MB_OK | MB_ICONERROR );
-		return false;
-	}
-	if ( indent > 0 ) {
-		MessageBox( "Missing closing brace!", va( "Error saving %s", decl->GetFileName() ), MB_OK | MB_ICONERROR );
-		return false;
-	}
-	return true;
+    if (indent < 0)
+    {
+        MessageBox("Missing opening brace!", va("Error saving %s", decl->GetFileName()), MB_OK | MB_ICONERROR);
+        return false;
+    }
+    if (indent > 0)
+    {
+        MessageBox("Missing closing brace!", va("Error saving %s", decl->GetFileName()), MB_OK | MB_ICONERROR);
+        return false;
+    }
+    return true;
 }
 
 /*
@@ -147,13 +154,16 @@ bool DialogDeclEditor::TestDecl( const idStr &declText ) {
 DialogDeclEditor::UpdateStatusBar
 ================
 */
-void DialogDeclEditor::UpdateStatusBar( void ) {
-	int line, column, character;
+void DialogDeclEditor::UpdateStatusBar(void)
+{
+    int line, column, character;
 
-	if ( decl ) {
-		declEdit.GetCursorPos( line, column, character );
-		statusBar.SetWindowText( va( "Line: %d, Column: %d, Character: %d", decl->GetLineNum() + line, column, character ) );
-	}
+    if (decl)
+    {
+        declEdit.GetCursorPos(line, column, character);
+        statusBar.SetWindowText(
+            va("Line: %d, Column: %d, Character: %d", decl->GetLineNum() + line, column, character));
+    }
 }
 
 /*
@@ -161,104 +171,119 @@ void DialogDeclEditor::UpdateStatusBar( void ) {
 DialogDeclEditor::LoadDecl
 ================
 */
-void DialogDeclEditor::LoadDecl( idDecl *decl ) {
-	int numLines = 0;
-	int numCharsPerLine = 0;
-	int maxCharsPerLine = 0;
-	idStr declText;
-	CRect rect;
+void DialogDeclEditor::LoadDecl(idDecl *decl)
+{
+    int numLines = 0;
+    int numCharsPerLine = 0;
+    int maxCharsPerLine = 0;
+    idStr declText;
+    CRect rect;
 
-	this->decl = decl;
+    this->decl = decl;
 
-	switch( decl->GetType() ) {
-		case DECL_ENTITYDEF:
-			declEdit.SetStringColor( SRE_COLOR_BLUE, SRE_COLOR_DARK_CYAN );
-			declEdit.LoadKeyWordsFromFile( "editors/entity.def" );
-			break;
-		case DECL_MATERIAL:
-			declEdit.LoadKeyWordsFromFile( "editors/material.def" );
-			break;
-		case DECL_SKIN:
-			declEdit.LoadKeyWordsFromFile( "editors/skin.def" );
-			break;
-		case DECL_SOUND:
-			declEdit.LoadKeyWordsFromFile( "editors/sound.def" );
-			break;
-		case DECL_FX:
-			declEdit.LoadKeyWordsFromFile( "editors/fx.def" );
-			break;
-		case DECL_PARTICLE:
-			declEdit.LoadKeyWordsFromFile( "editors/particle.def" );
-			break;
-		case DECL_AF:
-			declEdit.LoadKeyWordsFromFile( "editors/af.def" );
-			break;
-		case DECL_TABLE:
-			declEdit.LoadKeyWordsFromFile( "editors/table.def" );
-			break;
-		case DECL_MODELDEF:
-			declEdit.LoadKeyWordsFromFile( "editors/model.def" );
-			break;
-		default:
-			declEdit.LoadKeyWordsFromFile( va( "editors/%s.def", declManager->GetDeclNameFromType( decl->GetType() ) ) );
-			break;
-	}
+    switch (decl->GetType())
+    {
+    case DECL_ENTITYDEF:
+        declEdit.SetStringColor(SRE_COLOR_BLUE, SRE_COLOR_DARK_CYAN);
+        declEdit.LoadKeyWordsFromFile("editors/entity.def");
+        break;
+    case DECL_MATERIAL:
+        declEdit.LoadKeyWordsFromFile("editors/material.def");
+        break;
+    case DECL_SKIN:
+        declEdit.LoadKeyWordsFromFile("editors/skin.def");
+        break;
+    case DECL_SOUND:
+        declEdit.LoadKeyWordsFromFile("editors/sound.def");
+        break;
+    case DECL_FX:
+        declEdit.LoadKeyWordsFromFile("editors/fx.def");
+        break;
+    case DECL_PARTICLE:
+        declEdit.LoadKeyWordsFromFile("editors/particle.def");
+        break;
+    case DECL_AF:
+        declEdit.LoadKeyWordsFromFile("editors/af.def");
+        break;
+    case DECL_TABLE:
+        declEdit.LoadKeyWordsFromFile("editors/table.def");
+        break;
+    case DECL_MODELDEF:
+        declEdit.LoadKeyWordsFromFile("editors/model.def");
+        break;
+    default:
+        declEdit.LoadKeyWordsFromFile(va("editors/%s.def", declManager->GetDeclNameFromType(decl->GetType())));
+        break;
+    }
 
-	firstLine = decl->GetLineNum();
+    firstLine = decl->GetLineNum();
 
-	char *localDeclText = (char *)_alloca( ( decl->GetTextLength() + 1 ) * sizeof( char ) );
-	decl->GetText( localDeclText );
-	declText = localDeclText;
+    char *localDeclText = (char *)_alloca((decl->GetTextLength() + 1) * sizeof(char));
+    decl->GetText(localDeclText);
+    declText = localDeclText;
 
-	// clean up new-line crapola
-	declText.Replace( "\r", "" );
-	declText.Replace( "\n", "\r" );
-	declText.Replace( "\v", "\r" );
-	declText.StripLeading( '\r' );
-	declText.Append( "\r" );
+    // clean up new-line crapola
+    declText.Replace("\r", "");
+    declText.Replace("\n", "\r");
+    declText.Replace("\v", "\r");
+    declText.StripLeading('\r');
+    declText.Append("\r");
 
-	declEdit.SetText( declText );
+    declEdit.SetText(declText);
 
-	for( const char *ptr = declText.c_str(); *ptr; ptr++ ) {
-		if ( *ptr == '\r' ) {
-			if ( numCharsPerLine > maxCharsPerLine ) {
-				maxCharsPerLine = numCharsPerLine;
-			}
-			numCharsPerLine = 0;
-			numLines++;
-		} else if ( *ptr == '\t' ) {
-			numCharsPerLine += TAB_SIZE;
-		} else {
-			numCharsPerLine++;
-		}
-	}
+    for (const char *ptr = declText.c_str(); *ptr; ptr++)
+    {
+        if (*ptr == '\r')
+        {
+            if (numCharsPerLine > maxCharsPerLine)
+            {
+                maxCharsPerLine = numCharsPerLine;
+            }
+            numCharsPerLine = 0;
+            numLines++;
+        }
+        else if (*ptr == '\t')
+        {
+            numCharsPerLine += TAB_SIZE;
+        }
+        else
+        {
+            numCharsPerLine++;
+        }
+    }
 
-	SetWindowText( va( "Declaration Editor (%s, line %d)", decl->GetFileName(), decl->GetLineNum() ) );
-	
-	float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
+    SetWindowText(va("Declaration Editor (%s, line %d)", decl->GetFileName(), decl->GetLineNum()));
 
-	rect.left = initialRect.left;
-	rect.right = rect.left + (maxCharsPerLine * FONT_WIDTH + 32) *scaling_factor;
-	rect.top = initialRect.top;
-	rect.bottom = rect.top + (numLines * (FONT_HEIGHT+8) + 24 + 56)* scaling_factor;
-	if ( rect.right < initialRect.right ) {
-		rect.right = initialRect.right;
-	} else if ( rect.right - rect.left > (1024 * scaling_factor) ) {
-		rect.right = rect.left + (1024 * scaling_factor);
-	}
-	if ( rect.bottom < initialRect.bottom ) {
-		rect.bottom = initialRect.bottom;
-	} else if ( rect.bottom - rect.top > (768 * scaling_factor)  ) {
-		rect.bottom = rect.top + (768 * scaling_factor);
-	}
-	MoveWindow( rect );
+    float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
 
-	testButton.EnableWindow( FALSE );
-	okButton.EnableWindow( FALSE );
+    rect.left = initialRect.left;
+    rect.right = rect.left + (maxCharsPerLine * FONT_WIDTH + 32) * scaling_factor;
+    rect.top = initialRect.top;
+    rect.bottom = rect.top + (numLines * (FONT_HEIGHT + 8) + 24 + 56) * scaling_factor;
+    if (rect.right < initialRect.right)
+    {
+        rect.right = initialRect.right;
+    }
+    else if (rect.right - rect.left > (1024 * scaling_factor))
+    {
+        rect.right = rect.left + (1024 * scaling_factor);
+    }
+    if (rect.bottom < initialRect.bottom)
+    {
+        rect.bottom = initialRect.bottom;
+    }
+    else if (rect.bottom - rect.top > (768 * scaling_factor))
+    {
+        rect.bottom = rect.top + (768 * scaling_factor);
+    }
+    MoveWindow(rect);
 
-	UpdateStatusBar();
+    testButton.EnableWindow(FALSE);
+    okButton.EnableWindow(FALSE);
 
-	declEdit.SetFocus();
+    UpdateStatusBar();
+
+    declEdit.SetFocus();
 }
 
 /*
@@ -266,55 +291,54 @@ void DialogDeclEditor::LoadDecl( idDecl *decl ) {
 DialogDeclEditor::OnInitDialog
 ================
 */
-BOOL DialogDeclEditor::OnInitDialog()  {
+BOOL DialogDeclEditor::OnInitDialog()
+{
 
-	com_editors |= EDITOR_DECL;
+    com_editors |= EDITOR_DECL;
 
-	CDialog::OnInitDialog();
+    CDialog::OnInitDialog();
 
-	// load accelerator table
-	m_hAccel = ::LoadAccelerators( AfxGetResourceHandle(), MAKEINTRESOURCE( IDR_ACCELERATOR_DECLEDITOR ) );
+    // load accelerator table
+    m_hAccel = ::LoadAccelerators(AfxGetResourceHandle(), MAKEINTRESOURCE(IDR_ACCELERATOR_DECLEDITOR));
 
-	// create status bar
-	statusBar.CreateEx( SBARS_SIZEGRIP, WS_CHILD | WS_VISIBLE | CBRS_BOTTOM, initialRect, this, AFX_IDW_STATUS_BAR );
+    // create status bar
+    statusBar.CreateEx(SBARS_SIZEGRIP, WS_CHILD | WS_VISIBLE | CBRS_BOTTOM, initialRect, this, AFX_IDW_STATUS_BAR);
 
-	declEdit.Init();
+    declEdit.Init();
 
-	GetClientRect( initialRect );
+    GetClientRect(initialRect);
 
-	EnableToolTips( TRUE );
+    EnableToolTips(TRUE);
 
-	testButton.EnableWindow( FALSE );
-	okButton.EnableWindow( FALSE );
+    testButton.EnableWindow(FALSE);
+    okButton.EnableWindow(FALSE);
 
-	UpdateStatusBar();
+    UpdateStatusBar();
 
-	return FALSE; // return TRUE unless you set the focus to a control
-				  // EXCEPTION: OCX Property Pages should return FALSE
+    return FALSE; // return TRUE unless you set the focus to a control
+                  // EXCEPTION: OCX Property Pages should return FALSE
 }
 
-
 BEGIN_MESSAGE_MAP(DialogDeclEditor, CDialog)
-	ON_NOTIFY_EX_RANGE(TTN_NEEDTEXTW, 0, 0xFFFF, OnToolTipNotify)
-	ON_NOTIFY_EX_RANGE(TTN_NEEDTEXTA, 0, 0xFFFF, OnToolTipNotify)
-	ON_WM_DESTROY()
-	ON_WM_ACTIVATE()
-	ON_WM_MOVE()
-	ON_WM_SIZE()
-	ON_WM_SIZING()
-	ON_WM_SETFOCUS()
-	ON_COMMAND(ID_EDIT_FIND, OnEditFind)
-	ON_COMMAND(ID_EDIT_REPLACE, OnEditReplace)
-	ON_COMMAND(ID_DECLEDITOR_FIND_NEXT, OnEditFindNext)
-	ON_COMMAND(ID_DECLEDITOR_GOTOLINE, OnEditGoToLine)
-	ON_REGISTERED_MESSAGE(FindDialogMessage, OnFindDialogMessage)
-	ON_NOTIFY(EN_CHANGE, IDC_DECLEDITOR_EDIT_TEXT, OnEnChangeEdit)
-	ON_NOTIFY(EN_MSGFILTER, IDC_DECLEDITOR_EDIT_TEXT, OnEnInputEdit)
-	ON_BN_CLICKED(IDC_DECLEDITOR_BUTTON_TEST, OnBnClickedTest)
-	ON_BN_CLICKED(IDOK, OnBnClickedOk)
-	ON_BN_CLICKED(IDCANCEL, OnBnClickedCancel)
+ON_NOTIFY_EX_RANGE(TTN_NEEDTEXTW, 0, 0xFFFF, OnToolTipNotify)
+ON_NOTIFY_EX_RANGE(TTN_NEEDTEXTA, 0, 0xFFFF, OnToolTipNotify)
+ON_WM_DESTROY()
+ON_WM_ACTIVATE()
+ON_WM_MOVE()
+ON_WM_SIZE()
+ON_WM_SIZING()
+ON_WM_SETFOCUS()
+ON_COMMAND(ID_EDIT_FIND, OnEditFind)
+ON_COMMAND(ID_EDIT_REPLACE, OnEditReplace)
+ON_COMMAND(ID_DECLEDITOR_FIND_NEXT, OnEditFindNext)
+ON_COMMAND(ID_DECLEDITOR_GOTOLINE, OnEditGoToLine)
+ON_REGISTERED_MESSAGE(FindDialogMessage, OnFindDialogMessage)
+ON_NOTIFY(EN_CHANGE, IDC_DECLEDITOR_EDIT_TEXT, OnEnChangeEdit)
+ON_NOTIFY(EN_MSGFILTER, IDC_DECLEDITOR_EDIT_TEXT, OnEnInputEdit)
+ON_BN_CLICKED(IDC_DECLEDITOR_BUTTON_TEST, OnBnClickedTest)
+ON_BN_CLICKED(IDOK, OnBnClickedOk)
+ON_BN_CLICKED(IDCANCEL, OnBnClickedCancel)
 END_MESSAGE_MAP()
-
 
 // DialogDeclEditor message handlers
 
@@ -323,8 +347,9 @@ END_MESSAGE_MAP()
 DialogDeclEditor::OnActivate
 ================
 */
-void DialogDeclEditor::OnActivate( UINT nState, CWnd *pWndOther, BOOL bMinimized ) {
-	CDialog::OnActivate( nState, pWndOther, bMinimized );
+void DialogDeclEditor::OnActivate(UINT nState, CWnd *pWndOther, BOOL bMinimized)
+{
+    CDialog::OnActivate(nState, pWndOther, bMinimized);
 }
 
 /*
@@ -332,8 +357,9 @@ void DialogDeclEditor::OnActivate( UINT nState, CWnd *pWndOther, BOOL bMinimized
 DialogDeclEditor::OnToolTipNotify
 ================
 */
-BOOL DialogDeclEditor::OnToolTipNotify( UINT id, NMHDR *pNMHDR, LRESULT *pResult ) {
-	return DefaultOnToolTipNotify( toolTips, id, pNMHDR, pResult );
+BOOL DialogDeclEditor::OnToolTipNotify(UINT id, NMHDR *pNMHDR, LRESULT *pResult)
+{
+    return DefaultOnToolTipNotify(toolTips, id, pNMHDR, pResult);
 }
 
 /*
@@ -341,8 +367,9 @@ BOOL DialogDeclEditor::OnToolTipNotify( UINT id, NMHDR *pNMHDR, LRESULT *pResult
 DialogDeclEditor::OnSetFocus
 ================
 */
-void DialogDeclEditor::OnSetFocus( CWnd *pOldWnd ) {
-	CDialog::OnSetFocus( pOldWnd );
+void DialogDeclEditor::OnSetFocus(CWnd *pOldWnd)
+{
+    CDialog::OnSetFocus(pOldWnd);
 }
 
 /*
@@ -350,8 +377,9 @@ void DialogDeclEditor::OnSetFocus( CWnd *pOldWnd ) {
 DialogDeclEditor::OnDestroy
 ================
 */
-void DialogDeclEditor::OnDestroy() {
-	return CDialog::OnDestroy();
+void DialogDeclEditor::OnDestroy()
+{
+    return CDialog::OnDestroy();
 }
 
 /*
@@ -359,13 +387,15 @@ void DialogDeclEditor::OnDestroy() {
 DialogDeclEditor::OnMove
 ================
 */
-void DialogDeclEditor::OnMove( int x, int y ) {
-	if ( GetSafeHwnd() ) {
-		CRect rct;
-		GetWindowRect( rct );
-		// FIXME: save position
-	}
-	CDialog::OnMove( x, y );
+void DialogDeclEditor::OnMove(int x, int y)
+{
+    if (GetSafeHwnd())
+    {
+        CRect rct;
+        GetWindowRect(rct);
+        // FIXME: save position
+    }
+    CDialog::OnMove(x, y);
 }
 
 /*
@@ -373,72 +403,78 @@ void DialogDeclEditor::OnMove( int x, int y ) {
 DialogDeclEditor::OnSize
 ================
 */
-#define BORDER_SIZE			0
-#define BUTTON_SPACE		4
-#define TOOLBAR_HEIGHT		24
+#define BORDER_SIZE 0
+#define BUTTON_SPACE 4
+#define TOOLBAR_HEIGHT 24
 
-void DialogDeclEditor::OnSize( UINT nType, int cx, int cy ) {
-	CRect clientRect, rect;
+void DialogDeclEditor::OnSize(UINT nType, int cx, int cy)
+{
+    CRect clientRect, rect;
 
-	LockWindowUpdate();
+    LockWindowUpdate();
 
-	CDialog::OnSize( nType, cx, cy );
+    CDialog::OnSize(nType, cx, cy);
 
-	GetClientRect( clientRect );
-	float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
-	float scaled_toolbar_height = (TOOLBAR_HEIGHT * scaling_factor);
-	float scaled_button_space = (BUTTON_SPACE * scaling_factor);
+    GetClientRect(clientRect);
+    float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
+    float scaled_toolbar_height = (TOOLBAR_HEIGHT * scaling_factor);
+    float scaled_button_space = (BUTTON_SPACE * scaling_factor);
 
-	if ( declEdit.GetSafeHwnd() ) {
-		rect.left = BORDER_SIZE;
-		rect.top = BORDER_SIZE;
-		rect.right = clientRect.Width() - BORDER_SIZE;
-		rect.bottom = clientRect.Height() - (56 * scaling_factor);
-		declEdit.MoveWindow( rect.left, rect.top, rect.Width(), rect.Height() );
-	}
+    if (declEdit.GetSafeHwnd())
+    {
+        rect.left = BORDER_SIZE;
+        rect.top = BORDER_SIZE;
+        rect.right = clientRect.Width() - BORDER_SIZE;
+        rect.bottom = clientRect.Height() - (56 * scaling_factor);
+        declEdit.MoveWindow(rect.left, rect.top, rect.Width(), rect.Height());
+    }
 
-	if ( testButton.GetSafeHwnd() ) {
-		testButton.GetClientRect( rect );
-		int width = rect.Width();
-		int height = rect.Height();
-		rect.left = BORDER_SIZE;
-		rect.top = clientRect.Height() - scaled_toolbar_height - height;
-		rect.right = BORDER_SIZE + width;
-		rect.bottom = clientRect.Height() - scaled_toolbar_height;
-		testButton.MoveWindow( rect.left, rect.top, rect.Width(), rect.Height() );
-	}
+    if (testButton.GetSafeHwnd())
+    {
+        testButton.GetClientRect(rect);
+        int width = rect.Width();
+        int height = rect.Height();
+        rect.left = BORDER_SIZE;
+        rect.top = clientRect.Height() - scaled_toolbar_height - height;
+        rect.right = BORDER_SIZE + width;
+        rect.bottom = clientRect.Height() - scaled_toolbar_height;
+        testButton.MoveWindow(rect.left, rect.top, rect.Width(), rect.Height());
+    }
 
-	if ( okButton.GetSafeHwnd() ) {
-		okButton.GetClientRect( rect );
-		int width = rect.Width();
-		int height = rect.Height();
-		rect.left = clientRect.Width() - BORDER_SIZE - scaled_button_space - 2 * width;
-		rect.top = clientRect.Height() - scaled_toolbar_height - height;
-		rect.right = clientRect.Width() - BORDER_SIZE - scaled_button_space - width;
-		rect.bottom = clientRect.Height() - scaled_toolbar_height;
-		okButton.MoveWindow( rect.left, rect.top, rect.Width(), rect.Height() );
-	}
+    if (okButton.GetSafeHwnd())
+    {
+        okButton.GetClientRect(rect);
+        int width = rect.Width();
+        int height = rect.Height();
+        rect.left = clientRect.Width() - BORDER_SIZE - scaled_button_space - 2 * width;
+        rect.top = clientRect.Height() - scaled_toolbar_height - height;
+        rect.right = clientRect.Width() - BORDER_SIZE - scaled_button_space - width;
+        rect.bottom = clientRect.Height() - scaled_toolbar_height;
+        okButton.MoveWindow(rect.left, rect.top, rect.Width(), rect.Height());
+    }
 
-	if ( cancelButton.GetSafeHwnd() ) {
-		cancelButton.GetClientRect( rect );
-		int width = rect.Width();
-		int height = rect.Height();
-		rect.left = clientRect.Width() - BORDER_SIZE - width;
-		rect.top = clientRect.Height() - scaled_toolbar_height - height;
-		rect.right = clientRect.Width() - BORDER_SIZE;
-		rect.bottom = clientRect.Height() - scaled_toolbar_height;
-		cancelButton.MoveWindow( rect.left, rect.top, rect.Width(), rect.Height() );
-	}
+    if (cancelButton.GetSafeHwnd())
+    {
+        cancelButton.GetClientRect(rect);
+        int width = rect.Width();
+        int height = rect.Height();
+        rect.left = clientRect.Width() - BORDER_SIZE - width;
+        rect.top = clientRect.Height() - scaled_toolbar_height - height;
+        rect.right = clientRect.Width() - BORDER_SIZE;
+        rect.bottom = clientRect.Height() - scaled_toolbar_height;
+        cancelButton.MoveWindow(rect.left, rect.top, rect.Width(), rect.Height());
+    }
 
-	if ( statusBar.GetSafeHwnd() ) {
-		rect.left = clientRect.Width() - 2;
-		rect.top = clientRect.Height() - 2;
-		rect.right = clientRect.Width() - 2;
-		rect.bottom = clientRect.Height() - 2;
-		statusBar.MoveWindow( rect.left, rect.top, rect.Width(), rect.Height() );
-	}
+    if (statusBar.GetSafeHwnd())
+    {
+        rect.left = clientRect.Width() - 2;
+        rect.top = clientRect.Height() - 2;
+        rect.right = clientRect.Width() - 2;
+        rect.bottom = clientRect.Height() - 2;
+        statusBar.MoveWindow(rect.left, rect.top, rect.Width(), rect.Height());
+    }
 
-	UnlockWindowUpdate();
+    UnlockWindowUpdate();
 }
 
 /*
@@ -446,38 +482,49 @@ void DialogDeclEditor::OnSize( UINT nType, int cx, int cy ) {
 DialogDeclEditor::OnSizing
 ================
 */
-void DialogDeclEditor::OnSizing( UINT nSide, LPRECT lpRect ) {
-	/*
-		1 = left
-		2 = right
-		3 = top
-		4 = left - top
-		5 = right - top
-		6 = bottom
-		7 = left - bottom
-		8 = right - bottom
-	*/
+void DialogDeclEditor::OnSizing(UINT nSide, LPRECT lpRect)
+{
+    /*
+            1 = left
+            2 = right
+            3 = top
+            4 = left - top
+            5 = right - top
+            6 = bottom
+            7 = left - bottom
+            8 = right - bottom
+    */
 
-	CDialog::OnSizing( nSide, lpRect );
+    CDialog::OnSizing(nSide, lpRect);
 
-	if ( ( nSide - 1 ) % 3 == 0 ) {
-		if ( lpRect->right - lpRect->left < initialRect.Width() ) {
-			lpRect->left = lpRect->right - initialRect.Width();
-		}
-	} else if ( ( nSide - 2 ) % 3 == 0 ) {
-		if ( lpRect->right - lpRect->left < initialRect.Width() ) {
-			lpRect->right = lpRect->left + initialRect.Width();
-		}
-	}
-	if ( nSide >= 3 && nSide <= 5 ) {
-		if ( lpRect->bottom - lpRect->top < initialRect.Height() ) {
-			lpRect->top = lpRect->bottom - initialRect.Height();
-		}
-	} else if ( nSide >= 6 && nSide <= 9 ) {
-		if ( lpRect->bottom - lpRect->top < initialRect.Height() ) {
-			lpRect->bottom = lpRect->top + initialRect.Height();
-		}
-	}
+    if ((nSide - 1) % 3 == 0)
+    {
+        if (lpRect->right - lpRect->left < initialRect.Width())
+        {
+            lpRect->left = lpRect->right - initialRect.Width();
+        }
+    }
+    else if ((nSide - 2) % 3 == 0)
+    {
+        if (lpRect->right - lpRect->left < initialRect.Width())
+        {
+            lpRect->right = lpRect->left + initialRect.Width();
+        }
+    }
+    if (nSide >= 3 && nSide <= 5)
+    {
+        if (lpRect->bottom - lpRect->top < initialRect.Height())
+        {
+            lpRect->top = lpRect->bottom - initialRect.Height();
+        }
+    }
+    else if (nSide >= 6 && nSide <= 9)
+    {
+        if (lpRect->bottom - lpRect->top < initialRect.Height())
+        {
+            lpRect->bottom = lpRect->top + initialRect.Height();
+        }
+    }
 }
 
 /*
@@ -485,14 +532,16 @@ void DialogDeclEditor::OnSizing( UINT nSide, LPRECT lpRect ) {
 DialogDeclEditor::OnEditGoToLine
 ================
 */
-void DialogDeclEditor::OnEditGoToLine() {
-	DialogGoToLine goToLineDlg;
+void DialogDeclEditor::OnEditGoToLine()
+{
+    DialogGoToLine goToLineDlg;
 
-	goToLineDlg.SetRange( firstLine, firstLine + declEdit.GetLineCount() - 1 );
-	if ( goToLineDlg.DoModal() != IDOK ) {
-		return;
-	}
-	declEdit.GoToLine( goToLineDlg.GetLine() - firstLine );
+    goToLineDlg.SetRange(firstLine, firstLine + declEdit.GetLineCount() - 1);
+    if (goToLineDlg.DoModal() != IDOK)
+    {
+        return;
+    }
+    declEdit.GoToLine(goToLineDlg.GetLine() - firstLine);
 }
 
 /*
@@ -500,18 +549,21 @@ void DialogDeclEditor::OnEditGoToLine() {
 DialogDeclEditor::OnEditFind
 ================
 */
-void DialogDeclEditor::OnEditFind() {
+void DialogDeclEditor::OnEditFind()
+{
 
-	CString selText = declEdit.GetSelText();
-	if ( selText.GetLength() ) {
-		findStr = selText;
-	}
+    CString selText = declEdit.GetSelText();
+    if (selText.GetLength())
+    {
+        findStr = selText;
+    }
 
-	if ( !findDlg ) {
-		// create find/replace dialog
-		findDlg = new CFindReplaceDialog();  // Must be created on the heap
-		findDlg->Create( TRUE, findStr, "", FR_DOWN, this );
-	}
+    if (!findDlg)
+    {
+        // create find/replace dialog
+        findDlg = new CFindReplaceDialog(); // Must be created on the heap
+        findDlg->Create(TRUE, findStr, "", FR_DOWN, this);
+    }
 }
 
 /*
@@ -519,12 +571,16 @@ void DialogDeclEditor::OnEditFind() {
 DialogDeclEditor::OnEditFindNext
 ================
 */
-void DialogDeclEditor::OnEditFindNext() {
-	if ( declEdit.FindNext( findStr, matchCase, matchWholeWords, searchForward ) ) {
-		declEdit.SetFocus();
-	} else {
-		AfxMessageBox( "The specified text was not found.", MB_OK | MB_ICONINFORMATION, 0 );
-	}
+void DialogDeclEditor::OnEditFindNext()
+{
+    if (declEdit.FindNext(findStr, matchCase, matchWholeWords, searchForward))
+    {
+        declEdit.SetFocus();
+    }
+    else
+    {
+        AfxMessageBox("The specified text was not found.", MB_OK | MB_ICONINFORMATION, 0);
+    }
 }
 
 /*
@@ -532,18 +588,21 @@ void DialogDeclEditor::OnEditFindNext() {
 DialogDeclEditor::OnEditReplace
 ================
 */
-void DialogDeclEditor::OnEditReplace() {
+void DialogDeclEditor::OnEditReplace()
+{
 
-	CString selText = declEdit.GetSelText();
-	if ( selText.GetLength() ) {
-		findStr = selText;
-	}
+    CString selText = declEdit.GetSelText();
+    if (selText.GetLength())
+    {
+        findStr = selText;
+    }
 
-	// create find/replace dialog
-	if ( !findDlg ) {
-		findDlg = new CFindReplaceDialog();  // Must be created on the heap
-		findDlg->Create( FALSE, findStr, "", FR_DOWN, this );
-	}
+    // create find/replace dialog
+    if (!findDlg)
+    {
+        findDlg = new CFindReplaceDialog(); // Must be created on the heap
+        findDlg->Create(FALSE, findStr, "", FR_DOWN, this);
+    }
 }
 
 /*
@@ -551,51 +610,61 @@ void DialogDeclEditor::OnEditReplace() {
 DialogDeclEditor::OnFindDialogMessage
 ================
 */
-LRESULT DialogDeclEditor::OnFindDialogMessage( WPARAM wParam, LPARAM lParam ) {
-	if ( findDlg == NULL ) {
-		return 0;
-	}
+LRESULT DialogDeclEditor::OnFindDialogMessage(WPARAM wParam, LPARAM lParam)
+{
+    if (findDlg == NULL)
+    {
+        return 0;
+    }
 
-	if ( findDlg->IsTerminating() ) {
-		findDlg = NULL;
-		return 0;
-	}
+    if (findDlg->IsTerminating())
+    {
+        findDlg = NULL;
+        return 0;
+    }
 
-	if( findDlg->FindNext() ) {
-		findStr = findDlg->GetFindString();
-		matchCase = findDlg->MatchCase() != FALSE;
-		matchWholeWords = findDlg->MatchWholeWord() != FALSE;
-		searchForward = findDlg->SearchDown() != FALSE;
+    if (findDlg->FindNext())
+    {
+        findStr = findDlg->GetFindString();
+        matchCase = findDlg->MatchCase() != FALSE;
+        matchWholeWords = findDlg->MatchWholeWord() != FALSE;
+        searchForward = findDlg->SearchDown() != FALSE;
 
-		OnEditFindNext();
-	}
+        OnEditFindNext();
+    }
 
-	if ( findDlg->ReplaceCurrent() ) {
-		long selStart, selEnd;
+    if (findDlg->ReplaceCurrent())
+    {
+        long selStart, selEnd;
 
-		replaceStr = findDlg->GetReplaceString();
+        replaceStr = findDlg->GetReplaceString();
 
-		declEdit.GetSel( selStart, selEnd );
-		if ( selEnd > selStart ) {
-			declEdit.ReplaceSel( replaceStr, TRUE );
-		}
-	}
+        declEdit.GetSel(selStart, selEnd);
+        if (selEnd > selStart)
+        {
+            declEdit.ReplaceSel(replaceStr, TRUE);
+        }
+    }
 
-	if ( findDlg->ReplaceAll() ) {
-		replaceStr = findDlg->GetReplaceString();
-		findStr = findDlg->GetFindString();
-		matchCase = findDlg->MatchCase() != FALSE;
-		matchWholeWords = findDlg->MatchWholeWord() != FALSE;
+    if (findDlg->ReplaceAll())
+    {
+        replaceStr = findDlg->GetReplaceString();
+        findStr = findDlg->GetFindString();
+        matchCase = findDlg->MatchCase() != FALSE;
+        matchWholeWords = findDlg->MatchWholeWord() != FALSE;
 
-		int numReplaces = declEdit.ReplaceAll( findStr, replaceStr, matchCase, matchWholeWords );
-		if ( numReplaces == 0 ) {
-			AfxMessageBox( "The specified text was not found.", MB_OK | MB_ICONINFORMATION, 0 );
-		} else {
-			AfxMessageBox( va( "Replaced %d occurances.", numReplaces ), MB_OK | MB_ICONINFORMATION, 0 );
-		}
-	}
+        int numReplaces = declEdit.ReplaceAll(findStr, replaceStr, matchCase, matchWholeWords);
+        if (numReplaces == 0)
+        {
+            AfxMessageBox("The specified text was not found.", MB_OK | MB_ICONINFORMATION, 0);
+        }
+        else
+        {
+            AfxMessageBox(va("Replaced %d occurances.", numReplaces), MB_OK | MB_ICONINFORMATION, 0);
+        }
+    }
 
-	return 0;
+    return 0;
 }
 
 /*
@@ -603,9 +672,10 @@ LRESULT DialogDeclEditor::OnFindDialogMessage( WPARAM wParam, LPARAM lParam ) {
 DialogDeclEditor::OnEnChangeEdit
 ================
 */
-void DialogDeclEditor::OnEnChangeEdit( NMHDR *pNMHDR, LRESULT *pResult ) {
-	testButton.EnableWindow( TRUE );
-	okButton.EnableWindow( TRUE );
+void DialogDeclEditor::OnEnChangeEdit(NMHDR *pNMHDR, LRESULT *pResult)
+{
+    testButton.EnableWindow(TRUE);
+    okButton.EnableWindow(TRUE);
 }
 
 /*
@@ -613,14 +683,16 @@ void DialogDeclEditor::OnEnChangeEdit( NMHDR *pNMHDR, LRESULT *pResult ) {
 DialogDeclEditor::OnEnInputEdit
 ================
 */
-void DialogDeclEditor::OnEnInputEdit( NMHDR *pNMHDR, LRESULT *pResult ) {
-	MSGFILTER *msgFilter = (MSGFILTER *)pNMHDR;
+void DialogDeclEditor::OnEnInputEdit(NMHDR *pNMHDR, LRESULT *pResult)
+{
+    MSGFILTER *msgFilter = (MSGFILTER *)pNMHDR;
 
-	if ( msgFilter->msg != 512 && msgFilter->msg != 33 ) {
-		UpdateStatusBar();
-	}
+    if (msgFilter->msg != 512 && msgFilter->msg != 33)
+    {
+        UpdateStatusBar();
+    }
 
-	*pResult = 0;
+    *pResult = 0;
 }
 
 /*
@@ -628,36 +700,39 @@ void DialogDeclEditor::OnEnInputEdit( NMHDR *pNMHDR, LRESULT *pResult ) {
 DialogDeclEditor::OnBnClickedTest
 ================
 */
-void DialogDeclEditor::OnBnClickedTest() {
-	idStr declText;
+void DialogDeclEditor::OnBnClickedTest()
+{
+    idStr declText;
 
-	if ( decl ) {
+    if (decl)
+    {
 
-		declEdit.GetText( declText );
+        declEdit.GetText(declText);
 
-		// clean up new-line crapola
-		declText.Replace( "\n", "" );
-		declText.Replace( "\r", "\r\n" );
-		declText.Replace( "\v", "\r\n" );
-		declText.StripLeading( "\r\n" );
-		declText.Insert( "\r\n\r\n", 0 );
-		declText.StripTrailing( "\r\n" );
+        // clean up new-line crapola
+        declText.Replace("\n", "");
+        declText.Replace("\r", "\r\n");
+        declText.Replace("\v", "\r\n");
+        declText.StripLeading("\r\n");
+        declText.Insert("\r\n\r\n", 0);
+        declText.StripTrailing("\r\n");
 
-		if ( !TestDecl( declText ) ) {
-			return;
-		}
+        if (!TestDecl(declText))
+        {
+            return;
+        }
 
-		char *oldDeclText = (char *)_alloca( ( decl->GetTextLength() + 1 ) * sizeof( char ) );
-		decl->GetText( oldDeclText );
-		decl->SetText( declText );
-		decl->Invalidate();
-		declManager->DeclByIndex( decl->GetType(), decl->Index(), true );
-		decl->SetText( oldDeclText );
-		decl->Invalidate();
-		common->Printf( "tested %s\n", decl->GetName() );
+        char *oldDeclText = (char *)_alloca((decl->GetTextLength() + 1) * sizeof(char));
+        decl->GetText(oldDeclText);
+        decl->SetText(declText);
+        decl->Invalidate();
+        declManager->DeclByIndex(decl->GetType(), decl->Index(), true);
+        decl->SetText(oldDeclText);
+        decl->Invalidate();
+        common->Printf("tested %s\n", decl->GetName());
 
-		testButton.EnableWindow( FALSE );
-	}
+        testButton.EnableWindow(FALSE);
+    }
 }
 
 /*
@@ -665,44 +740,54 @@ void DialogDeclEditor::OnBnClickedTest() {
 DialogDeclEditor::OnBnClickedOk
 ================
 */
-void DialogDeclEditor::OnBnClickedOk() {
-	idStr declText;
+void DialogDeclEditor::OnBnClickedOk()
+{
+    idStr declText;
 
-	if ( decl ) {
+    if (decl)
+    {
 
-		declEdit.GetText( declText );
+        declEdit.GetText(declText);
 
-		// clean up new-line crapola
-		declText.Replace( "\n", "" );
-		declText.Replace( "\r", "\r\n" );
-		declText.Replace( "\v", "\r\n" );
-		declText.StripLeading( "\r\n" );
-		declText.Insert( "\r\n\r\n", 0 );
-		declText.StripTrailing( "\r\n" );
+        // clean up new-line crapola
+        declText.Replace("\n", "");
+        declText.Replace("\r", "\r\n");
+        declText.Replace("\v", "\r\n");
+        declText.StripLeading("\r\n");
+        declText.Insert("\r\n\r\n", 0);
+        declText.StripTrailing("\r\n");
 
-		if ( !TestDecl( declText ) ) {
-			return;
-		}
+        if (!TestDecl(declText))
+        {
+            return;
+        }
 
-		if ( decl->SourceFileChanged() ) {
-			if ( MessageBox( va( "Declaration file %s has been modified outside of the editor.\r\nReload declarations and save?", decl->GetFileName() ),
-							va( "Warning saving: %s", decl->GetFileName() ), MB_OKCANCEL | MB_ICONERROR ) != IDOK ) {
-				return;
-			}
-			declManager->Reload( false );
-			DeclBrowserReloadDeclarations();
-		}
+        if (decl->SourceFileChanged())
+        {
+            if (MessageBox(va("Declaration file %s has been modified outside of the "
+                              "editor.\r\nReload declarations and save?",
+                              decl->GetFileName()),
+                           va("Warning saving: %s", decl->GetFileName()), MB_OKCANCEL | MB_ICONERROR) != IDOK)
+            {
+                return;
+            }
+            declManager->Reload(false);
+            DeclBrowserReloadDeclarations();
+        }
 
-		decl->SetText( declText );
-		if ( !decl->ReplaceSourceFileText() ) {
-			MessageBox( va( "Couldn't save: %s.\r\nMake sure the declaration file is not read-only.", decl->GetFileName() ),
-						va( "Error saving: %s", decl->GetFileName() ), MB_OK | MB_ICONERROR );
-			return;
-		}
-		decl->Invalidate();
-	}
+        decl->SetText(declText);
+        if (!decl->ReplaceSourceFileText())
+        {
+            MessageBox(va("Couldn't save: %s.\r\nMake sure the declaration file is "
+                          "not read-only.",
+                          decl->GetFileName()),
+                       va("Error saving: %s", decl->GetFileName()), MB_OK | MB_ICONERROR);
+            return;
+        }
+        decl->Invalidate();
+    }
 
-	okButton.EnableWindow( FALSE );
+    okButton.EnableWindow(FALSE);
 }
 
 /*
@@ -710,11 +795,14 @@ void DialogDeclEditor::OnBnClickedOk() {
 DialogDeclEditor::OnBnClickedCancel
 ================
 */
-void DialogDeclEditor::OnBnClickedCancel() {
-	if ( okButton.IsWindowEnabled() ) {
-		if ( MessageBox( "Cancel changes?", "Cancel", MB_YESNO | MB_ICONQUESTION ) != IDYES ) {
-			return;
-		}
-	}
-	OnCancel();
+void DialogDeclEditor::OnBnClickedCancel()
+{
+    if (okButton.IsWindowEnabled())
+    {
+        if (MessageBox("Cancel changes?", "Cancel", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        {
+            return;
+        }
+    }
+    OnCancel();
 }

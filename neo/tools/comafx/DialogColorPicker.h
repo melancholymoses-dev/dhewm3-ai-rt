@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -34,160 +40,168 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "CDib.h"
 
-#define RADIUS		100
-#define PI			3.14159265358
+#define RADIUS 100
+#define PI 3.14159265358
 
-#define RECT_WIDTH	5
+#define RECT_WIDTH 5
 
-#define TOSCALE(x)	(((x)*RADIUS)/255.0)
-#define SCALETOMAX(x) (((x)*255.0)/RADIUS)
+#define TOSCALE(x) (((x) * RADIUS) / 255.0)
+#define SCALETOMAX(x) (((x) * 255.0) / RADIUS)
 
-
-#define RED	0
+#define RED 0
 #define GREEN 1
 #define BLUE 2
 
-#define BAD_SLOPE	1000000.0
-
+#define BAD_SLOPE 1000000.0
 
 struct HSVType;
 
-struct RGBType {
-	COLORREF		color() { return RGB( r, g, b ); }
-	HSVType			toHSV();
-	int				r, g, b;
+struct RGBType
+{
+    COLORREF color()
+    {
+        return RGB(r, g, b);
+    }
+    HSVType toHSV();
+    int r, g, b;
 };
 
-struct HSVType {
-	RGBType			toRGB();
-	int				h, s, v;
+struct HSVType
+{
+    RGBType toRGB();
+    int h, s, v;
 };
 
-struct LineDesc {
-	double			x, y;
-	double			slope;
-	double			c;
+struct LineDesc
+{
+    double x, y;
+    double slope;
+    double c;
 };
-
 
 class CDialogColorPicker : public CDialog
 {
-// Construction
-public:
-					CDialogColorPicker(COLORREF c,CWnd* pParent = NULL);   // standard constructor
-					~CDialogColorPicker();
+    // Construction
+  public:
+    CDialogColorPicker(COLORREF c, CWnd *pParent = NULL); // standard constructor
+    ~CDialogColorPicker();
 
-	COLORREF		GetColor() { return color.color();};
-	float			GetOverBright() { return overBright; };
+    COLORREF GetColor()
+    {
+        return color.color();
+    };
+    float GetOverBright()
+    {
+        return overBright;
+    };
 
+    // Dialog Data
+    //{{AFX_DATA(CDialogColorPicker)
+    enum
+    {
+        IDD = IDD_DIALOG_COLORS
+    };
+    float m_overBright;
+    //}}AFX_DATA
 
-	// Dialog Data
-	//{{AFX_DATA(CDialogColorPicker)
-	enum { IDD = IDD_DIALOG_COLORS };
-	float			m_overBright;
-	//}}AFX_DATA
+    void (*UpdateParent)(float r, float g, float b, float a);
 
-	void			(*UpdateParent)( float r, float g, float b, float a );
+    // Overrides
+    // ClassWizard generated virtual function overrides
+    //{{AFX_VIRTUAL(CDialogColorPicker)
+    //}}AFX_VIRTUAL
 
-	// Overrides
-	// ClassWizard generated virtual function overrides
-	//{{AFX_VIRTUAL(CDialogColorPicker)
-	//}}AFX_VIRTUAL
+    // Implementation
+  protected:
+    // Generated message map functions
+    //{{AFX_MSG(CDialogColorPicker)
+    afx_msg void OnLButtonDown(UINT nFlags, CPoint point);
+    afx_msg void OnLButtonUp(UINT nFlags, CPoint point);
+    afx_msg void OnMouseMove(UINT nFlags, CPoint point);
+    afx_msg void OnSysColorChange();
+    afx_msg void OnPaint();
+    virtual BOOL OnInitDialog();
+    afx_msg void OnChangeEditBlue();
+    afx_msg void OnChangeEditGreen();
+    afx_msg void OnChangeEditHue();
+    afx_msg void OnChangeEditRed();
+    afx_msg void OnChangeEditSat();
+    afx_msg void OnChangeEditVal();
+    afx_msg void OnChangeEditOverbright();
+    afx_msg void OnTimer(UINT_PTR nIDEvent);
+    afx_msg void OnBtnColor();
+    //}}AFX_MSG
+    DECLARE_MESSAGE_MAP()
 
-// Implementation
-protected:
+    void DrawFilledColor(CDC *pDC, CRect cr, COLORREF c);
+    void DrawLines(CDC *pDC);
+    void DrawXorRect(CDC *pDC, CRect &cr);
+    void CalcSlopes();
+    void CalcCuboid();
 
-	// Generated message map functions
-	//{{AFX_MSG(CDialogColorPicker)
-	afx_msg void	OnLButtonDown(UINT nFlags, CPoint point);
-	afx_msg void	OnLButtonUp(UINT nFlags, CPoint point);
-	afx_msg void	OnMouseMove(UINT nFlags, CPoint point);
-	afx_msg void	OnSysColorChange();
-	afx_msg void	OnPaint();
-	virtual BOOL	OnInitDialog();
-	afx_msg void	OnChangeEditBlue();
-	afx_msg void	OnChangeEditGreen();
-	afx_msg void	OnChangeEditHue();
-	afx_msg void	OnChangeEditRed();
-	afx_msg void	OnChangeEditSat();
-	afx_msg void	OnChangeEditVal();
-	afx_msg void	OnChangeEditOverbright();
-	afx_msg void	OnTimer(UINT_PTR nIDEvent);
-	afx_msg void	OnBtnColor();
-	//}}AFX_MSG
-	DECLARE_MESSAGE_MAP()
+    void CreateBrightDIB();
+    void SetDIBPalette();
+    void DrawMarkers(CDC *pDC);
+    void TrackPoint(CPoint pt);
+    void CalcRects();
 
-	void			DrawFilledColor(CDC *pDC,CRect cr,COLORREF c);
-	void			DrawLines(CDC *pDC);
-	void			DrawXorRect(CDC *pDC,CRect& cr);
-	void			CalcSlopes();
-	void			CalcCuboid();
+    BOOL InCircle(CPoint pt);
+    BOOL InBright(CPoint pt);
+    BOOL InOverBright(CPoint pt);
 
-	void			CreateBrightDIB();
-	void			SetDIBPalette();
-	void			DrawMarkers(CDC *pDC);
-	void			TrackPoint(CPoint pt);
-	void			CalcRects();
+    void SetSpinVals();
+    void SetEditVals();
+    void DrawAll();
 
-	BOOL			InCircle(CPoint pt);
-	BOOL			InBright(CPoint pt);
-	BOOL			InOverBright(CPoint pt);
+    void DrawRGB(CDC *pDC);
+    void DrawHSB(CDC *pDC);
 
+    void LoadMappedBitmap(CBitmap &bitmap, UINT nIdResource, CSize &size);
 
-	void			SetSpinVals();
-	void			SetEditVals();
-	void			DrawAll();
+    CBitmap m_RgbBitmap, m_HsbBitmap;
 
-	void			DrawRGB(CDC *pDC);
-	void			DrawHSB(CDC *pDC);
+    CDC memDC;
+    CPoint m_Centre;
+    CDIB m_BrightDIB;
 
-	void			LoadMappedBitmap(CBitmap& bitmap,UINT nIdResource,CSize& size);
+    int rgbWidth;
+    int rgbHeight;
+    int hsbWidth;
+    int hsbHeight;
 
-	CBitmap			m_RgbBitmap,m_HsbBitmap;
+    int m_nMouseIn;
+    CRect m_CurrentRect, brightMark;
+    CRect brightRect;
+    CRect overBrightRect;
 
-	CDC				memDC;
-	CPoint			m_Centre;
-	CDIB			m_BrightDIB;
+    HSVType hsvColor;
 
-	int				rgbWidth;
-	int				rgbHeight;
-	int				hsbWidth;
-	int				hsbHeight;
+    RGBType color;
+    RGBType m_OldColor;
+    CPoint Vertex;
+    CPoint Top;
+    CPoint Left;
+    CPoint Right;
+    CRect rects[3];
+    CPoint m_Cuboid[8];
+    BOOL m_bInMouse;
+    int nIndex;
+    int RedLen;
+    int GreenLen;
+    int BlueLen;
+    LineDesc lines[3];
 
-	int				m_nMouseIn;
-	CRect			m_CurrentRect,brightMark;
-	CRect			brightRect;
-	CRect			overBrightRect;
+    CRect rgbRect;
+    CRect hsbRect;
+    CRect OldColorRect;
+    CRect NewColorRect;
 
-	HSVType			hsvColor;
+    BOOL m_bInitOver;
+    BOOL m_bInDrawAll;
 
-	RGBType			color;
-	RGBType			m_OldColor;
-	CPoint			Vertex;
-	CPoint			Top;
-	CPoint			Left;
-	CPoint			Right;
-	CRect			rects[3];
-	CPoint			m_Cuboid[8];
-	BOOL			m_bInMouse;
-	int				nIndex;
-	int				RedLen;
-	int				GreenLen;
-	int				BlueLen;
-	LineDesc		lines[3];
-
-
-	CRect			rgbRect;
-	CRect			hsbRect;
-	CRect			OldColorRect;
-	CRect			NewColorRect;
-
-	BOOL			m_bInitOver;
-	BOOL			m_bInDrawAll;
-
-	float			overBright;
+    float overBright;
 };
 
-bool DoNewColor( int* i1, int* i2, int* i3, float *overBright, void (*Update)( float, float, float, float ) = NULL );
+bool DoNewColor(int *i1, int *i2, int *i3, float *overBright, void (*Update)(float, float, float, float) = NULL);
 
 #endif /* !__DIALOGCOLORPICKER__ */

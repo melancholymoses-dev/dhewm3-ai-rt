@@ -19,30 +19,38 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "sys/platform.h"
 #include "framework/async/AsyncNetwork.h"
+#include "sys/platform.h"
 
 #include "framework/async/NetworkSystem.h"
 
-idNetworkSystem		networkSystemLocal;
-idNetworkSystem *	networkSystem = &networkSystemLocal;
+idNetworkSystem networkSystemLocal;
+idNetworkSystem *networkSystem = &networkSystemLocal;
 
 /*
 ==================
 idNetworkSystem::ServerSendReliableMessage
 ==================
 */
-void idNetworkSystem::ServerSendReliableMessage( int clientNum, const idBitMsg &msg ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		idAsyncNetwork::server.SendReliableGameMessage( clientNum, msg );
-	}
+void idNetworkSystem::ServerSendReliableMessage(int clientNum, const idBitMsg &msg)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        idAsyncNetwork::server.SendReliableGameMessage(clientNum, msg);
+    }
 }
 
 /*
@@ -50,10 +58,12 @@ void idNetworkSystem::ServerSendReliableMessage( int clientNum, const idBitMsg &
 idNetworkSystem::ServerSendReliableMessageExcluding
 ==================
 */
-void idNetworkSystem::ServerSendReliableMessageExcluding( int clientNum, const idBitMsg &msg ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		idAsyncNetwork::server.SendReliableGameMessageExcluding( clientNum, msg );
-	}
+void idNetworkSystem::ServerSendReliableMessageExcluding(int clientNum, const idBitMsg &msg)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        idAsyncNetwork::server.SendReliableGameMessageExcluding(clientNum, msg);
+    }
 }
 
 /*
@@ -61,11 +71,13 @@ void idNetworkSystem::ServerSendReliableMessageExcluding( int clientNum, const i
 idNetworkSystem::ServerGetClientPing
 ==================
 */
-int idNetworkSystem::ServerGetClientPing( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientPing( clientNum );
-	}
-	return 0;
+int idNetworkSystem::ServerGetClientPing(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientPing(clientNum);
+    }
+    return 0;
 }
 
 /*
@@ -73,11 +85,13 @@ int idNetworkSystem::ServerGetClientPing( int clientNum ) {
 idNetworkSystem::ServerGetClientPrediction
 ==================
 */
-int idNetworkSystem::ServerGetClientPrediction( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientPrediction( clientNum );
-	}
-	return 0;
+int idNetworkSystem::ServerGetClientPrediction(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientPrediction(clientNum);
+    }
+    return 0;
 }
 
 /*
@@ -85,11 +99,13 @@ int idNetworkSystem::ServerGetClientPrediction( int clientNum ) {
 idNetworkSystem::ServerGetClientTimeSinceLastPacket
 ==================
 */
-int idNetworkSystem::ServerGetClientTimeSinceLastPacket( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientTimeSinceLastPacket( clientNum );
-	}
-	return 0;
+int idNetworkSystem::ServerGetClientTimeSinceLastPacket(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientTimeSinceLastPacket(clientNum);
+    }
+    return 0;
 }
 
 /*
@@ -97,11 +113,13 @@ int idNetworkSystem::ServerGetClientTimeSinceLastPacket( int clientNum ) {
 idNetworkSystem::ServerGetClientTimeSinceLastInput
 ==================
 */
-int idNetworkSystem::ServerGetClientTimeSinceLastInput( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientTimeSinceLastInput( clientNum );
-	}
-	return 0;
+int idNetworkSystem::ServerGetClientTimeSinceLastInput(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientTimeSinceLastInput(clientNum);
+    }
+    return 0;
 }
 
 /*
@@ -109,11 +127,13 @@ int idNetworkSystem::ServerGetClientTimeSinceLastInput( int clientNum ) {
 idNetworkSystem::ServerGetClientOutgoingRate
 ==================
 */
-int idNetworkSystem::ServerGetClientOutgoingRate( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientOutgoingRate( clientNum );
-	}
-	return 0;
+int idNetworkSystem::ServerGetClientOutgoingRate(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientOutgoingRate(clientNum);
+    }
+    return 0;
 }
 
 /*
@@ -121,11 +141,13 @@ int idNetworkSystem::ServerGetClientOutgoingRate( int clientNum ) {
 idNetworkSystem::ServerGetClientIncomingRate
 ==================
 */
-int idNetworkSystem::ServerGetClientIncomingRate( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientIncomingRate( clientNum );
-	}
-	return 0;
+int idNetworkSystem::ServerGetClientIncomingRate(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientIncomingRate(clientNum);
+    }
+    return 0;
 }
 
 /*
@@ -133,11 +155,13 @@ int idNetworkSystem::ServerGetClientIncomingRate( int clientNum ) {
 idNetworkSystem::ServerGetClientIncomingPacketLoss
 ==================
 */
-float idNetworkSystem::ServerGetClientIncomingPacketLoss( int clientNum ) {
-	if ( idAsyncNetwork::server.IsActive() ) {
-		return idAsyncNetwork::server.GetClientIncomingPacketLoss( clientNum );
-	}
-	return 0.0f;
+float idNetworkSystem::ServerGetClientIncomingPacketLoss(int clientNum)
+{
+    if (idAsyncNetwork::server.IsActive())
+    {
+        return idAsyncNetwork::server.GetClientIncomingPacketLoss(clientNum);
+    }
+    return 0.0f;
 }
 
 /*
@@ -145,12 +169,16 @@ float idNetworkSystem::ServerGetClientIncomingPacketLoss( int clientNum ) {
 idNetworkSystem::ClientSendReliableMessage
 ==================
 */
-void idNetworkSystem::ClientSendReliableMessage( const idBitMsg &msg ) {
-	if ( idAsyncNetwork::client.IsActive() ) {
-		idAsyncNetwork::client.SendReliableGameMessage( msg );
-	} else if ( idAsyncNetwork::server.IsActive() ) {
-		idAsyncNetwork::server.LocalClientSendReliableMessage( msg );
-	}
+void idNetworkSystem::ClientSendReliableMessage(const idBitMsg &msg)
+{
+    if (idAsyncNetwork::client.IsActive())
+    {
+        idAsyncNetwork::client.SendReliableGameMessage(msg);
+    }
+    else if (idAsyncNetwork::server.IsActive())
+    {
+        idAsyncNetwork::server.LocalClientSendReliableMessage(msg);
+    }
 }
 
 /*
@@ -158,11 +186,13 @@ void idNetworkSystem::ClientSendReliableMessage( const idBitMsg &msg ) {
 idNetworkSystem::ClientGetPrediction
 ==================
 */
-int idNetworkSystem::ClientGetPrediction( void ) {
-	if ( idAsyncNetwork::client.IsActive() ) {
-		return idAsyncNetwork::client.GetPrediction();
-	}
-	return 0;
+int idNetworkSystem::ClientGetPrediction(void)
+{
+    if (idAsyncNetwork::client.IsActive())
+    {
+        return idAsyncNetwork::client.GetPrediction();
+    }
+    return 0;
 }
 
 /*
@@ -170,11 +200,13 @@ int idNetworkSystem::ClientGetPrediction( void ) {
 idNetworkSystem::ClientGetTimeSinceLastPacket
 ==================
 */
-int idNetworkSystem::ClientGetTimeSinceLastPacket( void ) {
-	if ( idAsyncNetwork::client.IsActive() ) {
-		return idAsyncNetwork::client.GetTimeSinceLastPacket();
-	}
-	return 0;
+int idNetworkSystem::ClientGetTimeSinceLastPacket(void)
+{
+    if (idAsyncNetwork::client.IsActive())
+    {
+        return idAsyncNetwork::client.GetTimeSinceLastPacket();
+    }
+    return 0;
 }
 
 /*
@@ -182,11 +214,13 @@ int idNetworkSystem::ClientGetTimeSinceLastPacket( void ) {
 idNetworkSystem::ClientGetOutgoingRate
 ==================
 */
-int idNetworkSystem::ClientGetOutgoingRate( void ) {
-	if ( idAsyncNetwork::client.IsActive() ) {
-		return idAsyncNetwork::client.GetOutgoingRate();
-	}
-	return 0;
+int idNetworkSystem::ClientGetOutgoingRate(void)
+{
+    if (idAsyncNetwork::client.IsActive())
+    {
+        return idAsyncNetwork::client.GetOutgoingRate();
+    }
+    return 0;
 }
 
 /*
@@ -194,11 +228,13 @@ int idNetworkSystem::ClientGetOutgoingRate( void ) {
 idNetworkSystem::ClientGetIncomingRate
 ==================
 */
-int idNetworkSystem::ClientGetIncomingRate( void ) {
-	if ( idAsyncNetwork::client.IsActive() ) {
-		return idAsyncNetwork::client.GetIncomingRate();
-	}
-	return 0;
+int idNetworkSystem::ClientGetIncomingRate(void)
+{
+    if (idAsyncNetwork::client.IsActive())
+    {
+        return idAsyncNetwork::client.GetIncomingRate();
+    }
+    return 0;
 }
 
 /*
@@ -206,9 +242,11 @@ int idNetworkSystem::ClientGetIncomingRate( void ) {
 idNetworkSystem::ClientGetIncomingPacketLoss
 ==================
 */
-float idNetworkSystem::ClientGetIncomingPacketLoss( void ) {
-	if ( idAsyncNetwork::client.IsActive() ) {
-		return idAsyncNetwork::client.GetIncomingPacketLoss();
-	}
-	return 0.0f;
+float idNetworkSystem::ClientGetIncomingPacketLoss(void)
+{
+    if (idAsyncNetwork::client.IsActive())
+    {
+        return idAsyncNetwork::client.GetIncomingPacketLoss();
+    }
+    return 0.0f;
 }

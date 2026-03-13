@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -29,95 +35,92 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef PROPERTYGRID_H_
 #define PROPERTYGRID_H_
 
-#define PGN_ITEMCHANGED		100
+#define PGN_ITEMCHANGED 100
 
-#define PGS_HEADERS			0x00000001
-#define PGS_ALLOWINSERT		0x00000002
+#define PGS_HEADERS 0x00000001
+#define PGS_ALLOWINSERT 0x00000002
 
 typedef struct
 {
-	NMHDR			hdr;
-	int				mItem;
-	const char*		mName;
-	const char*		mValue;
+    NMHDR hdr;
+    int mItem;
+    const char *mName;
+    const char *mValue;
 
 } NMPROPGRID;
 
 class rvPropertyGrid
 {
-public:
+  public:
+    enum EItemType
+    {
+        PGIT_STRING,
+        PGIT_HEADER,
+        PGIT_MAX
+    };
 
-	enum EItemType
-	{
-		PGIT_STRING,
-		PGIT_HEADER,
-		PGIT_MAX
-	};
+    rvPropertyGrid();
 
-	rvPropertyGrid ( );
+    bool Create(HWND parent, int id, int style = 0);
 
-	bool	Create			( HWND parent, int id, int style = 0 );
+    void Move(int x, int y, int w, int h, BOOL redraw = FALSE);
 
-	void	Move			( int x, int y, int w, int h, BOOL redraw = FALSE );
+    bool ReflectMessage(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-	bool	ReflectMessage	( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
+    int AddItem(const char *name, const char *value, EItemType type = PGIT_STRING);
 
-	int		AddItem			( const char* name, const char* value, EItemType type = PGIT_STRING );
+    void RemoveItem(int index);
+    void RemoveAllItems(void);
 
-	void	RemoveItem		( int index );
-	void	RemoveAllItems	( void );
+    void SetCurSel(int index);
+    int GetCurSel(void);
 
-	void	SetCurSel		( int index );
-	int		GetCurSel		( void );
+    HWND GetWindow(void);
+    const char *GetItemName(int index);
+    const char *GetItemValue(int index);
 
-	HWND			GetWindow		( void );
-	const char*		GetItemName		( int index );
-	const char*		GetItemValue	( int index );
+  protected:
+    enum EState
+    {
+        STATE_FINISHEDIT,
+        STATE_EDIT,
+        STATE_NORMAL,
+    };
 
-protected:
+    void StartEdit(int item, bool label);
+    void FinishEdit(void);
+    void CancelEdit(void);
 
-	enum EState
-	{
-		STATE_FINISHEDIT,
-		STATE_EDIT,
-		STATE_NORMAL,
-	};
+    int HandleDrawItem(WPARAM wParam, LPARAM lParam);
 
-	void			StartEdit		( int item, bool label );
-	void			FinishEdit		( void );
-	void			CancelEdit		( void );
+    HWND mWindow;
+    HWND mEdit;
+    int mEditItem;
+    bool mEditLabel;
+    int mSelectedItem;
+    WNDPROC mListWndProc;
+    int mSplitter;
+    int mStyle;
+    EState mState;
 
-	int				HandleDrawItem	( WPARAM wParam, LPARAM lParam );
-
-	HWND		mWindow;
-	HWND		mEdit;
-	int			mEditItem;
-	bool		mEditLabel;
-	int			mSelectedItem;
-	WNDPROC		mListWndProc;
-	int			mSplitter;
-	int			mStyle;
-	EState		mState;
-
-private:
-
-	static LRESULT CALLBACK WndProc ( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
+  private:
+    static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 };
 
-inline HWND rvPropertyGrid::GetWindow ( void )
+inline HWND rvPropertyGrid::GetWindow(void)
 {
-	return mWindow;
+    return mWindow;
 }
 
-inline int rvPropertyGrid::GetCurSel ( void )
+inline int rvPropertyGrid::GetCurSel(void)
 {
-	return SendMessage ( mWindow, LB_GETCURSEL, 0, 0 );
+    return SendMessage(mWindow, LB_GETCURSEL, 0, 0);
 }
 
-inline void rvPropertyGrid::SetCurSel ( int index )
+inline void rvPropertyGrid::SetCurSel(int index)
 {
-	SendMessage ( mWindow, LB_SETCURSEL, index, 0 );
-	mSelectedItem = index;
+    SendMessage(mWindow, LB_SETCURSEL, index, 0);
+    mSelectedItem = index;
 }
 
 #endif // PROPERTYGRID_H_

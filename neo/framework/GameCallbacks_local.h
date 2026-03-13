@@ -20,37 +20,44 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-// Implementation details for idCommon::SetCallback() and idCommon::GetAdditionalFunction()
-// Needed in different parts of the Engine (that are supposed to call the callbacks)
-// but *not* part of the Game API exported to Game DLLs.
-// Common.h (above idCommon::SetCallback()) has a lengthy explanation of what all this is good for..
+// Implementation details for idCommon::SetCallback() and
+// idCommon::GetAdditionalFunction() Needed in different parts of the Engine
+// (that are supposed to call the callbacks) but *not* part of the Game API
+// exported to Game DLLs. Common.h (above idCommon::SetCallback()) has a lengthy
+// explanation of what all this is good for..
 
 #ifndef NEO_FRAMEWORK_GAMECALLBACKS_LOCAL_H_
 #define NEO_FRAMEWORK_GAMECALLBACKS_LOCAL_H_
 
 #include "Common.h"
 
-struct idGameCallbacks {
+struct idGameCallbacks
+{
 
-	typedef void (*ReloadImagesCallback)(void* userArg, const idCmdArgs &args);
-	ReloadImagesCallback	reloadImagesCB;
-	void*					reloadImagesUserArg;
+    typedef void (*ReloadImagesCallback)(void *userArg, const idCmdArgs &args);
+    ReloadImagesCallback reloadImagesCB;
+    void *reloadImagesUserArg;
 
-	idGameCallbacks();
+    idGameCallbacks();
 
-	// called when Game DLL is unloaded (=> the registered callbacks become invalid)
-	void Reset();
-
+    // called when Game DLL is unloaded (=> the registered callbacks become
+    // invalid)
+    void Reset();
 };
 
 extern idGameCallbacks gameCallbacks;
-
 
 #endif /* NEO_FRAMEWORK_GAMECALLBACKS_LOCAL_H_ */

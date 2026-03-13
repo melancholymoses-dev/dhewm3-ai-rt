@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -29,7 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 /*
 ===============================================================================
 
-	Trace model vs. polygonal model collision detection.
+        Trace model vs. polygonal model collision detection.
 
 ===============================================================================
 */
@@ -51,24 +57,29 @@ Retrieving contacts
 idCollisionModelManagerLocal::Contacts
 ==================
 */
-int idCollisionModelManagerLocal::Contacts( contactInfo_t *contacts, const int maxContacts, const idVec3 &start, const idVec6 &dir, const float depth,
-								const idTraceModel *trm, const idMat3 &trmAxis, int contentMask,
-								cmHandle_t model, const idVec3 &origin, const idMat3 &modelAxis ) {
-	trace_t results;
-	idVec3 end;
+int idCollisionModelManagerLocal::Contacts(contactInfo_t *contacts, const int maxContacts, const idVec3 &start,
+                                           const idVec6 &dir, const float depth, const idTraceModel *trm,
+                                           const idMat3 &trmAxis, int contentMask, cmHandle_t model,
+                                           const idVec3 &origin, const idMat3 &modelAxis)
+{
+    trace_t results;
+    idVec3 end;
 
-	// same as Translation but instead of storing the first collision we store all collisions as contacts
-	idCollisionModelManagerLocal::getContacts = true;
-	idCollisionModelManagerLocal::contacts = contacts;
-	idCollisionModelManagerLocal::maxContacts = maxContacts;
-	idCollisionModelManagerLocal::numContacts = 0;
-	end = start + dir.SubVec3(0) * depth;
-	idCollisionModelManagerLocal::Translation( &results, start, end, trm, trmAxis, contentMask, model, origin, modelAxis );
-	if ( dir.SubVec3(1).LengthSqr() != 0.0f ) {
-		// FIXME: rotational contacts
-	}
-	idCollisionModelManagerLocal::getContacts = false;
-	idCollisionModelManagerLocal::maxContacts = 0;
+    // same as Translation but instead of storing the first collision we store all
+    // collisions as contacts
+    idCollisionModelManagerLocal::getContacts = true;
+    idCollisionModelManagerLocal::contacts = contacts;
+    idCollisionModelManagerLocal::maxContacts = maxContacts;
+    idCollisionModelManagerLocal::numContacts = 0;
+    end = start + dir.SubVec3(0) * depth;
+    idCollisionModelManagerLocal::Translation(&results, start, end, trm, trmAxis, contentMask, model, origin,
+                                              modelAxis);
+    if (dir.SubVec3(1).LengthSqr() != 0.0f)
+    {
+        // FIXME: rotational contacts
+    }
+    idCollisionModelManagerLocal::getContacts = false;
+    idCollisionModelManagerLocal::maxContacts = 0;
 
-	return idCollisionModelManagerLocal::numContacts;
+    return idCollisionModelManagerLocal::numContacts;
 }

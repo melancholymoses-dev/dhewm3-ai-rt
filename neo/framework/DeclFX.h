@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -29,90 +35,93 @@ If you have questions concerning this license or the applicable additional terms
 #ifndef __DECLFX_H__
 #define __DECLFX_H__
 
+#include "framework/DeclManager.h"
+#include "idlib/Str.h"
 #include "idlib/containers/List.h"
 #include "idlib/math/Matrix.h"
-#include "idlib/Str.h"
-#include "framework/DeclManager.h"
 
 /*
 ===============================================================================
 
-	idDeclFX
+        idDeclFX
 
 ===============================================================================
 */
 
-enum {
-	FX_LIGHT,
-	FX_PARTICLE,
-	FX_DECAL,
-	FX_MODEL,
-	FX_SOUND,
-	FX_SHAKE,
-	FX_ATTACHLIGHT,
-	FX_ATTACHENTITY,
-	FX_LAUNCH,
-	FX_SHOCKWAVE
+enum
+{
+    FX_LIGHT,
+    FX_PARTICLE,
+    FX_DECAL,
+    FX_MODEL,
+    FX_SOUND,
+    FX_SHAKE,
+    FX_ATTACHLIGHT,
+    FX_ATTACHENTITY,
+    FX_LAUNCH,
+    FX_SHOCKWAVE
 };
 
 //
 // single fx structure
 //
-typedef struct {
-	int						type;
-	int						sibling;
+typedef struct
+{
+    int type;
+    int sibling;
 
-	idStr					data;
-	idStr					name;
-	idStr					fire;
+    idStr data;
+    idStr name;
+    idStr fire;
 
-	float					delay;
-	float					duration;
-	float					restart;
-	float					size;
-	float					fadeInTime;
-	float					fadeOutTime;
-	float					shakeTime;
-	float					shakeAmplitude;
-	float					shakeDistance;
-	float					shakeImpulse;
-	float					lightRadius;
-	float					rotate;
-	float					random1;
-	float					random2;
+    float delay;
+    float duration;
+    float restart;
+    float size;
+    float fadeInTime;
+    float fadeOutTime;
+    float shakeTime;
+    float shakeAmplitude;
+    float shakeDistance;
+    float shakeImpulse;
+    float lightRadius;
+    float rotate;
+    float random1;
+    float random2;
 
-	idVec3					lightColor;
-	idVec3					offset;
-	idMat3					axis;
+    idVec3 lightColor;
+    idVec3 offset;
+    idMat3 axis;
 
-	bool					soundStarted;
-	bool					shakeStarted;
-	bool					shakeFalloff;
-	bool					shakeIgnoreMaster;
-	bool					bindParticles;
-	bool					explicitAxis;
-	bool					noshadows;
-	bool					particleTrackVelocity;
-	bool					trackOrigin;
+    bool soundStarted;
+    bool shakeStarted;
+    bool shakeFalloff;
+    bool shakeIgnoreMaster;
+    bool bindParticles;
+    bool explicitAxis;
+    bool noshadows;
+    bool particleTrackVelocity;
+    bool trackOrigin;
 } idFXSingleAction;
 
 //
 // grouped fx structures
 //
-class idDeclFX : public idDecl {
-public:
-	virtual size_t			Size( void ) const;
-	virtual const char *	DefaultDefinition( void ) const;
-	virtual bool			Parse( const char *text, const int textLength );
-	virtual void			FreeData( void );
-	virtual void			Print( void ) const;
-	virtual void			List( void ) const;
+class idDeclFX : public idDecl
+{
+  public:
+    virtual size_t Size(void) const;
+    virtual const char *DefaultDefinition(void) const;
+    virtual bool Parse(const char *text, const int textLength);
+    virtual void FreeData(void);
+    virtual void Print(void) const;
+    virtual void List(void) const;
 
-	idList<idFXSingleAction>events;
-	idStr					joint;
+    idList<idFXSingleAction> events;
+    idStr joint;
 
-private:
-	void					ParseSingleFXAction( idLexer &src, idFXSingleAction& FXAction );
+  private:
+    void ParseSingleFXAction(idLexer &src, idFXSingleAction &FXAction);
 };
 
 #endif /* !__DECLFX_H__ */
