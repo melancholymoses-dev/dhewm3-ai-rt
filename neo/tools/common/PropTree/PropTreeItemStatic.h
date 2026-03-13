@@ -13,8 +13,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find the code
-//	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find
+// the code 	useful.
 
 #ifndef _PROPTREEITEMSTATIC_H
 #define _PROPTREEITEMSTATIC_H
@@ -23,23 +23,22 @@
 
 class PROPTREE_API CPropTreeItemStatic : public CPropTreeItem
 {
-public:
-	CPropTreeItemStatic();
-	virtual ~CPropTreeItemStatic();
+  public:
+    CPropTreeItemStatic();
+    virtual ~CPropTreeItemStatic();
 
-public:
-	// The attribute area needs drawing
-	virtual void DrawAttribute(CDC* pDC, const RECT& rc);
+  public:
+    // The attribute area needs drawing
+    virtual void DrawAttribute(CDC *pDC, const RECT &rc);
 
-	// Retrieve the item's attribute value (in this case the CString)
-	virtual LPARAM GetItemValue();
+    // Retrieve the item's attribute value (in this case the CString)
+    virtual LPARAM GetItemValue();
 
-	// Set the item's attribute value
-	virtual void SetItemValue(LPARAM lParam);
+    // Set the item's attribute value
+    virtual void SetItemValue(LPARAM lParam);
 
-protected:
-	CString		m_sAttribute;
+  protected:
+    CString m_sAttribute;
 };
-
 
 #endif // _PROPTREEITEMSTATIC_H

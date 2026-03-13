@@ -19,9 +19,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms.
+You should have received a copy of these additional terms immediately following
+the terms and conditions of the GNU General Public License which accompanied the
+Doom 3 Source Code.  If not, please request a copy in writing from id Software
+at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional
+terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
+120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -30,18 +36,19 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "physics/Force.h"
 
-CLASS_DECLARATION( idClass, idForce )
+CLASS_DECLARATION(idClass, idForce)
 END_CLASS
 
-idList<idForce*> idForce::forceList;
+idList<idForce *> idForce::forceList;
 
 /*
 ================
 idForce::idForce
 ================
 */
-idForce::idForce( void ) {
-	forceList.Append( this );
+idForce::idForce(void)
+{
+    forceList.Append(this);
 }
 
 /*
@@ -49,8 +56,9 @@ idForce::idForce( void ) {
 idForce::~idForce
 ================
 */
-idForce::~idForce( void ) {
-	forceList.Remove( this );
+idForce::~idForce(void)
+{
+    forceList.Remove(this);
 }
 
 /*
@@ -58,12 +66,14 @@ idForce::~idForce( void ) {
 idForce::DeletePhysics
 ================
 */
-void idForce::DeletePhysics( const idPhysics *phys ) {
-	int i;
+void idForce::DeletePhysics(const idPhysics *phys)
+{
+    int i;
 
-	for ( i = 0; i < forceList.Num(); i++ ) {
-		forceList[i]->RemovePhysics( phys );
-	}
+    for (i = 0; i < forceList.Num(); i++)
+    {
+        forceList[i]->RemovePhysics(phys);
+    }
 }
 
 /*
@@ -71,8 +81,9 @@ void idForce::DeletePhysics( const idPhysics *phys ) {
 idForce::ClearForceList
 ================
 */
-void idForce::ClearForceList( void ) {
-	forceList.Clear();
+void idForce::ClearForceList(void)
+{
+    forceList.Clear();
 }
 
 /*
@@ -80,7 +91,8 @@ void idForce::ClearForceList( void ) {
 idForce::Evaluate
 ================
 */
-void idForce::Evaluate( int time ) {
+void idForce::Evaluate(int time)
+{
 }
 
 /*
@@ -88,5 +100,6 @@ void idForce::Evaluate( int time ) {
 idForce::RemovePhysics
 ================
 */
-void idForce::RemovePhysics( const idPhysics *phys ) {
+void idForce::RemovePhysics(const idPhysics *phys)
+{
 }
