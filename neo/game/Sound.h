@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -45,41 +39,40 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 ===============================================================================
 */
 
-class idSound : public idEntity
-{
-  public:
-    CLASS_PROTOTYPE(idSound);
+class idSound : public idEntity {
+public:
+	CLASS_PROTOTYPE( idSound );
 
-    idSound(void);
+					idSound( void );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void			Save( idSaveGame *savefile ) const;
+	void			Restore( idRestoreGame *savefile );
 
-    virtual void UpdateChangeableSpawnArgs(const idDict *source);
+	virtual void	UpdateChangeableSpawnArgs( const idDict *source );
 
-    void Spawn(void);
+	void			Spawn( void );
 
-    void ToggleOnOff(idEntity *other, idEntity *activator);
-    void Think(void);
-    void SetSound(const char *sound, int channel = SND_CHANNEL_ANY);
+	void			ToggleOnOff( idEntity *other, idEntity *activator );
+	void			Think( void );
+	void			SetSound( const char *sound, int channel = SND_CHANNEL_ANY );
 
-    virtual void ShowEditingDialog(void);
+	virtual void	ShowEditingDialog( void );
 
-  private:
-    float lastSoundVol;
-    float soundVol;
-    float random;
-    float wait;
-    bool timerOn;
-    idVec3 shakeTranslate;
-    idAngles shakeRotate;
-    int playingUntilTime;
+private:
+	float			lastSoundVol;
+	float			soundVol;
+	float			random;
+	float			wait;
+	bool			timerOn;
+	idVec3			shakeTranslate;
+	idAngles		shakeRotate;
+	int				playingUntilTime;
 
-    void Event_Trigger(idEntity *activator);
-    void Event_Timer(void);
-    void Event_On(void);
-    void Event_Off(void);
-    void DoSound(bool play);
+	void			Event_Trigger( idEntity *activator );
+	void			Event_Timer( void );
+	void			Event_On( void );
+	void			Event_Off( void );
+	void			DoSound( bool play );
 };
 
 #endif /* !__GAME_SOUND_H__ */

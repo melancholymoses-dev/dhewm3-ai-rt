@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -43,276 +37,277 @@ class idRectangle;
 
 class rvGEOptions
 {
-  public:
-    static const int MAX_MRU_SIZE = rvRegistryOptions::MAX_MRU_SIZE;
+public:
 
-    rvGEOptions();
+	static const int MAX_MRU_SIZE = rvRegistryOptions::MAX_MRU_SIZE;
 
-    void Init(void);
+	rvGEOptions();
 
-    // Write the options to the registery
-    bool Save(void);
+	void			Init( void );
 
-    // Read the options from the registry
-    bool Load(void);
+	// Write the options to the registery
+	bool			Save				( void );
 
-    void SetSelectionColor(idVec4 &color);
-    void SetSelectionColor(COLORREF color);
-    void SetGridColor(idVec4 &color);
-    void SetGridColor(COLORREF color);
-    void SetGridWidth(int width);
-    void SetGridHeight(int height);
-    void SetGridVisible(bool vis);
-    void SetGridSnap(bool snap);
-    void SetLastOptionsPage(int page);
-    void SetNavigatorVisible(bool vis);
-    void SetPropertiesVisible(bool vis);
-    void SetTransformerVisible(bool vis);
-    void SetIgnoreDesktopSelect(bool ignore);
-    void SetStatusBarVisible(bool vis);
+	// Read the options from the registry
+	bool			Load					( void );
 
-    void AddRecentFile(const char *filename);
-    int GetRecentFileCount(void);
-    const char *GetRecentFile(int index);
+	void			SetSelectionColor		( idVec4& color );
+	void			SetSelectionColor		( COLORREF color );
+	void			SetGridColor			( idVec4& color );
+	void			SetGridColor			( COLORREF color );
+	void			SetGridWidth			( int width );
+	void			SetGridHeight			( int height );
+	void			SetGridVisible			( bool vis );
+	void			SetGridSnap				( bool snap );
+	void			SetLastOptionsPage		( int page );
+	void			SetNavigatorVisible		( bool vis );
+	void			SetPropertiesVisible	( bool vis );
+	void			SetTransformerVisible	( bool vis );
+	void			SetIgnoreDesktopSelect	( bool ignore );
+	void			SetStatusBarVisible		( bool vis );
 
-    idVec4 &GetGridColor(void);
-    int GetGridWidth(void);
-    int GetGridHeight(void);
-    bool GetGridVisible(void);
-    bool GetGridSnap(void);
-    int GetLastOptionsPage(void);
-    idVec4 &GetWorkspaceColor(void);
-    bool GetNavigatorVisible(void);
-    bool GetTransformerVisible(void);
-    bool GetPropertiesVisible(void);
-    idVec4 &GetSelectionColor(void);
-    COLORREF *GetCustomColors(void);
-    bool GetIgnoreDesktopSelect(void);
-    bool GetStatusBarVisible(void);
+	void			AddRecentFile			( const char* filename );
+	int				GetRecentFileCount		( void );
+	const char*		GetRecentFile			( int index );
 
-    void SetWindowPlacement(const char *name, HWND hwnd);
-    bool GetWindowPlacement(const char *name, HWND hwnd);
+	idVec4&			GetGridColor			( void );
+	int				GetGridWidth			( void );
+	int				GetGridHeight			( void );
+	bool			GetGridVisible			( void );
+	bool			GetGridSnap				( void );
+	int				GetLastOptionsPage		( void );
+	idVec4&			GetWorkspaceColor		( void );
+	bool			GetNavigatorVisible		( void );
+	bool			GetTransformerVisible	( void );
+	bool			GetPropertiesVisible	( void );
+	idVec4&			GetSelectionColor		( void );
+	COLORREF*		GetCustomColors			( void );
+	bool			GetIgnoreDesktopSelect	( void );
+	bool			GetStatusBarVisible		( void );
 
-    void SnapRectToGrid(idRectangle &rect, bool snapLeft = true, bool snapTop = true, bool snapWidth = true,
-                        bool snapHeight = true);
+	void			SetWindowPlacement		( const char* name, HWND hwnd );
+	bool			GetWindowPlacement		( const char* name, HWND hwnd );
 
-  protected:
-    void ConvertColor(COLORREF src, idVec4 &dest);
-    void SetModified(bool mod);
+	void			SnapRectToGrid			( idRectangle& rect, bool snapLeft = true, bool snapTop = true, bool snapWidth = true, bool snapHeight = true );
 
-    bool mModified;
-    int mLastOptionsPage;
+protected:
 
-    idVec4 mGridColor;
-    int mGridWidth;
-    int mGridHeight;
-    bool mGridSnap;
-    bool mGridVisible;
+	void				ConvertColor		( COLORREF src, idVec4& dest );
+	void				SetModified			( bool mod );
 
-    idVec4 mWorkspaceColor;
-    idVec4 mSelectionColor;
+	bool				mModified;
+	int					mLastOptionsPage;
 
-    bool mNavigatorVisible;
-    bool mPropertiesVisible;
-    bool mTransformerVisible;
-    bool mStatusBarVisible;
-    bool mIgnoreDesktopSelect;
+	idVec4				mGridColor;
+	int					mGridWidth;
+	int					mGridHeight;
+	bool				mGridSnap;
+	bool				mGridVisible;
 
-    idList<idStr> mRecentFiles;
+	idVec4				mWorkspaceColor;
+	idVec4				mSelectionColor;
 
-    COLORREF mCustomColors[16];
+	bool				mNavigatorVisible;
+	bool				mPropertiesVisible;
+	bool				mTransformerVisible;
+	bool				mStatusBarVisible;
+	bool				mIgnoreDesktopSelect;
 
-    rvRegistryOptions mRegistry;
+	idList<idStr>		mRecentFiles;
+
+	COLORREF			mCustomColors[16];
+
+	rvRegistryOptions	mRegistry;
 };
 
-ID_INLINE void rvGEOptions::SetModified(bool mod)
+ID_INLINE void rvGEOptions::SetModified ( bool mod )
 {
-    mModified = mod;
+	mModified = mod;
 }
 
-ID_INLINE void rvGEOptions::ConvertColor(COLORREF src, idVec4 &dest)
+ID_INLINE void rvGEOptions::ConvertColor ( COLORREF src, idVec4& dest )
 {
-    dest[0] = (float)GetRValue(src) / 255.0f;
-    dest[1] = (float)GetGValue(src) / 255.0f;
-    dest[2] = (float)GetBValue(src) / 255.0f;
-    dest[3] = 1.0f;
+	dest[0] = (float)GetRValue ( src ) / 255.0f;
+	dest[1] = (float)GetGValue ( src ) / 255.0f;
+	dest[2] = (float)GetBValue ( src ) / 255.0f;
+	dest[3] = 1.0f;
 }
 
-ID_INLINE void rvGEOptions::SetGridWidth(int width)
+ID_INLINE void rvGEOptions::SetGridWidth ( int width )
 {
-    mGridWidth = width;
-    SetModified(true);
+	mGridWidth = width;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetGridHeight(int height)
+ID_INLINE void rvGEOptions::SetGridHeight ( int height )
 {
-    mGridHeight = height;
-    SetModified(true);
+	mGridHeight = height;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetGridSnap(bool snap)
+ID_INLINE void rvGEOptions::SetGridSnap ( bool snap )
 {
-    mGridSnap = snap;
-    SetModified(true);
+	mGridSnap = snap;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetGridVisible(bool vis)
+ID_INLINE void rvGEOptions::SetGridVisible ( bool vis )
 {
-    mGridVisible = vis;
-    SetModified(true);
+	mGridVisible = vis;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetStatusBarVisible(bool vis)
+ID_INLINE void rvGEOptions::SetStatusBarVisible ( bool vis )
 {
-    mStatusBarVisible = vis;
-    SetModified(true);
+	mStatusBarVisible = vis;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetGridColor(COLORREF color)
+ID_INLINE void rvGEOptions::SetGridColor ( COLORREF color )
 {
-    ConvertColor(color, mGridColor);
-    SetModified(true);
+	ConvertColor ( color, mGridColor );
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetSelectionColor(idVec4 &color)
+ID_INLINE void rvGEOptions::SetSelectionColor ( idVec4& color )
 {
-    VectorCopy(color, mSelectionColor);
-    SetModified(true);
+	VectorCopy ( color, mSelectionColor );
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetSelectionColor(COLORREF color)
+ID_INLINE void rvGEOptions::SetSelectionColor ( COLORREF color )
 {
-    ConvertColor(color, mSelectionColor);
-    SetModified(true);
+	ConvertColor ( color, mSelectionColor );
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetGridColor(idVec4 &color)
+ID_INLINE void rvGEOptions::SetGridColor ( idVec4& color )
 {
-    VectorCopy(color, mGridColor);
-    SetModified(true);
+	VectorCopy ( color, mGridColor );
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetNavigatorVisible(bool vis)
+ID_INLINE void rvGEOptions::SetNavigatorVisible ( bool vis )
 {
-    mNavigatorVisible = vis;
-    SetModified(true);
+	mNavigatorVisible = vis;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetPropertiesVisible(bool vis)
+ID_INLINE void rvGEOptions::SetPropertiesVisible ( bool vis )
 {
-    mPropertiesVisible = vis;
-    SetModified(true);
+	mPropertiesVisible = vis;
+	SetModified ( true );
 }
 
-ID_INLINE void rvGEOptions::SetTransformerVisible(bool vis)
+ID_INLINE void rvGEOptions::SetTransformerVisible ( bool vis )
 {
-    mTransformerVisible = vis;
-    SetModified(true);
+	mTransformerVisible = vis;
+	SetModified ( true );
 }
 
-ID_INLINE idVec4 &rvGEOptions::GetGridColor(void)
+ID_INLINE idVec4& rvGEOptions::GetGridColor ( void )
 {
-    return mGridColor;
+	return mGridColor;
 }
 
-ID_INLINE int rvGEOptions::GetGridWidth(void)
+ID_INLINE int rvGEOptions::GetGridWidth ( void )
 {
-    return mGridWidth;
+	return mGridWidth;
 }
 
-ID_INLINE int rvGEOptions::GetGridHeight(void)
+ID_INLINE int rvGEOptions::GetGridHeight ( void )
 {
-    return mGridHeight;
+	return mGridHeight;
 }
 
-ID_INLINE bool rvGEOptions::GetGridVisible(void)
+ID_INLINE bool rvGEOptions::GetGridVisible ( void )
 {
-    return mGridVisible;
+	return mGridVisible;
 }
 
-ID_INLINE bool rvGEOptions::GetGridSnap(void)
+ID_INLINE bool rvGEOptions::GetGridSnap ( void )
 {
-    return mGridSnap;
+	return mGridSnap;
 }
 
-ID_INLINE idVec4 &rvGEOptions::GetWorkspaceColor(void)
+ID_INLINE idVec4& rvGEOptions::GetWorkspaceColor ( void )
 {
-    return mWorkspaceColor;
+	return mWorkspaceColor;
 }
 
-ID_INLINE int rvGEOptions::GetLastOptionsPage(void)
+ID_INLINE int rvGEOptions::GetLastOptionsPage ( void )
 {
-    return mLastOptionsPage;
+	return mLastOptionsPage;
 }
 
-ID_INLINE void rvGEOptions::SetLastOptionsPage(int page)
+ID_INLINE void rvGEOptions::SetLastOptionsPage ( int page )
 {
-    mLastOptionsPage = page;
+	mLastOptionsPage = page;
 }
 
-ID_INLINE bool rvGEOptions::GetNavigatorVisible(void)
+ID_INLINE bool rvGEOptions::GetNavigatorVisible ( void )
 {
-    return mNavigatorVisible;
+	return mNavigatorVisible;
 }
 
-ID_INLINE bool rvGEOptions::GetPropertiesVisible(void)
+ID_INLINE bool rvGEOptions::GetPropertiesVisible ( void )
 {
-    return mPropertiesVisible;
+	return mPropertiesVisible;
 }
 
-ID_INLINE bool rvGEOptions::GetTransformerVisible(void)
+ID_INLINE bool rvGEOptions::GetTransformerVisible ( void )
 {
-    return mTransformerVisible;
+	return mTransformerVisible;
 }
 
-ID_INLINE bool rvGEOptions::GetStatusBarVisible(void)
+ID_INLINE bool rvGEOptions::GetStatusBarVisible ( void )
 {
-    return mStatusBarVisible;
+	return mStatusBarVisible;
 }
 
-ID_INLINE idVec4 &rvGEOptions::GetSelectionColor(void)
+ID_INLINE idVec4& rvGEOptions::GetSelectionColor ( void )
 {
-    return mSelectionColor;
+	return mSelectionColor;
 }
 
-ID_INLINE COLORREF *rvGEOptions::GetCustomColors(void)
+ID_INLINE COLORREF* rvGEOptions::GetCustomColors ( void )
 {
-    return mCustomColors;
+	return mCustomColors;
 }
 
-ID_INLINE void rvGEOptions::SetIgnoreDesktopSelect(bool ignore)
+ID_INLINE void rvGEOptions::SetIgnoreDesktopSelect ( bool ignore )
 {
-    mIgnoreDesktopSelect = ignore;
+	mIgnoreDesktopSelect = ignore;
 }
 
-ID_INLINE bool rvGEOptions::GetIgnoreDesktopSelect(void)
+ID_INLINE bool rvGEOptions::GetIgnoreDesktopSelect ( void )
 {
-    return mIgnoreDesktopSelect;
+	return mIgnoreDesktopSelect;
 }
 
-ID_INLINE void rvGEOptions::SetWindowPlacement(const char *name, HWND hwnd)
+ID_INLINE void rvGEOptions::SetWindowPlacement ( const char* name, HWND hwnd )
 {
-    mRegistry.SetWindowPlacement(name, hwnd);
+	mRegistry.SetWindowPlacement ( name, hwnd );
 }
 
-ID_INLINE bool rvGEOptions::GetWindowPlacement(const char *name, HWND hwnd)
+ID_INLINE bool rvGEOptions::GetWindowPlacement ( const char* name, HWND hwnd )
 {
-    return mRegistry.GetWindowPlacement(name, hwnd);
+	return mRegistry.GetWindowPlacement ( name, hwnd );
 }
 
-ID_INLINE void rvGEOptions::AddRecentFile(const char *filename)
+ID_INLINE void rvGEOptions::AddRecentFile ( const char* filename )
 {
-    mRegistry.AddRecentFile(filename);
+	mRegistry.AddRecentFile ( filename );
 }
 
-ID_INLINE int rvGEOptions::GetRecentFileCount(void)
+ID_INLINE int rvGEOptions::GetRecentFileCount ( void )
 {
-    return mRegistry.GetRecentFileCount();
+	return mRegistry.GetRecentFileCount ( );
 }
 
-ID_INLINE const char *rvGEOptions::GetRecentFile(int index)
+ID_INLINE const char* rvGEOptions::GetRecentFile ( int index )
 {
-    return mRegistry.GetRecentFile(index);
+	return mRegistry.GetRecentFile ( index );
 }
 
 #endif // _GEOPTIONS_H_
