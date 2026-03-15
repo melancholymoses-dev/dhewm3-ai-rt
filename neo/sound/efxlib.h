@@ -1,5 +1,5 @@
 /*
-*/
+ */
 
 #ifndef __EFXLIBH
 #define __EFXLIBH
@@ -14,34 +14,43 @@
 #define EFX_VERBOSE 0
 
 #if EFX_VERBOSE
-#define EFXprintf(...) do { common->Printf(__VA_ARGS__); } while (false)
+#define EFXprintf(...)                                                                                                 \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        common->Printf(__VA_ARGS__);                                                                                   \
+    } while (false)
 #else
-#define EFXprintf(...) do { } while (false)
+#define EFXprintf(...)                                                                                                 \
+    do                                                                                                                 \
+    {                                                                                                                  \
+    } while (false)
 #endif
 
-struct idSoundEffect {
-	idSoundEffect();
-	~idSoundEffect();
+struct idSoundEffect
+{
+    idSoundEffect();
+    ~idSoundEffect();
 
-	bool alloc();
+    bool alloc();
 
-	idStr name;
-	ALuint effect;
+    idStr name;
+    ALuint effect;
 };
 
-class idEFXFile {
-public:
-	idEFXFile();
-	~idEFXFile();
+class idEFXFile
+{
+  public:
+    idEFXFile();
+    ~idEFXFile();
 
-	bool FindEffect( idStr &name, ALuint *effect );
-	bool LoadFile( const char *filename, bool OSPath = false );
-	void Clear( void );
+    bool FindEffect(idStr &name, ALuint *effect);
+    bool LoadFile(const char *filename, bool OSPath = false);
+    void Clear(void);
 
-private:
-	bool ReadEffect( idLexer &lexer, idSoundEffect *effect );
+  private:
+    bool ReadEffect(idLexer &lexer, idSoundEffect *effect);
 
-	idList<idSoundEffect *>effects;
+    idList<idSoundEffect *> effects;
 };
 
 #endif // __EFXLIBH

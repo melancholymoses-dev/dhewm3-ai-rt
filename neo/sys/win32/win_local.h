@@ -19,9 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -30,7 +33,7 @@ If you have questions concerning this license or the applicable additional terms
 #define __WIN_LOCAL_H__
 
 #if defined(_MFC_VER) && !defined(_D3SDK) && !defined(GAME_DLL)
-#define _ATL_CSTRING_EXPLICIT_CONSTRUCTORS	// prevent auto literal to string conversion
+#define _ATL_CSTRING_EXPLICIT_CONSTRUCTORS // prevent auto literal to string conversion
 #include "tools/comafx/StdAfx.h"
 #endif
 
@@ -43,42 +46,43 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/CVarSystem.h"
 #include "sys/sys_public.h"
 
-#define	WINDOW_STYLE	(WS_OVERLAPPED|WS_BORDER|WS_CAPTION|WS_VISIBLE | WS_THICKFRAME)
+#define WINDOW_STYLE (WS_OVERLAPPED | WS_BORDER | WS_CAPTION | WS_VISIBLE | WS_THICKFRAME)
 
-void	Sys_CreateConsole( void );
-void	Sys_DestroyConsole( void );
+void Sys_CreateConsole(void);
+void Sys_DestroyConsole(void);
 
-void	Win_SetErrorText( const char *text );
+void Win_SetErrorText(const char *text);
 
-const unsigned char *Win_GetScanTable( void );
-int		Win_MapKey (int key);
+const unsigned char *Win_GetScanTable(void);
+int Win_MapKey(int key);
 
-void Conbuf_AppendText( const char *msg );
+void Conbuf_AppendText(const char *msg);
 
-struct Win32Vars_t {
-	HWND			hWnd;
-	HINSTANCE		hInstance;
+struct Win32Vars_t
+{
+    HWND hWnd;
+    HINSTANCE hInstance;
 
-	OSVERSIONINFOEX	osversion;
+    OSVERSIONINFOEX osversion;
 
 #ifdef ID_ALLOW_TOOLS
-	HDC				hDC; // handle to device
-	HGLRC			hGLRC; // handle to GL rendering context
-	PIXELFORMATDESCRIPTOR pfd; // for ChoosePixelFormat
-	const int* piAttribIList; // for wglChoosePixelFormatARB, if available, set in GLimp_Init()
+    HDC hDC;                   // handle to device
+    HGLRC hGLRC;               // handle to GL rendering context
+    PIXELFORMATDESCRIPTOR pfd; // for ChoosePixelFormat
+    const int *piAttribIList;  // for wglChoosePixelFormatARB, if available, set in GLimp_Init()
 
-	// the following are set in GLimp_Init()
-	BOOL(WINAPI *wglChoosePixelFormatARB) (HDC hdc, const int* piAttribIList,
-		 const FLOAT* pfAttribFList, UINT nMaxFormats, int* piFormats, UINT* nNumFormats);
-	BOOL(WINAPI *wglGetPixelFormatAttribivARB) (HDC hdc, int iPixelFormat,
-		 int iLayerPlane, UINT nAttributes, const int* piAttributes, int* piValues);
+    // the following are set in GLimp_Init()
+    BOOL(WINAPI *wglChoosePixelFormatARB)(HDC hdc, const int *piAttribIList, const FLOAT *pfAttribFList,
+                                          UINT nMaxFormats, int *piFormats, UINT *nNumFormats);
+    BOOL(WINAPI *wglGetPixelFormatAttribivARB)(HDC hdc, int iPixelFormat, int iLayerPlane, UINT nAttributes,
+                                               const int *piAttributes, int *piValues);
 #endif
 
-	static idCVar	win_outputDebugString;
-	static idCVar	win_outputEditString;
-	static idCVar	win_viewlog;
+    static idCVar win_outputDebugString;
+    static idCVar win_outputEditString;
+    static idCVar win_viewlog;
 };
 
-extern Win32Vars_t	win32;
+extern Win32Vars_t win32;
 
 #endif /* !__WIN_LOCAL_H__ */

@@ -19,9 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -33,27 +36,27 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/sys_public.h"
 
-const char*	AROS_Cwd( void );
+const char *AROS_Cwd(void);
 
 // called first thing. does InitSigs and various things
-void		AROS_EarlyInit( );
+void AROS_EarlyInit();
 // called after common has been initialized
-void		AROS_LateInit( );
+void AROS_LateInit();
 
-void		AROS_InitLibs( );
-void		AROS_InitSigs( );
-void		AROS_ClearSigs( );
+void AROS_InitLibs();
+void AROS_InitSigs();
+void AROS_ClearSigs();
 
-void		AROS_Exit( int ret );
-void		AROS_SetExit(int ret); // override the exit code
-void		AROS_SetExitSpawn( const char *exeName ); // set the process to be spawned when we quit
+void AROS_Exit(int ret);
+void AROS_SetExit(int ret);                  // override the exit code
+void AROS_SetExitSpawn(const char *exeName); // set the process to be spawned when we quit
 
-void		AROS_InitConsoleInput( void );
-void		AROS_Shutdown( void );
+void AROS_InitConsoleInput(void);
+void AROS_Shutdown(void);
 
-void		AROS_OpenURL( const char *url );
+void AROS_OpenURL(const char *url);
 
-void		Sys_FPE_handler( int signum, siginfo_t *info, void *context );
-void		Sys_DoStartProcess( const char *exeName, bool dofork = true ); // if not forking, current process gets replaced
+void Sys_FPE_handler(int signum, siginfo_t *info, void *context);
+void Sys_DoStartProcess(const char *exeName, bool dofork = true); // if not forking, current process gets replaced
 
 #endif

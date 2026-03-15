@@ -19,9 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -32,55 +35,58 @@ If you have questions concerning this license or the applicable additional terms
 /*
 ===============================================================================
 
-	Stack template
+    Stack template
 
 ===============================================================================
 */
 
-#define idStack( type, next )		idStackTemplate<type, (int)&(((type*)NULL)->next)>
+#define idStack(type, next) idStackTemplate<type, (int)&(((type *)NULL)->next)>
 
-template< class type, int nextOffset >
-class idStackTemplate {
-public:
-							idStackTemplate( void );
+template <class type, int nextOffset> class idStackTemplate
+{
+  public:
+    idStackTemplate(void);
 
-	void					Add( type *element );
-	type *					Get( void );
+    void Add(type *element);
+    type *Get(void);
 
-private:
-	type *					top;
-	type *					bottom;
+  private:
+    type *top;
+    type *bottom;
 };
 
-#define STACK_NEXT_PTR( element )		(*(type**)(((byte*)element)+nextOffset))
+#define STACK_NEXT_PTR(element) (*(type **)(((byte *)element) + nextOffset))
 
-template< class type, int nextOffset >
-idStackTemplate<type,nextOffset>::idStackTemplate( void ) {
-	top = bottom = NULL;
+template <class type, int nextOffset> idStackTemplate<type, nextOffset>::idStackTemplate(void)
+{
+    top = bottom = NULL;
 }
 
-template< class type, int nextOffset >
-void idStackTemplate<type,nextOffset>::Add( type *element ) {
-	STACK_NEXT_PTR(element) = top;
-	top = element;
-	if ( !bottom ) {
-		bottom = element;
-	}
+template <class type, int nextOffset> void idStackTemplate<type, nextOffset>::Add(type *element)
+{
+    STACK_NEXT_PTR(element) = top;
+    top = element;
+    if (!bottom)
+    {
+        bottom = element;
+    }
 }
 
-template< class type, int nextOffset >
-type *idStackTemplate<type,nextOffset>::Get( void ) {
-	type *element;
+template <class type, int nextOffset> type *idStackTemplate<type, nextOffset>::Get(void)
+{
+    type *element;
 
-	element = top;
-	if ( element ) {
-		top = STACK_NEXT_PTR(top);
-		if ( bottom == element ) {
-			bottom = NULL;
-		}
-		STACK_NEXT_PTR(element) = NULL;
-	}
-	return element;
+    element = top;
+    if (element)
+    {
+        top = STACK_NEXT_PTR(top);
+        if (bottom == element)
+        {
+            bottom = NULL;
+        }
+        STACK_NEXT_PTR(element) = NULL;
+    }
+    return element;
 }
 
 #endif /* !__STACK_H__ */

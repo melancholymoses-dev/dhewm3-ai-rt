@@ -25,11 +25,10 @@ void GLBackend::PostSwapBuffers()
     GLimp_SwapBuffers();
 }
 
-void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm, bool allowDownSizeParm,
-                             textureRepeat_t repeatParm, textureDepth_t depthParm)
+void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm,
+                             bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm)
 {
-    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm,
-                       repeatParm, depthParm);
+    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm, repeatParm, depthParm);
 }
 
 void GLBackend::Image_Purge(idImage *img)

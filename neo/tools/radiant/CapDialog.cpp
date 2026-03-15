@@ -19,15 +19,17 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
-
 
 #include "qe3.h"
 #include "Radiant.h"
@@ -42,29 +44,25 @@ static char THIS_FILE[] = __FILE__;
 /////////////////////////////////////////////////////////////////////////////
 // CCapDialog dialog
 
-
-CCapDialog::CCapDialog(CWnd* pParent /*=NULL*/)
-	: CDialog(CCapDialog::IDD, pParent)
+CCapDialog::CCapDialog(CWnd *pParent /*=NULL*/) : CDialog(CCapDialog::IDD, pParent)
 {
-	//{{AFX_DATA_INIT(CCapDialog)
-	m_nCap = 0;
-	//}}AFX_DATA_INIT
+    //{{AFX_DATA_INIT(CCapDialog)
+    m_nCap = 0;
+    //}}AFX_DATA_INIT
 }
 
-
-void CCapDialog::DoDataExchange(CDataExchange* pDX)
+void CCapDialog::DoDataExchange(CDataExchange *pDX)
 {
-	CDialog::DoDataExchange(pDX);
-	//{{AFX_DATA_MAP(CCapDialog)
-	DDX_Radio(pDX, IDC_RADIO_CAP, m_nCap);
-	//}}AFX_DATA_MAP
+    CDialog::DoDataExchange(pDX);
+    //{{AFX_DATA_MAP(CCapDialog)
+    DDX_Radio(pDX, IDC_RADIO_CAP, m_nCap);
+    //}}AFX_DATA_MAP
 }
-
 
 BEGIN_MESSAGE_MAP(CCapDialog, CDialog)
-	//{{AFX_MSG_MAP(CCapDialog)
-		// NOTE: the ClassWizard will add message map macros here
-	//}}AFX_MSG_MAP
+//{{AFX_MSG_MAP(CCapDialog)
+// NOTE: the ClassWizard will add message map macros here
+//}}AFX_MSG_MAP
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
