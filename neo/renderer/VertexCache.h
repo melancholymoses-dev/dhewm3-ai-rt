@@ -33,7 +33,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 */
 #pragma once
 #include "framework/CVarSystem.h"
-#include "renderer/qgl.h"
+#include "renderer/GL/qgl.h"
 
 // vertex cache calls should only be made by the front end
 

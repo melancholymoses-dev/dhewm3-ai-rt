@@ -37,8 +37,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "framework/FileSystem.h"
 #include "idlib/containers/List.h"
+#include "renderer/GL/qgl.h"
 #include "renderer/Material.h"
-#include "renderer/qgl.h"
 
 /*
 ====================================================================

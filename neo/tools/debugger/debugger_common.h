@@ -113,12 +113,12 @@
 
 // renderer
 #include "renderer/Cinematic.h"
+#include "renderer/GL/qgl.h"
 #include "renderer/Material.h"
 #include "renderer/Model.h"
 #include "renderer/ModelManager.h"
 #include "renderer/RenderSystem.h"
 #include "renderer/RenderWorld.h"
-#include "renderer/qgl.h"
 
 // sound engine
 #include "sound/sound.h"
