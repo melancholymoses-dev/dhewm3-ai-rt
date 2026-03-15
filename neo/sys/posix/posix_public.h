@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,20 +33,19 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "sys/sys_public.h"
 
-const char *Posix_Cwd(void);
+const char*	Posix_Cwd( void );
 
-const char *Posix_GetExePath();
-const char *Posix_GetSavePath();
+const char* Posix_GetExePath();
+const char* Posix_GetSavePath();
 
-void Posix_Exit(int ret);
-void Posix_SetExit(int ret);                  // override the exit code
-void Posix_SetExitSpawn(const char *exeName); // set the process to be spawned when we quit
+void		Posix_Exit( int ret );
+void		Posix_SetExit(int ret); // override the exit code
+void		Posix_SetExitSpawn( const char *exeName ); // set the process to be spawned when we quit
 
-void Posix_InitSignalHandlers(void); // also opens/creates dhewm3.log
-void Posix_InitConsoleInput(void);
-void Posix_Shutdown(void);
+void		Posix_InitSignalHandlers( void ); // also opens/creates dhewm3.log
+void		Posix_InitConsoleInput( void );
+void		Posix_Shutdown( void );
 
-void Sys_DoStartProcess(const char *exeName,
-                        bool dofork = true); // if not forking, current process gets replaced
+void		Sys_DoStartProcess( const char *exeName, bool dofork = true ); // if not forking, current process gets replaced
 
 #endif

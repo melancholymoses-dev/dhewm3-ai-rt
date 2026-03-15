@@ -19,138 +19,130 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 #pragma once
 
-#include "../radiant/GLWidget.h"
 #include "MaterialView.h"
+#include "../radiant/GLWidget.h"
 
-class idGLDrawableView : public idGLDrawable
-{
 
-  public:
-    idGLDrawableView();
-    ~idGLDrawableView();
+class idGLDrawableView : public idGLDrawable {
 
-    virtual void setMedia(const char *name);
-    virtual void draw(int x, int y, int w, int h);
-    virtual void buttonUp(int button)
-    {
-    }
-    virtual void buttonDown(int _button, float x, float y);
-    virtual void mouseMove(float x, float y);
-    virtual void Update() {};
+public:
+	idGLDrawableView();
+	~idGLDrawableView();
 
-    void UpdateCamera(renderView_t *refdef);
-    void UpdateModel(void);
-    void UpdateLights(void);
+	virtual void setMedia(const char *name);
+	virtual void draw(int x, int y, int w, int h);
+	virtual void buttonUp(int button){}
+	virtual void buttonDown(int _button, float x, float y);
+	virtual void mouseMove(float x, float y);
+	virtual void Update() {};
 
-    void addLight(void);
-    void deleteLight(const int lightId);
-    void drawLights(renderView_t *refdef);
+	void UpdateCamera( renderView_t *refdef );
+	void UpdateModel( void );
+	void UpdateLights( void );
 
-    void InitWorld();
-    void ResetView(void);
+	void addLight( void );
+	void deleteLight( const int lightId );
+	void drawLights( renderView_t *refdef );
 
-    void setLightShader(const int lightId, const idStr shaderName);
-    void setLightColor(const int lightId, const idVec3 &value);
-    void setLightRadius(const int lightId, const float radius);
-    void setLightAllowMove(const int lightId, const bool move);
-    void setObject(int Id);
-    void setCustomModel(const idStr modelName);
-    void setShowLights(bool _showLights);
-    void setLocalParm(int parmNum, float value);
-    void setGlobalParm(int parmNum, float value);
+	void InitWorld();
+	void ResetView( void );
 
-  protected:
-    idRenderWorld *world;
-    idRenderModel *worldModel;
-    const idMaterial *material;
+	void setLightShader( const int lightId, const idStr shaderName );
+	void setLightColor( const int lightId, const idVec3 &value );
+	void setLightRadius( const int lightId, const float radius );
+	void setLightAllowMove( const int lightId, const bool move );
+	void setObject( int Id );
+	void setCustomModel( const idStr modelName );
+	void setShowLights( bool _showLights );
+	void setLocalParm( int parmNum, float value );
+	void setGlobalParm( int parmNum, float value );
 
-    bool showLights;
+protected:
+	idRenderWorld		*world;
+	idRenderModel		*worldModel;
+	const idMaterial	*material;
 
-    idVec3 viewOrigin;
-    idAngles viewRotation;
-    float viewDistance;
+	bool			showLights;
 
-    renderEntity_t worldEntity;
-    qhandle_t modelDefHandle;
+	idVec3			viewOrigin;
+	idAngles		viewRotation;
+	float			viewDistance;
 
-    int objectId;
-    idStr customModelName;
+	renderEntity_t	worldEntity;
+	qhandle_t		modelDefHandle;
 
-    float globalParms[MAX_GLOBAL_SHADER_PARMS];
+	int				objectId;
+	idStr			customModelName;
 
-    typedef struct
-    {
-        renderLight_t renderLight;
-        qhandle_t lightDefHandle;
-        idVec3 origin;
-        const idMaterial *shader;
-        float radius;
-        idVec3 color;
-        bool allowMove;
-    } lightInfo_t;
+	float			globalParms[MAX_GLOBAL_SHADER_PARMS];
 
-    idList<lightInfo_t> viewLights;
+	typedef struct {
+		renderLight_t		renderLight;
+		qhandle_t			lightDefHandle;
+		idVec3				origin;
+		const idMaterial	*shader;
+		float				radius;
+		idVec3				color;
+		bool				allowMove;
+	} lightInfo_t;
+
+	idList<lightInfo_t>	viewLights;
 };
+
 
 // ==================================================================
 // ==================================================================
 
 class MaterialPreviewView : public CView, public MaterialView
 {
-    DECLARE_DYNCREATE(MaterialPreviewView)
+	DECLARE_DYNCREATE(MaterialPreviewView)
 
-  protected:
-    MaterialPreviewView();
-    virtual ~MaterialPreviewView();
+protected:
+	MaterialPreviewView();
+	virtual ~MaterialPreviewView();
 
-  public:
-    virtual void OnDraw(CDC *pDC); // overridden to draw this view
+public:
+	virtual void OnDraw(CDC* pDC);      // overridden to draw this view
 
-    void MV_OnMaterialSelectionChange(MaterialDoc *pMaterial);
+	void	MV_OnMaterialSelectionChange(MaterialDoc* pMaterial);
 
-    void OnModelChange(int modelId);
-    void OnCustomModelChange(idStr modelName);
-    void OnShowLightsChange(bool showLights);
+	void	OnModelChange( int modelId );
+	void	OnCustomModelChange( idStr modelName );
+	void	OnShowLightsChange( bool showLights );
 
-    void OnLocalParmChange(int parmNum, float value);
-    void OnGlobalParmChange(int parmNum, float value);
+	void	OnLocalParmChange( int parmNum, float value );
+	void	OnGlobalParmChange( int parmNum, float value );
 
-    void OnLightShaderChange(int lightId, idStr shaderName);
-    void OnLightRadiusChange(int lightId, float radius);
-    void OnLightColorChange(int lightId, idVec3 &color);
-    void OnLightAllowMoveChange(int lightId, bool move);
+	void	OnLightShaderChange( int lightId, idStr shaderName );
+	void	OnLightRadiusChange( int lightId, float radius );
+	void	OnLightColorChange( int lightId, idVec3 &color );
+	void	OnLightAllowMoveChange( int lightId, bool move );
 
-    void OnAddLight(void);
-    void OnDeleteLight(int lightId);
+	void	OnAddLight( void );
+	void	OnDeleteLight( int lightId );
 
 #ifdef _DEBUG
-    virtual void AssertValid() const;
-    virtual void Dump(CDumpContext &dc) const;
+	virtual void AssertValid() const;
+	virtual void Dump(CDumpContext& dc) const;
 #endif
 
-  protected:
-    idGLWidget renderWindow;
-    idGLDrawableView renderedView;
+protected:
+	idGLWidget			renderWindow;
+	idGLDrawableView	renderedView;
 
-    idStr currentMaterial;
+	idStr	currentMaterial;
 
-    DECLARE_MESSAGE_MAP()
+	DECLARE_MESSAGE_MAP()
 
-  public:
-    afx_msg int OnCreate(LPCREATESTRUCT lpCreateStruct);
-    afx_msg void OnSize(UINT nType, int cx, int cy);
+public:
+	afx_msg int OnCreate(LPCREATESTRUCT lpCreateStruct);
+	afx_msg void OnSize(UINT nType, int cx, int cy);
 };

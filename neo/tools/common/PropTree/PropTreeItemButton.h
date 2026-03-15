@@ -15,8 +15,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 #include "PropTreeItem.h"
 
@@ -25,39 +25,39 @@
 
 class PROPTREE_API CPropTreeItemButton : public CPropTreeItem
 {
-    // Construction
-  public:
-    CPropTreeItemButton();
-    virtual ~CPropTreeItemButton();
+// Construction
+public:
+	CPropTreeItemButton();
+	virtual ~CPropTreeItemButton();
 
-    // Attributes
-  public:
-    // The non-attribute area needs drawing
-    virtual LONG DrawItem(CDC *pDC, const RECT &rc, LONG x, LONG y);
+// Attributes
+public:
+	// The non-attribute area needs drawing
+	virtual LONG DrawItem(CDC* pDC, const RECT& rc, LONG x, LONG y);
 
-    // The attribute area needs drawing
-    virtual void DrawAttribute(CDC *pDC, const RECT &rc);
+	// The attribute area needs drawing
+	virtual void DrawAttribute(CDC* pDC, const RECT& rc);
 
-    // Retrieve the item's attribute value
-    virtual LPARAM GetItemValue();
+	// Retrieve the item's attribute value
+	virtual LPARAM GetItemValue();
 
-    // Set the item's attribute value
-    virtual void SetItemValue(LPARAM lParam);
+	// Set the item's attribute value
+	virtual void SetItemValue(LPARAM lParam);
 
-    // Overrideable - Returns TRUE if the point is on the button
-    virtual BOOL HitButton(const POINT &pt);
+	// Overrideable - Returns TRUE if the point is on the button
+	virtual BOOL HitButton(const POINT& pt);
 
-    void SetButtonText(LPCSTR text);
+	void SetButtonText( LPCSTR text );
 
-  protected:
-    CString buttonText;
-    CRect buttonRect;
-    CRect hitTestRect;
-    bool mouseDown;
+protected:
+	CString				buttonText;
+	CRect				buttonRect;
+	CRect				hitTestRect;
+	bool				mouseDown;
+
 };
 
 /////////////////////////////////////////////////////////////////////////////
 
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Visual C++ will insert additional declarations immediately before
-// the previous line.
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.

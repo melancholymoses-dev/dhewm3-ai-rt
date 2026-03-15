@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,43 +33,45 @@ class idWindow;
 
 class rvGENavigator
 {
-  public:
-    rvGENavigator();
+public:
 
-    bool Create(HWND parent, bool visible);
-    void Show(bool visibile);
+	rvGENavigator ( );
 
-    void Refresh(void);
+	bool	Create				( HWND parent, bool visible );
+	void	Show				( bool visibile );
 
-    void SetWorkspace(rvGEWorkspace *workspace);
+	void	Refresh				( void );
 
-    void Update(void);
-    void UpdateSelections(void);
+	void	SetWorkspace		( rvGEWorkspace* workspace );
 
-    HWND GetWindow(void);
+	void	Update				( void );
+	void	UpdateSelections	( void );
 
-  protected:
-    void AddWindow(idWindow *window);
+	HWND	GetWindow			( void );
 
-    static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-    static LRESULT CALLBACK ListWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-    static LRESULT FAR PASCAL GetMsgProc(int nCode, WPARAM wParam, LPARAM lParam);
+protected:
 
-    HWND mWnd;
-    HWND mTree;
-    HICON mVisibleIcon;
-    HICON mVisibleIconDisabled;
-    HICON mScriptsIcon;
-    HICON mScriptsLightIcon;
-    HICON mCollapseIcon;
-    HICON mExpandIcon;
-    rvGEWorkspace *mWorkspace;
-    WNDPROC mListWndProc;
+	void	AddWindow			( idWindow* window );
+
+	static LRESULT CALLBACK WndProc ( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
+	static LRESULT CALLBACK ListWndProc ( HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam );
+	static LRESULT FAR PASCAL GetMsgProc ( int nCode, WPARAM wParam, LPARAM lParam );
+
+	HWND			mWnd;
+	HWND			mTree;
+	HICON			mVisibleIcon;
+	HICON			mVisibleIconDisabled;
+	HICON			mScriptsIcon;
+	HICON			mScriptsLightIcon;
+	HICON			mCollapseIcon;
+	HICON			mExpandIcon;
+	rvGEWorkspace*	mWorkspace;
+	WNDPROC			mListWndProc;
 };
 
-ID_INLINE HWND rvGENavigator::GetWindow(void)
+ID_INLINE HWND rvGENavigator::GetWindow ( void )
 {
-    return mWnd;
+	return mWnd;
 }
 
 #endif // GENAVIGATOR_H_

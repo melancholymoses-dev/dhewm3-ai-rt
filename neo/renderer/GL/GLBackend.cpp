@@ -1,8 +1,8 @@
-#include "renderer/GL/GLBackend.h"
-#include "renderer/Image.h"
 #include "renderer/RendererBackend.h"
-#include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
+#include "renderer/VertexCache.h"
+#include "renderer/Image.h"
+#include "renderer/GL/GLBackend.h"
 
 // Forward declarations of the existing GL free functions
 // (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
@@ -25,10 +25,11 @@ void GLBackend::PostSwapBuffers()
     GLimp_SwapBuffers();
 }
 
-void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm,
-                             bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm)
+void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm, bool allowDownSizeParm,
+                             textureRepeat_t repeatParm, textureDepth_t depthParm)
 {
-    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm, repeatParm, depthParm);
+    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm,
+                       repeatParm, depthParm);
 }
 
 void GLBackend::Image_Purge(idImage *img)

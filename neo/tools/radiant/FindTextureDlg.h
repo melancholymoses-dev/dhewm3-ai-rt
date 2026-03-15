@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -45,53 +39,51 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 class CFindTextureDlg : public CDialog
 {
-    // Construction
-  public:
-    static void setReplaceStr(const char *p);
-    static void setFindStr(const char *p);
-    static bool isOpen();
-    static void show();
-    static void updateTextures(const char *p);
-    CFindTextureDlg(CWnd *pParent = NULL); // standard constructor
+// Construction
+public:
+	static void setReplaceStr(const char* p);
+	static void setFindStr(const char* p);
+	static bool isOpen();
+  static void show();
+  static void updateTextures(const char* p);
+	CFindTextureDlg(CWnd* pParent = NULL);   // standard constructor
 
-    // Dialog Data
-    //{{AFX_DATA(CFindTextureDlg)
-    enum
-    {
-        IDD = IDD_DIALOG_FINDREPLACE
-    };
-    BOOL m_bSelectedOnly;
-    CString m_strFind;
-    CString m_strReplace;
-    BOOL m_bForce;
-    BOOL m_bLive;
-    //}}AFX_DATA
+// Dialog Data
+	//{{AFX_DATA(CFindTextureDlg)
+	enum { IDD = IDD_DIALOG_FINDREPLACE };
+	BOOL	m_bSelectedOnly;
+	CString	m_strFind;
+	CString	m_strReplace;
+	BOOL	m_bForce;
+	BOOL	m_bLive;
+	//}}AFX_DATA
 
-    // Overrides
-    // ClassWizard generated virtual function overrides
-    //{{AFX_VIRTUAL(CFindTextureDlg)
-  public:
-    virtual BOOL DestroyWindow();
 
-  protected:
-    virtual void DoDataExchange(CDataExchange *pDX); // DDX/DDV support
-                                                     //}}AFX_VIRTUAL
+// Overrides
+	// ClassWizard generated virtual function overrides
+	//{{AFX_VIRTUAL(CFindTextureDlg)
+	public:
+	virtual BOOL DestroyWindow();
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+	//}}AFX_VIRTUAL
 
-    // Implementation
-  protected:
-    // Generated message map functions
-    //{{AFX_MSG(CFindTextureDlg)
-    afx_msg void OnBtnApply();
-    virtual void OnOK();
-    virtual void OnCancel();
-    afx_msg void OnSetfocusEditFind();
-    afx_msg void OnSetfocusEditReplace();
-    //}}AFX_MSG
-    DECLARE_MESSAGE_MAP()
+// Implementation
+protected:
+
+	// Generated message map functions
+	//{{AFX_MSG(CFindTextureDlg)
+	afx_msg void OnBtnApply();
+	virtual void OnOK();
+	virtual void OnCancel();
+	afx_msg void OnSetfocusEditFind();
+	afx_msg void OnSetfocusEditReplace();
+	//}}AFX_MSG
+	DECLARE_MESSAGE_MAP()
 };
 
+
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Developer Studio will insert additional declarations immediately
-// before the previous line.
+// Microsoft Developer Studio will insert additional declarations immediately before the previous line.
 
 #endif // !defined(AFX_FINDTEXTUREDLG_H__34B75D32_9F3A_11D1_B570_00AA00A410FC__INCLUDED_)

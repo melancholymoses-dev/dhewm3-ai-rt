@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,81 +29,92 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __EDIT_PUBLIC_H__
 #define __EDIT_PUBLIC_H__
 
-#include "idlib/Dict.h"
 #include "idlib/math/Vector.h"
+#include "idlib/Dict.h"
 
 /*
 ===============================================================================
 
-        Editors.
+	Editors.
 
 ===============================================================================
 */
 
-class idProgram;
-class idInterpreter;
+
+class	idProgram;
+class	idInterpreter;
+
 
 // Radiant Level Editor
-void RadiantInit(void);
-void RadiantShutdown(void);
-void RadiantRun(void);
-void RadiantPrint(const char *text);
-void RadiantSync(const char *mapName, const idVec3 &viewOrg, const idAngles &viewAngles);
+void	RadiantInit( void );
+void	RadiantShutdown( void );
+void	RadiantRun( void );
+void	RadiantPrint( const char *text );
+void	RadiantSync( const char *mapName, const idVec3 &viewOrg, const idAngles &viewAngles );
+
 
 // in-game Light Editor
-void LightEditorInit(const idDict *spawnArgs);
-void LightEditorShutdown(void);
-void LightEditorRun(void);
+void	LightEditorInit( const idDict *spawnArgs );
+void	LightEditorShutdown( void );
+void	LightEditorRun( void );
+
 
 // in-game Sound Editor
-void SoundEditorInit(const idDict *spawnArgs);
-void SoundEditorShutdown(void);
-void SoundEditorRun(void);
+void	SoundEditorInit( const idDict *spawnArgs );
+void	SoundEditorShutdown( void );
+void	SoundEditorRun( void );
+
 
 // in-game Articulated Figure Editor
-void AFEditorInit(const idDict *spawnArgs);
-void AFEditorShutdown(void);
-void AFEditorRun(void);
+void	AFEditorInit( const idDict *spawnArgs );
+void	AFEditorShutdown( void );
+void	AFEditorRun( void );
+
 
 // in-game Particle Editor
-void ParticleEditorInit(const idDict *spawnArgs);
-void ParticleEditorShutdown(void);
-void ParticleEditorRun(void);
+void	ParticleEditorInit( const idDict *spawnArgs );
+void	ParticleEditorShutdown( void );
+void	ParticleEditorRun( void );
+
 
 // in-game PDA Editor
-void PDAEditorInit(const idDict *spawnArgs);
-void PDAEditorShutdown(void);
-void PDAEditorRun(void);
+void	PDAEditorInit( const idDict *spawnArgs );
+void	PDAEditorShutdown( void );
+void	PDAEditorRun( void );
+
 
 // in-game Script Editor
-void ScriptEditorInit(const idDict *spawnArgs);
-void ScriptEditorShutdown(void);
-void ScriptEditorRun(void);
+void	ScriptEditorInit( const idDict *spawnArgs );
+void	ScriptEditorShutdown( void );
+void	ScriptEditorRun( void );
+
 
 // in-game Declaration Browser
-void DeclBrowserInit(const idDict *spawnArgs);
-void DeclBrowserShutdown(void);
-void DeclBrowserRun(void);
-void DeclBrowserReloadDeclarations(void);
+void	DeclBrowserInit( const idDict *spawnArgs );
+void	DeclBrowserShutdown( void );
+void	DeclBrowserRun( void );
+void	DeclBrowserReloadDeclarations( void );
+
 
 // GUI Editor
-void GUIEditorInit(void);
-void GUIEditorShutdown(void);
-void GUIEditorRun(void);
-bool GUIEditorHandleMessage(void *msg);
+void	GUIEditorInit( void );
+void	GUIEditorShutdown( void );
+void	GUIEditorRun( void );
+bool	GUIEditorHandleMessage( void *msg );
+
 
 // Script Debugger
-void DebuggerClientLaunch(void);
-void DebuggerClientInit(const char *cmdline);
-bool DebuggerServerInit(void);
-void DebuggerServerShutdown(void);
-void DebuggerServerPrint(const char *text);
-void DebuggerServerCheckBreakpoint(idInterpreter *interpreter, idProgram *program, int instructionPointer);
+void	DebuggerClientLaunch( void );
+void	DebuggerClientInit( const char *cmdline );
+bool	DebuggerServerInit( void );
+void	DebuggerServerShutdown( void );
+void	DebuggerServerPrint( const char *text );
+void	DebuggerServerCheckBreakpoint( idInterpreter *interpreter, idProgram *program, int instructionPointer );
 
-// Material Editor
-void MaterialEditorInit(void);
-void MaterialEditorRun(void);
-void MaterialEditorShutdown(void);
-void MaterialEditorPrintConsole(const char *msg);
+//Material Editor
+void	MaterialEditorInit( void );
+void	MaterialEditorRun( void );
+void	MaterialEditorShutdown( void );
+void	MaterialEditorPrintConsole( const char *msg );
 
 #endif /* !__EDIT_PUBLIC_H__ */

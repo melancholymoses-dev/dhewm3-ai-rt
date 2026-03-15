@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,126 +33,122 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 const int NUM_VERTEX_FRAMES = 2;
 
-typedef enum
-{
-    TAG_FREE,
-    TAG_USED,
-    TAG_FIXED, // for the temp buffers
-    TAG_TEMP   // in frame temp area, not static area
+typedef enum {
+	TAG_FREE,
+	TAG_USED,
+	TAG_FIXED,		// for the temp buffers
+	TAG_TEMP		// in frame temp area, not static area
 } vertBlockTag_t;
 
-typedef struct vertCache_s
-{
-    GLuint vbo;
-    void *virtMem;    // only one of vbo / virtMem will be set
-    bool indexBuffer; // holds indexes instead of vertexes
+typedef struct vertCache_s {
+	GLuint			vbo;
+	void			*virtMem;			// only one of vbo / virtMem will be set
+	bool			indexBuffer;		// holds indexes instead of vertexes
 
-    intptr_t offset;
-    int size;                  // may be larger than the amount asked for, due
-                               // to round up and minimum fragment sizes
-    int tag;                   // a tag of 0 is a free block
-    struct vertCache_s **user; // will be set to zero when purged
-    struct vertCache_s *next,
-        *prev;     // may be on the static list or one of the frame lists
-    int frameUsed; // it can't be purged if near the current frame
+	intptr_t		offset;
+	int				size;				// may be larger than the amount asked for, due
+										// to round up and minimum fragment sizes
+	int				tag;				// a tag of 0 is a free block
+	struct vertCache_s	**	user;				// will be set to zero when purged
+	struct vertCache_s *next, *prev;	// may be on the static list or one of the frame lists
+	int				frameUsed;			// it can't be purged if near the current frame
 
 #ifdef DHEWM3_VULKAN
-    // Vulkan device-local buffer backing.  uint64_t matches the underlying type
-    // of VkBuffer / VkDeviceMemory (non-dispatchable handles) without pulling
-    // <vulkan/vulkan.h> into every file that includes VertexCache.h.
-    uint64_t vkBuffer; // VkBuffer handle  (0 = not allocated)
-    uint64_t vkMemory; // VkDeviceMemory handle
+	// Vulkan device-local buffer backing.  uint64_t matches the underlying type
+	// of VkBuffer / VkDeviceMemory (non-dispatchable handles) without pulling
+	// <vulkan/vulkan.h> into every file that includes VertexCache.h.
+	uint64_t		vkBuffer;			// VkBuffer handle  (0 = not allocated)
+	uint64_t		vkMemory;			// VkDeviceMemory handle
 #endif
 } vertCache_t;
 
-class idVertexCache
-{
-  public:
-    void Init();
-    void Shutdown();
 
-    // just for gfxinfo printing
-    bool IsFast();
+class idVertexCache {
+public:
+	void			Init();
+	void			Shutdown();
 
-    // called when vertex programs are enabled or disabled, because
-    // the cached data is no longer valid
-    void PurgeAll();
+	// just for gfxinfo printing
+	bool			IsFast();
 
-    // Tries to allocate space for the given data in fast vertex
-    // memory, and copies it over.
-    // Alloc does NOT do a touch, which allows purging of things
-    // created at level load time even if a frame hasn't passed yet.
-    // These allocations can be purged, which will zero the pointer.
-    void Alloc(void *data, int bytes, vertCache_t **buffer, bool indexBuffer = false);
+	// called when vertex programs are enabled or disabled, because
+	// the cached data is no longer valid
+	void			PurgeAll();
 
-    // This will be a real pointer with virtual memory,
-    // but it will be an int offset cast to a pointer of ARB_vertex_buffer_object
-    void *Position(vertCache_t *buffer);
+	// Tries to allocate space for the given data in fast vertex
+	// memory, and copies it over.
+	// Alloc does NOT do a touch, which allows purging of things
+	// created at level load time even if a frame hasn't passed yet.
+	// These allocations can be purged, which will zero the pointer.
+	void			Alloc( void *data, int bytes, vertCache_t **buffer, bool indexBuffer = false );
 
-    // if r_useIndexBuffers is enabled, but you need to draw something without
-    // an indexCache, this must be called to reset GL_ELEMENT_ARRAY_BUFFER_ARB
-    void UnbindIndex();
+	// This will be a real pointer with virtual memory,
+	// but it will be an int offset cast to a pointer of ARB_vertex_buffer_object
+	void *			Position( vertCache_t *buffer );
 
-    // automatically freed at the end of the next frame
-    // used for specular texture coordinates and gui drawing, which
-    // will change every frame.
-    // will return NULL if the vertex cache is completely full
-    // As with Position(), this may not actually be a pointer you can access.
-    vertCache_t *AllocFrameTemp(void *data, int bytes);
+	// if r_useIndexBuffers is enabled, but you need to draw something without
+	// an indexCache, this must be called to reset GL_ELEMENT_ARRAY_BUFFER_ARB
+	void			UnbindIndex();
 
-    // notes that a buffer is used this frame, so it can't be purged
-    // out from under the GPU
-    void Touch(vertCache_t *buffer);
+	// automatically freed at the end of the next frame
+	// used for specular texture coordinates and gui drawing, which
+	// will change every frame.
+	// will return NULL if the vertex cache is completely full
+	// As with Position(), this may not actually be a pointer you can access.
+	vertCache_t	*	AllocFrameTemp( void *data, int bytes );
 
-    // this block won't have to zero a buffer pointer when it is purged,
-    // but it must still wait for the frames to pass, in case the GPU
-    // is still referencing it
-    void Free(vertCache_t *buffer);
+	// notes that a buffer is used this frame, so it can't be purged
+	// out from under the GPU
+	void			Touch( vertCache_t *buffer );
 
-    // updates the counter for determining which temp space to use
-    // and which blocks can be purged
-    // Also prints debugging info when enabled
-    void EndFrame();
+	// this block won't have to zero a buffer pointer when it is purged,
+	// but it must still wait for the frames to pass, in case the GPU
+	// is still referencing it
+	void			Free( vertCache_t *buffer );
 
-    // listVertexCache calls this
-    void List();
+	// updates the counter for determining which temp space to use
+	// and which blocks can be purged
+	// Also prints debugging info when enabled
+	void			EndFrame();
 
-  private:
-    void InitMemoryBlocks(int size);
-    void ActuallyFree(vertCache_t *block);
+	// listVertexCache calls this
+	void			List();
 
-    static idCVar r_showVertexCache;
-    static idCVar r_vertexBufferMegs;
+private:
+	void			InitMemoryBlocks( int size );
+	void			ActuallyFree( vertCache_t *block );
 
-    int staticCountTotal;
-    int staticAllocTotal; // for end of frame purging
+	static idCVar	r_showVertexCache;
+	static idCVar	r_vertexBufferMegs;
 
-    int staticAllocThisFrame; // debug counter
-    int staticCountThisFrame;
-    int dynamicAllocThisFrame;
-    int dynamicCountThisFrame;
+	int				staticCountTotal;
+	int				staticAllocTotal;		// for end of frame purging
 
-    int currentFrame; // for purgable block tracking
-    int listNum;      // currentFrame % NUM_VERTEX_FRAMES, determines which tempBuffers
-                      // to use
+	int				staticAllocThisFrame;	// debug counter
+	int				staticCountThisFrame;
+	int				dynamicAllocThisFrame;
+	int				dynamicCountThisFrame;
 
-    bool virtualMemory; // not fast stuff
+	int				currentFrame;			// for purgable block tracking
+	int				listNum;				// currentFrame % NUM_VERTEX_FRAMES, determines which tempBuffers to use
 
-    bool allocatingTempBuffer; // force GL_STREAM_DRAW_ARB
+	bool			virtualMemory;			// not fast stuff
 
-    vertCache_t *tempBuffers[NUM_VERTEX_FRAMES]; // allocated at startup
-    bool tempOverflow;                           // had to alloc a temp in static memory
+	bool			allocatingTempBuffer;	// force GL_STREAM_DRAW_ARB
 
-    idBlockAlloc<vertCache_t, 1024> headerAllocator;
+	vertCache_t		*tempBuffers[NUM_VERTEX_FRAMES];		// allocated at startup
+	bool			tempOverflow;			// had to alloc a temp in static memory
 
-    vertCache_t freeStaticHeaders;  // head of doubly linked list
-    vertCache_t freeDynamicHeaders; // head of doubly linked list
-    vertCache_t dynamicHeaders;     // head of doubly linked list
-    vertCache_t deferredFreeList;   // head of doubly linked list
-    vertCache_t staticHeaders;      // head of doubly linked list in MRU order,
-                                    // staticHeaders.next is most recently used
+	idBlockAlloc<vertCache_t,1024>	headerAllocator;
 
-    int frameBytes; // for each of NUM_VERTEX_FRAMES frames
+	vertCache_t		freeStaticHeaders;		// head of doubly linked list
+	vertCache_t		freeDynamicHeaders;		// head of doubly linked list
+	vertCache_t		dynamicHeaders;			// head of doubly linked list
+	vertCache_t		deferredFreeList;		// head of doubly linked list
+	vertCache_t		staticHeaders;			// head of doubly linked list in MRU order,
+											// staticHeaders.next is most recently used
+
+	int				frameBytes;				// for each of NUM_VERTEX_FRAMES frames
 };
 
-extern idVertexCache vertexCache;
+extern	idVertexCache	vertexCache;

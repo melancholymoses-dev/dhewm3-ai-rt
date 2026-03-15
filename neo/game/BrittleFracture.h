@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +29,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_BRITTLEFRACTURE_H__
 #define __GAME_BRITTLEFRACTURE_H__
 
-#include "Entity.h"
-#include "physics/Clip.h"
 #include "physics/Physics_RigidBody.h"
 #include "physics/Physics_StaticMulti.h"
+#include "physics/Clip.h"
+#include "Entity.h"
 
 /*
 ===============================================================================
@@ -49,94 +43,92 @@ of the render model which can fracture.
 ===============================================================================
 */
 
-typedef struct shard_s
-{
-    idClipModel *clipModel;
-    idFixedWinding winding;
-    idList<idFixedWinding *> decals;
-    idList<bool> edgeHasNeighbour;
-    idList<struct shard_s *> neighbours;
-    idPhysics_RigidBody physicsObj;
-    int droppedTime;
-    bool atEdge;
-    int islandNum;
+typedef struct shard_s {
+	idClipModel *				clipModel;
+	idFixedWinding				winding;
+	idList<idFixedWinding *>	decals;
+	idList<bool>				edgeHasNeighbour;
+	idList<struct shard_s *>	neighbours;
+	idPhysics_RigidBody			physicsObj;
+	int							droppedTime;
+	bool						atEdge;
+	int							islandNum;
 } shard_t;
 
-class idBrittleFracture : public idEntity
-{
 
-  public:
-    CLASS_PROTOTYPE(idBrittleFracture);
+class idBrittleFracture : public idEntity {
 
-    idBrittleFracture(void);
-    virtual ~idBrittleFracture(void);
+public:
+	CLASS_PROTOTYPE( idBrittleFracture );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+								idBrittleFracture( void );
+	virtual						~idBrittleFracture( void );
 
-    void Spawn(void);
+	void						Save( idSaveGame *savefile ) const;
+	void						Restore( idRestoreGame *savefile );
 
-    virtual void Present(void);
-    virtual void Think(void);
-    virtual void ApplyImpulse(idEntity *ent, int id, const idVec3 &point, const idVec3 &impulse);
-    virtual void AddForce(idEntity *ent, int id, const idVec3 &point, const idVec3 &force);
-    virtual void AddDamageEffect(const trace_t &collision, const idVec3 &velocity, const char *damageDefName);
-    virtual void Killed(idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location);
+	void						Spawn( void );
 
-    void ProjectDecal(const idVec3 &point, const idVec3 &dir, const int time, const char *damageDefName);
-    bool IsBroken(void) const;
+	virtual void				Present( void );
+	virtual void				Think( void );
+	virtual void				ApplyImpulse( idEntity *ent, int id, const idVec3 &point, const idVec3 &impulse );
+	virtual void				AddForce( idEntity *ent, int id, const idVec3 &point, const idVec3 &force );
+	virtual void				AddDamageEffect( const trace_t &collision, const idVec3 &velocity, const char *damageDefName );
+	virtual void				Killed( idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location );
 
-    enum
-    {
-        EVENT_PROJECT_DECAL = idEntity::EVENT_MAXEVENTS,
-        EVENT_SHATTER,
-        EVENT_MAXEVENTS
-    };
+	void						ProjectDecal( const idVec3 &point, const idVec3 &dir, const int time, const char *damageDefName );
+	bool						IsBroken( void ) const;
 
-    virtual void ClientPredictionThink(void);
-    virtual bool ClientReceiveEvent(int event, int time, const idBitMsg &msg);
+	enum {
+		EVENT_PROJECT_DECAL = idEntity::EVENT_MAXEVENTS,
+		EVENT_SHATTER,
+		EVENT_MAXEVENTS
+	};
 
-  private:
-    // setttings
-    const idMaterial *material;
-    const idMaterial *decalMaterial;
-    float decalSize;
-    float maxShardArea;
-    float maxShatterRadius;
-    float minShatterRadius;
-    float linearVelocityScale;
-    float angularVelocityScale;
-    float shardMass;
-    float density;
-    float friction;
-    float bouncyness;
-    idStr fxFracture;
+	virtual void				ClientPredictionThink( void );
+	virtual bool				ClientReceiveEvent( int event, int time, const idBitMsg &msg );
 
-    // state
-    idPhysics_StaticMulti physicsObj;
-    idList<shard_t *> shards;
-    idBounds bounds;
-    bool disableFracture;
+private:
+	// setttings
+	const idMaterial *			material;
+	const idMaterial *			decalMaterial;
+	float						decalSize;
+	float						maxShardArea;
+	float						maxShatterRadius;
+	float						minShatterRadius;
+	float						linearVelocityScale;
+	float						angularVelocityScale;
+	float						shardMass;
+	float						density;
+	float						friction;
+	float						bouncyness;
+	idStr						fxFracture;
 
-    // for rendering
-    mutable int lastRenderEntityUpdate;
-    mutable bool changed;
+	// state
+	idPhysics_StaticMulti		physicsObj;
+	idList<shard_t *>			shards;
+	idBounds					bounds;
+	bool						disableFracture;
 
-    bool UpdateRenderEntity(renderEntity_s *renderEntity, const renderView_t *renderView) const;
-    static bool ModelCallback(renderEntity_s *renderEntity, const renderView_t *renderView);
+	// for rendering
+	mutable int					lastRenderEntityUpdate;
+	mutable bool				changed;
 
-    void AddShard(idClipModel *clipModel, idFixedWinding &w);
-    void RemoveShard(int index);
-    void DropShard(shard_t *shard, const idVec3 &point, const idVec3 &dir, const float impulse, const int time);
-    void Shatter(const idVec3 &point, const idVec3 &impulse, const int time);
-    void DropFloatingIslands(const idVec3 &point, const idVec3 &impulse, const int time);
-    void Break(void);
-    void Fracture_r(idFixedWinding &w);
-    void CreateFractures(const idRenderModel *renderModel);
-    void FindNeighbours(void);
+	bool						UpdateRenderEntity( renderEntity_s *renderEntity, const renderView_t *renderView ) const;
+	static bool					ModelCallback( renderEntity_s *renderEntity, const renderView_t *renderView );
 
-    void Event_Activate(idEntity *activator);
-    void Event_Touch(idEntity *other, trace_t *trace);
+	void						AddShard( idClipModel *clipModel, idFixedWinding &w );
+	void						RemoveShard( int index );
+	void						DropShard( shard_t *shard, const idVec3 &point, const idVec3 &dir, const float impulse, const int time );
+	void						Shatter( const idVec3 &point, const idVec3 &impulse, const int time );
+	void						DropFloatingIslands( const idVec3 &point, const idVec3 &impulse, const int time );
+	void						Break( void );
+	void						Fracture_r( idFixedWinding &w );
+	void						CreateFractures( const idRenderModel *renderModel );
+	void						FindNeighbours( void );
+
+	void						Event_Activate( idEntity *activator );
+	void						Event_Touch( idEntity *other, trace_t *trace );
 };
 
 #endif /* !__GAME_BRITTLEFRACTURE_H__ */

@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,6 +29,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #if 0 // TODO: FIX this. - DG: from SteelStorm2
 
 #include "tools/edit_gui_common.h"
+
 
 #include "../../sys/win32/rc/Common_resource.h"
 #include "../../sys/win32/rc/DeclEditor_resource.h"
@@ -449,10 +444,10 @@ void DialogEntityDefEditor::OnMove( int x, int y ) {
 DialogEntityDefEditor::OnSize
 ================
 */
-#define BORDER_SIZE 4
-#define BUTTON_SPACE 4
-#define CONTROL_HEIGHT 24
-#define TOOLBAR_HEIGHT 24
+#define BORDER_SIZE			4
+#define BUTTON_SPACE		4
+#define CONTROL_HEIGHT		24
+#define TOOLBAR_HEIGHT		24
 
 void DialogEntityDefEditor::OnSize( UINT nType, int cx, int cy ) {
 	CRect clientRect, rect;
@@ -866,3 +861,4 @@ void DialogEntityDefEditor::OnBnClickedDelete() {
 	}
 }
 #endif
+

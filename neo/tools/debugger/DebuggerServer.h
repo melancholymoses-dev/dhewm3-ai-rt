@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,16 +30,16 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "sys/sys_sdl.h"
 
-#include "DebuggerBreakpoint.h"
-#include "DebuggerMessages.h"
-#include "framework/Game.h"
-#include "idlib/Str.h"
 #include "sys/platform.h"
+#include "idlib/Str.h"
+#include "DebuggerMessages.h"
+#include "DebuggerBreakpoint.h"
+#include "framework/Game.h"
 
 #if SDL_VERSION_ATLEAST(3, 0, 0)
-// backwards-compat with SDL <= 2
-#define SDL_mutex SDL_Mutex
-#define SDL_cond SDL_Condition
+  // backwards-compat with SDL <= 2
+  #define SDL_mutex SDL_Mutex
+  #define SDL_cond SDL_Condition
 #endif
 
 class function_t;
@@ -53,69 +47,72 @@ typedef struct prstack_s prstack_t;
 
 class rvDebuggerServer
 {
-  public:
-    rvDebuggerServer();
-    ~rvDebuggerServer();
+public:
 
-    bool Initialize(void);
-    void Shutdown(void);
+	rvDebuggerServer ( );
+	~rvDebuggerServer ( );
 
-    bool ProcessMessages(void);
+	bool		Initialize				( void );
+	void		Shutdown				( void );
 
-    bool IsConnected(void);
+	bool		ProcessMessages			( void );
 
-    void CheckBreakpoints(idInterpreter *interpreter, idProgram *program, int instructionPointer);
+	bool		IsConnected				( void );
 
-    void Print(const char *text);
+	void		CheckBreakpoints		( idInterpreter *interpreter, idProgram *program, int instructionPointer );
 
-    void OSPathToRelativePath(const char *osPath, idStr &qpath);
+	void		Print					( const char *text );
 
-    bool GameSuspended(void);
+	void		OSPathToRelativePath	( const char *osPath, idStr &qpath );
 
-  private:
-    void ClearBreakpoints(void);
+	bool		GameSuspended			( void );
+private:
 
-    void Break(idInterpreter *interpreter, idProgram *program, int instructionPointer);
-    void Resume(void);
+	void		ClearBreakpoints		( void );
 
-    void SendMessage(EDebuggerMessage dbmsg);
-    void SendPacket(void *data, int datasize);
+	void		Break					( idInterpreter *interpreter, idProgram *program, int instructionPointer );
+	void		Resume					( void );
 
-    // Message handlers
-    void HandleAddBreakpoint(idBitMsg *msg);
-    void HandleRemoveBreakpoint(idBitMsg *msg);
-    void HandleResume(idBitMsg *msg);
-    void HandleInspectVariable(idBitMsg *msg);
-    void HandleInspectCallstack(idBitMsg *msg);
-    void HandleInspectThreads(idBitMsg *msg);
-    void HandleInspectScripts(idBitMsg *msg);
-    void HandleExecCommand(idBitMsg *msg);
-    ////
+	void		SendMessage				( EDebuggerMessage dbmsg );
+	void		SendPacket				( void* data, int datasize );
 
-    bool mConnected;
-    netadr_t mClientAdr;
-    idPort mPort;
-    idList<rvDebuggerBreakpoint *> mBreakpoints;
-    SDL_mutex *mCriticalSection;
+	// Message handlers
+	void		HandleAddBreakpoint		( idBitMsg *msg );
+	void		HandleRemoveBreakpoint	( idBitMsg *msg );
+	void		HandleResume			( idBitMsg *msg );
+	void		HandleInspectVariable	( idBitMsg *msg );
+	void		HandleInspectCallstack	( idBitMsg *msg );
+	void		HandleInspectThreads	( idBitMsg *msg );
+	void		HandleInspectScripts	( idBitMsg *msg );
+	void		HandleExecCommand		( idBitMsg *msg );
+	////
 
-    SDL_cond *mGameThreadBreakCond;
-    SDL_mutex *mGameThreadBreakLock;
-    bool mBreak;
+	bool							mConnected;
+	netadr_t						mClientAdr;
+	idPort							mPort;
+	idList<rvDebuggerBreakpoint*>	mBreakpoints;
+	SDL_mutex*						mCriticalSection;
 
-    bool mBreakNext;
-    bool mBreakStepOver;
-    bool mBreakStepInto;
-    int mBreakStepOverDepth;
-    const function_t *mBreakStepOverFunc1;
-    const function_t *mBreakStepOverFunc2;
-    idProgram *mBreakProgram;
-    int mBreakInstructionPointer;
-    idInterpreter *mBreakInterpreter;
 
-    idStr mLastStatementFile;
-    int mLastStatementLine;
-    uintptr_t mGameDLLHandle;
-    idStrList mScriptFileList;
+	SDL_cond*						mGameThreadBreakCond;
+	SDL_mutex*						mGameThreadBreakLock;
+	bool							mBreak;
+
+	bool							mBreakNext;
+	bool							mBreakStepOver;
+	bool							mBreakStepInto;
+	int								mBreakStepOverDepth;
+	const function_t*				mBreakStepOverFunc1;
+	const function_t*				mBreakStepOverFunc2;
+	idProgram*						mBreakProgram;
+	int								mBreakInstructionPointer;
+	idInterpreter*					mBreakInterpreter;
+
+	idStr							mLastStatementFile;
+	int								mLastStatementLine;
+	uintptr_t						mGameDLLHandle;
+	idStrList						mScriptFileList;
+
 };
 
 /*
@@ -123,9 +120,9 @@ class rvDebuggerServer
 rvDebuggerServer::IsConnected
 ================
 */
-ID_INLINE bool rvDebuggerServer::IsConnected(void)
+ID_INLINE bool rvDebuggerServer::IsConnected ( void )
 {
-    return mConnected;
+	return mConnected;
 }
 
 /*
@@ -133,9 +130,9 @@ ID_INLINE bool rvDebuggerServer::IsConnected(void)
 rvDebuggerServer::SendPacket
 ================
 */
-ID_INLINE void rvDebuggerServer::SendPacket(void *data, int size)
+ID_INLINE void rvDebuggerServer::SendPacket ( void *data, int size )
 {
-    mPort.SendPacket(mClientAdr, data, size);
+	mPort.SendPacket ( mClientAdr, data, size );
 }
 
 /*
@@ -143,9 +140,9 @@ ID_INLINE void rvDebuggerServer::SendPacket(void *data, int size)
 rvDebuggerServer::GameSuspended
 ================
 */
-ID_INLINE bool rvDebuggerServer::GameSuspended(void)
+ID_INLINE bool rvDebuggerServer::GameSuspended( void )
 {
-    return mBreak;
+	return mBreak;
 }
 
 #endif // DEBUGGERSERVER_H_
