@@ -292,7 +292,7 @@ renderer/ModelManager.h
 renderer/RenderSystem.h
 renderer/RenderWorld.h
 renderer/glext.h
-renderer/qgl.h
+renderer/GL/qgl.h
 renderer/qgl_linked.h
 sound/sound.h
 sys/linux/qgl_enforce.h

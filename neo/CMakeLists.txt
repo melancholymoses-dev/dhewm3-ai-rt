@@ -583,9 +583,9 @@ set(src_renderer
 	renderer/RenderWorld_load.cpp
 	renderer/RenderWorld_portals.cpp
 	renderer/VertexCache.cpp
-	renderer/draw_arb2.cpp
+	renderer/GL/draw_arb2.cpp
 	renderer/draw_common.cpp
-	renderer/draw_glsl.cpp
+	renderer/GL/draw_glsl.cpp
 	renderer/tr_backend.cpp
 	renderer/tr_deform.cpp
 	renderer/tr_font.cpp
