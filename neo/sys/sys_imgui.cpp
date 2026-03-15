@@ -35,7 +35,7 @@
 #include "framework/Common.h"
 #include "framework/KeyInput.h"
 #include "framework/Session_local.h" // sessLocal.GetActiveMenu()
-#include "renderer/qgl.h"
+#include "renderer/GL/qgl.h"
 #include "renderer/tr_local.h" // glconfig
 #include "ui/DeviceContext.h"
 #include "ui/UserInterface.h"
