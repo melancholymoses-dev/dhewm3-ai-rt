@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,84 +33,81 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 // DialogDeclBrowser dialog
 
-class DialogDeclBrowser : public CDialog
-{
+class DialogDeclBrowser : public CDialog {
 
-    DECLARE_DYNAMIC(DialogDeclBrowser)
+	DECLARE_DYNAMIC(DialogDeclBrowser)
 
-  public:
-    DialogDeclBrowser(CWnd *pParent = NULL); // standard constructor
-    virtual ~DialogDeclBrowser();
+public:
+						DialogDeclBrowser( CWnd* pParent = NULL );   // standard constructor
+	virtual				~DialogDeclBrowser();
 
-    void ReloadDeclarations(void);
-    bool CompareDecl(HTREEITEM item, const char *name) const;
+	void				ReloadDeclarations( void );
+	bool				CompareDecl( HTREEITEM item, const char *name ) const;
 
-    //{{AFX_VIRTUAL(DialogDeclBrowser)
-    virtual BOOL OnInitDialog();
-    virtual void DoDataExchange(CDataExchange *pDX); // DDX/DDV support
-                                                     //}}AFX_VIRTUAL
+	//{{AFX_VIRTUAL(DialogDeclBrowser)
+	virtual BOOL		OnInitDialog();
+	virtual void		DoDataExchange( CDataExchange* pDX );    // DDX/DDV support
+	//}}AFX_VIRTUAL
 
-  protected:
-    //{{AFX_MSG(DialogDeclBrowser)
-    afx_msg BOOL OnToolTipNotify(UINT id, NMHDR *pNMHDR, LRESULT *pResult);
-    afx_msg void OnSetFocus(CWnd *pOldWnd);
-    afx_msg void OnDestroy();
-    afx_msg void OnActivate(UINT nState, CWnd *pWndOther, BOOL bMinimized);
-    afx_msg void OnMove(int x, int y);
-    afx_msg void OnSize(UINT nType, int cx, int cy);
-    afx_msg void OnSizing(UINT nSide, LPRECT lpRect);
-    afx_msg void OnTreeSelChanged(NMHDR *pNMHDR, LRESULT *pResult);
-    afx_msg void OnTreeDblclk(NMHDR *pNMHDR, LRESULT *pResult);
-    afx_msg void OnBnClickedFind();
-    afx_msg void OnBnClickedEdit();
-    afx_msg void OnBnClickedNew();
-    afx_msg void OnBnClickedReload();
-    afx_msg void OnBnClickedOk();
-    afx_msg void OnBnClickedCancel();
-    //}}AFX_MSG
+protected:
+	//{{AFX_MSG(DialogDeclBrowser)
+	afx_msg BOOL		OnToolTipNotify( UINT id, NMHDR *pNMHDR, LRESULT *pResult );
+	afx_msg void		OnSetFocus( CWnd *pOldWnd );
+	afx_msg void		OnDestroy();
+	afx_msg void		OnActivate(UINT nState, CWnd* pWndOther, BOOL bMinimized);
+	afx_msg void		OnMove( int x, int y );
+	afx_msg void		OnSize( UINT nType, int cx, int cy );
+	afx_msg void		OnSizing( UINT nSide, LPRECT lpRect );
+	afx_msg void		OnTreeSelChanged( NMHDR* pNMHDR, LRESULT* pResult );
+	afx_msg void		OnTreeDblclk( NMHDR *pNMHDR, LRESULT *pResult );
+	afx_msg void		OnBnClickedFind();
+	afx_msg void		OnBnClickedEdit();
+	afx_msg void		OnBnClickedNew();
+	afx_msg void		OnBnClickedReload();
+	afx_msg void		OnBnClickedOk();
+	afx_msg void		OnBnClickedCancel();
+	//}}AFX_MSG
 
-    DECLARE_MESSAGE_MAP()
+	DECLARE_MESSAGE_MAP()
 
-  private:
-    //{{AFX_DATA(DialogDeclBrowser)
-    enum
-    {
-        IDD = IDD_DIALOG_DECLBROWSER
-    };
-    CStatusBarCtrl statusBar;
-    CPathTreeCtrl declTree;
-    CStatic findNameStatic;
-    CStatic findTextStatic;
-    CEdit findNameEdit;
-    CEdit findTextEdit;
-    CButton findButton;
-    CButton editButton;
-    CButton newButton;
-    CButton reloadButton;
-    CButton cancelButton;
-    //}}AFX_DATA
+private:
 
-    static toolTip_t toolTips[];
+	//{{AFX_DATA(DialogDeclBrowser)
+	enum				{ IDD = IDD_DIALOG_DECLBROWSER };
+	CStatusBarCtrl		statusBar;
+	CPathTreeCtrl		declTree;
+	CStatic				findNameStatic;
+	CStatic				findTextStatic;
+	CEdit				findNameEdit;
+	CEdit				findTextEdit;
+	CButton				findButton;
+	CButton				editButton;
+	CButton				newButton;
+	CButton				reloadButton;
+	CButton				cancelButton;
+	//}}AFX_DATA
 
-    CRect initialRect;
-    CPathTreeCtrl baseDeclTree;
-    int numListedDecls;
-    idStr findNameString;
-    idStr findTextString;
+	static toolTip_t	toolTips[];
 
-    TCHAR *m_pchTip;
-    WCHAR *m_pwchTip;
+	CRect				initialRect;
+	CPathTreeCtrl		baseDeclTree;
+	int					numListedDecls;
+	idStr				findNameString;
+	idStr				findTextString;
 
-  private:
-    void AddDeclTypeToTree(declType_t type, const char *root, CPathTreeCtrl &tree);
-    void AddScriptsToTree(CPathTreeCtrl &tree);
-    void AddGUIsToTree(CPathTreeCtrl &tree);
-    void InitBaseDeclTree(void);
+	TCHAR *				m_pchTip;
+	WCHAR *				m_pwchTip;
 
-    void GetDeclName(HTREEITEM item, idStr &typeName, idStr &declName) const;
-    const idDecl *GetDeclFromTreeItem(HTREEITEM item) const;
-    const idDecl *GetSelectedDecl(void) const;
-    void EditSelected(void) const;
+private:
+	void				AddDeclTypeToTree( declType_t type, const char *root, CPathTreeCtrl &tree );
+	void				AddScriptsToTree( CPathTreeCtrl &tree );
+	void				AddGUIsToTree( CPathTreeCtrl &tree );
+	void				InitBaseDeclTree( void );
+
+	void				GetDeclName( HTREEITEM item, idStr &typeName, idStr &declName ) const;
+	const idDecl *		GetDeclFromTreeItem( HTREEITEM item ) const;
+	const idDecl *		GetSelectedDecl( void ) const;
+	void				EditSelected( void ) const;
 };
 
 #endif /* !__DIALOGDECLBROWSER_H__ */

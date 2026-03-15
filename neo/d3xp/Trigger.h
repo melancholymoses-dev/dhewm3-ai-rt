@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,8 +29,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_TRIGGER_H__
 #define __GAME_TRIGGER_H__
 
-#include "Entity.h"
 #include "gamesys/Event.h"
+#include "Entity.h"
 
 extern const idEventDef EV_Enable;
 extern const idEventDef EV_Disable;
@@ -49,32 +43,32 @@ extern const idEventDef EV_Disable;
 ===============================================================================
 */
 
-class idTrigger : public idEntity
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger);
+class idTrigger : public idEntity {
+public:
+	CLASS_PROTOTYPE( idTrigger );
 
-    static void DrawDebugInfo(void);
+	static void			DrawDebugInfo( void );
 
-    idTrigger();
-    void Spawn(void);
+						idTrigger();
+	void				Spawn( void );
 
-    const function_t *GetScriptFunction(void) const;
+	const function_t *	GetScriptFunction( void ) const;
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
-    virtual void Enable(void);
-    virtual void Disable(void);
+	virtual void		Enable( void );
+	virtual void		Disable( void );
 
-  protected:
-    void CallScript(void) const;
+protected:
+	void				CallScript( void ) const;
 
-    void Event_Enable(void);
-    void Event_Disable(void);
+	void				Event_Enable( void );
+	void				Event_Disable( void );
 
-    const function_t *scriptFunction;
+	const function_t *	scriptFunction;
 };
+
 
 /*
 ===============================================================================
@@ -84,43 +78,42 @@ class idTrigger : public idEntity
 ===============================================================================
 */
 
-class idTrigger_Multi : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Multi);
+class idTrigger_Multi : public idTrigger {
+public:
+	CLASS_PROTOTYPE( idTrigger_Multi );
 
-    idTrigger_Multi(void);
+						idTrigger_Multi( void );
 
-    void Spawn(void);
+	void				Spawn( void );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
 #ifdef CTF
-  protected:
+protected:
 #else
-  private:
+private:
 #endif
 
-    float wait;
-    float random;
-    float delay;
-    float random_delay;
-    int nextTriggerTime;
-    idStr
-        requires;
-    int removeItem;
-    bool touchClient;
-    bool touchOther;
-    bool triggerFirst;
-    bool triggerWithSelf;
+	float				wait;
+	float				random;
+	float				delay;
+	float				random_delay;
+	int					nextTriggerTime;
+	idStr				requires;
+	int					removeItem;
+	bool				touchClient;
+	bool				touchOther;
+	bool				triggerFirst;
+	bool				triggerWithSelf;
 
-    bool CheckFacing(idEntity *activator);
-    void TriggerAction(idEntity *activator);
-    void Event_TriggerAction(idEntity *activator);
-    void Event_Trigger(idEntity *activator);
-    void Event_Touch(idEntity *other, trace_t *trace);
+	bool				CheckFacing( idEntity *activator );
+	void				TriggerAction( idEntity *activator );
+	void				Event_TriggerAction( idEntity *activator );
+	void				Event_Trigger( idEntity *activator );
+	void				Event_Touch( idEntity *other, trace_t *trace );
 };
+
 
 /*
 ===============================================================================
@@ -130,31 +123,30 @@ class idTrigger_Multi : public idTrigger
 ===============================================================================
 */
 
-class idTrigger_EntityName : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_EntityName);
+class idTrigger_EntityName : public idTrigger {
+public:
+	CLASS_PROTOTYPE( idTrigger_EntityName );
 
-    idTrigger_EntityName(void);
+						idTrigger_EntityName( void );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
-    void Spawn(void);
+	void				Spawn( void );
 
-  private:
-    float wait;
-    float random;
-    float delay;
-    float random_delay;
-    int nextTriggerTime;
-    bool triggerFirst;
-    idStr entityName;
+private:
+	float				wait;
+	float				random;
+	float				delay;
+	float				random_delay;
+	int					nextTriggerTime;
+	bool				triggerFirst;
+	idStr				entityName;
 
-    void TriggerAction(idEntity *activator);
-    void Event_TriggerAction(idEntity *activator);
-    void Event_Trigger(idEntity *activator);
-    void Event_Touch(idEntity *other, trace_t *trace);
+	void				TriggerAction( idEntity *activator );
+	void				Event_TriggerAction( idEntity *activator );
+	void				Event_Trigger( idEntity *activator );
+	void				Event_Touch( idEntity *other, trace_t *trace );
 };
 
 /*
@@ -165,32 +157,32 @@ class idTrigger_EntityName : public idTrigger
 ===============================================================================
 */
 
-class idTrigger_Timer : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Timer);
+class idTrigger_Timer : public idTrigger {
+public:
+	CLASS_PROTOTYPE( idTrigger_Timer );
 
-    idTrigger_Timer(void);
+						idTrigger_Timer( void );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
-    void Spawn(void);
+	void				Spawn( void );
 
-    virtual void Enable(void);
-    virtual void Disable(void);
+	virtual void		Enable( void );
+	virtual void		Disable( void );
 
-  private:
-    float random;
-    float wait;
-    bool on;
-    float delay;
-    idStr onName;
-    idStr offName;
+private:
+	float				random;
+	float				wait;
+	bool				on;
+	float				delay;
+	idStr				onName;
+	idStr				offName;
 
-    void Event_Timer(void);
-    void Event_Use(idEntity *activator);
+	void				Event_Timer( void );
+	void				Event_Use( idEntity *activator );
 };
+
 
 /*
 ===============================================================================
@@ -200,26 +192,26 @@ class idTrigger_Timer : public idTrigger
 ===============================================================================
 */
 
-class idTrigger_Count : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Count);
+class idTrigger_Count : public idTrigger {
+public:
+	CLASS_PROTOTYPE( idTrigger_Count );
 
-    idTrigger_Count(void);
+						idTrigger_Count( void );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
-    void Spawn(void);
+	void				Spawn( void );
 
-  private:
-    int goal;
-    int count;
-    float delay;
+private:
+	int					goal;
+	int					count;
+	float				delay;
 
-    void Event_Trigger(idEntity *activator);
-    void Event_TriggerAction(idEntity *activator);
+	void				Event_Trigger( idEntity *activator );
+	void				Event_TriggerAction( idEntity *activator );
 };
+
 
 /*
 ===============================================================================
@@ -229,26 +221,26 @@ class idTrigger_Count : public idTrigger
 ===============================================================================
 */
 
-class idTrigger_Hurt : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Hurt);
+class idTrigger_Hurt : public idTrigger {
+public:
+	CLASS_PROTOTYPE( idTrigger_Hurt );
 
-    idTrigger_Hurt(void);
+						idTrigger_Hurt( void );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void				Save( idSaveGame *savefile ) const;
+	void				Restore( idRestoreGame *savefile );
 
-    void Spawn(void);
+	void				Spawn( void );
 
-  private:
-    bool on;
-    float delay;
-    int nextTime;
+private:
+	bool				on;
+	float				delay;
+	int					nextTime;
 
-    void Event_Touch(idEntity *other, trace_t *trace);
-    void Event_Toggle(idEntity *activator);
+	void				Event_Touch( idEntity *other, trace_t *trace );
+	void				Event_Toggle( idEntity *activator );
 };
+
 
 /*
 ===============================================================================
@@ -258,14 +250,15 @@ class idTrigger_Hurt : public idTrigger
 ===============================================================================
 */
 
-class idTrigger_Fade : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Fade);
+class idTrigger_Fade : public idTrigger {
+public:
 
-  private:
-    void Event_Trigger(idEntity *activator);
+	CLASS_PROTOTYPE( idTrigger_Fade );
+
+private:
+	void				Event_Trigger( idEntity *activator );
 };
+
 
 /*
 ===============================================================================
@@ -275,28 +268,28 @@ class idTrigger_Fade : public idTrigger
 ===============================================================================
 */
 
-class idTrigger_Touch : public idTrigger
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Touch);
+class idTrigger_Touch : public idTrigger {
+public:
 
-    idTrigger_Touch(void);
+	CLASS_PROTOTYPE( idTrigger_Touch );
 
-    void Spawn(void);
-    virtual void Think(void);
+						idTrigger_Touch( void );
 
-    void Save(idSaveGame *savefile);
-    void Restore(idRestoreGame *savefile);
+	void				Spawn( void );
+	virtual void		Think( void );
 
-    virtual void Enable(void);
-    virtual void Disable(void);
+	void				Save( idSaveGame *savefile );
+	void				Restore( idRestoreGame *savefile );
 
-    void TouchEntities(void);
+	virtual void		Enable( void );
+	virtual void		Disable( void );
 
-  private:
-    idClipModel *clipModel;
+	void				TouchEntities( void );
 
-    void Event_Trigger(idEntity *activator);
+private:
+	idClipModel *		clipModel;
+
+	void				Event_Trigger( idEntity *activator );
 };
 
 #ifdef CTF
@@ -307,21 +300,20 @@ class idTrigger_Touch : public idTrigger
 
 ===============================================================================
 */
-class idTrigger_Flag : public idTrigger_Multi
-{
-  public:
-    CLASS_PROTOTYPE(idTrigger_Flag);
+class idTrigger_Flag : public idTrigger_Multi {
+public:
+	CLASS_PROTOTYPE( idTrigger_Flag );
 
-    idTrigger_Flag(void);
-    void Spawn(void);
+						idTrigger_Flag( void );
+	void				Spawn( void );
 
-  private:
-    int team;
-    bool player; // flag must be attached/carried by player
+private:
+	int					team;
+	bool				player;			// flag must be attached/carried by player
 
-    const idEventDef *eventFlag;
+	const idEventDef *	eventFlag;
 
-    void Event_Touch(idEntity *other, trace_t *trace);
+	void				Event_Touch( idEntity *other, trace_t *trace );
 };
 
 #endif /* CTF */
