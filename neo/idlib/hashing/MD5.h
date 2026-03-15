@@ -4,12 +4,12 @@
 /*
 ===============================================================================
 
-        Calculates a checksum for a block of data
-        using the MD5 message-digest algorithm.
+	Calculates a checksum for a block of data
+	using the MD5 message-digest algorithm.
 
 ===============================================================================
 */
 
-unsigned int MD5_BlockChecksum(const void *data, int length);
+unsigned int MD5_BlockChecksum( const void *data, int length );
 
 #endif /* !__MD5_H__ */

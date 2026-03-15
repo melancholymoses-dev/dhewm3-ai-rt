@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,70 +34,66 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===================================================================================
 
-        Security camera
+	Security camera
 
 ===================================================================================
 */
 
-class idSecurityCamera : public idEntity
-{
-  public:
-    CLASS_PROTOTYPE(idSecurityCamera);
 
-    void Spawn(void);
+class idSecurityCamera : public idEntity {
+public:
+	CLASS_PROTOTYPE( idSecurityCamera );
 
-    void Save(idSaveGame *savefile) const;
-    void Restore(idRestoreGame *savefile);
+	void					Spawn( void );
 
-    virtual void Think(void);
+	void					Save( idSaveGame *savefile ) const;
+	void					Restore( idRestoreGame *savefile );
 
-    virtual renderView_t *GetRenderView();
-    virtual void Killed(idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location);
-    virtual bool Pain(idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location);
-    virtual void Present(void);
+	virtual void			Think( void );
 
-  private:
-    enum
-    {
-        SCANNING,
-        LOSINGINTEREST,
-        ALERT,
-        ACTIVATED
-    };
+	virtual renderView_t *	GetRenderView();
+	virtual void			Killed( idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location );
+	virtual bool			Pain( idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location );
+	virtual void			Present( void );
 
-    float angle;
-    float sweepAngle;
-    int modelAxis;
-    bool flipAxis;
-    float scanDist;
-    float scanFov;
 
-    float sweepStart;
-    float sweepEnd;
-    bool negativeSweep;
-    bool sweeping;
-    int alertMode;
-    float stopSweeping;
-    float scanFovCos;
+private:
 
-    idVec3 viewOffset;
+	enum { SCANNING, LOSINGINTEREST, ALERT, ACTIVATED };
 
-    int pvsArea;
-    idPhysics_RigidBody physicsObj;
-    idTraceModel trm;
+	float					angle;
+	float					sweepAngle;
+	int						modelAxis;
+	bool					flipAxis;
+	float					scanDist;
+	float					scanFov;
 
-    void StartSweep(void);
-    bool CanSeePlayer(void);
-    void SetAlertMode(int status);
-    void DrawFov(void);
-    const idVec3 GetAxis(void) const;
-    float SweepSpeed(void) const;
+	float					sweepStart;
+	float					sweepEnd;
+	bool					negativeSweep;
+	bool					sweeping;
+	int						alertMode;
+	float					stopSweeping;
+	float					scanFovCos;
 
-    void Event_ReverseSweep(void);
-    void Event_ContinueSweep(void);
-    void Event_Pause(void);
-    void Event_Alert(void);
-    void Event_AddLight(void);
+	idVec3					viewOffset;
+
+	int						pvsArea;
+	idPhysics_RigidBody		physicsObj;
+	idTraceModel			trm;
+
+	void					StartSweep( void );
+	bool					CanSeePlayer( void );
+	void					SetAlertMode( int status );
+	void					DrawFov( void );
+	const idVec3			GetAxis( void ) const;
+	float					SweepSpeed( void ) const;
+
+	void					Event_ReverseSweep( void );
+	void					Event_ContinueSweep( void );
+	void					Event_Pause( void );
+	void					Event_Alert( void );
+	void					Event_AddLight( void );
 };
 
 #endif /* !__GAME_SECURITYCAMERA_H__ */

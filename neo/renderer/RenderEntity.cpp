@@ -19,15 +19,9 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,113 +30,98 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "renderer/tr_local.h"
 
-idRenderEntityLocal::idRenderEntityLocal()
-{
-    memset(&parms, 0, sizeof(parms));
-    memset(modelMatrix, 0, sizeof(modelMatrix));
+idRenderEntityLocal::idRenderEntityLocal() {
+	memset( &parms, 0, sizeof( parms ) );
+	memset( modelMatrix, 0, sizeof( modelMatrix ) );
 
-    world = NULL;
-    index = 0;
-    lastModifiedFrameNum = 0;
-    archived = false;
-    dynamicModel = NULL;
-    dynamicModelFrameCount = 0;
-    cachedDynamicModel = NULL;
-    referenceBounds = bounds_zero;
-    viewCount = 0;
-    viewEntity = NULL;
-    visibleCount = 0;
-    decals = NULL;
-    overlay = NULL;
-    entityRefs = NULL;
-    firstInteraction = NULL;
-    lastInteraction = NULL;
-    needsPortalSky = false;
+	world					= NULL;
+	index					= 0;
+	lastModifiedFrameNum	= 0;
+	archived				= false;
+	dynamicModel			= NULL;
+	dynamicModelFrameCount	= 0;
+	cachedDynamicModel		= NULL;
+	referenceBounds			= bounds_zero;
+	viewCount				= 0;
+	viewEntity				= NULL;
+	visibleCount			= 0;
+	decals					= NULL;
+	overlay					= NULL;
+	entityRefs				= NULL;
+	firstInteraction		= NULL;
+	lastInteraction			= NULL;
+	needsPortalSky			= false;
 #ifdef DHEWM3_RAYTRACING
-    blas = NULL;
-    blasFrameCount = 0;
+	blas					= NULL;
+	blasFrameCount			= 0;
 #endif
 }
 
-void idRenderEntityLocal::FreeRenderEntity()
-{
+void idRenderEntityLocal::FreeRenderEntity() {
 #ifdef DHEWM3_RAYTRACING
-    if (blas)
-    {
-        extern void VK_RT_DestroyBLAS(struct vkBLAS_t *);
-        VK_RT_DestroyBLAS(blas);
-        blas = NULL;
-    }
+	if ( blas ) {
+		extern void VK_RT_DestroyBLAS( struct vkBLAS_t * );
+		VK_RT_DestroyBLAS( blas );
+		blas = NULL;
+	}
 #endif
 }
 
-void idRenderEntityLocal::UpdateRenderEntity(const renderEntity_t *re, bool forceUpdate)
-{
+void idRenderEntityLocal::UpdateRenderEntity( const renderEntity_t *re, bool forceUpdate ) {
 }
 
-void idRenderEntityLocal::GetRenderEntity(renderEntity_t *re)
-{
+void idRenderEntityLocal::GetRenderEntity( renderEntity_t *re ) {
 }
 
-void idRenderEntityLocal::ForceUpdate()
-{
+void idRenderEntityLocal::ForceUpdate() {
 }
 
-int idRenderEntityLocal::GetIndex()
-{
-    return index;
+int idRenderEntityLocal::GetIndex() {
+	return index;
 }
 
-void idRenderEntityLocal::ProjectOverlay(const idPlane localTextureAxis[2], const idMaterial *material)
-{
+void idRenderEntityLocal::ProjectOverlay( const idPlane localTextureAxis[2], const idMaterial *material ) {
 }
-void idRenderEntityLocal::RemoveDecals()
-{
+void idRenderEntityLocal::RemoveDecals() {
 }
 
 //======================================================================
 
-idRenderLightLocal::idRenderLightLocal()
-{
-    memset(&parms, 0, sizeof(parms));
-    memset(modelMatrix, 0, sizeof(modelMatrix));
-    memset(shadowFrustums, 0, sizeof(shadowFrustums));
-    memset(lightProject, 0, sizeof(lightProject));
-    memset(frustum, 0, sizeof(frustum));
-    memset(frustumWindings, 0, sizeof(frustumWindings));
+idRenderLightLocal::idRenderLightLocal() {
+	memset( &parms, 0, sizeof( parms ) );
+	memset( modelMatrix, 0, sizeof( modelMatrix ) );
+	memset( shadowFrustums, 0, sizeof( shadowFrustums ) );
+	memset( lightProject, 0, sizeof( lightProject ) );
+	memset( frustum, 0, sizeof( frustum ) );
+	memset( frustumWindings, 0, sizeof( frustumWindings ) );
 
-    lightHasMoved = false;
-    world = NULL;
-    index = 0;
-    areaNum = 0;
-    lastModifiedFrameNum = 0;
-    archived = false;
-    lightShader = NULL;
-    falloffImage = NULL;
-    globalLightOrigin = vec3_zero;
-    frustumTris = NULL;
-    numShadowFrustums = 0;
-    viewCount = 0;
-    viewLight = NULL;
-    references = NULL;
-    foggedPortals = NULL;
-    firstInteraction = NULL;
-    lastInteraction = NULL;
+	lightHasMoved			= false;
+	world					= NULL;
+	index					= 0;
+	areaNum					= 0;
+	lastModifiedFrameNum	= 0;
+	archived				= false;
+	lightShader				= NULL;
+	falloffImage			= NULL;
+	globalLightOrigin		= vec3_zero;
+	frustumTris				= NULL;
+	numShadowFrustums		= 0;
+	viewCount				= 0;
+	viewLight				= NULL;
+	references				= NULL;
+	foggedPortals			= NULL;
+	firstInteraction		= NULL;
+	lastInteraction			= NULL;
 }
 
-void idRenderLightLocal::FreeRenderLight()
-{
+void idRenderLightLocal::FreeRenderLight() {
 }
-void idRenderLightLocal::UpdateRenderLight(const renderLight_t *re, bool forceUpdate)
-{
+void idRenderLightLocal::UpdateRenderLight( const renderLight_t *re, bool forceUpdate ) {
 }
-void idRenderLightLocal::GetRenderLight(renderLight_t *re)
-{
+void idRenderLightLocal::GetRenderLight( renderLight_t *re ) {
 }
-void idRenderLightLocal::ForceUpdate()
-{
+void idRenderLightLocal::ForceUpdate() {
 }
-int idRenderLightLocal::GetIndex()
-{
-    return index;
+int idRenderLightLocal::GetIndex() {
+	return index;
 }
