@@ -19,9 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,8 +40,9 @@ If you have questions concerning this license or the applicable additional terms
 idRotation::ToAngles
 ============
 */
-idAngles idRotation::ToAngles( void ) const {
-	return ToMat3().ToAngles();
+idAngles idRotation::ToAngles(void) const
+{
+    return ToMat3().ToAngles();
 }
 
 /*
@@ -46,12 +50,13 @@ idAngles idRotation::ToAngles( void ) const {
 idRotation::ToQuat
 ============
 */
-idQuat idRotation::ToQuat( void ) const {
-	float a, s, c;
+idQuat idRotation::ToQuat(void) const
+{
+    float a, s, c;
 
-	a = angle * ( idMath::M_DEG2RAD * 0.5f );
-	idMath::SinCos( a, s, c );
-	return idQuat( vec.x * s, vec.y * s, vec.z * s, c );
+    a = angle * (idMath::M_DEG2RAD * 0.5f);
+    idMath::SinCos(a, s, c);
+    return idQuat(vec.x * s, vec.y * s, vec.z * s, c);
 }
 
 /*
@@ -59,55 +64,57 @@ idQuat idRotation::ToQuat( void ) const {
 idRotation::toMat3
 ============
 */
-const idMat3 &idRotation::ToMat3( void ) const {
-	float wx, wy, wz;
-	float xx, yy, yz;
-	float xy, xz, zz;
-	float x2, y2, z2;
-	float a, c, s, x, y, z;
+const idMat3 &idRotation::ToMat3(void) const
+{
+    float wx, wy, wz;
+    float xx, yy, yz;
+    float xy, xz, zz;
+    float x2, y2, z2;
+    float a, c, s, x, y, z;
 
-	if ( axisValid ) {
-		return axis;
-	}
+    if (axisValid)
+    {
+        return axis;
+    }
 
-	a = angle * ( idMath::M_DEG2RAD * 0.5f );
-	idMath::SinCos( a, s, c );
+    a = angle * (idMath::M_DEG2RAD * 0.5f);
+    idMath::SinCos(a, s, c);
 
-	x = vec[0] * s;
-	y = vec[1] * s;
-	z = vec[2] * s;
+    x = vec[0] * s;
+    y = vec[1] * s;
+    z = vec[2] * s;
 
-	x2 = x + x;
-	y2 = y + y;
-	z2 = z + z;
+    x2 = x + x;
+    y2 = y + y;
+    z2 = z + z;
 
-	xx = x * x2;
-	xy = x * y2;
-	xz = x * z2;
+    xx = x * x2;
+    xy = x * y2;
+    xz = x * z2;
 
-	yy = y * y2;
-	yz = y * z2;
-	zz = z * z2;
+    yy = y * y2;
+    yz = y * z2;
+    zz = z * z2;
 
-	wx = c * x2;
-	wy = c * y2;
-	wz = c * z2;
+    wx = c * x2;
+    wy = c * y2;
+    wz = c * z2;
 
-	axis[ 0 ][ 0 ] = 1.0f - ( yy + zz );
-	axis[ 0 ][ 1 ] = xy - wz;
-	axis[ 0 ][ 2 ] = xz + wy;
+    axis[0][0] = 1.0f - (yy + zz);
+    axis[0][1] = xy - wz;
+    axis[0][2] = xz + wy;
 
-	axis[ 1 ][ 0 ] = xy + wz;
-	axis[ 1 ][ 1 ] = 1.0f - ( xx + zz );
-	axis[ 1 ][ 2 ] = yz - wx;
+    axis[1][0] = xy + wz;
+    axis[1][1] = 1.0f - (xx + zz);
+    axis[1][2] = yz - wx;
 
-	axis[ 2 ][ 0 ] = xz - wy;
-	axis[ 2 ][ 1 ] = yz + wx;
-	axis[ 2 ][ 2 ] = 1.0f - ( xx + yy );
+    axis[2][0] = xz - wy;
+    axis[2][1] = yz + wx;
+    axis[2][2] = 1.0f - (xx + yy);
 
-	axisValid = true;
+    axisValid = true;
 
-	return axis;
+    return axis;
 }
 
 /*
@@ -115,8 +122,9 @@ const idMat3 &idRotation::ToMat3( void ) const {
 idRotation::ToMat4
 ============
 */
-idMat4 idRotation::ToMat4( void ) const {
-	return ToMat3().ToMat4();
+idMat4 idRotation::ToMat4(void) const
+{
+    return ToMat3().ToMat4();
 }
 
 /*
@@ -124,8 +132,9 @@ idMat4 idRotation::ToMat4( void ) const {
 idRotation::ToAngularVelocity
 ============
 */
-idVec3 idRotation::ToAngularVelocity( void ) const {
-	return vec * DEG2RAD( angle );
+idVec3 idRotation::ToAngularVelocity(void) const
+{
+    return vec * DEG2RAD(angle);
 }
 
 /*
@@ -133,14 +142,17 @@ idVec3 idRotation::ToAngularVelocity( void ) const {
 idRotation::Normalize180
 ============
 */
-void idRotation::Normalize180( void ) {
-	angle -= floor( angle / 360.0f ) * 360.0f;
-	if ( angle > 180.0f ) {
-		angle -= 360.0f;
-	}
-	else if ( angle < -180.0f ) {
-		angle += 360.0f;
-	}
+void idRotation::Normalize180(void)
+{
+    angle -= floor(angle / 360.0f) * 360.0f;
+    if (angle > 180.0f)
+    {
+        angle -= 360.0f;
+    }
+    else if (angle < -180.0f)
+    {
+        angle += 360.0f;
+    }
 }
 
 /*
@@ -148,12 +160,15 @@ void idRotation::Normalize180( void ) {
 idRotation::Normalize360
 ============
 */
-void idRotation::Normalize360( void ) {
-	angle -= floor( angle / 360.0f ) * 360.0f;
-	if ( angle > 360.0f ) {
-		angle -= 360.0f;
-	}
-	else if ( angle < 0.0f ) {
-		angle += 360.0f;
-	}
+void idRotation::Normalize360(void)
+{
+    angle -= floor(angle / 360.0f) * 360.0f;
+    if (angle > 360.0f)
+    {
+        angle -= 360.0f;
+    }
+    else if (angle < 0.0f)
+    {
+        angle += 360.0f;
+    }
 }

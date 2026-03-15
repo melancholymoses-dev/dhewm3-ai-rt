@@ -4,14 +4,14 @@
 #include "imgui.h"
 #include <stdio.h>
 
-int main(int, char**)
+int main(int, char **)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
+    ImGuiIO &io = ImGui::GetIO();
 
     // Build atlas
-    unsigned char* tex_pixels = nullptr;
+    unsigned char *tex_pixels = nullptr;
     int tex_w, tex_h;
     io.Fonts->GetTexDataAsRGBA32(&tex_pixels, &tex_w, &tex_h);
 

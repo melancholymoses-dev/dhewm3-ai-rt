@@ -19,111 +19,112 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-
 #include "GEApp.h"
 #include "GEZOrderModifier.h"
 
-
-rvGEZOrderModifier::rvGEZOrderModifier ( const char* name, idWindow* window, EZOrderChange change ) :
-	rvGEModifier ( name, window )
+rvGEZOrderModifier::rvGEZOrderModifier(const char *name, idWindow *window, EZOrderChange change)
+    : rvGEModifier(name, window)
 {
-	int			count;
-	int			index;
-	idWindow*	parent;
+    int count;
+    int index;
+    idWindow *parent;
 
-	parent = window->GetParent ( );
-	if ( !parent )
-	{
-		return;
-	}
+    parent = window->GetParent();
+    if (!parent)
+    {
+        return;
+    }
 
-	count = parent->GetChildCount ( );
-	index = parent->GetChildIndex ( mWindow );
+    count = parent->GetChildCount();
+    index = parent->GetChildIndex(mWindow);
 
-	if ( index + 1 >= count )
-	{
-		mUndoBefore = NULL;
-	}
-	else
-	{
-		mUndoBefore = parent->GetChild ( index + 1 );
-	}
+    if (index + 1 >= count)
+    {
+        mUndoBefore = NULL;
+    }
+    else
+    {
+        mUndoBefore = parent->GetChild(index + 1);
+    }
 
-	switch ( change )
-	{
-		case ZO_FORWARD:
-			index+=2;
-			break;
+    switch (change)
+    {
+    case ZO_FORWARD:
+        index += 2;
+        break;
 
-		case ZO_BACKWARD:
-			if ( index == 0 )
-			{
-				index = 1;
-			}
-			else
-			{
-				index-=1;
-			}
-			break;
+    case ZO_BACKWARD:
+        if (index == 0)
+        {
+            index = 1;
+        }
+        else
+        {
+            index -= 1;
+        }
+        break;
 
-		case ZO_BACK:
-			index = 0;
-			break;
+    case ZO_BACK:
+        index = 0;
+        break;
 
-		case ZO_FRONT:
-			index = count;
-			break;
-	}
+    case ZO_FRONT:
+        index = count;
+        break;
+    }
 
-	if ( index >= count )
-	{
-		mBefore = NULL;
-	}
-	else
-	{
-		mBefore = parent->GetChild ( index );
-	}
+    if (index >= count)
+    {
+        mBefore = NULL;
+    }
+    else
+    {
+        mBefore = parent->GetChild(index);
+    }
 }
 
-bool rvGEZOrderModifier::Apply ( void )
+bool rvGEZOrderModifier::Apply(void)
 {
-	idWindow* parent;
+    idWindow *parent;
 
-	parent = mWindow->GetParent ( );
+    parent = mWindow->GetParent();
 
-	parent->RemoveChild ( mWindow );
-	parent->InsertChild ( mWindow, mBefore );
+    parent->RemoveChild(mWindow);
+    parent->InsertChild(mWindow, mBefore);
 
-	return true;
+    return true;
 }
 
-bool rvGEZOrderModifier::Undo ( void )
+bool rvGEZOrderModifier::Undo(void)
 {
-	idWindow* parent;
+    idWindow *parent;
 
-	parent = mWindow->GetParent ( );
+    parent = mWindow->GetParent();
 
-	parent->RemoveChild ( mWindow );
-	parent->InsertChild ( mWindow, mUndoBefore );
+    parent->RemoveChild(mWindow);
+    parent->InsertChild(mWindow, mUndoBefore);
 
-	return true;
+    return true;
 }
 
-bool rvGEZOrderModifier::IsValid ( void )
+bool rvGEZOrderModifier::IsValid(void)
 {
-	if ( !mWindow->GetParent ( ) )
-	{
-		return false;
-	}
+    if (!mWindow->GetParent())
+    {
+        return false;
+    }
 
-	return true;
+    return true;
 }
