@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/RenderWorld.h"
 #include "sys/platform.h"
+#include "renderer/RenderWorld.h"
 
+#include "gamesys/SysCvar.h"
+#include "gamesys/SaveGame.h"
 #include "GameBase.h"
 #include "Player.h"
-#include "gamesys/SaveGame.h"
-#include "gamesys/SysCvar.h"
 
 #include "PlayerView.h"
 
@@ -376,29 +373,40 @@ but having it localized here lets the material be pre-looked up etc.
 void idPlayerView::AddBloodSpray(float duration)
 {
     /*
-            if ( duration <= 0 || bloodSprayMaterial == NULL ||
-       g_skipViewEffects.GetBool() ) { return;
-            }
-            // visit this for chainsaw
-            screenBlob_t *blob = GetScreenBlob();
-            blob->startFadeTime = gameLocal.slow.time;
-            blob->finishTime = gameLocal.slow.time + ( duration * 1000 );
-            blob->material = bloodSprayMaterial;
-            blob->x = ( gameLocal.random.RandomInt() & 63 ) - 32;
-            blob->y = ( gameLocal.random.RandomInt() & 63 ) - 32;
-            blob->driftAmount = 0.5f + gameLocal.random.CRandomFloat() * 0.5;
-            float scale = ( 256 + ( ( gameLocal.random.RandomInt()&63 ) - 32 ) ) /
-       256.0f; blob->w = 600 * g_blobSize.GetFloat() * scale; blob->h = 480 *
-       g_blobSize.GetFloat() * scale; float s1 = 0.0f; float t1 = 0.0f; float s2
-       = 1.0f; float t2 = 1.0f; if ( blob->driftAmount < 0.6 ) { s1 = 1.0f; s2 =
-       0.0f; } else if ( blob->driftAmount < 0.75 ) { t1 = 1.0f; t2 = 0.0f; } else
-       if ( blob->driftAmount < 0.85 ) { s1 = 1.0f; s2 = 0.0f; t1 = 1.0f; t2 =
-       0.0f;
-            }
-            blob->s1 = s1;
-            blob->t1 = t1;
-            blob->s2 = s2;
-            blob->t2 = t2;
+        if ( duration <= 0 || bloodSprayMaterial == NULL || g_skipViewEffects.GetBool() ) {
+            return;
+        }
+        // visit this for chainsaw
+        screenBlob_t *blob = GetScreenBlob();
+        blob->startFadeTime = gameLocal.slow.time;
+        blob->finishTime = gameLocal.slow.time + ( duration * 1000 );
+        blob->material = bloodSprayMaterial;
+        blob->x = ( gameLocal.random.RandomInt() & 63 ) - 32;
+        blob->y = ( gameLocal.random.RandomInt() & 63 ) - 32;
+        blob->driftAmount = 0.5f + gameLocal.random.CRandomFloat() * 0.5;
+        float scale = ( 256 + ( ( gameLocal.random.RandomInt()&63 ) - 32 ) ) / 256.0f;
+        blob->w = 600 * g_blobSize.GetFloat() * scale;
+        blob->h = 480 * g_blobSize.GetFloat() * scale;
+        float s1 = 0.0f;
+        float t1 = 0.0f;
+        float s2 = 1.0f;
+        float t2 = 1.0f;
+        if ( blob->driftAmount < 0.6 ) {
+            s1 = 1.0f;
+            s2 = 0.0f;
+        } else if ( blob->driftAmount < 0.75 ) {
+            t1 = 1.0f;
+            t2 = 0.0f;
+        } else if ( blob->driftAmount < 0.85 ) {
+            s1 = 1.0f;
+            s2 = 0.0f;
+            t1 = 1.0f;
+            t2 = 0.0f;
+        }
+        blob->s1 = s1;
+        blob->t1 = t1;
+        blob->s2 = s2;
+        blob->t2 = t2;
     */
 }
 
@@ -516,8 +524,7 @@ void idPlayerView::SingleView(idUserInterface *hud, const renderView_t *view)
         return;
     }
 
-    // hack the shake in at the very last moment, so it can't cause any
-    // consistency problems
+    // hack the shake in at the very last moment, so it can't cause any consistency problems
     renderView_t hackedView = *view;
     hackedView.viewaxis = hackedView.viewaxis * ShakeAxis();
 

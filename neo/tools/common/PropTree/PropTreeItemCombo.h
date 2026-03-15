@@ -19,8 +19,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 #include "PropTreeItem.h"
 
@@ -97,7 +97,6 @@ class PROPTREE_API CPropTreeItemCombo : public CComboBox, public CPropTreeItem
 /////////////////////////////////////////////////////////////////////////////
 
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Visual C++ will insert additional declarations immediately before
-// the previous line.
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.
 
 #endif // !defined(AFX_PROPTREEITEMCOMBO_H__9916BC6F_751F_4B15_996F_3C9F6334A259__INCLUDED_)

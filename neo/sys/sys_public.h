@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -67,10 +64,8 @@ typedef enum
     SE_KEY,       // evValue is a key code, evValue2 is the down flag
     SE_CHAR,      // evValue is a "High ASCII" (ISO-8859-1) char
     SE_MOUSE,     // evValue and evValue2 are relative signed x / y moves
-    SE_MOUSE_ABS, // evValue and evValue2 are absolute x / y coordinates in the
-                  // window
-    SE_JOYSTICK,  // evValue is an axis number and evValue2 is the current state
-                  // (-127 to 127)
+    SE_MOUSE_ABS, // evValue and evValue2 are absolute x / y coordinates in the window
+    SE_JOYSTICK,  // evValue is an axis number and evValue2 is the current state (-127 to 127)
     SE_CONSOLE    // evPtr is a char*, from typing something at a non-game console
 } sysEventType_t;
 
@@ -110,17 +105,12 @@ typedef enum
     J_DPAD_LEFT,
     J_DPAD_RIGHT,
 
-    J_BTN_MISC1,    // Additional button (e.g. Xbox Series X share button, PS5
-                    // microphone button, Nintendo Switch Pro capture button, Amazon
-                    // Luna microphone button)
-    J_BTN_RPADDLE1, // Upper or primary paddle, under your right hand (e.g. Xbox
-                    // Elite paddle P1)
-    J_BTN_LPADDLE1, // Upper or primary paddle, under your left hand (e.g. Xbox
-                    // Elite paddle P3)
-    J_BTN_RPADDLE2, // Lower or secondary paddle, under your right hand (e.g. Xbox
-                    // Elite paddle P2)
-    J_BTN_LPADDLE2, //  Lower or secondary paddle, under your left hand (e.g. Xbox
-                    //  Elite paddle P4)
+    J_BTN_MISC1,    // Additional button (e.g. Xbox Series X share button, PS5 microphone button, Nintendo Switch Pro
+                    // capture button, Amazon Luna microphone button)
+    J_BTN_RPADDLE1, // Upper or primary paddle, under your right hand (e.g. Xbox Elite paddle P1)
+    J_BTN_LPADDLE1, // Upper or primary paddle, under your left hand (e.g. Xbox Elite paddle P3)
+    J_BTN_RPADDLE2, // Lower or secondary paddle, under your right hand (e.g. Xbox Elite paddle P2)
+    J_BTN_LPADDLE2, //  Lower or secondary paddle, under your left hand (e.g. Xbox Elite paddle P4)
 
     J_ACTION_MAX = J_BTN_LPADDLE2,
     // leaving some space here for about 12 additional J_ACTIONs, if needed
@@ -141,8 +131,7 @@ typedef enum
 struct sysEvent_t
 {
     sysEventType_t evType;
-    int evValue;     // for keys: K_* or ASCII code; for joystick: axis; for mouse:
-                     // mouseX
+    int evValue;     // for keys: K_* or ASCII code; for joystick: axis; for mouse: mouseX
     int evValue2;    // for keys: 0/1 for up/down; for axis: value; for mouse: mouseY
     int evPtrLength; // bytes of data pointed to by evPtr, for journaling
     void *evPtr;     // this must be manually freed if not NULL
@@ -177,8 +166,7 @@ void Sys_DebugPrintf(const char *fmt, ...) id_attribute((format(printf, 1, 2)));
 void Sys_DebugVPrintf(const char *fmt, va_list arg);
 
 // allow game to yield CPU time
-// NOTE: due to SDL_TIMESLICE this is very bad portability karma, and should be
-// completely removed
+// NOTE: due to SDL_TIMESLICE this is very bad portability karma, and should be completely removed
 void Sys_Sleep(int msec);
 
 // Sys_Milliseconds should only be used for profiling purposes,
@@ -210,8 +198,7 @@ bool Sys_UnlockMemory(void *ptr, int bytes);
 // set amount of physical work memory
 void Sys_SetPhysicalWorkMemory(int minBytes, int maxBytes);
 
-// DLL loading, the path should be a fully qualified OS path to the DLL file to
-// be loaded
+// DLL loading, the path should be a fully qualified OS path to the DLL file to be loaded
 uintptr_t Sys_DLL_Load(const char *dllName);
 void *Sys_DLL_GetProcAddress(uintptr_t dllHandle, const char *procName);
 void Sys_DLL_Unload(uintptr_t dllHandle);
@@ -235,10 +222,10 @@ unsigned char Sys_MapCharForKey(int key);
 // for keynums between K_FIRST_SCANCODE and K_LAST_SCANCODE
 // returns e.g. "SC_A" for K_SC_A
 const char *Sys_GetScancodeName(int key);
-// returns localized name of the key (between K_FIRST_SCANCODE and
-// K_LAST_SCANCODE), regarding the current keyboard layout - if that name is in
-// ASCII or corresponds to a "High-ASCII" char supported by Doom3. Otherwise
-// return same name as Sys_GetScancodeName()
+// returns localized name of the key (between K_FIRST_SCANCODE and K_LAST_SCANCODE),
+// regarding the current keyboard layout - if that name is in ASCII or corresponds
+// to a "High-ASCII" char supported by Doom3.
+// Otherwise return same name as Sys_GetScancodeName()
 // !! Returned string is only valid until next call to this function !!
 const char *Sys_GetLocalizedScancodeName(int key);
 // the same, but using UTF-8 instead of "High-ASCII"
@@ -248,8 +235,8 @@ int Sys_GetKeynumForScancodeName(const char *name);
 
 // returns display name of the key (between K_FIRST_JOY and K_LAST_JOY)
 // With SDL2 it'll return the name in the SDL_GameController standard layout
-// (which is based on XBox/XInput => on Nintendo gamepads, A/B and X/Y will be
-// flipped), with SDL3 it will return the "real" button name
+// (which is based on XBox/XInput => on Nintendo gamepads, A/B and X/Y will be flipped),
+// with SDL3 it will return the "real" button name
 const char *Sys_GetLocalizedJoyKeyName(int key);
 
 // keyboard input polling
@@ -298,7 +285,7 @@ int Sys_ListFiles(const char *directory, const char *extension, idList<class idS
 /*
 ==============================================================
 
-        Networking
+    Networking
 
 ==============================================================
 */
@@ -365,8 +352,8 @@ class idTCP
 
     // returns -1 on failure (and closes socket)
     // those are non blocking, can be used for polling
-    // there is no buffering, you are not guaranteed to Read or Write everything
-    // in a single call (specially on win32, see recv and send documentation)
+    // there is no buffering, you are not guaranteed to Read or Write everything in a single call
+    // (specially on win32, see recv and send documentation)
     int Read(void *data, int size);
     int Write(void *data, int size);
 
@@ -390,7 +377,7 @@ void Sys_ShutdownNetworking(void);
 /*
 ==============================================================
 
-        Multi-threading
+    Multi-threading
 
 ==============================================================
 */
@@ -448,7 +435,7 @@ void Sys_TriggerEvent(int index = TRIGGER_EVENT_ZERO);
 /*
 ==============================================================
 
-        idSys
+    idSys
 
 ==============================================================
 */

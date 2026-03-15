@@ -19,29 +19,26 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Misc.h"
-#include "Moveable.h"
 #include "sys/platform.h"
+#include "Moveable.h"
+#include "Misc.h"
 
-#include "ai/AI.h"
 #include "gamesys/SysCvar.h"
+#include "ai/AI.h"
 
 /***********************************************************************
 
-        AI Events
+    AI Events
 
 ***********************************************************************/
 
@@ -725,8 +722,7 @@ void idAI::Event_LaunchMissile(const idVec3 &org, const idAngles &ang)
     }
     else
     {
-        // projectile bounds bigger than the owner bounds, so just start it from the
-        // center
+        // projectile bounds bigger than the owner bounds, so just start it from the center
         start = ownerBounds.GetCenter();
     }
 
@@ -1409,8 +1405,7 @@ void idAI::Event_GetCombatNode(void)
         return;
     }
 
-    // find the closest attack node that can see our enemy and is closer than our
-    // enemy
+    // find the closest attack node that can see our enemy and is closer than our enemy
     bestNode = NULL;
     const idVec3 &myPos = physicsObj.GetOrigin();
     bestDist = (myPos - lastVisibleEnemyPos).LengthSqr();
@@ -1471,9 +1466,8 @@ void idAI::Event_EnemyInCombatCone(idEntity *ent, int use_current_enemy_location
     }
 
 #ifdef _D3XP
-    // Allow the level designers define attack nodes that the enemy should never
-    // leave. This is different that the turrent type combat nodes because they
-    // can play an animation
+    // Allow the level designers define attack nodes that the enemy should never leave.
+    // This is different that the turrent type combat nodes because they can play an animation
     if (ent->spawnArgs.GetBool("neverLeave", "0"))
     {
         idThread::ReturnInt(true);
@@ -1793,8 +1787,7 @@ void idAI::Event_CanHitEnemy(void)
     idVec3 eye = GetEyePosition();
     idVec3 dir;
 
-    // expand the ray out as far as possible so we can detect anything behind the
-    // enemy
+    // expand the ray out as far as possible so we can detect anything behind the enemy
     dir = toPos - eye;
     dir.Normalize();
     toPos = eye + dir * MAX_WORLD_SIZE;
@@ -1885,8 +1878,7 @@ void idAI::Event_CanHitEnemyFromAnim(const char *animname)
     }
     else
     {
-        // projectile bounds bigger than the owner bounds, so just start it from the
-        // center
+        // projectile bounds bigger than the owner bounds, so just start it from the center
         start = ownerBounds.GetCenter();
     }
 
@@ -1965,8 +1957,7 @@ void idAI::Event_CanHitEnemyFromJoint(const char *jointname)
     }
     else
     {
-        // projectile bounds bigger than the owner bounds, so just start it from the
-        // center
+        // projectile bounds bigger than the owner bounds, so just start it from the center
         start = ownerBounds.GetCenter();
     }
 

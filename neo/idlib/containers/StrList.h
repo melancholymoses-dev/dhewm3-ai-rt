@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,13 +32,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __STRLIST_H__
 #define __STRLIST_H__
 
-#include "idlib/Str.h"
 #include "idlib/containers/List.h"
+#include "idlib/Str.h"
 
 /*
 ===============================================================================
 
-        idStrList
+    idStrList
 
 ===============================================================================
 */
@@ -54,8 +51,7 @@ typedef idStr *idStrPtr;
 ================
 idListSortCompare<idStrPtr>
 
-Compares two pointers to strings. Used to sort a list of string pointers
-alphabetically in idList<idStr>::Sort.
+Compares two pointers to strings. Used to sort a list of string pointers alphabetically in idList<idStr>::Sort.
 ================
 */
 template <> ID_INLINE int idListSortCompare<idStrPtr>(const idStrPtr *a, const idStrPtr *b)
@@ -67,9 +63,8 @@ template <> ID_INLINE int idListSortCompare<idStrPtr>(const idStrPtr *a, const i
 ================
 idStrList::Sort
 
-Sorts the list of strings alphabetically. Creates a list of pointers to the
-actual strings and sorts the pointer list. Then copies the strings into another
-list using the ordered list of pointers.
+Sorts the list of strings alphabetically. Creates a list of pointers to the actual strings and sorts the
+pointer list. Then copies the strings into another list using the ordered list of pointers.
 ================
 */
 template <> ID_INLINE void idStrList::Sort(cmp_t *compare)
@@ -172,7 +167,7 @@ template <> ID_INLINE size_t idStrList::Size(void) const
 /*
 ===============================================================================
 
-        idStrList path sorting
+    idStrList path sorting
 
 ===============================================================================
 */
@@ -181,8 +176,7 @@ template <> ID_INLINE size_t idStrList::Size(void) const
 ================
 idListSortComparePaths
 
-Compares two pointers to strings. Used to sort a list of string pointers
-alphabetically in idList<idStr>::Sort.
+Compares two pointers to strings. Used to sort a list of string pointers alphabetically in idList<idStr>::Sort.
 ================
 */
 template <class idStrPtr> ID_INLINE int idListSortComparePaths(const idStrPtr *a, const idStrPtr *b)

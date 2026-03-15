@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../renderer/tr_local.h"
 #include "../../sys/win32/rc/guied_resource.h"
+#include "../../renderer/tr_local.h"
 
 #include "GEApp.h"
 #include "GEViewer.h"
@@ -128,8 +125,7 @@ bool rvGEViewer::OpenFile(const char *filename)
     tempfile.StripPath();
     tempfile.StripFileExtension();
     tempfile = va("guis/temp.guied", tempfile.c_str());
-    // ospath = fileSystem->RelativePathToOSPath ( tempfile, "fs_basepath" ); DG:
-    // change from SteelStorm2
+    // ospath = fileSystem->RelativePathToOSPath ( tempfile, "fs_basepath" ); DG: change from SteelStorm2
     ospath = fileSystem->RelativePathToOSPath(tempfile, "fs_savepath");
 
     // Make sure the gui directory exists
@@ -189,8 +185,8 @@ static int MapKey(int key)
     const unsigned char *scanToKey = Win_GetScanTable();
     result = scanToKey[modified];
 
-    // common->Printf( "Key: 0x%08x Modified: 0x%02x Extended: %s Result:
-    // 0x%02x\n", key, modified, (is_extended?"Y":"N"), result);
+    // common->Printf( "Key: 0x%08x Modified: 0x%02x Extended: %s Result: 0x%02x\n", key, modified,
+    // (is_extended?"Y":"N"), result);
 
     if (is_extended)
     {
@@ -381,8 +377,7 @@ LRESULT CALLBACK rvGEViewer::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         viewer->mToolbar = CreateWindowEx(0, TOOLBARCLASSNAME, "", CCS_BOTTOM | WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hwnd,
                                           (HMENU)IDR_GUIED_VIEWERTOOLBAR, gApp.GetInstance(), NULL);
 
-        // Send the TB_BUTTONSTRUCTSIZE message, which is required for backward
-        // compatibility.
+        // Send the TB_BUTTONSTRUCTSIZE message, which is required for backward compatibility.
         SendMessage(viewer->mToolbar, TB_BUTTONSTRUCTSIZE, (WPARAM)sizeof(TBBUTTON), 0);
 
         SendMessage(viewer->mToolbar, TB_SETBUTTONSIZE, 0, MAKELONG(16, 15));

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,15 +32,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __BV_FRUSTUM_H__
 #define __BV_FRUSTUM_H__
 
-#include "idlib/bv/Bounds.h"
-#include "idlib/bv/Box.h"
 #include "idlib/geometry/Winding.h"
 #include "idlib/math/Vector.h"
+#include "idlib/bv/Bounds.h"
+#include "idlib/bv/Box.h"
 
 /*
 ===============================================================================
 
-        Orthogonal Frustum
+    Orthogonal Frustum
 
 ===============================================================================
 */
@@ -98,8 +95,7 @@ class idFrustum
     bool LineIntersection(const idVec3 &start, const idVec3 &end) const;
     bool RayIntersection(const idVec3 &start, const idVec3 &dir, float &scale1, float &scale2) const;
 
-    // returns true if the projection origin is far enough away from the bounding
-    // volume to create a valid frustum
+    // returns true if the projection origin is far enough away from the bounding volume to create a valid frustum
     bool FromProjection(const idBounds &bounds, const idVec3 &projectionOrigin, const float dFar);
     bool FromProjection(const idBox &box, const idVec3 &projectionOrigin, const float dFar);
     bool FromProjection(const idSphere &sphere, const idVec3 &projectionOrigin, const float dFar);
@@ -124,8 +120,7 @@ class idFrustum
     bool ProjectionBounds(const idFrustum &frustum, idBounds &projectionBounds) const;
     bool ProjectionBounds(const idWinding &winding, idBounds &projectionBounds) const;
 
-    // calculates the bounds for the projection in this frustum of the given
-    // frustum clipped to the given box
+    // calculates the bounds for the projection in this frustum of the given frustum clipped to the given box
     bool ClippedProjectionBounds(const idFrustum &frustum, const idBox &clipBox, idBounds &projectionBounds) const;
 
   private:

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,11 +33,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "renderer/tr_local.h"
 
-static idCVar r_fillWindowAlphaChan("r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE,
-                                    "Make sure alpha channel of windows default framebuffer is completely "
-                                    "opaque at the end of each frame. Needed at least when using Wayland with "
-                                    "older drivers.\n 1: do this, 0: don't do it, -1: let dhewm3 decide "
-                                    "(default)");
+static idCVar r_fillWindowAlphaChan(
+    "r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE,
+    "Make sure alpha channel of windows default framebuffer is completely opaque at the end of each frame. Needed at "
+    "least when using Wayland with older drivers.\n 1: do this, 0: don't do it, -1: let dhewm3 decide (default)");
 
 frameData_t *frameData;
 backEndState_t backEnd;
@@ -729,8 +725,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
     const bool usingVulkan = false;
 #endif
 
-    // needed for editor rendering (GL only; Vulkan has no fixed-function GL
-    // state)
+    // needed for editor rendering (GL only; Vulkan has no fixed-function GL state)
     if (!usingVulkan)
     {
         RB_SetDefaultGLState();
@@ -776,8 +771,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
             break;
         case RC_SWAP_BUFFERS:
             // Vulkan present is handled inside VK_RB_DrawView (vkQueuePresentKHR);
-            // calling RB_SwapBuffers here would double-present and call
-            // GLimp_SwapBuffers.
+            // calling RB_SwapBuffers here would double-present and call GLimp_SwapBuffers.
             if (!usingVulkan)
             {
                 RB_SwapBuffers(cmds);
@@ -811,9 +805,8 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
 
     if (r_debugRenderToTexture.GetInteger() == 1)
     {
-        common->Printf("3d: %i, 2d: %i, SetBuf: %i, SwpBuf: %i, CpyRenders: %i, "
-                       "CpyFrameBuf: %i\n",
-                       c_draw3d, c_draw2d, c_setBuffers, c_swapBuffers, c_copyRenders, backEnd.c_copyFrameBuffer);
+        common->Printf("3d: %i, 2d: %i, SetBuf: %i, SwpBuf: %i, CpyRenders: %i, CpyFrameBuf: %i\n", c_draw3d, c_draw2d,
+                       c_setBuffers, c_swapBuffers, c_copyRenders, backEnd.c_copyFrameBuffer);
         backEnd.c_copyFrameBuffer = 0;
     }
 }

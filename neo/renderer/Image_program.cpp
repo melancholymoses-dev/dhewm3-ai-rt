@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
 
 #include "renderer/Image.h"
 
@@ -59,12 +56,11 @@ Manager
 ->Print
 ->Reload( bool force )
 
-Anywhere that an image name is used (diffusemaps, bumpmaps, specularmaps,
-lights, etc), an imageProgram can be specified.
+Anywhere that an image name is used (diffusemaps, bumpmaps, specularmaps, lights, etc),
+an imageProgram can be specified.
 
-This allows load time operations, like heightmap-to-normalmap conversion and
-image composition, to be automatically handled in a way that supports
-timestamped reloads.
+This allows load time operations, like heightmap-to-normalmap conversion and image
+composition, to be automatically handled in a way that supports timestamped reloads.
 
 */
 
@@ -242,8 +238,7 @@ static void R_AddNormalMaps(byte *data1, int width1, int height1, byte *data2, i
             n[2] = (d1[2] - 128) / 127.0;
 
             // There are some normal maps that blend to 0,0,0 at the edges
-            // this screws up compression, so we try to correct that here by instead
-            // fading it to 0,0,1
+            // this screws up compression, so we try to correct that here by instead fading it to 0,0,1
             len = n.LengthFast();
             if (len < 1.0f)
             {

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,8 +36,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        List template
-        Does not allocate memory until the first item is added.
+    List template
+    Does not allocate memory until the first item is added.
 
 ===============================================================================
 */
@@ -103,44 +100,38 @@ template <class type> class idList
     int GetGranularity(void) const;          // get the current granularity
 
     size_t Allocated(void) const;  // returns total size of allocated memory
-    size_t Size(void) const;       // returns total size of allocated memory including
-                                   // size of list type
+    size_t Size(void) const;       // returns total size of allocated memory including size of list type
     size_t MemoryUsed(void) const; // returns size of the used elements in the list
 
     idList<type> &operator=(const idList<type> &other);
     const type &operator[](int index) const;
     type &operator[](int index);
 
-    void Condense(void);      // resizes list to exactly the number of elements it contains
-    void Resize(int newsize); // resizes list to the given number of elements
-    void Resize(int newsize,
-                int newgranularity); // resizes list and sets new granularity
+    void Condense(void);                          // resizes list to exactly the number of elements it contains
+    void Resize(int newsize);                     // resizes list to the given number of elements
+    void Resize(int newsize, int newgranularity); // resizes list and sets new granularity
     void SetNum(int newnum,
-                bool resize = true); // set number of elements in list and resize
-                                     // to exactly this number if necessary
-    void AssureSize(int newSize);    // assure list has given number of elements, but
-                                     // leave them uninitialized
+                bool resize = true); // set number of elements in list and resize to exactly this number if necessary
+    void AssureSize(int newSize);    // assure list has given number of elements, but leave them uninitialized
     void AssureSize(int newSize,
-                    const type &initValue); // assure list has given number of elements
-                                            // and initialize any new elements
-    void AssureSizeAlloc(int newSize,
-                         new_t *allocator); // assure the pointer list has the given number of
-                                            // elements and allocate any new elements
+                    const type &initValue); // assure list has given number of elements and initialize any new elements
+    void AssureSizeAlloc(
+        int newSize,
+        new_t *allocator); // assure the pointer list has the given number of elements and allocate any new elements
 
-    type *Ptr(void);                       // returns a pointer to the list
-    const type *Ptr(void) const;           // returns a pointer to the list
-    type &Alloc(void);                     // returns reference to a new data element at the end of the list
-    int Append(const type &obj);           // append element
-    int Append(const idList<type> &other); // append list
-    int AddUnique(const type &obj);        // add unique element
-    int Insert(const type &obj,
-               int index = 0);            // insert the element at the given index
-    int FindIndex(const type &obj) const; // find the index for the given element
-    type *Find(type const &obj) const;    // find pointer to the given element
-    int FindNull(void) const;             // find the index for the first NULL pointer in the list
-    int IndexOf(const type *obj) const;   // returns the index for the pointer to an element in the list
-    bool RemoveIndex(int index);          // remove the element at the given index
-    bool Remove(const type &obj);         // remove the element
+    type *Ptr(void);                            // returns a pointer to the list
+    const type *Ptr(void) const;                // returns a pointer to the list
+    type &Alloc(void);                          // returns reference to a new data element at the end of the list
+    int Append(const type &obj);                // append element
+    int Append(const idList<type> &other);      // append list
+    int AddUnique(const type &obj);             // add unique element
+    int Insert(const type &obj, int index = 0); // insert the element at the given index
+    int FindIndex(const type &obj) const;       // find the index for the given element
+    type *Find(type const &obj) const;          // find pointer to the given element
+    int FindNull(void) const;                   // find the index for the first NULL pointer in the list
+    int IndexOf(const type *obj) const;         // returns the index for the pointer to an element in the list
+    bool RemoveIndex(int index);                // remove the element at the given index
+    bool Remove(const type &obj);               // remove the element
     void Sort(cmp_t *compare = (cmp_t *)&idListSortCompare<type>);
     void SortSubSection(int startIndex, int endIndex, cmp_t *compare = (cmp_t *)&idListSortCompare<type>);
     void Swap(idList<type> &other);  // swap the contents of the lists
@@ -215,8 +206,7 @@ template <class type> ID_INLINE idList<type>::~idList(void)
 ================
 idList<type>::Clear
 
-Frees up the memory allocated by the list.  Assumes that type automatically
-handles freeing up memory.
+Frees up the memory allocated by the list.  Assumes that type automatically handles freeing up memory.
 ================
 */
 template <class type> ID_INLINE void idList<type>::Clear(void)
@@ -235,13 +225,12 @@ template <class type> ID_INLINE void idList<type>::Clear(void)
 ================
 idList<type>::DeleteContents
 
-Calls the destructor of all elements in the list.  Conditionally frees up memory
-used by the list. Note that this only works on lists containing pointers to
-objects and will cause a compiler error if called with non-pointers.  Since the
-list was not responsible for allocating the object, it has no information on
-whether the object still exists or not, so care must be taken to ensure that the
-pointers are still valid when this function is called.  Function will set all
-pointers in the list to NULL.
+Calls the destructor of all elements in the list.  Conditionally frees up memory used by the list.
+Note that this only works on lists containing pointers to objects and will cause a compiler error
+if called with non-pointers.  Since the list was not responsible for allocating the object, it has
+no information on whether the object still exists or not, so care must be taken to ensure that
+the pointers are still valid when this function is called.  Function will set all pointers in the
+list to NULL.
 ================
 */
 template <class type> ID_INLINE void idList<type>::DeleteContents(bool clear)
@@ -268,8 +257,7 @@ template <class type> ID_INLINE void idList<type>::DeleteContents(bool clear)
 ================
 idList<type>::Allocated
 
-return total memory allocated for the list in bytes, but doesn't take into
-account additional memory allocated by type
+return total memory allocated for the list in bytes, but doesn't take into account additional memory allocated by type
 ================
 */
 template <class type> ID_INLINE size_t idList<type>::Allocated(void) const
@@ -281,8 +269,7 @@ template <class type> ID_INLINE size_t idList<type>::Allocated(void) const
 ================
 idList<type>::Size
 
-return total size of list in bytes, but doesn't take into account additional
-memory allocated by type
+return total size of list in bytes, but doesn't take into account additional memory allocated by type
 ================
 */
 template <class type> ID_INLINE size_t idList<type>::Size(void) const
@@ -384,8 +371,7 @@ template <class type> ID_INLINE int idList<type>::GetGranularity(void) const
 ================
 idList<type>::Condense
 
-Resizes the array to exactly the number of elements it contains or frees up
-memory if empty.
+Resizes the array to exactly the number of elements it contains or frees up memory if empty.
 ================
 */
 template <class type> ID_INLINE void idList<type>::Condense(void)
@@ -407,14 +393,13 @@ template <class type> ID_INLINE void idList<type>::Condense(void)
 ================
 idList<type>::Resize
 
-Allocates memory for the amount of elements requested while keeping the contents
-intact. Contents are copied using their = operator so that data is correnctly
-instantiated.
+Allocates memory for the amount of elements requested while keeping the contents intact.
+Contents are copied using their = operator so that data is correnctly instantiated.
 ================
 */
 #pragma GCC diagnostic push
-// shut up GCC's stupid "warning: assuming signed overflow does not occur when
-// assuming that (X - c) > X is always false [-Wstrict-overflow]"
+// shut up GCC's stupid "warning: assuming signed overflow does not occur when assuming that
+// (X - c) > X is always false [-Wstrict-overflow]"
 #pragma GCC diagnostic ignored "-Wstrict-overflow"
 template <class type> ID_INLINE void idList<type>::Resize(int newsize)
 {
@@ -463,9 +448,8 @@ template <class type> ID_INLINE void idList<type>::Resize(int newsize)
 ================
 idList<type>::Resize
 
-Allocates memory for the amount of elements requested while keeping the contents
-intact. Contents are copied using their = operator so that data is correnctly
-instantiated.
+Allocates memory for the amount of elements requested while keeping the contents intact.
+Contents are copied using their = operator so that data is correnctly instantiated.
 ================
 */
 template <class type> ID_INLINE void idList<type>::Resize(int newsize, int newgranularity)
@@ -537,8 +521,7 @@ template <class type> ID_INLINE void idList<type>::AssureSize(int newSize)
 ================
 idList<type>::AssureSize
 
-Makes sure the list has at least the given number of elements and initialize any
-elements not yet initialized.
+Makes sure the list has at least the given number of elements and initialize any elements not yet initialized.
 ================
 */
 template <class type> ID_INLINE void idList<type>::AssureSize(int newSize, const type &initValue)
@@ -571,8 +554,7 @@ template <class type> ID_INLINE void idList<type>::AssureSize(int newSize, const
 ================
 idList<type>::AssureSizeAlloc
 
-Makes sure the list has at least the given number of elements and allocates any
-elements using the allocator.
+Makes sure the list has at least the given number of elements and allocates any elements using the allocator.
 
 NOTE: This function can only be called on lists containing pointers. Calling it
 on non-pointer lists will cause a compiler error.
@@ -634,15 +616,15 @@ template <class type> ID_INLINE idList<type> &idList<type>::operator=(const idLi
 }
 
 #pragma GCC diagnostic push
-// shut up GCC's stupid "warning: assuming signed overflow does not occur when
-// assuming that (X - c) > X is always false [-Wstrict-overflow]"
+// shut up GCC's stupid "warning: assuming signed overflow does not occur when assuming that
+// (X - c) > X is always false [-Wstrict-overflow]"
 #pragma GCC diagnostic ignored "-Wstrict-overflow"
 /*
 ================
 idList<type>::operator[] const
 
-Access operator.  Index must be within range or an assert will be issued in
-debug builds. Release builds do no range checking.
+Access operator.  Index must be within range or an assert will be issued in debug builds.
+Release builds do no range checking.
 ================
 */
 template <class type> ID_INLINE const type &idList<type>::operator[](int index) const
@@ -657,8 +639,8 @@ template <class type> ID_INLINE const type &idList<type>::operator[](int index) 
 ================
 idList<type>::operator[]
 
-Access operator.  Index must be within range or an assert will be issued in
-debug builds. Release builds do no range checking.
+Access operator.  Index must be within range or an assert will be issued in debug builds.
+Release builds do no range checking.
 ================
 */
 template <class type> ID_INLINE type &idList<type>::operator[](int index)
@@ -674,8 +656,7 @@ template <class type> ID_INLINE type &idList<type>::operator[](int index)
 ================
 idList<type>::Ptr
 
-Returns a pointer to the begining of the array.  Useful for iterating through
-the list in loops.
+Returns a pointer to the begining of the array.  Useful for iterating through the list in loops.
 
 Note: may return NULL if the list is empty.
 
@@ -691,8 +672,7 @@ template <class type> ID_INLINE type *idList<type>::Ptr(void)
 ================
 idList<type>::Ptr
 
-Returns a pointer to the begining of the array.  Useful for iterating through
-the list in loops.
+Returns a pointer to the begining of the array.  Useful for iterating through the list in loops.
 
 Note: may return NULL if the list is empty.
 
@@ -730,8 +710,7 @@ template <class type> ID_INLINE type &idList<type>::Alloc(void)
 ================
 idList<type>::Append
 
-Increases the size of the list by one element and copies the supplied data into
-it.
+Increases the size of the list by one element and copies the supplied data into it.
 
 Returns the index of the new element.
 ================
@@ -840,8 +819,7 @@ template <class type> ID_INLINE int idList<type>::Append(const idList<type> &oth
 ================
 idList<type>::AddUnique
 
-Adds the data to the list if it doesn't already exist.  Returns the index of the
-data in the list.
+Adds the data to the list if it doesn't already exist.  Returns the index of the data in the list.
 ================
 */
 template <class type> ID_INLINE int idList<type>::AddUnique(type const &obj)
@@ -861,8 +839,7 @@ template <class type> ID_INLINE int idList<type>::AddUnique(type const &obj)
 ================
 idList<type>::FindIndex
 
-Searches for the specified data in the list and returns it's index.  Returns -1
-if the data is not found.
+Searches for the specified data in the list and returns it's index.  Returns -1 if the data is not found.
 ================
 */
 template <class type> ID_INLINE int idList<type>::FindIndex(type const &obj) const
@@ -885,8 +862,7 @@ template <class type> ID_INLINE int idList<type>::FindIndex(type const &obj) con
 ================
 idList<type>::Find
 
-Searches for the specified data in the list and returns it's address. Returns
-NULL if the data is not found.
+Searches for the specified data in the list and returns it's address. Returns NULL if the data is not found.
 ================
 */
 template <class type> ID_INLINE type *idList<type>::Find(type const &obj) const
@@ -934,8 +910,8 @@ idList<type>::IndexOf
 
 Takes a pointer to an element in the list and returns the index of the element.
 This is NOT a guarantee that the object is really in the list.
-Function will assert in debug builds if pointer is outside the bounds of the
-list, but remains silent in release builds.
+Function will assert in debug builds if pointer is outside the bounds of the list,
+but remains silent in release builds.
 ================
 */
 template <class type> ID_INLINE int idList<type>::IndexOf(type const *objptr) const
@@ -954,11 +930,9 @@ template <class type> ID_INLINE int idList<type>::IndexOf(type const *objptr) co
 ================
 idList<type>::RemoveIndex
 
-Removes the element at the specified index and moves all data following the
-element down to fill in the gap. The number of elements in the list is reduced
-by one.  Returns false if the index is outside the bounds of the list. Note that
-the element is not destroyed, so any memory used by it may not be freed until
-the destruction of the list.
+Removes the element at the specified index and moves all data following the element down to fill in the gap.
+The number of elements in the list is reduced by one.  Returns false if the index is outside the bounds of the list.
+Note that the element is not destroyed, so any memory used by it may not be freed until the destruction of the list.
 ================
 */
 template <class type> ID_INLINE bool idList<type>::RemoveIndex(int index)
@@ -987,11 +961,9 @@ template <class type> ID_INLINE bool idList<type>::RemoveIndex(int index)
 ================
 idList<type>::Remove
 
-Removes the element if it is found within the list and moves all data following
-the element down to fill in the gap. The number of elements in the list is
-reduced by one.  Returns false if the data is not found in the list.  Note that
-the element is not destroyed, so any memory used by it may not be freed until
-the destruction of the list.
+Removes the element if it is found within the list and moves all data following the element down to fill in the gap.
+The number of elements in the list is reduced by one.  Returns false if the data is not found in the list.  Note that
+the element is not destroyed, so any memory used by it may not be freed until the destruction of the list.
 ================
 */
 template <class type> ID_INLINE bool idList<type>::Remove(type const &obj)
@@ -1011,9 +983,8 @@ template <class type> ID_INLINE bool idList<type>::Remove(type const &obj)
 ================
 idList<type>::Sort
 
-Performs a qsort on the list using the supplied comparison function.  Note that
-the data is merely moved around the list, so any pointers to data within the
-list may no longer be valid.
+Performs a qsort on the list using the supplied comparison function.  Note that the data is merely moved around the
+list, so any pointers to data within the list may no longer be valid.
 ================
 */
 template <class type> ID_INLINE void idList<type>::Sort(cmp_t *compare)

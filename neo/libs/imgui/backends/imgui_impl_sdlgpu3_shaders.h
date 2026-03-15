@@ -3,12 +3,10 @@
 #include <stdint.h>
 
 // Data exported using
-//   misc/fonts/binary_to_compressed_c.exe -u8 -nocompress filename symbolname
-//   >filename.h
+//   misc/fonts/binary_to_compressed_c.exe -u8 -nocompress filename symbolname >filename.h
 // With some manual pasting.
 
-// Check sdlgpu3/ folder for the shaders' source code and instruction on how to
-// build them
+// Check sdlgpu3/ folder for the shaders' source code and instruction on how to build them
 const uint8_t spirv_vertex[1732] = {
     3,   2,   35,  7,   0,   0,   1,   0,   11,  0,   13,  0,   55,  0,   0,   0,   0,   0,   0,   0,   17,  0,   2,
     0,   1,   0,   0,   0,   11,  0,   6,   0,   1,   0,   0,   0,   71,  76,  83,  76,  46,  115, 116, 100, 46,  52,

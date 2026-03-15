@@ -13,14 +13,14 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 // #include "stdafx.h"
 #include "tools/edit_gui_common.h"
 
-#include "../../../sys/win32/rc/proptree_Resource.h"
 #include "PropTree.h"
+#include "../../../sys/win32/rc/proptree_Resource.h"
 
 #include "PropTreeItemCombo.h"
 
@@ -60,8 +60,7 @@ void CPropTreeItemCombo::DrawAttribute(CDC *pDC, const RECT &rc)
     // verify the window has been created
     if (!IsWindow(m_hWnd))
     {
-        TRACE0("CPropTreeItemCombo::DrawAttribute() - The window has not been "
-               "created\n");
+        TRACE0("CPropTreeItemCombo::DrawAttribute() - The window has not been created\n");
         return;
     }
 
@@ -163,8 +162,7 @@ BOOL CPropTreeItemCombo::CreateComboBoxBool()
 
     if (!Create(dwStyle, CRect(0, 0, 0, 0), m_pProp->GetCtrlParent(), GetCtrlID()))
     {
-        TRACE0("CPropTreeItemCombo::CreateComboBoxBool() - failed to create combo "
-               "box\n");
+        TRACE0("CPropTreeItemCombo::CreateComboBoxBool() - failed to create combo box\n");
         return FALSE;
     }
 

@@ -19,43 +19,40 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/DeclEntityDef.h"
-#include "framework/async/NetworkSystem.h"
-#include "idlib/LangDict.h"
-#include "idlib/geometry/JointTransform.h"
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "idlib/geometry/JointTransform.h"
+#include "idlib/LangDict.h"
+#include "framework/async/NetworkSystem.h"
+#include "framework/DeclEntityDef.h"
+#include "renderer/ModelManager.h"
 
-#include "AFEntity.h"
-#include "Fx.h"
-#include "Mover.h"
-#include "Player.h"
-#include "SmokeParticles.h"
-#include "WorldSpawn.h"
 #include "gamesys/SysCvar.h"
-#include "physics/Physics_Actor.h"
 #include "physics/Physics_Parametric.h"
+#include "physics/Physics_Actor.h"
 #include "script/Script_Thread.h"
+#include "Fx.h"
+#include "AFEntity.h"
+#include "Player.h"
+#include "Mover.h"
+#include "WorldSpawn.h"
+#include "SmokeParticles.h"
 
 #include "Entity.h"
 
 /*
 ===============================================================================
 
-        idEntity
+    idEntity
 
 ===============================================================================
 */
@@ -401,11 +398,10 @@ void idGameEdit::ParseSpawnArgsToRefSound(const idDict *args, refSound_t *refSou
 ===============
 idEntity::UpdateChangeableSpawnArgs
 
-Any key val pair that might change during the course of the game ( via a gui or
-whatever ) should be initialize here so a gui or other trigger can change
-something and have it updated properly. An optional source may be provided if
-the values reside in an outside dictionary and first need copied over to
-spawnArgs
+Any key val pair that might change during the course of the game ( via a gui or whatever )
+should be initialize here so a gui or other trigger can change something and have it updated
+properly. An optional source may be provided if the values reside in an outside dictionary and
+first need copied over to spawnArgs
 ===============
 */
 void idEntity::UpdateChangeableSpawnArgs(const idDict *source)
@@ -525,8 +521,7 @@ void idEntity::Spawn(void)
 
     renderEntity.entityNum = entityNumber;
 
-    // go dormant within 5 frames so that when the map starts most monsters are
-    // dormant
+    // go dormant within 5 frames so that when the map starts most monsters are dormant
     dormantStart = gameLocal.time - DELAY_DORMANT_TIME + gameLocal.msec * 5;
 
     origin = renderEntity.origin;
@@ -535,8 +530,8 @@ void idEntity::Spawn(void)
     // do the audio parsing the same way dmap and the editor do
     gameEdit->ParseSpawnArgsToRefSound(&spawnArgs, &refSound);
 
-    // only play SCHANNEL_PRIVATE when sndworld->PlaceListener() is called with
-    // this listenerId don't spatialize sounds from the same entity
+    // only play SCHANNEL_PRIVATE when sndworld->PlaceListener() is called with this listenerId
+    // don't spatialize sounds from the same entity
     refSound.listenerId = entityNumber + 1;
 
     cameraTarget = NULL;
@@ -662,9 +657,8 @@ idEntity::~idEntity(void)
 
     Signal(SIG_REMOVED);
 
-    // we have to set back the default physics object before unbinding because the
-    // entity specific physics object might be an entity variable and as such
-    // could already be destroyed.
+    // we have to set back the default physics object before unbinding because the entity
+    // specific physics object might be an entity variable and as such could already be destroyed.
     SetPhysics(NULL);
 
     // remove any entities that are bound to me
@@ -911,7 +905,7 @@ const char *idEntity::GetName(void) const
 
 /***********************************************************************
 
-        Thinking
+    Thinking
 
 ***********************************************************************/
 
@@ -1067,8 +1061,7 @@ void idEntity::BecomeActive(int flags)
         }
         else if (!oldFlags)
         {
-            // we became inactive this frame, so we have to decrease the count of
-            // entities to deactivate
+            // we became inactive this frame, so we have to decrease the count of entities to deactivate
             gameLocal.numEntitiesToDeactivate--;
         }
     }
@@ -1083,8 +1076,7 @@ void idEntity::BecomeInactive(int flags)
 {
     if ((flags & TH_PHYSICS))
     {
-        // may only disable physics on a team master if no team members are running
-        // physics or bound to a joints
+        // may only disable physics on a team master if no team members are running physics or bound to a joints
         if (teamMaster == this)
         {
             for (idEntity *ent = teamMaster->teamChain; ent; ent = ent->teamChain)
@@ -1123,7 +1115,7 @@ void idEntity::BecomeInactive(int flags)
 
 /***********************************************************************
 
-        Visuals
+    Visuals
 
 ***********************************************************************/
 
@@ -1373,8 +1365,7 @@ void idEntity::UpdateModel(void)
         renderEntity.callback = idEntity::ModelCallback;
     }
 
-    // set to invalid number to force an update the next time the PVS areas are
-    // retrieved
+    // set to invalid number to force an update the next time the PVS areas are retrieved
     ClearPVSAreas();
 
     // ensure that we call Present this frame
@@ -1407,9 +1398,9 @@ void idEntity::UpdatePVSAreas(void)
     localNumPVSAreas =
         gameLocal.pvs.GetPVSAreas(modelAbsBounds, localPVSAreas, sizeof(localPVSAreas) / sizeof(localPVSAreas[0]));
 
-    // FIXME: some particle systems may have huge bounds and end up in many PVS
-    // areas the first MAX_PVS_AREAS may not be visible to a network client and as
-    // a result the particle system may not show up when it should
+    // FIXME: some particle systems may have huge bounds and end up in many PVS areas
+    // the first MAX_PVS_AREAS may not be visible to a network client and as a result the particle system may not show
+    // up when it should
     if (localNumPVSAreas > MAX_PVS_AREAS)
     {
         localNumPVSAreas = gameLocal.pvs.GetPVSAreas(idBounds(modelAbsBounds.GetCenter()).Expand(64.0f), localPVSAreas,
@@ -1486,8 +1477,7 @@ void idEntity::ClearPVSAreas(void)
 ================
 idEntity::PhysicsTeamInPVS
 
-  FIXME: for networking also return true if any of the entity shadows is in the
-PVS
+  FIXME: for networking also return true if any of the entity shadows is in the PVS
 ================
 */
 bool idEntity::PhysicsTeamInPVS(pvsHandle_t pvsHandle)
@@ -1569,8 +1559,7 @@ void idEntity::ProjectOverlay(const idVec3 &origin, const idVec3 &dir, float siz
 ================
 idEntity::Present
 
-Present is called to allow entities to generate refEntities, lights, etc for the
-renderer.
+Present is called to allow entities to generate refEntities, lights, etc for the renderer.
 ================
 */
 void idEntity::Present(void)
@@ -1656,7 +1645,7 @@ bool idEntity::UpdateRenderEntity(renderEntity_s *renderEntity, const renderView
 ================
 idEntity::ModelCallback
 
-        NOTE: may not change the game state whatsoever!
+    NOTE: may not change the game state whatsoever!
 ================
 */
 bool idEntity::ModelCallback(renderEntity_s *renderEntity, const renderView_t *renderView)
@@ -1752,8 +1741,7 @@ bool idEntity::StartSound(const char *soundName, const s_channelType channel, in
     }
 
     // we should ALWAYS be playing sounds from the def.
-    // hardcoded sounds MUST be avoided at all times because they won't get
-    // precached.
+    // hardcoded sounds MUST be avoided at all times because they won't get precached.
     assert(idStr::Icmpn(soundName, "snd_", 4) == 0);
 
     if (!spawnArgs.GetString(soundName, "", &sound))
@@ -2255,8 +2243,8 @@ void idEntity::Unbind(void)
     }
     else if (next)
     {
-        // If we were the teamMaster, then the nodes that were not bound to me are
-        // now a disconnected chain.  Make them into their own team.
+        // If we were the teamMaster, then the nodes that were not bound to me are now
+        // a disconnected chain.  Make them into their own team.
         for (ent = next; ent->teamChain != NULL; ent = ent->teamChain)
         {
             ent->teamMaster = next;
@@ -2590,8 +2578,7 @@ void idEntity::GetWorldVelocities(idVec3 &linearVelocity, idVec3 &angularVelocit
         // get master velocities
         bindMaster->GetWorldVelocities(masterLinearVelocity, masterAngularVelocity);
 
-        // linear velocity relative to master plus master linear and angular
-        // velocity
+        // linear velocity relative to master plus master linear and angular velocity
         linearVelocity = linearVelocity * masterAxis + masterLinearVelocity +
                          masterAngularVelocity.Cross(GetPhysics()->GetOrigin() - masterOrigin);
     }
@@ -2908,8 +2895,7 @@ bool idEntity::RunPhysics(void)
         return false;
     }
 
-    // if this entity is a team slave don't do anything because the team master
-    // will handle everything
+    // if this entity is a team slave don't do anything because the team master will handle everything
     if (teamMaster && teamMaster != this)
     {
         return false;
@@ -2921,8 +2907,7 @@ bool idEntity::RunPhysics(void)
     gameLocal.push.InitSavingPushedEntityPositions();
     blockedPart = NULL;
 
-    // save the physics state of the whole team and disable the team for collision
-    // detection
+    // save the physics state of the whole team and disable the team for collision detection
     for (part = this; part != NULL; part = part->teamChain)
     {
         if (part->physics)
@@ -2953,8 +2938,7 @@ bool idEntity::RunPhysics(void)
                 break;
             }
 
-            // if moved or forced to update the visual position and orientation from
-            // the physics
+            // if moved or forced to update the visual position and orientation from the physics
             if (moved || part->fl.forcePhysicsUpdate)
             {
                 part->UpdateFromPhysics(false);
@@ -3035,8 +3019,7 @@ bool idEntity::RunPhysics(void)
         return true;
     }
 
-    // post reached event if the current time is at or past the end point of the
-    // motion
+    // post reached event if the current time is at or past the end point of the motion
     for (part = this; part != NULL; part = part->teamChain)
     {
 
@@ -3180,8 +3163,7 @@ idEntity::GetPhysicsToSoundTransform
 */
 bool idEntity::GetPhysicsToSoundTransform(idVec3 &origin, idMat3 &axis)
 {
-    // by default play the sound at the center of the bounding box of the first
-    // clip model
+    // by default play the sound at the center of the bounding box of the first clip model
     if (GetPhysics()->GetNumClipModels() > 0)
     {
         origin = GetPhysics()->GetBounds().GetCenter();
@@ -3284,7 +3266,7 @@ void idEntity::RemoveContactEntity(idEntity *ent)
 
 /***********************************************************************
 
-        Damage
+    Damage
 
 ***********************************************************************/
 
@@ -3314,8 +3296,7 @@ bool idEntity::CanDamage(const idVec3 &origin, idVec3 &damagePoint) const
         return true;
     }
 
-    // this should probably check in the plane of projection, rather than in world
-    // coordinate
+    // this should probably check in the plane of projection, rather than in world coordinate
     dest = midpoint;
     dest[0] += 15.0;
     dest[1] += 15.0;
@@ -3381,8 +3362,8 @@ bool idEntity::CanDamage(const idVec3 &origin, idVec3 &damagePoint) const
 ================
 idEntity::DamageFeedback
 
-callback function for when another entity received damage from this entity.
-damage can be adjusted and returned to the caller.
+callback function for when another entity received damage from this entity.  damage can be adjusted and returned to the
+caller.
 ================
 */
 void idEntity::DamageFeedback(idEntity *victim, idEntity *inflictor, int &damage)
@@ -3397,7 +3378,7 @@ Damage
 this		entity that is being damaged
 inflictor	entity that is causing the damage
 attacker	entity that caused the inflictor to damage targ
-        example: this=monster, inflictor=rocket, attacker=player
+    example: this=monster, inflictor=rocket, attacker=player
 
 dir			direction of the attack for knockback in global space
 point		point at which the damage is being inflicted, used for headshots
@@ -3506,9 +3487,8 @@ void idEntity::AddDamageEffect(const trace_t &collision, const idVec3 &velocity,
 ============
 idEntity::Pain
 
-Called whenever an entity recieves damage.  Returns whether the entity responds
-to the pain. This is a virtual function that subclasses are expected to
-implement.
+Called whenever an entity recieves damage.  Returns whether the entity responds to the pain.
+This is a virtual function that subclasses are expected to implement.
 ============
 */
 bool idEntity::Pain(idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location)
@@ -3538,8 +3518,8 @@ void idEntity::Killed(idEntity *inflictor, idEntity *attacker, int damage, const
 ================
 idEntity::ShouldConstructScriptObjectAtSpawn
 
-Called during idEntity::Spawn to see if it should construct the script object or
-not. Overridden by subclasses that need to spawn the script object themselves.
+Called during idEntity::Spawn to see if it should construct the script object or not.
+Overridden by subclasses that need to spawn the script object themselves.
 ================
 */
 bool idEntity::ShouldConstructScriptObjectAtSpawn(void) const
@@ -3886,8 +3866,7 @@ bool idEntity::HandleGuiCommands(idEntity *entityGui, const char *cmds)
                         idToken token3;
                         if (!src.ReadToken(&token3))
                         {
-                            gameLocal.Error("Expecting function name following '::' in gui "
-                                            "for entity '%s'",
+                            gameLocal.Error("Expecting function name following '::' in gui for entity '%s'",
                                             entityGui->name.c_str());
                         }
                         token2 += "::" + token3;
@@ -4037,9 +4016,8 @@ bool idEntity::HandleSingleGuiCommand(idEntity *entityGui, idLexer *src)
 idEntity::FindTargets
 
 We have to wait until all entities are spawned
-Used to build lists of targets after the entity is spawned.  Since not all
-entities have been spawned when the entity is created at map load time, we have
-to wait
+Used to build lists of targets after the entity is spawned.  Since not all entities
+have been spawned when the entity is created at map load time, we have to wait
 ===============
 */
 void idEntity::FindTargets(void)
@@ -4049,8 +4027,7 @@ void idEntity::FindTargets(void)
     // targets can be a list of multiple names
     gameLocal.GetTargets(spawnArgs, targets, "target");
 
-    // ensure that we don't target ourselves since that could cause an infinite
-    // loop when activating entities
+    // ensure that we don't target ourselves since that could cause an infinite loop when activating entities
     for (i = 0; i < targets.Num(); i++)
     {
         if (targets[i].GetEntity() == this)
@@ -4474,8 +4451,7 @@ void idEntity::Event_SpawnBind(void)
                 parentAnimator = parent->GetAnimator();
                 if (!parentAnimator)
                 {
-                    gameLocal.Error("Cannot bind to joint '%s' on '%s'.  Entity does not "
-                                    "support skeletal models.",
+                    gameLocal.Error("Cannot bind to joint '%s' on '%s'.  Entity does not support skeletal models.",
                                     joint, name.c_str());
                 }
                 bindJoint = parentAnimator->GetJointHandle(joint);
@@ -4676,10 +4652,8 @@ idEntity::Event_StartSoundShader
 */
 void idEntity::Event_StartSoundShader(const char *soundName, int channel)
 {
-    // DG: at least some map scripts in d3xp seem to use $ent.startSoundShader(
-    // "", SND_CHANNEL_whatever );
-    //     to stop a playing sound. special-casing this to avoid playing beep
-    //     sound (if s_playDefaultSound 1)
+    // DG: at least some map scripts in d3xp seem to use $ent.startSoundShader( "", SND_CHANNEL_whatever );
+    //     to stop a playing sound. special-casing this to avoid playing beep sound (if s_playDefaultSound 1)
     if (soundName == NULL || soundName[0] == '\0')
     {
         StopSound((s_channelType)channel, false);
@@ -6117,8 +6091,7 @@ bool idAnimatedEntity::ClientReceiveEvent(int event, int time, const idBitMsg &m
 ================
 idAnimatedEntity::Event_GetJointHandle
 
-looks up the number of the specified joint.  returns INVALID_JOINT if the joint
-is not found.
+looks up the number of the specified joint.  returns INVALID_JOINT if the joint is not found.
 ================
 */
 void idAnimatedEntity::Event_GetJointHandle(const char *jointname)

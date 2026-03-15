@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "WaitDlg.h"
 #include "qe3.h"
 #include <direct.h>
 #include <sys/stat.h>
+#include "WaitDlg.h"
 
 QEGlobals_t g_qeglobals;
 
@@ -54,8 +51,8 @@ void WINAPI QE_CheckOpenGLForErrors(void)
         if (i == GL_OUT_OF_MEMORY)
         {
             //
-            // strMsg.Format("OpenGL out of memory error %s\nDo you wish to save
-            // before exiting?", gluErrorString((GLenum)i));
+            // strMsg.Format("OpenGL out of memory error %s\nDo you wish to save before
+            // exiting?", gluErrorString((GLenum)i));
             //
             if (g_pParentWnd->MessageBox(strMsg, EDITOR_WINDOWTEXT " Error", MB_YESNO) == IDYES)
             {
@@ -66,8 +63,7 @@ void WINAPI QE_CheckOpenGLForErrors(void)
         }
         else
         {
-            // strMsg.Format("Warning: OpenGL Error %s\n ",
-            // gluErrorString((GLenum)i));
+            // strMsg.Format("Warning: OpenGL Error %s\n ", gluErrorString((GLenum)i));
             common->Printf(strMsg.GetBuffer(0));
         }
     }
@@ -120,9 +116,9 @@ void Map_Snapshot()
     CString strMsg;
 
     //
-    // we need to do the following 1. make sure the snapshot directory exists
-    // (create it if it doesn't) 2. find out what the lastest save is based on
-    // number 3. inc that and save the map
+    // we need to do the following 1. make sure the snapshot directory exists (create
+    // it if it doesn't) 2. find out what the lastest save is based on number 3. inc
+    // that and save the map
     //
     CString strOrgPath, strOrgFile;
     ExtractPath_and_Filename(currentmap, strOrgPath, strOrgFile);
@@ -157,8 +153,8 @@ void Map_Snapshot()
         Sys_SetTitle(currentmap);
         if (lSize > 12 * 1024 * 1024)
         { // total size of saves > 4 mb
-            common->Printf("The snapshot files in the [%s] directory total more than 4 "
-                           "megabytes. You might consider cleaning the directory up.",
+            common->Printf("The snapshot files in the [%s] directory total more than 4 megabytes. You might consider "
+                           "cleaning the directory up.",
                            strOrgPath.GetString());
         }
     }
@@ -171,8 +167,7 @@ void Map_Snapshot()
 
 /*
  =======================================================================================================================
-        QE_CheckAutoSave If five minutes have passed since making a change and
- the map hasn't been saved, save it out.
+    QE_CheckAutoSave If five minutes have passed since making a change and the map hasn't been saved, save it out.
  =======================================================================================================================
  */
 void QE_CheckAutoSave(void)
@@ -240,7 +235,7 @@ const int g_nPathFixupCount = sizeof(g_pPathFixups) / sizeof(const char *);
 
 /*
  =======================================================================================================================
-        QE_LoadProject
+    QE_LoadProject
  =======================================================================================================================
  */
 bool QE_LoadProject(char *projectfile)
@@ -291,7 +286,7 @@ bool QE_LoadProject(char *projectfile)
 
 /*
  =======================================================================================================================
-        QE_SaveProject £
+    QE_SaveProject £
  =======================================================================================================================
  */
 bool QE_SaveProject(const char *pProjectFile)
@@ -325,8 +320,7 @@ bool QE_SaveProject(const char *pProjectFile)
 
 /*
  =======================================================================================================================
-        ConnectEntities Sets target / name on the two entities selected from the
- first selected to the secon
+    ConnectEntities Sets target / name on the two entities selected from the first selected to the secon
  =======================================================================================================================
  */
 void ConnectEntities(void)

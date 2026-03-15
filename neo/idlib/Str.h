@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,7 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Character string
+    Character string
 
 ===============================================================================
 */
@@ -231,38 +228,32 @@ class idStr
     int Find(const char c, int start = 0, int end = -1) const;
     int Find(const char *text, bool casesensitive = true, int start = 0, int end = -1) const;
     bool Filter(const char *filter, bool casesensitive) const;
-    int Last(const char c) const;                             // return the index to the last occurance of
-                                                              // 'c', returns -1 if not found
+    int Last(const char c) const; // return the index to the last occurance of 'c', returns -1 if not found
     const char *Left(int len, idStr &result) const;           // store the leftmost 'len' characters in the result
     const char *Right(int len, idStr &result) const;          // store the rightmost 'len' characters in the result
     const char *Mid(int start, int len, idStr &result) const; // store 'len' characters starting at 'start' in result
     idStr Left(int len) const;                                // return the leftmost 'len' characters
     idStr Right(int len) const;                               // return the rightmost 'len' characters
-    idStr Mid(int start,
-              int len) const;                   // return 'len' characters starting at 'start'
-    void StripLeading(const char c);            // strip char from front as many times as the char occurs
-    void StripLeading(const char *string);      // strip string from front as many
-                                                // times as the string occurs
+    idStr Mid(int start, int len) const;                      // return 'len' characters starting at 'start'
+    void StripLeading(const char c);                          // strip char from front as many times as the char occurs
+    void StripLeading(const char *string);      // strip string from front as many times as the string occurs
     bool StripLeadingOnce(const char *string);  // strip string from front just once if it occurs
     void StripTrailing(const char c);           // strip char from end as many times as the char occurs
-    void StripTrailing(const char *string);     // strip string from end as many times
-                                                // as the string occurs
+    void StripTrailing(const char *string);     // strip string from end as many times as the string occurs
     bool StripTrailingOnce(const char *string); // strip string from end just once if it occurs
-    void Strip(const char c);                   // strip char from front and end as many times as
-                                                // the char occurs
-    void Strip(const char *string);             // strip string from front and end as many
-                                                // times as the string occurs
+    void Strip(const char c);                   // strip char from front and end as many times as the char occurs
+    void Strip(const char *string);             // strip string from front and end as many times as the string occurs
     void StripTrailingWhitespace(void);         // strip trailing white space characters
     idStr &StripQuotes(void);                   // strip quotes around string
     void Replace(const char *old, const char *nw);
 
     // file name methods
-    int FileNameHash(void) const;                       // hash key for the filename (skips extension)
-    idStr &BackSlashesToSlashes(void);                  // convert slashes
-    idStr &SetFileExtension(const char *extension);     // set the given file extension
-    idStr &StripFileExtension(void);                    // remove any file extension
-    idStr &StripAbsoluteFileExtension(void);            // remove any file extension looking from
-                                                        // front (useful if there are multiple .'s)
+    int FileNameHash(void) const;                   // hash key for the filename (skips extension)
+    idStr &BackSlashesToSlashes(void);              // convert slashes
+    idStr &SetFileExtension(const char *extension); // set the given file extension
+    idStr &StripFileExtension(void);                // remove any file extension
+    idStr &StripAbsoluteFileExtension(
+        void); // remove any file extension looking from front (useful if there are multiple .'s)
     idStr &DefaultFileExtension(const char *extension); // if there's no file extension use the default
     idStr &DefaultPath(const char *basepath);           // if there's no path use the default
     void AppendPath(const char *text);                  // append a partial path
@@ -289,10 +280,8 @@ class idStr
     static int Icmp(const char *s1, const char *s2);
     static int Icmpn(const char *s1, const char *s2, int n);
     static int IcmpNoColor(const char *s1, const char *s2);
-    static int IcmpPath(const char *s1,
-                        const char *s2); // compares paths and makes sure folders come first
-    static int IcmpnPath(const char *s1, const char *s2,
-                         int n); // compares paths and makes sure folders come first
+    static int IcmpPath(const char *s1, const char *s2);         // compares paths and makes sure folders come first
+    static int IcmpnPath(const char *s1, const char *s2, int n); // compares paths and makes sure folders come first
     static void Append(char *dest, int size, const char *src);
     static void Copynz(char *dest, const char *src, int destsize);
     static int snPrintf(char *dest, int size, const char *fmt, ...) id_attribute((format(printf, 3, 4)));
@@ -329,8 +318,7 @@ class idStr
     void ReAllocate(int amount, bool keepold); // reallocate string data buffer
     void FreeData(void);                       // free allocated string memory
 
-    // format value in the given measurement with the best unit, returns the best
-    // unit
+    // format value in the given measurement with the best unit, returns the best unit
     int BestUnit(const char *format, float value, Measure_t measure);
     // format value in the requested unit and measurement
     void SetUnit(const char *format, float value, int unit, Measure_t measure);
@@ -352,9 +340,8 @@ class idStr
     int alloced;
     char baseBuffer[STR_ALLOC_BASE];
 
-    void Init(void); // initialize string using base buffer
-    void EnsureAlloced(int amount,
-                       bool keepold = true); // ensure string data buffer is large anough
+    void Init(void);                                     // initialize string using base buffer
+    void EnsureAlloced(int amount, bool keepold = true); // ensure string data buffer is large anough
 };
 
 char *va(const char *fmt, ...) id_attribute((format(printf, 1, 2)));
@@ -564,8 +551,8 @@ ID_INLINE idStr::operator const char *(void) const
 }
 
 #pragma GCC diagnostic push
-// shut up GCC's stupid "warning: assuming signed overflow does not occur when
-// assuming that (X - c) > X is always false [-Wstrict-overflow]"
+// shut up GCC's stupid "warning: assuming signed overflow does not occur when assuming that
+// (X - c) > X is always false [-Wstrict-overflow]"
 #pragma GCC diagnostic ignored "-Wstrict-overflow"
 ID_INLINE char idStr::operator[](int index) const
 {
@@ -1069,8 +1056,8 @@ ID_INLINE idStr idStr::Left(int len) const
 }
 
 #pragma GCC diagnostic push
-// shut up GCC's stupid "warning: assuming signed overflow does not occur when
-// assuming that (X - c) > X is always false [-Wstrict-overflow]"
+// shut up GCC's stupid "warning: assuming signed overflow does not occur when assuming that
+// (X - c) > X is always false [-Wstrict-overflow]"
 #pragma GCC diagnostic ignored "-Wstrict-overflow"
 ID_INLINE idStr idStr::Right(int len) const
 {
@@ -1256,8 +1243,8 @@ int D3_snprintfC99(char *dst, size_t size, const char *format, ...) id_attribute
 int D3_vsnprintfC99(char *dst, size_t size, const char *format, va_list ap);
 
 // convert UTF-8 to ISU8859-1 (the "High ASCII" 8-bit encoding Doom3 uses)
-// invalidChar is inserted into the output buffer for unicode characters that
-// can't be represented by ISO8859-1; if it's 0, those will just be skipped
+// invalidChar is inserted into the output buffer for unicode characters that can't be
+// represented by ISO8859-1; if it's 0, those will just be skipped
 char *D3_UTF8toISO8859_1(const char *utf8str, char *isobuf, int n, char invalidChar = 0);
 
 // convert ISO8859-1 (the "High ASCII" 8-bit encoding Doom3 uses) to UTF-8
@@ -1265,16 +1252,15 @@ char *D3_UTF8toISO8859_1(const char *utf8str, char *isobuf, int n, char invalidC
 char *D3_ISO8859_1toUTF8(const char *isoStr, char *utf8buf, int utf8bufLen);
 
 // returns number of Unicode codepoints (UTF32 char) in given UTF-8 string.
-// if n >= 0, it only looks at the first n bytes of str (but still stops at the
-// first \0) that's not necessarily the number of printed characters (as unicode
-// allows graphemes that consist of multiple codepoints), but for our purposes
-// (limiting to Latin1 subset) it is..
+// if n >= 0, it only looks at the first n bytes of str (but still stops at the first \0)
+// that's not necessarily the number of printed characters (as unicode allows graphemes that
+// consist of multiple codepoints), but for our purposes (limiting to Latin1 subset) it is..
 size_t D3_UTF8CountCodepoints(const char *str, size_t n = -1);
 
 // cuts off str (by writing \0 char) after n Unicode codepoints
-// returns number of bytes that remain in string => returns strlen(str) (after
-// cutting off) if str contains <= n codepoints, it's not modified and the
-// number of bytes in it is still returned (excluding terminating \0)
+// returns number of bytes that remain in string => returns strlen(str) (after cutting off)
+// if str contains <= n codepoints, it's not modified and the number of bytes in it
+// is still returned (excluding terminating \0)
 size_t D3_UTF8CutOffAfterNCodepoints(char *str, size_t n);
 
 #endif /* !__STR_H__ */

@@ -19,33 +19,28 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
-#include "idlib/Heap.h"
-#include "idlib/math/Vector.h"
 #include "sys/platform.h"
+#include "idlib/math/Vector.h"
+#include "idlib/Heap.h"
+#include "framework/Common.h"
 #include <limits.h>
 
 #include "idlib/Str.h"
 
-// DG: idDynamicBlockAlloc isn't thread-safe and idStr is used both in the main
-// thread
-//     and the async thread! For some reason this seems to cause lots of
-//     problems on newer Linux distros if dhewm3 is built with GCC9 or newer
-//     (see #391). No idea why it apparently didn't cause that (noticeable)
-//     issues before..
+// DG: idDynamicBlockAlloc isn't thread-safe and idStr is used both in the main thread
+//     and the async thread! For some reason this seems to cause lots of problems on
+//     newer Linux distros if dhewm3 is built with GCC9 or newer (see #391).
+//     No idea why it apparently didn't cause that (noticeable) issues before..
 #if 0 // !defined( ID_REDIRECT_NEWDELETE ) && !defined( MACOS_X )
 #define USE_STRING_DATA_ALLOCATOR
 #endif
@@ -290,7 +285,7 @@ Several metacharacter may be used in the filter.
 *          match any string of zero or more characters
 ?          match any single character
 [abc...]   match any of the enclosed characters; a hyphen can
-                   be used to specify a range (e.g. a-z, A-Z, 0-9)
+           be used to specify a range (e.g. a-z, A-Z, 0-9)
 
 ============
 */
@@ -434,8 +429,7 @@ bool idStr::Filter(const char *filter, const char *name, bool casesensitive)
 =============
 idStr::StripMediaName
 
-  makes the string lower case, replaces backslashes with forward slashes, and
-removes extension
+  makes the string lower case, replaces backslashes with forward slashes, and removes extension
 =============
 */
 void idStr::StripMediaName(const char *name, idStr &mediaName)
@@ -894,8 +888,7 @@ idStr &idStr::SetFileExtension(const char *extension)
     return *this;
 }
 
-// DG: helper-function that returns true if the character c is a directory
-// separator
+// DG: helper-function that returns true if the character c is a directory separator
 //     on the current platform
 static ID_INLINE bool isDirSeparator(int c)
 {
@@ -952,11 +945,9 @@ idStr::StripAbsoluteFileExtension
 idStr &idStr::StripAbsoluteFileExtension(void)
 {
     int i;
-    // FIXME DG: seems like this is unused, but it probably doesn't do what's
-    // expected
+    // FIXME DG: seems like this is unused, but it probably doesn't do what's expected
     //           (if you wanna strip .tar.gz this will fail with dots in path,
-    //            if you indeed wanna strip the first dot in *path* (even in some
-    //            directory) this is right)
+    //            if you indeed wanna strip the first dot in *path* (even in some directory) this is right)
     for (i = 0; i < len; i++)
     {
         if (data[i] == '.')
@@ -1815,18 +1806,15 @@ idStr::vsnPrintf
 vsnprintf portability:
 
 C99 standard: vsnprintf returns the number of characters (excluding the trailing
-'\0') which would have been written to the final string if enough space had been
-available snprintf and vsnprintf do not write more than size bytes (including
-the trailing '\0')
+'\0') which would have been written to the final string if enough space had been available
+snprintf and vsnprintf do not write more than size bytes (including the trailing '\0')
 
-win32: _vsnprintf returns the number of characters written, not including the
-terminating null character, or a negative value if an output error occurs. If
-the number of characters to write exceeds count, then count characters are
-written and -1 is returned and no trailing '\0' is added.
+win32: _vsnprintf returns the number of characters written, not including the terminating null character,
+or a negative value if an output error occurs. If the number of characters to write exceeds count, then count
+characters are written and -1 is returned and no trailing '\0' is added.
 
-idStr::vsnPrintf: always appends a trailing '\0', returns number of characters
-written (not including terminal \0) or returns -1 on failure or if the buffer
-would be overflowed.
+idStr::vsnPrintf: always appends a trailing '\0', returns number of characters written (not including terminal \0)
+or returns -1 on failure or if the buffer would be overflowed.
 ============
 */
 int idStr::vsnPrintf(char *dest, int size, const char *fmt, va_list argptr)
@@ -2097,8 +2085,7 @@ idStr idStr::VFormat(const char *format, va_list argptr)
     va_list argptrcopy;
     char buffer[16000];
 
-    // make a copy of argptr in case we need to call D3_vsnprintf() again after
-    // truncation
+    // make a copy of argptr in case we need to call D3_vsnprintf() again after truncation
 #ifdef va_copy // IIRC older VS versions didn't have this?
     va_copy(argptrcopy, argptr);
 #else
@@ -2131,13 +2118,11 @@ idStr idStr::VFormat(const char *format, va_list argptr)
 // unlike idStr::vsnPrintf() which returns -1 in that case
 int D3_vsnprintfC99(char *dst, size_t size, const char *format, va_list ap)
 {
-    // before VS2015, it didn't have a standards-conforming
-    // (v)snprintf()-implementation same might be true for other windows compilers
-    // if they use old CRT versions, like MinGW does
+    // before VS2015, it didn't have a standards-conforming (v)snprintf()-implementation
+    // same might be true for other windows compilers if they use old CRT versions, like MinGW does
 #if defined(_WIN32) && (!defined(_MSC_VER) || _MSC_VER < 1900)
 #undef _vsnprintf
-    // based on DG_vsnprintf() from
-    // https://github.com/DanielGibson/Snippets/blob/master/DG_misc.h
+    // based on DG_vsnprintf() from https://github.com/DanielGibson/Snippets/blob/master/DG_misc.h
     int ret = -1;
     if (dst != NULL && size > 0)
     {
@@ -2161,8 +2146,7 @@ int D3_vsnprintfC99(char *dst, size_t size, const char *format, va_list ap)
     }
     return ret;
 #define _vsnprintf use_idStr_vsnPrintf
-#else // other operating systems and VisualC++ >= 2015 should have a proper
-      // vsnprintf()
+#else // other operating systems and VisualC++ >= 2015 should have a proper vsnprintf()
 #undef vsnprintf
     return vsnprintf(dst, size, format, ap);
 #define vsnprintf use_idStr_vsnPrintf
@@ -2184,11 +2168,10 @@ int D3_snprintfC99(char *dst, size_t size, const char *format, ...)
 }
 
 // convert UTF-8 to ISU8859-1 (the "High ASCII" 8-bit encoding Doom3 uses)
-// invalidChar is inserted into the output buffer for unicode characters that
-// can't be represented by ISO8859-1; if it's 0, those will just be skipped
-// returns NULL on error (need more than n chars in isobuf or invalid encoding
-// in utf8str) based on stb_from_utf8 from
-// https://github.com/nothings/stb/blob/master/deprecated/stb.h#L1010
+// invalidChar is inserted into the output buffer for unicode characters that can't be
+// represented by ISO8859-1; if it's 0, those will just be skipped
+// returns NULL on error (need more than n chars in isobuf or invalid encoding in utf8str)
+// based on stb_from_utf8 from https://github.com/nothings/stb/blob/master/deprecated/stb.h#L1010
 char *D3_UTF8toISO8859_1(const char *utf8str, char *isobuf, int isobufLen, char invalidChar)
 {
     const unsigned char *str = (const unsigned char *)utf8str;
@@ -2219,8 +2202,8 @@ char *D3_UTF8toISO8859_1(const char *utf8str, char *isobuf, int isobufLen, char 
         }
         else if ((*str & 0xf0) == 0xe0)
         {
-            // Unicode character between 0x0800 and 0xFFFF => way out of range for
-            // ISO8859-1 so just validate and skip the input bytes
+            // Unicode character between 0x0800 and 0xFFFF => way out of range for ISO8859-1
+            // so just validate and skip the input bytes
             if (*str == 0xe0 && (str[1] < 0xa0 || str[1] > 0xbf))
                 return NULL;
             if (*str == 0xed && str[1] > 0x9f)
@@ -2240,8 +2223,8 @@ char *D3_UTF8toISO8859_1(const char *utf8str, char *isobuf, int isobufLen, char 
         }
         else if ((*str & 0xf8) == 0xf0)
         {
-            // Unicode character between 0x010000 and 0x10FFFF => even more out of
-            // range again, validate and skip
+            // Unicode character between 0x010000 and 0x10FFFF => even more out of range
+            // again, validate and skip
             if (*str > 0xf4)
                 return NULL;
             if (*str == 0xf0 && (str[1] < 0x90 || str[1] > 0xbf))
@@ -2273,8 +2256,7 @@ char *D3_UTF8toISO8859_1(const char *utf8str, char *isobuf, int isobufLen, char 
 
 // convert ISO8859-1 (the "High ASCII" 8-bit encoding Doom3 uses) to UTF-8
 // returns NULL on error (need more than utf8bufLen chars in utf8buf)
-// based on stb_to_utf8 from
-// https://github.com/nothings/stb/blob/master/deprecated/stb.h#L1060
+// based on stb_to_utf8 from https://github.com/nothings/stb/blob/master/deprecated/stb.h#L1060
 char *D3_ISO8859_1toUTF8(const char *isoStr, char *utf8buf, int utf8bufLen)
 {
     const unsigned char *str = (const unsigned char *)isoStr;
@@ -2301,11 +2283,10 @@ char *D3_ISO8859_1toUTF8(const char *isoStr, char *utf8buf, int utf8bufLen)
 }
 
 // returns number of Unicode codepoints (UTF32 char) in given UTF-8 string.
-// if n >= 0, it only looks at the first n bytes of str (but still stops at the
-// first \0) that's not necessarily the number of printed characters (as unicode
-// allows graphemes that consist of multiple codepoints), but for our purposes
-// (limiting to Latin1 subset) it is.. based on utf8nlen from
-// https://github.com/sheredom/utf8.h/blob/master/utf8.h
+// if n >= 0, it only looks at the first n bytes of str (but still stops at the first \0)
+// that's not necessarily the number of printed characters (as unicode allows graphemes that
+// consist of multiple codepoints), but for our purposes (limiting to Latin1 subset) it is..
+// based on utf8nlen from https://github.com/sheredom/utf8.h/blob/master/utf8.h
 size_t D3_UTF8CountCodepoints(const char *str, size_t n)
 {
     const char *t = str;
@@ -2351,10 +2332,10 @@ size_t D3_UTF8CountCodepoints(const char *str, size_t n)
 }
 
 // cuts off str (by writing \0 char) after n Unicode codepoints
-// returns number of bytes that remain in string => returns strlen(str) (after
-// cutting off) if str contains <= n codepoints, it's not modified and the
-// number of bytes in it is still returned (excluding terminating \0) based on
-// utf8nlen from https://github.com/sheredom/utf8.h/blob/master/utf8.h
+// returns number of bytes that remain in string => returns strlen(str) (after cutting off)
+// if str contains <= n codepoints, it's not modified and the number of bytes in it
+// is still returned (excluding terminating \0)
+// based on utf8nlen from https://github.com/sheredom/utf8.h/blob/master/utf8.h
 size_t D3_UTF8CutOffAfterNCodepoints(char *str, size_t n)
 {
     const char *t = str;

@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/FileSystem.h"
 #include "framework/Session.h"
 #include "renderer/RenderWorld.h"
-#include "sys/platform.h"
 
 #include "sound/snd_local.h"
 
@@ -376,10 +373,9 @@ void idSoundWorldLocal::ProcessDemoCommand(idDemoFile *readDemo)
     {
     case SCMD_STATE:
         // we need to protect this from the async thread
-        // other instances of calling idSoundWorldLocal::ReadFromSaveGame do this
-        // while the sound code is muted setting muted and going right in may not be
-        // good enough here, as we async thread may already be in an async tick (in
-        // which case we could still race to it)
+        // other instances of calling idSoundWorldLocal::ReadFromSaveGame do this while the sound code is muted
+        // setting muted and going right in may not be good enough here, as we async thread may already be in an async
+        // tick (in which case we could still race to it)
         Sys_EnterCriticalSection();
         ReadFromSaveGame(readDemo);
         Sys_LeaveCriticalSection();
@@ -528,9 +524,9 @@ float idSoundWorldLocal::CurrentShakeAmplitudeForPosition(const int time, const 
 ===================
 idSoundWorldLocal::MixLoop
 
-Sum all sound contributions into finalMixBuffer, an unclamped float buffer
-holding all output channels.  MIXBUFFER_SAMPLES samples will be created, with
-each sample consisting of 2 or 6 floats depending on numSpeakers.
+Sum all sound contributions into finalMixBuffer, an unclamped float buffer holding
+all output channels.  MIXBUFFER_SAMPLES samples will be created, with each sample consisting
+of 2 or 6 floats depending on numSpeakers.
 
 this is normally called from the sound thread, but also from the main thread
 for AVIdemo writing
@@ -671,7 +667,7 @@ void idSoundWorldLocal::MixLoop(int current44kHz, int numSpeakers, float *finalM
 ===================
 idSoundWorldLocal::AVIOpen
 
-        this is called by the main thread
+    this is called by the main thread
 ===================
 */
 void idSoundWorldLocal::AVIOpen(const char *path, const char *name)
@@ -869,11 +865,11 @@ Find out of the sound is completely occluded by a closed door portal, or
 the virtual sound origin position at the portal closest to the listener.
   this is called by the main thread
 
-dist is the distance from the orignial sound origin to the current portal that
-enters soundArea def->distance is the distance we are trying to reduce.
+dist is the distance from the orignial sound origin to the current portal that enters soundArea
+def->distance is the distance we are trying to reduce.
 
-If there is no path through open portals from the sound to the listener,
-def->distance will remain set at maxDistance
+If there is no path through open portals from the sound to the listener, def->distance will remain
+set at maxDistance
 ===================
 */
 static const int MAX_PORTAL_TRACE_DEPTH = 10;
@@ -919,8 +915,8 @@ void idSoundWorldLocal::ResolveOrigin(const int stackDepth, const soundPortalTra
         // air blocking windows will block sound like closed doors
         if ((re.blockingBits & (PS_BLOCK_VIEW | PS_BLOCK_AIR)))
         {
-            // we could just completely cut sound off, but reducing the volume works
-            // better continue;
+            // we could just completely cut sound off, but reducing the volume works better
+            // continue;
             occlusionDistance = idSoundSystemLocal::s_doorDistanceAdd.GetFloat();
         }
 
@@ -986,8 +982,8 @@ void idSoundWorldLocal::ResolveOrigin(const int stackDepth, const soundPortalTra
         }
 #else
         // clip the ray from the listener to the center of the portal by
-        // all the portal edge planes, then project that point (or the original if
-        // not clipped) onto the portal plane to get the spatialized origin
+        // all the portal edge planes, then project that point (or the original if not clipped)
+        // onto the portal plane to get the spatialized origin
 
         idVec3 start = listenerQU;
         idVec3 mid = re.w->GetCenter();
@@ -1086,9 +1082,9 @@ void idSoundWorldLocal::PlaceListener(const idVec3 &origin, const idMat3 &axis, 
 
     // we usually expect gameTime to be increasing by 16 or 32 msec, but when
     // a cinematic is fast-forward skipped through, it can jump by a significant
-    // amount, while the hardware 44kHz position will not have changed
-    // accordingly, which would make sounds (like long character speaches)
-    // continue from the old time.  Fix this by killing all non-looping sounds
+    // amount, while the hardware 44kHz position will not have changed accordingly,
+    // which would make sounds (like long character speaches) continue from the
+    // old time.  Fix this by killing all non-looping sounds
     if (gameTime > gameMsec + 500)
     {
         OffsetSoundTime(-(gameTime - gameMsec) * 0.001f * 44100.0f);
@@ -1448,8 +1444,7 @@ void idSoundWorldLocal::ReadFromSaveGame(idFile *savefile)
     currentSoundTime = soundSystemLocal.GetCurrent44kHzTime();
     soundTimeOffset = currentSoundTime - savedSoundTime;
 
-    // at the end of the level load we unpause the sound world and adjust the
-    // sound starting times once more
+    // at the end of the level load we unpause the sound world and adjust the sound starting times once more
     pause44kHz = currentSoundTime;
 
     // place listener
@@ -1508,8 +1503,7 @@ void idSoundWorldLocal::ReadFromSaveGame(idFile *savefile)
         {
             if (channel > SOUND_MAX_CHANNELS)
             {
-                common->Error("idSoundWorldLocal::ReadFromSaveGame: channel > "
-                              "SOUND_MAX_CHANNELS");
+                common->Error("idSoundWorldLocal::ReadFromSaveGame: channel > SOUND_MAX_CHANNELS");
             }
 
             idSoundChannel *chan = &def->channels[channel];
@@ -1540,12 +1534,10 @@ void idSoundWorldLocal::ReadFromSaveGame(idFile *savefile)
             // make sure we start up the hardware voice if needed
             chan->triggered = chan->triggerState;
             chan->openalStreamingOffset = currentSoundTime - chan->trigger44kHzTime;
-            // DG: round up openalStreamingOffset to multiple of 8, so it still has an
-            // even number
-            //  if we calculate "how many 11kHz stereo samples do we need to decode"
-            //  and don't run into a "I need one more sample apparently, so decode 0
-            //  stereo samples" situation that could cause an endless loop..
-            //  (44kHz/11kHz = 4; *2 for stereo => 8)
+            // DG: round up openalStreamingOffset to multiple of 8, so it still has an even number
+            //  if we calculate "how many 11kHz stereo samples do we need to decode" and don't
+            //  run into a "I need one more sample apparently, so decode 0 stereo samples"
+            //  situation that could cause an endless loop.. (44kHz/11kHz = 4; *2 for stereo => 8)
             chan->openalStreamingOffset = (chan->openalStreamingOffset + 7) & ~7;
 
             // adjust the hardware fade time
@@ -1824,9 +1816,8 @@ void idSoundWorldLocal::CalcEars(int numSpeakers, idVec3 spatializedOrigin, idVe
         float dot = ovec.y;
         float dotBias = idSoundSystemLocal::s_dotbias2.GetFloat();
 
-        // when we are inside the minDistance, start reducing the amount of
-        // spatialization so NPC voices right in front of us aren't quieter that off
-        // to the side
+        // when we are inside the minDistance, start reducing the amount of spatialization
+        // so NPC voices right in front of us aren't quieter that off to the side
         dotBias += (idSoundSystemLocal::s_spatializationDecay.GetFloat() - dotBias) * (1.0f - spatialize);
 
         ears[0] = (idSoundSystemLocal::s_dotbias2.GetFloat() + dot) / (1.0f + dotBias);
@@ -1913,8 +1904,7 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
         omni = true;
     }
 
-    // if the sound is playing from the current listener, it will not be
-    // spatialized at all
+    // if the sound is playing from the current listener, it will not be spatialized at all
     if (sound->listenerId == listenerPrivateId)
     {
         global = true;
@@ -1928,8 +1918,8 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
 
     // leadin volume scale for shattering lights
     // this isn't exactly correct, because the modified volume will get applied to
-    // some initial chunk of the loop as well, because the volume is scaled for
-    // the entire mix buffer
+    // some initial chunk of the loop as well, because the volume is scaled for the
+    // entire mix buffer
     if (shader->leadinVolume && current44kHz - chan->trigger44kHzTime < sample->LengthIn44kHzSamples())
     {
         volume = soundSystemLocal.dB2Scale(shader->leadinVolume);
@@ -2014,16 +2004,16 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
     // DG: scaling the volume of *everything* down a bit to prevent some sounds
     //     (like shotgun shot) being "drowned" when lots of other loud sounds
     //     (like shotgun impacts on metal) are played at the same time
-    //     I guess this happens because the loud sounds mixed together are too
-    //     loud so OpenAL just makes *everything* quiter or sth like that. See
-    //     also https://github.com/dhewm/dhewm3/issues/179
+    //     I guess this happens because the loud sounds mixed together are too loud so
+    //     OpenAL just makes *everything* quiter or sth like that.
+    //     See also https://github.com/dhewm/dhewm3/issues/179
     if (soundSystemLocal.s_scaleDownAndClamp.GetBool())
     {
         // First clamp it to 1.0 - that's done anyway when setting AL_GAIN below,
-        // for consistency it must be done before scaling, because many
-        // player-weapon sounds have a too high volume defined and only sound right
-        // (relative to other weapons) when clamped see
-        // https://github.com/dhewm/dhewm3/issues/326#issuecomment-1366833004
+        // for consistency it must be done before scaling, because many player-weapon
+        // sounds have a too high volume defined and only sound right (relative to
+        // other weapons) when clamped
+        // see https://github.com/dhewm/dhewm3/issues/326#issuecomment-1366833004
         if (volume > 1.0f)
         {
             volume = 1.0f;
@@ -2033,8 +2023,7 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
     }
 
     // global volume scale - DG: now done after clamping to 1.0, so reducing the
-    // global volume doesn't cause the different weapon volume issues described
-    // above
+    // global volume doesn't cause the different weapon volume issues described above
     volume *= soundSystemLocal.dB2Scale(idSoundSystemLocal::s_volume.GetFloat());
 
     //
@@ -2088,8 +2077,7 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
                            -spatializedOriginInMeters.x);
                 alSourcef(chan->openalSource, AL_GAIN, (volume) < (1.0f) ? (volume) : (1.0f));
             }
-            // DG: looping sounds with a leadin can't just use a HW buffer and
-            // openal's AL_LOOPING
+            // DG: looping sounds with a leadin can't just use a HW buffer and openal's AL_LOOPING
             //     because we need to switch from leadin to the looped sound.. see
             //     https://github.com/dhewm/dhewm3/issues/291
             bool haveLeadin = chan->soundShader->numLeadins > 0;
@@ -2119,10 +2107,8 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
                 (looping && !haveLeadin && chan->soundShader->entries[0]->hardwareBuffer))
             {
                 // handle uncompressed (non streaming) single shot and looping sounds
-                // DG: ... that have no leadin (with leadin we still need to switch to
-                // another sound,
-                //     just use streaming code for that) - see
-                //     https://github.com/dhewm/dhewm3/issues/291
+                // DG: ... that have no leadin (with leadin we still need to switch to another sound,
+                //     just use streaming code for that) - see https://github.com/dhewm/dhewm3/issues/291
                 if (chan->triggered)
                 {
                     alSourcei(chan->openalSource, AL_BUFFER,
@@ -2134,8 +2120,7 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
                 ALint finishedbuffers;
                 ALuint buffers[3];
 
-                // handle streaming sounds (decode on the fly) both single shot AND
-                // looping
+                // handle streaming sounds (decode on the fly) both single shot AND looping
                 if (chan->triggered)
                 {
                     alSourcei(chan->openalSource, AL_BUFFER, 0);
@@ -2194,9 +2179,8 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
         }
     }
 #if 1 // DG: I /think/ this was only relevant for the old sound backends?
-      // FIXME: completely remove else branch, but for testing leave it in under
-      // com_asyncSound 2
-      //        (which also does the old 92-100ms updates)
+    // FIXME: completely remove else branch, but for testing leave it in under com_asyncSound 2
+    //        (which also does the old 92-100ms updates)
     else if (com_asyncSound.GetInteger() == 2)
     {
 
@@ -2225,8 +2209,7 @@ void idSoundWorldLocal::AddChannelContribution(idSoundEmitterLocal *sound, idSou
             // if we are getting a stereo sample adjust accordingly
             if (sample->objectInfo.nChannels == 2)
             {
-                // we should probably check to make sure any looping is also to a stereo
-                // sample...
+                // we should probably check to make sure any looping is also to a stereo sample...
                 chan->GatherChannelSamples(offset * 2, MIXBUFFER_SAMPLES * 2, alignedInputSamples);
             }
             else
@@ -2340,11 +2323,11 @@ idSoundWorldLocal::FindAmplitude
   this is called from the main thread
 
   if listenerPosition is NULL, this is being used for shader parameters,
-  like flashing lights and glows based on sound level.  Otherwise, it is being
-used for the screen-shake on a player.
+  like flashing lights and glows based on sound level.  Otherwise, it is being used for
+  the screen-shake on a player.
 
-  This doesn't do the portal-occlusion currently, because it would have to reset
-all the defs which would be problematic in multiplayer
+  This doesn't do the portal-occlusion currently, because it would have to reset all the defs
+  which would be problematic in multiplayer
 ===============
 */
 float idSoundWorldLocal::FindAmplitude(idSoundEmitterLocal *sound, const int localTime, const idVec3 *listenerPosition,
@@ -2475,8 +2458,7 @@ float idSoundWorldLocal::FindAmplitude(idSoundEmitterLocal *sound, const int loc
             if (amplitudeData)
             {
                 // when the amplitudeData is present use that fill a dummy sourceBuffer
-                // this is to allow for amplitude based effect on hardware audio
-                // solutions
+                // this is to allow for amplitude based effect on hardware audio solutions
                 if (looping)
                     offset %= size;
                 if (offset < size)

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,15 +37,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Lexicographical parser
+    Lexicographical parser
 
-        Does not use memory allocation during parsing. The lexer uses no
-        memory allocation if a source is loaded with LoadMemory().
-        However, idToken may still allocate memory for large strings.
+    Does not use memory allocation during parsing. The lexer uses no
+    memory allocation if a source is loaded with LoadMemory().
+    However, idToken may still allocate memory for large strings.
 
-        A number directly following the escape character '\' in a string is
-        assumed to be in decimal format instead of octal. Binary numbers of
-        the form 0b.. or 0B.. can also be used.
+    A number directly following the escape character '\' in a string is
+    assumed to be in decimal format instead of octal. Binary numbers of
+    the form 0b.. or 0B.. can also be used.
 
 ===============================================================================
 */
@@ -69,8 +66,7 @@ typedef enum
     LEXFL_ALLOWFLOATEXCEPTIONS = BIT(10),       // allow float exceptions like 1.#INF or 1.#IND to be parsed
     LEXFL_ALLOWMULTICHARLITERALS = BIT(11),     // allow multi character literals
     LEXFL_ALLOWBACKSLASHSTRINGCONCAT = BIT(12), // allow multiple strings seperated by '\' to be concatenated
-    LEXFL_ONLYSTRINGS = BIT(13)                 // parse as whitespace deliminated strings (quoted
-                                                // strings keep quotes)
+    LEXFL_ONLYSTRINGS = BIT(13)                 // parse as whitespace deliminated strings (quoted strings keep quotes)
 } lexerFlags_t;
 
 // punctuation ids
@@ -158,10 +154,9 @@ class idLexer
     ~idLexer();
     // load a script from the given file at the given offset with the given length
     int LoadFile(const char *filename, bool OSPath = false);
-    // load a script from the given memory with the given length and a specified
-    // line offset, so source strings extracted from a file can still refer to
-    // proper line numbers in the file NOTE: the ptr is expected to point at a
-    // valid C string: ptr[length] == '\0'
+    // load a script from the given memory with the given length and a specified line offset,
+    // so source strings extracted from a file can still refer to proper line numbers in the file
+    // NOTE: the ptr is expected to point at a valid C string: ptr[length] == '\0'
     int LoadMemory(const char *ptr, int length, const char *name, int startLine = 1);
     // free the script
     void FreeSource(void);
@@ -180,14 +175,11 @@ class idLexer
     int ExpectAnyToken(idToken *token);
     // returns true when the token is available
     int CheckTokenString(const char *string);
-    // returns true an reads the token when a token with the given type is
-    // available
+    // returns true an reads the token when a token with the given type is available
     int CheckTokenType(int type, int subtype, idToken *token);
-    // returns true if the next token equals the given string but does not remove
-    // the token from the source
+    // returns true if the next token equals the given string but does not remove the token from the source
     int PeekTokenString(const char *string);
-    // returns true if the next token equals the given type but does not remove
-    // the token from the source
+    // returns true if the next token equals the given type but does not remove the token from the source
     int PeekTokenType(int type, int subtype, idToken *token);
     // skip tokens until the given token string is read
     int SkipUntilString(const char *string);
@@ -207,9 +199,8 @@ class idLexer
     int ParseInt(void);
     // read a boolean
     bool ParseBool(void);
-    // read a floating point number.  If errorFlag is NULL, a non-numeric token
-    // will issue an Error().  If it isn't NULL, it will issue a Warning() and set
-    // *errorFlag = true
+    // read a floating point number.  If errorFlag is NULL, a non-numeric token will
+    // issue an Error().  If it isn't NULL, it will issue a Warning() and set *errorFlag = true
     float ParseFloat(bool *errorFlag = NULL);
     // parse matrices with floats
     int Parse1DMatrix(int x, float *m);
@@ -227,8 +218,7 @@ class idLexer
     int GetLastWhiteSpaceStart(void) const;
     // returns end index into text buffer of last white space
     int GetLastWhiteSpaceEnd(void) const;
-    // set an array with punctuations, NULL restores default C/C++ set, see
-    // default_punctuations for an example
+    // set an array with punctuations, NULL restores default C/C++ set, see default_punctuations for an example
     void SetPunctuations(const punctuation_t *p);
     // returns a pointer to the punctuation with the given id
     const char *GetPunctuationFromId(int id);
@@ -254,8 +244,7 @@ class idLexer
     void Error(const char *str, ...) id_attribute((format(printf, 2, 3)));
     // print a warning message
     void Warning(const char *str, ...) id_attribute((format(printf, 2, 3)));
-    // returns true if Error() was called with LEXFL_NOFATALERRORS or
-    // LEXFL_NOERRORS set
+    // returns true if Error() was called with LEXFL_NOFATALERRORS or LEXFL_NOERRORS set
     bool HadError(void) const;
 
     // set the base folder to load files from

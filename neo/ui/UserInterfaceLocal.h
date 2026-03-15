@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -176,13 +173,12 @@ class idUserInterfaceLocal : public idUserInterface
     int refs;
 
     // DG: used so we can notify GUI scripts about changes in side padding.
-    //  Relevant if they use cstAnchor, so they can know how big padding on the
-    //  left/right or above/below a centered windowDef with full 640x480 size is.
-    //  Then they can adjust the sizes of windowDefs anchored to left/right or
-    //  upper/lower borders to fill up the gap
-    // if force=true, the variables are set no matter if the size has changed or
-    // not returns true if the windowSize has changed and thus the variables were
-    // updated, otherwise false
+    //  Relevant if they use cstAnchor, so they can know how big padding on the left/right
+    //  or above/below a centered windowDef with full 640x480 size is.
+    //  Then they can adjust the sizes of windowDefs anchored to left/right or upper/lower borders
+    //  to fill up the gap
+    // if force=true, the variables are set no matter if the size has changed or not
+    // returns true if the windowSize has changed and thus the variables were updated, otherwise false
     bool MaybeSetCstWinRegs(bool force = false);
     int lastGlWidth;
     int lastGlHeight;

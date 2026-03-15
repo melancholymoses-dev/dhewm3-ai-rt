@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,7 +35,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Command arguments.
+    Command arguments.
 
 ===============================================================================
 */
@@ -57,8 +54,7 @@ class idCmdArgs
 
     void operator=(const idCmdArgs &args);
 
-    // The functions that execute commands get their parameters with these
-    // functions.
+    // The functions that execute commands get their parameters with these functions.
     int Argc(void) const
     {
         return argc;
@@ -69,14 +65,12 @@ class idCmdArgs
         return (arg >= 0 && arg < argc) ? argv[arg] : "";
     }
     // Returns a single string containing argv(start) to argv(end)
-    // escapeArgs is a fugly way to put the string back into a state ready to
-    // tokenize again
+    // escapeArgs is a fugly way to put the string back into a state ready to tokenize again
     const char *Args(int start = 1, int end = -1, bool escapeArgs = false) const;
 
     // Takes a null terminated string and breaks the string up into arg tokens.
     // Does not need to be /n terminated.
-    // Set keepAsStrings to true to only seperate tokens from whitespace and
-    // comments, ignoring punctuation
+    // Set keepAsStrings to true to only seperate tokens from whitespace and comments, ignoring punctuation
     void TokenizeString(const char *text, bool keepAsStrings);
 
     void AppendArg(const char *text);

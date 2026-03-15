@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -45,8 +42,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 ===============================================================================
 */
 
-// MAX_CHALLENGES is made large to prevent a denial of service attack that could
-// cycle all of them out before legitimate users connected
+// MAX_CHALLENGES is made large to prevent a denial of service attack that could cycle
+// all of them out before legitimate users connected
 const int MAX_CHALLENGES = 1024;
 
 // if we don't hear from authorize server, assume it is down
@@ -76,8 +73,7 @@ typedef enum
 } authReply_t;
 
 // message from auth to be forwarded back to the client
-// some are locally hardcoded to save space, auth has the possibility to send a
-// custom reply
+// some are locally hardcoded to save space, auth has the possibility to send a custom reply
 typedef enum
 {
     AUTH_REPLY_WAITING = 0, // waiting on an initial reply from auth
@@ -106,10 +102,8 @@ typedef struct challenge_s
 typedef enum
 {
     SCS_FREE,      // can be reused for a new connection
-    SCS_ZOMBIE,    // client has been disconnected, but don't reuse connection for a
-                   // couple seconds
-    SCS_PUREWAIT,  // client needs to update it's pure checksums before we can go
-                   // further
+    SCS_ZOMBIE,    // client has been disconnected, but don't reuse connection for a couple seconds
+    SCS_PUREWAIT,  // client needs to update it's pure checksums before we can go further
     SCS_CONNECTED, // client is connected
     SCS_INGAME     // client is in the game
 } serverClientState_t;
@@ -225,16 +219,14 @@ class idAsyncServer
     int nextHeartbeatTime;
     int nextAsyncStatsTime;
 
-    bool serverReloadingEngine; // flip-flop to not loop over when
-                                // net_serverReloadEngine is on
+    bool serverReloadingEngine; // flip-flop to not loop over when net_serverReloadEngine is on
 
     bool noRconOutput; // for default rcon response when command is silent
 
     int lastAuthTime; // global for auth server timeout
 
     // track the max outgoing rate over the last few secs to watch for spikes
-    // dependent on net_serverSnapshotDelay. 50ms, for a 3 seconds backlog -> 60
-    // samples
+    // dependent on net_serverSnapshotDelay. 50ms, for a 3 seconds backlog -> 60 samples
     static const int stats_numsamples = 60;
     int stats_outrate[stats_numsamples];
     int stats_current;
@@ -272,8 +264,7 @@ class idAsyncServer
     void ProcessAuthMessage(const idBitMsg &msg);
     bool SendPureServerMessage(const netadr_t to); // returns false if no pure paks on the list
     void ProcessPureMessage(const netadr_t from, const idBitMsg &msg);
-    int ValidateChallenge(const netadr_t from, int challenge,
-                          int clientId); // returns -1 if validate failed
+    int ValidateChallenge(const netadr_t from, int challenge, int clientId); // returns -1 if validate failed
     bool SendReliablePureToClient(int clientNum);
     void ProcessReliablePure(int clientNum, const idBitMsg &msg);
     bool VerifyChecksumMessage(int clientNum, const netadr_t *from, const idBitMsg &msg,

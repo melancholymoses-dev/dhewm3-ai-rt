@@ -19,35 +19,31 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
-#include "framework/async/NetworkSystem.h"
-#include "idlib/BitMsg.h"
-#include "idlib/LangDict.h"
-#include "idlib/Str.h"
 #include "sys/platform.h"
+#include "idlib/BitMsg.h"
+#include "idlib/Str.h"
+#include "idlib/LangDict.h"
+#include "framework/async/NetworkSystem.h"
+#include "framework/FileSystem.h"
 #include "ui/UserInterface.h"
 
-#include "Game_local.h"
-#include "Player.h"
 #include "gamesys/SysCvar.h"
+#include "Player.h"
+#include "Game_local.h"
 
 #include "MultiplayerGame.h"
 
-// could be a problem if players manage to go down sudden deaths till this .. oh
-// well
+// could be a problem if players manage to go down sudden deaths till this .. oh well
 #define LASTMAN_NOLIVES -20
 
 idCVar g_spectatorChat("g_spectatorChat", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
@@ -157,8 +153,7 @@ void idMultiplayerGame::Reset()
     mainGui = uiManager->FindGui("guis/mpmain.gui", true, false, true);
     mapList = uiManager->AllocListGUI();
     mapList->Config(mainGui, "mapList");
-    // set this GUI so that our Draw function is still called when it becomes the
-    // active/fullscreen GUI
+    // set this GUI so that our Draw function is still called when it becomes the active/fullscreen GUI
     mainGui->SetStateBool("gameDraw", true);
     mainGui->SetKeyBindingNames();
     mainGui->SetStateInt("com_machineSpec", cvarSystem->GetCVarInteger("com_machineSpec"));
@@ -450,9 +445,8 @@ void idMultiplayerGame::UpdateScoreboard(idUserInterface *scoreBoard, idPlayer *
     }
 
     // if warmup, this draws everyone, otherwise it goes over spectators only
-    // when doing warmup we loop twice to draw ready/not ready first *then*
-    // spectators NOTE: in tourney, shows spectators according to their playing
-    // rank order?
+    // when doing warmup we loop twice to draw ready/not ready first *then* spectators
+    // NOTE: in tourney, shows spectators according to their playing rank order?
     for (k = 0; k < (gameState == WARMUP ? 2 : 1); k++)
     {
         for (i = 0; i < MAX_CLIENTS; i++)
@@ -645,8 +639,7 @@ const char *idMultiplayerGame::GameTime()
         s -= m * 60;   // => s < 60
         t = s / 10;    // => t < 6
         s -= t * 10;   // => s < 10
-        // writing <= 5 for m + 3 bytes for ":ts" + 1 byte for \0 => 16 bytes is
-        // enough
+        // writing <= 5 for m + 3 bytes for ":ts" + 1 byte for \0 => 16 bytes is enough
 
         sprintf(buff, "%i:%i%i", m, t, s);
     }
@@ -806,8 +799,7 @@ idPlayer *idMultiplayerGame::FragLimitHit()
                 return NULL;
             }
         }
-        // there is a leader, his score may even be negative, but no one else has
-        // frags left or is !lastManOver
+        // there is a leader, his score may even be negative, but no one else has frags left or is !lastManOver
         return leader;
     }
     else if (gameLocal.gameType == GAME_TDM)
@@ -1351,8 +1343,8 @@ void idMultiplayerGame::FillTourneySlots()
 /*
 ================
 idMultiplayerGame::UpdateTourneyLine
-we manipulate tourneyRank on player entities for internal ranking. it's easier
-to deal with. but we need a real wait list to be synced down to clients for GUI
+we manipulate tourneyRank on player entities for internal ranking. it's easier to deal with.
+but we need a real wait list to be synced down to clients for GUI
 ignore current players, ignore wantSpectate
 ================
 */
@@ -1697,8 +1689,7 @@ void idMultiplayerGame::Run()
         player = FragLimitHit();
         if (player)
         {
-            // delay between detecting frag limit and ending game. let the death anims
-            // play
+            // delay between detecting frag limit and ending game. let the death anims play
             if (!fragLimitTimeout)
             {
                 common->DPrintf("enter FragLimit timeout, player %d is leader\n", player->entityNumber);
@@ -1714,8 +1705,8 @@ void idMultiplayerGame::Run()
         {
             if (fragLimitTimeout)
             {
-                // frag limit was hit and cancelled. means the two teams got even during
-                // FRAGLIMIT_DELAY enter sudden death, the next frag leader will win
+                // frag limit was hit and cancelled. means the two teams got even during FRAGLIMIT_DELAY
+                // enter sudden death, the next frag leader will win
                 SuddenRespawn();
                 PrintMessageEvent(-1, MSG_HOLYSHIT);
                 fragLimitTimeout = 0;
@@ -1844,9 +1835,8 @@ idUserInterface *idMultiplayerGame::StartMenu(void)
         UpdateMainGui();
 
         // UpdateMainGui sets most things, but it doesn't set these because
-        // it'd be pointless and/or harmful to set them every frame (for various
-        // reasons) Currenty the gui doesn't update properly if they change anyway,
-        // so we'll leave it like this.
+        // it'd be pointless and/or harmful to set them every frame (for various reasons)
+        // Currenty the gui doesn't update properly if they change anyway, so we'll leave it like this.
 
         // setup callvote
         if (vote == VOTE_NONE)
@@ -1854,8 +1844,7 @@ idUserInterface *idMultiplayerGame::StartMenu(void)
             bool callvote_ok = false;
             for (i = 0; i < VOTE_COUNT; i++)
             {
-                // flag on means vote is denied, so default value 0 means all votes and
-                // -1 disables
+                // flag on means vote is denied, so default value 0 means all votes and -1 disables
                 mainGui->SetStateInt(va("vote%d", i), g_voteFlags.GetInteger() & (1 << i) ? 0 : 1);
                 if (!(g_voteFlags.GetInteger() & (1 << i)))
                 {
@@ -2549,8 +2538,7 @@ void idMultiplayerGame::DrawChat()
                     chatHistory[i % NUM_CHAT_NOTIFY].fade--;
                     if (chatHistory[i % NUM_CHAT_NOTIFY].fade < 0)
                     {
-                        chatHistorySize--; // this assumes the removals are always at the
-                                           // beginning
+                        chatHistorySize--; // this assumes the removals are always at the beginning
                     }
                 }
                 chatDataUpdated = true;
@@ -2629,8 +2617,7 @@ void idMultiplayerGame::ReadFromSnapshot(const idBitMsgDelta &msg)
     {
         gameLocal.DPrintf("%s -> %s\n", GameStateStrings[gameState], GameStateStrings[newState]);
         gameState = newState;
-        // these could be gathered in a BGNewState() kind of thing, as we have to do
-        // them in NewState as well
+        // these could be gathered in a BGNewState() kind of thing, as we have to do them in NewState as well
         if (gameState == GAMEON)
         {
             matchStartedTime = gameLocal.time;
@@ -2794,9 +2781,8 @@ void idMultiplayerGame::PrintMessageEvent(int to, msg_evt_t evt, int parm1, int 
 /*
 ================
 idMultiplayerGame::SuddenRespawns
-solely for LMN if an end game ( fragLimitTimeout ) was entered and aborted
-before expiration LMN players which still have lives left need to be respawned
-without being marked lastManOver
+solely for LMN if an end game ( fragLimitTimeout ) was entered and aborted before expiration
+LMN players which still have lives left need to be respawned without being marked lastManOver
 ================
 */
 void idMultiplayerGame::SuddenRespawn(void)
@@ -2847,9 +2833,8 @@ void idMultiplayerGame::CheckRespawns(idPlayer *spectator)
             if (gameState == SUDDENDEATH && gameLocal.gameType != GAME_LASTMAN)
             {
                 // respawn rules while sudden death are different
-                // sudden death may trigger while a player is dead, so there are still
-                // cases where we need to respawn don't do any respawns while we are in
-                // end game delay though
+                // sudden death may trigger while a player is dead, so there are still cases where we need to respawn
+                // don't do any respawns while we are in end game delay though
                 if (!fragLimitTimeout)
                 {
                     if (gameLocal.gameType == GAME_TDM || p->IsLeader())
@@ -2865,8 +2850,7 @@ void idMultiplayerGame::CheckRespawns(idPlayer *spectator)
                     }
                     else if (!p->IsLeader())
                     {
-                        // sudden death is rolling, this player is not a leader, have him
-                        // spectate
+                        // sudden death is rolling, this player is not a leader, have him spectate
                         p->ServerSpectate(true);
                         CheckAbortGame();
                     }
@@ -2920,26 +2904,23 @@ void idMultiplayerGame::CheckRespawns(idPlayer *spectator)
                         }
                         else
                         {
-                            // if a fragLimitTimeout was engaged, do NOT mark lastManOver as
-                            // that could mean everyone ends up spectator and game is stalled
-                            // with no end if the frag limit delay is engaged and cancels out
-                            // before expiring, LMN players are respawned to play the tie
-                            // again ( through SuddenRespawn and lastManPlayAgain )
+                            // if a fragLimitTimeout was engaged, do NOT mark lastManOver as that could mean
+                            // everyone ends up spectator and game is stalled with no end
+                            // if the frag limit delay is engaged and cancels out before expiring, LMN players are
+                            // respawned to play the tie again ( through SuddenRespawn and lastManPlayAgain )
                             if (!fragLimitTimeout && !p->lastManOver)
                             {
                                 common->DPrintf("client %d has lost all last man lives\n", i);
                                 // end of the game for this guy, send him to spectators
                                 p->lastManOver = true;
                                 // clients don't have access to lastManOver
-                                // so set the fragCount to something silly ( used in scoreboard
-                                // and player ranking )
+                                // so set the fragCount to something silly ( used in scoreboard and player ranking )
                                 playerState[i].fragCount = LASTMAN_NOLIVES;
                                 p->ServerSpectate(true);
 
-                                // Check for a situation where the last two player dies at the
-                                // same time and don't try to respawn manually...This was
-                                // causing all players to go into spectate mode and the server
-                                // got stuck
+                                // Check for a situation where the last two player dies at the same time and don't
+                                // try to respawn manually...This was causing all players to go into spectate mode
+                                // and the server got stuck
                                 {
                                     int j;
                                     for (j = 0; j < gameLocal.numClients; j++)
@@ -2972,8 +2953,7 @@ void idMultiplayerGame::CheckRespawns(idPlayer *spectator)
         }
         else if (p->wantSpectate && !p->spectating)
         {
-            playerState[i].fragCount = 0; // whenever you willingly go spectate during
-                                          // game, your score resets
+            playerState[i].fragCount = 0; // whenever you willingly go spectate during game, your score resets
             p->ServerSpectate(true);
             UpdateTourneyLine();
             CheckAbortGame();
@@ -3138,8 +3118,7 @@ void idMultiplayerGame::ServerStartVote(int clientNum, vote_flags_t voteIndex, c
     vote = voteIndex;
     voteValue = value;
     voteTimeOut = gameLocal.time + 20000;
-    // mark players allowed to vote - only current ingame players, players joining
-    // during vote will be ignored
+    // mark players allowed to vote - only current ingame players, players joining during vote will be ignored
     for (i = 0; i < gameLocal.numClients; i++)
     {
         if (gameLocal.entities[i] && gameLocal.entities[i]->IsType(idPlayer::Type))
@@ -3214,8 +3193,7 @@ void idMultiplayerGame::ClientUpdateVote(vote_result_t status, int yesCount, int
 
     if (vote == VOTE_NONE)
     {
-        // clients coming in late don't get the vote start and are not allowed to
-        // vote
+        // clients coming in late don't get the vote start and are not allowed to vote
         return;
     }
 
@@ -3334,8 +3312,7 @@ idMultiplayerGame::ServerCallVote
 void idMultiplayerGame::ServerCallVote(int clientNum, const idBitMsg &msg)
 {
     vote_flags_t voteIndex;
-    int vote_timeLimit, vote_fragLimit, vote_clientNum,
-        vote_gameTypeIndex; //, vote_kickIndex;
+    int vote_timeLimit, vote_fragLimit, vote_clientNum, vote_gameTypeIndex; //, vote_kickIndex;
     char value[MAX_STRING_CHARS];
 
     assert(clientNum != -1);
@@ -3591,8 +3568,7 @@ void idMultiplayerGame::MapRestart(void)
                 if (static_cast<idPlayer *>(gameLocal.entities[clientNum])->BalanceTDM())
                 {
                     // core is in charge of syncing down userinfo changes
-                    // it will also call back game through SetUserInfo with the current
-                    // info for update
+                    // it will also call back game through SetUserInfo with the current info for update
                     cmdSystem->BufferCommandText(CMD_EXEC_NOW, va("updateUI %d\n", clientNum));
                 }
             }
@@ -4140,8 +4116,7 @@ void idMultiplayerGame::ServerWriteInitialReliableMessages(int clientNum)
     outMsg.WriteShort(MAX_CLIENTS);
     networkSystem->ServerSendReliableMessage(clientNum, outMsg);
 
-    // we send SI in connectResponse messages, but it may have been modified
-    // already
+    // we send SI in connectResponse messages, but it may have been modified already
     outMsg.BeginWriting();
     outMsg.WriteByte(GAME_RELIABLE_MESSAGE_SERVERINFO);
     outMsg.WriteDeltaDict(gameLocal.serverInfo, NULL);

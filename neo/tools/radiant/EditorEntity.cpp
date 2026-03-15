@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../renderer/model_local.h" // for idRenderModelMD5
-#include "../../renderer/tr_local.h"
 #include "qe3.h"
+#include "../../renderer/tr_local.h"
+#include "../../renderer/model_local.h" // for idRenderModelMD5
 int g_entityId = 1;
 
 #define CURVE_TAG "curve_"
@@ -312,7 +309,7 @@ bool GetMatrixForKey(entity_t *ent, const char *key, idMat3 &mat)
 
 /*
  =======================================================================================================================
-        Entity_FreeEpairs Frees the entity epairs.
+    Entity_FreeEpairs Frees the entity epairs.
  =======================================================================================================================
  */
 void Entity_FreeEpairs(entity_t *e)
@@ -322,7 +319,7 @@ void Entity_FreeEpairs(entity_t *e)
 
 /*
  =======================================================================================================================
-        Entity_AddToList
+    Entity_AddToList
  =======================================================================================================================
  */
 void Entity_AddToList(entity_t *e, entity_t *list)
@@ -340,7 +337,7 @@ void Entity_AddToList(entity_t *e, entity_t *list)
 
 /*
  =======================================================================================================================
-        Entity_RemoveFromList
+    Entity_RemoveFromList
  =======================================================================================================================
  */
 void Entity_RemoveFromList(entity_t *e)
@@ -357,8 +354,7 @@ void Entity_RemoveFromList(entity_t *e)
 
 /*
  =======================================================================================================================
-        Entity_Free Frees the entity and any brushes is has. The entity is
- removed from the global entities list.
+    Entity_Free Frees the entity and any brushes is has. The entity is removed from the global entities list.
  =======================================================================================================================
  */
 void Entity_Free(entity_t *e)
@@ -382,7 +378,7 @@ void Entity_Free(entity_t *e)
 
 /*
  =======================================================================================================================
-        Entity_MemorySize
+    Entity_MemorySize
  =======================================================================================================================
  */
 
@@ -401,7 +397,7 @@ int Entity_MemorySize(entity_t *e)
 
 /*
  =======================================================================================================================
-        ParseEpair
+    ParseEpair
  =======================================================================================================================
  */
 
@@ -678,8 +674,7 @@ entity_t *Entity_PostParse(entity_t *ent, brush_t *pList)
 
     if (e->nShowFlags & ECLASS_WORLDSPAWN)
     {
-        // DG: this makes sure that tr.allowNoSpecular is set appropriately when
-        // loading a map
+        // DG: this makes sure that tr.allowNoSpecular is set appropriately when loading a map
         const char *noSpecVal = ValueForKey(ent, "allow_nospecular");
         tr.allowNoSpecular = noSpecVal && *noSpecVal && atoi(noSpecVal) != 0;
         common->Printf("This map does%s support 'nospecular' lights\n", tr.allowNoSpecular ? "" : " not");
@@ -903,9 +898,8 @@ entity_t *Entity_PostParse(entity_t *ent, brush_t *pList)
 
 /*
  =======================================================================================================================
-        Entity_Parse If onlypairs is set, the classname info will not be looked
- up, and the entity will not be added to the global list. Used for parsing the
- project.
+    Entity_Parse If onlypairs is set, the classname info will not be looked up, and the entity will not be added to the
+    global list. Used for parsing the project.
  =======================================================================================================================
  */
 entity_t *Entity_Parse(bool onlypairs, brush_t *pList)
@@ -986,7 +980,7 @@ void VectorMidpoint(idVec3 va, idVec3 vb, idVec3 &out)
 
 /*
  =======================================================================================================================
-        Entity_Write
+    Entity_Write
  =======================================================================================================================
  */
 void Entity_Write(entity_t *e, FILE *f, bool use_region)
@@ -996,8 +990,7 @@ void Entity_Write(entity_t *e, FILE *f, bool use_region)
     char text[128];
     int count;
 
-    // if none of the entities brushes are in the region, don't write the entity
-    // at all
+    // if none of the entities brushes are in the region, don't write the entity at all
     if (use_region)
     {
         // in region mode, save the camera position as playerstart
@@ -1302,9 +1295,8 @@ void Entity_Name(entity_t *e, bool force)
 
 /*
  =======================================================================================================================
-        Entity_Create Creates a new entity out of the selected_brushes list. If
- the entity class is fixed size, the brushes are only used to find a midpoint.
- Otherwise, the brushes have their ownership transfered to the new entity.
+    Entity_Create Creates a new entity out of the selected_brushes list. If the entity class is fixed size, the brushes
+    are only used to find a midpoint. Otherwise, the brushes have their ownership transfered to the new entity.
  =======================================================================================================================
  */
 entity_t *Entity_Create(eclass_t *c, bool forceFixed)
@@ -1347,8 +1339,8 @@ entity_t *Entity_Create(eclass_t *c, bool forceFixed)
     if (c->fixedsize)
     {
         //
-        // just use the selection for positioning b = selected_brushes.next; for
-        // (i=0 ; i<3 ; i++) { e->origin[i] = b->mins[i] - c->mins[i]; }
+        // just use the selection for positioning b = selected_brushes.next; for (i=0 ;
+        // i<3 ; i++) { e->origin[i] = b->mins[i] - c->mins[i]; }
         //
         Select_GetMid(e->origin);
         VectorCopy(e->origin, origin);
@@ -1421,7 +1413,7 @@ void Brush_MakeDirty(brush_t *b)
 }
 /*
  =======================================================================================================================
-        Entity_LinkBrush
+    Entity_LinkBrush
  =======================================================================================================================
  */
 void Entity_LinkBrush(entity_t *e, brush_t *b)
@@ -1443,7 +1435,7 @@ void Entity_LinkBrush(entity_t *e, brush_t *b)
 
 /*
  =======================================================================================================================
-        Entity_UnlinkBrush
+    Entity_UnlinkBrush
  =======================================================================================================================
  */
 void Entity_UnlinkBrush(brush_t *b)
@@ -1462,7 +1454,7 @@ void Entity_UnlinkBrush(brush_t *b)
 
 /*
  =======================================================================================================================
-        Entity_Clone
+    Entity_Clone
  =======================================================================================================================
  */
 entity_t *Entity_Clone(entity_t *e)
@@ -1591,8 +1583,7 @@ void Entity_UpdateSoundEmitter(entity_t *ent)
 
             gameEdit->ParseSpawnArgsToRefSound(&ent->epairs, &sound);
             if (!sound.waitfortrigger)
-            { // waitfortrigger will not start playing
-              // immediately
+            { // waitfortrigger will not start playing immediately
                 if (!ent->soundEmitter)
                 {
                     ent->soundEmitter = g_qeglobals.sw->AllocSoundEmitter();

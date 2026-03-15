@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,11 +32,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __ASYNCCLIENT_H__
 #define __ASYNCCLIENT_H__
 
-#include "framework/FileSystem.h"
-#include "framework/Session.h"
-#include "framework/UsercmdGen.h"
 #include "framework/async/MsgChannel.h"
 #include "framework/async/ServerScan.h"
+#include "framework/UsercmdGen.h"
+#include "framework/FileSystem.h"
+#include "framework/Session.h"
 
 /*
 ===============================================================================
@@ -203,10 +200,8 @@ class idAsyncClient
     int lastFrameDelta;
 
     int dlRequest;                  // randomized number to keep track of the requests
-    int dlChecksums[MAX_PURE_PAKS]; // 0-terminated, first element is the game pak
-                                    // checksum or 0
-    int dlCount;                    // total number of paks we request download for ( including the
-                                    // game pak )
+    int dlChecksums[MAX_PURE_PAKS]; // 0-terminated, first element is the game pak checksum or 0
+    int dlCount;                    // total number of paks we request download for ( including the game pak )
     idList<pakDlEntry_t> dlList;    // list of paks to download, with url and name
     int currentDlSize;
     int totalDlSize; // for partial progress stuff

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,7 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        base64
+    base64
 
 ===============================================================================
 */
@@ -56,8 +53,8 @@ class idBase64
     void Encode(const idStr &src);
     int DecodeLength(void) const;   // minimum size in bytes of destination buffer for decoding
     int Decode(byte *to) const;     // does not append a \0 - needs a DecodeLength() bytes buffer
-    void Decode(idStr &dest) const; // decodes the binary content to an idStr (a bit dodgy, \0 and
-                                    // other non-ascii are possible in the decoded content)
+    void Decode(idStr &dest) const; // decodes the binary content to an idStr (a bit dodgy, \0 and other non-ascii are
+                                    // possible in the decoded content)
     void Decode(idFile *dest) const;
 
     const char *c_str() const;

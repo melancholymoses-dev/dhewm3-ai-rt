@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -188,9 +185,8 @@ static void Drag_Setup(int x, int y, int buttons, const idVec3 &xaxis, const idV
     if (selected_brushes.next == &selected_brushes)
     {
         //
-        // in this case a new brush is created when the dragging takes place in the
-        // XYWnd, An useless undo is created when the dragging takes place in the
-        // CamWnd
+        // in this case a new brush is created when the dragging takes place in the XYWnd,
+        // An useless undo is created when the dragging takes place in the CamWnd
         //
         Undo_Start("create brush");
 
@@ -310,8 +306,7 @@ static void Drag_Setup(int x, int y, int buttons, const idVec3 &xaxis, const idV
     }
     else
     {
-        // single select.. trying to drag fixed entities handle themselves and just
-        // move
+        // single select.. trying to drag fixed entities handle themselves and just move
         if (buttons & MK_CONTROL)
         {
             Brush_SideSelect(selected_brushes.next, origin, dir, true);
@@ -488,41 +483,41 @@ void Drag_Begin(int x, int y, int buttons, const idVec3 &xaxis, const idVec3 &ya
         if (t.brush && !t.brush->owner->eclass->fixedsize)
         {
             /*
-                                    if (t.brush->brush_faces->texdef.name[0] == '(') {
-                                            if (t.brush->owner->eclass->nShowFlags &
-               ECLASS_LIGHT) { CString		strBuff; idMaterial	*pTex =
-               declManager->FindMaterial(g_qeglobals.d_texturewin.texdef.name); if
-               (pTex) { idVec3	vColor = pTex->getColor();
+                        if (t.brush->brush_faces->texdef.name[0] == '(') {
+                            if (t.brush->owner->eclass->nShowFlags & ECLASS_LIGHT) {
+                                CString		strBuff;
+                                idMaterial	*pTex = declManager->FindMaterial(g_qeglobals.d_texturewin.texdef.name);
+                                if (pTex) {
+                                    idVec3	vColor = pTex->getColor();
 
-                                                            float	fLargest = 0.0f;
-                                                            for (int i = 0; i < 3;
-               i++) { if (vColor[i] > fLargest) { fLargest = vColor[i];
-                                                                    }
-                                                            }
-
-                                                            if (fLargest == 0.0f) {
-                                                                    vColor[0] =
-               vColor[1] = vColor[2] = 1.0f;
-                                                            }
-                                                            else {
-                                                                    float	fScale
-               = 1.0f / fLargest; for (int i = 0; i < 3; i++) { vColor[i] *= fScale;
-                                                                    }
-                                                            }
-
-                                                            strBuff.Format("%f %f %f",
-               pTex->getColor().x, pTex->getColor().y, pTex->getColor().z);
-                                                            SetKeyValue(t.brush->owner,
-               "_color", strBuff.GetBuffer(0)); Sys_UpdateWindows(W_ALL);
-                                                    }
-                                            }
-                                            else {
-                                                    Sys_Status("Can't select an entity
-               brush face\n");
-                                            }
+                                    float	fLargest = 0.0f;
+                                    for (int i = 0; i < 3; i++) {
+                                        if (vColor[i] > fLargest) {
+                                            fLargest = vColor[i];
+                                        }
                                     }
 
+                                    if (fLargest == 0.0f) {
+                                        vColor[0] = vColor[1] = vColor[2] = 1.0f;
+                                    }
                                     else {
+                                        float	fScale = 1.0f / fLargest;
+                                        for (int i = 0; i < 3; i++) {
+                                            vColor[i] *= fScale;
+                                        }
+                                    }
+
+                                    strBuff.Format("%f %f %f", pTex->getColor().x, pTex->getColor().y,
+               pTex->getColor().z); SetKeyValue(t.brush->owner, "_color", strBuff.GetBuffer(0));
+                                    Sys_UpdateWindows(W_ALL);
+                                }
+                            }
+                            else {
+                                Sys_Status("Can't select an entity brush face\n");
+                            }
+                        }
+
+                        else {
             */
             // strcpy(t.face->texdef.name,g_qeglobals.d_texturewin.texdef.name);
             t.face->texdef.SetName(g_qeglobals.d_texturewin.texdef.name);
@@ -704,9 +699,8 @@ static void MoveSelection(const idVec3 &orgMove)
         }
 
         //
-        // VectorScale(move, .5, move); for (i=0 ; i<g_qeglobals.d_num_move_points2
-        // ; i++) VectorAdd (g_qeglobals.d_move_points2[i], move,
-        // g_qeglobals.d_move_points2[i]);
+        // VectorScale(move, .5, move); for (i=0 ; i<g_qeglobals.d_num_move_points2 ; i++)
+        // VectorAdd (g_qeglobals.d_move_points2[i], move, g_qeglobals.d_move_points2[i]);
         //
         for (b = selected_brushes.next; b != &selected_brushes; b = b->next)
         {
@@ -742,8 +736,7 @@ static void MoveSelection(const idVec3 &orgMove)
             }
         }
 
-        // if any of the brushes were crushed out of existance calcel the entire
-        // move
+        // if any of the brushes were crushed out of existance calcel the entire move
         if (b != &selected_brushes)
         {
             Sys_Status("Brush dragged backwards, move canceled\n");
@@ -761,8 +754,8 @@ static void MoveSelection(const idVec3 &orgMove)
     else
     {
         //
-        // reset face originals from vertex edit mode this is dirty, but
-        // unfortunately necessary because Brush_Build can remove windings
+        // reset face originals from vertex edit mode this is dirty, but unfortunately
+        // necessary because Brush_Build can remove windings
         //
         for (b = selected_brushes.next; b != &selected_brushes; b = b->next)
         {
@@ -862,9 +855,9 @@ void Drag_MouseUp(int nButtons)
     g_pParentWnd->SetStatusText(3, "");
 
     /*
-            if (g_pParentWnd->GetCamera()->UpdateRenderEntities()) {
-                    Sys_UpdateWindows(W_CAMERA);
-            }
+        if (g_pParentWnd->GetCamera()->UpdateRenderEntities()) {
+            Sys_UpdateWindows(W_CAMERA);
+        }
     */
 
     Undo_EndBrushList(&selected_brushes);

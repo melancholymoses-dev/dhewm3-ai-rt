@@ -19,8 +19,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 class CPropTree;
 
@@ -93,7 +93,6 @@ class PROPTREE_API CPropTreeList : public CWnd
 /////////////////////////////////////////////////////////////////////////////
 
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Visual C++ will insert additional declarations immediately before
-// the previous line.
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.
 
 #endif // !defined(AFX_PROPTREELIST_H__2E09E831_09F5_44AA_B41D_9C4BF495873C__INCLUDED_)

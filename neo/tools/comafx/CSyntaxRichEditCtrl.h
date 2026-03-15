@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,27 +35,25 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Rich Edit Control with:
+    Rich Edit Control with:
 
-        - syntax highlighting
-        - braced section highlighting
-        - braced section auto-indentation
-        - multi-line tabs
-        - keyword auto-completion
-        - object member auto-completion
-        - keyword tool tip
-        - function parameter tool tip
+    - syntax highlighting
+    - braced section highlighting
+    - braced section auto-indentation
+    - multi-line tabs
+    - keyword auto-completion
+    - object member auto-completion
+    - keyword tool tip
+    - function parameter tool tip
 
 ===============================================================================
 */
 
-// use #import on Vista to generate .tlh header to copy from intermediate
-// compile directory to local directory for subsequent builds
-//     rename: avoids warning C4278: 'FindText': identifier in type library
-//     'riched20.dll' is already a macro; use the 'rename' qualifier
-//     no_auto_exclude: avoids warnings
-//     no_namespace: no longer using this option, which avoids variable
-//     redifinition compile errors on Vista
+// use #import on Vista to generate .tlh header to copy from intermediate compile directory to local directory for
+// subsequent builds
+//     rename: avoids warning C4278: 'FindText': identifier in type library 'riched20.dll' is already a macro; use the
+//     'rename' qualifier no_auto_exclude: avoids warnings no_namespace: no longer using this option, which avoids
+//     variable redifinition compile errors on Vista
 // #define GENERATE_TLH
 #ifdef GENERATE_TLH
 #import "riched20.dll" raw_interfaces_only, raw_native_types, named_guids, no_auto_exclude, no_implementation, rename("FindText", "FindShit")

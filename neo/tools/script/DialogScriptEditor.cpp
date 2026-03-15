@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -419,10 +416,9 @@ void ScriptEditorInit(const idDict *spawnArgs)
     {
         g_ScriptDialog->Create(IDD_DIALOG_SCRIPTEDITOR);
         /*
-                        // FIXME: restore position
-                        CRect rct;
-                        g_ScriptDialog->SetWindowPos( NULL, rct.left, rct.top, 0, 0,
-           SWP_NOSIZE );
+                // FIXME: restore position
+                CRect rct;
+                g_ScriptDialog->SetWindowPos( NULL, rct.left, rct.top, 0, 0, SWP_NOSIZE );
         */
     }
 
@@ -600,14 +596,14 @@ DialogScriptEditor::OnSizing
 void DialogScriptEditor::OnSizing(UINT nSide, LPRECT lpRect)
 {
     /*
-            1 = left
-            2 = right
-            3 = top
-            4 = left - top
-            5 = right - top
-            6 = bottom
-            7 = left - bottom
-            8 = right - bottom
+        1 = left
+        2 = right
+        3 = top
+        4 = left - top
+        5 = right - top
+        6 = bottom
+        7 = left - bottom
+        8 = right - bottom
     */
 
     CDialog::OnSizing(nSide, lpRect);

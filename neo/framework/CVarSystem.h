@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,56 +32,56 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __CVARSYSTEM_H__
 #define __CVARSYSTEM_H__
 
-#include "framework/CmdSystem.h"
-#include "idlib/CmdArgs.h"
 #include "idlib/Dict.h"
+#include "idlib/CmdArgs.h"
+#include "framework/CmdSystem.h"
 
 /*
 ===============================================================================
 
-        Console Variables (CVars) are used to hold scalar or string variables
-        that can be changed or displayed at the console as well as accessed
-        directly in code.
+    Console Variables (CVars) are used to hold scalar or string variables
+    that can be changed or displayed at the console as well as accessed
+    directly in code.
 
-        CVars are mostly used to hold settings that can be changed from the
-        console or saved to and loaded from configuration files. CVars are also
-        occasionally used to communicate information between different modules
-        of the program.
+    CVars are mostly used to hold settings that can be changed from the
+    console or saved to and loaded from configuration files. CVars are also
+    occasionally used to communicate information between different modules
+    of the program.
 
-        CVars are restricted from having the same names as console commands to
-        keep the console interface from being ambiguous.
+    CVars are restricted from having the same names as console commands to
+    keep the console interface from being ambiguous.
 
-        CVars can be accessed from the console in three ways:
-        cvarName			prints the current value
-        cvarName X			sets the value to X if the variable
-exists set cvarName X		as above, but creates the CVar if not present
+    CVars can be accessed from the console in three ways:
+    cvarName			prints the current value
+    cvarName X			sets the value to X if the variable exists
+    set cvarName X		as above, but creates the CVar if not present
 
-        CVars may be declared in the global namespace, in classes and in
-functions. However declarations in classes and functions should always be static
-to save space and time. Making CVars static does not change their functionality
-due to their global nature.
+    CVars may be declared in the global namespace, in classes and in functions.
+    However declarations in classes and functions should always be static to
+    save space and time. Making CVars static does not change their
+    functionality due to their global nature.
 
-        CVars should be contructed only through one of the constructors with
-name, value, flags and description. The name, value and description parameters
-        to the constructor have to be static strings, do not use va() or the
-like functions returning a string.
+    CVars should be contructed only through one of the constructors with name,
+    value, flags and description. The name, value and description parameters
+    to the constructor have to be static strings, do not use va() or the like
+    functions returning a string.
 
-        CVars may be declared multiple times using the same name string.
-However, they will all reference the same value and changing the value of one
-CVar changes the value of all CVars with the same name.
+    CVars may be declared multiple times using the same name string. However,
+    they will all reference the same value and changing the value of one CVar
+    changes the value of all CVars with the same name.
 
-        CVars should always be declared with the correct type flag: CVAR_BOOL,
-        CVAR_INTEGER or CVAR_FLOAT. If no such flag is specified the CVar
-        defaults to type string. If the CVAR_BOOL flag is used there is no need
-        to specify an argument auto-completion function because the CVar gets
-        one assigned automatically.
+    CVars should always be declared with the correct type flag: CVAR_BOOL,
+    CVAR_INTEGER or CVAR_FLOAT. If no such flag is specified the CVar
+    defaults to type string. If the CVAR_BOOL flag is used there is no need
+    to specify an argument auto-completion function because the CVar gets
+    one assigned automatically.
 
-        CVars are automatically range checked based on their type and any
-min/max or valid string set specified in the constructor.
+    CVars are automatically range checked based on their type and any min/max
+    or valid string set specified in the constructor.
 
-        CVars are always considered cheats except when CVAR_NOCHEAT, CVAR_INIT,
-        CVAR_ROM, CVAR_ARCHIVE, CVAR_USERINFO, CVAR_SERVERINFO, CVAR_NETWORKSYNC
-        is set.
+    CVars are always considered cheats except when CVAR_NOCHEAT, CVAR_INIT,
+    CVAR_ROM, CVAR_ARCHIVE, CVAR_USERINFO, CVAR_SERVERINFO, CVAR_NETWORKSYNC
+    is set.
 
 ===============================================================================
 */
@@ -116,7 +113,7 @@ typedef enum
 /*
 ===============================================================================
 
-        idCVar
+    idCVar
 
 ===============================================================================
 */
@@ -286,7 +283,7 @@ ID_INLINE idCVar::idCVar(const char *name, const char *value, int flags, const c
 /*
 ===============================================================================
 
-        idCVarSystem
+    idCVarSystem
 
 ===============================================================================
 */
@@ -322,8 +319,7 @@ class idCVarSystem
     virtual float GetCVarFloat(const char *name) const = 0;
 
     // Called by the command system when argv(0) doesn't match a known command.
-    // Returns true if argv(0) is a variable reference and prints or changes the
-    // CVar.
+    // Returns true if argv(0) is a variable reference and prints or changes the CVar.
     virtual bool Command(const idCmdArgs &args) = 0;
 
     // Command and argument completion using callback for each valid string.
@@ -354,12 +350,12 @@ extern idCVarSystem *cvarSystem;
 /*
 ===============================================================================
 
-        CVar Registration
+    CVar Registration
 
-        Each DLL using CVars has to declare a private copy of the static
-variable idCVar::staticVars like this: idCVar * idCVar::staticVars = NULL;
-        Furthermore idCVar::RegisterStaticVars() has to be called after the
-        cvarSystem pointer is set when the DLL is first initialized.
+    Each DLL using CVars has to declare a private copy of the static variable
+    idCVar::staticVars like this: idCVar * idCVar::staticVars = NULL;
+    Furthermore idCVar::RegisterStaticVars() has to be called after the
+    cvarSystem pointer is set when the DLL is first initialized.
 
 ===============================================================================
 */

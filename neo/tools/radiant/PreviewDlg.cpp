@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "CommentsDlg.h"
-#include "PreviewDlg.h"
+#include "qe3.h"
 #include "Radiant.h"
 #include "WaitDlg.h"
-#include "qe3.h"
+#include "PreviewDlg.h"
+#include "CommentsDlg.h"
 
 const int PARENTID = 99999;
 
@@ -286,8 +283,7 @@ void CPreviewDlg::AddStrList(const char *root, const idStrList &list, int id)
                 {
                     newItem = *check;
                 }
-                // HTREEITEM	newItem = FindTreeItem(&treeMedia, item,
-                // name.Left(index, out), item);
+                // HTREEITEM	newItem = FindTreeItem(&treeMedia, item, name.Left(index, out), item);
                 if (newItem == NULL)
                 {
                     newItem = treeMedia.InsertItem(out, item);
@@ -418,8 +414,7 @@ void CPreviewDlg::OnTvnSelchangedTreeMedia(NMHDR *pNMHDR, LRESULT *pResult)
                 }
                 if (size > lsize)
                 {
-                    if (MessageBox("Model appears to be quite large, are you sure you "
-                                   "want to preview it?",
+                    if (MessageBox("Model appears to be quite large, are you sure you want to preview it?",
                                    "High Poly Model?", MB_YESNO) == IDNO)
                     {
                         *pResult = 0;
@@ -723,8 +718,7 @@ void CPreviewDlg::AddMaterials(bool rootItems)
             list.Append(mat->GetName());
         }
         list.Sort();
-        AddStrList("Materials", list,
-                   MATERIALS); // FIXME: SteelStorm2 has a _v1 suffix here
+        AddStrList("Materials", list, MATERIALS); // FIXME: SteelStorm2 has a _v1 suffix here
     }
 }
 

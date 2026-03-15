@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -68,19 +65,19 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #error "According to SDL, endianess is neither Big nor Little - dhewm3 doesn't support other byteorders!"
 #endif
 
-#include "framework/Common.h"
-#include "idlib/Dict.h"
-#include "idlib/Str.h"
-#include "idlib/math/Polynomial.h"
-#include "idlib/math/Vector.h"
 #include "sys/platform.h"
+#include "idlib/math/Vector.h"
+#include "idlib/math/Polynomial.h"
+#include "idlib/Str.h"
+#include "idlib/Dict.h"
+#include "framework/Common.h"
 
 #include "idlib/Lib.h"
 
 /*
 ===============================================================================
 
-        idLib
+    idLib
 
 ===============================================================================
 */
@@ -151,7 +148,7 @@ void idLib::ShutDown(void)
 /*
 ===============================================================================
 
-        Colors
+    Colors
 
 ===============================================================================
 */
@@ -294,7 +291,7 @@ void idLib::Warning(const char *fmt, ...)
 /*
 ===============================================================================
 
-        Byte order functions
+    Byte order functions
 
 ===============================================================================
 */
@@ -564,7 +561,7 @@ int IntForSixtets(byte *in)
 /*
 ===============================================================================
 
-        Assertion
+    Assertion
 
 ===============================================================================
 */
@@ -577,8 +574,7 @@ void AssertFailed(const char *file, int line, const char *expression)
     _exit(1);
 #elif defined(__unix__)
     // __builtin_trap() causes an illegal instruction which is kinda ugly.
-    // especially if you'd like to be able to continue after the assertion during
-    // debugging
+    // especially if you'd like to be able to continue after the assertion during debugging
     raise(SIGTRAP); // this will break into the debugger.
 #elif defined(__GNUC__)
     __builtin_trap();

@@ -19,30 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "renderer/ModelManager.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "tools/compilers/compiler_public.h"
 
 #ifdef WIN32
-#include "sys/win32/win_local.h"
+#include <windows.h>
 #include <GL/gl.h>
 #include <GL/glu.h>
-#include <windows.h>
+#include "sys/win32/win_local.h"
 #endif
 
 /*
@@ -100,8 +97,7 @@ typedef struct
     byte *localPic;
     byte *globalPic;
     byte *colorPic;
-    float *edgeDistances; // starts out -1 for untraced, for each texel, 0 = true
-                          // interior, >0 = off-edge rasterization
+    float *edgeDistances; // starts out -1 for untraced, for each texel, 0 = true interior, >0 = off-edge rasterization
     int width, height;
     int antiAlias;
     int outline;
@@ -592,8 +588,7 @@ static bool SampleHighMesh(const renderBump_t *rb, const idVec3 &point, const id
     // increment our uniqueness counter (FIXME: make thread safe?)
     rayNumber++;
 
-    // the max distance will be the traceFrac times the longest axis of the high
-    // poly model
+    // the max distance will be the traceFrac times the longest axis of the high poly model
     bestDist = -rb->traceDist;
     maxDist = rb->traceDist;
 
@@ -601,8 +596,8 @@ static bool SampleHighMesh(const renderBump_t *rb, const idVec3 &point, const id
 
     c_hits = 0;
 
-    // this is a pretty damn lazy way to walk through a 3D grid, and has a (very
-    // slight) chance of missing a triangle in a corner crossing case
+    // this is a pretty damn lazy way to walk through a 3D grid, and has a (very slight)
+    // chance of missing a triangle in a corner crossing case
 #define RAY_STEPS 100
     for (i = 0; i < RAY_STEPS; i++)
     {
@@ -787,16 +782,14 @@ static void RasterizeTriangle(const srfTriangles_t *lowMesh, const idVec3 *lowMe
 
             float *edgeDistance = &rb->edgeDistances[k / 4];
 #ifdef SKIP_MIRRORS
-            // if this texel has already been filled by a true interior pixel, don't
-            // overwrite it
+            // if this texel has already been filled by a true interior pixel, don't overwrite it
             if (*edgeDistance == 0)
             {
                 continue;
             }
 #endif
 
-            // check against the three edges to see if the pixel is inside the
-            // triangle
+            // check against the three edges to see if the pixel is inside the triangle
             for (k = 0; k < 3; k++)
             {
                 float v;
@@ -822,8 +815,7 @@ static void RasterizeTriangle(const srfTriangles_t *lowMesh, const idVec3 *lowMe
             {
                 edgeTexel = true;
 #ifdef SKIP_MIRRORS
-                // if this texel has already been filled by another edge pixel, don't
-                // overwrite it
+                // if this texel has already been filled by another edge pixel, don't overwrite it
                 if (*edgeDistance == 1)
                 {
                     continue;
@@ -859,8 +851,7 @@ static void RasterizeTriangle(const srfTriangles_t *lowMesh, const idVec3 *lowMe
                 index = lowMesh->indexes[lowFaceNum * 3 + k];
                 point += bary[k] * lowMesh->verts[index].xyz;
 
-                // traceNormal will differ from normal if the surface uses
-                // unsmoothedTangents
+                // traceNormal will differ from normal if the surface uses unsmoothedTangents
                 traceNormal += bary[k] * lowMeshNormals[index];
 
                 normal += bary[k] * lowMesh->verts[index].normal;
@@ -1113,8 +1104,8 @@ static void WriteRenderBump(renderBump_t *rb, int outLinePixels)
 	WriteTGA( filename, globalPic, width, height );
 #endif
 
-    // outline the image several times to help bilinear filtering across
-    // disconnected edges, and mip-mapping
+    // outline the image several times to help bilinear filtering across disconnected
+    // edges, and mip-mapping
     for (i = 0; i < outLinePixels; i++)
     {
         OutlineNormalMap(rb->localPic, width, height, 128, 128, 128);
@@ -1283,8 +1274,7 @@ void RenderBump_f(const idCmdArgs &args)
     // update the screen as we print
     common->SetRefreshOnPrint(true);
 
-    // there should be a single parameter, the filename for a game loadable
-    // low-poly model
+    // there should be a single parameter, the filename for a game loadable low-poly model
     if (args.Argc() != 2)
     {
         common->Error("Usage: renderbump <lowPolyModel>");
@@ -1396,9 +1386,8 @@ void RenderBump_f(const idCmdArgs &args)
 
         if (j != (localArgs.Argc() - 2))
         {
-            common->Error("usage: renderBump [-size width height] [-aa <1-2>] "
-                          "[globalMap] [colorMap] [-trace <0.01 - 1.0>] "
-                          "normalMapImageFile highPolyAseFile");
+            common->Error("usage: renderBump [-size width height] [-aa <1-2>] [globalMap] [colorMap] [-trace <0.01 - "
+                          "1.0>] normalMapImageFile highPolyAseFile");
         }
         idStr::Copynz(opt.outputName, localArgs.Argv(j), sizeof(opt.outputName));
         idStr::Copynz(opt.highName, localArgs.Argv(j + 1), sizeof(opt.highName));
@@ -1407,8 +1396,7 @@ void RenderBump_f(const idCmdArgs &args)
         opt.width <<= opt.antiAlias;
         opt.height <<= opt.antiAlias;
 
-        // see if we already have a renderbump going for another surface that this
-        // should use
+        // see if we already have a renderbump going for another surface that this should use
         for (j = 0; j < numRenderBumps; j++)
         {
             rb = &renderBumps[j];
@@ -1660,8 +1648,8 @@ void RenderBumpFlat_f(const idCmdArgs &args)
 
                             plane.FromPoints(*a, *b, *c);
 
-                            // NULLNORMAL is used by the artists to force an area to reflect
-                            // no light at all
+                            // NULLNORMAL is used by the artists to force an area to reflect no
+                            // light at all
                             if (surf->shader->GetSurfaceFlags() & SURF_NULLNORMAL)
                             {
                                 qglColor3f(0.5, 0.5, 0.5);
@@ -1686,8 +1674,8 @@ void RenderBumpFlat_f(const idCmdArgs &args)
                                 v = mesh->indexes[j + k];
                                 n = mesh->verts[v].normal.ToFloatPtr();
 
-                                // NULLNORMAL is used by the artists to force an area to reflect
-                                // no light at all
+                                // NULLNORMAL is used by the artists to force an area to reflect no
+                                // light at all
                                 if (surf->shader->GetSurfaceFlags() & SURF_NULLNORMAL)
                                 {
                                     qglColor3f(0.5, 0.5, 0.5);

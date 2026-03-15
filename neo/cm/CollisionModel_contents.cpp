@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,7 +32,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Trace model vs. polygonal model collision detection.
+    Trace model vs. polygonal model collision detection.
 
 ===============================================================================
 */
@@ -155,8 +152,7 @@ CM_SetTrmPolygonSidedness
         {                                                                                                              \
             float fl;                                                                                                  \
             fl = plane.Distance((v)->p);                                                                               \
-            /* cannot use float sign bit because it is undetermined when fl == 0.0f                                    \
-             */                                                                                                        \
+            /* cannot use float sign bit because it is undetermined when fl == 0.0f */                                 \
             if (fl < 0.0f)                                                                                             \
             {                                                                                                          \
                 (v)->side |= (1 << bitNum);                                                                            \
@@ -402,8 +398,7 @@ bool idCollisionModelManagerLocal::TestTrmInPolygon(cm_traceWork_t *tw, cm_polyg
                 flip = true;
             }
 #endif
-            // test if polygon edge goes through the trm polygon between the trm
-            // polygon edges
+            // test if polygon edge goes through the trm polygon between the trm polygon edges
             for (k = 0; k < tw->polys[j].numEdges; k++)
             {
                 trmEdgeNum = tw->polys[j].edges[k];

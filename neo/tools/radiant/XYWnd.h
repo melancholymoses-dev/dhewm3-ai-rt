@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -43,8 +40,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /////////////////////////////////////////////////////////////////////////////
 // CXYWnd window
 
-#include "CamWnd.h"
 #include "qe3.h"
+#include "CamWnd.h"
 
 const int SCALE_X = 0x01;
 const int SCALE_Y = 0x02;
@@ -252,13 +249,10 @@ class CXYWnd : public CWnd
     idVec3 m_vPressdelta;
     bool m_bPress_selection;
 
-    int m_axisHoriz; //  <axisHoriz> and <axisVert> are one of AXIS_X, AXIS_Y,
-                     //  AXIS_Z and
-    int m_axisVert;  //  reflect which axes are represented horizontally and
-                     //  vertically in the 2d view (XY, XZ, etc)
+    int m_axisHoriz; //  <axisHoriz> and <axisVert> are one of AXIS_X, AXIS_Y, AXIS_Z and
+    int m_axisVert;  //  reflect which axes are represented horizontally and vertically in the 2d view (XY, XZ, etc)
 
-    /// Each of the following _mc fields are stored in map-coordinates, NOT
-    /// screen-pixels
+    /// Each of the following _mc fields are stored in map-coordinates, NOT screen-pixels
     float m_mcWidth;
     float m_mcHeight;
     float m_mcLeft;
@@ -319,7 +313,6 @@ class CXYWnd : public CWnd
 /////////////////////////////////////////////////////////////////////////////
 
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Developer Studio will insert additional declarations immediately
-// before the previous line.
+// Microsoft Developer Studio will insert additional declarations immediately before the previous line.
 
 #endif // !defined(AFX_XYWND_H__44B4BA04_781B_11D1_B53C_00AA00A410FC__INCLUDED_)

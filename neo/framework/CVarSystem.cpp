@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "framework/async/AsyncNetwork.h"
 #include "framework/Common.h"
 #include "framework/Session.h"
-#include "framework/async/AsyncNetwork.h"
-#include "sys/platform.h"
 
 #include "framework/CVarSystem.h"
 
@@ -44,7 +41,7 @@ idCVar *idCVar::staticVars = NULL;
 /*
 ===============================================================================
 
-        idInternalCVar
+    idInternalCVar
 
 ===============================================================================
 */
@@ -198,8 +195,8 @@ void idInternalCVar::Update(const idCVar *cvar)
         if (flags & CVAR_STATIC)
         {
 
-            // the code has more than one static declaration of the same variable,
-            // make sure they have the same properties
+            // the code has more than one static declaration of the same variable, make sure they have the same
+            // properties
             if (resetString.Icmp(cvar->GetString()) != 0)
             {
                 common->Warning("CVar '%s' declared multiple times with different initial value", nameString.c_str());
@@ -215,8 +212,8 @@ void idInternalCVar::Update(const idCVar *cvar)
             }
         }
 
-        // the code is now specifying a variable that the user already set a value
-        // for, take the new value as the reset value
+        // the code is now specifying a variable that the user already set a value for, take the new value as the reset
+        // value
         resetString = cvar->GetString();
         descriptionString = cvar->GetDescription();
         description = descriptionString.c_str();
@@ -371,8 +368,7 @@ void idInternalCVar::Set(const char *newValue, bool force, bool fromServer)
 #ifndef ID_TYPEINFO
         if ((flags & CVAR_NETWORKSYNC) && idAsyncNetwork::client.IsActive())
         {
-            common->Printf("%s is a synced over the network and cannot be changed on "
-                           "a multiplayer client.\n",
+            common->Printf("%s is a synced over the network and cannot be changed on a multiplayer client.\n",
                            nameString.c_str());
 #if ID_ALLOW_CHEATS
             common->Printf("ID_ALLOW_CHEATS override!\n");
@@ -490,7 +486,7 @@ void idInternalCVar::InternalSetFloat(const float newValue)
 /*
 ===============================================================================
 
-        idCVarSystemLocal
+    idCVarSystemLocal
 
 ===============================================================================
 */
@@ -1052,8 +1048,7 @@ void idCVarSystemLocal::Toggle_f(const idCmdArgs &args)
         common->Printf("usage:\n"
                        "   toggle <variable>  - toggles between 0 and 1\n"
                        "   toggle <variable> <value> - toggles between 0 and <value>\n"
-                       "   toggle <variable> [string 1] [string 2]...[string n] - cycles "
-                       "through all strings\n");
+                       "   toggle <variable> [string 1] [string 2]...[string n] - cycles through all strings\n");
         return;
     }
 

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,8 +34,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "tools/compilers/roqvq/roqParam.h"
 
 //
-// read a parameter file in (true I bloddy well had to do this again) (and yet
-// again to c++)
+// read a parameter file in (true I bloddy well had to do this again) (and yet again to c++)
 //
 
 int parseRange(const char *rangeStr, int field, int skipnum[], int startnum[], int endnum[], int numfiles[],
@@ -102,8 +98,7 @@ void roqParam::InitFromFile(const char *fileName)
             src->ReadToken(&token);
             addPath = true;
             currentPath = token;
-            //			common->Printf("  + input directory is %s\n",
-            // currentPath );
+            //			common->Printf("  + input directory is %s\n", currentPath );
             readarg++;
             continue;
         }
@@ -148,8 +143,7 @@ void roqParam::InitFromFile(const char *fileName)
         if (token.Icmp("video_in") == 0)
         {
             encodeVideo = true;
-            //			common->Printf("  + Using the video port as
-            // input\n");
+            //			common->Printf("  + Using the video port as input\n");
             continue;
         }
         // timecode range
@@ -181,8 +175,7 @@ void roqParam::InitFromFile(const char *fileName)
         {
             src->ReadToken(&token);
             outputFilename = token;
-            //			common->Printf("  + output file is %s\n",
-            // outputFilename );
+            //			common->Printf("  + output file is %s\n", outputFilename );
             readarg++;
             continue;
         }
@@ -191,8 +184,7 @@ void roqParam::InitFromFile(const char *fileName)
         {
             src->ReadToken(&token);
             sprintf(startPal, "/LocalLibrary/vdxPalettes/%s", token.c_str());
-            //			common->Error("  + starting palette is %s\n",
-            // startPal );
+            //			common->Error("  + starting palette is %s\n", startPal );
             startPalette = true;
             readarg++;
             continue;
@@ -202,8 +194,7 @@ void roqParam::InitFromFile(const char *fileName)
         {
             src->ReadToken(&token);
             sprintf(endPal, "/LocalLibrary/vdxPalettes/%s", token.c_str());
-            //			common->Printf("  + ending palette is %s\n",
-            // endPal );
+            //			common->Printf("  + ending palette is %s\n", endPal );
             endPalette = true;
             readarg++;
             continue;
@@ -213,8 +204,7 @@ void roqParam::InitFromFile(const char *fileName)
         {
             src->ReadToken(&token);
             sprintf(startPal, "/LocalLibrary/vdxPalettes/%s", token.c_str());
-            //			common->Printf("  + fixed palette is %s\n",
-            // startPal );
+            //			common->Printf("  + fixed palette is %s\n", startPal );
             fixedPalette = true;
             readarg++;
             continue;
@@ -234,16 +224,16 @@ void roqParam::InitFromFile(const char *fileName)
             keyG = src->ParseInt();
             keyB = src->ParseInt();
             keyColor = true;
-            //			common->Printf("  + key color is %03d %03d
-            //%03d\n", keyR, keyG, keyB );
+            //			common->Printf("  + key color is %03d %03d %03d\n", keyR, keyG, keyB );
             readarg++;
             continue;
         }
         // only want deltas
         if (token.Icmp("just_delta") == 0)
         {
-            //			common->Printf("  + outputting deltas in the
-            // night\n" ); 			justDelta = true; 			justDeltaFlag = true;
+            //			common->Printf("  + outputting deltas in the night\n" );
+            //			justDelta = true;
+            //			justDeltaFlag = true;
             readarg++;
             continue;
         }
@@ -337,8 +327,7 @@ void roqParam::InitFromFile(const char *fileName)
 
                     if (arg1[0] != '[')
                     {
-                        //						common->Printf("  +
-                        // reading %s\n", file[field] );
+                        //						common->Printf("  + reading %s\n", file[field] );
                         range[field] = 0;
                         numfiles[field] = 1;
                         realnum++;
@@ -352,17 +341,15 @@ void roqParam::InitFromFile(const char *fileName)
                             {
                                 realnum += parseTimecodeRange(arg1, field, skipnum, startnum, endnum, numfiles, padding,
                                                               numpadding);
-                                //								common->Printf("
-                                //+ reading %s from %d to %d\n", file[field], startnum[field],
-                                // endnum[field]);
+                                //								common->Printf("  + reading %s from %d to %d\n",
+                                //file[field], startnum[field], endnum[field]);
                             }
                             else
                             {
                                 realnum +=
                                     parseRange(arg1, field, skipnum, startnum, endnum, numfiles, padding, numpadding);
-                                //								common->Printf("
-                                //+ reading %s from %d to %d\n", file[field], startnum[field],
-                                // endnum[field]);
+                                //								common->Printf("  + reading %s from %d to %d\n",
+                                //file[field], startnum[field], endnum[field]);
                             }
                         }
                         else if ((arg1[0] != '[') && (arg2[0] == '[') && (arg3[0] == '['))
@@ -372,14 +359,12 @@ void roqParam::InitFromFile(const char *fileName)
                             file2[field] = arg1;
                             range[field] = 2;
                             files1 = parseRange(arg2, field, skipnum, startnum, endnum, numfiles, padding, numpadding);
-                            //							common->Printf("
-                            //+ reading %s from %d to %d\n", file[field], startnum[field],
-                            // endnum[field]);
+                            //							common->Printf("  + reading %s from %d to %d\n", file[field],
+                            //startnum[field], endnum[field]);
                             files2 =
                                 parseRange(arg3, field, skipnum2, startnum2, endnum2, numfiles, padding2, numpadding2);
-                            //							common->Printf("
-                            //+ reading %s from %d to %d\n", file2[field], startnum2[field],
-                            // endnum2[field]);
+                            //							common->Printf("  + reading %s from %d to %d\n", file2[field],
+                            //startnum2[field], endnum2[field]);
                             if (files1 != files2)
                             {
                                 common->Error("You had %d files for %s and %d for %s!", files1, arg1.c_str(), files2,

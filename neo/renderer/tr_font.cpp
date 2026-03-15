@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,11 +36,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define FILESIZE_fontInfo_t (20548)
 
 #ifdef BUILD_FREETYPE
-#include "../ft2/freetype.h"
 #include "../ft2/fterrors.h"
-#include "../ft2/ftimage.h"
-#include "../ft2/ftoutln.h"
 #include "../ft2/ftsystem.h"
+#include "../ft2/ftimage.h"
+#include "../ft2/freetype.h"
+#include "../ft2/ftoutln.h"
 
 #define _FLOOR(x) ((x) & -64)
 #define _CEIL(x) (((x) + 63) & -64)
@@ -161,14 +158,12 @@ glyphInfo_t *RE_ConstructGlyphInfo(unsigned char *imageOut, int *xOut, int *yOut
         }
 
         /*
-                        // need to convert to power of 2 sizes so we do not get
-                        // any scaling from the gl upload
-                        for (scaled_width = 1 ; scaled_width < glyph.pitch ;
-           scaled_width<<=1)
-                                ;
-                        for (scaled_height = 1 ; scaled_height < glyph.height ;
-           scaled_height<<=1)
-                                ;
+                // need to convert to power of 2 sizes so we do not get
+                // any scaling from the gl upload
+                for (scaled_width = 1 ; scaled_width < glyph.pitch ; scaled_width<<=1)
+                    ;
+                for (scaled_height = 1 ; scaled_height < glyph.height ; scaled_height<<=1)
+                    ;
         */
 
         scaled_width = glyph.pitch;
@@ -323,18 +318,19 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
 
     int pointSize = 12;
     /*
-            if ( registeredFontCount >= MAX_FONTS ) {
-                    common->Warning( "RegisterFont: Too many fonts registered
-       already." ); return false;
-            }
+        if ( registeredFontCount >= MAX_FONTS ) {
+            common->Warning( "RegisterFont: Too many fonts registered already." );
+            return false;
+        }
 
-            int pointSize = 12;
-            idStr::snPrintf( name, sizeof(name), "%s/fontImage_%i.dat", fontName,
-       pointSize ); for ( i = 0; i < registeredFontCount; i++ ) { if (
-       idStr::Icmp(name, registeredFont[i].fontInfoSmall.name) == 0 ) { memcpy(
-       &font, &registeredFont[i], sizeof( fontInfoEx_t ) ); return true;
-                    }
+        int pointSize = 12;
+        idStr::snPrintf( name, sizeof(name), "%s/fontImage_%i.dat", fontName, pointSize );
+        for ( i = 0; i < registeredFontCount; i++ ) {
+            if ( idStr::Icmp(name, registeredFont[i].fontInfoSmall.name) == 0 ) {
+                memcpy( &font, &registeredFont[i], sizeof( fontInfoEx_t ) );
+                return true;
             }
+        }
     */
     assert(sizeof(float) == 4 && "if this is false, readFloat() won't work");
 
@@ -355,10 +351,10 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
         {
             pointSize = 48;
         }
-        // we also need to adjust the scale based on point size relative to 48
-        // points as the ui scaling is based on a 48 point font
-        float glyphScale = 1.0f; // change the scale to be relative to 1 based on 72
-                                 // dpi ( so dpi of 144 means a scale of .5 )
+        // we also need to adjust the scale based on point size relative to 48 points as the ui scaling is based on a 48
+        // point font
+        float glyphScale =
+            1.0f; // change the scale to be relative to 1 based on 72 dpi ( so dpi of 144 means a scale of .5 )
         glyphScale *= 48.0f / pointSize;
 
         idStr::snPrintf(name, sizeof(name), "%s/fontImage_%i.dat", fontName, pointSize);
@@ -450,8 +446,7 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
         fileSystem->FreeFile(faceData);
     }
 
-    // memcpy( &registeredFont[registeredFontCount++], &font, sizeof( fontInfoEx_t
-    // ) );
+    // memcpy( &registeredFont[registeredFontCount++], &font, sizeof( fontInfoEx_t ) );
 
     common->Printf("      RegisterFont: success\n");
     fflush(NULL);
@@ -489,8 +484,8 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
 
     // font = registeredFonts[registeredFontCount++];
 
-    // make a 256x256 image buffer, once it is full, register it, clean it and
-    // keep going until all glyphs are rendered
+    // make a 256x256 image buffer, once it is full, register it, clean it and keep going
+    // until all glyphs are rendered
 
     out = Mem_Alloc(1024 * 1024);
     if (out == NULL)
@@ -521,8 +516,7 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
         if (xOut == -1 || yOut == -1 || i == GLYPH_END)
         {
             // ran out of room
-            // we need to create an image from the bitmap, set all the handles in the
-            // glyphs to this point
+            // we need to create an image from the bitmap, set all the handles in the glyphs to this point
             //
 
             scaledSize = 256 * 256;
@@ -558,8 +552,7 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
                 R_WriteTGA(name, imageBuff, 256, 256);
             }
 
-            // idStr::snprintf( name, sizeof(name), "fonts/fontImage_%i_%i",
-            // imageNumber++, pointSize );
+            // idStr::snprintf( name, sizeof(name), "fonts/fontImage_%i_%i", imageNumber++, pointSize );
             image = R_CreateImage(name, imageBuff, 256, 256, qfalse, qfalse, GL_CLAMP);
             h = RE_RegisterShaderFromImage(name, LIGHTMAP_2D, image, qfalse);
             for (j = lastStart; j < i; j++)

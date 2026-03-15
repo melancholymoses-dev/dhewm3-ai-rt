@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,7 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Area Awareness System
+    Area Awareness System
 
 ===============================================================================
 */
@@ -122,8 +119,7 @@ class idAAS
     virtual void GetEdgeVertexNumbers(int edgeNum, int verts[2]) const = 0;
     // Get an edge.
     virtual void GetEdge(int edgeNum, idVec3 &start, idVec3 &end) const = 0;
-    // Find all areas within or touching the bounds with the given contents and
-    // disable/enable them for routing.
+    // Find all areas within or touching the bounds with the given contents and disable/enable them for routing.
     virtual bool SetAreaState(const idBounds &bounds, const int areaContents, bool disabled) = 0;
     // Add an obstacle to the routing system.
     virtual aasHandle_t AddObstacle(const idBounds &bounds) = 0;
@@ -133,22 +129,19 @@ class idAAS
     virtual void RemoveAllObstacles(void) = 0;
     // Returns the travel time towards the goal area in 100th of a second.
     virtual int TravelTimeToGoalArea(int areaNum, const idVec3 &origin, int goalAreaNum, int travelFlags) const = 0;
-    // Get the travel time and first reachability to be used towards the goal,
-    // returns true if there is a path.
+    // Get the travel time and first reachability to be used towards the goal, returns true if there is a path.
     virtual bool RouteToGoalArea(int areaNum, const idVec3 origin, int goalAreaNum, int travelFlags, int &travelTime,
                                  idReachability **reach) const = 0;
     // Creates a walk path towards the goal.
     virtual bool WalkPathToGoal(aasPath_t &path, int areaNum, const idVec3 &origin, int goalAreaNum,
                                 const idVec3 &goalOrigin, int travelFlags) const = 0;
-    // Returns true if one can walk along a straight line from the origin to the
-    // goal origin.
+    // Returns true if one can walk along a straight line from the origin to the goal origin.
     virtual bool WalkPathValid(int areaNum, const idVec3 &origin, int goalAreaNum, const idVec3 &goalOrigin,
                                int travelFlags, idVec3 &endPos, int &endAreaNum) const = 0;
     // Creates a fly path towards the goal.
     virtual bool FlyPathToGoal(aasPath_t &path, int areaNum, const idVec3 &origin, int goalAreaNum,
                                const idVec3 &goalOrigin, int travelFlags) const = 0;
-    // Returns true if one can fly along a straight line from the origin to the
-    // goal origin.
+    // Returns true if one can fly along a straight line from the origin to the goal origin.
     virtual bool FlyPathValid(int areaNum, const idVec3 &origin, int goalAreaNum, const idVec3 &goalOrigin,
                               int travelFlags, idVec3 &endPos, int &endAreaNum) const = 0;
     // Show the walk path from the origin towards the area.

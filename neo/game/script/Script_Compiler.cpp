@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
-#include "idlib/Timer.h"
 #include "sys/platform.h"
+#include "idlib/Timer.h"
+#include "framework/FileSystem.h"
 
-#include "Game_local.h"
 #include "script/Script_Thread.h"
+#include "Game_local.h"
 
 #include "script/Script_Compiler.h"
 
@@ -769,8 +766,7 @@ idVarDef *idCompiler::EmitOpcode(const opcode_t *op, idVarDef *var_a, idVarDef *
         // allocate result space
         // try to reuse result defs as much as possible
         var_c = gameLocal.program.FindFreeResultDef(op->type_c->TypeDef(), RESULT_STRING, scope, var_a, var_b);
-        // set user count back to 1, a result def needs to be used twice before it
-        // can be reused
+        // set user count back to 1, a result def needs to be used twice before it can be reused
         var_c->numUsers = 1;
     }
 
@@ -851,8 +847,8 @@ void idCompiler::NextToken(void)
     immediateType = NULL;
     memset(&immediate, 0, sizeof(immediate));
 
-    // Save the token's line number and filename since when we emit opcodes the
-    // current token is always the next one to be read
+    // Save the token's line number and filename since when we emit opcodes the current
+    // token is always the next one to be read
     currentLineNumber = token.line;
     currentFileNumber = gameLocal.program.GetFilenum(parserPtr->GetFileName());
 
@@ -869,21 +865,15 @@ void idCompiler::NextToken(void)
             // missing a closing brace.  try to give as much info as possible.
             if (scope->Type() == ev_function)
             {
-                Error("Unexpected end of file inside function '%s'.  Missing closing "
-                      "braces.",
-                      scope->Name());
+                Error("Unexpected end of file inside function '%s'.  Missing closing braces.", scope->Name());
             }
             else if (scope->Type() == ev_object)
             {
-                Error("Unexpected end of file inside object '%s'.  Missing closing "
-                      "braces.",
-                      scope->Name());
+                Error("Unexpected end of file inside object '%s'.  Missing closing braces.", scope->Name());
             }
             else if (scope->Type() == ev_namespace)
             {
-                Error("Unexpected end of file inside namespace '%s'.  Missing closing "
-                      "braces.",
-                      scope->Name());
+                Error("Unexpected end of file inside namespace '%s'.  Missing closing braces.", scope->Name());
             }
             else
             {
@@ -925,9 +915,8 @@ void idCompiler::NextToken(void)
             }
             else
             {
-                Error("vector '%s' is not in the form of 'x y z'.  expected float "
-                      "value, found '%s'",
-                      token.c_str(), token2.c_str());
+                Error("vector '%s' is not in the form of 'x y z'.  expected float value, found '%s'", token.c_str(),
+                      token2.c_str());
             }
         }
         return;
@@ -1151,8 +1140,7 @@ idTypeDef *idCompiler::ParseType(void)
 
     if ((type == &type_namespace) && (scope->Type() != ev_namespace))
     {
-        Error("A namespace may only be defined globally, or within another "
-              "namespace");
+        Error("A namespace may only be defined globally, or within another namespace");
     }
 
     NextToken();
@@ -1250,24 +1238,21 @@ idVarDef *idCompiler::EmitFunctionParms(int op, idVarDef *func, int startarg, in
         // need arg size seperate since script object may be NULL
         statement_t &statement = gameLocal.program.GetStatement(gameLocal.program.NumStatements() - 1);
         statement.c = SizeConstant(func->value.functionPtr->parmTotal);
-        // DG: before changes I did to ParseFunctionDef(),
-        // func->value.functionPtr->parmTotal was 0
-        //     if the function declaration/prototype has been parsed already, but
-        //     the definition/implementation hadn't been parsed yet. That was wrong
-        //     and sometimes (with debug game DLLs) lead to assertions in custom
-        //     scripts, because the stack space reserved for function parameters was
-        //     wrong. Now func->value.functionPtr->parmTotal is calculated when
-        //     parsing the prototype, but func->value.functionPtr->parmSize[i] is
-        //     still only calculated when parsing the implementation (as it's not
-        //     needed before and so we can tell the cases apart here). However,
-        //     savegames from before the change have script checksums (by
-        //     idProgram::CalculateChecksum()) from statements with the wrong size,
-        //     so loading them would fail as the checksum doesn't match. Setting
-        //     this flag allows using the parmTotal argSize 0 when calculating the
-        //     checksum so it matches the one from old savegames (unless something
-        //     else has also changed in the script state so they really are
-        //     incompatible). That's only done when actually loading old savegames
-        //     (detected via BUILD_NUMBER/savegame.GetBuildNumber())
+        // DG: before changes I did to ParseFunctionDef(), func->value.functionPtr->parmTotal was 0
+        //     if the function declaration/prototype has been parsed already, but the
+        //     definition/implementation hadn't been parsed yet. That was wrong and sometimes
+        //     (with debug game DLLs) lead to assertions in custom scripts, because the
+        //     stack space reserved for function parameters was wrong.
+        //     Now func->value.functionPtr->parmTotal is calculated when parsing the prototype,
+        //     but func->value.functionPtr->parmSize[i] is still only calculated when parsing
+        //     the implementation (as it's not needed before and so we can tell the cases apart here).
+        //     However, savegames from before the change have script checksums
+        //     (by idProgram::CalculateChecksum()) from statements with the wrong size, so
+        //     loading them would fail as the checksum doesn't match.
+        //     Setting this flag allows using the parmTotal argSize 0 when calculating the checksum
+        //     so it matches the one from old savegames (unless something else has also changed in
+        //     the script state so they really are incompatible). That's only done when actually
+        //     loading old savegames (detected via BUILD_NUMBER/savegame.GetBuildNumber())
         if (op == OP_OBJECTCALL && func->value.functionPtr->parmTotal > 0 &&
             func->value.functionPtr->parmSize.Num() == 0)
         {
@@ -1279,8 +1264,7 @@ idVarDef *idCompiler::EmitFunctionParms(int op, idVarDef *func, int startarg, in
         EmitOpcode(op, func, SizeConstant(size));
     }
 
-    // we need to copy off the result into a temporary result location, so figure
-    // out the opcode
+    // we need to copy off the result into a temporary result location, so figure out the opcode
     returnType = type->ReturnType();
     if (returnType->Type() == ev_string)
     {
@@ -1328,8 +1312,7 @@ idVarDef *idCompiler::EmitFunctionParms(int op, idVarDef *func, int startarg, in
 
     if (returnType->Type() == ev_void)
     {
-        // don't need result space since there's no result, so just return the
-        // normal result def.
+        // don't need result space since there's no result, so just return the normal result def.
         return returnDef;
     }
 
@@ -1338,8 +1321,7 @@ idVarDef *idCompiler::EmitFunctionParms(int op, idVarDef *func, int startarg, in
     statement_t &statement = gameLocal.program.GetStatement(gameLocal.program.NumStatements() - 1);
     idVarDef *resultDef =
         gameLocal.program.FindFreeResultDef(returnType, RESULT_STRING, scope, statement.a, statement.b);
-    // set user count back to 0, a result def needs to be used twice before it can
-    // be reused
+    // set user count back to 0, a result def needs to be used twice before it can be reused
     resultDef->numUsers = 0;
 
     EmitOpcode(resultOp, returnDef, resultDef);
@@ -1611,9 +1593,8 @@ idVarDef *idCompiler::ParseValue(void)
 
     if (immediateType == &type_entity)
     {
-        // if an immediate entity ($-prefaced name) then create or lookup a def for
-        // it. when entities are spawned, they'll lookup the def and point it to
-        // them.
+        // if an immediate entity ($-prefaced name) then create or lookup a def for it.
+        // when entities are spawned, they'll lookup the def and point it to them.
         def = gameLocal.program.GetDef(&type_entity, "$" + token, &def_namespace);
         if (!def)
         {
@@ -2067,11 +2048,9 @@ idVarDef *idCompiler::GetExpression(int priority)
 
             if (op - opcodes == OP_STOREP_OBJENT)
             {
-                // statement.b points to type_pointer, which is just a temporary that
-                // gets its type reassigned, so we store the real type in statement.c so
-                // that we can do a type check during run time since we don't know what
-                // type the script object is at compile time because it comes from an
-                // entity
+                // statement.b points to type_pointer, which is just a temporary that gets its type reassigned, so we
+                // store the real type in statement.c so that we can do a type check during run time since we don't know
+                // what type the script object is at compile time because it comes from an entity
                 statement_t &statement = gameLocal.program.GetStatement(gameLocal.program.NumStatements() - 1);
                 statement.c = type_pointer.PointerType()->def;
             }
@@ -2202,8 +2181,7 @@ void idCompiler::ParseWhileStatement(void)
 
     if ((e->initialized == idVarDef::initializedConstant) && (*e->value.intPtr != 0))
     {
-        // FIXME: we can completely skip generation of this code in the opposite
-        // case
+        // FIXME: we can completely skip generation of this code in the opposite case
         ParseStatement();
         EmitOpcode(OP_GOTO, JumpTo(patch2), 0);
     }
@@ -2228,35 +2206,35 @@ idCompiler::ParseForStatement
 
 Form of for statement with a counter:
 
-        a = 0;
+    a = 0;
 start:					<< patch4
-        if ( !( a < 10 ) ) {
-                goto end;		<< patch1
-        } else {
-                goto process;	<< patch3
-        }
+    if ( !( a < 10 ) ) {
+        goto end;		<< patch1
+    } else {
+        goto process;	<< patch3
+    }
 
 increment:				<< patch2
-        a = a + 1;
-        goto start;			<< goto patch4
+    a = a + 1;
+    goto start;			<< goto patch4
 
 process:
-        statements;
-        goto increment;		<< goto patch2
+    statements;
+    goto increment;		<< goto patch2
 
 end:
 
 Form of for statement without a counter:
 
-        a = 0;
+    a = 0;
 start:					<< patch2
-        if ( !( a < 10 ) ) {
-                goto end;		<< patch1
-        }
+    if ( !( a < 10 ) ) {
+        goto end;		<< patch1
+    }
 
 process:
-        statements;
-        goto start;			<< goto patch2
+    statements;
+    goto start;			<< goto patch2
 
 end:
 ================
@@ -2652,13 +2630,10 @@ void idCompiler::ParseFunctionDef(idTypeDef *returnType, const char *name)
         }
     }
 
-    // DG: make sure parmTotal gets calculated when parsing prototype (not just
-    // when parsing
-    //     implementation) so calling this function/method before the
-    //     implementation has been parsed works without getting Assertions in
-    //     IdInterpreter::Execute() and ::LeaveFunction()
-    //     ("st->c->value.argSize == func->parmTotal", "localstackUsed ==
-    //     localstackBase", see #303 and #344)
+    // DG: make sure parmTotal gets calculated when parsing prototype (not just when parsing
+    //     implementation) so calling this function/method before the implementation has been parsed
+    //     works without getting Assertions in IdInterpreter::Execute() and ::LeaveFunction()
+    //     ("st->c->value.argSize == func->parmTotal", "localstackUsed == localstackBase", see #303 and #344)
 
     // calculate stack space used by parms
     numParms = type->NumParameters();
@@ -2666,31 +2641,26 @@ void idCompiler::ParseFunctionDef(idTypeDef *returnType, const char *name)
     {
         // it's just a prototype, so get the ; and move on
         ExpectToken(";");
-        // DG: BUT only after calculating the stack space for the arguments because
-        // this function might be called before the implementation is parsed (see
-        // #303 and #344) which otherwise causes Assertions in
-        // IdInterpreter::Execute() and ::LeaveFunction()
-        // ("st->c->value.argSize == func->parmTotal", "localstackUsed ==
-        // localstackBase")
+        // DG: BUT only after calculating the stack space for the arguments because this
+        // function might be called before the implementation is parsed (see #303 and #344)
+        // which otherwise causes Assertions in IdInterpreter::Execute() and ::LeaveFunction()
+        // ("st->c->value.argSize == func->parmTotal", "localstackUsed == localstackBase")
         func->parmTotal = 0;
         for (i = 0; i < numParms; i++)
         {
             parmType = type->GetParmType(i);
             int size = parmType->Inherits(&type_object) ? type_object.Size() : parmType->Size();
             func->parmTotal += size;
-            // NOTE: Don't set func->parmSize[] yet, the workaround to keep
-            // compatibility
+            // NOTE: Don't set func->parmSize[] yet, the workaround to keep compatibility
             //       with old savegames checks for func->parmSize.Num() == 0
             //       (see EmitFunctionParms() for more explanation of that workaround)
-            // Also not defining the parms yet, otherwise they're defined in a
-            // different order than before, so their .num is different which breaks
-            // compat with old savegames
+            // Also not defining the parms yet, otherwise they're defined in a different order
+            // than before, so their .num is different which breaks compat with old savegames
         }
         return;
     }
 
-    int totalSize = 0; // DG: totalsize might already have been calculated for the
-                       // prototype, see a few lines above
+    int totalSize = 0; // DG: totalsize might already have been calculated for the prototype, see a few lines above
     func->parmSize.SetNum(numParms);
     for (i = 0; i < numParms; i++)
     {
@@ -2799,8 +2769,8 @@ void idCompiler::ParseFunctionDef(idTypeDef *returnType, const char *name)
         }
     }
 
-// Disabled code since it caused a function to fall through to the next function
-// when last statement is in the form "if ( x ) { return; }"
+// Disabled code since it caused a function to fall through to the next function when last statement is in the form "if
+// ( x ) { return; }"
 #if 0
 	// don't bother adding a return opcode if the "return" statement was used.
 	if ( ( func->firstStatement == gameLocal.program.NumStatements() ) || ( gameLocal.program.GetStatement( gameLocal.program.NumStatements() - 1 ).op != OP_RETURN ) ) {
@@ -2839,8 +2809,7 @@ void idCompiler::ParseVariableDef(idTypeDef *type, const char *name)
     // check for an initialization
     if (CheckToken("="))
     {
-        // if a local variable in a function then write out interpreter code to
-        // initialize variable
+        // if a local variable in a function then write out interpreter code to initialize variable
         if (scope->Type() == ev_function)
         {
             def2 = GetExpression(TOP_PRIORITY);
@@ -3052,8 +3021,7 @@ void idCompiler::ParseEventDef(idTypeDef *returnType, const char *name)
         ParseName(parmName);
         if (argType != expectedType)
         {
-            Error("The type of parm %d ('%s') does not match the internal type '%s' "
-                  "in definition of '%s' event.",
+            Error("The type of parm %d ('%s') does not match the internal type '%s' in definition of '%s' event.",
                   i + 1, parmName.c_str(), expectedType->Name(), name);
         }
 
@@ -3063,18 +3031,14 @@ void idCompiler::ParseEventDef(idTypeDef *returnType, const char *name)
         {
             if (CheckToken(")"))
             {
-                Error("Too few parameters for event definition.  Internal definition "
-                      "has %d parameters.",
-                      num);
+                Error("Too few parameters for event definition.  Internal definition has %d parameters.", num);
             }
             ExpectToken(",");
         }
     }
     if (!CheckToken(")"))
     {
-        Error("Too many parameters for event definition.  Internal definition has "
-              "%d parameters.",
-              num);
+        Error("Too many parameters for event definition.  Internal definition has %d parameters.", num);
     }
     ExpectToken(";");
 
@@ -3228,8 +3192,7 @@ void idCompiler::CompileFile(const char *text, const char *filename, bool toCons
 
     compile_time.Start();
 
-    idStr origFileName = filename; // DG: filename pointer might become invalid
-                                   // when calling NextToken() below
+    idStr origFileName = filename; // DG: filename pointer might become invalid when calling NextToken() below
 
     scope = &def_namespace;
     basetype = NULL;
@@ -3266,8 +3229,7 @@ void idCompiler::CompileFile(const char *text, const char *filename, bool toCons
     token.line = token.linesCrossed = 0;
     parser.UnreadToken(&token);
 
-    // init the current token line to be the first line so that currentLineNumber
-    // is set correctly in NextToken
+    // init the current token line to be the first line so that currentLineNumber is set correctly in NextToken
     token.line = 1;
 
     error = false;
@@ -3288,8 +3250,7 @@ void idCompiler::CompileFile(const char *text, const char *filename, bool toCons
 
         if (console)
         {
-            // don't print line number of an error if were calling script from the
-            // console using the "script" command
+            // don't print line number of an error if were calling script from the console using the "script" command
             sprintf(error, "Error: %s\n", err.error);
         }
         else
@@ -3308,13 +3269,11 @@ void idCompiler::CompileFile(const char *text, const char *filename, bool toCons
     compile_time.Stop();
     if (!toConsole)
     {
-        // DG: filename can be overwritten by NextToken() (via
-        // gameLocal.program.GetFilenum()), so
-        //     use a copy, origFileName, that's still valid here. Furthermore, the
-        //     path is nonsense, as idProgram::CompileText() called
-        //     fileSystem->RelativePathToOSPath() on it which does not return the
-        //     *actual* full path of that file but invents one, so revert that to
-        //     the relative filename which at least isn't misleading
+        // DG: filename can be overwritten by NextToken() (via gameLocal.program.GetFilenum()), so
+        //     use a copy, origFileName, that's still valid here. Furthermore, the path is nonsense,
+        //     as idProgram::CompileText() called fileSystem->RelativePathToOSPath() on it
+        //     which does not return the *actual* full path of that file but invents one,
+        //     so revert that to the relative filename which at least isn't misleading
         gameLocal.Printf("Compiled '%s': %u ms\n", fileSystem->OSPathToRelativePath(origFileName),
                          compile_time.Milliseconds());
     }

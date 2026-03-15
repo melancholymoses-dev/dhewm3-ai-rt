@@ -1,8 +1,8 @@
-#include "renderer/GL/GLBackend.h"
-#include "renderer/Image.h"
 #include "renderer/RendererBackend.h"
-#include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
+#include "renderer/VertexCache.h"
+#include "renderer/Image.h"
+#include "renderer/GL/GLBackend.h"
 
 // Forward declarations of the existing GL free functions
 // (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)

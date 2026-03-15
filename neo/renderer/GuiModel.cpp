@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/DemoFile.h"
-#include "renderer/VertexCache.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "framework/DemoFile.h"
+#include "renderer/tr_local.h"
+#include "renderer/VertexCache.h"
 
 #include "renderer/GuiModel.h"
 
@@ -190,9 +187,9 @@ void idGuiModel::EmitSurface(guiModelSurface_t *surf, float modelMatrix[16], flo
     tri->indexes = (glIndex_t *)R_FrameAlloc(tri->numIndexes * sizeof(tri->indexes[0]));
     memcpy(tri->indexes, &indexes[surf->firstIndex], tri->numIndexes * sizeof(tri->indexes[0]));
 
-    // we might be able to avoid copying these and just let them reference the
-    // list vars but some things, like deforms and recursive guis, need to access
-    // the verts in cpu space, not just through the vertex range
+    // we might be able to avoid copying these and just let them reference the list vars
+    // but some things, like deforms and recursive
+    // guis, need to access the verts in cpu space, not just through the vertex range
     tri->verts = (idDrawVert *)R_FrameAlloc(tri->numVerts * sizeof(tri->verts[0]));
     memcpy(tri->verts, &verts[surf->firstVert], tri->numVerts * sizeof(tri->verts[0]));
 
@@ -296,8 +293,7 @@ void idGuiModel::EmitFullScreen(void)
 
     viewDef->floatTime = tr.frameShaderTime;
 
-    // qglOrtho( 0, 640, 480, 0, 0, 1 );		// always assume 640x480 virtual
-    // coordinates
+    // qglOrtho( 0, 640, 480, 0, 0, 1 );		// always assume 640x480 virtual coordinates
     viewDef->projectionMatrix[0] = 2.0f / 640.0f;
     viewDef->projectionMatrix[5] = -2.0f / 480.0f;
     viewDef->projectionMatrix[10] = -2.0f / 1.0f;
@@ -417,8 +413,7 @@ void idGuiModel::DrawStretchPic(const idDrawVert *dverts, const glIndex_t *dinde
         {
             AdvanceSurf();
         }
-        const_cast<idMaterial *>(hShader)->EnsureNotPurged(); // in case it was a gui item started before a level
-                                                              // change
+        const_cast<idMaterial *>(hShader)->EnsureNotPurged(); // in case it was a gui item started before a level change
         surf->material = hShader;
     }
 
@@ -428,8 +423,7 @@ void idGuiModel::DrawStretchPic(const idDrawVert *dverts, const glIndex_t *dinde
     {
         int i, j;
 
-        // FIXME:	this is grim stuff, and should be rewritten if we have any
-        // significant
+        // FIXME:	this is grim stuff, and should be rewritten if we have any significant
         //			number of guis asking for clipping
         idFixedWinding w;
         for (i = 0; i < indexCount; i += 3)
@@ -714,8 +708,8 @@ void idGuiModel::DrawStretchTri(idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVe
         {
             AdvanceSurf();
         }
-        const_cast<idMaterial *>(material)->EnsureNotPurged(); // in case it was a gui item started before a level
-                                                               // change
+        const_cast<idMaterial *>(material)
+            ->EnsureNotPurged(); // in case it was a gui item started before a level change
         surf->material = material;
     }
 

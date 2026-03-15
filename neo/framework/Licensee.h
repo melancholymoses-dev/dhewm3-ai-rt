@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,8 +32,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Definitions for information that is related to a licensee's game name
-and location.
+    Definitions for information that is related to a licensee's game name and location.
 
 ===============================================================================
 */
@@ -51,9 +47,8 @@ and location.
 #define ENGINE_VERSION "dhewm3 1.5.5pre" // printed in console, used for window title
 
 #ifdef ID_REPRODUCIBLE_BUILD
-// for reproducible builds we hardcode values that would otherwise come from
-// __DATE__ and __TIME__ NOTE: remember to update esp. the date for (pre-)
-// releases and RCs and the like
+// for reproducible builds we hardcode values that would otherwise come from __DATE__ and __TIME__
+// NOTE: remember to update esp. the date for (pre-) releases and RCs and the like
 #define ID__DATE__ "Aug 15 2024"
 #define ID__TIME__ "13:37:42"
 
@@ -88,8 +83,7 @@ and location.
 #define PORT_SERVER 27666
 #endif
 
-// broadcast scan this many ports after PORT_SERVER so a single machine can run
-// multiple servers
+// broadcast scan this many ports after PORT_SERVER so a single machine can run multiple servers
 #define NUM_SERVER_PORTS 4
 
 // see ASYNC_PROTOCOL_VERSION
@@ -98,10 +92,10 @@ and location.
 
 // Savegame Version
 // Update when you can no longer maintain compatibility with previous savegames
-// NOTE: a seperate core savegame version and game savegame version could be
-// useful 16: Doom v1.1 17: Doom v1.2 / D3XP. Can still read old v16 with
-// defaults for new data 18: dhewm3 with CstDoom3 anchored window support - can
-// still read v16 and v17, unless gamedata changed
+// NOTE: a seperate core savegame version and game savegame version could be useful
+// 16: Doom v1.1
+// 17: Doom v1.2 / D3XP. Can still read old v16 with defaults for new data
+// 18: dhewm3 with CstDoom3 anchored window support - can still read v16 and v17, unless gamedata changed
 #define SAVEGAME_VERSION 18
 
 // <= Doom v1.1: 1. no DS_VERSION token ( default )
@@ -117,8 +111,7 @@ and location.
 #define WIN32_CONSOLE_CLASS "dhewm 3 WinConsole"
 
 // Linux info
-#ifndef LINUX_DEFAULT_PATH // allow overriding it from the build system with
-                           // -DLINUX_DEFAULT_PATH="/bla/foo/whatever"
+#ifndef LINUX_DEFAULT_PATH // allow overriding it from the build system with -DLINUX_DEFAULT_PATH="/bla/foo/whatever"
 #define LINUX_DEFAULT_PATH "/usr/local/games/doom3"
 #endif
 

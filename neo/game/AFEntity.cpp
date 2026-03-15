@@ -19,27 +19,24 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/geometry/JointTransform.h"
 #include "renderer/ModelManager.h"
-#include "sys/platform.h"
 
+#include "gamesys/SysCvar.h"
 #include "Item.h"
 #include "Player.h"
 #include "SmokeParticles.h"
-#include "gamesys/SysCvar.h"
 
 #include "AFEntity.h"
 
@@ -164,8 +161,7 @@ idChain::BuildChain
 
   builds a chain hanging down from the ceiling
   the highest link is a child of the link below it etc.
-  this allows an object to be attached to multiple chains while keeping a single
-tree structure
+  this allows an object to be attached to multiple chains while keeping a single tree structure
 ================
 */
 void idChain::BuildChain(const idStr &name, const idVec3 &origin, float linkLength, float linkWidth, float density,
@@ -208,8 +204,7 @@ void idChain::BuildChain(const idStr &name, const idVec3 &origin, float linkLeng
                 uj = new idAFConstraint_UniversalJoint(name + idStr(i), body, lastBody);
                 uj->SetShafts(idVec3(0, 0, -1), idVec3(0, 0, 1));
                 // uj->SetConeLimit( idVec3( 0, 0, -1 ), 30.0f );
-                // uj->SetPyramidLimit( idVec3( 0, 0, -1 ), idVec3( 1, 0, 0
-                // ), 90.0f, 30.0f );
+                // uj->SetPyramidLimit( idVec3( 0, 0, -1 ), idVec3( 1, 0, 0 ), 90.0f, 30.0f );
             }
             else
             {
@@ -864,9 +859,8 @@ bool idAFEntity_Base::Collide(const trace_t &collision, const idVec3 &velocity)
                           (1.0f / idMath::Sqrt(BOUNCE_SOUND_MAX_VELOCITY - BOUNCE_SOUND_MIN_VELOCITY));
             if (StartSound("snd_bounce", SND_CHANNEL_ANY, 0, false, NULL))
             {
-                // don't set the volume unless there is a bounce sound as it overrides
-                // the entire channel which causes footsteps on ai's to not honor their
-                // shader parms
+                // don't set the volume unless there is a bounce sound as it overrides the entire channel
+                // which causes footsteps on ai's to not honor their shader parms
                 SetSoundVolume(f);
             }
             nextSoundTime = gameLocal.time + 500;
@@ -1014,10 +1008,11 @@ void idAFEntity_Base::ShowEditingDialog(void)
 idAFEntity_Base::DropAFs
 
   The entity should have the following key/value pairs set:
-        "def_drop<type>AF"		"af def"
-        "drop<type>Skin"		"skin name"
-  To drop multiple articulated figures the following key/value pairs can be
-used: "def_drop<type>AF*"		"af def" where * is an aribtrary string.
+    "def_drop<type>AF"		"af def"
+    "drop<type>Skin"		"skin name"
+  To drop multiple articulated figures the following key/value pairs can be used:
+    "def_drop<type>AF*"		"af def"
+  where * is an aribtrary string.
 ================
 */
 void idAFEntity_Base::DropAFs(idEntity *ent, const char *type, idList<idEntity *> *list)
@@ -2063,8 +2058,7 @@ void idAFEntity_VehicleSimple::Think(void)
             suspension[i]->SetSteerAngle(steerAngle);
         }
 
-        // adjust wheel velocity for better steering because there are no
-        // differentials between the wheels
+        // adjust wheel velocity for better steering because there are no differentials between the wheels
         if (steerAngle < 0.0f)
         {
             suspension[0]->SetMotorVelocity(velocity * 0.5f);
@@ -2117,21 +2111,18 @@ void idAFEntity_VehicleSimple::Think(void)
             GetAnimator()->SetJointPos(wheelJoints[i], JOINTMOD_WORLD_OVERRIDE, origin);
         }
         /*
-                        // spawn dust particle effects
-                        if ( force != 0.0f && !( gameLocal.framenum & 7 ) ) {
-                                int numContacts;
-                                idAFConstraint_Contact *contacts[2];
-                                for ( i = 0; i < 4; i++ ) {
-                                        numContacts =
-           af.GetPhysics()->GetBodyContactConstraints(
-           wheels[i]->GetClipModel()->GetId(), contacts, 2 ); for ( int j = 0; j <
-           numContacts; j++ ) { gameLocal.smokeParticles->EmitSmoke( dustSmoke,
-           gameLocal.time, gameLocal.random.RandomFloat(),
-           contacts[j]->GetContact().point,
+                // spawn dust particle effects
+                if ( force != 0.0f && !( gameLocal.framenum & 7 ) ) {
+                    int numContacts;
+                    idAFConstraint_Contact *contacts[2];
+                    for ( i = 0; i < 4; i++ ) {
+                        numContacts = af.GetPhysics()->GetBodyContactConstraints( wheels[i]->GetClipModel()->GetId(),
+           contacts, 2 ); for ( int j = 0; j < numContacts; j++ ) { gameLocal.smokeParticles->EmitSmoke( dustSmoke,
+           gameLocal.time, gameLocal.random.RandomFloat(), contacts[j]->GetContact().point,
            contacts[j]->GetContact().normal.ToMat3() );
-                                        }
-                                }
                         }
+                    }
+                }
         */
     }
 
@@ -2272,8 +2263,7 @@ void idAFEntity_VehicleFourWheels::Think(void)
             wheels[2 + i]->SetContactMotorForce(force);
         }
 
-        // adjust wheel velocity for better steering because there are no
-        // differentials between the wheels
+        // adjust wheel velocity for better steering because there are no differentials between the wheels
         if (steerAngle < 0.0f)
         {
             wheels[2]->SetContactMotorVelocity(velocity * 0.5f);
@@ -2470,8 +2460,7 @@ void idAFEntity_VehicleSixWheels::Think(void)
             wheels[i]->SetContactMotorForce(force);
         }
 
-        // adjust wheel velocity for better steering because there are no
-        // differentials between the wheels
+        // adjust wheel velocity for better steering because there are no differentials between the wheels
         if (steerAngle < 0.0f)
         {
             for (i = 0; i < 3; i++)
@@ -2698,9 +2687,8 @@ void idAFEntity_SteamPipe::Think(void)
         steamDir.z = steamUpForce;
         force.SetForce(steamDir);
         force.Evaluate(gameLocal.time);
-        // gameRenderWorld->DebugArrow( colorWhite, af.GetPhysics()->GetOrigin(
-        // steamBody ), af.GetPhysics()->GetOrigin( steamBody ) - 10.0f * steamDir,
-        // 4 );
+        // gameRenderWorld->DebugArrow( colorWhite, af.GetPhysics()->GetOrigin( steamBody ), af.GetPhysics()->GetOrigin(
+        // steamBody ) - 10.0f * steamDir, 4 );
     }
 
     if (steamModelDefHandle >= 0)

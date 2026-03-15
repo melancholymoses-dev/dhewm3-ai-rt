@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -230,8 +227,7 @@ void MaterialTreeView::MV_OnMaterialSaved(MaterialDoc *pMaterial)
     HTREEITEM *materialItem = NULL;
     materialToTree.Get(pMaterial->name, &materialItem);
 
-    // We will get this message for a delete file so the material will not be in
-    // the tree
+    // We will get this message for a delete file so the material will not be in the tree
     if (materialItem)
     {
         tree.SetItemImage(*materialItem, IMAGE_MATERIAL, IMAGE_MATERIAL);
@@ -301,8 +297,7 @@ void MaterialTreeView::MV_OnMaterialAdd(MaterialDoc *pMaterial)
 void MaterialTreeView::MV_OnMaterialDelete(MaterialDoc *pMaterial)
 {
 
-    // Our doc told us a material has been deleted. Lets find and remove the item
-    // from our tree
+    // Our doc told us a material has been deleted. Lets find and remove the item from our tree
     HTREEITEM *materialItem = NULL;
     materialToTree.Get(pMaterial->name, &materialItem);
 
@@ -569,8 +564,8 @@ bool MaterialTreeView::FindNextMaterial(MaterialSearchData_t *searchData)
 }
 
 /**
- * Searches for a material given the supplied search parameters. Returns the
- * tree item where the item was found or NULL if no material was found.
+ * Searches for a material given the supplied search parameters. Returns the tree item where
+ * the item was found or NULL if no material was found.
  * @param item The tree item from where to start the search.
  * @param searchData The parameters to use for the search.
  */
@@ -739,8 +734,7 @@ void MaterialTreeView::RenameFolder(HTREEITEM item, const char *name)
 
     CTreeCtrl &tree = GetTreeCtrl();
 
-    // Clean up the quicktree with the current tree before we allow the edit to
-    // commit
+    // Clean up the quicktree with the current tree before we allow the edit to commit
     CleanLookupTrees(item);
 
     // Store some data so the we can make the appropriate changes after the commit
@@ -849,8 +843,8 @@ void MaterialTreeView::OnTvnBeginlabeledit(NMHDR *pNMHDR, LRESULT *pResult)
 }
 
 /**
- * Makes sure that a rename operation can be performed after a label edit is
- * complete and performs the folder or material rename.
+ * Makes sure that a rename operation can be performed after a label edit is complete and
+ * performs the folder or material rename.
  */
 void MaterialTreeView::OnTvnEndlabeledit(NMHDR *pNMHDR, LRESULT *pResult)
 {
@@ -894,9 +888,7 @@ void MaterialTreeView::OnTvnEndlabeledit(NMHDR *pNMHDR, LRESULT *pResult)
             if (declManager->FindMaterial(material, false))
             {
                 // Can't rename because it conflicts with an existing file
-                MessageBox("Unable to rename material because it conflicts with "
-                           "another material",
-                           "Error");
+                MessageBox("Unable to rename material because it conflicts with another material", "Error");
             }
             else
             {
@@ -917,12 +909,10 @@ void MaterialTreeView::OnTvnEndlabeledit(NMHDR *pNMHDR, LRESULT *pResult)
         else if (type == TYPE_MATERIAL_FOLDER)
         {
 
-            // Clean up the quicktree with the current tree before we allow the edit
-            // to commit
+            // Clean up the quicktree with the current tree before we allow the edit to commit
             CleanLookupTrees(pTVDispInfo->item.hItem);
 
-            // Store some data so the we can make the appropriate changes after the
-            // commit
+            // Store some data so the we can make the appropriate changes after the commit
             renamedFolder = pTVDispInfo->item.hItem;
 
             affectedMaterials.Clear();
@@ -1105,8 +1095,7 @@ void MaterialTreeView::OnMouseMove(UINT nFlags, CPoint point)
 }
 
 /**
- * Handles the end of a drag copy/move when the user releases the left mouse
- * button.
+ * Handles the end of a drag copy/move when the user releases the left mouse button.
  */
 void MaterialTreeView::OnLButtonUp(UINT nFlags, CPoint point)
 {
@@ -1165,8 +1154,7 @@ void MaterialTreeView::OnLButtonUp(UINT nFlags, CPoint point)
                 copyName.ExtractFileName(copyMaterialName);
                 materialName += "/" + copyMaterialName;
 
-                // If the material name already exists add numbers until we don't find
-                // it
+                // If the material name already exists add numbers until we don't find it
                 materialName = materialDocManager->GetUniqueMaterialName(materialName);
 
                 // Paste
@@ -1416,8 +1404,7 @@ void MaterialTreeView::OnReloadFile()
 
         if (materialDocManager->IsFileModified(filename))
         {
-            int result = MessageBox("This file has been modified. Are you sure you "
-                                    "want to reload this file?",
+            int result = MessageBox("This file has been modified. Are you sure you want to reload this file?",
                                     "Reload?", MB_ICONQUESTION | MB_YESNO);
             if (result != IDYES)
             {
@@ -1512,8 +1499,8 @@ void MaterialTreeView::OnPaste()
 }
 
 /**
- * This message is sent after the label edit is complete to actually perform the
- * rename operation.
+ * This message is sent after the label edit is complete to actually perform the rename
+ * operation.
  */
 LRESULT MaterialTreeView::OnRenameFolderComplete(WPARAM wParam, LPARAM lParam)
 {
@@ -1536,8 +1523,7 @@ LRESULT MaterialTreeView::OnRenameFolderComplete(WPARAM wParam, LPARAM lParam)
 }
 
 /**
- * This message is sent after the label edit is complete to ensure that the
- * sorting stays consistent.
+ * This message is sent after the label edit is complete to ensure that the sorting stays consistent.
  */
 LRESULT MaterialTreeView::OnRenameMaterialComplete(WPARAM wParam, LPARAM lParam)
 {
@@ -1850,8 +1836,7 @@ void MaterialTreeView::AddStrList(const char *root, idStrList *list, bool includ
 
                             // Add the item to a quick lookup table
                             idStr file = GetMediaPath(newItem, TYPE_FILE);
-                            // common->Printf("Adding fileToTree: %s - %d\n", file.c_str(),
-                            // newItem);
+                            // common->Printf("Adding fileToTree: %s - %d\n", file.c_str(), newItem);
                             fileToTree.Set(file, newItem);
                         }
                         else
@@ -2044,8 +2029,7 @@ void MaterialTreeView::PopupMenu(CPoint *pt)
  * @param item The item to set.
  * @param mod Is the item modified
  * @param apply Does the item need an apply
- * @param children Should this method recurse through the items children and set
- * their icons.
+ * @param children Should this method recurse through the items children and set their icons.
  */
 void MaterialTreeView::SetItemImage(HTREEITEM item, bool mod, bool apply, bool children)
 {

@@ -19,44 +19,41 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include <bsdsocket/socketbasetags.h>
-#include <proto/miami.h>
 #include <proto/socket.h>
+#include <proto/miami.h>
+#include <bsdsocket/socketbasetags.h>
 #ifndef INADDR_LOOPBACK
 #define INADDR_LOOPBACK ((unsigned long int)0x7f000001)
 #endif /* INADDR_LOOPBACK */
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <net/if.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <signal.h>
-#include <sys/ioctl.h>
-#include <sys/param.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/param.h>
+#include <sys/ioctl.h>
 #include <sys/uio.h>
-#include <unistd.h>
+#include <errno.h>
+#include <net/if.h>
 
-#include "framework/CVarSystem.h"
-#include "framework/Common.h"
 #include "sys/platform.h"
+#include "framework/Common.h"
+#include "framework/CVarSystem.h"
 #include "sys/sys_public.h"
 
 #include "sys/aros/aros_public.h"
@@ -180,9 +177,8 @@ static bool StringToSockaddr(const char *s, struct sockaddr_in *sadr, bool doDNS
     }
     else if (doDNSResolve)
     {
-        // try to remove the port first, otherwise the DNS gets confused into
-        // multiple timeouts failed or not failed, buf is expected to contain the
-        // appropriate host to resolve
+        // try to remove the port first, otherwise the DNS gets confused into multiple timeouts
+        // failed or not failed, buf is expected to contain the appropriate host to resolve
         if (ExtractPort(s, buf, sizeof(buf), &port))
         {
             sadr->sin_port = htons(port);
@@ -269,8 +265,7 @@ bool Sys_IsLANAddress(const netadr_t adr)
 
     if (!num_interfaces)
     {
-        return false; // well, if there's no networking, there are no LAN addresses,
-                      // right
+        return false; // well, if there's no networking, there are no LAN addresses, right
     }
 
     for (i = 0; i < num_interfaces; i++)
@@ -324,10 +319,9 @@ NET_InitNetworking
 */
 void Sys_InitNetworking(void)
 {
-    // haven't been able to clearly pinpoint which standards or RFCs define
-    // SIOCGIFCONF, SIOCGIFADDR, SIOCGIFNETMASK ioctls it seems fairly widespread,
-    // in Linux kernel ioctl, and in BSD .. so let's assume it's always available
-    // on our targets
+    // haven't been able to clearly pinpoint which standards or RFCs define SIOCGIFCONF, SIOCGIFADDR, SIOCGIFNETMASK
+    // ioctls it seems fairly widespread, in Linux kernel ioctl, and in BSD .. so let's assume it's always available on
+    // our targets
 
     int s;
     char buf[MAX_INTERFACES * sizeof(ifreq)];
@@ -368,8 +362,7 @@ void Sys_InitNetworking(void)
 
     while (ifindex < ifc.ifc_len)
     {
-        // find the type - ignore interfaces for which we can find we can't get IP
-        // and mask ( not configured )
+        // find the type - ignore interfaces for which we can find we can't get IP and mask ( not configured )
         ifr = (struct ifreq *)((caddr_t)ifc.ifc_buf + ifindex);
 
         common->Printf("interface @ %p '%s' - ", ifr, ifr->ifr_name);

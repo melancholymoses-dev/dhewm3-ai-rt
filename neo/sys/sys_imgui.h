@@ -29,8 +29,7 @@ inline bool IsImguiEnabled()
     return imguiCtx != NULL;
 }
 
-// using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL
-// headers into sys_imgui.h
+// using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL headers into sys_imgui.h
 extern bool Init(void *sdlWindow, void *sdlGlContext);
 
 extern void Shutdown();
@@ -44,16 +43,14 @@ extern void CloseWindow(D3ImGuiWindow win);
 extern int GetOpenWindowsMask();
 
 // called with every SDL event by Sys_GetEvent()
-// returns true if ImGui has handled the event (so it shouldn't be handled by
-// D3)
+// returns true if ImGui has handled the event (so it shouldn't be handled by D3)
 extern bool ProcessEvent(const void *sdlEvent);
 
 // for binding keys from an ImGui-based menu: send input events to dhewm3
 // even if ImGui window has focus
 extern void SetKeyBindMode(bool enable);
 
-// returns true if the system cursor should be shown because an ImGui menu is
-// active
+// returns true if the system cursor should be shown because an ImGui menu is active
 extern bool ShouldShowCursor();
 
 // NewFrame() is called once per D3 frame, after all events have been gotten
@@ -79,8 +76,7 @@ enum Style
     User
 };
 
-// set the overall style for ImGui: Both shape (sizes, roundings, etc) and
-// colors
+// set the overall style for ImGui: Both shape (sizes, roundings, etc) and colors
 extern void SetImGuiStyle(Style style);
 
 // set the default dhewm3 imgui style colors
@@ -100,8 +96,7 @@ inline bool IsImguiEnabled()
     return false;
 }
 
-// using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL
-// headers into sys_imgui.h
+// using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL headers into sys_imgui.h
 inline bool Init(void *sdlWindow, void *sdlGlContext)
 {
     return false;

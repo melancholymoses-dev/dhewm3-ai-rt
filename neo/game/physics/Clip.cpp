@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "gamesys/SaveGame.h"
 #include "Entity.h"
 #include "Game_local.h"
-#include "gamesys/SaveGame.h"
-#include "sys/platform.h"
 
 #include "physics/Clip.h"
 
@@ -75,7 +72,7 @@ idBlockAlloc<clipLink_t, 1024> clipLinkAllocator;
 /*
 ===============================================================
 
-        idClipModel trace model cache
+    idClipModel trace model cache
 
 ===============================================================
 */
@@ -226,7 +223,7 @@ void idClipModel::RestoreTraceModels(idRestoreGame *savefile)
 /*
 ===============================================================
 
-        idClipModel
+    idClipModel
 
 ===============================================================
 */
@@ -524,9 +521,8 @@ cmHandle_t idClipModel::Handle(void) const
     else
     {
         // this happens in multiplayer on the combat models
-        gameLocal.Warning("idClipModel::Handle: clip model %d on '%s' (%x) is not "
-                          "a collision or trace model",
-                          id, entity->name.c_str(), entity->entityNumber);
+        gameLocal.Warning("idClipModel::Handle: clip model %d on '%s' (%x) is not a collision or trace model", id,
+                          entity->name.c_str(), entity->entityNumber);
         return 0;
     }
 }
@@ -540,9 +536,8 @@ void idClipModel::GetMassProperties(const float density, float &mass, idVec3 &ce
 {
     if (traceModelIndex == -1)
     {
-        gameLocal.Error("idClipModel::GetMassProperties: clip model %d on '%s' is "
-                        "not a trace model\n",
-                        id, entity->name.c_str());
+        gameLocal.Error("idClipModel::GetMassProperties: clip model %d on '%s' is not a trace model\n", id,
+                        entity->name.c_str());
     }
 
     trmCache_t *entry = traceModelCache[traceModelIndex];
@@ -702,7 +697,7 @@ cmHandle_t idClipModel::CheckModel(const char *name)
 /*
 ===============================================================
 
-        idClip
+    idClip
 
 ===============================================================
 */
@@ -958,8 +953,7 @@ int idClip::EntitiesTouchingBounds(const idBounds &bounds, int contentMask, idEn
     entCount = 0;
     for (i = 0; i < count; i++)
     {
-        // entity could already be in the list because an entity can use multiple
-        // clip models
+        // entity could already be in the list because an entity can use multiple clip models
         for (j = 0; j < entCount; j++)
         {
             if (entityList[j] == clipModelList[i]->entity)
@@ -1098,9 +1092,8 @@ const idTraceModel *idClip::TraceModelForClipModel(const idClipModel *mdl) const
         {
             if (mdl->GetEntity())
             {
-                gameLocal.Error("TraceModelForClipModel: clip model %d on '%s' is not "
-                                "a trace model\n",
-                                mdl->GetId(), mdl->GetEntity()->name.c_str());
+                gameLocal.Error("TraceModelForClipModel: clip model %d on '%s' is not a trace model\n", mdl->GetId(),
+                                mdl->GetEntity()->name.c_str());
             }
             else
             {
@@ -1145,8 +1138,8 @@ ID_INLINE bool TestHugeTranslation(trace_t &results, const idClipModel *mdl, con
         if (mdl->GetEntity() != NULL && idStr::Cmp(mdl->GetEntity()->GetName(), "monster_zsec_shotgun_12") == 0 &&
             idStr::Cmp(gameLocal.GetMapName(), "maps/game/alphalabs4.map") == 0)
         {
-            // there is a map bug in alpha4 where the ride of death can push a monster
-            // far into the void don't assert there
+            // there is a map bug in alpha4 where the ride of death can push a monster far into the void
+            // don't assert there
             return true;
         }
 
@@ -1908,9 +1901,8 @@ idClip::PrintStatistics
 */
 void idClip::PrintStatistics(void)
 {
-    gameLocal.Printf("t = %-3d, r = %-3d, m = %-3d, render = %-3d, contents = "
-                     "%-3d, contacts = %-3d\n",
-                     numTranslations, numRotations, numMotions, numRenderModelTraces, numContents, numContacts);
+    gameLocal.Printf("t = %-3d, r = %-3d, m = %-3d, render = %-3d, contents = %-3d, contacts = %-3d\n", numTranslations,
+                     numRotations, numMotions, numRenderModelTraces, numContents, numContacts);
     numRotations = numTranslations = numMotions = numRenderModelTraces = numContents = numContacts = 0;
 }
 

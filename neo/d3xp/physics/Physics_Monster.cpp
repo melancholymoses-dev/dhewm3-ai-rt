@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Actor.h"
-#include "Entity.h"
 #include "sys/platform.h"
+#include "Entity.h"
+#include "Actor.h"
 
 #include "physics/Physics_Monster.h"
 
@@ -227,8 +224,7 @@ monsterMoveResult_t idPhysics_Monster::StepMove(idVec3 &start, idVec3 &velocity,
     gameLocal.clip.Translation(tr, stepPos, down, clipModel, clipModel->GetAxis(), clipMask, self);
     stepPos = tr.endpos;
 
-    // if the move is further without stepping up, or the slope is too steap,
-    // don't step up
+    // if the move is further without stepping up, or the slope is too steap, don't step up
     nostepdist = (noStepPos - start).LengthSqr();
     stepdist = (stepPos - start).LengthSqr();
     if ((nostepdist >= stepdist) || ((tr.c.normal * -gravityNormal) < minFloorCosine))

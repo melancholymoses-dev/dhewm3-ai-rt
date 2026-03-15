@@ -1,90 +1,67 @@
 // dear imgui: Renderer + Platform Backend for Allegro 5
-// (Info: Allegro 5 is a cross-platform general purpose library for handling
-// windows, inputs, graphics, etc.)
+// (Info: Allegro 5 is a cross-platform general purpose library for handling windows, inputs, graphics, etc.)
 
 // Implemented features:
-//  [X] Renderer: User texture binding. Use 'ALLEGRO_BITMAP*' as ImTextureID.
-//  Read the FAQ about ImTextureID! [X] Platform: Keyboard support. Since 1.87
-//  we are using the io.AddKeyEvent() function. Pass ImGuiKey values to all key
-//  functions e.g. ImGui::IsKeyPressed(ImGuiKey_Space). [Legacy ALLEGRO_KEY_*
-//  values are obsolete since 1.87 and not supported since 1.91.5] [X] Platform:
-//  Clipboard support (from Allegro 5.1.12). [X] Platform: Mouse cursor shape
-//  and visibility (ImGuiBackendFlags_HasMouseCursors). Disable with
-//  'io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange'.
+//  [X] Renderer: User texture binding. Use 'ALLEGRO_BITMAP*' as ImTextureID. Read the FAQ about ImTextureID!
+//  [X] Platform: Keyboard support. Since 1.87 we are using the io.AddKeyEvent() function. Pass ImGuiKey values to all
+//  key functions e.g. ImGui::IsKeyPressed(ImGuiKey_Space). [Legacy ALLEGRO_KEY_* values are obsolete since 1.87 and not
+//  supported since 1.91.5] [X] Platform: Clipboard support (from Allegro 5.1.12). [X] Platform: Mouse cursor shape and
+//  visibility (ImGuiBackendFlags_HasMouseCursors). Disable with 'io.ConfigFlags |=
+//  ImGuiConfigFlags_NoMouseCursorChange'.
 // Missing features or Issues:
-//  [ ] Renderer: The renderer is suboptimal as we need to convert vertices
-//  manually. [ ] Platform: Missing gamepad support.
+//  [ ] Renderer: The renderer is suboptimal as we need to convert vertices manually.
+//  [ ] Platform: Missing gamepad support.
 
-// You can use unmodified imgui_impl_* files in your project. See examples/
-// folder for examples of using this. Prefer including the entire imgui/
-// repository into your project (either as a copy or as a submodule), and only
-// build the backends you need. Learn about Dear ImGui:
+// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build
+// the backends you need. Learn about Dear ImGui:
 // - FAQ                  https://dearimgui.com/faq
 // - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/
-// folder).
+// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
-//  2025-01-06: Avoid calling al_set_mouse_cursor() repeatedly since it appears
-//  to leak on on X11 (#8256). 2024-08-22: moved some OS/backend related
-//  function pointers from ImGuiIO to ImGuiPlatformIO:
-//               - io.GetClipboardTextFn    ->
-//               platform_io.Platform_GetClipboardTextFn
-//               - io.SetClipboardTextFn    ->
-//               platform_io.Platform_SetClipboardTextFn
-//  2022-11-30: Renderer: Restoring using al_draw_indexed_prim() when Allegro
-//  version is >= 5.2.5. 2022-10-11: Using 'nullptr' instead of 'NULL' as per
-//  our switch to C++11. 2022-09-26: Inputs: Renamed ImGuiKey_ModXXX introduced
-//  in 1.87 to ImGuiMod_XXX (old names still supported). 2022-01-26: Inputs:
-//  replaced short-lived io.AddKeyModsEvent() (added two weeks ago) with
-//  io.AddKeyEvent() using ImGuiKey_ModXXX flags. Sorry for the confusion.
-//  2022-01-17: Inputs: calling new io.AddMousePosEvent(),
-//  io.AddMouseButtonEvent(), io.AddMouseWheelEvent() API (1.87+). 2022-01-17:
-//  Inputs: always calling io.AddKeyModsEvent() next and before key event (not
-//  in NewFrame) to fix input queue with very low framerates. 2022-01-10:
-//  Inputs: calling new io.AddKeyEvent(), io.AddKeyModsEvent() +
-//  io.SetKeyEventNativeData() API (1.87+). Support for full ImGuiKey range.
-//  2021-12-08: Renderer: Fixed mishandling of the ImDrawCmd::IdxOffset field!
-//  This is an old bug but it never had an effect until some internal rendering
-//  changes in 1.86. 2021-08-17: Calling io.AddFocusEvent() on
-//  ALLEGRO_EVENT_DISPLAY_SWITCH_OUT/ALLEGRO_EVENT_DISPLAY_SWITCH_IN events.
-//  2021-06-29: Reorganized backend to pull data from a single structure to
-//  facilitate usage with multiple-contexts (all g_XXXX access changed to
-//  bd->XXXX). 2021-05-19: Renderer: Replaced direct access to
-//  ImDrawCmd::TextureId with a call to ImDrawCmd::GetTexID(). (will become a
-//  requirement) 2021-02-18: Change blending equation to preserve alpha in
-//  output buffer. 2020-08-10: Inputs: Fixed horizontal mouse wheel direction.
-//  2019-12-05: Inputs: Added support for ImGuiMouseCursor_NotAllowed mouse
-//  cursor. 2019-07-21: Inputs: Added mapping for ImGuiKey_KeyPadEnter.
-//  2019-05-11: Inputs: Don't filter character value from ALLEGRO_EVENT_KEY_CHAR
-//  before calling AddInputCharacter(). 2019-04-30: Renderer: Added support for
-//  special ImDrawCallback_ResetRenderState callback to reset render state.
-//  2018-11-30: Platform: Added touchscreen support.
-//  2018-11-30: Misc: Setting up io.BackendPlatformName/io.BackendRendererName
-//  so they can be displayed in the About Window. 2018-06-13: Platform: Added
-//  clipboard support (from Allegro 5.1.12). 2018-06-13: Renderer: Use
-//  draw_data->DisplayPos and draw_data->DisplaySize to setup projection matrix
-//  and clipping rectangle. 2018-06-13: Renderer: Stopped using
-//  al_draw_indexed_prim() as it is buggy in Allegro's DX9 backend. 2018-06-13:
-//  Renderer: Backup/restore transform and clipping rectangle. 2018-06-11: Misc:
-//  Setup io.BackendFlags ImGuiBackendFlags_HasMouseCursors flag + honor
-//  ImGuiConfigFlags_NoMouseCursorChange flag. 2018-04-18: Misc: Renamed file
-//  from imgui_impl_a5.cpp to imgui_impl_allegro5.cpp. 2018-04-18: Misc: Added
-//  support for 32-bit vertex indices to avoid conversion at runtime. Added
-//  imconfig_allegro5.h to enforce 32-bit indices when included from imgui.h.
-//  2018-02-16: Misc: Obsoleted the io.RenderDrawListsFn callback and exposed
-//  ImGui_ImplAllegro5_RenderDrawData() in the .h file so you can call it
-//  yourself. 2018-02-06: Misc: Removed call to ImGui::Shutdown() which is not
-//  available from 1.60 WIP, user needs to call CreateContext/DestroyContext
-//  themselves. 2018-02-06: Inputs: Added mapping for ImGuiKey_Space.
+//  2025-01-06: Avoid calling al_set_mouse_cursor() repeatedly since it appears to leak on on X11 (#8256).
+//  2024-08-22: moved some OS/backend related function pointers from ImGuiIO to ImGuiPlatformIO:
+//               - io.GetClipboardTextFn    -> platform_io.Platform_GetClipboardTextFn
+//               - io.SetClipboardTextFn    -> platform_io.Platform_SetClipboardTextFn
+//  2022-11-30: Renderer: Restoring using al_draw_indexed_prim() when Allegro version is >= 5.2.5.
+//  2022-10-11: Using 'nullptr' instead of 'NULL' as per our switch to C++11.
+//  2022-09-26: Inputs: Renamed ImGuiKey_ModXXX introduced in 1.87 to ImGuiMod_XXX (old names still supported).
+//  2022-01-26: Inputs: replaced short-lived io.AddKeyModsEvent() (added two weeks ago) with io.AddKeyEvent() using
+//  ImGuiKey_ModXXX flags. Sorry for the confusion. 2022-01-17: Inputs: calling new io.AddMousePosEvent(),
+//  io.AddMouseButtonEvent(), io.AddMouseWheelEvent() API (1.87+). 2022-01-17: Inputs: always calling
+//  io.AddKeyModsEvent() next and before key event (not in NewFrame) to fix input queue with very low framerates.
+//  2022-01-10: Inputs: calling new io.AddKeyEvent(), io.AddKeyModsEvent() + io.SetKeyEventNativeData() API (1.87+).
+//  Support for full ImGuiKey range. 2021-12-08: Renderer: Fixed mishandling of the ImDrawCmd::IdxOffset field! This is
+//  an old bug but it never had an effect until some internal rendering changes in 1.86. 2021-08-17: Calling
+//  io.AddFocusEvent() on ALLEGRO_EVENT_DISPLAY_SWITCH_OUT/ALLEGRO_EVENT_DISPLAY_SWITCH_IN events. 2021-06-29:
+//  Reorganized backend to pull data from a single structure to facilitate usage with multiple-contexts (all g_XXXX
+//  access changed to bd->XXXX). 2021-05-19: Renderer: Replaced direct access to ImDrawCmd::TextureId with a call to
+//  ImDrawCmd::GetTexID(). (will become a requirement) 2021-02-18: Change blending equation to preserve alpha in output
+//  buffer. 2020-08-10: Inputs: Fixed horizontal mouse wheel direction. 2019-12-05: Inputs: Added support for
+//  ImGuiMouseCursor_NotAllowed mouse cursor. 2019-07-21: Inputs: Added mapping for ImGuiKey_KeyPadEnter. 2019-05-11:
+//  Inputs: Don't filter character value from ALLEGRO_EVENT_KEY_CHAR before calling AddInputCharacter(). 2019-04-30:
+//  Renderer: Added support for special ImDrawCallback_ResetRenderState callback to reset render state. 2018-11-30:
+//  Platform: Added touchscreen support. 2018-11-30: Misc: Setting up io.BackendPlatformName/io.BackendRendererName so
+//  they can be displayed in the About Window. 2018-06-13: Platform: Added clipboard support (from Allegro 5.1.12).
+//  2018-06-13: Renderer: Use draw_data->DisplayPos and draw_data->DisplaySize to setup projection matrix and clipping
+//  rectangle. 2018-06-13: Renderer: Stopped using al_draw_indexed_prim() as it is buggy in Allegro's DX9 backend.
+//  2018-06-13: Renderer: Backup/restore transform and clipping rectangle.
+//  2018-06-11: Misc: Setup io.BackendFlags ImGuiBackendFlags_HasMouseCursors flag + honor
+//  ImGuiConfigFlags_NoMouseCursorChange flag. 2018-04-18: Misc: Renamed file from imgui_impl_a5.cpp to
+//  imgui_impl_allegro5.cpp. 2018-04-18: Misc: Added support for 32-bit vertex indices to avoid conversion at runtime.
+//  Added imconfig_allegro5.h to enforce 32-bit indices when included from imgui.h. 2018-02-16: Misc: Obsoleted the
+//  io.RenderDrawListsFn callback and exposed ImGui_ImplAllegro5_RenderDrawData() in the .h file so you can call it
+//  yourself. 2018-02-06: Misc: Removed call to ImGui::Shutdown() which is not available from 1.60 WIP, user needs to
+//  call CreateContext/DestroyContext themselves. 2018-02-06: Inputs: Added mapping for ImGuiKey_Space.
 
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
 #include "imgui_impl_allegro5.h"
-#include <cstring>  // memcpy
 #include <stdint.h> // uint64_t
+#include <cstring>  // memcpy
 
 // Allegro
 #include <allegro5/allegro.h>
@@ -97,8 +74,7 @@
      ((5 << 24) | (1 << 16) | (12 << 8))) // Clipboard only supported from Allegro 5.1.12
 #define ALLEGRO_HAS_DRAW_INDEXED_PRIM                                                                                  \
     ((ALLEGRO_VERSION_INT & ~ALLEGRO_UNSTABLE_BIT) >=                                                                  \
-     ((5 << 24) | (2 << 16) | (5 << 8))) // DX9 implementation of al_draw_indexed_prim() got fixed in
-                                         // Allegro 5.2.5
+     ((5 << 24) | (2 << 16) | (5 << 8))) // DX9 implementation of al_draw_indexed_prim() got fixed in Allegro 5.2.5
 
 // Visual Studio warnings
 #ifdef _MSC_VER
@@ -112,12 +88,10 @@ struct ImDrawVertAllegro
     ALLEGRO_COLOR col;
 };
 
-// FIXME-OPT: Unfortunately Allegro doesn't support 32-bit packed colors so we
-// have to convert them to 4 float as well..
+// FIXME-OPT: Unfortunately Allegro doesn't support 32-bit packed colors so we have to convert them to 4 float as well..
 // FIXME-OPT: Consider inlining al_map_rgba()?
 // see https://github.com/liballeg/allegro5/blob/master/src/pixels.c#L554
-// and
-// https://github.com/liballeg/allegro5/blob/master/include/allegro5/internal/aintern_pixels.h
+// and https://github.com/liballeg/allegro5/blob/master/include/allegro5/internal/aintern_pixels.h
 #define DRAW_VERT_IMGUI_TO_ALLEGRO(DST, SRC)                                                                           \
     {                                                                                                                  \
         (DST)->pos = (SRC)->pos;                                                                                       \
@@ -146,12 +120,10 @@ struct ImGui_ImplAllegro5_Data
     }
 };
 
-// Backend data stored in io.BackendPlatformUserData to allow support for
-// multiple Dear ImGui contexts It is STRONGLY preferred that you use docking
-// branch with multi-viewports (== single Dear ImGui context + multiple windows)
-// instead of multiple Dear ImGui contexts.
-// FIXME: multi-context support is not well tested and probably dysfunctional in
-// this backend.
+// Backend data stored in io.BackendPlatformUserData to allow support for multiple Dear ImGui contexts
+// It is STRONGLY preferred that you use docking branch with multi-viewports (== single Dear ImGui context + multiple
+// windows) instead of multiple Dear ImGui contexts.
+// FIXME: multi-context support is not well tested and probably dysfunctional in this backend.
 static ImGui_ImplAllegro5_Data *ImGui_ImplAllegro5_GetBackendData()
 {
     return ImGui::GetCurrentContext() ? (ImGui_ImplAllegro5_Data *)ImGui::GetIO().BackendPlatformUserData : nullptr;
@@ -216,9 +188,9 @@ void ImGui_ImplAllegro5_RenderDrawData(ImDrawData *draw_data)
         if (sizeof(ImDrawIdx) == 2)
         {
             // FIXME-OPT: Allegro doesn't support 16-bit indices.
-            // You can '#define ImDrawIdx int' in imconfig.h to request Dear ImGui to
-            // output 32-bit indices. Otherwise, we convert them from 16-bit to 32-bit
-            // at runtime here, which works perfectly but is a little wasteful.
+            // You can '#define ImDrawIdx int' in imconfig.h to request Dear ImGui to output 32-bit indices.
+            // Otherwise, we convert them from 16-bit to 32-bit at runtime here, which works perfectly but is a little
+            // wasteful.
             bd->BufIndices.resize(draw_list->IdxBuffer.Size);
             for (int i = 0; i < draw_list->IdxBuffer.Size; ++i)
                 bd->BufIndices[i] = (int)draw_list->IdxBuffer.Data[i];
@@ -229,8 +201,8 @@ void ImGui_ImplAllegro5_RenderDrawData(ImDrawData *draw_data)
             indices = (const int *)draw_list->IdxBuffer.Data;
         }
 #else
-        // Allegro's implementation of al_draw_indexed_prim() for DX9 was broken
-        // until 5.2.5. Unindex buffers ourselves while converting vertex format.
+        // Allegro's implementation of al_draw_indexed_prim() for DX9 was broken until 5.2.5. Unindex buffers ourselves
+        // while converting vertex format.
         vertices.resize(draw_list->IdxBuffer.Size);
         for (int i = 0; i < draw_list->IdxBuffer.Size; i++)
         {
@@ -248,8 +220,8 @@ void ImGui_ImplAllegro5_RenderDrawData(ImDrawData *draw_data)
             if (pcmd->UserCallback)
             {
                 // User callback, registered via ImDrawList::AddCallback()
-                // (ImDrawCallback_ResetRenderState is a special callback value used by
-                // the user to request the renderer to reset render state.)
+                // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer
+                // to reset render state.)
                 if (pcmd->UserCallback == ImDrawCallback_ResetRenderState)
                     ImGui_ImplAllegro5_SetupRenderState(draw_data);
                 else
@@ -294,9 +266,8 @@ bool ImGui_ImplAllegro5_CreateDeviceObjects()
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 
     // Create texture
-    // (Bilinear sampling is required by default. Set 'io.Fonts->Flags |=
-    // ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false' to
-    // allow point/nearest sampling)
+    // (Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or
+    // 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling)
     int flags = al_get_new_bitmap_flags();
     int fmt = al_get_new_bitmap_format();
     al_set_new_bitmap_flags(ALLEGRO_MEMORY_BITMAP | ALLEGRO_MIN_LINEAR | ALLEGRO_MAG_LINEAR);
@@ -369,8 +340,7 @@ static void ImGui_ImplAllegro5_SetClipboardText(ImGuiContext *, const char *text
 }
 #endif
 
-// Not static to allow third-party code to use that if they want to (but
-// undocumented)
+// Not static to allow third-party code to use that if they want to (but undocumented)
 ImGuiKey ImGui_ImplAllegro5_KeyCodeToImGuiKey(int key_code);
 ImGuiKey ImGui_ImplAllegro5_KeyCodeToImGuiKey(int key_code)
 {
@@ -601,17 +571,15 @@ bool ImGui_ImplAllegro5_Init(ALLEGRO_DISPLAY *display)
     ImGui_ImplAllegro5_Data *bd = IM_NEW(ImGui_ImplAllegro5_Data)();
     io.BackendPlatformUserData = (void *)bd;
     io.BackendPlatformName = io.BackendRendererName = "imgui_impl_allegro5";
-    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors; // We can honor GetMouseCursor() values
-                                                          // (optional)
+    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors; // We can honor GetMouseCursor() values (optional)
 
     bd->Display = display;
     bd->LastCursor = ALLEGRO_SYSTEM_MOUSE_CURSOR_NONE;
 
     // Create custom vertex declaration.
-    // Unfortunately Allegro doesn't support 32-bit packed colors so we have to
-    // convert them to 4 floats. We still use a custom declaration to use
-    // 'ALLEGRO_PRIM_TEX_COORD' instead of 'ALLEGRO_PRIM_TEX_COORD_PIXEL' else we
-    // can't do a reliable conversion.
+    // Unfortunately Allegro doesn't support 32-bit packed colors so we have to convert them to 4 floats.
+    // We still use a custom declaration to use 'ALLEGRO_PRIM_TEX_COORD' instead of 'ALLEGRO_PRIM_TEX_COORD_PIXEL' else
+    // we can't do a reliable conversion.
     ALLEGRO_VERTEX_ELEMENT elems[] = {{ALLEGRO_PRIM_POSITION, ALLEGRO_PRIM_FLOAT_2, offsetof(ImDrawVertAllegro, pos)},
                                       {ALLEGRO_PRIM_TEX_COORD, ALLEGRO_PRIM_FLOAT_2, offsetof(ImDrawVertAllegro, uv)},
                                       {ALLEGRO_PRIM_COLOR_ATTR, 0, offsetof(ImDrawVertAllegro, col)},
@@ -657,19 +625,16 @@ static void ImGui_ImplAllegro5_UpdateKeyModifiers()
     io.AddKeyEvent(ImGuiMod_Super, al_key_down(&keys, ALLEGRO_KEY_LWIN) || al_key_down(&keys, ALLEGRO_KEY_RWIN));
 }
 
-// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if
-// dear imgui wants to use your inputs.
-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your
-// main application, or clear/overwrite your copy of the mouse data.
-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to
-// your main application, or clear/overwrite your copy of the keyboard data.
-// Generally you may always pass all inputs to dear imgui, and hide them from
-// your application based on those two flags.
+// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
+// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite
+// your copy of the mouse data.
+// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or
+// clear/overwrite your copy of the keyboard data. Generally you may always pass all inputs to dear imgui, and hide them
+// from your application based on those two flags.
 bool ImGui_ImplAllegro5_ProcessEvent(ALLEGRO_EVENT *ev)
 {
     ImGui_ImplAllegro5_Data *bd = ImGui_ImplAllegro5_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call "
-                               "ImGui_ImplAllegro5_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplAllegro5_Init()?");
     ImGuiIO &io = ImGui::GetIO();
 
     switch (ev->type)
@@ -712,8 +677,7 @@ bool ImGui_ImplAllegro5_ProcessEvent(ALLEGRO_EVENT *ev)
             ImGui_ImplAllegro5_UpdateKeyModifiers();
             ImGuiKey key = ImGui_ImplAllegro5_KeyCodeToImGuiKey(ev->keyboard.keycode);
             io.AddKeyEvent(key, (ev->type == ALLEGRO_EVENT_KEY_DOWN));
-            io.SetKeyEventNativeData(key, ev->keyboard.keycode,
-                                     -1); // To support legacy indexing (<1.87 user code)
+            io.SetKeyEventNativeData(key, ev->keyboard.keycode, -1); // To support legacy indexing (<1.87 user code)
         }
         return true;
     case ALLEGRO_EVENT_DISPLAY_SWITCH_OUT:
@@ -787,8 +751,7 @@ static void ImGui_ImplAllegro5_UpdateMouseCursor()
 void ImGui_ImplAllegro5_NewFrame()
 {
     ImGui_ImplAllegro5_Data *bd = ImGui_ImplAllegro5_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call "
-                               "ImGui_ImplAllegro5_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplAllegro5_Init()?");
 
     if (!bd->Texture)
         ImGui_ImplAllegro5_CreateDeviceObjects();

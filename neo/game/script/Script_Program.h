@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,9 +32,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __SCRIPT_PROGRAM_H__
 #define __SCRIPT_PROGRAM_H__
 
-#include "idlib/containers/HashIndex.h"
-#include "idlib/containers/StaticList.h"
 #include "idlib/containers/StrList.h"
+#include "idlib/containers/StaticList.h"
+#include "idlib/containers/HashIndex.h"
 #include "idlib/math/Vector.h"
 
 #include "GameBase.h"
@@ -50,9 +47,7 @@ class idSaveGame;
 class idRestoreGame;
 
 #define MAX_STRING_LEN 128
-#define MAX_GLOBALS                                                                                                    \
-    296608 // in bytes - DG: increased this for better support of mods that use
-           // the vanilla game dll
+#define MAX_GLOBALS 296608 // in bytes - DG: increased this for better support of mods that use the vanilla game dll
 #define MAX_STRINGS 1024
 #define MAX_FUNCS 3072
 #define MAX_STATEMENTS 81920 // statement_t - 18 bytes last I checked
@@ -214,8 +209,8 @@ class idScriptObject
 idScriptVariable
 
 Helper template that handles looking up script variables stored in objects.
-If the specified variable doesn't exist, or is the wrong data type,
-idScriptVariable will cause an error.
+If the specified variable doesn't exist, or is the wrong data type, idScriptVariable
+will cause an error.
 
 ***********************************************************************/
 
@@ -496,14 +491,12 @@ typedef struct statement_s
     unsigned short flags; // DG: added this for ugly hacks
     enum
     {
-        // op is OP_OBJECTCALL and when the statement was created the
-        // function/method implementation hasn't been parsed yet (only the
-        // declaration/prototype) see idCompiler::EmitFunctionParms() and
-        // idProgram::CalculateChecksum()
+        // op is OP_OBJECTCALL and when the statement was created the function/method
+        // implementation hasn't been parsed yet (only the declaration/prototype)
+        // see idCompiler::EmitFunctionParms() and idProgram::CalculateChecksum()
         FLAG_OBJECTCALL_IMPL_NOT_PARSED_YET = 1,
     };
-    // DG: moved linenumber and file up here to prevent wasting 8 bytes of padding
-    // on 64bit
+    // DG: moved linenumber and file up here to prevent wasting 8 bytes of padding on 64bit
     unsigned short linenumber;
     unsigned short file;
     idVarDef *a;

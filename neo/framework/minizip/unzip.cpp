@@ -1,10 +1,8 @@
 /* unzip.c -- IO for uncompress .zip files using zlib
    Version 1.1, February 14h, 2010
-   part of the MiniZip project - ( http://www.winimage.com/zLibDll/minizip.html
-)
+   part of the MiniZip project - ( http://www.winimage.com/zLibDll/minizip.html )
 
-         Copyright (C) 1998-2010 Gilles Vollant (minizip) (
-http://www.winimage.com/zLibDll/minizip.html )
+         Copyright (C) 1998-2010 Gilles Vollant (minizip) ( http://www.winimage.com/zLibDll/minizip.html )
 
          Modifications of Unzip for Zip64
          Copyright (C) 2007-2008 Even Rouault
@@ -16,9 +14,9 @@ http://www.winimage.com/zLibDll/minizip.html )
 
 
   ------------------------------------------------------------------------------------
-  Decryption code comes from crypt.c by Info-ZIP but has been greatly reduced in
-terms of compatibility with older software. The following is from the original
-crypt.c. Code woven in by Terry Thorsen 1/2003.
+  Decryption code comes from crypt.c by Info-ZIP but has been greatly reduced in terms of
+  compatibility with older software. The following is from the original crypt.c.
+  Code woven in by Terry Thorsen 1/2003.
 
   Copyright (c) 1990-2000 Info-ZIP.  All rights reserved.
 
@@ -51,15 +49,12 @@ crypt.c. Code woven in by Terry Thorsen 1/2003.
         Copyright (C) 2007-2008 Even Rouault
 
 
-  Oct-2009 - Mathias Svensson - Removed cpl_* from symbol names (Even Rouault
-added them but since this is now moved to a new project (minizip64) I renamed
-them again). Oct-2009 - Mathias Svensson - Fixed problem if uncompressed size
-was > 4G and compressed size was <4G should only read the
-compressed/uncompressed size from the Zip64 format if the size from normal
-header was 0xFFFFFFFF Oct-2009 - Mathias Svensson - Applied some bug fixes from
-patches received from Gilles Vollant Oct-2009 - Mathias Svensson - Applied
-support to unzip files with compression method BZIP2 (bzip2 lib is required)
-                                Patch created by Daniel Borca
+  Oct-2009 - Mathias Svensson - Removed cpl_* from symbol names (Even Rouault added them but since this is now moved to
+a new project (minizip64) I renamed them again). Oct-2009 - Mathias Svensson - Fixed problem if uncompressed size was >
+4G and compressed size was <4G should only read the compressed/uncompressed size from the Zip64 format if the size from
+normal header was 0xFFFFFFFF Oct-2009 - Mathias Svensson - Applied some bug fixes from patches received from Gilles
+Vollant Oct-2009 - Mathias Svensson - Applied support to unzip files with compression method BZIP2 (bzip2 lib is
+required) Patch created by Daniel Borca
 
   Jan-2010 - back to unzip and minizip 1.0 name scheme, with compatibility layer
 
@@ -67,9 +62,9 @@ support to unzip files with compression method BZIP2 (bzip2 lib is required)
 
         ####################################################################################
 
-unzReOpen() was added by id Software (originally in framework/Unzip.cpp) for
-doom3 and adjusted for MiniZip 1.1 by Daniel Gibson The file was renamed from
-unzip.c to unzip.cpp so we can use C++ functions from doom3
+unzReOpen() was added by id Software (originally in framework/Unzip.cpp) for doom3
+and adjusted for MiniZip 1.1 by Daniel Gibson
+The file was renamed from unzip.c to unzip.cpp so we can use C++ functions from doom3
 
  Copyright (C) 1999-2011 id Software LLC, a ZeniMax Media company.
  Copyright (C) 2012 Daniel Gibson
@@ -81,8 +76,8 @@ unzip.c to unzip.cpp so we can use C++ functions from doom3
 #include <stdlib.h>
 #include <string.h>
 
-#include "unzip.h"
 #include "zlib.h"
+#include "unzip.h"
 
 #ifdef STDC
 #include <stddef.h>
@@ -95,9 +90,9 @@ unzip.c to unzip.cpp so we can use C++ functions from doom3
 
 #else // 0
 // use doom3 headers
+#include "sys/platform.h"
 #include "idlib/Heap.h"
 #include "idlib/Lib.h"
-#include "sys/platform.h"
 
 // we don't need crypt support
 #define NOUNCRYPT 1
@@ -139,15 +134,13 @@ unzip.c to unzip.cpp so we can use C++ functions from doom3
 #define TRYFREE(p)                                                                                                     \
     {                                                                                                                  \
         Mem_Free(p);                                                                                                   \
-    } // Mem_Free - as well as free() - check for NULL themselves, no need to do
-      // it here
+    }  // Mem_Free - as well as free() - check for NULL themselves, no need to do it here
 #endif // 0
 
 #define SIZECENTRALDIRITEM (0x2e)
 #define SIZEZIPLOCALHEADER (0x1e)
 
-const char unz_copyright[] = " unzip 1.01 Copyright 1998-2004 Gilles Vollant - "
-                             "http://www.winimage.com/zLibDll";
+const char unz_copyright[] = " unzip 1.01 Copyright 1998-2004 Gilles Vollant - http://www.winimage.com/zLibDll";
 
 /* unz_file_info64_internal contain internal info about a file in zipfile*/
 typedef struct unz_file_info64_internal_s
@@ -174,11 +167,10 @@ typedef struct
     ZPOS64_T pos_local_extrafield;    /* position in the local extra field in read*/
     ZPOS64_T total_out_64;
 
-    uLong crc32;                   /* crc32 of all data uncompressed */
-    uLong crc32_wait;              /* crc32 we must obtain after decompress all */
-    ZPOS64_T rest_read_compressed; /* number of byte to be decompressed */
-    ZPOS64_T
-    rest_read_uncompressed; /*number of byte to be obtained after decomp*/
+    uLong crc32;                     /* crc32 of all data uncompressed */
+    uLong crc32_wait;                /* crc32 we must obtain after decompress all */
+    ZPOS64_T rest_read_compressed;   /* number of byte to be decompressed */
+    ZPOS64_T rest_read_uncompressed; /*number of byte to be obtained after decomp*/
     zlib_filefunc64_32_def z_filefunc;
     voidpf filestream;                /* io structure of the zipfile */
     uLong compression_method;         /* compression method (0==store) */
@@ -1583,10 +1575,9 @@ extern int ZEXPORT unzReadCurrentFile(unzFile file, voidp buf, unsigned len)
                 uReadThis = (uInt)pfile_in_zip_read_info->rest_read_compressed;
             if (uReadThis == 0)
                 return UNZ_EOF;
-            // TODO: the following line was added by id Software to the original src -
-            // seems to work without it, but if problems occur look here..
-            // if(s->cur_file_info.compressed_size ==
-            // pfile_in_zip_read_info->rest_read_compressed)
+            // TODO: the following line was added by id Software to the original src - seems to work without it,
+            // but if problems occur look here..
+            // if(s->cur_file_info.compressed_size == pfile_in_zip_read_info->rest_read_compressed)
             if (ZSEEK64(pfile_in_zip_read_info->z_filefunc, pfile_in_zip_read_info->filestream,
                         pfile_in_zip_read_info->pos_in_zipfile + pfile_in_zip_read_info->byte_before_the_zipfile,
                         ZLIB_FILEFUNC_SEEK_SET) != 0)

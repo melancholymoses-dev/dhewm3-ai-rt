@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,13 +32,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Trace model vs. polygonal model collision detection.
+    Trace model vs. polygonal model collision detection.
 
 ===============================================================================
 */
 
-#include "cm/CollisionModel.h"
 #include "idlib/math/Pluecker.h"
+#include "cm/CollisionModel.h"
 
 #define MIN_NODE_SIZE 64.0f
 #define MAX_NODE_POLYGONS 128
@@ -89,10 +86,8 @@ typedef struct cm_vertex_s
 {
     idVec3 p;             // vertex point
     int checkcount;       // for multi-check avoidance
-    unsigned int side;    // each bit tells at which side this vertex passes one of
-                          // the trace model edges
-    unsigned int sideSet; // each bit tells if sidedness for the trace model edge
-                          // has been calculated yet
+    unsigned int side;    // each bit tells at which side this vertex passes one of the trace model edges
+    unsigned int sideSet; // each bit tells if sidedness for the trace model edge has been calculated yet
 } cm_vertex_t;
 
 typedef struct cm_edge_s
@@ -100,10 +95,8 @@ typedef struct cm_edge_s
     int checkcount;          // for multi-check avoidance
     unsigned short internal; // a trace model can never collide with internal edges
     unsigned short numUsers; // number of polygons using this edge
-    unsigned int side;       // each bit tells at which side of this edge one of the
-                             // trace model vertices passes
-    unsigned int sideSet;    // each bit tells if sidedness for the trace model
-                             // vertex has been calculated yet
+    unsigned int side;       // each bit tells at which side of this edge one of the trace model vertices passes
+    unsigned int sideSet;    // each bit tells if sidedness for the trace model vertex has been calculated yet
     int vertexNum[2];        // start and end point of edge
     idVec3 normal;           // edge normal
 } cm_edge_t;
@@ -358,8 +351,7 @@ class idCollisionModelManagerLocal : public idCollisionModelManager
     // returns the contents the trm is stuck in or 0 if the trm is in free space
     int Contents(const idVec3 &start, const idTraceModel *trm, const idMat3 &trmAxis, int contentMask, cmHandle_t model,
                  const idVec3 &modelOrigin, const idMat3 &modelAxis);
-    // stores all contact points of the trm with the model, returns the number of
-    // contacts
+    // stores all contact points of the trm with the model, returns the number of contacts
     int Contacts(contactInfo_t *contacts, const int maxContacts, const idVec3 &start, const idVec6 &dir,
                  const float depth, const idTraceModel *trm, const idMat3 &trmAxis, int contentMask, cmHandle_t model,
                  const idVec3 &modelOrigin, const idMat3 &modelAxis);

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __MATERIAL_H__
 #define __MATERIAL_H__
 
-#include "framework/DeclManager.h"
-#include "idlib/Lexer.h"
 #include "idlib/containers/List.h"
+#include "idlib/Lexer.h"
+#include "framework/DeclManager.h"
 
 /*
 ===============================================================================
 
-        Material
+    Material
 
 ===============================================================================
 */
@@ -64,9 +61,8 @@ typedef enum
 {
     TR_REPEAT,
     TR_CLAMP,
-    TR_CLAMP_TO_BORDER, // this should replace TR_CLAMP_TO_ZERO and
-                        // TR_CLAMP_TO_ZERO_ALPHA, but I don't want to risk
-                        // changing it right now
+    TR_CLAMP_TO_BORDER, // this should replace TR_CLAMP_TO_ZERO and TR_CLAMP_TO_ZERO_ALPHA,
+                        // but I don't want to risk changing it right now
     TR_CLAMP_TO_ZERO,   // guarantee 0,0,0,255 edge for projected textures,
     // set AFTER image format selection
     TR_CLAMP_TO_ZERO_ALPHA // guarantee 0 alpha edge for projected textures,
@@ -77,10 +73,8 @@ typedef struct
 {
     int stayTime;   // msec for no change
     int fadeTime;   // msec to fade vertex colors over
-    float start[4]; // vertex color at spawn (possibly out of 0.0 - 1.0 range,
-                    // will clamp after calc)
-    float end[4];   // vertex color at fade-out (possibly out of 0.0 - 1.0 range,
-                    // will clamp after calc)
+    float start[4]; // vertex color at spawn (possibly out of 0.0 - 1.0 range, will clamp after calc)
+    float end[4];   // vertex color at fade-out (possibly out of 0.0 - 1.0 range, will clamp after calc)
 } decalInfo_t;
 
 typedef enum
@@ -193,8 +187,7 @@ typedef struct
     int dynamicFrameCount;
 } textureStage_t;
 
-// the order BUMP / DIFFUSE / SPECULAR is necessary for interactions to draw
-// correctly on low end cards
+// the order BUMP / DIFFUSE / SPECULAR is necessary for interactions to draw correctly on low end cards
 typedef enum
 {
     SL_AMBIENT, // execute after lighting
@@ -248,8 +241,7 @@ typedef struct
 typedef enum
 {
     MC_BAD,
-    MC_OPAQUE,     // completely fills the triangle, will have black drawn on
-                   // fillDepthBuffer
+    MC_OPAQUE,     // completely fills the triangle, will have black drawn on fillDepthBuffer
     MC_PERFORATED, // may have alpha tested holes
     MC_TRANSLUCENT // blended with background
 } materialCoverage_t;
@@ -302,8 +294,7 @@ typedef enum
     MF_EDITOR_VISIBLE = BIT(6) // in use (visible) per editor
 } materialFlags_t;
 
-// contents flags, NOTE: make sure to keep the defines in doom_defs.script up to
-// date with these!
+// contents flags, NOTE: make sure to keep the defines in doom_defs.script up to date with these!
 typedef enum
 {
     CONTENTS_SOLID = BIT(0),               // an eye is never valid in a solid
@@ -371,8 +362,8 @@ typedef enum
     SURF_NOSTEPS = BIT(9),     // no footstep sounds
     SURF_DISCRETE = BIT(10),   // not clipped or merged by utilities
     SURF_NOFRAGMENT = BIT(11), // dmap won't cut surface at each bsp boundary
-    SURF_NULLNORMAL = BIT(12)  // renderbump will draw this surface as 0x80 0x80
-                               // 0x80, which won't collect light from any angle
+    SURF_NULLNORMAL = BIT(12)  // renderbump will draw this surface as 0x80 0x80 0x80, which
+                               // won't collect light from any angle
 } surfaceFlags_t;
 
 class idSoundEmitter;
@@ -418,9 +409,9 @@ class idMaterial : public idDecl
     const shaderStage_t *GetBumpStage(void) const;
 
     // returns true if the material will draw anything at all.  Triggers, portals,
-    // etc, will not have anything to draw.  A not drawn surface can still
-    // castShadow, which can be used to make a simplified shadow hull for a
-    // complex object set as noShadow
+    // etc, will not have anything to draw.  A not drawn surface can still castShadow,
+    // which can be used to make a simplified shadow hull for a complex object set
+    // as noShadow
     bool IsDrawn(void) const
     {
         return (numStages > 0 || entityGui != 0 || gui != NULL);
@@ -452,9 +443,8 @@ class idMaterial : public idDecl
         return TestMaterialFlag(MF_FORCESHADOWS) || !TestMaterialFlag(MF_NOSHADOWS);
     }
 
-    // returns true if the material will generate interactions with fog/blend
-    // lights All non-translucent surfaces receive fog unless they are explicitly
-    // noFog
+    // returns true if the material will generate interactions with fog/blend lights
+    // All non-translucent surfaces receive fog unless they are explicitly noFog
     bool ReceivesFog(void) const
     {
         return (IsDrawn() && !noFog && coverage != MC_TRANSLUCENT);
@@ -468,42 +458,42 @@ class idMaterial : public idDecl
         return numAmbientStages != numStages;
     }
 
-    // returns true if the material should generate interactions on sides facing
-    // away from light centers, as with noshadow and noselfshadow options
+    // returns true if the material should generate interactions on sides facing away
+    // from light centers, as with noshadow and noselfshadow options
     bool ReceivesLightingOnBackSides(void) const
     {
         return (materialFlags & (MF_NOSELFSHADOW | MF_NOSHADOWS)) != 0;
     }
 
-    // Standard two-sided triangle rendering won't work with bump map lighting,
-    // because the normal and tangent vectors won't be correct for the back sides.
-    // When two sided lighting is desired. typically for alpha tested surfaces,
-    // this is addressed by having CleanupModelSurfaces() create duplicates of all
-    // the triangles with apropriate order reversal.
+    // Standard two-sided triangle rendering won't work with bump map lighting, because
+    // the normal and tangent vectors won't be correct for the back sides.  When two
+    // sided lighting is desired. typically for alpha tested surfaces, this is
+    // addressed by having CleanupModelSurfaces() create duplicates of all the triangles
+    // with apropriate order reversal.
     bool ShouldCreateBackSides(void) const
     {
         return shouldCreateBackSides;
     }
 
-    // characters and models that are created by a complete renderbump can use a
-    // faster method of tangent and normal vector generation than surfaces which
-    // have a flat renderbump wrapped over them.
+    // characters and models that are created by a complete renderbump can use a faster
+    // method of tangent and normal vector generation than surfaces which have a flat
+    // renderbump wrapped over them.
     bool UseUnsmoothedTangents(void) const
     {
         return unsmoothedTangents;
     }
 
     // by default, monsters can have blood overlays placed on them, but this can
-    // be overrided on a per-material basis with the "noOverlays" material
-    // command. This will always return false for translucent surfaces
+    // be overrided on a per-material basis with the "noOverlays" material command.
+    // This will always return false for translucent surfaces
     bool AllowOverlays(void) const
     {
         return allowOverlays;
     }
 
-    // MC_OPAQUE, MC_PERFORATED, or MC_TRANSLUCENT, for interaction list linking
-    // and dmap flood filling The depth buffer will not be filled for
-    // MC_TRANSLUCENT surfaces
+    // MC_OPAQUE, MC_PERFORATED, or MC_TRANSLUCENT, for interaction list linking and
+    // dmap flood filling
+    // The depth buffer will not be filled for MC_TRANSLUCENT surfaces
     // FIXME: what do nodraw surfaces return?
     materialCoverage_t Coverage(void) const
     {
@@ -522,11 +512,10 @@ class idMaterial : public idDecl
         return gui;
     }
 
-    // a discrete surface will never be merged with other surfaces by dmap, which
-    // is necessary to prevent mutliple gui surfaces, mirrors, autosprites, and
-    // some other special effects from being combined into a single surface guis,
-    // merging sprites or other effects, mirrors and remote views are always
-    // discrete
+    // a discrete surface will never be merged with other surfaces by dmap, which is
+    // necessary to prevent mutliple gui surfaces, mirrors, autosprites, and some other
+    // special effects from being combined into a single surface
+    // guis, merging sprites or other effects, mirrors and remote views are always discrete
     bool IsDiscrete(void) const
     {
         return (entityGui || gui || deform != DFRM_NONE || (int)sort == SS_SUBVIEW ||
@@ -534,13 +523,13 @@ class idMaterial : public idDecl
     }
 
     // Normally, dmap chops each surface by every BSP boundary, then reoptimizes.
-    // For gigantic polygons like sky boxes, this can cause a huge number of
-    // planar triangles that make the optimizer take forever to turn back into a
-    // single triangle.  The "noFragment" option causes dmap to only break the
-    // polygons at area boundaries, instead of every BSP boundary.  This has the
-    // negative effect of not automatically fixing up interpenetrations, so when
-    // this is used, you should manually make the edges of your sky box exactly
-    // meet, instead of poking into each other.
+    // For gigantic polygons like sky boxes, this can cause a huge number of planar
+    // triangles that make the optimizer take forever to turn back into a single
+    // triangle.  The "noFragment" option causes dmap to only break the polygons at
+    // area boundaries, instead of every BSP boundary.  This has the negative effect
+    // of not automatically fixing up interpenetrations, so when this is used, you
+    // should manually make the edges of your sky box exactly meet, instead of poking
+    // into each other.
     bool NoFragment(void) const
     {
         return (surfaceFlags & SURF_NOFRAGMENT) != 0;
@@ -549,15 +538,13 @@ class idMaterial : public idDecl
     //------------------------------------------------------------------
     // light shader specific functions, only called for light entities
 
-    // lightshader option to fill with fog from viewer instead of light from
-    // center
+    // lightshader option to fill with fog from viewer instead of light from center
     bool IsFogLight() const
     {
         return fogLight;
     }
 
-    // perform simple blending of the projection, instead of interacting with
-    // bumps and textures
+    // perform simple blending of the projection, instead of interacting with bumps and textures
     bool IsBlendLight() const
     {
         return blendLight;
@@ -577,19 +564,18 @@ class idMaterial : public idDecl
                (!fogLight && !ambientLight && !blendLight && !TestMaterialFlag(MF_NOSHADOWS));
     }
 
-    // fog lights, blend lights, ambient lights, etc will all have to have
-    // interaction triangles generated for sides facing away from the light as
-    // well as those facing towards the light.  It is debatable if noshadow lights
-    // should effect back sides, making everything "noSelfShadow", but that would
-    // make noshadow lights potentially slower than normal lights, which detracts
-    // from their optimization ability, so they currently do not.
+    // fog lights, blend lights, ambient lights, etc will all have to have interaction
+    // triangles generated for sides facing away from the light as well as those
+    // facing towards the light.  It is debatable if noshadow lights should effect back
+    // sides, making everything "noSelfShadow", but that would make noshadow lights
+    // potentially slower than normal lights, which detracts from their optimization
+    // ability, so they currently do not.
     bool LightEffectsBackSides() const
     {
         return fogLight || ambientLight || blendLight;
     }
 
-    // NULL unless an image is explicitly specified in the shader with
-    // "lightFalloffShader <image>"
+    // NULL unless an image is explicitly specified in the shader with "lightFalloffShader <image>"
     idImage *LightFalloffImage() const
     {
         return lightFalloffImage;
@@ -597,8 +583,7 @@ class idMaterial : public idDecl
 
     //------------------------------------------------------------------
 
-    // returns the renderbump command line for this shader, or an empty string if
-    // not present
+    // returns the renderbump command line for this shader, or an empty string if not present
     const char *GetRenderBump() const
     {
         return renderBump;
@@ -760,15 +745,13 @@ class idMaterial : public idDecl
         return numRegisters;
     }
 
-    // regs should point to a float array large enough to hold GetNumRegisters()
-    // floats
+    // regs should point to a float array large enough to hold GetNumRegisters() floats
     void EvaluateRegisters(float *regs, const float entityParms[MAX_ENTITY_SHADER_PARMS], const struct viewDef_s *view,
                            idSoundEmitter *soundEmitter = NULL) const;
 
-    // if a material only uses constants (no entityParm or globalparm references),
-    // this will return a pointer to an internal table, and EvaluateRegisters will
-    // not need to be called.  If NULL is returned, EvaluateRegisters must be
-    // used.
+    // if a material only uses constants (no entityParm or globalparm references), this
+    // will return a pointer to an internal table, and EvaluateRegisters will not need
+    // to be called.  If NULL is returned, EvaluateRegisters must be used.
     const float *ConstantRegisters() const;
 
     bool SuppressInSubview() const
@@ -806,16 +789,14 @@ class idMaterial : public idDecl
     int NameToSrcBlendMode(const idStr &name);
     int NameToDstBlendMode(const idStr &name);
     void MultiplyTextureMatrix(textureStage_t *ts,
-                               int registers[2][3]); // FIXME: for some reason the
-                                                     // const is bad for gcc and Mac
+                               int registers[2][3]); // FIXME: for some reason the const is bad for gcc and Mac
     void SortInteractionStages();
     void AddImplicitStages(const textureRepeat_t trpDefault = TR_REPEAT);
     void CheckForConstantRegisters();
 
   private:
     idStr desc;       // description
-    idStr renderBump; // renderbump command options, without the "renderbump" at
-                      // the start
+    idStr renderBump; // renderbump command options, without the "renderbump" at the start
 
     idImage *lightFalloffImage;
 
@@ -859,8 +840,7 @@ class idMaterial : public idDecl
     int numRegisters; //
     float *expressionRegisters;
 
-    float *constantRegisters; // NULL if ops ever reference globalParms or
-                              // entityParms
+    float *constantRegisters; // NULL if ops ever reference globalParms or entityParms
 
     int numStages;
     int numAmbientStages;
@@ -871,10 +851,9 @@ class idMaterial : public idDecl
 
     float surfaceArea; // only for listSurfaceAreas
 
-    // we defer loading of the editor image until it is asked for, so the game
-    // doesn't load up all the invisible and uncompressed images. If editorImage
-    // is NULL, it will atempt to load editorImageName, and set editorImage to
-    // that or defaultImage
+    // we defer loading of the editor image until it is asked for, so the game doesn't load up
+    // all the invisible and uncompressed images.
+    // If editorImage is NULL, it will atempt to load editorImageName, and set editorImage to that or defaultImage
     idStr editorImageName;
     mutable idImage *editorImage; // image used for non-shaded preview
     float editorAlpha;

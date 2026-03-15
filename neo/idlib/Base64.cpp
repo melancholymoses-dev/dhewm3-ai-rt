@@ -1,5 +1,5 @@
-#include "framework/File.h"
 #include "sys/platform.h"
+#include "framework/File.h"
 
 #include "idlib/Base64.h"
 
@@ -7,8 +7,8 @@
 Copyright (c) 1996 Lars Wirzenius.  All rights reserved.
 
 June 14 2003: TTimo <ttimo@idsoftware.com>
-        modified + endian bug fixes
-        http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=197039
+    modified + endian bug fixes
+    http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=197039
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions

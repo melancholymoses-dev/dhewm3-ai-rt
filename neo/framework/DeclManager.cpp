@@ -19,19 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/containers/List.h"
+#include "idlib/containers/HashIndex.h"
+#include "idlib/hashing/MD5.h"
+#include "idlib/BitMsg.h"
+#include "framework/FileSystem.h"
 #include "framework/CVarSystem.h"
 #include "framework/DeclAF.h"
 #include "framework/DeclEntityDef.h"
@@ -40,14 +43,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "framework/DeclParticle.h"
 #include "framework/DeclSkin.h"
 #include "framework/DeclTable.h"
-#include "framework/FileSystem.h"
-#include "idlib/BitMsg.h"
-#include "idlib/containers/HashIndex.h"
-#include "idlib/containers/List.h"
-#include "idlib/hashing/MD5.h"
 #include "renderer/Material.h"
 #include "sound/sound.h"
-#include "sys/platform.h"
 
 #include "framework/DeclManager.h"
 
@@ -55,19 +52,18 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 GUIs and script remain separately parsed
 
-Following a parse, all referenced media (and other decls) will have been
-touched.
+Following a parse, all referenced media (and other decls) will have been touched.
 
 sinTable and cosTable are required for the rotate material keyword to function
 
-A new FindType on a purged decl will cause it to be reloaded, but a stale
-pointer to a purged decl will look like a defaulted decl.
+A new FindType on a purged decl will cause it to be reloaded, but a stale pointer to a purged
+decl will look like a defaulted decl.
 
-Moving a decl from one file to another will not be handled correctly by a
-reload, the material will be defaulted.
+Moving a decl from one file to another will not be handled correctly by a reload, the material
+will be defaulted.
 
 NULL or empty decl names will always return NULL
-        Should probably make a default decl for this
+    Should probably make a default decl for this
 
 Decls are initially created without a textSource
 A parse without textSource set should always just call MakeDefault()
@@ -173,10 +169,9 @@ class idDeclLocal : public idDeclBase
 
     bool parsedOutsideLevelLoad; // these decls will never be purged
     bool everReferenced;         // set to true if the decl was ever used
-    bool referencedThisLevel;    // set to true when the decl is used for the current
-                                 // level
-    bool redefinedInReload;      // used during file reloading to make sure a decl that
-                                 // has its source removed will be defaulted
+    bool referencedThisLevel;    // set to true when the decl is used for the current level
+    bool redefinedInReload;      // used during file reloading to make sure a decl that has
+                                 // its source removed will be defaulted
     idDeclLocal *nextInFile;     // next decl in the decl file
 };
 
@@ -263,10 +258,9 @@ class idDeclManagerLocal : public idDeclManager
     idList<idDeclFile *> loadedFiles;
     idHashIndex hashTables[DECL_MAX_TYPES];
     idList<idDeclLocal *> linearLists[DECL_MAX_TYPES];
-    idDeclFile implicitDecls; // this holds all the decls that were created
-                              // because explicit text definitions were not found.
-                              // Decls that became default because of a parse
-                              // error are not in this list.
+    idDeclFile implicitDecls; // this holds all the decls that were created because explicit
+                              // text definitions were not found. Decls that became default
+                              // because of a parse error are not in this list.
     int checksum;             // checksum of all loaded decl text
     int indent;               // for MediaPrint
     bool insideLevelLoad;
@@ -746,8 +740,7 @@ int idDeclFile::LoadAndParse()
             if (token.Icmp("{") == 0)
             {
 
-                // if we ever see an open brace, we somehow missed the [type] <name>
-                // prefix
+                // if we ever see an open brace, we somehow missed the [type] <name> prefix
                 src.Warning("Missing decl name");
                 src.SkipBracedSection(false);
                 continue;
@@ -775,15 +768,13 @@ int idDeclFile::LoadAndParse()
 
         if (!token.Icmp("{"))
         {
-            // if we ever see an open brace, we somehow missed the [type] <name>
-            // prefix
+            // if we ever see an open brace, we somehow missed the [type] <name> prefix
             src.Warning("Missing decl name");
             src.SkipBracedSection(false);
             continue;
         }
 
-        // FIXME: export decls are only used by the model exporter, they are skipped
-        // here for now
+        // FIXME: export decls are only used by the model exporter, they are skipped here for now
         if (identifiedType == DECL_MODELEXPORT)
         {
             src.SkipBracedSection();
@@ -1197,8 +1188,7 @@ int idDeclManagerLocal::GetChecksum(void) const
     {
         declType_t type = (declType_t)i;
 
-        // FIXME: not particularly pretty but PDAs and associated decls are
-        // localized and should not be checksummed
+        // FIXME: not particularly pretty but PDAs and associated decls are localized and should not be checksummed
         if (type == DECL_PDA || type == DECL_VIDEO || type == DECL_AUDIO || type == DECL_EMAIL)
         {
             continue;
@@ -1283,8 +1273,7 @@ const idDecl *idDeclManagerLocal::FindType(declType_t type, const char *name, bo
     if (!name || !name[0])
     {
         name = "_emptyName";
-        // common->Warning( "idDeclManager::FindType: empty %s name", GetDeclType(
-        // (int)type )->typeName.c_str() );
+        // common->Warning( "idDeclManager::FindType: empty %s name", GetDeclType( (int)type )->typeName.c_str() );
     }
 
     decl = FindTypeWithoutParsing(type, name, makeDefault);
@@ -1954,8 +1943,7 @@ void idDeclManagerLocal::TouchDecl_f(const idCmdArgs &args)
 ===================
 idDeclManagerLocal::FindTypeWithoutParsing
 
-This finds or creats the decl, but does not cause a parse.  This is only used
-internally.
+This finds or creats the decl, but does not cause a parse.  This is only used internally.
 ===================
 */
 idDeclLocal *idDeclManagerLocal::FindTypeWithoutParsing(declType_t type, const char *name, bool makeDefault)
@@ -1978,8 +1966,7 @@ idDeclLocal *idDeclManagerLocal::FindTypeWithoutParsing(declType_t type, const c
     {
         if (linearLists[typeIndex][i]->name.Icmp(canonicalName) == 0)
         {
-            // only print these when decl_show is set to 2, because it can be a lot of
-            // clutter
+            // only print these when decl_show is set to 2, because it can be a lot of clutter
             if (decl_show.GetInteger() > 1)
             {
                 MediaPrint("referencing %s %s\n", declTypes[type]->typeName.c_str(), name);
@@ -2015,7 +2002,7 @@ idDeclLocal *idDeclManagerLocal::FindTypeWithoutParsing(declType_t type, const c
 /*
 ====================================================================================
 
-        idDeclLocal
+    idDeclLocal
 
 ====================================================================================
 */
@@ -2380,8 +2367,7 @@ void idDeclLocal::MakeDefault()
     // parse
     self->Parse(defaultText, strlen(defaultText));
 
-    // we could still eventually hit the recursion if we have enough Error() calls
-    // inside Parse...
+    // we could still eventually hit the recursion if we have enough Error() calls inside Parse...
     --recursionLevel;
 }
 

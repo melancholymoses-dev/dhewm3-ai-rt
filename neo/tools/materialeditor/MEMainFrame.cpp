@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 #include "tools/edit_gui_common.h"
 
+#include "MaterialEditor.h"
 #include "MEMainFrame.h"
 #include "MaterialDef.h"
-#include "MaterialEditor.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -100,8 +97,7 @@ static UINT indicators[] = {
 };
 
 /**
- * Constructor for MEMainFrame. Initialize some member data and load the
- * options.
+ * Constructor for MEMainFrame. Initialize some member data and load the options.
  */
 MEMainFrame::MEMainFrame()
 {
@@ -145,9 +141,8 @@ BOOL MEMainFrame::PreCreateWindow(CREATESTRUCT &cs)
 }
 
 /**
- * Called by the MFC framework to allow the window to create any client windows.
- * This method creates all of the spliter windows and registers all of the views
- * with the document manager.
+ * Called by the MFC framework to allow the window to create any client windows. This method
+ * creates all of the spliter windows and registers all of the views with the document manager.
  */
 BOOL MEMainFrame::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext *pContext)
 {
@@ -334,9 +329,9 @@ void MEMainFrame::OnDestroy()
 }
 
 /**
- * Called by the MFC framework when the window size is changed. This method
- * adjusts the console view so that it is always at the bottom of the window and
- * resizes the splitter window to fit the remaining space.
+ * Called by the MFC framework when the window size is changed. This method adjusts the console view
+ * so that it is always at the bottom of the window and resizes the splitter window to fit
+ * the remaining space.
  */
 void MEMainFrame::OnSize(UINT nType, int cx, int cy)
 {
@@ -365,8 +360,8 @@ void MEMainFrame::OnSize(UINT nType, int cx, int cy)
 }
 
 /**
- * Called when the user changes the editor/console tab selection. This methods
- * shows and hides the appropriate windows.
+ * Called when the user changes the editor/console tab selection. This methods shows and hides
+ * the appropriate windows.
  */
 void MEMainFrame::OnTcnSelChange(NMHDR *pNMHDR, LRESULT *pResult)
 {
@@ -434,8 +429,7 @@ void MEMainFrame::OnFileSaveAll()
 }
 
 /**
- * Enables the save material menu item if a material is selected and has been
- * modified.
+ * Enables the save material menu item if a material is selected and has been modified.
  */
 void MEMainFrame::OnFileSaveMaterialUpdate(CCmdUI *pCmdUI)
 {
@@ -459,8 +453,7 @@ void MEMainFrame::OnFileSaveMaterialUpdate(CCmdUI *pCmdUI)
 }
 
 /**
- * Enables the Save File menu item if the current file contains a modified
- * material.
+ * Enables the Save File menu item if the current file contains a modified material.
  */
 void MEMainFrame::OnFileSaveFileUpdate(CCmdUI *pCmdUI)
 {
@@ -482,8 +475,7 @@ void MEMainFrame::OnFileSaveFileUpdate(CCmdUI *pCmdUI)
 }
 
 /**
- * Enables the Save All menu item if there are any materials that have been
- * modified.
+ * Enables the Save All menu item if there are any materials that have been modified.
  */
 void MEMainFrame::OnFileSaveAllUpdate(CCmdUI *pCmdUI)
 {
@@ -538,8 +530,7 @@ void MEMainFrame::OnApplyAll()
 }
 
 /**
- * Enables the Apply Material menu item if the current material has an apply
- * waiting.
+ * Enables the Apply Material menu item if the current material has an apply waiting.
  */
 void MEMainFrame::OnApplyMaterialUpdate(CCmdUI *pCmdUI)
 {
@@ -1042,8 +1033,8 @@ void MEMainFrame::OnReloadArbPrograms()
 }
 
 /**
- * Executes the reloadImages command to reload images that have been changed
- * outside of the editor.
+ * Executes the reloadImages command to reload images that have been changed outside
+ * of the editor.
  */
 void MEMainFrame::OnReloadImages()
 {

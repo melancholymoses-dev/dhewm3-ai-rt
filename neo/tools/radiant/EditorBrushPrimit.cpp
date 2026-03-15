@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -54,8 +51,8 @@ class idVec3D
 
 //
 // =======================================================================================================================
-//    compute a determinant using Sarrus rule ++timo "inline" this with a macro
-//    NOTE:: the three idVec3D are understood as columns of the matrix
+//    compute a determinant using Sarrus rule ++timo "inline" this with a macro NOTE:: the three idVec3D are understood
+//    as columns of the matrix
 // =======================================================================================================================
 //
 double SarrusDet(idVec3D a, idVec3D b, idVec3D c)
@@ -67,10 +64,9 @@ double SarrusDet(idVec3D a, idVec3D b, idVec3D c)
 
 //
 // =======================================================================================================================
-//    ++timo replace everywhere texX by texS etc. ( > and in q3map !) NOTE::
-//    ComputeAxisBase here and in q3map code must always BE THE SAME ! WARNING::
-//    special case behaviour of atan2(y,x) <-> atan(y/x) might not be the same
-//    everywhere when x == 0 rotation by (0,RotY,RotZ) assigns X to normal
+//    ++timo replace everywhere texX by texS etc. ( > and in q3map !) NOTE:: ComputeAxisBase here and in q3map code must
+//    always BE THE SAME ! WARNING:: special case behaviour of atan2(y,x) <-> atan(y/x) might not be the same everywhere
+//    when x == 0 rotation by (0,RotY,RotZ) assigns X to normal
 // =======================================================================================================================
 //
 void ComputeAxisBase(idVec3 &normal, idVec3D &texS, idVec3D &texT)
@@ -147,11 +143,11 @@ void FaceToBrushPrimitFace(face_t *f)
     VectorScale(proj, -f->plane[3], proj);
 
     //
-    // (0,0) in plane axis base is (0,0,0) in world coordinates + projection on
-    // the affine plane (1,0) in plane axis base is texX in world coordinates +
-    // projection on the affine plane (0,1) in plane axis base is texY in world
-    // coordinates + projection on the affine plane use old texture code to
-    // compute the ST coords of these points
+    // (0,0) in plane axis base is (0,0,0) in world coordinates + projection on the
+    // affine plane (1,0) in plane axis base is texX in world coordinates + projection
+    // on the affine plane (0,1) in plane axis base is texY in world coordinates +
+    // projection on the affine plane use old texture code to compute the ST coords of
+    // these points
     //
     VectorCopy(proj, ST[0]);
     EmitTextureCoordinates(ST[0], f->d_texture, f);
@@ -190,8 +186,8 @@ void EmitBrushPrimitTextureCoordinates(face_t *f, idWinding *w, patchMesh_t *pat
     ComputeAxisBase(f->plane.Normal(), texX, texY);
 
     //
-    // in case the texcoords matrix is empty, build a default one same behaviour
-    // as if scale[0]==0 && scale[1]==0 in old code
+    // in case the texcoords matrix is empty, build a default one same behaviour as if
+    // scale[0]==0 && scale[1]==0 in old code
     //
     if (f->brushprimit_texdef.coords[0][0] == 0 && f->brushprimit_texdef.coords[1][0] == 0 &&
         f->brushprimit_texdef.coords[0][1] == 0 && f->brushprimit_texdef.coords[1][1] == 0)
@@ -420,8 +416,8 @@ void BrushPrimit_Parse(brush_t *b, bool newFormat, const idVec3 origin)
 
 //
 // =======================================================================================================================
-//    compute a fake shift scale rot representation from the texture matrix
-//    these shift scale rot values are to be understood in the local axis base
+//    compute a fake shift scale rot representation from the texture matrix these shift scale rot values are to be
+//    understood in the local axis base
 // =======================================================================================================================
 //
 void TexMatToFakeTexCoords(float texMat[2][3], float shift[2], float *rot, float scale[2])
@@ -473,9 +469,8 @@ void TexMatToFakeTexCoords(float texMat[2][3], float shift[2], float *rot, float
 
 //
 // =======================================================================================================================
-//    compute back the texture matrix from fake shift scale rot the matrix
-//    returned must be understood as a qtexture_t with width=2 height=2 ( the
-//    default one )
+//    compute back the texture matrix from fake shift scale rot the matrix returned must be understood as a qtexture_t
+//    with width=2 height=2 ( the default one )
 // =======================================================================================================================
 //
 void FakeTexCoordsToTexMat(float shift[2], float rot, float scale[2], float texMat[2][3])
@@ -490,9 +485,8 @@ void FakeTexCoordsToTexMat(float shift[2], float rot, float scale[2], float texM
 
 //
 // =======================================================================================================================
-//    convert a texture matrix between two qtexture_t if NULL for qtexture_t,
-//    basic 2x2 texture is assumed ( straight mapping between s/t coordinates
-//    and geometric coordinates )
+//    convert a texture matrix between two qtexture_t if NULL for qtexture_t, basic 2x2 texture is assumed ( straight
+//    mapping between s/t coordinates and geometric coordinates )
 // =======================================================================================================================
 //
 void ConvertTexMatWithQTexture(float texMat1[2][3], const idMaterial *qtex1, float texMat2[2][3],
@@ -636,20 +630,17 @@ void ComputeBest2DVector(idVec3 v, idVec3 X, idVec3 Y, int &x, int &y)
 
 //
 // =======================================================================================================================
-//    in many case we know three points A,B,C in two axis base B1 and B2 and we
-//    want the matrix M so that A(B1) = T * A(B2) NOTE: 2D homogeneous space
-//    stuff NOTE: we don't do any check to see if there's a solution or we have
-//    a particular case .. need to make sure before calling NOTE: the third
-//    coord of the A,B,C point is ignored NOTE: see the commented out section to
-//    fill M and D ++timo TODO: update the other members to use this when
-//    possible
+//    in many case we know three points A,B,C in two axis base B1 and B2 and we want the matrix M so that A(B1) = T *
+//    A(B2) NOTE: 2D homogeneous space stuff NOTE: we don't do any check to see if there's a solution or we have a
+//    particular case .. need to make sure before calling NOTE: the third coord of the A,B,C point is ignored NOTE: see
+//    the commented out section to fill M and D ++timo TODO: update the other members to use this when possible
 // =======================================================================================================================
 //
 void MatrixForPoints(idVec3D M[3], idVec3D D[2], brushprimit_texdef_t *T)
 {
     //
-    // idVec3D M[3]; // columns of the matrix .. easier that way (the indexing is
-    // not standard! it's column-line .. later computations are easier that way)
+    // idVec3D M[3]; // columns of the matrix .. easier that way (the indexing is not
+    // standard! it's column-line .. later computations are easier that way)
     //
     double det;
 
@@ -688,10 +679,8 @@ void MatrixForPoints(idVec3D M[3], idVec3D D[2], brushprimit_texdef_t *T)
 
 //
 // =======================================================================================================================
-//    ++timo FIXME quick'n dirty hack, doesn't care about current texture
-//    settings (angle) can be improved .. bug #107311 mins and maxs are the face
-//    bounding box ++timo fixme: we use the face info, mins and maxs are
-//    irrelevant
+//    ++timo FIXME quick'n dirty hack, doesn't care about current texture settings (angle) can be improved .. bug
+//    #107311 mins and maxs are the face bounding box ++timo fixme: we use the face info, mins and maxs are irrelevant
 // =======================================================================================================================
 //
 void Face_FitTexture_BrushPrimit(face_t *f, idVec3 mins, idVec3 maxs, float height, float width)
@@ -706,15 +695,14 @@ void Face_FitTexture_BrushPrimit(face_t *f, idVec3 mins, idVec3 maxs, float heig
     brushprimit_texdef_t N;
     idVec3D Mf[2];
 
-    // memset(f->brushprimit_texdef.coords, 0,
-    // sizeof(f->brushprimit_texdef.coords)); f->brushprimit_texdef.coords[0][0]
-    // = 1.0f; f->brushprimit_texdef.coords[1][1] = 1.0f;
-    // ConvertTexMatWithQTexture(&f->brushprimit_texdef, NULL,
-    // &f->brushprimit_texdef, f->d_texture);
+    // memset(f->brushprimit_texdef.coords, 0, sizeof(f->brushprimit_texdef.coords));
+    // f->brushprimit_texdef.coords[0][0] = 1.0f;
+    // f->brushprimit_texdef.coords[1][1] = 1.0f;
+    // ConvertTexMatWithQTexture(&f->brushprimit_texdef, NULL, &f->brushprimit_texdef, f->d_texture);
     //
     //  we'll be working on a standardized texture size ConvertTexMatWithQTexture(
-    //  &f->brushprimit_texdef, f->d_texture, &f->brushprimit_texdef, NULL );
-    //  compute the BBox in ST coords
+    //  &f->brushprimit_texdef, f->d_texture, &f->brushprimit_texdef, NULL ); compute
+    //  the BBox in ST coords
     //
     EmitBrushPrimitTextureCoordinates(f, f->face_winding);
     BBoxSTMin[0] = BBoxSTMin[1] = BBoxSTMin[2] = 999999;
@@ -747,8 +735,8 @@ void Face_FitTexture_BrushPrimit(face_t *f, idVec3 mins, idVec3 maxs, float heig
     // (BBoxSTMax[0],BBoxSTMin[1]) (BBoxSTMin[0],BBoxSTMax[1]) in ST space the BP
     // matrix we are looking for gives (0,0) (nwidth,0) (0,nHeight) coordinates in
     // (Sfit,Tfit) space to these three points we have A(Sfit,Tfit) = (0,0) = Mf *
-    // A(TexS,TexT) = N * M * A(TexS,TexT) = N * A(S,T) so we solve the system for
-    // N and then Mf = N * M
+    // A(TexS,TexT) = N * M * A(TexS,TexT) = N * A(S,T) so we solve the system for N
+    // and then Mf = N * M
     //
     M[0][0] = BBoxSTMin[0];
     M[0][1] = BBoxSTMax[0];
@@ -849,11 +837,11 @@ void Face_RotateTexture_BrushPrimit(face_t *face, float amount, idVec3 origin)
 //
 // TEXTURE LOCKING (Relevant to the editor only?)
 // internally used for texture locking on rotation and flipping the general
-// algorithm is the same for both lockings, it's only the geometric
-// transformation part that changes so I wanted to keep it in a single function
-// if there are more linear transformations that need the locking, going to a
-// C++ or code pointer solution would be best (but right now I want to keep
-// brush_primit.cpp striclty C)
+// algorithm is the same for both lockings, it's only the geometric transformation
+// part that changes so I wanted to keep it in a single function if there are more
+// linear transformations that need the locking, going to a C++ or code pointer
+// solution would be best (but right now I want to keep brush_primit.cpp striclty
+// C)
 //
 bool txlock_bRotation;
 
@@ -879,8 +867,7 @@ void TextureLockTransformation_BrushPrimit(face_t *f)
     int j;
     // idVec3D	vRotate;				// rotation vector
 
-    idVec3D rOrig, rvecS, rvecT; // geometric transformation of (0,0) (1,0) (0,1)
-                                 // { initial plane axis base }
+    idVec3D rOrig, rvecS, rvecT; // geometric transformation of (0,0) (1,0) (0,1) { initial plane axis base }
     idVec3 rNormal;
     idVec3D rtexS, rtexT;        // axis base for the transformed plane
     idVec3D lOrig, lvecS, lvecT; // [2] are not used ( but usefull for debugging )
@@ -903,26 +890,25 @@ void TextureLockTransformation_BrushPrimit(face_t *f)
     Orig.z = vec3_origin.z;
 
     //
-    // compute coordinates of (0,0) (1,0) (0,1) ( expressed in initial plane axis
-    // base ) after transformation (0,0) (1,0) (0,1) ( expressed in initial plane
-    // axis base ) <-> (0,0,0) texS texT ( expressed world axis base ) input:
-    // Orig, texS, texT (and the global locking params) ouput: rOrig, rvecS,
-    // rvecT, rNormal
+    // compute coordinates of (0,0) (1,0) (0,1) ( expressed in initial plane axis base
+    // ) after transformation (0,0) (1,0) (0,1) ( expressed in initial plane axis base
+    // ) <-> (0,0,0) texS texT ( expressed world axis base ) input: Orig, texS, texT
+    // (and the global locking params) ouput: rOrig, rvecS, rvecT, rNormal
     //
     if (txlock_bRotation)
     {
         /*
-                        // rotation vector
-                        vRotate.x = vec3_origin.x;
-                        vRotate.y = vec3_origin.y;
-                        vRotate.z = vec3_origin.z;
-                        vRotate[txl_nAxis] = txl_fDeg;
-                        VectorRotate3Origin(Orig, vRotate, txl_vOrigin, rOrig);
-                        VectorRotate3Origin(texS, vRotate, txl_vOrigin, rvecS);
-                        VectorRotate3Origin(texT, vRotate, txl_vOrigin, rvecT);
+                // rotation vector
+                vRotate.x = vec3_origin.x;
+                vRotate.y = vec3_origin.y;
+                vRotate.z = vec3_origin.z;
+                vRotate[txl_nAxis] = txl_fDeg;
+                VectorRotate3Origin(Orig, vRotate, txl_vOrigin, rOrig);
+                VectorRotate3Origin(texS, vRotate, txl_vOrigin, rvecS);
+                VectorRotate3Origin(texT, vRotate, txl_vOrigin, rvecT);
 
-                        // compute normal of plane after rotation
-                        VectorRotate3(f->plane.Normal(), vRotate, rNormal);
+                // compute normal of plane after rotation
+                VectorRotate3(f->plane.Normal(), vRotate, rNormal);
         */
     }
     else
@@ -946,8 +932,8 @@ void TextureLockTransformation_BrushPrimit(face_t *f)
         }
 
         //
-        // we also need the axis base of the target plane, apply the transformation
-        // matrix to the normal too..
+        // we also need the axis base of the target plane, apply the transformation matrix
+        // to the normal too..
         //
         for (j = 0; j < 3; j++)
         {
@@ -958,8 +944,7 @@ void TextureLockTransformation_BrushPrimit(face_t *f)
     // compute rotated plane axis base
     ComputeAxisBase(rNormal, rtexS, rtexT);
 
-    // compute S/T coordinates of the three points in rotated axis base ( in M
-    // matrix )
+    // compute S/T coordinates of the three points in rotated axis base ( in M matrix )
     lOrig[0] = DotProduct(rOrig, rtexS);
     lOrig[1] = DotProduct(rOrig, rtexT);
     lvecS[0] = DotProduct(rvecS, rtexS);
@@ -1011,12 +996,10 @@ void RotateFaceTexture_BrushPrimit(face_t *f, int nAxis, float fDeg, idVec3 vOri
 
 //
 // =======================================================================================================================
-//    compute the new brush primit texture matrix for a transformation matrix
-//    and a flip order flag (change plane o rientation) this matches the
-//    select_matrix algo used in select.cpp this needs to be called on the face
-//    BEFORE any geometric transformation it will compute the texture matrix
-//    that will represent the same texture on the face after the geometric
-//    transformation is done
+//    compute the new brush primit texture matrix for a transformation matrix and a flip order flag (change plane o
+//    rientation) this matches the select_matrix algo used in select.cpp this needs to be called on the face BEFORE any
+//    geometric transformation it will compute the texture matrix that will represent the same texture on the face after
+//    the geometric transformation is done
 // =======================================================================================================================
 //
 void ApplyMatrix_BrushPrimit(face_t *f, idMat3 matrix, idVec3 origin)
@@ -1353,26 +1336,25 @@ void Face_SetAxialScale_BrushPrimit(face_t *face, bool y)
         Face_SetExplicitScale_BrushPrimit(face, width, 0.0);
     }
     /*
-            common->Printf("Face x: %f  y: %f  xr: %f  yr: %f\n", x, y, xRatio,
-       yRatio); common->Printf("Texture x: %i  y: %i
-       \n",face->d_texture->GetEditorImage()->uploadWidth,
+        common->Printf("Face x: %f  y: %f  xr: %f  yr: %f\n", x, y, xRatio, yRatio);
+        common->Printf("Texture x: %i  y: %i  \n",face->d_texture->GetEditorImage()->uploadWidth,
        face->d_texture->GetEditorImage()->uploadHeight);
 
-            idVec3D texS, texT;
-            ComputeAxisBase(face->plane.normal, texS, texT);
-            float	Os = 0, Ot = 0;
-            for (int i = 0; i < face->face_winding->numpoints; i++) {
-                    Os += DotProduct(face->face_winding->p[i], texS);
-                    Ot += DotProduct(face->face_winding->p[i], texT);
-            }
+        idVec3D texS, texT;
+        ComputeAxisBase(face->plane.normal, texS, texT);
+        float	Os = 0, Ot = 0;
+        for (int i = 0; i < face->face_winding->numpoints; i++) {
+            Os += DotProduct(face->face_winding->p[i], texS);
+            Ot += DotProduct(face->face_winding->p[i], texT);
+        }
 
-            common->Printf("Face2 x: %f  y: %f  \n", Os, Ot);
-            Os /= face->face_winding->numpoints;
-            Ot /= face->face_winding->numpoints;
+        common->Printf("Face2 x: %f  y: %f  \n", Os, Ot);
+        Os /= face->face_winding->numpoints;
+        Ot /= face->face_winding->numpoints;
 
 
-            //Os /= face->face_winding->numpoints;
-            //Ot /= face->face_winding->numpoints;
+        //Os /= face->face_winding->numpoints;
+        //Ot /= face->face_winding->numpoints;
 
     */
 }

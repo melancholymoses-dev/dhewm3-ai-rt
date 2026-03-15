@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,8 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include <malloc.h>
 #endif
 
-#ifdef _MSC_VER // DG: I don't care if matrix code has some unused r variable
-                // only used for assertions, shut up VS
+#ifdef _MSC_VER // DG: I don't care if matrix code has some unused r variable only used for assertions, shut up VS
 #pragma warning(push)
 #pragma warning(disable : 4189)
 #endif
@@ -94,11 +90,10 @@ class idMat2
     friend idVec2 operator*(const idVec2 &vec, const idMat2 &mat);
     friend idVec2 &operator*=(idVec2 &vec, const idMat2 &mat);
 
-    bool Compare(const idMat2 &a) const; // exact compare, no epsilon
-    bool Compare(const idMat2 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idMat2 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idMat2 &a) const;  // exact compare, no epsilon
+    bool Compare(const idMat2 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idMat2 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idMat2 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idMat2 &a) const;                   // exact compare, no epsilon
 
     void Zero(void);
     void Identity(void);
@@ -413,11 +408,10 @@ class idMat3
     friend idVec3 operator*(const idVec3 &vec, const idMat3 &mat);
     friend idVec3 &operator*=(idVec3 &vec, const idMat3 &mat);
 
-    bool Compare(const idMat3 &a) const; // exact compare, no epsilon
-    bool Compare(const idMat3 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idMat3 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idMat3 &a) const;  // exact compare, no epsilon
+    bool Compare(const idMat3 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idMat3 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idMat3 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idMat3 &a) const;                   // exact compare, no epsilon
 
     void Zero(void);
     void Identity(void);
@@ -933,11 +927,10 @@ class idMat4
     friend idVec4 &operator*=(idVec4 &vec, const idMat4 &mat);
     friend idVec3 &operator*=(idVec3 &vec, const idMat4 &mat);
 
-    bool Compare(const idMat4 &a) const; // exact compare, no epsilon
-    bool Compare(const idMat4 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idMat4 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idMat4 &a) const;  // exact compare, no epsilon
+    bool Compare(const idMat4 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idMat4 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idMat4 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idMat4 &a) const;                   // exact compare, no epsilon
 
     void Zero(void);
     void Identity(void);
@@ -1435,11 +1428,10 @@ class idMat5
     friend idVec5 operator*(const idVec5 &vec, const idMat5 &mat);
     friend idVec5 &operator*=(idVec5 &vec, const idMat5 &mat);
 
-    bool Compare(const idMat5 &a) const; // exact compare, no epsilon
-    bool Compare(const idMat5 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idMat5 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idMat5 &a) const;  // exact compare, no epsilon
+    bool Compare(const idMat5 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idMat5 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idMat5 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idMat5 &a) const;                   // exact compare, no epsilon
 
     void Zero(void);
     void Identity(void);
@@ -1885,11 +1877,10 @@ class idMat6
     friend idVec6 operator*(const idVec6 &vec, const idMat6 &mat);
     friend idVec6 &operator*=(idVec6 &vec, const idMat6 &mat);
 
-    bool Compare(const idMat6 &a) const; // exact compare, no epsilon
-    bool Compare(const idMat6 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idMat6 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idMat6 &a) const;  // exact compare, no epsilon
+    bool Compare(const idMat6 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idMat6 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idMat6 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idMat6 &a) const;                   // exact compare, no epsilon
 
     void Zero(void);
     void Identity(void);
@@ -2343,8 +2334,7 @@ ID_INLINE float *idMat6::ToFloatPtr(void)
 //
 //  The matrix lives on 16 byte aligned and 16 byte padded memory.
 //
-//	NOTE: due to the temporary memory pool idMatX cannot be used by multiple
-// threads.
+//	NOTE: due to the temporary memory pool idMatX cannot be used by multiple threads.
 //
 //===============================================================
 
@@ -2388,15 +2378,13 @@ class idMatX
     friend idVecX operator*(const idVecX &vec, const idMatX &m);
     friend idVecX &operator*=(idVecX &vec, const idMatX &m);
 
-    bool Compare(const idMatX &a) const; // exact compare, no epsilon
-    bool Compare(const idMatX &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idMatX &a) const;  // exact compare, no epsilon
-    bool operator!=(const idMatX &a) const;  // exact compare, no epsilon
+    bool Compare(const idMatX &a) const;                      // exact compare, no epsilon
+    bool Compare(const idMatX &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idMatX &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idMatX &a) const;                   // exact compare, no epsilon
 
-    void SetSize(int rows, int columns); // set the number of rows/columns
-    void ChangeSize(int rows, int columns,
-                    bool makeZero = false); // change the size keeping data intact where possible
+    void SetSize(int rows, int columns);                           // set the number of rows/columns
+    void ChangeSize(int rows, int columns, bool makeZero = false); // change the size keeping data intact where possible
     int GetNumRows(void) const
     {
         return numRows;
@@ -2404,29 +2392,27 @@ class idMatX
     int GetNumColumns(void) const
     {
         return numColumns;
-    } // get the number of columns
-    void SetData(int rows, int columns, float *data); // set float array pointer
-    void Zero(void);                                  // clear matrix
-    void Zero(int rows, int columns);                 // set size and clear matrix
-    void Identity(void);                              // clear to identity matrix
-    void Identity(int rows, int columns);             // set size and clear to identity matrix
-    void Diag(const idVecX &v);                       // create diagonal matrix from vector
-    void Random(int seed, float l = 0.0f,
-                float u = 1.0f); // fill matrix with random values
+    }                                                      // get the number of columns
+    void SetData(int rows, int columns, float *data);      // set float array pointer
+    void Zero(void);                                       // clear matrix
+    void Zero(int rows, int columns);                      // set size and clear matrix
+    void Identity(void);                                   // clear to identity matrix
+    void Identity(int rows, int columns);                  // set size and clear to identity matrix
+    void Diag(const idVecX &v);                            // create diagonal matrix from vector
+    void Random(int seed, float l = 0.0f, float u = 1.0f); // fill matrix with random values
     void Random(int rows, int columns, int seed, float l = 0.0f, float u = 1.0f);
-    void Negate(void);                       // (*this) = - (*this)
-    void Clamp(float min, float max);        // clamp all values
-    idMatX &SwapRows(int r1, int r2);        // swap rows
-    idMatX &SwapColumns(int r1, int r2);     // swap columns
-    idMatX &SwapRowsColumns(int r1, int r2); // swap rows and columns
-    idMatX &RemoveRow(int r);                // remove a row
-    idMatX &RemoveColumn(int r);             // remove a column
-    idMatX &RemoveRowColumn(int r);          // remove a row and column
-    void ClearUpperTriangle(void);           // clear the upper triangle
-    void ClearLowerTriangle(void);           // clear the lower triangle
-    void SquareSubMatrix(const idMatX &m,
-                         int size);             // get square sub-matrix from 0,0 to size,size
-    float MaxDifference(const idMatX &m) const; // return maximum element difference between this and m
+    void Negate(void);                               // (*this) = - (*this)
+    void Clamp(float min, float max);                // clamp all values
+    idMatX &SwapRows(int r1, int r2);                // swap rows
+    idMatX &SwapColumns(int r1, int r2);             // swap columns
+    idMatX &SwapRowsColumns(int r1, int r2);         // swap rows and columns
+    idMatX &RemoveRow(int r);                        // remove a row
+    idMatX &RemoveColumn(int r);                     // remove a column
+    idMatX &RemoveRowColumn(int r);                  // remove a row and column
+    void ClearUpperTriangle(void);                   // clear the upper triangle
+    void ClearLowerTriangle(void);                   // clear the lower triangle
+    void SquareSubMatrix(const idMatX &m, int size); // get square sub-matrix from 0,0 to size,size
+    float MaxDifference(const idMatX &m) const;      // return maximum element difference between this and m
 
     bool IsSquare(void) const
     {
@@ -2464,19 +2450,15 @@ class idMatX
     idMatX Multiply(const idMatX &a) const;          // (*this) * a
     idMatX TransposeMultiply(const idMatX &a) const; // this->Transpose() * a
 
-    void Multiply(idVecX &dst, const idVecX &vec) const; // dst = (*this) * vec
-    void MultiplyAdd(idVecX &dst,
-                     const idVecX &vec) const; // dst += (*this) * vec
-    void MultiplySub(idVecX &dst,
-                     const idVecX &vec) const; // dst -= (*this) * vec
-    void TransposeMultiply(idVecX &dst,
-                           const idVecX &vec) const;                 // dst = this->Transpose() * vec
+    void Multiply(idVecX &dst, const idVecX &vec) const;             // dst = (*this) * vec
+    void MultiplyAdd(idVecX &dst, const idVecX &vec) const;          // dst += (*this) * vec
+    void MultiplySub(idVecX &dst, const idVecX &vec) const;          // dst -= (*this) * vec
+    void TransposeMultiply(idVecX &dst, const idVecX &vec) const;    // dst = this->Transpose() * vec
     void TransposeMultiplyAdd(idVecX &dst, const idVecX &vec) const; // dst += this->Transpose() * vec
     void TransposeMultiplySub(idVecX &dst, const idVecX &vec) const; // dst -= this->Transpose() * vec
 
-    void Multiply(idMatX &dst, const idMatX &a) const; // dst = (*this) * a
-    void TransposeMultiply(idMatX &dst,
-                           const idMatX &a) const; // dst = this->Transpose() * a
+    void Multiply(idMatX &dst, const idMatX &a) const;          // dst = (*this) * a
+    void TransposeMultiply(idMatX &dst, const idMatX &a) const; // dst = this->Transpose() * a
 
     int GetDimension(void) const; // returns total number of values in matrix
 
@@ -2524,8 +2506,7 @@ class idMatX
     void QR_UnpackFactors(idMatX &Q, idMatX &R, const idVecX &c, const idVecX &d) const;
     void QR_MultiplyFactors(idMatX &m, const idVecX &c, const idVecX &d) const;
 
-    bool SVD_Factor(idVecX &w,
-                    idMatX &V); // factor in-place: U * Diag(w) * V.Transpose()
+    bool SVD_Factor(idVecX &w, idMatX &V); // factor in-place: U * Diag(w) * V.Transpose()
     void SVD_Solve(idVecX &x, const idVecX &b, const idVecX &w, const idMatX &V) const;
     void SVD_Inverse(idMatX &inv, const idVecX &w, const idMatX &V) const;
     void SVD_MultiplyFactors(idMatX &m, const idVecX &w, const idMatX &V) const;
@@ -2564,8 +2545,7 @@ class idMatX
   private:
     int numRows;    // number of rows
     int numColumns; // number of columns
-    int alloced;    // floats allocated, if -1 then mat points to data set with
-                    // SetData
+    int alloced;    // floats allocated, if -1 then mat points to data set with SetData
     float *mat;     // memory the matrix is stored
 
     static float temp[MATX_MAX_TEMP + 4]; // used to store intermediate results
@@ -3163,8 +3143,7 @@ ID_INLINE bool idMatX::IsIdentity(const float epsilon) const
 
 ID_INLINE bool idMatX::IsDiagonal(const float epsilon) const
 {
-    // returns true if all elements are zero except for the elements on the
-    // diagonal
+    // returns true if all elements are zero except for the elements on the diagonal
     assert(numRows == numColumns);
     for (int i = 0; i < numRows; i++)
     {
@@ -3181,8 +3160,7 @@ ID_INLINE bool idMatX::IsDiagonal(const float epsilon) const
 
 ID_INLINE bool idMatX::IsTriDiagonal(const float epsilon) const
 {
-    // returns true if all elements are zero except for the elements on the
-    // diagonal plus or minus one column
+    // returns true if all elements are zero except for the elements on the diagonal plus or minus one column
 
     if (numRows != numColumns)
     {

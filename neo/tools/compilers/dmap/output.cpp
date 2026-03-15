@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -278,8 +275,7 @@ static void CleanupUTriangles(srfTriangles_t *tri)
 
     R_RangeCheckIndexes(tri);
     R_CreateSilIndexes(tri);
-    //	R_RemoveDuplicatedTriangles( tri );	// this may remove valid
-    // overlapped transparent triangles
+    //	R_RemoveDuplicatedTriangles( tri );	// this may remove valid overlapped transparent triangles
     R_RemoveDegenerateTriangles(tri);
     //	R_RemoveUnusedVerts( tri );
 
@@ -362,10 +358,10 @@ static void WriteShadowTriangles(const srfTriangles_t *tri)
     int i;
 
     // emit this chain
-    procFile->WriteFloatString("/* numVerts = */ %i /* noCaps = */ %i /* noFrontCaps = */ %i /* "
-                               "numIndexes = */ %i /* planeBits = */ %i\n",
-                               tri->numVerts, tri->numShadowIndexesNoCaps, tri->numShadowIndexesNoFrontCaps,
-                               tri->numIndexes, tri->shadowCapPlaneBits);
+    procFile->WriteFloatString(
+        "/* numVerts = */ %i /* noCaps = */ %i /* noFrontCaps = */ %i /* numIndexes = */ %i /* planeBits = */ %i\n",
+        tri->numVerts, tri->numShadowIndexesNoCaps, tri->numShadowIndexesNoFrontCaps, tri->numIndexes,
+        tri->shadowCapPlaneBits);
 
     // verts
     col = 0;
@@ -481,8 +477,8 @@ static void WriteOutputSurfaces(int entityNum, int areaNum)
         // combine all groups compatible with this one
         // usually several optimizeGroup_t can be combined into a single
         // surface, even though they couldn't be merged together to save
-        // vertexes because they had different planes, texture coordinates, or
-        // lights. Different mergeGroups will stay in separate surfaces.
+        // vertexes because they had different planes, texture coordinates, or lights.
+        // Different mergeGroups will stay in separate surfaces.
         ambient = NULL;
 
         // each light that illuminates any of the groups in the surface will
@@ -654,8 +650,8 @@ static void WriteOutputPortals(uEntity_t *e)
 
     procFile->WriteFloatString("interAreaPortals { /* numAreas = */ %i /* numIAP = */ %i\n\n", e->numAreas,
                                numInterAreaPortals);
-    procFile->WriteFloatString("/* interAreaPortal format is: numPoints positiveSideArea "
-                               "negativeSideArea ( point) ... */\n");
+    procFile->WriteFloatString(
+        "/* interAreaPortal format is: numPoints positiveSideArea negativeSideArea ( point) ... */\n");
     for (i = 0; i < numInterAreaPortals; i++)
     {
         iap = &interAreaPortals[i];

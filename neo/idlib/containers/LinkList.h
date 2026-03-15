@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -124,8 +121,7 @@ template <class type> bool idLinkList<type>::IsListEmpty(void) const
 ================
 idLinkList<type>::InList
 
-Returns true if the node is in a list.  If called on the head of a list, will
-always return false.
+Returns true if the node is in a list.  If called on the head of a list, will always return false.
 ================
 */
 template <class type> bool idLinkList<type>::InList(void) const
@@ -158,8 +154,7 @@ template <class type> int idLinkList<type>::Num(void) const
 ================
 idLinkList<type>::Clear
 
-If node is the head of the list, clears the list.  Otherwise it just removes the
-node from the list.
+If node is the head of the list, clears the list.  Otherwise it just removes the node from the list.
 ================
 */
 template <class type> void idLinkList<type>::Clear(void)
@@ -198,8 +193,8 @@ template <class type> void idLinkList<type>::Remove(void)
 ================
 idLinkList<type>::InsertBefore
 
-Places the node before the existing node in the list.  If the existing node is
-the head, then the new node is placed at the end of the list.
+Places the node before the existing node in the list.  If the existing node is the head,
+then the new node is placed at the end of the list.
 ================
 */
 template <class type> void idLinkList<type>::InsertBefore(idLinkList &node)
@@ -217,8 +212,8 @@ template <class type> void idLinkList<type>::InsertBefore(idLinkList &node)
 ================
 idLinkList<type>::InsertAfter
 
-Places the node after the existing node in the list.  If the existing node is
-the head, then the new node is placed at the beginning of the list.
+Places the node after the existing node in the list.  If the existing node is the head,
+then the new node is placed at the beginning of the list.
 ================
 */
 template <class type> void idLinkList<type>::InsertAfter(idLinkList &node)

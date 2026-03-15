@@ -19,42 +19,39 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #if MACOS_X
-#include <mach/mach_time.h>
 #include <stdlib.h>
-#include <sys/resource.h>
-#include <sys/time.h>
 #include <unistd.h> // this is for sleep()
+#include <sys/time.h>
+#include <sys/resource.h>
+#include <mach/mach_time.h>
 #endif
 
-#include "framework/Common.h"
-#include "idlib/Lib.h"
-#include "idlib/bv/Bounds.h"
+#include "sys/platform.h"
 #include "idlib/geometry/DrawVert.h"
 #include "idlib/geometry/JointTransform.h"
-#include "idlib/math/Plane.h"
-#include "idlib/math/Simd_3DNow.h"
-#include "idlib/math/Simd_AltiVec.h"
 #include "idlib/math/Simd_Generic.h"
 #include "idlib/math/Simd_MMX.h"
+#include "idlib/math/Simd_3DNow.h"
 #include "idlib/math/Simd_SSE.h"
 #include "idlib/math/Simd_SSE2.h"
 #include "idlib/math/Simd_SSE3.h"
+#include "idlib/math/Simd_AltiVec.h"
+#include "idlib/math/Plane.h"
+#include "idlib/bv/Bounds.h"
+#include "idlib/Lib.h"
+#include "framework/Common.h"
 #include "renderer/Model.h"
-#include "sys/platform.h"
 
 #include "idlib/math/Simd.h"
 

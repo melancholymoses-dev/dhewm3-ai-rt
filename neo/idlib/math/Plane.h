@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,13 +32,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __MATH_PLANE_H__
 #define __MATH_PLANE_H__
 
-#include "idlib/math/Matrix.h"
 #include "idlib/math/Vector.h"
+#include "idlib/math/Matrix.h"
 
 /*
 ===============================================================================
 
-        3D plane with equation: a * x + b * y + c * z + d = 0
+    3D plane with equation: a * x + b * y + c * z + d = 0
 
 ===============================================================================
 */
@@ -91,13 +88,11 @@ class idPlane
     idPlane operator-(const idPlane &p) const; // subtract plane equations
     idPlane &operator*=(const idMat3 &m);      // Normal() *= m
 
-    bool Compare(const idPlane &p) const; // exact compare, no epsilon
-    bool Compare(const idPlane &p,
-                 const float epsilon) const; // compare with epsilon
-    bool Compare(const idPlane &p, const float normalEps,
-                 const float distEps) const; // compare with epsilon
-    bool operator==(const idPlane &p) const; // exact compare, no epsilon
-    bool operator!=(const idPlane &p) const; // exact compare, no epsilon
+    bool Compare(const idPlane &p) const;                                             // exact compare, no epsilon
+    bool Compare(const idPlane &p, const float epsilon) const;                        // compare with epsilon
+    bool Compare(const idPlane &p, const float normalEps, const float distEps) const; // compare with epsilon
+    bool operator==(const idPlane &p) const;                                          // exact compare, no epsilon
+    bool operator!=(const idPlane &p) const;                                          // exact compare, no epsilon
 
     void Zero(void);                            // zero plane
     void SetNormal(const idVec3 &normal);       // sets the normal

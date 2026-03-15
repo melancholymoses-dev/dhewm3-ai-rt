@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/FileSystem.h"
 #include "framework/Session.h"
-#include "sys/platform.h"
 
-#include "tools/compilers/roqvq/codec.h"
 #include "tools/compilers/roqvq/roq.h"
+#include "tools/compilers/roqvq/codec.h"
 
 roq *theRoQ; // current roq file
 
@@ -882,10 +879,10 @@ void roq::LoadAndDisplayImage(const char *filename)
     numQuadCels = ((image->pixelsWide() & 0xfff0) * (image->pixelsHigh() & 0xfff0)) / (MINSIZE * MINSIZE);
     numQuadCels += numQuadCels / 4 + numQuadCels / 16;
 
-    //	if (paramFile->deltaFrames] == true && cleared == false && [image
-    // isPlanar] == false) { 		cleared = true; 		imageData = [image data]; 		memset(
-    // imageData, 0, image->pixelsWide()*image->pixelsHigh()*[image
-    // samplesPerPixel]);
+    //	if (paramFile->deltaFrames] == true && cleared == false && [image isPlanar] == false) {
+    //		cleared = true;
+    //		imageData = [image data];
+    //		memset( imageData, 0, image->pixelsWide()*image->pixelsHigh()*[image samplesPerPixel]);
     //	}
 
     if (!quietMode)

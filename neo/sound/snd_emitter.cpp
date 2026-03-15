@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Session.h"
 #include "renderer/RenderWorld.h"
-#include "sys/platform.h"
 
 #include "sound/snd_local.h"
 
@@ -261,9 +258,8 @@ void idSoundChannel::ALStop(void)
     {
         alSourceStop(openalSource);
         alSourcei(openalSource, AL_BUFFER, 0);
-        // unassociate effect slot from source, so the effect slot can be deleted on
-        // shutdown even though the source itself is deleted later (in
-        // idSoundSystemLocal::Shutdown())
+        // unassociate effect slot from source, so the effect slot can be deleted on shutdown
+        // even though the source itself is deleted later (in idSoundSystemLocal::Shutdown())
         alSource3i(openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL);
         soundSystemLocal.FreeOpenALSource(openalSource);
     }
@@ -293,9 +289,9 @@ void idSoundChannel::ALStop(void)
 ===================
 idSoundChannel::GatherChannelSamples
 
-Will always return 44kHz samples for the given range, even if it deeply looped
-or out of the range of the unlooped samples.  Handles looping between multiple
-different samples and leadins
+Will always return 44kHz samples for the given range, even if it deeply looped or
+out of the range of the unlooped samples.  Handles looping between multiple different
+samples and leadins
 ===================
 */
 void idSoundChannel::GatherChannelSamples(int sampleOffset44k, int sampleCount44k, float *dest) const
@@ -303,9 +299,8 @@ void idSoundChannel::GatherChannelSamples(int sampleOffset44k, int sampleCount44
     float *dest_p = dest;
     int len;
 
-    // Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Sys_Milliseconds(),
-    // soundSystemLocal.GetCurrent44kHzTime(), sampleOffset44k, sampleCount44k );
-    // //!@#
+    // Sys_DebugPrintf( "msec:%i sample:%i : %i : %i\n", Sys_Milliseconds(), soundSystemLocal.GetCurrent44kHzTime(),
+    // sampleOffset44k, sampleCount44k );	//!@#
 
     // negative offset times will just zero fill
     if (sampleOffset44k < 0)
@@ -498,8 +493,8 @@ void idSoundEmitterLocal::OverrideParms(const soundShaderParms_t *base, const so
 ==================
 idSoundEmitterLocal::CheckForCompletion
 
-Checks to see if all the channels have completed, clearing the playing flag if
-necessary. Sets the playing and shakes bools.
+Checks to see if all the channels have completed, clearing the playing flag if necessary.
+Sets the playing and shakes bools.
 ==================
 */
 void idSoundEmitterLocal::CheckForCompletion(int current44kHzTime)
@@ -581,8 +576,7 @@ void idSoundEmitterLocal::CheckForCompletion(int current44kHzTime)
         }
     }
 
-    // mark the entire sound emitter as non-playing if there aren't any active
-    // channels
+    // mark the entire sound emitter as non-playing if there aren't any active channels
     if (!hasActive)
     {
         playing = false;
@@ -598,8 +592,7 @@ void idSoundEmitterLocal::CheckForCompletion(int current44kHzTime)
 ===================
 idSoundEmitterLocal::Spatialize
 
-Called once each sound frame by the main thread from
-idSoundWorldLocal::PlaceOrigin
+Called once each sound frame by the main thread from idSoundWorldLocal::PlaceOrigin
 ===================
 */
 void idSoundEmitterLocal::Spatialize(idVec3 listenerPos, int listenerArea, idRenderWorld *rw)
@@ -640,8 +633,7 @@ void idSoundEmitterLocal::Spatialize(idVec3 listenerPos, int listenerArea, idRen
     }
 
     //
-    // work out virtual origin and distance, which may be from a portal instead of
-    // the actual origin
+    // work out virtual origin and distance, which may be from a portal instead of the actual origin
     //
     distance = maxDistance * METERS_TO_DOOM;
     if (listenerArea == -1)
@@ -793,8 +785,7 @@ int idSoundEmitterLocal::StartSound(const idSoundShader *shader, const s_channel
         soundWorld->writeDemo->WriteInt(soundShaderFlags);
     }
 
-    // build the channel parameters by taking the shader parms and optionally
-    // overriding
+    // build the channel parameters by taking the shader parms and optionally overriding
     soundShaderParms_t chanParms;
 
     chanParms = shader->parms;
@@ -962,8 +953,7 @@ int idSoundEmitterLocal::StartSound(const idSoundShader *shader, const s_channel
         chan->leadinSample->Load();
         int end = Sys_Milliseconds();
         session->TimeHitch(end - start);
-        // recalculate start44kHz, because loading may have taken a fair amount of
-        // time
+        // recalculate start44kHz, because loading may have taken a fair amount of time
         if (!soundWorld->fpa[0])
         {
             start44kHz = soundSystemLocal.GetCurrent44kHzTime() + MIXBUFFER_SAMPLES;
@@ -1012,8 +1002,8 @@ int idSoundEmitterLocal::StartSound(const idSoundShader *shader, const s_channel
         length /= 2; // stereo samples
     }
 
-    // adjust the start time based on diversity for looping sounds, so they don't
-    // all start at the same point
+    // adjust the start time based on diversity for looping sounds, so they don't all start
+    // at the same point
     if (chan->parms.soundShaderFlags & SSF_LOOPING && !chan->leadinSample->LengthIn44kHzSamples())
     {
         chan->trigger44kHzTime -= diversity * length;
@@ -1352,8 +1342,7 @@ idSlowChannel::Reset
 */
 void idSlowChannel::Reset()
 {
-    // DG: memset() on this is problematic, because lowpass (SoundFX_LowpassFast)
-    // has a vtable
+    // DG: memset() on this is problematic, because lowpass (SoundFX_LowpassFast) has a vtable
     // memset( this, 0, sizeof( *this ) );
     active = false;
     chan = NULL;

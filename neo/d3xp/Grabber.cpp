@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,11 +33,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "sys/platform.h"
 
-#include "Misc.h"
-#include "Moveable.h"
-#include "Player.h"
-#include "ai/AI.h"
 #include "gamesys/SysCvar.h"
+#include "ai/AI.h"
+#include "Player.h"
+#include "Moveable.h"
+#include "Misc.h"
 
 #include "Grabber.h"
 
@@ -56,7 +53,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Allows entities to be dragged through the world with physics.
+    Allows entities to be dragged through the world with physics.
 
 ===============================================================================
 */
@@ -278,8 +275,7 @@ void idGrabber::StartDrag(idEntity *grabEnt, int id)
 
         p->CatchProjectile(thePlayer, "_catch");
 
-        // Make the projectile non-solid to other projectiles/enemies (special hack
-        // for helltime hunter)
+        // Make the projectile non-solid to other projectiles/enemies (special hack for helltime hunter)
         if (!idStr::Cmp(grabEnt->GetEntityDefName(), "projectile_helltime_killer"))
         {
             savedContents = CONTENTS_PROJECTILE;
@@ -710,8 +706,7 @@ int idGrabber::Update(idPlayer *player, bool hide)
         // Some kind of effect from gun to object?
         UpdateBeams();
 
-        // If the object is stuck away from its intended position for more than
-        // 500ms, let it go.
+        // If the object is stuck away from its intended position for more than 500ms, let it go.
         if (drag.GetDistanceToGoal() > DRAG_FAIL_LEN)
         {
             if (dragFailTime < (gameLocal.slow.time - 500))

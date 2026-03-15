@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __AASFILE_H__
 #define __AASFILE_H__
 
-#include "idlib/Dict.h"
-#include "idlib/bv/Bounds.h"
 #include "idlib/containers/PlaneSet.h"
+#include "idlib/bv/Bounds.h"
+#include "idlib/Dict.h"
 
 /*
 ===============================================================================
 
-        AAS File
+    AAS File
 
 ===============================================================================
 */
@@ -103,19 +100,19 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 class idReachability
 {
   public:
-    int travelType;                  // type of travel required to get to the area
-    short toAreaNum;                 // number of the reachable area
-    short fromAreaNum;               // number of area the reachability starts
-    idVec3 start;                    // start point of inter area movement
-    idVec3 end;                      // end point of inter area movement
-    int edgeNum;                     // edge crossed by this reachability
-    unsigned short travelTime;       // travel time of the inter area movement
-    byte number;                     // reachability number within the fromAreaNum (must be < 256)
-    byte disableCount;               // number of times this reachability has been disabled
-    idReachability *next;            // next reachability in list
-    idReachability *rev_next;        // next reachability in reversed list
-    unsigned short *areaTravelTimes; // travel times within the fromAreaNum from
-                                     // reachabilities that lead towards this area
+    int travelType;            // type of travel required to get to the area
+    short toAreaNum;           // number of the reachable area
+    short fromAreaNum;         // number of area the reachability starts
+    idVec3 start;              // start point of inter area movement
+    idVec3 end;                // end point of inter area movement
+    int edgeNum;               // edge crossed by this reachability
+    unsigned short travelTime; // travel time of the inter area movement
+    byte number;               // reachability number within the fromAreaNum (must be < 256)
+    byte disableCount;         // number of times this reachability has been disabled
+    idReachability *next;      // next reachability in list
+    idReachability *rev_next;  // next reachability in reversed list
+    unsigned short
+        *areaTravelTimes; // travel times within the fromAreaNum from reachabilities that lead towards this area
   public:
     void CopyBase(idReachability &reach);
 };
@@ -176,8 +173,7 @@ typedef struct aasFace_s
 typedef struct aasArea_s
 {
     int numFaces;              // number of faces used for the boundary of the area
-    int firstFace;             // first face in the face index used for the boundary of the
-                               // area
+    int firstFace;             // first face in the face index used for the boundary of the area
     idBounds bounds;           // bounds of the area
     idVec3 center;             // center of the area an AI can move towards
     unsigned short flags;      // several area flags
@@ -201,8 +197,7 @@ typedef struct aasPortal_s
 {
     short areaNum;                    // number of the area that is the actual portal
     short clusters[2];                // number of cluster at the front and back of the portal
-    short clusterAreaNum[2];          // number of this portal area in the front and back
-                                      // cluster
+    short clusterAreaNum[2];          // number of this portal area in the front and back cluster
     unsigned short maxAreaTravelTime; // maximum travel time through the portal area
 } aasPortal_t;
 
@@ -293,16 +288,16 @@ class idAASSettings
 
 -	when a node child is a solid leaf the node child number is zero
 -	two adjacent areas (sharing a plane at opposite sides) share a face
-        this face is a portal between the areas
+    this face is a portal between the areas
 -	when an area uses a face from the faceindex with a positive index
-        then the face plane normal points into the area
+    then the face plane normal points into the area
 -	the face edges are stored counter clockwise using the edgeindex
 -	two adjacent convex areas (sharing a face) only share One face
-        this is a simple result of the areas being convex
+    this is a simple result of the areas being convex
 -	the areas can't have a mixture of ground and gap faces
-        other mixtures of faces in one area are allowed
+    other mixtures of faces in one area are allowed
 -	areas with the AREACONTENTS_CLUSTERPORTAL in the settings have
-        the cluster number set to the negative portal number
+    the cluster number set to the negative portal number
 -	edge zero is a dummy
 -	face zero is a dummy
 -	area zero is a dummy

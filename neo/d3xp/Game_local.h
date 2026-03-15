@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,19 +34,19 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "GameBase.h"
 
-#include "framework/Game.h"
-#include "idlib/BitMsg.h"
-#include "idlib/containers/LinkList.h"
 #include "idlib/containers/StrList.h"
+#include "idlib/containers/LinkList.h"
+#include "idlib/BitMsg.h"
+#include "framework/Game.h"
 
-#include "MultiplayerGame.h"
-#include "Pvs.h"
-#include "ai/AAS.h"
-#include "anim/Anim.h"
 #include "gamesys/SaveGame.h"
 #include "physics/Clip.h"
 #include "physics/Push.h"
 #include "script/Script_Program.h"
+#include "ai/AAS.h"
+#include "anim/Anim.h"
+#include "Pvs.h"
+#include "MultiplayerGame.h"
 
 #ifdef ID_DEBUG_UNINITIALIZED_MEMORY
 // This is real evil but allows the code to inspect arbitrary class variables.
@@ -60,7 +57,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Local implementation of the public game interface.
+    Local implementation of the public game interface.
 
 ===============================================================================
 */
@@ -98,7 +95,7 @@ extern const int NUM_RENDER_PORTAL_BITS;
 /*
 ===============================================================================
 
-        Local implementation of the public game interface.
+    Local implementation of the public game interface.
 
 ===============================================================================
 */
@@ -320,16 +317,13 @@ class idGameLocal : public idGame
     idWorldspawn *world;                  // world entity
     idLinkList<idEntity> spawnedEntities; // all spawned entities
     idLinkList<idEntity> activeEntities;  // all thinking entities (idEntity::thinkFlags != 0)
-    int numEntitiesToDeactivate;          // number of entities that became inactive in
-                                          // current frame
-    bool sortPushers;                     // true if active lists needs to be reordered to place
-                                          // pushers at the front
-    bool sortTeamMasters;                 // true if active lists needs to be reordered to place
-                                          // physics team masters before their slaves
-    idDict persistentLevelInfo;           // contains args that are kept around between levels
+    int numEntitiesToDeactivate;          // number of entities that became inactive in current frame
+    bool sortPushers;                     // true if active lists needs to be reordered to place pushers at the front
+    bool
+        sortTeamMasters; // true if active lists needs to be reordered to place physics team masters before their slaves
+    idDict persistentLevelInfo; // contains args that are kept around between levels
 
-    // can be used to automatically effect every material in the world that
-    // references globalParms
+    // can be used to automatically effect every material in the world that references globalParms
     float globalShaderParms[MAX_GLOBAL_SHADER_PARMS];
 
     idRandom random; // random number generator used throughout the game
@@ -344,23 +338,19 @@ class idGameLocal : public idGame
     idTestModel *testmodel; // for development testing of models
     idEntityFx *testFx;     // for development testing of fx
 
-    idStr sessionCommand; // a target_sessionCommand can set this to return
-                          // something to the session
+    idStr sessionCommand; // a target_sessionCommand can set this to return something to the session
 
     idMultiplayerGame mpGame; // handles rules for standard dm
 
     idSmokeParticles *smokeParticles; // global smoke trails
     idEditEntities *editEntities;     // in game editing
 
-    int cinematicSkipTime;    // don't allow skipping cinemetics until this time has
-                              // passed so player doesn't skip out accidently from a
-                              // firefight
-    int cinematicStopTime;    // cinematics have several camera changes, so keep
-                              // track of when we stop them so that we don't reset
-                              // cinematicSkipTime unnecessarily
-    int cinematicMaxSkipTime; // time to end cinematic when skipping.  there's a
-                              // possibility of an infinite loop if the map isn't
-                              // set up right.
+    int cinematicSkipTime;    // don't allow skipping cinemetics until this time has passed so player doesn't skip out
+                              // accidently from a firefight
+    int cinematicStopTime;    // cinematics have several camera changes, so keep track of when we stop them so that we
+                              // don't reset cinematicSkipTime unnecessarily
+    int cinematicMaxSkipTime; // time to end cinematic when skipping.  there's a possibility of an infinite loop if the
+                              // map isn't set up right.
     bool inCinematic;         // game is playing cinematic (player controls frozen)
     bool skipCinematic;
 
@@ -376,14 +366,12 @@ class idGameLocal : public idGame
     bool isMultiplayer;                    // set if the game is run in multiplayer mode
     bool isServer;                         // set if the game is run for a dedicated or listen server
     bool isClient;                         // set if the game is run for a client
-                                           // discriminates between the RunFrame path and the
-                                           // ClientPrediction path NOTE: on a listen server, isClient is
-                                           // false
+                                           // discriminates between the RunFrame path and the ClientPrediction path
+                                           // NOTE: on a listen server, isClient is false
     int localClientNum;                    // number of the local client. MP: -1 on a dedicated
     idLinkList<idEntity> snapshotEntities; // entities from the last snapshot
     int realClientTime;                    // real client time
-    bool isNewFrame;                       // true if this is a new game frame, not a rerun due to
-                                           // prediction
+    bool isNewFrame;                       // true if this is a new game frame, not a rerun due to prediction
     float clientSmoothing;                 // smoothing of other clients in the view
     int entityDefBits;                     // bits required to store an entity def number
 
@@ -538,8 +526,8 @@ class idGameLocal : public idGame
     bool RemoveEntityFromHash(const char *name, idEntity *ent);
     int GetTargets(const idDict &args, idList<idEntityPtr<idEntity>> &list, const char *ref) const;
 
-    // returns the master entity of a trace.  for example, if the trace entity is
-    // the player's head, it will return the player.
+    // returns the master entity of a trace.  for example, if the trace entity is the player's head, it will return the
+    // player.
     idEntity *GetTraceEntity(const trace_t &trace) const;
 
     static void ArgCompletion_EntityName(const idCmdArgs &args, void (*callback)(const char *s));
@@ -629,15 +617,13 @@ class idGameLocal : public idGame
     idEntityPtr<idActor> lastAIAlertEntity;
     int lastAIAlertTime;
 
-    idDict spawnArgs; // spawn args used during entity spawning  FIXME: shouldn't
-                      // be necessary anymore
+    idDict spawnArgs; // spawn args used during entity spawning  FIXME: shouldn't be necessary anymore
 
     pvsHandle_t playerPVS;            // merged pvs of all players
     pvsHandle_t playerConnectedAreas; // all areas connected to any player area
 
     idVec3 gravity;        // global gravity vector
-    gameState_t gamestate; // keeps track of whether we're spawning, shutting
-                           // down, or normal gameplay
+    gameState_t gamestate; // keeps track of whether we're spawning, shutting down, or normal gameplay
     bool influenceActive;  // true when a phantasm is happening
     int nextGibTime;
 
@@ -669,8 +655,7 @@ class idGameLocal : public idGame
     byte lagometer[LAGO_IMG_HEIGHT][LAGO_IMG_WIDTH][4];
 
     void Clear(void);
-    // returns true if the entity shouldn't be spawned at all in this game type or
-    // difficulty level
+    // returns true if the entity shouldn't be spawned at all in this game type or difficulty level
     bool InhibitEntitySpawn(idDict &spawnArgs);
     // spawn entities from the map file
     void SpawnMapEntities(void);
@@ -763,8 +748,7 @@ template <class type> ID_INLINE idEntityPtr<type> &idEntityPtr<type>::operator=(
 template <class type> ID_INLINE bool idEntityPtr<type>::SetSpawnId(int id)
 {
     // the reason for this first check is unclear:
-    // the function returning false may mean the spawnId is already set right, or
-    // the entity is missing
+    // the function returning false may mean the spawnId is already set right, or the entity is missing
     if (id == spawnId)
     {
         return false;
@@ -801,8 +785,7 @@ template <class type> ID_INLINE int idEntityPtr<type>::GetEntityNum(void) const
 
 //
 // these defines work for all startsounds from all entity types
-// make sure to change script/doom_defs.script if you add any channels, or
-// change their order
+// make sure to change script/doom_defs.script if you add any channels, or change their order
 //
 typedef enum
 {

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -111,8 +108,7 @@ void ToggleListView::SetToggleIcons(LPCSTR disabled, LPCSTR on, LPCSTR off)
  * @param index Index of the item whose state should be changed.
  * @param toggleState The state to set
  * @param notify Determines if the notification method OnStateChanged should
- * be called. OnStateChanged will also not be called if the state has not
- * changed.
+ * be called. OnStateChanged will also not be called if the state has not changed.
  */
 void ToggleListView::SetToggleState(int index, int toggleState, bool notify)
 {
@@ -318,8 +314,7 @@ void ToggleListView::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 }
 
 /**
- * Draws a 3d rectangle using the given brushes this code was taken from the gui
- * editor
+ * Draws a 3d rectangle using the given brushes this code was taken from the gui editor
  */
 void ToggleListView::Draw3dRect(HDC hDC, RECT *rect, HBRUSH topLeft, HBRUSH bottomRight)
 {

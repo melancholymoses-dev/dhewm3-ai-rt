@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Session.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "renderer/Model_local.h"
 
@@ -42,7 +39,7 @@ static const char *MD5_SnapshotName = "_MD5_Snapshot_";
 
 /***********************************************************************
 
-        idMD5Mesh
+    idMD5Mesh
 
 ***********************************************************************/
 
@@ -287,8 +284,7 @@ void idMD5Mesh::TransformVerts(idDrawVert *verts, const idJointMat *entJoints)
 ====================
 idMD5Mesh::TransformScaledVerts
 
-Special transform to make the mesh seem fat or skinny.  May be used for zombie
-deaths
+Special transform to make the mesh seem fat or skinny.  May be used for zombie deaths
 ====================
 */
 void idMD5Mesh::TransformScaledVerts(idDrawVert *verts, const idJointMat *entJoints, float scale)
@@ -316,9 +312,8 @@ void idMD5Mesh::UpdateSurface(const struct renderEntity_s *ent, const idJointMat
 
     if (surf->geometry)
     {
-        // if the number of verts and indexes are the same we can re-use the
-        // triangle surface the number of indexes must be the same to assure the
-        // correct amount of memory is allocated for the facePlanes
+        // if the number of verts and indexes are the same we can re-use the triangle surface
+        // the number of indexes must be the same to assure the correct amount of memory is allocated for the facePlanes
         if (surf->geometry->numVerts == deformInfo->numOutputVerts &&
             surf->geometry->numIndexes == deformInfo->numIndexes)
         {
@@ -382,11 +377,10 @@ void idMD5Mesh::UpdateSurface(const struct renderEntity_s *ent, const idJointMat
 
     R_BoundTriSurf(tri);
 
-    // If a surface is going to be have a lighting interaction generated, it will
-    // also have to call R_DeriveTangents() to get normals, tangents, and face
-    // planes.  If it only needs shadows generated, it will only have to generate
-    // face planes.  If it only has ambient drawing, or is culled, no additional
-    // work will be necessary
+    // If a surface is going to be have a lighting interaction generated, it will also have to call
+    // R_DeriveTangents() to get normals, tangents, and face planes.  If it only
+    // needs shadows generated, it will only have to generate face planes.  If it only
+    // has ambient drawing, or is culled, no additional work will be necessary
     if (!r_useDeferredTangents.GetBool())
     {
         // set face planes, vertex normals, tangents
@@ -496,7 +490,7 @@ int idMD5Mesh::NumWeights(void) const
 
 /***********************************************************************
 
-        idRenderModelMD5
+    idRenderModelMD5
 
 ***********************************************************************/
 
@@ -836,16 +830,14 @@ idRenderModel *idRenderModelMD5::InstantiateDynamicModel(const struct renderEnti
 
     if (!ent->joints)
     {
-        common->Printf("idRenderModelMD5::InstantiateDynamicModel: NULL joints on "
-                       "renderEntity for '%s'\n",
-                       Name());
+        common->Printf("idRenderModelMD5::InstantiateDynamicModel: NULL joints on renderEntity for '%s'\n", Name());
         delete cachedModel;
         return NULL;
     }
     else if (ent->numJoints != joints.Num())
     {
-        common->Printf("idRenderModelMD5::InstantiateDynamicModel: renderEntity "
-                       "has different number of joints than model for '%s'\n",
+        common->Printf("idRenderModelMD5::InstantiateDynamicModel: renderEntity has different number of joints than "
+                       "model for '%s'\n",
                        Name());
         delete cachedModel;
         return NULL;
@@ -887,8 +879,7 @@ idRenderModel *idRenderModelMD5::InstantiateDynamicModel(const struct renderEnti
     // create all the surfaces
     for (mesh = meshes.Ptr(), i = 0; i < meshes.Num(); i++, mesh++)
     {
-        // avoid deforming the surface if it will be a nodraw due to a skin
-        // remapping
+        // avoid deforming the surface if it will be a nodraw due to a skin remapping
         // FIXME: may have to still deform clipping hulls
         const idMaterial *shader = mesh->shader;
 

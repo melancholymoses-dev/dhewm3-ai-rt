@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -89,8 +86,7 @@ const char *idSIMD_3DNow::GetName(void) const
 ================
 idSIMD_3DNow::Memcpy
 
-  optimized memory copy routine that handles all alignment cases and block sizes
-efficiently
+  optimized memory copy routine that handles all alignment cases and block sizes efficiently
 ================
 */
 void VPCALL idSIMD_3DNow::Memcpy(void *dest, const void *src, const int n)
@@ -137,10 +133,9 @@ $memcpy_align_done: // destination is dword aligned
 	cmp		ecx, IN_CACHE_COPY/64 // too big 4 cache? use uncached copy
 	jae		$memcpy_uc_test
 
-                // This is small block copy that uses the MMX registers to copy 8
-                // bytes at a time.  It uses the "unrolled loop" optimization, and
-                // also uses the software prefetch instruction to get the data into
-                // the cache.
+                // This is small block copy that uses the MMX registers to copy 8 bytes
+                // at a time.  It uses the "unrolled loop" optimization, and also uses
+                // the software prefetch instruction to get the data into the cache.
 align 16
 $memcpy_ic_1: // 64-byte block copies, in-cache copy
 
@@ -185,11 +180,10 @@ $memcpy_64_test:
 	or		ecx, ecx // tail end of block prefetch will jump here
 	jz		$memcpy_ic_2 // no more 64-byte blocks left
 
-                 // For larger blocks, which will spill beyond the cache, it's
-                 // faster to use the Streaming Store instruction MOVNTQ.   This
-                 // write instruction bypasses the cache and writes straight to main
-                 // memory.  This code also uses the software prefetch instruction
-                 // to pre-read the data.
+                 // For larger blocks, which will spill beyond the cache, it's faster to
+                 // use the Streaming Store instruction MOVNTQ.   This write instruction
+                 // bypasses the cache and writes straight to main memory.  This code also
+                 // uses the software prefetch instruction to pre-read the data.
 align 16
 $memcpy_uc_1: // 64-byte blocks, uncached copy
 
@@ -218,12 +212,12 @@ $memcpy_uc_1: // 64-byte blocks, uncached copy
 
 	jmp		$memcpy_ic_2 // almost done
 
-                // For the largest size blocks, a special technique called Block
-                // Prefetch can be used to accelerate the read operations.   Block
-                // Prefetch reads one address per cache line, for a series of cache
-                // lines, in a short loop. This is faster than using software
-                // prefetch, in this case. The technique is great for getting
-                // maximum read bandwidth, especially in DDR memory systems.
+                // For the largest size blocks, a special technique called Block Prefetch
+                // can be used to accelerate the read operations.   Block Prefetch reads
+                // one address per cache line, for a series of cache lines, in a short loop.
+                // This is faster than using software prefetch, in this case.
+                // The technique is great for getting maximum read bandwidth,
+                // especially in DDR memory systems.
 $memcpy_bp_1: // large blocks, block prefetch copy
 
 	cmp		ecx, CACHEBLOCK // big enough to run another prefetch loop?
@@ -267,9 +261,8 @@ $memcpy_bp_3:
 	sub		ecx, CACHEBLOCK // update the 64-byte block count
 	jmp		$memcpy_bp_1 // keep processing chunks
 
-                 // The smallest copy uses the X86 "movsd" instruction, in an
-                 // optimized form which is an "unrolled loop".   Then it handles
-                 // the last few bytes.
+                 // The smallest copy uses the X86 "movsd" instruction, in an optimized
+                 // form which is an "unrolled loop".   Then it handles the last few bytes.
 align 4
 	movsd
 	movsd // perform last 1-15 dword copies

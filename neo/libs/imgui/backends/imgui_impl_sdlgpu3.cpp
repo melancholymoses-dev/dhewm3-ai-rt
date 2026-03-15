@@ -2,32 +2,26 @@
 // This needs to be used along with the SDL3 Platform Backend
 
 // Implemented features:
-//  [X] Renderer: User texture binding. Use simply cast a reference to your
-//  SDL_GPUTextureSamplerBinding to ImTextureID. [X] Renderer: Large meshes
-//  support (64k+ vertices) with 16-bit indices.
+//  [X] Renderer: User texture binding. Use simply cast a reference to your SDL_GPUTextureSamplerBinding to ImTextureID.
+//  [X] Renderer: Large meshes support (64k+ vertices) with 16-bit indices.
 
-// The aim of imgui_impl_sdlgpu3.h/.cpp is to be usable in your engine without
-// any modification. IF YOU FEEL YOU NEED TO MAKE ANY CHANGE TO THIS CODE,
-// please share them and your feedback at https://github.com/ocornut/imgui/
+// The aim of imgui_impl_sdlgpu3.h/.cpp is to be usable in your engine without any modification.
+// IF YOU FEEL YOU NEED TO MAKE ANY CHANGE TO THIS CODE, please share them and your feedback at
+// https://github.com/ocornut/imgui/
 
-// You can use unmodified imgui_impl_* files in your project. See examples/
-// folder for examples of using this. Prefer including the entire imgui/
-// repository into your project (either as a copy or as a submodule), and only
-// build the backends you need. Learn about Dear ImGui:
+// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build
+// the backends you need. Learn about Dear ImGui:
 // - FAQ                  https://dearimgui.com/faq
 // - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/
-// folder).
+// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
-// Important note to the reader who wish to integrate imgui_impl_sdlgpu3.cpp/.h
-// in their own engine/app.
-// - Unlike other backends, the user must call the function
-// Imgui_ImplSDLGPU3_PrepareDrawData() BEFORE issuing a SDL_GPURenderPass
-// containing ImGui_ImplSDLGPU3_RenderDrawData.
-//   Calling the function is MANDATORY, otherwise the ImGui will not upload
-//   neither the vertex nor the index buffer for the GPU. See
-//   imgui_impl_sdlgpu3.cpp for more info.
+// Important note to the reader who wish to integrate imgui_impl_sdlgpu3.cpp/.h in their own engine/app.
+// - Unlike other backends, the user must call the function Imgui_ImplSDLGPU3_PrepareDrawData() BEFORE issuing a
+// SDL_GPURenderPass containing ImGui_ImplSDLGPU3_RenderDrawData.
+//   Calling the function is MANDATORY, otherwise the ImGui will not upload neither the vertex nor the index buffer for
+//   the GPU. See imgui_impl_sdlgpu3.cpp for more info.
 
 // CHANGELOG
 //  2025-01-09: SDL_Gpu: Added the SDL_GPU3 backend.
@@ -37,8 +31,7 @@
 #include "imgui_impl_sdlgpu3.h"
 #include "imgui_impl_sdlgpu3_shaders.h"
 
-// Reusable buffers used for rendering 1 current in-flight frame, for
-// ImGui_ImplSDLGPU3_RenderDrawData()
+// Reusable buffers used for rendering 1 current in-flight frame, for ImGui_ImplSDLGPU3_RenderDrawData()
 struct ImGui_ImplSDLGPU3_FrameData
 {
     SDL_GPUBuffer *VertexBuffer = nullptr;
@@ -75,10 +68,9 @@ static void ImGui_ImplSDLGPU3_DestroyFrameData();
 // FUNCTIONS
 //-----------------------------------------------------------------------------
 
-// Backend data stored in io.BackendRendererUserData to allow support for
-// multiple Dear ImGui contexts It is STRONGLY preferred that you use docking
-// branch with multi-viewports (== single Dear ImGui context + multiple windows)
-// instead of multiple Dear ImGui contexts.
+// Backend data stored in io.BackendRendererUserData to allow support for multiple Dear ImGui contexts
+// It is STRONGLY preferred that you use docking branch with multi-viewports (== single Dear ImGui context + multiple
+// windows) instead of multiple Dear ImGui contexts.
 // FIXME: multi-context support has never been tested.
 static ImGui_ImplSDLGPU3_Data *ImGui_ImplSDLGPU3_GetBackendData()
 {
@@ -121,8 +113,7 @@ static void ImGui_ImplSDLGPU3_SetupRenderState(ImDrawData *draw_data, SDL_GPUGra
 
     // Setup scale and translation
     // Our visible imgui space lies from draw_data->DisplayPps (top left) to
-    // draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is
-    // (0,0) for single viewport apps.
+    // draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is (0,0) for single viewport apps.
     struct UBO
     {
         float scale[2];
@@ -153,15 +144,14 @@ static void CreateOrResizeBuffer(SDL_GPUBuffer **buffer, uint32_t *old_size, uin
     IM_ASSERT(*buffer != nullptr && "Failed to create GPU Buffer, call SDL_GetError() for more information");
 }
 
-// SDL_GPU doesn't allow copy passes to occur while a render or compute pass is
-// bound! The only way to allow a user to supply their own RenderPass (to render
-// to a texture instead of the window for example), is to split the upload part
-// of ImGui_ImplSDLGPU3_RenderDrawData() to another function that needs to be
+// SDL_GPU doesn't allow copy passes to occur while a render or compute pass is bound!
+// The only way to allow a user to supply their own RenderPass (to render to a texture instead of the window for
+// example), is to split the upload part of ImGui_ImplSDLGPU3_RenderDrawData() to another function that needs to be
 // called by the user before rendering.
 void Imgui_ImplSDLGPU3_PrepareDrawData(ImDrawData *draw_data, SDL_GPUCommandBuffer *command_buffer)
 {
-    // Avoid rendering when minimized, scale coordinates for retina displays
-    // (screen coordinates != framebuffer coordinates)
+    // Avoid rendering when minimized, scale coordinates for retina displays (screen coordinates != framebuffer
+    // coordinates)
     int fb_width = (int)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
     int fb_height = (int)(draw_data->DisplaySize.y * draw_data->FramebufferScale.y);
     if (fb_width <= 0 || fb_height <= 0 || draw_data->TotalVtxCount <= 0)
@@ -188,11 +178,11 @@ void Imgui_ImplSDLGPU3_PrepareDrawData(ImDrawData *draw_data, SDL_GPUCommandBuff
 
     SDL_GPUTransferBuffer *vertex_transferbuffer =
         SDL_CreateGPUTransferBuffer(v->GpuDevice, &vertex_transferbuffer_info);
-    IM_ASSERT(vertex_transferbuffer != nullptr && "Failed to create the vertex transfer buffer, call SDL_GetError() "
-                                                  "for more information");
+    IM_ASSERT(vertex_transferbuffer != nullptr &&
+              "Failed to create the vertex transfer buffer, call SDL_GetError() for more information");
     SDL_GPUTransferBuffer *index_transferbuffer = SDL_CreateGPUTransferBuffer(v->GpuDevice, &index_transferbuffer_info);
-    IM_ASSERT(index_transferbuffer != nullptr && "Failed to create the index transfer buffer, call SDL_GetError() "
-                                                 "for more information");
+    IM_ASSERT(index_transferbuffer != nullptr &&
+              "Failed to create the index transfer buffer, call SDL_GetError() for more information");
 
     ImDrawVert *vtx_dst = (ImDrawVert *)SDL_MapGPUTransferBuffer(v->GpuDevice, vertex_transferbuffer, true);
     ImDrawIdx *idx_dst = (ImDrawIdx *)SDL_MapGPUTransferBuffer(v->GpuDevice, index_transferbuffer, true);
@@ -235,8 +225,8 @@ void Imgui_ImplSDLGPU3_PrepareDrawData(ImDrawData *draw_data, SDL_GPUCommandBuff
 void ImGui_ImplSDLGPU3_RenderDrawData(ImDrawData *draw_data, SDL_GPUCommandBuffer *command_buffer,
                                       SDL_GPURenderPass *render_pass, SDL_GPUGraphicsPipeline *pipeline)
 {
-    // Avoid rendering when minimized, scale coordinates for retina displays
-    // (screen coordinates != framebuffer coordinates)
+    // Avoid rendering when minimized, scale coordinates for retina displays (screen coordinates != framebuffer
+    // coordinates)
     int fb_width = (int)(draw_data->DisplaySize.x * draw_data->FramebufferScale.x);
     int fb_height = (int)(draw_data->DisplaySize.y * draw_data->FramebufferScale.y);
     if (fb_width <= 0 || fb_height <= 0)
@@ -252,12 +242,10 @@ void ImGui_ImplSDLGPU3_RenderDrawData(ImDrawData *draw_data, SDL_GPUCommandBuffe
 
     // Will project scissor/clipping rectangles into framebuffer space
     ImVec2 clip_off = draw_data->DisplayPos;         // (0,0) unless using multi-viewports
-    ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which
-                                                     // are often (2,2)
+    ImVec2 clip_scale = draw_data->FramebufferScale; // (1,1) unless using retina display which are often (2,2)
 
     // Render command lists
-    // (Because we merged all buffers into a single one, we maintain our own
-    // offset into them)
+    // (Because we merged all buffers into a single one, we maintain our own offset into them)
     int global_vtx_offset = 0;
     int global_idx_offset = 0;
     for (int n = 0; n < draw_data->CmdListsCount; n++)
@@ -278,8 +266,7 @@ void ImGui_ImplSDLGPU3_RenderDrawData(ImDrawData *draw_data, SDL_GPUCommandBuffe
                 ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * clip_scale.x,
                                 (pcmd->ClipRect.w - clip_off.y) * clip_scale.y);
 
-                // Clamp to viewport as SDL_SetGPUScissor() won't accept values that are
-                // off bounds
+                // Clamp to viewport as SDL_SetGPUScissor() won't accept values that are off bounds
                 if (clip_min.x < 0.0f)
                 {
                     clip_min.x = 0.0f;
@@ -319,14 +306,11 @@ void ImGui_ImplSDLGPU3_RenderDrawData(ImDrawData *draw_data, SDL_GPUCommandBuffe
         global_vtx_offset += draw_list->VtxBuffer.Size;
     }
 
-    // Note: at this point both SDL_SetGPUViewport() and SDL_SetGPUScissor() have
-    // been called. Our last values will leak into user/application rendering if
-    // you forgot to call SDL_SetGPUViewport() and SDL_SetGPUScissor() yourself to
-    // explicitly set that state In theory we should aim to backup/restore those
-    // values but I am not sure this is possible. We perform a call to
-    // SDL_SetGPUScissor() to set back a full viewport which is likely to fix
-    // things for 99% users but technically this is not perfect. (See github
-    // #4644)
+    // Note: at this point both SDL_SetGPUViewport() and SDL_SetGPUScissor() have been called.
+    // Our last values will leak into user/application rendering if you forgot to call SDL_SetGPUViewport() and
+    // SDL_SetGPUScissor() yourself to explicitly set that state In theory we should aim to backup/restore those values
+    // but I am not sure this is possible. We perform a call to SDL_SetGPUScissor() to set back a full viewport which is
+    // likely to fix things for 99% users but technically this is not perfect. (See github #4644)
     SDL_Rect scissor_rect{0, 0, fb_width, fb_height};
     SDL_SetGPUScissor(render_pass, &scissor_rect);
 }
@@ -376,8 +360,8 @@ bool ImGui_ImplSDLGPU3_CreateFontsTexture()
 
         SDL_GPUTransferBuffer *font_transferbuffer =
             SDL_CreateGPUTransferBuffer(v->GpuDevice, &font_transferbuffer_info);
-        IM_ASSERT(font_transferbuffer != nullptr && "Failed to create font transfer buffer, call SDL_GetError() for "
-                                                    "more information");
+        IM_ASSERT(font_transferbuffer != nullptr &&
+                  "Failed to create font transfer buffer, call SDL_GetError() for more information");
 
         void *texture_ptr = SDL_MapGPUTransferBuffer(v->GpuDevice, font_transferbuffer, false);
         memcpy(texture_ptr, pixels, upload_size);
@@ -407,8 +391,8 @@ bool ImGui_ImplSDLGPU3_CreateFontsTexture()
     return true;
 }
 
-// You probably never need to call this, as it is called by
-// ImGui_ImplSDLGPU3_CreateFontsTexture() and ImGui_ImplSDLGPU3_Shutdown().
+// You probably never need to call this, as it is called by ImGui_ImplSDLGPU3_CreateFontsTexture() and
+// ImGui_ImplSDLGPU3_Shutdown().
 void ImGui_ImplSDLGPU3_DestroyFontsTexture()
 {
     ImGuiIO &io = ImGui::GetIO();
@@ -480,10 +464,10 @@ static void Imgui_ImplSDLGPU3_CreateShaders()
 #endif
     bd->VertexShader = SDL_CreateGPUShader(v->GpuDevice, &vertex_shader_info);
     bd->FragmentShader = SDL_CreateGPUShader(v->GpuDevice, &fragment_shader_info);
-    IM_ASSERT(bd->VertexShader != nullptr && "Failed to create vertex shader, call SDL_GetError() for more "
-                                             "information");
-    IM_ASSERT(bd->FragmentShader != nullptr && "Failed to create fragment shader, call SDL_GetError() for more "
-                                               "information");
+    IM_ASSERT(bd->VertexShader != nullptr &&
+              "Failed to create vertex shader, call SDL_GetError() for more information");
+    IM_ASSERT(bd->FragmentShader != nullptr &&
+              "Failed to create fragment shader, call SDL_GetError() for more information");
 }
 
 static void ImGui_ImplSDLGPU3_CreateGraphicsPipeline()
@@ -567,8 +551,8 @@ static void ImGui_ImplSDLGPU3_CreateGraphicsPipeline()
     pipeline_info.target_info = target_info;
 
     bd->Pipeline = SDL_CreateGPUGraphicsPipeline(v->GpuDevice, &pipeline_info);
-    IM_ASSERT(bd->Pipeline != nullptr && "Failed to create graphics pipeline, call SDL_GetError() for more "
-                                         "information");
+    IM_ASSERT(bd->Pipeline != nullptr &&
+              "Failed to create graphics pipeline, call SDL_GetError() for more information");
 }
 
 bool ImGui_ImplSDLGPU3_CreateDeviceObjects()
@@ -578,9 +562,8 @@ bool ImGui_ImplSDLGPU3_CreateDeviceObjects()
 
     if (!bd->FontSampler)
     {
-        // Bilinear sampling is required by default. Set 'io.Fonts->Flags |=
-        // ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false'
-        // to allow point/nearest sampling.
+        // Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or
+        // 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling.
         SDL_GPUSamplerCreateInfo sampler_info = {};
         sampler_info.min_filter = SDL_GPU_FILTER_LINEAR;
         sampler_info.mag_filter = SDL_GPU_FILTER_LINEAR;
@@ -597,8 +580,8 @@ bool ImGui_ImplSDLGPU3_CreateDeviceObjects()
 
         bd->FontSampler = SDL_CreateGPUSampler(v->GpuDevice, &sampler_info);
         bd->FontBinding.sampler = bd->FontSampler;
-        IM_ASSERT(bd->FontSampler != nullptr && "Failed to create font sampler, call SDL_GetError() for more "
-                                                "information");
+        IM_ASSERT(bd->FontSampler != nullptr &&
+                  "Failed to create font sampler, call SDL_GetError() for more information");
     }
 
     ImGui_ImplSDLGPU3_CreateGraphicsPipeline();
@@ -659,9 +642,8 @@ bool ImGui_ImplSDLGPU3_Init(ImGui_ImplSDLGPU3_InitInfo *info)
     ImGui_ImplSDLGPU3_Data *bd = IM_NEW(ImGui_ImplSDLGPU3_Data)();
     io.BackendRendererUserData = (void *)bd;
     io.BackendRendererName = "imgui_impl_sdlgpu3";
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset; // We can honor the
-                                                               // ImDrawCmd::VtxOffset field,
-                                                               // allowing for large meshes.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset; // We can honor the ImDrawCmd::VtxOffset field, allowing
+                                                               // for large meshes.
 
     IM_ASSERT(info->GpuDevice != nullptr);
     IM_ASSERT(info->ColorTargetFormat != SDL_GPU_TEXTUREFORMAT_INVALID);
@@ -689,8 +671,7 @@ void ImGui_ImplSDLGPU3_Shutdown()
 void ImGui_ImplSDLGPU3_NewFrame()
 {
     ImGui_ImplSDLGPU3_Data *bd = ImGui_ImplSDLGPU3_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call "
-                               "ImGui_ImplSDLGPU3_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplSDLGPU3_Init()?");
 
     if (!bd->FontTexture)
         ImGui_ImplSDLGPU3_CreateFontsTexture();

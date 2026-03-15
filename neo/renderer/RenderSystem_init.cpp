@@ -19,37 +19,34 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Console.h"
-#include "framework/Licensee.h"
-#include "framework/Session.h"
+#include "sys/platform.h"
 #include "idlib/LangDict.h"
-#include "renderer/GuiModel.h"
+#include "framework/Licensee.h"
+#include "framework/Console.h"
+#include "framework/Session.h"
+#include "renderer/VertexCache.h"
 #include "renderer/ModelManager.h"
 #include "renderer/RenderWorld_local.h"
-#include "renderer/VertexCache.h"
+#include "renderer/GuiModel.h"
 #include "sound/sound.h"
-#include "sys/platform.h"
 #include "ui/UserInterface.h"
 
+#include "renderer/tr_local.h"
 #include "renderer/GL/GLBackend.h"
 #include "renderer/Vulkan/VKBackend.h"
-#include "renderer/tr_local.h"
 
-#include "framework/Game.h"
 #include "framework/GameCallbacks_local.h"
+#include "framework/Game.h"
 
 // Vista OpenGL wrapper check
 #ifdef _WIN32
@@ -106,8 +103,7 @@ idCVar r_useShadowVertexProgram("r_useShadowVertexProgram", "1", CVAR_RENDERER |
 idCVar r_useShadowSurfaceScissor("r_useShadowSurfaceScissor", "1", CVAR_RENDERER | CVAR_BOOL,
                                  "scissor shadows by the scissor rect of the interaction surfaces");
 idCVar r_useInteractionTable("r_useInteractionTable", "1", CVAR_RENDERER | CVAR_BOOL,
-                             "create a full entityDefs * lightDefs table to "
-                             "make finding interactions faster");
+                             "create a full entityDefs * lightDefs table to make finding interactions faster");
 idCVar r_useTurboShadow("r_useTurboShadow", "1", CVAR_RENDERER | CVAR_BOOL,
                         "use the infinite projection with W technique for dynamic shadows");
 idCVar r_useTwoSidedStencil("r_useTwoSidedStencil", "1", CVAR_RENDERER | CVAR_BOOL,
@@ -141,16 +137,14 @@ idCVar r_gammaInShader("r_gammaInShader", "1", CVAR_RENDERER | CVAR_ARCHIVE | CV
 idCVar r_renderer("r_renderer", "best", CVAR_RENDERER | CVAR_ARCHIVE, "hardware specific renderer path to use",
                   r_rendererArgs, idCmdSystem::ArgCompletion_String<r_rendererArgs>);
 idCVar r_useGLSL("r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
-                 "use modern GLSL backend instead of ARB assembly programs "
-                 "(requires OpenGL 2.0)");
+                 "use modern GLSL backend instead of ARB assembly programs (requires OpenGL 2.0)");
 
 // Vulkan / Ray Tracing backend CVars
 idCVar r_backend("r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"");
 idCVar r_useRayTracing("r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "enable hardware ray tracing (requires Vulkan backend and RTX hardware)");
 idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-                   "ray traced shadows (replaces stencil shadow volumes when "
-                   "using Vulkan RT)");
+                   "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)");
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "ray traced reflections (expensive)");
@@ -165,8 +159,7 @@ idCVar r_jitter("r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel j
 idCVar r_skipSuppress("r_skipSuppress", "0", CVAR_RENDERER | CVAR_BOOL, "ignore the per-view suppressions");
 idCVar r_skipPostProcess("r_skipPostProcess", "0", CVAR_RENDERER | CVAR_BOOL, "skip all post-process renderings");
 idCVar r_skipLightScale("r_skipLightScale", "0", CVAR_RENDERER | CVAR_BOOL,
-                        "don't do any post-interaction light scaling, makes "
-                        "things dim on low-dynamic range cards");
+                        "don't do any post-interaction light scaling, makes things dim on low-dynamic range cards");
 idCVar r_skipInteractions("r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL,
                           "skip all light/surface interaction drawing");
 idCVar r_skipDynamicTextures("r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -210,17 +203,16 @@ idCVar r_useLightCulling("r_useLightCulling", "3", CVAR_RENDERER | CVAR_INTEGER,
 idCVar r_useLightScissors("r_useLightScissors", "1", CVAR_RENDERER | CVAR_BOOL,
                           "1 = use custom scissor rectangle for each light");
 idCVar r_useClippedLightScissors("r_useClippedLightScissors", "1", CVAR_RENDERER | CVAR_INTEGER,
-                                 "0 = full screen when near clipped, 1 = exact "
-                                 "when near clipped, 2 = exact always",
-                                 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+                                 "0 = full screen when near clipped, 1 = exact when near clipped, 2 = exact always", 0,
+                                 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useEntityCulling("r_useEntityCulling", "1", CVAR_RENDERER | CVAR_BOOL, "0 = none, 1 = box");
 idCVar r_useEntityScissors("r_useEntityScissors", "0", CVAR_RENDERER | CVAR_BOOL,
                            "1 = use custom scissor rectangle for each entity");
 idCVar r_useInteractionCulling("r_useInteractionCulling", "1", CVAR_RENDERER | CVAR_BOOL, "1 = cull interactions");
-idCVar r_useInteractionScissors("r_useInteractionScissors", "2", CVAR_RENDERER | CVAR_INTEGER,
-                                "1 = use a custom scissor rectangle for each shadow interaction, 2 = also "
-                                "crop using portal scissors",
-                                -2, 2, idCmdSystem::ArgCompletion_Integer<-2, 2>);
+idCVar r_useInteractionScissors(
+    "r_useInteractionScissors", "2", CVAR_RENDERER | CVAR_INTEGER,
+    "1 = use a custom scissor rectangle for each shadow interaction, 2 = also crop using portal scissors", -2, 2,
+    idCmdSystem::ArgCompletion_Integer<-2, 2>);
 idCVar r_useShadowCulling("r_useShadowCulling", "1", CVAR_RENDERER | CVAR_BOOL,
                           "try to cull shadows from partially visible lights");
 idCVar r_useFrustumFarDistance("r_useFrustumFarDistance", "0", CVAR_RENDERER | CVAR_FLOAT,
@@ -236,10 +228,10 @@ idCVar r_shadowPolygonFactor("r_shadowPolygonFactor", "0", CVAR_RENDERER | CVAR_
 idCVar r_frontBuffer("r_frontBuffer", "0", CVAR_RENDERER | CVAR_BOOL, "draw to front buffer for debugging");
 idCVar r_skipSubviews("r_skipSubviews", "0", CVAR_RENDERER | CVAR_INTEGER,
                       "1 = don't render any gui elements on surfaces");
-idCVar r_skipGuiShaders("r_skipGuiShaders", "0", CVAR_RENDERER | CVAR_INTEGER,
-                        "1 = skip all gui elements on surfaces, 2 = skip drawing "
-                        "but still handle events, 3 = draw but skip events",
-                        0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+idCVar r_skipGuiShaders(
+    "r_skipGuiShaders", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "1 = skip all gui elements on surfaces, 2 = skip drawing but still handle events, 3 = draw but skip events", 0, 3,
+    idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_skipParticles("r_skipParticles", "0", CVAR_RENDERER | CVAR_INTEGER, "1 = skip all particle systems", 0, 1,
                        idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_subviewOnly("r_subviewOnly", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -257,9 +249,8 @@ idCVar r_lightSourceRadius("r_lightSourceRadius", "0", CVAR_RENDERER | CVAR_FLOA
 idCVar r_flareSize("r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the flare deforms from the material def");
 
 idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_INTEGER,
-                            "1 = skip drawing caps when outside the light "
-                            "volume, 2 = force to no caps for testing",
-                            0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+                            "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
+                            2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
                              "use the dmap generated static shadow volumes");
 idCVar r_useScissor("r_useScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor clip as portals and lights are processed");
@@ -269,8 +260,7 @@ idCVar r_useDepthBoundsTest("r_useDepthBoundsTest", "1", CVAR_RENDERER | CVAR_BO
                             "use depth bounds test to reduce shadow fill");
 
 idCVar r_screenFraction("r_screenFraction", "100", CVAR_RENDERER | CVAR_INTEGER,
-                        "for testing fill rate, the resolution of the entire "
-                        "screen can be changed");
+                        "for testing fill rate, the resolution of the entire screen can be changed");
 idCVar r_demonstrateBug("r_demonstrateBug", "0", CVAR_RENDERER | CVAR_BOOL,
                         "used during development to show IHV's their problems");
 idCVar r_usePortals("r_usePortals", "1", CVAR_RENDERER | CVAR_BOOL,
@@ -289,15 +279,14 @@ idCVar r_lightAllBackFaces("r_lightAllBackFaces", "0", CVAR_RENDERER | CVAR_BOOL
                            "light all the back faces, even when they would be shadowed");
 
 // DG: added this to support "nospecular" param of lights
-// NOTE: if you're developing a standalone game, you'll probably want to use "1"
-// as default value
-idCVar r_supportNoSpecular("r_supportNoSpecular", "-1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                           "Support 'nospecular' parm on lights. Vanilla Doom3 didn't, so the "
-                           "original maps are probably "
-                           "expecting it to not do anything. -1: Only support in maps that have have "
-                           "\"allow_nospecular\" \"1\" set in worldspawn (default), "
-                           "0: never respect 'nospecular' parm 1: support 'nospecular' in all maps",
-                           -1, 1);
+// NOTE: if you're developing a standalone game, you'll probably want to use "1" as default value
+idCVar r_supportNoSpecular(
+    "r_supportNoSpecular", "-1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+    "Support 'nospecular' parm on lights. Vanilla Doom3 didn't, so the original maps are probably "
+    "expecting it to not do anything. -1: Only support in maps that have have \"allow_nospecular\" \"1\" set in "
+    "worldspawn (default), "
+    "0: never respect 'nospecular' parm 1: support 'nospecular' in all maps",
+    -1, 1);
 
 // visual debugging info
 idCVar r_showPortals("r_showPortals", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -317,45 +306,42 @@ idCVar r_showDefs("r_showDefs", "0", CVAR_RENDERER | CVAR_BOOL, "report the numb
 idCVar r_showTrace("r_showTrace", "0", CVAR_RENDERER | CVAR_INTEGER,
                    "show the intersection of an eye trace with the world", idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_showIntensity("r_showIntensity", "0", CVAR_RENDERER | CVAR_BOOL,
-                       "draw the screen colors based on intensity, red = 0, "
-                       "green = 128, blue = 255");
+                       "draw the screen colors based on intensity, red = 0, green = 128, blue = 255");
 idCVar r_showImages("r_showImages", "0", CVAR_RENDERER | CVAR_INTEGER,
                     "1 = show all images instead of rendering, 2 = show in proportional size", 0, 2,
                     idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_showSmp("r_showSmp", "0", CVAR_RENDERER | CVAR_BOOL, "show which end (front or back) is blocking");
 idCVar r_showLights("r_showLights", "0", CVAR_RENDERER | CVAR_INTEGER,
-                    "1 = just print volumes numbers, highlighting ones covering the view, 2 = "
-                    "also draw planes of each volume, 3 = also draw edges of each volume",
+                    "1 = just print volumes numbers, highlighting ones covering the view, 2 = also draw planes of each "
+                    "volume, 3 = also draw edges of each volume",
                     0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_showShadows("r_showShadows", "0", CVAR_RENDERER | CVAR_INTEGER,
                      "1 = visualize the stencil shadow volumes, 2 = draw filled in", 0, 3,
                      idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_showShadowCount("r_showShadowCount", "0", CVAR_RENDERER | CVAR_INTEGER,
-                         "colors screen based on shadow volume depth complexity, >= 2 = print "
-                         "overdraw count based on stencil index values, 3 = only show turboshadows, "
-                         "4 = only show static shadows",
+                         "colors screen based on shadow volume depth complexity, >= 2 = print overdraw count based on "
+                         "stencil index values, 3 = only show turboshadows, 4 = only show static shadows",
                          0, 4, idCmdSystem::ArgCompletion_Integer<0, 4>);
 idCVar r_showLightScissors("r_showLightScissors", "0", CVAR_RENDERER | CVAR_BOOL, "show light scissor rectangles");
 idCVar r_showEntityScissors("r_showEntityScissors", "0", CVAR_RENDERER | CVAR_BOOL, "show entity scissor rectangles");
-idCVar r_showInteractionFrustums("r_showInteractionFrustums", "0", CVAR_RENDERER | CVAR_INTEGER,
-                                 "1 = show a frustum for each interaction, 2 = also draw lines to light "
-                                 "origin, 3 = also draw entity bbox",
-                                 0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
-idCVar r_showInteractionScissors("r_showInteractionScissors", "0", CVAR_RENDERER | CVAR_INTEGER,
-                                 "1 = show screen rectangle which contains the interaction frustum, 2 = "
-                                 "also draw construction lines",
-                                 0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
-idCVar r_showLightCount("r_showLightCount", "0", CVAR_RENDERER | CVAR_INTEGER,
-                        "1 = colors surfaces based on light count, 2 = also count "
-                        "everything through walls, 3 = also print overdraw",
-                        0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+idCVar r_showInteractionFrustums(
+    "r_showInteractionFrustums", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "1 = show a frustum for each interaction, 2 = also draw lines to light origin, 3 = also draw entity bbox", 0, 3,
+    idCmdSystem::ArgCompletion_Integer<0, 3>);
+idCVar r_showInteractionScissors(
+    "r_showInteractionScissors", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "1 = show screen rectangle which contains the interaction frustum, 2 = also draw construction lines", 0, 2,
+    idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_showLightCount(
+    "r_showLightCount", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "1 = colors surfaces based on light count, 2 = also count everything through walls, 3 = also print overdraw", 0, 3,
+    idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_showViewEntitys("r_showViewEntitys", "0", CVAR_RENDERER | CVAR_INTEGER,
-                         "1 = displays the bounding boxes of all view models, "
-                         "2 = print index numbers");
-idCVar r_showTris("r_showTris", "0", CVAR_RENDERER | CVAR_INTEGER,
-                  "enables wireframe rendering of the world, 1 = only draw "
-                  "visible ones, 2 = draw all front facing, 3 = draw all",
-                  0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+                         "1 = displays the bounding boxes of all view models, 2 = print index numbers");
+idCVar r_showTris(
+    "r_showTris", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "enables wireframe rendering of the world, 1 = only draw visible ones, 2 = draw all front facing, 3 = draw all", 0,
+    3, idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_showSurfaceInfo("r_showSurfaceInfo", "0", CVAR_RENDERER | CVAR_BOOL,
                          "show surface material name under crosshair");
 idCVar r_showNormals("r_showNormals", "0", CVAR_RENDERER | CVAR_FLOAT, "draws wireframe normals");
@@ -370,31 +356,28 @@ idCVar r_showPrimitives("r_showPrimitives", "0", CVAR_RENDERER | CVAR_INTEGER, "
 idCVar r_showEdges("r_showEdges", "0", CVAR_RENDERER | CVAR_BOOL, "draw the sil edges");
 idCVar r_showTexturePolarity("r_showTexturePolarity", "0", CVAR_RENDERER | CVAR_BOOL,
                              "shade triangles by texture area polarity");
-idCVar r_showTangentSpace("r_showTangentSpace", "0", CVAR_RENDERER | CVAR_INTEGER,
-                          "shade triangles by tangent space, 1 = use 1st tangent vector, 2 = use 2nd "
-                          "tangent vector, 3 = use normal vector",
-                          0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+idCVar r_showTangentSpace(
+    "r_showTangentSpace", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "shade triangles by tangent space, 1 = use 1st tangent vector, 2 = use 2nd tangent vector, 3 = use normal vector",
+    0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_showDominantTri("r_showDominantTri", "0", CVAR_RENDERER | CVAR_BOOL,
                          "draw lines from vertexes to center of dominant triangles");
 idCVar r_showAlloc("r_showAlloc", "0", CVAR_RENDERER | CVAR_BOOL, "report alloc/free counts");
 idCVar r_showTextureVectors("r_showTextureVectors", "0", CVAR_RENDERER | CVAR_FLOAT,
                             " if > 0 draw each triangles texture (tangent) vectors");
-idCVar r_showOverDraw("r_showOverDraw", "0", CVAR_RENDERER | CVAR_INTEGER,
-                      "1 = geometry overdraw, 2 = light interaction overdraw, "
-                      "3 = geometry and light interaction overdraw",
-                      0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+idCVar r_showOverDraw(
+    "r_showOverDraw", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "1 = geometry overdraw, 2 = light interaction overdraw, 3 = geometry and light interaction overdraw", 0, 3,
+    idCmdSystem::ArgCompletion_Integer<0, 3>);
 
 idCVar r_lockSurfaces("r_lockSurfaces", "0", CVAR_RENDERER | CVAR_BOOL,
-                      "allow moving the view point without changing the "
-                      "composition of the scene, including culling");
+                      "allow moving the view point without changing the composition of the scene, including culling");
 idCVar r_useEntityCallbacks("r_useEntityCallbacks", "1", CVAR_RENDERER | CVAR_BOOL,
-                            "if 0, issue the callback immediately at update "
-                            "time, rather than defering");
+                            "if 0, issue the callback immediately at update time, rather than defering");
 
 idCVar r_showSkel("r_showSkel", "0", CVAR_RENDERER | CVAR_INTEGER,
-                  "draw the skeleton when model animates, 1 = draw model with "
-                  "skeleton, 2 = draw skeleton only",
-                  0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+                  "draw the skeleton when model animates, 1 = draw model with skeleton, 2 = draw skeleton only", 0, 2,
+                  idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_jointNameScale("r_jointNameScale", "0.02", CVAR_RENDERER | CVAR_FLOAT,
                         "size of joint names when r_showskel is set to 1");
 idCVar r_jointNameOffset("r_jointNameOffset", "0.5", CVAR_RENDERER | CVAR_FLOAT,
@@ -422,29 +405,28 @@ idCVar r_useStencilOpSeparate("r_useStencilOpSeparate", "1", CVAR_RENDERER | CVA
                               "Use glStencilOpSeparate() (if available) when rendering shadows");
 idCVar r_screenshotFormat("r_screenshotFormat", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                           "Screenshot format. 0 = TGA (default), 1 = BMP, 2 = PNG, 3 = JPG");
-idCVar r_screenshotJpgQuality("r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                              "Screenshot quality for JPG images (1-100). Lower "
-                              "value means smaller file but worse quality");
+idCVar r_screenshotJpgQuality(
+    "r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "Screenshot quality for JPG images (1-100). Lower value means smaller file but worse quality");
 idCVar r_screenshotPngCompression("r_screenshotPngCompression", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                                  "Compression level when using PNG screenshots (0-9). Higher levels "
-                                  "generate smaller files, but take noticeably longer");
+                                  "Compression level when using PNG screenshots (0-9). Higher levels generate smaller "
+                                  "files, but take noticeably longer");
 // DG: allow freely resizing the window
-idCVar r_windowResizable("r_windowResizable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
-                         "Allow resizing (and maximizing) the window (needs "
-                         "SDL2; with 2.0.5 or newer it's applied immediately)");
-idCVar r_vidRestartAlwaysFull("r_vidRestartAlwaysFull", 0, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
-                              "Always do a full vid_restart (ignore 'partial' "
-                              "argument), e.g. when changing window size");
+idCVar r_windowResizable(
+    "r_windowResizable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
+    "Allow resizing (and maximizing) the window (needs SDL2; with 2.0.5 or newer it's applied immediately)");
+idCVar r_vidRestartAlwaysFull(
+    "r_vidRestartAlwaysFull", 0, CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
+    "Always do a full vid_restart (ignore 'partial' argument), e.g. when changing window size");
 
 // DG: for soft particles (ported from TDM)
 idCVar r_enableDepthCapture("r_enableDepthCapture", "-1", CVAR_RENDERER | CVAR_INTEGER,
-                            "enable capturing depth buffer to texture. -1: enable automatically (if "
-                            "soft particles are enabled), 0: disable, 1: enable",
+                            "enable capturing depth buffer to texture. -1: enable automatically (if soft particles are "
+                            "enabled), 0: disable, 1: enable",
                             -1, 1); // #3877
 idCVar r_useSoftParticles("r_useSoftParticles", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
-                          "Soften particle transitions when player walks through them or they "
-                          "cross solid geometry. Needs r_enableDepthCapture. Can slow down "
-                          "rendering!"); // #3878
+                          "Soften particle transitions when player walks through them or they cross solid geometry. "
+                          "Needs r_enableDepthCapture. Can slow down rendering!"); // #3878
 
 idCVar r_glDebugContext("r_glDebugContext", "0", CVAR_RENDERER | CVAR_BOOL,
                         "Enable OpenGL Debug context - requires vid_restart, needs SDL2");
@@ -495,21 +477,18 @@ PFNGLPROGRAMLOCALPARAMETER4FVARBPROC qglProgramLocalParameter4fvARB;
 // GL_EXT_depth_bounds_test
 PFNGLDEPTHBOUNDSEXTPROC qglDepthBoundsEXT;
 
-// DG: couldn't find any extension for this, it's supported in GL2.0 and newer,
-// incl OpenGL ES2.0
+// DG: couldn't find any extension for this, it's supported in GL2.0 and newer, incl OpenGL ES2.0
 PFNGLSTENCILOPSEPARATEPROC qglStencilOpSeparate;
 
 // GL_ARB_debug_output
 PFNGLDEBUGMESSAGECALLBACKARBPROC qglDebugMessageCallbackARB;
 
-// eez: This is a slight hack for letting us select the desired screenshot
-// format in other functions
-//  This is a hack to avoid adding another function parameter to
-//  idRenderSystem::TakeScreenshot(), which would break the API of the dhewm3
-//  SDK for mods. Note that this is reset to -1 (which means: use value of
-//  r_screenshotFormat) at the end of idRenderSystemLocal::TakeScreenshot(), so
-//  if your code wants to enforce a specific format, it must set
-//  g_screenshotFormat accordingly before each call to TakeScreenshot().
+// eez: This is a slight hack for letting us select the desired screenshot format in other functions
+//  This is a hack to avoid adding another function parameter to idRenderSystem::TakeScreenshot(),
+//  which would break the API of the dhewm3 SDK for mods.
+//  Note that this is reset to -1 (which means: use value of r_screenshotFormat) at the end of
+//  idRenderSystemLocal::TakeScreenshot(), so if your code wants to enforce a specific format,
+//  it must set g_screenshotFormat accordingly before each call to TakeScreenshot().
 int g_screenshotFormat = -1;
 
 enum
@@ -640,8 +619,7 @@ static void R_CheckPortableExtensions(void)
     glConfig.textureNonPowerOfTwoAvailable = R_CheckExtension("GL_ARB_texture_non_power_of_two");
 
     // GL_ARB_texture_compression + GL_S3_s3tc
-    // DRI drivers may have GL_ARB_texture_compression but no
-    // GL_EXT_texture_compression_s3tc
+    // DRI drivers may have GL_ARB_texture_compression but no GL_EXT_texture_compression_s3tc
     if (R_CheckExtension("GL_ARB_texture_compression") && R_CheckExtension("GL_EXT_texture_compression_s3tc"))
     {
         glConfig.textureCompressionAvailable = true;
@@ -673,9 +651,8 @@ static void R_CheckPortableExtensions(void)
     }
 
     // GL_EXT_texture_lod_bias
-    // The actual extension is broken as specificed, storing the state in the
-    // texture unit instead of the texture object.  The behavior in GL 1.4 is the
-    // behavior we use.
+    // The actual extension is broken as specificed, storing the state in the texture unit instead
+    // of the texture object.  The behavior in GL 1.4 is the behavior we use.
     if (glConfig.glVersion >= 1.4 || R_CheckExtension("GL_EXT_texture_lod"))
     {
         common->Printf("...using %s\n", "GL_1.4_texture_lod_bias");
@@ -704,10 +681,9 @@ static void R_CheckPortableExtensions(void)
     }
 
     // EXT_stencil_wrap
-    // This isn't very important, but some pathological case might cause a clamp
-    // error and give a shadow bug. Nvidia also believes that future hardware may
-    // be able to run faster with this enabled to avoid the serialization of
-    // clamping.
+    // This isn't very important, but some pathological case might cause a clamp error and give a shadow bug.
+    // Nvidia also believes that future hardware may be able to run faster with this enabled to avoid the
+    // serialization of clamping.
     if (R_CheckExtension("GL_EXT_stencil_wrap"))
     {
         tr.stencilIncr = GL_INCR_WRAP_EXT;
@@ -732,15 +708,13 @@ static void R_CheckPortableExtensions(void)
     else if (R_CheckExtension("GL_ATI_separate_stencil"))
     {
         common->Printf("...got glStencilOpSeparateATI() (GL_ATI_separate_stencil)\n");
-        // the ATI version of glStencilOpSeparate() has the same signature and
-        // should also behave identical to the GL2 version (in Mesa3D it's just an
-        // alias)
+        // the ATI version of glStencilOpSeparate() has the same signature and should also
+        // behave identical to the GL2 version (in Mesa3D it's just an alias)
         qglStencilOpSeparate = (PFNGLSTENCILOPSEPARATEPROC)GLimp_ExtensionPointer("glStencilOpSeparateATI");
     }
     else
     {
-        common->Printf("X..don't have glStencilOpSeparateATI() or (GL2.0+) "
-                       "glStencilOpSeparate()\n");
+        common->Printf("X..don't have glStencilOpSeparateATI() or (GL2.0+) glStencilOpSeparate()\n");
         qglStencilOpSeparate = NULL;
     }
 
@@ -831,8 +805,7 @@ static void R_CheckPortableExtensions(void)
             }
             else
             {
-                common->Printf("...found GL_ARB_debug_output, but not using it "
-                               "(r_glDebugContext is not set)\n");
+                common->Printf("...found GL_ARB_debug_output, but not using it (r_glDebugContext is not set)\n");
             }
         }
         else
@@ -841,8 +814,8 @@ static void R_CheckPortableExtensions(void)
             qglDebugMessageCallbackARB = NULL;
             if (r_glDebugContext.GetBool())
             {
-                common->Warning("r_glDebugContext is set, but can't be used because "
-                                "GL_ARB_debug_output is not supported");
+                common->Warning(
+                    "r_glDebugContext is set, but can't be used because GL_ARB_debug_output is not supported");
             }
         }
     }
@@ -852,13 +825,11 @@ static void R_CheckPortableExtensions(void)
         {
             if (r_glDebugContext.GetBool())
             {
-                common->Printf("...found GL_ARB_debug_output, but not using it (no "
-                               "debug context)\n");
+                common->Printf("...found GL_ARB_debug_output, but not using it (no debug context)\n");
             }
             else
             {
-                common->Printf("...found GL_ARB_debug_output, but not using it "
-                               "(r_glDebugContext is not set)\n");
+                common->Printf("...found GL_ARB_debug_output, but not using it (r_glDebugContext is not set)\n");
             }
         }
         else
@@ -922,8 +893,7 @@ vidmode_t r_vidModes[] = {
     {"Mode 31: 5120x1440", 5120, 1440},
     {"Mode 32: 7680x2160", 7680, 2160},
 };
-// DG: made this an enum so even stupid compilers accept it as array length
-// below
+// DG: made this an enum so even stupid compilers accept it as array length below
 enum
 {
     s_numVidModes = sizeof(r_vidModes) / sizeof(r_vidModes[0])
@@ -963,8 +933,7 @@ bool R_GetModeInfo(int *width, int *height, int mode)
     return true;
 }
 
-// DG: I added all this vidModeInfoPtr stuff, so I can have a second list of
-// vidmodes
+// DG: I added all this vidModeInfoPtr stuff, so I can have a second list of vidmodes
 //     that are sorted (by width, height), instead of just r_mode index.
 //     That way I can add modes without breaking r_mode, but still display them
 //     sorted in the menu.
@@ -1004,8 +973,7 @@ static void initSortedVidModes()
     qsort(sortedVidModes, s_numVidModes, sizeof(vidModePtr), vidModeCmp);
 }
 
-// DG: the following two functions are part of a horrible hack in
-// ChoiceWindow.cpp
+// DG: the following two functions are part of a horrible hack in ChoiceWindow.cpp
 //     to overwrite the default resolution list in the system options menu
 
 // "r_custom*;640x480;800x600;1024x768;..."
@@ -1262,8 +1230,8 @@ void R_InitOpenGL(void)
     }
     else
     {
-        common->Printf("Will apply r_gamma and r_brightness in hardware (possibly "
-                       "on all screens; r_gammaInShader 0)\n");
+        common->Printf(
+            "Will apply r_gamma and r_brightness in hardware (possibly on all screens; r_gammaInShader 0)\n");
         R_SetColorMappings();
     }
 
@@ -1285,8 +1253,8 @@ void R_InitOpenGL(void)
                 Sys_GrabMouseCursor(false);
             }
             int ret = MessageBox(NULL,
-                                 "Please install OpenGL drivers from your graphics "
-                                 "hardware vendor to run " GAME_NAME ".\nYour OpenGL functionality is limited.",
+                                 "Please install OpenGL drivers from your graphics hardware vendor to run " GAME_NAME
+                                 ".\nYour OpenGL functionality is limited.",
                                  "Insufficient OpenGL capabilities", MB_OKCANCEL | MB_ICONWARNING | MB_TASKMODAL);
             if (ret == IDCANCEL)
             {
@@ -1680,7 +1648,7 @@ void R_ReportImageDuplication_f(const idCmdArgs &args)
 /*
 ==============================================================================
 
-                                                THROUGHPUT BENCHMARKING
+                        THROUGHPUT BENCHMARKING
 
 ==============================================================================
 */
@@ -1764,7 +1732,7 @@ void R_Benchmark_f(const idCmdArgs &args)
 /*
 ==============================================================================
 
-                                                SCREEN SHOTS
+                        SCREEN SHOTS
 
 ==============================================================================
 */
@@ -1831,10 +1799,8 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
             }
             else
             {
-                // DG: It's probably better to restore the glReadBuffer mode after
-                // reading the pixels..
-                //     (at least with XWayland on GNOME changing resolutions is wonky
-                //     when not doing this)
+                // DG: It's probably better to restore the glReadBuffer mode after reading the pixels..
+                //     (at least with XWayland on GNOME changing resolutions is wonky when not doing this)
                 GLint oldReadBuf = GL_BACK;
                 qglGetIntegerv(GL_READ_BUFFER, &oldReadBuf);
                 qglReadBuffer(GL_FRONT);
@@ -2112,8 +2078,8 @@ void R_ScreenShot_f(const idCmdArgs &args)
         R_ScreenshotFilename(lastNumber, "screenshots/shot", checkname);
         break;
     default:
-        common->Printf("usage: screenshot\n       screenshot <filename>\n       screenshot "
-                       "<width> <height>\n       screenshot <width> <height> <blends>\n");
+        common->Printf("usage: screenshot\n       screenshot <filename>\n       screenshot <width> <height>\n       "
+                       "screenshot <width> <height> <blends>\n");
         return;
     }
 
@@ -2440,9 +2406,8 @@ void R_MakeAmbientMap_f(const idCmdArgs &args)
 
                     for (int s = 0; s < samples; s++)
                     {
-                        // pick a random direction vector that is inside the unit sphere but
-                        // not behind dir, which is a robust way to evenly sample a
-                        // hemisphere
+                        // pick a random direction vector that is inside the unit sphere but not behind dir,
+                        // which is a robust way to evenly sample a hemisphere
                         idVec3 test;
                         while (1)
                         {
@@ -2666,8 +2631,7 @@ void R_VidRestart_f(const idCmdArgs &args)
         }
     }
 
-    // DG: allow enforcing full vid restarts (when vid_restart is called from the
-    // menu or whatever)
+    // DG: allow enforcing full vid restarts (when vid_restart is called from the menu or whatever)
     //     to let users work around driver bugs or whatever, like
     //     https://github.com/dhewm/dhewm3/issues/587#issuecomment-2206937752
     if (r_vidRestartAlwaysFull.GetBool())
@@ -2675,11 +2639,9 @@ void R_VidRestart_f(const idCmdArgs &args)
         full = true;
     }
 
-    // DG: in partial mode, try to just resize the window (and make it fullscreen
-    // or windowed)
-    //     instead of doing a full vid_restart. Still falls back to a full
-    //     vid_restart in case this doesn't work (for example because MSAA
-    //     settings have changed)
+    // DG: in partial mode, try to just resize the window (and make it fullscreen or windowed)
+    //     instead of doing a full vid_restart. Still falls back to a full vid_restart
+    //     in case this doesn't work (for example because MSAA settings have changed)
     if (!full)
     {
         int wantedWidth = 0, wantedHeight = 0;
@@ -2696,23 +2658,20 @@ void R_VidRestart_f(const idCmdArgs &args)
             parms.fullScreen = (forceWindow) ? false : r_fullscreen.GetBool();
             parms.fullScreenDesktop = r_fullscreenDesktop.GetBool();
             parms.displayHz = r_displayRefresh.GetInteger();
-            // "vid_restart partial windowed" is used in case of errors to return to
-            // windowed mode before things explode more. in that case just keep
-            // whatever MSAA setting is active
+            // "vid_restart partial windowed" is used in case of errors to return to windowed mode
+            // before things explode more. in that case just keep whatever MSAA setting is active
             parms.multiSamples = forceWindow ? -1 : r_multiSamples.GetInteger();
             parms.stereo = false;
 
             if (GLimp_SetScreenParms(parms))
             {
-                common->Printf("'vid_restart partial' succeeded in changing resolution "
-                               "and/or fullscreen mode\n");
+                common->Printf("'vid_restart partial' succeeded in changing resolution and/or fullscreen mode\n");
                 return;
             }
         }
     }
 
-    // DG: notify the game DLL about the reloadImages and (non-partial)
-    // vid_restart commands
+    // DG: notify the game DLL about the reloadImages and (non-partial) vid_restart commands
     if (gameCallbacks.reloadImagesCB != NULL)
     {
         gameCallbacks.reloadImagesCB(gameCallbacks.reloadImagesUserArg, args);
@@ -3075,16 +3034,12 @@ void idRenderSystemLocal::EndLevelLoad(void)
     {
         RB_ShowImages();
     }
-    // DG: check if the levels worldspawn has "allow_nospecular" set, which tells
-    // us that
-    //     the map author wants "nospecular" parms of lights to be respected by
-    //     the renderer (Vanilla Doom3 didn't, even though some official levels
-    //     have it set, so to not
-    //      change the look of the original game it must be enabled in the
-    //      worldspawn of new maps)
-    //     See also the r_supportNoSpecular CVar (the allowNoSpecular set here
-    //     only makes a difference if r_supportNoSpecular is -1, which is the
-    //     default)
+    // DG: check if the levels worldspawn has "allow_nospecular" set, which tells us that
+    //     the map author wants "nospecular" parms of lights to be respected by the renderer
+    //     (Vanilla Doom3 didn't, even though some official levels have it set, so to not
+    //      change the look of the original game it must be enabled in the worldspawn of new maps)
+    //     See also the r_supportNoSpecular CVar (the allowNoSpecular set here only makes
+    //     a difference if r_supportNoSpecular is -1, which is the default)
     allowNoSpecular = false;
     if (gameEdit != NULL)
     {

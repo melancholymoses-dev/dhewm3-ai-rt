@@ -98,8 +98,7 @@ void CPropTreeView::MeasureItem(LPMEASUREITEMSTRUCT lpMeasureItemStruct)
     float scaling_factor = Win_GetWindowScalingFactor(GetSafeHwnd());
     int s20 = int(20 * scaling_factor);
 
-    // #HvGNote : This should be the right way to do it, but hardcoded is fine
-    // too.
+    // #HvGNote : This should be the right way to do it, but hardcoded is fine too.
     // if (measureItem && !measureItem->m_curValue.IsEmpty()) {
     //	CRect rect;
     //	GetClientRect(rect);
@@ -108,12 +107,11 @@ void CPropTreeView::MeasureItem(LPMEASUREITEMSTRUCT lpMeasureItemStruct)
     //	}
     //	rect.left = m_nDivider;
     //	CDC* dc = GetDC();
-    //	int ret = dc->DrawText(measureItem->m_curValue, rect, DT_INTERNAL |
-    // DT_CALCRECT | DT_LEFT | DT_WORDBREAK); 	ReleaseDC(dc);
-    //	lpMeasureItemStruct->itemHeight = (ret >= s20) ? ret * scaling_factor :
-    // s20; //pixels
+    //	int ret = dc->DrawText(measureItem->m_curValue, rect, DT_INTERNAL | DT_CALCRECT | DT_LEFT | DT_WORDBREAK);
+    //	ReleaseDC(dc);
+    //	lpMeasureItemStruct->itemHeight = (ret >= s20) ? ret * scaling_factor : s20; //pixels
     //}
     // else {
     lpMeasureItemStruct->itemHeight = s20; // pixels
-                                           //}
+    //}
 }

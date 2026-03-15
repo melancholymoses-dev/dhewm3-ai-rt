@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,10 +39,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===================================================================================
 
-        Articulated Figure physics
+    Articulated Figure physics
 
-        Employs a constraint force based dynamic simulation using a lagrangian
-        multiplier method to solve for the constraint forces.
+    Employs a constraint force based dynamic simulation using a lagrangian
+    multiplier method to solve for the constraint forces.
 
 ===================================================================================
 */
@@ -271,8 +268,7 @@ class idAFConstraint_BallAndSocketJointFriction : public idAFConstraint
 };
 
 // universal, Cardan or Hooke joint which allows 2 degrees of freedom
-// like a ball and socket joint but also constrains the rotation about the
-// cardan shafts
+// like a ball and socket joint but also constrains the rotation about the cardan shafts
 class idAFConstraint_UniversalJoint : public idAFConstraint
 {
 
@@ -341,8 +337,7 @@ class idAFConstraint_UniversalJointFriction : public idAFConstraint
 };
 
 // cylindrical joint which allows 2 degrees of freedom
-// constrains body1 to lie on a line relative to body2 and allows only
-// translation along and rotation about the line
+// constrains body1 to lie on a line relative to body2 and allows only translation along and rotation about the line
 class idAFConstraint_CylindricalJoint : public idAFConstraint
 {
 
@@ -359,8 +354,7 @@ class idAFConstraint_CylindricalJoint : public idAFConstraint
 };
 
 // hinge, revolute or pin joint which allows 1 degree of freedom
-// constrains all motion of body1 relative to body2 except the rotation about
-// the hinge axis
+// constrains all motion of body1 relative to body2 except the rotation about the hinge axis
 class idAFConstraint_Hinge : public idAFConstraint
 {
 
@@ -430,8 +424,7 @@ class idAFConstraint_HingeFriction : public idAFConstraint
     virtual void ApplyFriction(float invTimeStep);
 };
 
-// constrains two bodies attached to each other with a hinge to get a specified
-// relative orientation
+// constrains two bodies attached to each other with a hinge to get a specified relative orientation
 class idAFConstraint_HingeSteering : public idAFConstraint
 {
 
@@ -468,9 +461,8 @@ class idAFConstraint_HingeSteering : public idAFConstraint
     virtual void ApplyFriction(float invTimeStep);
 };
 
-// slider, prismatic or translational constraint which allows 1 degree of
-// freedom constrains body1 to lie on a line relative to body2, the orientation
-// is also fixed relative to body2
+// slider, prismatic or translational constraint which allows 1 degree of freedom
+// constrains body1 to lie on a line relative to body2, the orientation is also fixed relative to body2
 class idAFConstraint_Slider : public idAFConstraint
 {
 
@@ -495,8 +487,7 @@ class idAFConstraint_Slider : public idAFConstraint
 };
 
 // line constraint which allows 4 degrees of freedom
-// constrains body1 to lie on a line relative to body2, does not constrain the
-// orientation.
+// constrains body1 to lie on a line relative to body2, does not constrain the orientation.
 class idAFConstraint_Line : public idAFConstraint
 {
 
@@ -513,8 +504,7 @@ class idAFConstraint_Line : public idAFConstraint
 };
 
 // plane constraint which allows 5 degrees of freedom
-// constrains body1 to lie in a plane relative to body2, does not constrain the
-// orientation.
+// constrains body1 to lie in a plane relative to body2, does not constrain the orientation.
 class idAFConstraint_Plane : public idAFConstraint
 {
 
@@ -537,8 +527,8 @@ class idAFConstraint_Plane : public idAFConstraint
     virtual void ApplyFriction(float invTimeStep);
 };
 
-// spring constraint which allows 6 or 5 degrees of freedom based on the spring
-// limits constrains body1 relative to body2 with a spring
+// spring constraint which allows 6 or 5 degrees of freedom based on the spring limits
+// constrains body1 relative to body2 with a spring
 class idAFConstraint_Spring : public idAFConstraint
 {
 
@@ -673,8 +663,7 @@ class idAFConstraint_PyramidLimit : public idAFConstraint
 
   protected:
     idVec3 pyramidAnchor;  // top of the pyramid in body2 space
-    idMat3 pyramidBasis;   // pyramid basis in body2 space with base[2] being the
-                           // pyramid axis
+    idMat3 pyramidBasis;   // pyramid basis in body2 space with base[2] being the pyramid axis
     idVec3 body1Axis;      // axis in body1 space that should stay within the cone
     float cosAngle[2];     // cos( pyramidAngle / 2 )
     float sinHalfAngle[2]; // sin( pyramidAngle / 4 )
@@ -926,10 +915,8 @@ class idAFBody
     float *response;                   // forces on body in response to auxiliary constraint forces
     int *responseIndex;                // index to response forces
     int numResponses;                  // number of response forces
-    int maxAuxiliaryIndex;             // largest index of an auxiliary constraint
-                                       // constraining this body
-    int maxSubTreeAuxiliaryIndex;      // largest index of an auxiliary constraint
-                                       // constraining this body or one of it's
+    int maxAuxiliaryIndex;             // largest index of an auxiliary constraint constraining this body
+    int maxSubTreeAuxiliaryIndex;      // largest index of an auxiliary constraint constraining this body or one of it's
                                        // children
 
     struct bodyFlags_s
@@ -1034,8 +1021,8 @@ class idPhysics_AF : public idPhysics_Base
     void SetDefaultFriction(float linear, float angular, float contact);
     // suspend settings
     void SetSuspendSpeed(const idVec2 &velocity, const idVec2 &acceleration);
-    // set the time and tolerances used to determine if the simulation can be
-    // suspended when the figure hardly moves for a while
+    // set the time and tolerances used to determine if the simulation can be suspended when the figure hardly moves for
+    // a while
     void SetSuspendTolerance(const float noMoveTime, const float translationTolerance, const float rotationTolerance);
     // set minimum and maximum simulation time in seconds
     void SetSuspendTime(const float minTime, const float maxTime);
@@ -1187,35 +1174,27 @@ class idPhysics_AF : public idPhysics_Base
     float totalMass;       // total mass of articulated figure
     float forceTotalMass;  // force this total mass
 
-    idVec2 suspendVelocity;     // simulation may not be suspended if a body has more
-                                // velocity
-    idVec2 suspendAcceleration; // simulation may not be suspended if a body has
-                                // more acceleration
-    float noMoveTime;           // suspend simulation if hardly any movement for this many
-                                // seconds
+    idVec2 suspendVelocity;     // simulation may not be suspended if a body has more velocity
+    idVec2 suspendAcceleration; // simulation may not be suspended if a body has more acceleration
+    float noMoveTime;           // suspend simulation if hardly any movement for this many seconds
     float noMoveTranslation;    // maximum translation considered no movement
     float noMoveRotation;       // maximum rotation considered no movement
-    float minMoveTime;          // if > 0 the simulation is never suspended before running
-                                // this many seconds
-    float maxMoveTime;          // if > 0 the simulation is always suspeded after running
-                                // this many seconds
-    float impulseThreshold;     // threshold below which impulses are ignored to avoid
-                                // continuous activation
+    float minMoveTime;          // if > 0 the simulation is never suspended before running this many seconds
+    float maxMoveTime;          // if > 0 the simulation is always suspeded after running this many seconds
+    float impulseThreshold;     // threshold below which impulses are ignored to avoid continuous activation
 
     float timeScale;          // the time is scaled with this value for slow motion effects
     float timeScaleRampStart; // start of time scale change
     float timeScaleRampEnd;   // end of time scale change
 
     float jointFrictionScale;     // joint friction scale
-    float jointFrictionDent;      // joint friction dives from 1 to this value and goes
-                                  // up again
+    float jointFrictionDent;      // joint friction dives from 1 to this value and goes up again
     float jointFrictionDentStart; // start time of joint friction dent
     float jointFrictionDentEnd;   // end time of joint friction dent
     float jointFrictionDentScale; // dent scale
 
     float contactFrictionScale;     // contact friction scale
-    float contactFrictionDent;      // contact friction dives from 1 to this value and
-                                    // goes up again
+    float contactFrictionDent;      // contact friction dives from 1 to this value and goes up again
     float contactFrictionDentStart; // start time of contact friction dent
     float contactFrictionDentEnd;   // end time of contact friction dent
     float contactFrictionDentScale; // dent scale

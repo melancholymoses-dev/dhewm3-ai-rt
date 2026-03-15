@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/VertexCache.h"
 #include "sys/platform.h"
+#include "renderer/VertexCache.h"
 
 #include "renderer/tr_local.h"
 
@@ -54,8 +51,8 @@ look better.
 
 Match in position and normal, but differ in texcoords are referenced together
 for calculating tangent vectors for bump mapping.
-Artists should take care to have identical texels in all maps
-(bump/diffuse/specular) in this case
+Artists should take care to have identical texels in all maps (bump/diffuse/specular)
+in this case
 
 Vertexes that only match in position are merged for shadow edge finding.
 
@@ -101,10 +98,9 @@ silhouette indexes
 shade indexes
 texture indexes
 
-  shade indexes will only be > silhouette indexes if there is facet shading
-present
+  shade indexes will only be > silhouette indexes if there is facet shading present
 
-        lookups from texture to sil and texture to shade?
+    lookups from texture to sil and texture to shade?
 
 The normal and tangent vector smoothing is simple averaging, no attempt is
 made to better handle the cases where the distribution around the shared vertex
@@ -117,12 +113,10 @@ is highly uneven.
 ==============================================================================
 */
 
-// this shouldn't change anything, but previously renderbumped models seem to
-// need it
+// this shouldn't change anything, but previously renderbumped models seem to need it
 #define USE_INVA
 
-// instead of using the texture T vector, cross the normal and S vector for an
-// orthogonal axis
+// instead of using the texture T vector, cross the normal and S vector for an orthogonal axis
 #define DERIVE_UNSMOOTHED_BITANGENT
 
 const int MAX_SIL_EDGES = 0x10000;
@@ -251,41 +245,34 @@ void R_ShowTriSurfMemory_f(const idCmdArgs &args)
                    triIndexAllocator.GetBaseBlockMemory() >> 10, triIndexAllocator.GetFreeBlockMemory() >> 10,
                    triIndexAllocator.GetNumFreeBlocks(), triIndexAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB shadow vert memory (%d kB free in %d blocks, %d empty "
-                   "base blocks)\n",
+    common->Printf("%6d kB shadow vert memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triShadowVertexAllocator.GetBaseBlockMemory() >> 10,
                    triShadowVertexAllocator.GetFreeBlockMemory() >> 10, triShadowVertexAllocator.GetNumFreeBlocks(),
                    triShadowVertexAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB tri plane memory (%d kB free in %d blocks, %d empty "
-                   "base blocks)\n",
+    common->Printf("%6d kB tri plane memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triPlaneAllocator.GetBaseBlockMemory() >> 10, triPlaneAllocator.GetFreeBlockMemory() >> 10,
                    triPlaneAllocator.GetNumFreeBlocks(), triPlaneAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB sil index memory (%d kB free in %d blocks, %d empty "
-                   "base blocks)\n",
+    common->Printf("%6d kB sil index memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triSilIndexAllocator.GetBaseBlockMemory() >> 10, triSilIndexAllocator.GetFreeBlockMemory() >> 10,
                    triSilIndexAllocator.GetNumFreeBlocks(), triSilIndexAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB sil edge memory (%d kB free in %d blocks, %d empty "
-                   "base blocks)\n",
+    common->Printf("%6d kB sil edge memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triSilEdgeAllocator.GetBaseBlockMemory() >> 10, triSilEdgeAllocator.GetFreeBlockMemory() >> 10,
                    triSilEdgeAllocator.GetNumFreeBlocks(), triSilEdgeAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB dominant tri memory (%d kB free in %d blocks, %d "
-                   "empty base blocks)\n",
+    common->Printf("%6d kB dominant tri memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triDominantTrisAllocator.GetBaseBlockMemory() >> 10,
                    triDominantTrisAllocator.GetFreeBlockMemory() >> 10, triDominantTrisAllocator.GetNumFreeBlocks(),
                    triDominantTrisAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB mirror vert memory (%d kB free in %d blocks, %d empty "
-                   "base blocks)\n",
+    common->Printf("%6d kB mirror vert memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triMirroredVertAllocator.GetBaseBlockMemory() >> 10,
                    triMirroredVertAllocator.GetFreeBlockMemory() >> 10, triMirroredVertAllocator.GetNumFreeBlocks(),
                    triMirroredVertAllocator.GetNumEmptyBaseBlocks());
 
-    common->Printf("%6d kB dup vert memory (%d kB free in %d blocks, %d empty "
-                   "base blocks)\n",
+    common->Printf("%6d kB dup vert memory (%d kB free in %d blocks, %d empty base blocks)\n",
                    triDupVertAllocator.GetBaseBlockMemory() >> 10, triDupVertAllocator.GetFreeBlockMemory() >> 10,
                    triDupVertAllocator.GetNumFreeBlocks(), triDupVertAllocator.GetNumEmptyBaseBlocks());
 
@@ -433,8 +420,8 @@ void R_ReallyFreeStaticTriSurf(srfTriangles_t *tri)
     {
         if (tri->indexes != NULL)
         {
-            // if a surface is completely inside a light volume R_CreateLightTris
-            // points tri->indexes at the indexes of the ambient surface
+            // if a surface is completely inside a light volume R_CreateLightTris points tri->indexes at the indexes of
+            // the ambient surface
             if (tri->ambientSurface == NULL || tri->indexes != tri->ambientSurface->indexes)
             {
                 triIndexAllocator.Free(tri->indexes);
@@ -505,8 +492,8 @@ void R_CheckStaticTriSurfMemory(const srfTriangles_t *tri)
     {
         if (tri->indexes != NULL)
         {
-            // if a surface is completely inside a light volume R_CreateLightTris
-            // points tri->indexes at the indexes of the ambient surface
+            // if a surface is completely inside a light volume R_CreateLightTris points tri->indexes at the indexes of
+            // the ambient surface
             if (tri->ambientSurface == NULL || tri->indexes != tri->ambientSurface->indexes)
             {
                 const char *error id_attribute((unused)) = triIndexAllocator.CheckMemory(tri->indexes);
@@ -788,8 +775,7 @@ void R_RangeCheckIndexes(const srfTriangles_t *tri)
     if (tri->numVerts > tri->numIndexes)
     {
         // FIXME: find the causes of these
-        // common->Printf( "R_RangeCheckIndexes: tri->numVerts > tri->numIndexes\n"
-        // );
+        // common->Printf( "R_RangeCheckIndexes: tri->numVerts > tri->numIndexes\n" );
     }
 }
 
@@ -897,8 +883,7 @@ void R_CreateDupVerts(srfTriangles_t *tri)
 {
     int i;
 
-    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with
-    // big models
+    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with big models
     bool remapOnStack;
     int *remap = (int *)Mem_MallocA(tri->numVerts * sizeof(remap[0]), remapOnStack);
 
@@ -933,9 +918,8 @@ void R_CreateDupVerts(srfTriangles_t *tri)
     {
         tri->dupVerts = triDupVertAllocator.Alloc(tri->numDupVerts * 2);
         memcpy(tri->dupVerts, tempDupVerts,
-               tri->numDupVerts * 2 * sizeof(tri->dupVerts[0])); // runtime error: null pointer passed
-                                                                 // as argument 1, which is declared to
-                                                                 // never be null
+               tri->numDupVerts * 2 * sizeof(tri->dupVerts[0])); // runtime error: null pointer passed as argument 1,
+                                                                 // which is declared to never be null
     }
     else
     {
@@ -1242,8 +1226,8 @@ void R_IdentifySilEdges(srfTriangles_t *tri, bool omitCoplanarEdges)
         if (c_coplanarCulled)
         {
             c_coplanarSilEdges += c_coplanarCulled;
-            //			common->Printf( "%i of %i sil edges coplanar
-            // culled\n", c_coplanarCulled, 				c_coplanarCulled + numSilEdges );
+            //			common->Printf( "%i of %i sil edges coplanar culled\n", c_coplanarCulled,
+            //				c_coplanarCulled + numSilEdges );
         }
     }
     c_totalSilEdges += numSilEdges;
@@ -1294,8 +1278,7 @@ void R_IdentifySilEdges(srfTriangles_t *tri, bool omitCoplanarEdges)
 ===============
 R_FaceNegativePolarity
 
-Returns true if the texture polarity of the face is negative, false if it is
-positive or zero
+Returns true if the texture polarity of the face is negative, false if it is positive or zero
 ===============
 */
 static bool R_FaceNegativePolarity(const srfTriangles_t *tri, int firstIndex)
@@ -1428,13 +1411,12 @@ static void R_DeriveFaceTangents(const srfTriangles_t *tri, faceTangents_t *face
 ===================
 R_DuplicateMirroredVertexes
 
-Modifies the surface to bust apart any verts that are shared by both positive
-and negative texture polarities, so tangent space smoothing at the vertex
-doesn't degenerate.
+Modifies the surface to bust apart any verts that are shared by both positive and
+negative texture polarities, so tangent space smoothing at the vertex doesn't
+degenerate.
 
-This will create some identical vertexes (which will eventually get different
-tangent vectors), so never optimize the resulting mesh, or it will get the
-mirrored edges back.
+This will create some identical vertexes (which will eventually get different tangent
+vectors), so never optimize the resulting mesh, or it will get the mirrored edges back.
 
 Reallocates tri->verts and changes tri->indexes in place
 Silindexes are unchanged by this.
@@ -1456,8 +1438,7 @@ static void R_DuplicateMirroredVertexes(srfTriangles_t *tri)
     int totalVerts;
     int numMirror;
 
-    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with
-    // big models
+    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with big models
     bool tvertsOnStack;
     tverts = (tangentVert_t *)Mem_MallocA(tri->numVerts * sizeof(*tverts), tvertsOnStack);
 
@@ -1579,8 +1560,7 @@ void R_DeriveTangentsWithoutNormals(srfTriangles_t *tri)
     faceTangents_t *ft;
     idDrawVert *vert;
 
-    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with
-    // big models
+    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with big models
     size_t allocaSize = sizeof(faceTangents[0]) * tri->numIndexes / 3;
     bool faceTangentsOnStack;
     faceTangents = (faceTangents_t *)Mem_MallocA(allocaSize, faceTangentsOnStack);
@@ -1802,8 +1782,7 @@ void R_BuildDominantTris(srfTriangles_t *tri)
 ====================
 R_DeriveUnsmoothedTangents
 
-Uses the single largest area triangle for each vertex, instead of smoothing over
-all
+Uses the single largest area triangle for each vertex, instead of smoothing over all
 ====================
 */
 void R_DeriveUnsmoothedTangents(srfTriangles_t *tri)
@@ -1912,8 +1891,7 @@ void R_DeriveTangents(srfTriangles_t *tri, bool allocFacePlanes)
     bool planesOnStack = true;
     if (!planes)
     {
-        // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows
-        // with big models
+        // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with big models
         planes = (idPlane *)Mem_MallocA((tri->numIndexes / 3) * sizeof(planes[0]), planesOnStack);
     }
 
@@ -2020,8 +1998,7 @@ void R_DeriveTangents(srfTriangles_t *tri, bool allocFacePlanes)
     int *dupVerts = tri->dupVerts;
     idDrawVert *verts = tri->verts;
 
-    // add the normal of a duplicated vertex to the normal of the first vertex
-    // with the same XYZ
+    // add the normal of a duplicated vertex to the normal of the first vertex with the same XYZ
     for (i = 0; i < tri->numDupVerts; i++)
     {
         verts[dupVerts[i * 2 + 0]].normal += verts[dupVerts[i * 2 + 1]].normal;
@@ -2205,8 +2182,7 @@ void R_TestDegenerateTextureSpace(srfTriangles_t *tri)
 
     if (c_degenerate)
     {
-        //		common->Printf( "%d triangles with a degenerate texture
-        // space\n", c_degenerate );
+        //		common->Printf( "%d triangles with a degenerate texture space\n", c_degenerate );
     }
 }
 
@@ -2277,8 +2253,7 @@ void R_RemoveUnusedVerts(srfTriangles_t *tri)
             tri->verts[index - 1] = tri->verts[i];
         }
 
-        // this doesn't realloc the arrays to save the memory used by the unused
-        // verts
+        // this doesn't realloc the arrays to save the memory used by the unused verts
     }
 
     R_StaticFree(mark);
@@ -2289,8 +2264,7 @@ void R_RemoveUnusedVerts(srfTriangles_t *tri)
 R_MergeSurfaceList
 
 Only deals with vertexes and indexes, not silhouettes, planes, etc.
-Does NOT perform a cleanup triangles, so there may be duplicated verts in the
-result.
+Does NOT perform a cleanup triangles, so there may be duplicated verts in the result.
 =================
 */
 srfTriangles_t *R_MergeSurfaceList(const srfTriangles_t **surfaces, int numSurfaces)
@@ -2337,8 +2311,7 @@ srfTriangles_t *R_MergeSurfaceList(const srfTriangles_t **surfaces, int numSurfa
 R_MergeTriangles
 
 Only deals with vertexes and indexes, not silhouettes, planes, etc.
-Does NOT perform a cleanup triangles, so there may be duplicated verts in the
-result.
+Does NOT perform a cleanup triangles, so there may be duplicated verts in the result.
 =================
 */
 srfTriangles_t *R_MergeTriangles(const srfTriangles_t *tri1, const srfTriangles_t *tri2)
@@ -2398,8 +2371,7 @@ void R_CleanupTriangles(srfTriangles_t *tri, bool createNormals, bool identifySi
 
     R_CreateSilIndexes(tri);
 
-    //	R_RemoveDuplicatedTriangles( tri );	// this may remove valid
-    // overlapped transparent triangles
+    //	R_RemoveDuplicatedTriangles( tri );	// this may remove valid overlapped transparent triangles
 
     R_RemoveDegenerateTriangles(tri);
 
@@ -2467,8 +2439,7 @@ deformInfo_t *R_BuildDeformInfo(int numVerts, const idDrawVert *verts, int numIn
     tri.numIndexes = numIndexes;
     R_AllocStaticTriSurfIndexes(&tri, tri.numIndexes);
 
-    // don't memcpy, so we can change the index type from int to short without
-    // changing the interface
+    // don't memcpy, so we can change the index type from int to short without changing the interface
     for (i = 0; i < tri.numIndexes; i++)
     {
         tri.indexes[i] = indexes[i];

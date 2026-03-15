@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "NewTexWnd.h"
-#include "Radiant.h"
-#include "io.h"
 #include "qe3.h"
+#include "Radiant.h"
+#include "NewTexWnd.h"
+#include "io.h"
 
 #include "../../renderer/tr_local.h"
 
@@ -504,8 +501,7 @@ const idMaterial *CNewTexWnd::getMaterialAtPoint(CPoint point)
 
         int width = mat->GetEditorImage()->uploadWidth * ((float)g_PrefsDlg.m_nTextureScale / 100);
         int height = mat->GetEditorImage()->uploadHeight * ((float)g_PrefsDlg.m_nTextureScale / 100);
-        // if (point.x > draw.x && point.x - draw.x < width && my < draw.y && my +
-        // draw.y < height + FONT_HEIGHT) {
+        // if (point.x > draw.x && point.x - draw.x < width && my < draw.y && my + draw.y < height + FONT_HEIGHT) {
         if (point.x > draw.x && point.x - draw.x < width && my < draw.y && draw.y - my < height + FONT_HEIGHT)
         {
             return mat;
@@ -690,8 +686,8 @@ void Texture_SetTexture(texdef_t *texdef, brushprimit_texdef_t *brushprimit_texd
     g_qeglobals.d_texturewin.texdef = *texdef;
 
     //
-    // store the texture coordinates for new brush primitive mode be sure that all
-    // the callers are using the default 2x2 texture
+    // store the texture coordinates for new brush primitive mode be sure that all the
+    // callers are using the default 2x2 texture
     //
     if (g_qeglobals.m_bBrushPrimitMode)
     {
@@ -714,8 +710,8 @@ void Texture_SetTexture(texdef_t *texdef, brushprimit_texdef_t *brushprimit_texd
     }
 
     g_qeglobals.d_texturewin.texdef = *texdef;
-    // store the texture coordinates for new brush primitive mode be sure that all
-    // the callers are using the default 2x2 texture
+    // store the texture coordinates for new brush primitive mode be sure that all the
+    // callers are using the default 2x2 texture
     //
     if (g_qeglobals.m_bBrushPrimitMode)
     {
@@ -827,7 +823,7 @@ bool texture_showinuse = true;
 
 /*
  =======================================================================================================================
-        Texture_SetMode
+    Texture_SetMode
  =======================================================================================================================
  */
 void Texture_SetMode(int iMenu)

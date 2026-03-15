@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +32,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "tools/edit_gui_common.h"
 
 #include "../../sys/win32/rc/debugger_resource.h"
-#include "../Common/OpenFileDialog.h"
 #include "DebuggerApp.h"
-#include "DebuggerFindDlg.h"
+#include "../Common/OpenFileDialog.h"
 #include "DebuggerQuickWatchDlg.h"
+#include "DebuggerFindDlg.h"
 
 #define DEBUGGERWINDOWCLASS "DHEWM3_DEBUGGER_WINDOW"
 #define ID_DBG_WINDOWMIN 18900
@@ -186,10 +183,9 @@ bool rvDebuggerWindow::Create(HINSTANCE instance)
 ================
 rvDebuggerWindow::ScriptWordBreakProc
 
-Determines where word breaks are in the script window.  This is used for
-determining the word that someone is over with their mouse cursor.  Since the
-default windows one doesnt understand the delimiters of the scripting language
-it had to be overridden.
+Determines where word breaks are in the script window.  This is used for determining
+the word that someone is over with their mouse cursor.  Since the default windows one
+doesnt understand the delimiters of the scripting language it had to be overridden.
 ================
 */
 int CALLBACK rvDebuggerWindow::ScriptWordBreakProc(LPTSTR text, int current, int max, int action)
@@ -365,10 +361,8 @@ LRESULT CALLBACK rvDebuggerWindow::ScriptWndProc(HWND wnd, UINT msg, WPARAM wpar
         GetWindowRect(window->mWndToolbar, &rect);
         MoveWindow(window->mWndMargin, 0, 0, window->mMarginSize, window->mSplitterRect.top - (rect.bottom - rect.top),
                    TRUE);
-        // FIXME: was *2.25, increased for line numbers up to 9999; but neither
-        // works particularly well
-        //        if DPI scaling is involved, because script code text and
-        //        linenumbers aren't DPI scaled
+        // FIXME: was *2.25, increased for line numbers up to 9999; but neither works particularly well
+        //        if DPI scaling is involved, because script code text and linenumbers aren't DPI scaled
         int lmargin = window->GetMarginWidth();
         SendMessage(window->mWndScript, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(lmargin, s10));
     }
@@ -1077,8 +1071,8 @@ int rvDebuggerWindow::HandleCreate(WPARAM wparam, LPARAM lparam)
     col.pszText = "Value";
     ListView_InsertColumn(mWndWatch, 1, &col);
 
-    // Create the image list that is used by the threads window, callstack window,
-    // and margin window
+    // Create the image list that is used by the threads window, callstack window, and
+    // margin window
     mImageList = ImageList_Create(16, 16, ILC_COLOR | ILC_MASK, 0, 2);
     ImageList_AddIcon(mImageList, (HICON)LoadImage(mInstance, MAKEINTRESOURCE(IDI_DBG_EMPTY), IMAGE_ICON, 16, 16,
                                                    LR_DEFAULTSIZE | LR_DEFAULTCOLOR));
@@ -1280,9 +1274,8 @@ int rvDebuggerWindow::HandleCommand(WPARAM wparam, LPARAM lparam)
             GetCurrentDirectory(MAX_PATH, curDir);
 
             GetModuleFileName(NULL, exeFile, MAX_PATH);
-            const char *s = va("%s +set fs_game %s +set fs_cdpath %s +set "
-                               "com_enableDebuggerServer 1",
-                               exeFile, cvarSystem->GetCVarString("fs_game"), cvarSystem->GetCVarString("fs_cdpath"));
+            const char *s = va("%s +set fs_game %s +set fs_cdpath %s +set com_enableDebuggerServer 1", exeFile,
+                               cvarSystem->GetCVarString("fs_game"), cvarSystem->GetCVarString("fs_cdpath"));
             CreateProcess(NULL, (LPSTR)s, NULL, NULL, FALSE, 0, NULL, curDir, &startup, &process);
 
             CloseHandle(process.hThread);
@@ -1319,8 +1312,8 @@ int rvDebuggerWindow::HandleCommand(WPARAM wparam, LPARAM lparam)
         break;
     }
 
-    case 111: // DG: Debugger.rc has 'MENUITEM "Toggle &Breakpoint\tF9", 111' for
-              // the context menu no idea why 111 but this works
+    case 111: // DG: Debugger.rc has 'MENUITEM "Toggle &Breakpoint\tF9", 111' for the context menu no idea why 111 but
+              // this works
     case ID_DBG_DEBUG_TOGGLEBREAKPOINT:
         ToggleBreakpoint();
         break;
@@ -1503,10 +1496,8 @@ LRESULT CALLBACK rvDebuggerWindow::WndProc(HWND wnd, UINT msg, WPARAM wparam, LP
         MoveWindow(window->mWndScriptList, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
         MoveWindow(window->mWndBreakList, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
 
-        // FIXME: was *2.25, increased for line numbers up to 9999; but neither
-        // works particularly well
-        //        if DPI scaling is involved, because script code text and
-        //        linenumbers aren't DPI scaled
+        // FIXME: was *2.25, increased for line numbers up to 9999; but neither works particularly well
+        //        if DPI scaling is involved, because script code text and linenumbers aren't DPI scaled
         int lmargin = window->GetMarginWidth();
         SendMessage(window->mWndScript, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(lmargin, s10));
         SendMessage(window->mWndCallstack, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(s18, s10));
@@ -1791,8 +1782,7 @@ LRESULT CALLBACK rvDebuggerWindow::WndProc(HWND wnd, UINT msg, WPARAM wparam, LP
             }
             else if (hdr->code == LVN_KEYDOWN)
             {
-                // when user selects a breakpoints and presses the Del key, remove the
-                // breakpoint
+                // when user selects a breakpoints and presses the Del key, remove the breakpoint
                 int sel = ListView_GetNextItem(hdr->hwndFrom, -1, LVNI_SELECTED);
                 if (sel != -1)
                 {
@@ -1859,8 +1849,8 @@ LRESULT CALLBACK rvDebuggerWindow::WndProc(HWND wnd, UINT msg, WPARAM wparam, LP
         if (window->mClient->IsConnected())
         {
             if (IDNO == MessageBox(wnd,
-                                   "The debugger is currently connected to a running version "
-                                   "of the game.  Are you sure you want to close now?",
+                                   "The debugger is currently connected to a running version of the game.  Are you "
+                                   "sure you want to close now?",
                                    "Dhewm3 Script Debugger", MB_YESNO | MB_ICONQUESTION))
             {
                 return 0;
@@ -1877,8 +1867,8 @@ LRESULT CALLBACK rvDebuggerWindow::WndProc(HWND wnd, UINT msg, WPARAM wparam, LP
 ================
 rvDebuggerWindow::Activate
 
-Static method that will activate the currently running debugger.  If one is
-found and activated then true will be returned.
+Static method that will activate the currently running debugger.  If one is found
+and activated then true will be returned.
 ================
 */
 bool rvDebuggerWindow::Activate(void)
@@ -2278,9 +2268,8 @@ void rvDebuggerWindow::CreateToolbar(void)
     SendMessage(mWndToolbar, TB_ADDBITMAP, (WPARAM)4, (LPARAM)&tbab);
 
     // Add the buttons to the toolbar
-    // FIXME:  warning C4838: conversion from 'int' to 'BYTE' requires a narrowing
-    // conversion most probably because TBBUTTON has 4 more bytes in bReserved for
-    // alignment on _WIN64
+    // FIXME:  warning C4838: conversion from 'int' to 'BYTE' requires a narrowing conversion
+    // most probably because TBBUTTON has 4 more bytes in bReserved for alignment on _WIN64
     TBBUTTON tbb[] = {{0, 0, TBSTATE_ENABLED, BTNS_SEP, 0, 0, -1},
                       {8, ID_DBG_FILE_OPEN, TBSTATE_ENABLED, BTNS_BUTTON, 0, 0, -1},
                       {0, 0, TBSTATE_ENABLED, BTNS_SEP, 0, 0, -1},
@@ -2349,9 +2338,9 @@ void rvDebuggerWindow::HandleTooltipGetDispInfo(WPARAM wparam, LPARAM lparam)
 ================
 rvDebuggerWindow::HandleActivate
 
-When the main window is activated, check all the loaded scripts and see if any
-of them have been modified since the last time they were loaded.  If they have
-then reload them and adjust all breakpoints that now fall on invalid lines.
+When the main window is activated, check all the loaded scripts and see if any of them
+have been modified since the last time they were loaded.  If they have then reload
+them and adjust all breakpoints that now fall on invalid lines.
 ================
 */
 int rvDebuggerWindow::HandleActivate(WPARAM wparam, LPARAM lparam)
@@ -2364,17 +2353,16 @@ int rvDebuggerWindow::HandleActivate(WPARAM wparam, LPARAM lparam)
         return 0;
     }
 
-    // Run through all of the loaded scripts and see if any of them have been
-    // modified
+    // Run through all of the loaded scripts and see if any of them have been modified
     for (i = 0; i < mScripts.Num(); i++)
     {
         if (mScripts[i]->IsFileModified(true))
         {
-            if (IDYES == MessageBox(mWnd,
-                                    va("%s\n\nThis file has been modified outside of "
-                                       "the debugger.\nDo you want to reload it?",
-                                       mScripts[i]->GetFilename()),
-                                    "Quake 4 Script Debugger", MB_YESNO | MB_ICONQUESTION))
+            if (IDYES ==
+                MessageBox(mWnd,
+                           va("%s\n\nThis file has been modified outside of the debugger.\nDo you want to reload it?",
+                              mScripts[i]->GetFilename()),
+                           "Quake 4 Script Debugger", MB_YESNO | MB_ICONQUESTION))
             {
                 mScripts[i]->Reload();
 
@@ -2428,8 +2416,8 @@ void rvDebuggerWindow::EnableWindows(bool state)
 ================
 rvDebuggerWindow::AddWatch
 
-Add a variable to the watch window.  If update is set to true then also query
-the debugger client for the value
+Add a variable to the watch window.  If update is set to true then also query the
+debugger client for the value
 ================
 */
 void rvDebuggerWindow::AddWatch(const char *varname, bool update)
@@ -2689,8 +2677,7 @@ bool rvDebuggerWindow::FindPrev(const char *text)
 ================
 rvDebuggerWindow::HandleDrawItem
 
-Handled the WM_DRAWITEM message.  The watch window is custom drawn so a grid can
-be displayed.
+Handled the WM_DRAWITEM message.  The watch window is custom drawn so a grid can be displayed.
 ================
 */
 int rvDebuggerWindow::HandleDrawItem(WPARAM wparam, LPARAM lparam)

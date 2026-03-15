@@ -16,17 +16,16 @@ the Free Software Foundation, either version 3 of the License, or
 
 #ifdef DHEWM3_RAYTRACING
 
+#include "sys/platform.h"
+#include "renderer/tr_local.h"
 #include "renderer/VertexCache.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
-#include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include <string.h>
 
 // ---------------------------------------------------------------------------
-// RT extension function pointer definitions (declared extern in
-// vk_raytracing.h)
+// RT extension function pointer definitions (declared extern in vk_raytracing.h)
 // ---------------------------------------------------------------------------
 
 PFN_vkCreateAccelerationStructureKHR pfn_vkCreateAccelerationStructureKHR = NULL;
@@ -98,8 +97,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
     VkMemoryRequirements memReqs;
     vkGetBufferMemoryRequirements(vk.device, *outBuf, &memReqs);
 
-    // VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT required for device-address-capable
-    // memory
+    // VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT required for device-address-capable memory
     VkMemoryAllocateFlagsInfo flagsInfo = {};
     flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
     flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
@@ -116,8 +114,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
 // ---------------------------------------------------------------------------
 // VK_RT_BuildBLAS
 // Build a bottom-level acceleration structure from a srfTriangles_t mesh.
-// Geometry is read from the ambient vertex cache (already on GPU as a GL/Vk
-// buffer).
+// Geometry is read from the ambient vertex cache (already on GPU as a GL/Vk buffer).
 // ---------------------------------------------------------------------------
 
 vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri)
@@ -129,18 +126,16 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri)
 
     // The vertex cache provides a GPU buffer for this surface.
     // In the Vulkan path the vertex cache buffer has SHADER_DEVICE_ADDRESS_BIT.
-    // If the data isn't cached yet, bail — the caller must ensure ambient cache
-    // is populated.
+    // If the data isn't cached yet, bail — the caller must ensure ambient cache is populated.
     if (!tri->ambientCache)
     {
         return NULL;
     }
 
     // Vertex / index buffer addresses from the vertex cache
-    // vertexCache gives us a vertCacheHandle_t; the VK vertex cache backend
-    // stores the VkBuffer. For now we read the CPU-side data and build the BLAS
-    // from a host-visible staging buffer. A later optimisation can reuse the GPU
-    // vertex buffer directly.
+    // vertexCache gives us a vertCacheHandle_t; the VK vertex cache backend stores the VkBuffer.
+    // For now we read the CPU-side data and build the BLAS from a host-visible staging buffer.
+    // A later optimisation can reuse the GPU vertex buffer directly.
     const idDrawVert *verts = tri->verts;
     const glIndex_t *indexes = tri->indexes;
 

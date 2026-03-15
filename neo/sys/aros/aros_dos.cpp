@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,18 +35,18 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #undef ASSERT
 
 #include <proto/alib.h>
-#include <proto/dos.h>
-#include <proto/exec.h>
-#include <proto/iffparse.h>
 #include <proto/intuition.h>
-#include <proto/openurl.h>
+#include <proto/exec.h>
+#include <proto/dos.h>
+#include <proto/iffparse.h>
 #include <proto/socket.h>
+#include <proto/openurl.h>
 
 #include <dos/dos.h>
 #include <dos/dosextens.h>
 
-#include <intuition/intuition.h>
 #include <proto/icon.h>
+#include <intuition/intuition.h>
 #include <workbench/startup.h>
 
 // undefine - conflict with ID functions
@@ -64,9 +61,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #undef Printf
 #undef VPrintf
 
-#include "framework/Licensee.h"
-#include "idlib/containers/StrList.h"
 #include "sys/platform.h"
+#include "idlib/containers/StrList.h"
+#include "framework/Licensee.h"
 #include "sys/sys_local.h"
 
 #define ID_FTXT MAKE_ID('F', 'T', 'X', 'T')
@@ -422,9 +419,8 @@ const char *Sys_DefaultBasePath(void)
             }
             FreeDosObject(DOS_FIB, fib);
         }
-        D(bug("[ADoom3] Sys_DefaultBasePath: no '%s' directory in exe path %s, "
-              "skipping\n",
-              BASE_GAMEDIR, adoom3_basepath.c_str()));
+        D(bug("[ADoom3] Sys_DefaultBasePath: no '%s' directory in exe path %s, skipping\n", BASE_GAMEDIR,
+              adoom3_basepath.c_str()));
     }
     if (adoom3_basepath != AROS_Cwd())
     {
@@ -449,9 +445,8 @@ const char *Sys_DefaultBasePath(void)
             }
             FreeDosObject(DOS_FIB, fib);
         }
-        D(bug("[ADoom3] Sys_DefaultBasePath: no '%s' directory in cwd path %s, "
-              "skipping\n",
-              BASE_GAMEDIR, adoom3_basepath.c_str()));
+        D(bug("[ADoom3] Sys_DefaultBasePath: no '%s' directory in cwd path %s, skipping\n", BASE_GAMEDIR,
+              adoom3_basepath.c_str()));
     }
     return "PROGDIR:";
 }

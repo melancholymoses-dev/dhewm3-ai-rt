@@ -19,27 +19,24 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
-#include "idlib/Str.h"
+#include "sys/platform.h"
 #include "idlib/containers/List.h"
-#include "idlib/math/Angles.h"
 #include "idlib/math/Math.h"
+#include "idlib/math/Angles.h"
 #include "idlib/math/Quat.h"
 #include "idlib/math/Rotation.h"
-#include "sys/platform.h"
+#include "idlib/Str.h"
+#include "framework/Common.h"
 
 #include "idlib/math/Matrix.h"
 
@@ -3384,8 +3381,7 @@ bool idMatX::IsOrthogonal(const float epsilon) const
 ============
 idMatX::IsOrthonormal
 
-  returns true if (*this) * this->Transpose() == Identity and the length of each
-column vector is 1
+  returns true if (*this) * this->Transpose() == Identity and the length of each column vector is 1
 ============
 */
 bool idMatX::IsOrthonormal(const float epsilon) const
@@ -3421,8 +3417,7 @@ bool idMatX::IsOrthonormal(const float epsilon) const
         }
         ptr1 += numColumns;
 
-        // check that length of *column* vector i is 1 (no need for sqrt because
-        // sqrt(1)==1)
+        // check that length of *column* vector i is 1 (no need for sqrt because sqrt(1)==1)
         if (idMath::Fabs(colVecSum - 1.0f) > epsilon)
         {
             return false;
@@ -3532,8 +3527,7 @@ bool idMatX::IsZMatrix(const float epsilon) const
 idMatX::IsPositiveDefinite
 
   returns true if the matrix is Positive Definite (PD)
-  A square matrix M of order n is said to be PD if y'My > 0 for all vectors y of
-dimension n, y != 0.
+  A square matrix M of order n is said to be PD if y'My > 0 for all vectors y of dimension n, y != 0.
 ============
 */
 bool idMatX::IsPositiveDefinite(const float epsilon) const
@@ -3609,8 +3603,7 @@ bool idMatX::IsSymmetricPositiveDefinite(const float epsilon) const
     m.SetData(numRows, numColumns, MATX_ALLOCA(numRows * numColumns));
     m = *this;
 
-    // being able to obtain Cholesky factors is both a necessary and sufficient
-    // condition for positive definiteness
+    // being able to obtain Cholesky factors is both a necessary and sufficient condition for positive definiteness
     return m.Cholesky_Factor();
 }
 
@@ -3619,8 +3612,7 @@ bool idMatX::IsSymmetricPositiveDefinite(const float epsilon) const
 idMatX::IsPositiveSemiDefinite
 
   returns true if the matrix is Positive Semi Definite (PSD)
-  A square matrix M of order n is said to be PSD if y'My >= 0 for all vectors y
-of dimension n, y != 0.
+  A square matrix M of order n is said to be PSD if y'My >= 0 for all vectors y of dimension n, y != 0.
 ============
 */
 bool idMatX::IsPositiveSemiDefinite(const float epsilon) const
@@ -3848,12 +3840,11 @@ idMatX::Update_RowColumn
 
   Updates the matrix to obtain the matrix:
 
-          [ 0  a  0 ]
+      [ 0  a  0 ]
   A + [ d  b  e ]
-          [ 0  c  0 ]
+      [ 0  c  0 ]
 
-  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] =
-0.0f, e = w[r+1,numColumns-1]
+  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] = 0.0f, e = w[r+1,numColumns-1]
 ============
 */
 void idMatX::Update_RowColumn(const idVecX &v, const idVecX &w, int r)
@@ -3880,9 +3871,9 @@ idMatX::Update_RowColumnSymmetric
 
   Updates the matrix to obtain the matrix:
 
-          [ 0  a  0 ]
+      [ 0  a  0 ]
   A + [ a  b  c ]
-          [ 0  c  0 ]
+      [ 0  c  0 ]
 
   where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1]
 ============
@@ -3916,8 +3907,7 @@ idMatX::Update_Increment
   [ A  a ]
   [ c  b ]
 
-  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1]],
-w[numColumns] = 0
+  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1]], w[numColumns] = 0
 ============
 */
 void idMatX::Update_Increment(const idVecX &v, const idVecX &w)
@@ -4007,8 +3997,7 @@ bool idMatX::Inverse_GaussJordan(void)
     for (i = 0; i < numRows; i++)
     {
 
-        // search the whole matrix except for pivoted rows for the maximum absolute
-        // value
+        // search the whole matrix except for pivoted rows for the maximum absolute value
         max = 0.0f;
         r = c = 0;
         for (j = 0; j < numRows; j++)
@@ -4093,8 +4082,8 @@ bool idMatX::Inverse_GaussJordan(void)
 ============
 idMatX::Inverse_UpdateRankOne
 
-  Updates the in-place inverse using the Sherman-Morrison formula to obtain the
-inverse for the matrix: A + alpha * v * w'
+  Updates the in-place inverse using the Sherman-Morrison formula to obtain the inverse for the matrix: A + alpha * v *
+w'
 ============
 */
 bool idMatX::Inverse_UpdateRankOne(const idVecX &v, const idVecX &w, float alpha)
@@ -4138,12 +4127,11 @@ idMatX::Inverse_UpdateRowColumn
 
   Updates the in-place inverse to obtain the inverse for the matrix:
 
-          [ 0  a  0 ]
+      [ 0  a  0 ]
   A + [ d  b  e ]
-          [ 0  c  0 ]
+      [ 0  c  0 ]
 
-  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] =
-0.0f, e = w[r+1,numColumns-1]
+  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] = 0.0f, e = w[r+1,numColumns-1]
 ============
 */
 bool idMatX::Inverse_UpdateRowColumn(const idVecX &v, const idVecX &w, int r)
@@ -4180,8 +4168,7 @@ idMatX::Inverse_UpdateIncrement
   [ A  a ]
   [ c  b ]
 
-  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1],
-w[numColumns] = 0
+  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1], w[numColumns] = 0
 ============
 */
 bool idMatX::Inverse_UpdateIncrement(const idVecX &v, const idVecX &w)
@@ -4206,9 +4193,8 @@ bool idMatX::Inverse_UpdateIncrement(const idVecX &v, const idVecX &w)
 ============
 idMatX::Inverse_UpdateDecrement
 
-  Updates the in-place inverse to obtain the inverse of the matrix with row r
-and column r removed. v and w should store the column and row of the original
-matrix respectively.
+  Updates the in-place inverse to obtain the inverse of the matrix with row r and column r removed.
+  v and w should store the column and row of the original matrix respectively.
 ============
 */
 bool idMatX::Inverse_UpdateDecrement(const idVecX &v, const idVecX &w, int r)
@@ -4261,9 +4247,8 @@ idMatX::LU_Factor
   L has ones on the diagonal that are not stored.
   U is a triangular matrix stored in the upper triangle.
   If index != NULL partial pivoting is used for numerical stability.
-  If index != NULL it must point to an array of numRow integers and is used to
-keep track of the row permutation. If det != NULL the determinant of the matrix
-is calculated and stored.
+  If index != NULL it must point to an array of numRow integers and is used to keep track of the row permutation.
+  If det != NULL the determinant of the matrix is calculated and stored.
 ============
 */
 bool idMatX::LU_Factor(int *index, float *det)
@@ -4364,8 +4349,7 @@ bool idMatX::LU_Factor(int *index, float *det)
 ============
 idMatX::LU_UpdateRankOne
 
-  Updates the in-place LU factorization to obtain the factors for the matrix: LU
-+ alpha * v * w'
+  Updates the in-place LU factorization to obtain the factors for the matrix: LU + alpha * v * w'
 ============
 */
 bool idMatX::LU_UpdateRankOne(const idVecX &v, const idVecX &w, float alpha, int *index)
@@ -4446,12 +4430,11 @@ idMatX::LU_UpdateRowColumn
 
   Updates the in-place LU factorization to obtain the factors for the matrix:
 
-           [ 0  a  0 ]
+       [ 0  a  0 ]
   LU + [ d  b  e ]
-           [ 0  c  0 ]
+       [ 0  c  0 ]
 
-  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] =
-0.0f, e = w[r+1,numColumns-1]
+  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] = 0.0f, e = w[r+1,numColumns-1]
 ============
 */
 bool idMatX::LU_UpdateRowColumn(const idVecX &v, const idVecX &w, int r, int *index)
@@ -4614,8 +4597,7 @@ idMatX::LU_UpdateIncrement
   [ A  a ]
   [ c  b ]
 
-  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1],
-w[numColumns] = 0
+  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1], w[numColumns] = 0
 ============
 */
 bool idMatX::LU_UpdateIncrement(const idVecX &v, const idVecX &w, int *index)
@@ -4671,10 +4653,9 @@ bool idMatX::LU_UpdateIncrement(const idVecX &v, const idVecX &w, int *index)
 ============
 idMatX::LU_UpdateDecrement
 
-  Updates the in-place LU factorization to obtain the factors for the matrix
-with row r and column r removed. v and w should store the column and row of the
-original matrix respectively. If index != NULL then u should store row index[r]
-of the original matrix. If index == NULL then u = w.
+  Updates the in-place LU factorization to obtain the factors for the matrix with row r and column r removed.
+  v and w should store the column and row of the original matrix respectively.
+  If index != NULL then u should store row index[r] of the original matrix. If index == NULL then u = w.
 ============
 */
 bool idMatX::LU_UpdateDecrement(const idVecX &v, const idVecX &w, const idVecX &u, int r, int *index)
@@ -4726,12 +4707,10 @@ bool idMatX::LU_UpdateDecrement(const idVecX &v, const idVecX &w, const idVecX &
 
             if (idMath::Fabs(u[p]) < 1e-4f)
             {
-                // NOTE: an additional row interchange is required for numerical
-                // stability
+                // NOTE: an additional row interchange is required for numerical stability
             }
 
-            // move row index[r] of the original matrix to row index[p] of the
-            // original matrix
+            // move row index[r] of the original matrix to row index[p] of the original matrix
             v1.Zero();
             v1[index[p]] = 1.0f;
             w1 = u - w;
@@ -4882,8 +4861,7 @@ void idMatX::LU_UnpackFactors(idMatX &L, idMatX &U) const
 ============
 idMatX::LU_MultiplyFactors
 
-  Multiplies the factors of the in-place LU factorization to form the original
-matrix.
+  Multiplies the factors of the in-place LU factorization to form the original matrix.
 ============
 */
 void idMatX::LU_MultiplyFactors(idMatX &m, const int *index) const
@@ -4930,10 +4908,9 @@ void idMatX::LU_MultiplyFactors(idMatX &m, const int *index) const
 idMatX::QR_Factor
 
   in-place factorization: QR
-  Q is an orthogonal matrix represented as a product of Householder matrices
-stored in the lower triangle and c. R is a triangular matrix stored in the upper
-triangle except for the diagonal elements which are stored in d. The initial
-matrix has to be square.
+  Q is an orthogonal matrix represented as a product of Householder matrices stored in the lower triangle and c.
+  R is a triangular matrix stored in the upper triangle except for the diagonal elements which are stored in d.
+  The initial matrix has to be square.
 ============
 */
 bool idMatX::QR_Factor(idVecX &c, idVecX &d)
@@ -5069,8 +5046,7 @@ void idMatX::QR_Rotate(idMatX &R, int i, float a, float b)
 ============
 idMatX::QR_UpdateRankOne
 
-  Updates the unpacked QR factorization to obtain the factors for the matrix: QR
-+ alpha * v * w'
+  Updates the unpacked QR factorization to obtain the factors for the matrix: QR + alpha * v * w'
 ============
 */
 bool idMatX::QR_UpdateRankOne(idMatX &R, const idVecX &v, const idVecX &w, float alpha)
@@ -5128,12 +5104,11 @@ idMatX::QR_UpdateRowColumn
 
   Updates the unpacked QR factorization to obtain the factors for the matrix:
 
-           [ 0  a  0 ]
+       [ 0  a  0 ]
   QR + [ d  b  e ]
-           [ 0  c  0 ]
+       [ 0  c  0 ]
 
-  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] =
-0.0f, e = w[r+1,numColumns-1]
+  where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1], d = w[0,r-1], w[r] = 0.0f, e = w[r+1,numColumns-1]
 ============
 */
 bool idMatX::QR_UpdateRowColumn(idMatX &R, const idVecX &v, const idVecX &w, int r)
@@ -5169,8 +5144,7 @@ idMatX::QR_UpdateIncrement
   [ A  a ]
   [ c  b ]
 
-  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1],
-w[numColumns] = 0
+  where: a = v[0,numRows-1], b = v[numRows], c = w[0,numColumns-1], w[numColumns] = 0
 ============
 */
 bool idMatX::QR_UpdateIncrement(idMatX &R, const idVecX &v, const idVecX &w)
@@ -5198,9 +5172,8 @@ bool idMatX::QR_UpdateIncrement(idMatX &R, const idVecX &v, const idVecX &w)
 ============
 idMatX::QR_UpdateDecrement
 
-  Updates the unpacked QR factorization to obtain the factors for the matrix
-with row r and column r removed. v and w should store the column and row of the
-original matrix respectively.
+  Updates the unpacked QR factorization to obtain the factors for the matrix with row r and column r removed.
+  v and w should store the column and row of the original matrix respectively.
 ============
 */
 bool idMatX::QR_UpdateDecrement(idMatX &R, const idVecX &v, const idVecX &w, int r)
@@ -5394,8 +5367,7 @@ void idMatX::QR_UnpackFactors(idMatX &Q, idMatX &R, const idVecX &c, const idVec
 ============
 idMatX::QR_MultiplyFactors
 
-  Multiplies the factors of the in-place QR factorization to form the original
-matrix.
+  Multiplies the factors of the in-place QR factorization to form the original matrix.
 ============
 */
 void idMatX::QR_MultiplyFactors(idMatX &m, const idVecX &c, const idVecX &d) const
@@ -5873,8 +5845,7 @@ void idMatX::SVD_Solve(idVecX &x, const idVecX &b, const idVecX &w, const idMatX
 ============
 idMatX::SVD_Inverse
 
-  Calculates the inverse of the matrix which is factored in-place as: U *
-Diag(w) * V.Transpose()
+  Calculates the inverse of the matrix which is factored in-place as: U * Diag(w) * V.Transpose()
 ============
 */
 void idMatX::SVD_Inverse(idMatX &inv, const idVecX &w, const idMatX &V) const
@@ -5917,8 +5888,7 @@ void idMatX::SVD_Inverse(idMatX &inv, const idVecX &w, const idMatX &V) const
 ============
 idMatX::SVD_MultiplyFactors
 
-  Multiplies the factors of the in-place SVD factorization to form the original
-matrix.
+  Multiplies the factors of the in-place SVD factorization to form the original matrix.
 ============
 */
 void idMatX::SVD_MultiplyFactors(idMatX &m, const idVecX &w, const idMatX &V) const
@@ -6008,9 +5978,8 @@ bool idMatX::Cholesky_Factor(void)
 ============
 idMatX::Cholesky_UpdateRankOne
 
-  Updates the in-place Cholesky factorization to obtain the factors for the
-matrix: LL' + alpha * v * v' If offset > 0 only the lower right corner starting
-at (offset, offset) is updated.
+  Updates the in-place Cholesky factorization to obtain the factors for the matrix: LL' + alpha * v * v'
+  If offset > 0 only the lower right corner starting at (offset, offset) is updated.
 ============
 */
 bool idMatX::Cholesky_UpdateRankOne(const idVecX &v, float alpha, int offset)
@@ -6063,12 +6032,11 @@ bool idMatX::Cholesky_UpdateRankOne(const idVecX &v, float alpha, int offset)
 ============
 idMatX::Cholesky_UpdateRowColumn
 
-  Updates the in-place Cholesky factorization to obtain the factors for the
-matrix:
+  Updates the in-place Cholesky factorization to obtain the factors for the matrix:
 
-                [ 0  a  0 ]
+        [ 0  a  0 ]
   LL' + [ a  b  c ]
-                [ 0  c  0 ]
+        [ 0  c  0 ]
 
   where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1]
 ============
@@ -6151,8 +6119,7 @@ bool idMatX::Cholesky_UpdateRowColumn(const idVecX &v, int r)
             return true;
         }
 
-        // calculate the row/column to be added to the lower right sub matrix
-        // starting at (r, r)
+        // calculate the row/column to be added to the lower right sub matrix starting at (r, r)
         for (i = r; i < numColumns; i++)
         {
             sum = 0.0f;
@@ -6267,8 +6234,7 @@ bool idMatX::Cholesky_UpdateRowColumn(const idVecX &v, int r)
 ============
 idMatX::Cholesky_UpdateIncrement
 
-  Updates the in-place Cholesky factorization to obtain the factors for the
-matrix:
+  Updates the in-place Cholesky factorization to obtain the factors for the matrix:
 
   [ A  a ]
   [ a  b ]
@@ -6323,9 +6289,8 @@ bool idMatX::Cholesky_UpdateIncrement(const idVecX &v)
 ============
 idMatX::Cholesky_UpdateDecrement
 
-  Updates the in-place Cholesky factorization to obtain the factors for the
-matrix with row r and column r removed. v should store the row of the original
-matrix.
+  Updates the in-place Cholesky factorization to obtain the factors for the matrix with row r and column r removed.
+  v should store the row of the original matrix.
 ============
 */
 bool idMatX::Cholesky_UpdateDecrement(const idVecX &v, int r)
@@ -6342,10 +6307,8 @@ bool idMatX::Cholesky_UpdateDecrement(const idVecX &v, int r)
     v1 = -v;
     v1[r] += 1.0f;
 
-    // NOTE:	msvc compiler bug: the this pointer stored in edi is expected to
-    // stay
-    //			untouched when calling Cholesky_UpdateRowColumn in the
-    // if statement
+    // NOTE:	msvc compiler bug: the this pointer stored in edi is expected to stay
+    //			untouched when calling Cholesky_UpdateRowColumn in the if statement
 #if 0
 	if ( !Cholesky_UpdateRowColumn( v1, r ) ) {
 #else
@@ -6436,8 +6399,7 @@ void idMatX::Cholesky_Inverse(idMatX &inv) const
 ============
 idMatX::Cholesky_MultiplyFactors
 
-  Multiplies the factors of the in-place Cholesky factorization to form the
-original matrix.
+  Multiplies the factors of the in-place Cholesky factorization to form the original matrix.
 ============
 */
 void idMatX::Cholesky_MultiplyFactors(idMatX &m) const
@@ -6522,9 +6484,8 @@ bool idMatX::LDLT_Factor(void)
 ============
 idMatX::LDLT_UpdateRankOne
 
-  Updates the in-place LDL' factorization to obtain the factors for the matrix:
-LDL' + alpha * v * v' If offset > 0 only the lower right corner starting at
-(offset, offset) is updated.
+  Updates the in-place LDL' factorization to obtain the factors for the matrix: LDL' + alpha * v * v'
+  If offset > 0 only the lower right corner starting at (offset, offset) is updated.
 ============
 */
 bool idMatX::LDLT_UpdateRankOne(const idVecX &v, float alpha, int offset)
@@ -6576,9 +6537,9 @@ idMatX::LDLT_UpdateRowColumn
 
   Updates the in-place LDL' factorization to obtain the factors for the matrix:
 
-                 [ 0  a  0 ]
+         [ 0  a  0 ]
   LDL' + [ a  b  c ]
-                 [ 0  c  0 ]
+         [ 0  c  0 ]
 
   where: a = v[0,r-1], b = v[r], c = v[r+1,numRows-1]
 ============
@@ -6675,8 +6636,7 @@ bool idMatX::LDLT_UpdateRowColumn(const idVecX &v, int r)
             return true;
         }
 
-        // calculate the row/column to be added to the lower right sub matrix
-        // starting at (r, r)
+        // calculate the row/column to be added to the lower right sub matrix starting at (r, r)
         for (i = 0; i < r; i++)
         {
             y[i] = (*this)[r][i] * (*this)[i][i];
@@ -6855,8 +6815,8 @@ bool idMatX::LDLT_UpdateIncrement(const idVecX &v)
 ============
 idMatX::LDLT_UpdateDecrement
 
-  Updates the in-place LDL' factorization to obtain the factors for the matrix
-with row r and column r removed. v should store the row of the original matrix.
+  Updates the in-place LDL' factorization to obtain the factors for the matrix with row r and column r removed.
+  v should store the row of the original matrix.
 ============
 */
 bool idMatX::LDLT_UpdateDecrement(const idVecX &v, int r)
@@ -6873,10 +6833,8 @@ bool idMatX::LDLT_UpdateDecrement(const idVecX &v, int r)
     v1 = -v;
     v1[r] += 1.0f;
 
-    // NOTE:	msvc compiler bug: the this pointer stored in edi is expected to
-    // stay
-    //			untouched when calling LDLT_UpdateRowColumn in the if
-    // statement
+    // NOTE:	msvc compiler bug: the this pointer stored in edi is expected to stay
+    //			untouched when calling LDLT_UpdateRowColumn in the if statement
 #if 0
 	if ( !LDLT_UpdateRowColumn( v1, r ) ) {
 #else
@@ -6997,8 +6955,7 @@ void idMatX::LDLT_UnpackFactors(idMatX &L, idMatX &D) const
 ============
 idMatX::LDLT_MultiplyFactors
 
-  Multiplies the factors of the in-place LDL' factorization to form the original
-matrix.
+  Multiplies the factors of the in-place LDL' factorization to form the original matrix.
 ============
 */
 void idMatX::LDLT_MultiplyFactors(idMatX &m) const
@@ -7141,10 +7098,10 @@ void idMatX::TriDiagonal_Inverse(idMatX &inv) const
 idMatX::HouseholderReduction
 
   Householder reduction to symmetric tri-diagonal form.
-  The original matrix is replaced by an orthogonal matrix effecting the
-accumulated householder transformations. The diagonal elements of the diagonal
-matrix are stored in diag. The off-diagonal elements of the diagonal matrix are
-stored in subd. The initial matrix has to be symmetric.
+  The original matrix is replaced by an orthogonal matrix effecting the accumulated householder transformations.
+  The diagonal elements of the diagonal matrix are stored in diag.
+  The off-diagonal elements of the diagonal matrix are stored in subd.
+  The initial matrix has to be symmetric.
 ============
 */
 void idMatX::HouseholderReduction(idVecX &diag, idVecX &subd)
@@ -7267,14 +7224,11 @@ void idMatX::HouseholderReduction(idVecX &diag, idVecX &subd)
 ============
 idMatX::QL
 
-  QL algorithm with implicit shifts to determine the eigenvalues and
-eigenvectors of a symmetric tri-diagonal matrix. diag contains the diagonal
-elements of the symmetric tri-diagonal matrix on input and is overwritten with
-the eigenvalues. subd contains the off-diagonal elements of the symmetric
-tri-diagonal matrix and is destroyed. This matrix has to be either the identity
-matrix to determine the eigenvectors for a symmetric tri-diagonal matrix, or the
-matrix returned by the Householder reduction to determine the eigenvalues for
-the original symmetric matrix.
+  QL algorithm with implicit shifts to determine the eigenvalues and eigenvectors of a symmetric tri-diagonal matrix.
+  diag contains the diagonal elements of the symmetric tri-diagonal matrix on input and is overwritten with the
+eigenvalues. subd contains the off-diagonal elements of the symmetric tri-diagonal matrix and is destroyed. This matrix
+has to be either the identity matrix to determine the eigenvectors for a symmetric tri-diagonal matrix, or the matrix
+returned by the Householder reduction to determine the eigenvalues for the original symmetric matrix.
 ============
 */
 bool idMatX::QL(idVecX &diag, idVecX &subd)
@@ -7366,8 +7320,8 @@ idMatX::Eigen_SolveSymmetricTriDiagonal
 
   Determine eigen values and eigen vectors for a symmetric tri-diagonal matrix.
   The eigen values are stored in 'eigenValues'.
-  Column i of the original matrix will store the eigen vector corresponding to
-the eigenValues[i]. The initial matrix has to be symmetric tri-diagonal.
+  Column i of the original matrix will store the eigen vector corresponding to the eigenValues[i].
+  The initial matrix has to be symmetric tri-diagonal.
 ============
 */
 bool idMatX::Eigen_SolveSymmetricTriDiagonal(idVecX &eigenValues)
@@ -7398,8 +7352,8 @@ idMatX::Eigen_SolveSymmetric
 
   Determine eigen values and eigen vectors for a symmetric matrix.
   The eigen values are stored in 'eigenValues'.
-  Column i of the original matrix will store the eigen vector corresponding to
-the eigenValues[i]. The initial matrix has to be symmetric.
+  Column i of the original matrix will store the eigen vector corresponding to the eigenValues[i].
+  The initial matrix has to be symmetric.
 ============
 */
 bool idMatX::Eigen_SolveSymmetric(idVecX &eigenValues)
@@ -8036,8 +7990,8 @@ idMatX::Eigen_Solve
 
   Determine eigen values and eigen vectors for a square matrix.
   The eigen values are stored in 'realEigenValues' and 'imaginaryEigenValues'.
-  Column i of the original matrix will store the eigen vector corresponding to
-the realEigenValues[i] and imaginaryEigenValues[i].
+  Column i of the original matrix will store the eigen vector corresponding to the realEigenValues[i] and
+imaginaryEigenValues[i].
 ============
 */
 bool idMatX::Eigen_Solve(idVecX &realEigenValues, idVecX &imaginaryEigenValues)
@@ -8198,7 +8152,7 @@ void idMatX::Test(void)
     index2 = (int *)_alloca16((size + 1) * sizeof(index2[0]));
 
     /*
-            idMatX::LowerTriangularInverse
+        idMatX::LowerTriangularInverse
     */
 
     m1 = original;
@@ -8214,7 +8168,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::UpperTriangularInverse
+        idMatX::UpperTriangularInverse
     */
 
     m1 = original;
@@ -8230,7 +8184,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Inverse_GaussJordan
+        idMatX::Inverse_GaussJordan
     */
 
     m1 = original;
@@ -8244,7 +8198,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Inverse_UpdateRankOne
+        idMatX::Inverse_UpdateRankOne
     */
 
     m1 = original;
@@ -8272,7 +8226,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Inverse_UpdateRowColumn
+        idMatX::Inverse_UpdateRowColumn
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8304,7 +8258,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Inverse_UpdateIncrement
+        idMatX::Inverse_UpdateIncrement
     */
 
     m1 = original;
@@ -8333,7 +8287,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Inverse_UpdateDecrement
+        idMatX::Inverse_UpdateDecrement
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8369,7 +8323,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LU_Factor
+        idMatX::LU_Factor
     */
 
     m1 = original;
@@ -8384,7 +8338,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LU_UpdateRankOne
+        idMatX::LU_UpdateRankOne
     */
 
     m1 = original;
@@ -8416,7 +8370,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LU_UpdateRowColumn
+        idMatX::LU_UpdateRowColumn
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8452,7 +8406,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LU_UpdateIncrement
+        idMatX::LU_UpdateIncrement
     */
 
     m1 = original;
@@ -8485,7 +8439,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LU_UpdateDecrement
+        idMatX::LU_UpdateDecrement
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8531,7 +8485,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LU_Inverse
+        idMatX::LU_Inverse
     */
 
     m2 = original;
@@ -8546,7 +8500,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::QR_Factor
+        idMatX::QR_Factor
     */
 
     c.SetSize(size);
@@ -8564,7 +8518,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::QR_UpdateRankOne
+        idMatX::QR_UpdateRankOne
     */
 
     c.SetSize(size);
@@ -8599,7 +8553,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::QR_UpdateRowColumn
+        idMatX::QR_UpdateRowColumn
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8638,7 +8592,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::QR_UpdateIncrement
+        idMatX::QR_UpdateIncrement
     */
 
     c.SetSize(size + 1);
@@ -8674,7 +8628,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::QR_UpdateDecrement
+        idMatX::QR_UpdateDecrement
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8717,7 +8671,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::QR_Inverse
+        idMatX::QR_Inverse
     */
 
     m2 = original;
@@ -8732,7 +8686,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::SVD_Factor
+        idMatX::SVD_Factor
     */
 
     m1 = original;
@@ -8750,7 +8704,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::SVD_Inverse
+        idMatX::SVD_Inverse
     */
 
     m2 = original;
@@ -8765,7 +8719,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Cholesky_Factor
+        idMatX::Cholesky_Factor
     */
 
     m1 = original;
@@ -8779,7 +8733,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Cholesky_UpdateRankOne
+        idMatX::Cholesky_UpdateRankOne
     */
 
     m1 = original;
@@ -8808,7 +8762,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Cholesky_UpdateRowColumn
+        idMatX::Cholesky_UpdateRowColumn
     */
 
     for (offset = 0; offset < size; offset++)
@@ -8842,7 +8796,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Cholesky_UpdateIncrement
+        idMatX::Cholesky_UpdateIncrement
     */
 
     m1.Random(size + 1, size + 1, 0);
@@ -8879,7 +8833,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Cholesky_UpdateDecrement
+        idMatX::Cholesky_UpdateDecrement
     */
 
     for (offset = 0; offset < size; offset += size - 1)
@@ -8913,7 +8867,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Cholesky_Inverse
+        idMatX::Cholesky_Inverse
     */
 
     m2 = original;
@@ -8928,7 +8882,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LDLT_Factor
+        idMatX::LDLT_Factor
     */
 
     m1 = original;
@@ -8950,7 +8904,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LDLT_UpdateRankOne
+        idMatX::LDLT_UpdateRankOne
     */
 
     m1 = original;
@@ -8979,7 +8933,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LDLT_UpdateRowColumn
+        idMatX::LDLT_UpdateRowColumn
     */
 
     for (offset = 0; offset < size; offset++)
@@ -9011,7 +8965,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LDLT_UpdateIncrement
+        idMatX::LDLT_UpdateIncrement
     */
 
     m1.Random(size + 1, size + 1, 0);
@@ -9048,7 +9002,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LDLT_UpdateDecrement
+        idMatX::LDLT_UpdateDecrement
     */
 
     for (offset = 0; offset < size; offset++)
@@ -9082,7 +9036,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::LDLT_Inverse
+        idMatX::LDLT_Inverse
     */
 
     m2 = original;
@@ -9097,7 +9051,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Eigen_SolveSymmetricTriDiagonal
+        idMatX::Eigen_SolveSymmetricTriDiagonal
     */
 
     m3 = original;
@@ -9124,7 +9078,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Eigen_SolveSymmetric
+        idMatX::Eigen_SolveSymmetric
     */
 
     m3 = original;
@@ -9150,7 +9104,7 @@ void idMatX::Test(void)
     }
 
     /*
-            idMatX::Eigen_Solve
+        idMatX::Eigen_Solve
     */
 
     m3 = original;

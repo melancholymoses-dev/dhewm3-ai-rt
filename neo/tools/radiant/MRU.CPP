@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "mru.h"
 #include <windowsx.h>
+#include "mru.h"
 
 //*************************************************************
 //  File name: mru.c
@@ -69,8 +66,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 //      WORD wNbLruShowInit -      Maximum number of item displayed on menu
 //      WORD wNbLruMenuInit -      Maximum number of item stored in memory
 //      WORD wMaxSizeLruItemInit - Maximum size of an item (ie size of pathname)
-//      WORD wIdMruInit -          ID of the first item in the menu
-//      (default:IDMRU)
+//      WORD wIdMruInit -          ID of the first item in the menu (default:IDMRU)
 //
 //
 //  Return: (LPMRUMENU)
@@ -428,8 +424,7 @@ void PlaceMenuMRUItem(LPMRUMENU lpMruMenu, HMENU hMenu, UINT uiItem)
 //
 //
 //  Comments:
-//      See WritePrivateProfileString API for more info on lpszSection and
-//      lpszFile
+//      See WritePrivateProfileString API for more info on lpszSection and lpszFile
 //
 //  History:    Date       Author       Comment
 //              09/24/94   G. Vollant   Created
@@ -477,8 +472,7 @@ BOOL SaveMruInIni(LPMRUMENU lpMruMenu, LPSTR lpszSection, LPSTR lpszFile)
 //
 //
 //  Comments:
-//      See GetPrivateProfileString API for more info on lpszSection and
-//      lpszFile
+//      See GetPrivateProfileString API for more info on lpszSection and lpszFile
 //
 //  History:    Date       Author       Comment
 //              09/24/94   G. Vollant   Created

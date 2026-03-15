@@ -19,36 +19,33 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
-#include "Misc.h"
-#include "Mover.h"
-#include "Player.h"
-#include "SmokeParticles.h"
-#include "ai/AI.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
+#include "ai/AI.h"
+#include "Player.h"
+#include "Mover.h"
+#include "SmokeParticles.h"
+#include "Misc.h"
 
 #include "Projectile.h"
 
 /*
 ===============================================================================
 
-        idProjectile
+    idProjectile
 
 ===============================================================================
 */
@@ -104,8 +101,7 @@ idProjectile::idProjectile(void)
     memset(&projectileFlags, 0, sizeof(projectileFlags));
     memset(&renderLight, 0, sizeof(renderLight));
 
-    // note: for net_instanthit projectiles, we will force this back to false at
-    // spawn time
+    // note: for net_instanthit projectiles, we will force this back to false at spawn time
     fl.networkSync = true;
 
     netSyncPhysics = false;
@@ -640,8 +636,7 @@ bool idProjectile::Collide(const trace_t &collision, const idVec3 &velocity)
     dir = velocity;
     dir.Normalize();
 
-    // projectiles can apply an additional impulse next to the rigid body physics
-    // impulse
+    // projectiles can apply an additional impulse next to the rigid body physics impulse
     if (spawnArgs.GetFloat("push", "0", push) && push > 0.0f)
     {
         ent->ApplyImpulse(this, collision.c.id, collision.c.point, push * dir);
@@ -882,12 +877,11 @@ void idProjectile::Fizzle(void)
     const char *psystem = spawnArgs.GetString("smoke_fuse");
     if (psystem && *psystem)
     {
-        // FIXME:SMOKE		gameLocal.particles->SpawnParticles(
-        // GetPhysics()->GetOrigin(), vec3_origin, psystem );
+        // FIXME:SMOKE		gameLocal.particles->SpawnParticles( GetPhysics()->GetOrigin(), vec3_origin, psystem );
     }
 
-    // we need to work out how long the effects last and then remove them at that
-    // time for example, bullets have no real effects
+    // we need to work out how long the effects last and then remove them at that time
+    // for example, bullets have no real effects
     if (smokeFly && smokeFlyTime)
     {
         smokeFlyTime = 0;
@@ -975,8 +969,8 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
     }
     StartSound(sndExplode, SND_CHANNEL_BODY, 0, true, NULL);
 
-    // we need to work out how long the effects last and then remove them at that
-    // time for example, bullets have no real effects
+    // we need to work out how long the effects last and then remove them at that time
+    // for example, bullets have no real effects
     if (smokeFly && smokeFlyTime)
     {
         smokeFlyTime = 0;
@@ -1326,6 +1320,7 @@ idProjectile::GetProjectileState
 */
 int idProjectile::GetProjectileState(void)
 {
+
     return (int)state;
 }
 
@@ -1601,7 +1596,7 @@ bool idProjectile::ClientReceiveEvent(int event, int time, const idBitMsg &msg)
 /*
 ===============================================================================
 
-        idGuidedProjectile
+    idGuidedProjectile
 
 ===============================================================================
 */
@@ -2418,8 +2413,7 @@ void idBFGProjectile::Launch(const idVec3 &start, const idVec3 &dir, const idVec
     }
 
     idVec3 delta(15.0f, 15.0f, 15.0f);
-    // physicsObj.SetAngularExtrapolation(
-    // extrapolation_t(EXTRAPOLATION_LINEAR|EXTRAPOLATION_NOSTOP), gameLocal.time,
+    // physicsObj.SetAngularExtrapolation( extrapolation_t(EXTRAPOLATION_LINEAR|EXTRAPOLATION_NOSTOP), gameLocal.time,
     // 0, physicsObj.GetAxis().ToAngles(), delta, ang_zero );
 
     // get all entities touching the bounds
@@ -2636,7 +2630,7 @@ void idBFGProjectile::Explode(const trace_t &collision, idEntity *ignore)
 /*
 ===============================================================================
 
-        idDebris
+    idDebris
 
 ===============================================================================
 */

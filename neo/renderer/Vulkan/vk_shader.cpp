@@ -14,9 +14,9 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#include "renderer/Vulkan/vk_common.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
+#include "renderer/Vulkan/vk_common.h"
 
 #include <stdio.h>
 #include <stdlib.h>

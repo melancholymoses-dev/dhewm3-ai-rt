@@ -1,40 +1,30 @@
 // dear imgui: Renderer Backend for Vulkan
-// This needs to be used along with a Platform Backend (e.g. GLFW, SDL, Win32,
-// custom..)
+// This needs to be used along with a Platform Backend (e.g. GLFW, SDL, Win32, custom..)
 
 // Implemented features:
-//  [!] Renderer: User texture binding. Use 'VkDescriptorSet' as ImTextureID.
-//  Call ImGui_ImplVulkan_AddTexture() to register one. Read the FAQ about
-//  ImTextureID! See https://github.com/ocornut/imgui/pull/914 for discussions.
-//  [X] Renderer: Large meshes support (64k+ vertices) even with 16-bit indices
-//  (ImGuiBackendFlags_RendererHasVtxOffset). [X] Renderer: Expose selected
-//  render state for draw callbacks to use. Access in
+//  [!] Renderer: User texture binding. Use 'VkDescriptorSet' as ImTextureID. Call ImGui_ImplVulkan_AddTexture() to
+//  register one. Read the FAQ about ImTextureID! See https://github.com/ocornut/imgui/pull/914 for discussions. [X]
+//  Renderer: Large meshes support (64k+ vertices) even with 16-bit indices (ImGuiBackendFlags_RendererHasVtxOffset).
+//  [X] Renderer: Expose selected render state for draw callbacks to use. Access in
 //  '(ImGui_ImplXXXX_RenderState*)GetPlatformIO().Renderer_RenderState'.
 
-// The aim of imgui_impl_vulkan.h/.cpp is to be usable in your engine without
-// any modification. IF YOU FEEL YOU NEED TO MAKE ANY CHANGE TO THIS CODE,
-// please share them and your feedback at https://github.com/ocornut/imgui/
+// The aim of imgui_impl_vulkan.h/.cpp is to be usable in your engine without any modification.
+// IF YOU FEEL YOU NEED TO MAKE ANY CHANGE TO THIS CODE, please share them and your feedback at
+// https://github.com/ocornut/imgui/
 
-// You can use unmodified imgui_impl_* files in your project. See examples/
-// folder for examples of using this. Prefer including the entire imgui/
-// repository into your project (either as a copy or as a submodule), and only
-// build the backends you need. Learn about Dear ImGui:
+// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build
+// the backends you need. Learn about Dear ImGui:
 // - FAQ                  https://dearimgui.com/faq
 // - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/
-// folder).
+// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
-// Important note to the reader who wish to integrate imgui_impl_vulkan.cpp/.h
-// in their own engine/app.
-// - Common ImGui_ImplVulkan_XXX functions and structures are used to interface
-// with imgui_impl_vulkan.cpp/.h.
-//   You will use those if you want to use this rendering backend in your
-//   engine/app.
-// - Helper ImGui_ImplVulkanH_XXX functions and structures are only used by this
-// example (main.cpp) and by
-//   the backend itself (imgui_impl_vulkan.cpp), but should PROBABLY NOT be used
-//   by your own engine/app code.
+// Important note to the reader who wish to integrate imgui_impl_vulkan.cpp/.h in their own engine/app.
+// - Common ImGui_ImplVulkan_XXX functions and structures are used to interface with imgui_impl_vulkan.cpp/.h.
+//   You will use those if you want to use this rendering backend in your engine/app.
+// - Helper ImGui_ImplVulkanH_XXX functions and structures are only used by this example (main.cpp) and by
+//   the backend itself (imgui_impl_vulkan.cpp), but should PROBABLY NOT be used by your own engine/app code.
 // Read comments in imgui_impl_vulkan.h.
 
 #pragma once
@@ -43,21 +33,18 @@
 
 // [Configuration] in order to use a custom Vulkan function loader:
 // (1) You'll need to disable default Vulkan function prototypes.
-//     We provide a '#define IMGUI_IMPL_VULKAN_NO_PROTOTYPES' convenience
-//     configuration flag. In order to make sure this is visible from the
-//     imgui_impl_vulkan.cpp compilation unit:
+//     We provide a '#define IMGUI_IMPL_VULKAN_NO_PROTOTYPES' convenience configuration flag.
+//     In order to make sure this is visible from the imgui_impl_vulkan.cpp compilation unit:
 //     - Add '#define IMGUI_IMPL_VULKAN_NO_PROTOTYPES' in your imconfig.h file
 //     - Or as a compilation flag in your build system
-//     - Or uncomment here (not recommended because you'd be modifying imgui
-//     sources!)
+//     - Or uncomment here (not recommended because you'd be modifying imgui sources!)
 //     - Do not simply add it in a .cpp file!
-// (2) Call ImGui_ImplVulkan_LoadFunctions() before ImGui_ImplVulkan_Init() with
-// your custom function. If you have no idea what this is, leave it alone!
+// (2) Call ImGui_ImplVulkan_LoadFunctions() before ImGui_ImplVulkan_Init() with your custom function.
+// If you have no idea what this is, leave it alone!
 // #define IMGUI_IMPL_VULKAN_NO_PROTOTYPES
 
 // Convenience support for Volk
-// (you can also technically use IMGUI_IMPL_VULKAN_NO_PROTOTYPES + wrap Volk via
-// ImGui_ImplVulkan_LoadFunctions().)
+// (you can also technically use IMGUI_IMPL_VULKAN_NO_PROTOTYPES + wrap Volk via ImGui_ImplVulkan_LoadFunctions().)
 // #define IMGUI_IMPL_VULKAN_USE_VOLK
 
 #if defined(IMGUI_IMPL_VULKAN_NO_PROTOTYPES) && !defined(VK_NO_PROTOTYPES)
@@ -77,24 +64,20 @@
 #define IMGUI_IMPL_VULKAN_HAS_DYNAMIC_RENDERING
 #endif
 
-// Current version of the backend use 1 descriptor for the font atlas + as many
-// as additional calls done to ImGui_ImplVulkan_AddTexture(). It is expected
-// that as early as Q1 2025 the backend will use a few more descriptors. Use
-// this value + number of desired calls to ImGui_ImplVulkan_AddTexture().
+// Current version of the backend use 1 descriptor for the font atlas + as many as additional calls done to
+// ImGui_ImplVulkan_AddTexture(). It is expected that as early as Q1 2025 the backend will use a few more descriptors.
+// Use this value + number of desired calls to ImGui_ImplVulkan_AddTexture().
 #define IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE (1) // Minimum per atlas
 
 // Initialization data, for ImGui_ImplVulkan_Init()
 // [Please zero-clear before use!]
 // - About descriptor pool:
-//   - A VkDescriptorPool should be created with
-//   VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-//     and must contain a pool size large enough to hold a small number of
-//     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER descriptors.
-//   - As an convenience, by setting DescriptorPoolSize > 0 the backend will
-//   create one for you.
+//   - A VkDescriptorPool should be created with VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+//     and must contain a pool size large enough to hold a small number of VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+//     descriptors.
+//   - As an convenience, by setting DescriptorPoolSize > 0 the backend will create one for you.
 // - About dynamic rendering:
-//   - When using dynamic rendering, set UseDynamicRendering=true and fill
-//   PipelineRenderingCreateInfo structure.
+//   - When using dynamic rendering, set UseDynamicRendering=true and fill PipelineRenderingCreateInfo structure.
 struct ImGui_ImplVulkan_InitInfo
 {
     VkInstance Instance;
@@ -102,8 +85,7 @@ struct ImGui_ImplVulkan_InitInfo
     VkDevice Device;
     uint32_t QueueFamily;
     VkQueue Queue;
-    VkDescriptorPool DescriptorPool;   // See requirements in note above; ignored if
-                                       // using DescriptorPoolSize > 0
+    VkDescriptorPool DescriptorPool;   // See requirements in note above; ignored if using DescriptorPoolSize > 0
     VkRenderPass RenderPass;           // Ignored if using dynamic rendering
     uint32_t MinImageCount;            // >= 2
     uint32_t ImageCount;               // >= MinImageCount
@@ -113,13 +95,11 @@ struct ImGui_ImplVulkan_InitInfo
     VkPipelineCache PipelineCache;
     uint32_t Subpass;
 
-    // (Optional) Set to create internal descriptor pool instead of using
-    // DescriptorPool
+    // (Optional) Set to create internal descriptor pool instead of using DescriptorPool
     uint32_t DescriptorPoolSize;
 
     // (Optional) Dynamic Rendering
-    // Need to explicitly enable VK_KHR_dynamic_rendering extension to use this,
-    // even for Vulkan 1.3.
+    // Need to explicitly enable VK_KHR_dynamic_rendering extension to use this, even for Vulkan 1.3.
     bool UseDynamicRendering;
 #ifdef IMGUI_IMPL_VULKAN_HAS_DYNAMIC_RENDERING
     VkPipelineRenderingCreateInfoKHR PipelineRenderingCreateInfo;
@@ -128,13 +108,11 @@ struct ImGui_ImplVulkan_InitInfo
     // (Optional) Allocation, Debugging
     const VkAllocationCallbacks *Allocator;
     void (*CheckVkResultFn)(VkResult err);
-    VkDeviceSize MinAllocationSize; // Minimum allocation size. Set to 1024*1024
-                                    // to satisfy zealous best practices
+    VkDeviceSize MinAllocationSize; // Minimum allocation size. Set to 1024*1024 to satisfy zealous best practices
                                     // validation layer and waste a little memory.
 };
 
-// Follow "Getting Started" link and check examples/ folder to learn about using
-// backends!
+// Follow "Getting Started" link and check examples/ folder to learn about using backends!
 IMGUI_IMPL_API bool ImGui_ImplVulkan_Init(ImGui_ImplVulkan_InitInfo *info);
 IMGUI_IMPL_API void ImGui_ImplVulkan_Shutdown();
 IMGUI_IMPL_API void ImGui_ImplVulkan_NewFrame();
@@ -143,13 +121,11 @@ IMGUI_IMPL_API void ImGui_ImplVulkan_RenderDrawData(ImDrawData *draw_data, VkCom
 IMGUI_IMPL_API bool ImGui_ImplVulkan_CreateFontsTexture();
 IMGUI_IMPL_API void ImGui_ImplVulkan_DestroyFontsTexture();
 IMGUI_IMPL_API void ImGui_ImplVulkan_SetMinImageCount(
-    uint32_t min_image_count); // To override MinImageCount after initialization
-                               // (e.g. if swap chain is recreated)
+    uint32_t min_image_count); // To override MinImageCount after initialization (e.g. if swap chain is recreated)
 
 // Register a texture (VkDescriptorSet == ImTextureID)
-// FIXME: This is experimental in the sense that we are unsure how to best
-// design/tackle this problem Please post to
-// https://github.com/ocornut/imgui/pull/914 if you have suggestions.
+// FIXME: This is experimental in the sense that we are unsure how to best design/tackle this problem
+// Please post to https://github.com/ocornut/imgui/pull/914 if you have suggestions.
 IMGUI_IMPL_API VkDescriptorSet ImGui_ImplVulkan_AddTexture(VkSampler sampler, VkImageView image_view,
                                                            VkImageLayout image_layout);
 IMGUI_IMPL_API void ImGui_ImplVulkan_RemoveTexture(VkDescriptorSet descriptor_set);
@@ -161,9 +137,8 @@ IMGUI_IMPL_API bool ImGui_ImplVulkan_LoadFunctions(PFN_vkVoidFunction (*loader_f
                                                    void *user_data = nullptr);
 
 // [BETA] Selected render state data shared with callbacks.
-// This is temporarily stored in GetPlatformIO().Renderer_RenderState during the
-// ImGui_ImplVulkan_RenderDrawData() call. (Please open an issue if you feel you
-// need access to more data)
+// This is temporarily stored in GetPlatformIO().Renderer_RenderState during the ImGui_ImplVulkan_RenderDrawData() call.
+// (Please open an issue if you feel you need access to more data)
 struct ImGui_ImplVulkan_RenderState
 {
     VkCommandBuffer CommandBuffer;
@@ -174,27 +149,23 @@ struct ImGui_ImplVulkan_RenderState
 //-------------------------------------------------------------------------
 // Internal / Miscellaneous Vulkan Helpers
 //-------------------------------------------------------------------------
-// Used by example's main.cpp. Used by multi-viewport features. PROBABLY NOT
-// used by your own engine/app.
+// Used by example's main.cpp. Used by multi-viewport features. PROBABLY NOT used by your own engine/app.
 //
 // You probably do NOT need to use or care about those functions.
 // Those functions only exist because:
-//   1) they facilitate the readability and maintenance of the multiple main.cpp
-//   examples files. 2) the multi-viewport / platform window implementation
-//   needs them internally.
-// Generally we avoid exposing any kind of superfluous high-level helpers in the
-// backends, but it is too much code to duplicate everywhere so we exceptionally
-// expose them.
+//   1) they facilitate the readability and maintenance of the multiple main.cpp examples files.
+//   2) the multi-viewport / platform window implementation needs them internally.
+// Generally we avoid exposing any kind of superfluous high-level helpers in the backends,
+// but it is too much code to duplicate everywhere so we exceptionally expose them.
 //
-// Your engine/app will likely _already_ have code to setup all that stuff (swap
-// chain, render pass, frame buffers, etc.). You may read this code if you are
-// curious, but it is recommended you use you own custom tailored code to do
-// equivalent work.
+// Your engine/app will likely _already_ have code to setup all that stuff (swap chain,
+// render pass, frame buffers, etc.). You may read this code if you are curious, but
+// it is recommended you use you own custom tailored code to do equivalent work.
 //
 // We don't provide a strong guarantee that we won't change those functions API.
 //
-// The ImGui_ImplVulkanH_XXX functions should NOT interact with any of the state
-// used by the regular ImGui_ImplVulkan_XXX functions).
+// The ImGui_ImplVulkanH_XXX functions should NOT interact with any of the state used
+// by the regular ImGui_ImplVulkan_XXX functions).
 //-------------------------------------------------------------------------
 
 struct ImGui_ImplVulkanH_Frame;
@@ -222,8 +193,8 @@ IMGUI_IMPL_API uint32_t ImGui_ImplVulkanH_SelectQueueFamilyIndex(VkPhysicalDevic
 IMGUI_IMPL_API int ImGui_ImplVulkanH_GetMinImageCountFromPresentMode(VkPresentModeKHR present_mode);
 
 // Helper structure to hold the data needed by one rendering frame
-// (Used by example's main.cpp. Used by multi-viewport features. Probably NOT
-// used by your own engine/app.) [Please zero-clear before use!]
+// (Used by example's main.cpp. Used by multi-viewport features. Probably NOT used by your own engine/app.)
+// [Please zero-clear before use!]
 struct ImGui_ImplVulkanH_Frame
 {
     VkCommandPool CommandPool;
@@ -240,9 +211,8 @@ struct ImGui_ImplVulkanH_FrameSemaphores
     VkSemaphore RenderCompleteSemaphore;
 };
 
-// Helper structure to hold the data needed by one rendering context into one OS
-// window (Used by example's main.cpp. Used by multi-viewport features. Probably
-// NOT used by your own engine/app.)
+// Helper structure to hold the data needed by one rendering context into one OS window
+// (Used by example's main.cpp. Used by multi-viewport features. Probably NOT used by your own engine/app.)
 struct ImGui_ImplVulkanH_Window
 {
     int Width;
@@ -252,28 +222,25 @@ struct ImGui_ImplVulkanH_Window
     VkSurfaceFormatKHR SurfaceFormat;
     VkPresentModeKHR PresentMode;
     VkRenderPass RenderPass;
-    VkPipeline Pipeline; // The window pipeline may uses a different VkRenderPass
-                         // than the one passed in ImGui_ImplVulkan_InitInfo
+    VkPipeline Pipeline; // The window pipeline may uses a different VkRenderPass than the one passed in
+                         // ImGui_ImplVulkan_InitInfo
     bool UseDynamicRendering;
     bool ClearEnable;
     VkClearValue ClearValue;
-    uint32_t FrameIndex;     // Current frame being rendered to (0 <= FrameIndex <
-                             // FrameInFlightCount)
-    uint32_t ImageCount;     // Number of simultaneous in-flight frames (returned by
-                             // vkGetSwapchainImagesKHR, usually derived from
-                             // min_image_count)
-    uint32_t SemaphoreCount; // Number of simultaneous in-flight frames + 1, to be
-                             // able to use it in vkAcquireNextImageKHR
-    uint32_t SemaphoreIndex; // Current set of swapchain wait semaphores we're
-                             // using (needs to be distinct from per frame data)
+    uint32_t FrameIndex; // Current frame being rendered to (0 <= FrameIndex < FrameInFlightCount)
+    uint32_t ImageCount; // Number of simultaneous in-flight frames (returned by vkGetSwapchainImagesKHR, usually
+                         // derived from min_image_count)
+    uint32_t
+        SemaphoreCount; // Number of simultaneous in-flight frames + 1, to be able to use it in vkAcquireNextImageKHR
+    uint32_t SemaphoreIndex; // Current set of swapchain wait semaphores we're using (needs to be distinct from per
+                             // frame data)
     ImGui_ImplVulkanH_Frame *Frames;
     ImGui_ImplVulkanH_FrameSemaphores *FrameSemaphores;
 
     ImGui_ImplVulkanH_Window()
     {
         memset((void *)this, 0, sizeof(*this));
-        PresentMode = (VkPresentModeKHR)~0; // Ensure we get an error if user
-                                            // doesn't set this.
+        PresentMode = (VkPresentModeKHR)~0; // Ensure we get an error if user doesn't set this.
         ClearEnable = true;
     }
 };

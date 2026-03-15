@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __HASHINDEX_H__
 #define __HASHINDEX_H__
 
-#include "idlib/Str.h"
 #include "idlib/math/Vector.h"
+#include "idlib/Str.h"
 
 /*
 ===============================================================================
 
-        Fast hash table for indexes and arrays.
-        Does not allocate memory until the first key/index pair is added.
+    Fast hash table for indexes and arrays.
+    Does not allocate memory until the first key/index pair is added.
 
 ===============================================================================
 */
@@ -63,21 +60,17 @@ class idHashIndex
     size_t Size(void) const;
 
     idHashIndex &operator=(const idHashIndex &other);
-    // add an index to the hash, assumes the index has not yet been added to the
-    // hash
+    // add an index to the hash, assumes the index has not yet been added to the hash
     void Add(const int key, const int index);
     // remove an index from the hash
     void Remove(const int key, const int index);
     // get the first index from the hash, returns -1 if empty hash entry
     int First(const int key) const;
-    // get the next index from the hash, returns -1 if at the end of the hash
-    // chain
+    // get the next index from the hash, returns -1 if at the end of the hash chain
     int Next(const int index) const;
-    // insert an entry into the index and add it to the hash, increasing all
-    // indexes >= index
+    // insert an entry into the index and add it to the hash, increasing all indexes >= index
     void InsertIndex(const int key, const int index);
-    // remove an entry from the index and remove it from the hash, decreasing all
-    // indexes >= index
+    // remove an entry from the index and remove it from the hash, decreasing all indexes >= index
     void RemoveIndex(const int key, const int index);
     // clear the hash
     void Clear(void);
@@ -93,8 +86,7 @@ class idHashIndex
     void SetGranularity(const int newGranularity);
     // force resizing the index, current hash table stays intact
     void ResizeIndex(const int newIndexSize);
-    // returns number in the range [0-100] representing the spread over the hash
-    // table
+    // returns number in the range [0-100] representing the spread over the hash table
     int GetSpread(void) const;
     // returns a key for a string
     int GenerateKey(const char *string, bool caseSensitive = true) const;
@@ -384,8 +376,7 @@ idHashIndex::Clear
 */
 ID_INLINE void idHashIndex::Clear(void)
 {
-    // only clear the hash table because clearing the indexChain is not really
-    // needed
+    // only clear the hash table because clearing the indexChain is not really needed
     if (hash != INVALID_INDEX)
     {
         memset(hash, 0xff, hashSize * sizeof(hash[0]));

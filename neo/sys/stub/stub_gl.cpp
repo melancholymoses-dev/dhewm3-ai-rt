@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,9 +34,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #ifdef _MSC_VER
 #pragma warning(push)
-// for each gl function we get an inconsistent dll linkage warning, because
-// SDL_OpenGL.h says they're dllimport showing one warning is enough and it
-// doesn't matter anyway (these stubs are for the dedicated server)
+// for each gl function we get an inconsistent dll linkage warning, because SDL_OpenGL.h says they're dllimport
+// showing one warning is enough and it doesn't matter anyway (these stubs are for the dedicated server)
 #pragma warning(once : 4273)
 #endif
 
@@ -193,8 +189,8 @@ const GLubyte *APIENTRY glGetString(GLenum name)
     switch (name)
     {
     case GL_EXTENSIONS:
-        return (GLubyte *)"GL_ARB_multitexture GL_ARB_texture_env_combine "
-                          "GL_ARB_texture_cube_map GL_ARB_texture_env_dot3";
+        return (
+            GLubyte *)"GL_ARB_multitexture GL_ARB_texture_env_combine GL_ARB_texture_cube_map GL_ARB_texture_env_dot3";
     }
     return (const GLubyte *)"";
 };

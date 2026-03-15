@@ -19,30 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/DeclEntityDef.h"
 #include "framework/DeclSkin.h"
-#include "sys/platform.h"
 
-#include "Misc.h"
-#include "Player.h"
-#include "SmokeParticles.h"
-#include "Trigger.h"
-#include "WorldSpawn.h"
-#include "ai/AI.h"
 #include "gamesys/SysCvar.h"
+#include "ai/AI.h"
+#include "Player.h"
+#include "Trigger.h"
+#include "SmokeParticles.h"
+#include "WorldSpawn.h"
+#include "Misc.h"
 
 #include "Weapon.h"
 
@@ -153,7 +150,7 @@ END_CLASS
 
 /***********************************************************************
 
-        init
+    init
 
 ***********************************************************************/
 
@@ -255,8 +252,8 @@ void idWeapon::SetOwner(idPlayer *_owner)
 ================
 idWeapon::ShouldConstructScriptObjectAtSpawn
 
-Called during idEntity::Spawn to see if it should construct the script object or
-not. Overridden by subclasses that need to spawn the script object themselves.
+Called during idEntity::Spawn to see if it should construct the script object or not.
+Overridden by subclasses that need to spawn the script object themselves.
 ================
 */
 bool idWeapon::ShouldConstructScriptObjectAtSpawn(void) const
@@ -714,7 +711,7 @@ void idWeapon::Restore(idRestoreGame *savefile)
 
 /***********************************************************************
 
-        Weapon definition management
+    Weapon definition management
 
 ***********************************************************************/
 
@@ -796,8 +793,7 @@ void idWeapon::Clear(void)
         refSound.listenerId = owner->GetListenerId();
     }
 
-    // clear out the sounds from our spawnargs since we'll copy them from the
-    // weapon def
+    // clear out the sounds from our spawnargs since we'll copy them from the weapon def
     const idKeyValue *kv = spawnArgs.MatchPrefix("snd_");
     while (kv)
     {
@@ -1234,8 +1230,7 @@ void idWeapon::GetWeaponDef(const char *objectname, int ammoinclip)
             ammoClip = ammoAvail;
         }
 #ifdef _D3XP
-        // In D3XP we use ammo as soon as it is moved into the clip. This allows for
-        // weapons that share ammo
+        // In D3XP we use ammo as soon as it is moved into the clip. This allows for weapons that share ammo
         owner->inventory.UseAmmo(ammoType, ammoClip);
 #endif
     }
@@ -1386,7 +1381,7 @@ void idWeapon::GetWeaponDef(const char *objectname, int ammoinclip)
 
 /***********************************************************************
 
-        GUIs
+    GUIs
 
 ***********************************************************************/
 
@@ -1419,8 +1414,8 @@ void idWeapon::UpdateGUI(void)
 
     if (owner->weaponGone)
     {
-        // dropping weapons was implemented wierd, so we have to not update the gui
-        // when it happens or we'll get a negative ammo count
+        // dropping weapons was implemented wierd, so we have to not update the gui when it happens or we'll get a
+        // negative ammo count
         return;
     }
 
@@ -1472,8 +1467,7 @@ void idWeapon::UpdateGUI(void)
     renderEntity.gui[0]->SetStateBool("player_clip_low", (inclip <= lowAmmo));
 
 #ifdef _D3XP
-    // Let the HUD know the total amount of ammo regardless of the ammo required
-    // value
+    // Let the HUD know the total amount of ammo regardless of the ammo required value
     renderEntity.gui[0]->SetStateString("player_ammo_count", va("%i", AmmoCount()));
 
     // Grabber Gui Info
@@ -1483,7 +1477,7 @@ void idWeapon::UpdateGUI(void)
 
 /***********************************************************************
 
-        Model and muzzleflash
+    Model and muzzleflash
 
 ***********************************************************************/
 
@@ -1497,8 +1491,7 @@ void idWeapon::UpdateFlashPosition(void)
     // the flash has an explicit joint for locating it
     GetGlobalJointTransform(true, flashJointView, muzzleFlash.origin, muzzleFlash.axis);
 
-    // if the desired point is inside or very close to a wall, back it up until it
-    // is clear
+    // if the desired point is inside or very close to a wall, back it up until it is clear
     idVec3 start = muzzleFlash.origin - playerViewAxis[0] * 16;
     idVec3 end = muzzleFlash.origin + playerViewAxis[0] * 8;
     trace_t tr;
@@ -1616,8 +1609,7 @@ void idWeapon::SetModel(const char *modelname)
 ================
 idWeapon::GetGlobalJointTransform
 
-This returns the offset and axis of a weapon bone in world space, suitable for
-attaching models or lights
+This returns the offset and axis of a weapon bone in world space, suitable for attaching models or lights
 ================
 */
 bool idWeapon::GetGlobalJointTransform(bool viewModel, const jointHandle_t jointHandle, idVec3 &offset, idMat3 &axis)
@@ -1661,7 +1653,7 @@ void idWeapon::SetPushVelocity(const idVec3 &pushVelocity)
 
 /***********************************************************************
 
-        State control/player interface
+    State control/player interface
 
 ***********************************************************************/
 
@@ -1672,8 +1664,7 @@ idWeapon::Think
 */
 void idWeapon::Think(void)
 {
-    // do nothing because the present is called from the player through
-    // PresentWeapon
+    // do nothing because the present is called from the player through PresentWeapon
 }
 
 /*
@@ -1851,8 +1842,8 @@ void idWeapon::OwnerDied(void)
         worldModel.GetEntity()->Hide();
     }
 
-    // don't clear the weapon immediately since the owner might have killed
-    // himself by firing the weapon within the current stack frame
+    // don't clear the weapon immediately since the owner might have killed himself by firing the weapon
+    // within the current stack frame
     PostEventMS(&EV_Weapon_Clear, 0);
 }
 
@@ -2017,7 +2008,7 @@ idEntity *idWeapon::DropItem(const idVec3 &velocity, int activateDelay, int remo
 
 /***********************************************************************
 
-        Script state management
+    Script state management
 
 ***********************************************************************/
 
@@ -2056,7 +2047,7 @@ void idWeapon::SetState(const char *statename, int blendFrames)
 
 /***********************************************************************
 
-        Particles/Effects
+    Particles/Effects
 
 ***********************************************************************/
 
@@ -2183,7 +2174,7 @@ bool idWeapon::BloodSplat(float size)
 
 /***********************************************************************
 
-        Visual presentation
+    Visual presentation
 
 ***********************************************************************/
 
@@ -2319,8 +2310,7 @@ void idWeapon::UpdateScript(void)
         SetState(idealState, animBlendFrames);
     }
 
-    // update script state, which may call Event_LaunchProjectiles, among other
-    // things
+    // update script state, which may call Event_LaunchProjectiles, among other things
     count = 10;
     while ((thread->Execute() || idealState.Length()) && count--)
     {
@@ -2367,8 +2357,7 @@ void idWeapon::AlertMonsters(void)
         }
     }
 
-    // jitter the trace to try to catch cases where a trace down the center
-    // doesn't hit the monster
+    // jitter the trace to try to catch cases where a trace down the center doesn't hit the monster
     end += muzzleFlash.axis * muzzleFlash.right * idMath::Sin16(MS2SEC(gameLocal.time) * 31.34f);
     end += muzzleFlash.axis * muzzleFlash.up * idMath::Sin16(MS2SEC(gameLocal.time) * 12.17f);
     gameLocal.clip.TracePoint(tr, muzzleFlash.origin, end,
@@ -2452,8 +2441,7 @@ void idWeapon::PresentWeapon(bool showViewModel)
     // only show the surface in player view
     renderEntity.allowSurfaceInViewID = owner->entityNumber + 1;
 
-    // crunch the depth range so it never pokes into walls this breaks the machine
-    // gun gui
+    // crunch the depth range so it never pokes into walls this breaks the machine gun gui
     renderEntity.weaponDepthHack = true;
 
     // present the model
@@ -2562,8 +2550,7 @@ void idWeapon::PresentWeapon(bool showViewModel)
                 }
                 else
                 {
-                    // Manually update the position of the emitter so it follows the
-                    // weapon
+                    // Manually update the position of the emitter so it follows the weapon
                     renderEntity_t *rendEnt = part->emitter->GetRenderEntity();
                     GetGlobalJointTransform(true, part->joint, rendEnt->origin, rendEnt->axis);
 
@@ -2753,7 +2740,7 @@ void idWeapon::GetWeaponTimeOffsets(float *time, float *scale)
 
 /***********************************************************************
 
-        Ammo
+    Ammo
 
 ***********************************************************************/
 
@@ -3012,6 +2999,7 @@ Returns the current grabberState
 */
 int idWeapon::GetGrabberState() const
 {
+
     return grabberState;
 }
 
@@ -3061,8 +3049,7 @@ void idWeapon::ReadFromSnapshot(const idBitMsgDelta &msg)
     bool snapLight = msg.ReadBits(1) != 0;
     isFiring = msg.ReadBits(1) != 0;
 
-    // WEAPON_NETFIRING is only turned on for other clients we're predicting. not
-    // for local client
+    // WEAPON_NETFIRING is only turned on for other clients we're predicting. not for local client
     if (owner && gameLocal.localClientNum != owner->entityNumber && WEAPON_NETFIRING.IsLinked())
     {
 
@@ -3135,7 +3122,7 @@ bool idWeapon::ClientReceiveEvent(int event, int time, const idBitMsg &msg)
 
 /***********************************************************************
 
-        Script events
+    Script events
 
 ***********************************************************************/
 
@@ -3796,11 +3783,10 @@ void idWeapon::Event_LaunchProjectiles(int num_projectiles, float spread, float 
 #ifdef _D3XP
         if (clipSize == 0)
         {
-            // Weapons with a clip size of 0 launch strait from inventory without
-            // moving to a clip
+            // Weapons with a clip size of 0 launch strait from inventory without moving to a clip
 #endif
-            // In D3XP we used the ammo when the ammo was moved into the clip so we
-            // don't want to use it now.
+            // In D3XP we used the ammo when the ammo was moved into the clip so we don't want to
+            // use it now.
             owner->inventory.UseAmmo(ammoType, (powerAmmo) ? dmgPower : ammoRequired);
 
 #ifdef _D3XP
@@ -3824,8 +3810,7 @@ void idWeapon::Event_LaunchProjectiles(int num_projectiles, float spread, float 
     }
 
     // set the shader parm to the time of last projectile firing,
-    // which the gun material shaders can reference for single shot barrel glows,
-    // etc
+    // which the gun material shaders can reference for single shot barrel glows, etc
     renderEntity.shaderParms[SHADERPARM_DIVERSITY] = gameLocal.random.CRandomFloat();
     renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.realClientTime);
 
@@ -3933,11 +3918,9 @@ void idWeapon::Event_LaunchProjectiles(int num_projectiles, float spread, float 
             {
                 muzzle_pos = muzzleOrigin + playerViewAxis[0] * 2.0f;
 
-                // DG: sometimes the assertion in idBounds::operator-(const idBounds&)
-                // triggers
+                // DG: sometimes the assertion in idBounds::operator-(const idBounds&) triggers
                 //     (would get bounding box with negative volume)
-                //     => check that before doing ownerBounds - projBounds (equivalent
-                //     to the check in the assertion)
+                //     => check that before doing ownerBounds - projBounds (equivalent to the check in the assertion)
                 idVec3 obDiff = ownerBounds[1] - ownerBounds[0];
                 idVec3 pbDiff = projBounds[1] - projBounds[0];
                 bool boundsSubLegal = obDiff.x > pbDiff.x && obDiff.y > pbDiff.y && obDiff.z > pbDiff.z;
@@ -4021,8 +4004,7 @@ void idWeapon::Event_LaunchProjectilesEllipse(int num_projectiles, float spreada
 
         if (clipSize == 0)
         {
-            // Weapons with a clip size of 0 launch strait from inventory without
-            // moving to a clip
+            // Weapons with a clip size of 0 launch strait from inventory without moving to a clip
             owner->inventory.UseAmmo(ammoType, ammoRequired);
         }
 
@@ -4039,8 +4021,7 @@ void idWeapon::Event_LaunchProjectilesEllipse(int num_projectiles, float spreada
     }
 
     // set the shader parm to the time of last projectile firing,
-    // which the gun material shaders can reference for single shot barrel glows,
-    // etc
+    // which the gun material shaders can reference for single shot barrel glows, etc
     renderEntity.shaderParms[SHADERPARM_DIVERSITY] = gameLocal.random.CRandomFloat();
     renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.time);
 
@@ -4145,8 +4126,8 @@ void idWeapon::Event_LaunchProjectilesEllipse(int num_projectiles, float spreada
 }
 
 /**
- * Gives the player a powerup as if it were a weapon shot. It will use the ammo
- * amount specified as ammoRequired.
+ * Gives the player a powerup as if it were a weapon shot. It will use the ammo amount specified
+ * as ammoRequired.
  */
 void idWeapon::Event_LaunchPowerup(const char *powerup, float duration, int useAmmo)
 {
@@ -4168,8 +4149,7 @@ void idWeapon::Event_LaunchPowerup(const char *powerup, float duration, int useA
     }
 
     // set the shader parm to the time of last projectile firing,
-    // which the gun material shaders can reference for single shot barrel glows,
-    // etc
+    // which the gun material shaders can reference for single shot barrel glows, etc
     renderEntity.shaderParms[SHADERPARM_DIVERSITY] = gameLocal.random.CRandomFloat();
     renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.time);
 
@@ -4322,8 +4302,7 @@ void idWeapon::Event_Melee(void)
 
             ent->ApplyImpulse(this, tr.c.id, tr.c.point, impulse);
 
-            // weapon stealing - do this before damaging so weapons are not dropped
-            // twice
+            // weapon stealing - do this before damaging so weapons are not dropped twice
             if (gameLocal.isMultiplayer && weaponDef && weaponDef->dict.GetBool("stealing") &&
                 ent->IsType(idPlayer::Type) && !owner->PowerUpActive(BERSERK) &&
                 ((gameLocal.gameType != GAME_TDM) || gameLocal.serverInfo.GetBool("si_teamDamage") ||

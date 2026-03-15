@@ -15,8 +15,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 #include "PropTreeItem.h"
 
@@ -91,5 +91,4 @@ class PROPTREE_API CPropTreeItemCheck : public CButton, public CPropTreeItem
 /////////////////////////////////////////////////////////////////////////////
 
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Visual C++ will insert additional declarations immediately before
-// the previous line.
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.

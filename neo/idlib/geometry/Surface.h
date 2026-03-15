@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,10 +39,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Surface base class.
+    Surface base class.
 
-        A surface is tesselated to a triangle mesh with each edge shared by
-        at most two triangles.
+    A surface is tesselated to a triangle mesh with each edge shared by
+    at most two triangles.
 
 ===============================================================================
 */
@@ -98,18 +95,16 @@ class idSurface
     void TranslateSelf(const idVec3 &translation);
     void RotateSelf(const idMat3 &rotation);
 
-    // splits the surface into a front and back surface, the surface itself stays
-    // unchanged frontOnPlaneEdges and backOnPlaneEdges optionally store the
-    // indexes to the edges that lay on the split plane returns a SIDE_?
+    // splits the surface into a front and back surface, the surface itself stays unchanged
+    // frontOnPlaneEdges and backOnPlaneEdges optionally store the indexes to the edges that lay on the split plane
+    // returns a SIDE_?
     int Split(const idPlane &plane, const float epsilon, idSurface **front, idSurface **back,
               int *frontOnPlaneEdges = NULL, int *backOnPlaneEdges = NULL) const;
-    // cuts off the part at the back side of the plane, returns true if some part
-    // was at the front if there is nothing at the front the number of points is
-    // set to zero
+    // cuts off the part at the back side of the plane, returns true if some part was at the front
+    // if there is nothing at the front the number of points is set to zero
     bool ClipInPlace(const idPlane &plane, const float epsilon = ON_EPSILON, const bool keepOn = false);
 
-    // returns true if each triangle can be reached from any other triangle by a
-    // traversal
+    // returns true if each triangle can be reached from any other triangle by a traversal
     bool IsConnected(void) const;
     // returns true if the surface is closed
     bool IsClosed(void) const;
@@ -128,8 +123,7 @@ class idSurface
     idList<idDrawVert> verts;    // vertices
     idList<int> indexes;         // 3 references to vertices for each triangle
     idList<surfaceEdge_t> edges; // edges
-    idList<int> edgeIndexes;     // 3 references to edges for each triangle, may be
-                                 // negative for reversed edge
+    idList<int> edgeIndexes;     // 3 references to edges for each triangle, may be negative for reversed edge
 
   protected:
     void GenerateEdgeIndexes(void);

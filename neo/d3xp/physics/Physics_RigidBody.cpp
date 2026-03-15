@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/math/Quat.h"
 #include "sys/platform.h"
+#include "idlib/math/Quat.h"
 
+#include "gamesys/SysCvar.h"
 #include "Entity.h"
 #include "Player.h"
-#include "gamesys/SysCvar.h"
 
 #include "physics/Physics_RigidBody.h"
 
@@ -118,8 +115,8 @@ void idPhysics_RigidBody::Integrate(float deltaTime, rigidBodyPState_t &next)
 ================
 idPhysics_RigidBody::CollisionImpulse
 
-  Calculates the collision impulse using the velocity relative to the collision
-object. The current state should be set to the moment of impact.
+  Calculates the collision impulse using the velocity relative to the collision object.
+  The current state should be set to the moment of impact.
 ================
 */
 bool idPhysics_RigidBody::CollisionImpulse(const trace_t &collision, idVec3 &impulse)
@@ -185,8 +182,7 @@ bool idPhysics_RigidBody::CollisionImpulse(const trace_t &collision, idVec3 &imp
 idPhysics_RigidBody::CheckForCollisions
 
   Check for collisions between the current and next state.
-  If there is a collision the next state is set to the state at the moment of
-impact.
+  If there is a collision the next state is set to the state at the moment of impact.
 ================
 */
 bool idPhysics_RigidBody::CheckForCollisions(const float deltaTime, rigidBodyPState_t &next, trace_t &collision)
@@ -236,9 +232,8 @@ bool idPhysics_RigidBody::CheckForCollisions(const float deltaTime, rigidBodyPSt
 ================
 idPhysics_RigidBody::ContactFriction
 
-  Does not solve friction for multiple simultaneous contacts but applies contact
-friction in isolation. Uses absolute velocity at the contact points instead of
-the velocity relative to the contact object.
+  Does not solve friction for multiple simultaneous contacts but applies contact friction in isolation.
+  Uses absolute velocity at the contact points instead of the velocity relative to the contact object.
 ================
 */
 void idPhysics_RigidBody::ContactFriction(float deltaTime)
@@ -298,8 +293,7 @@ void idPhysics_RigidBody::ContactFriction(float deltaTime)
 idPhysics_RigidBody::TestIfAtRest
 
   Returns true if the body is considered at rest.
-  Does not catch all cases where the body is at rest but is generally good
-enough.
+  Does not catch all cases where the body is at rest but is generally good enough.
 ================
 */
 bool idPhysics_RigidBody::TestIfAtRest(void) const
@@ -396,8 +390,7 @@ bool idPhysics_RigidBody::TestIfAtRest(void) const
 ================
 idPhysics_RigidBody::DropToFloorAndRest
 
-  Drops the object straight down to the floor and verifies if the object is at
-rest on the floor.
+  Drops the object straight down to the floor and verifies if the object is at rest on the floor.
 ================
 */
 void idPhysics_RigidBody::DropToFloorAndRest(void)
@@ -682,8 +675,7 @@ void idPhysics_RigidBody::SetClipModel(idClipModel *model, const float density, 
     // check whether or not the clip model has valid mass properties
     if (mass <= 0.0f || FLOAT_IS_NAN(mass))
     {
-        gameLocal.Warning("idPhysics_RigidBody::SetClipModel: invalid mass for "
-                          "entity '%s' type '%s'",
+        gameLocal.Warning("idPhysics_RigidBody::SetClipModel: invalid mass for entity '%s' type '%s'",
                           self->name.c_str(), self->GetType()->classname);
         mass = 1.0f;
         centerOfMass.Zero();
@@ -700,8 +692,7 @@ void idPhysics_RigidBody::SetClipModel(idClipModel *model, const float density, 
     if (inertiaScale[0][0] > MAX_INERTIA_SCALE || inertiaScale[1][1] > MAX_INERTIA_SCALE ||
         inertiaScale[2][2] > MAX_INERTIA_SCALE)
     {
-        gameLocal.DWarning("idPhysics_RigidBody::SetClipModel: unbalanced inertia "
-                           "tensor for entity '%s' type '%s'",
+        gameLocal.DWarning("idPhysics_RigidBody::SetClipModel: unbalanced inertia tensor for entity '%s' type '%s'",
                            self->name.c_str(), self->GetType()->classname);
         float min = inertiaTensor[minIndex][minIndex] * MAX_INERTIA_SCALE;
         inertiaScale[(minIndex + 1) % 3][(minIndex + 1) % 3] =
@@ -979,8 +970,7 @@ bool idPhysics_RigidBody::Evaluate(int timeStepMSec, int endTimeMSec)
 
     // move the rigid body velocity into the frame of a pusher
     //	current.i.linearMomentum -= current.pushVelocity.SubVec3( 0 ) * mass;
-    //	current.i.angularMomentum -= current.pushVelocity.SubVec3( 1 ) *
-    // inertiaTensor;
+    //	current.i.angularMomentum -= current.pushVelocity.SubVec3( 1 ) * inertiaTensor;
 
     clipModel->Unlink();
 
@@ -1062,8 +1052,7 @@ bool idPhysics_RigidBody::Evaluate(int timeStepMSec, int endTimeMSec)
 
     // move the rigid body velocity back into the world frame
     //	current.i.linearMomentum += current.pushVelocity.SubVec3( 0 ) * mass;
-    //	current.i.angularMomentum += current.pushVelocity.SubVec3( 1 ) *
-    // inertiaTensor;
+    //	current.i.angularMomentum += current.pushVelocity.SubVec3( 1 ) * inertiaTensor;
     current.pushVelocity.Zero();
 
     current.lastTimeStep = timeStep;
@@ -1072,9 +1061,8 @@ bool idPhysics_RigidBody::Evaluate(int timeStepMSec, int endTimeMSec)
 
     if (IsOutsideWorld())
     {
-        gameLocal.Warning("rigid body moved outside world bounds for entity '%s' "
-                          "type '%s' at (%s)",
-                          self->name.c_str(), self->GetType()->classname, current.i.position.ToString(0));
+        gameLocal.Warning("rigid body moved outside world bounds for entity '%s' type '%s' at (%s)", self->name.c_str(),
+                          self->GetType()->classname, current.i.position.ToString(0));
         Rest();
     }
 

@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/DeclSkin.h"
+#include "sys/platform.h"
 #include "framework/Session.h"
+#include "framework/DeclSkin.h"
 #include "renderer/GuiModel.h"
 #include "renderer/RenderWorld_local.h"
-#include "sys/platform.h"
 
 #include "renderer/tr_local.h"
 
@@ -191,8 +188,7 @@ void idRenderWorldLocal::ResizeInteractionTable()
 {
     // we overflowed the interaction table, so dump it
     // we may want to resize this in the future if it turns out to be common
-    common->Printf("idRenderWorldLocal::ResizeInteractionTable: overflowed "
-                   "interactionTableWidth, dumping\n");
+    common->Printf("idRenderWorldLocal::ResizeInteractionTable: overflowed interactionTableWidth, dumping\n");
     R_StaticFree(interactionTable);
     interactionTable = NULL;
 }
@@ -267,11 +263,11 @@ void idRenderWorldLocal::UpdateEntityDef(qhandle_t entityHandle, const renderEnt
                 return;
             }
 
-            // if the only thing that changed was shaderparms, we can just leave
-            // things as they are after updating parms
+            // if the only thing that changed was shaderparms, we can just leave things as they are
+            // after updating parms
 
-            // if we have a callback function and the bounds, origin, axis and model
-            // match, then we can leave the references as they are
+            // if we have a callback function and the bounds, origin, axis and model match,
+            // then we can leave the references as they are
             if (re->callback)
             {
 
@@ -291,8 +287,7 @@ void idRenderWorldLocal::UpdateEntityDef(qhandle_t entityHandle, const renderEnt
             }
         }
 
-        // save any decals if the model is the same, allowing marks to move with
-        // entities
+        // save any decals if the model is the same, allowing marks to move with entities
         if (def->parms.hModel == re->hModel)
         {
             R_FreeEntityDefDerivedData(def, true, true);
@@ -627,8 +622,7 @@ void idRenderWorldLocal::ProjectDecalOntoWorld(const idFixedWinding &winding, co
                 continue;
             }
 
-            // transform the bounding planes, fade planes and texture axis into local
-            // space
+            // transform the bounding planes, fade planes and texture axis into local space
             idRenderModelDecal::GlobalProjectionInfoToLocal(localInfo, info, def->parms.origin, def->parms.axis);
             localInfo.force = (def->parms.customShader != NULL);
 
@@ -686,8 +680,7 @@ void idRenderWorldLocal::ProjectDecal(qhandle_t entityHandle, const idFixedWindi
         return;
     }
 
-    // transform the bounding planes, fade planes and texture axis into local
-    // space
+    // transform the bounding planes, fade planes and texture axis into local space
     idRenderModelDecal::GlobalProjectionInfoToLocal(localInfo, info, def->parms.origin, def->parms.axis);
     localInfo.force = (def->parms.customShader != NULL);
 
@@ -762,8 +755,7 @@ void idRenderWorldLocal::RemoveDecals(qhandle_t entityHandle)
 ====================
 SetRenderView
 
-Sets the current view so any calls to the render world will use the correct
-parms.
+Sets the current view so any calls to the render world will use the correct parms.
 ====================
 */
 void idRenderWorldLocal::SetRenderView(const renderView_t *renderView)
@@ -863,8 +855,7 @@ void idRenderWorldLocal::RenderScene(const renderView_t *renderView)
 
         // usually the following are called later in R_RenderView(), but we pass
         // the locked viewDef to that function so do these calculations here
-        // (the results are needed for some special cases like in-world GUIs and
-        // mirrors)
+        // (the results are needed for some special cases like in-world GUIs and mirrors)
         R_SetViewMatrix(&tr.lockSurfacesRealViewDef);
         R_SetupViewFrustum(&tr.lockSurfacesRealViewDef);
         R_SetupProjection(&tr.lockSurfacesRealViewDef);
@@ -882,8 +873,7 @@ void idRenderWorldLocal::RenderScene(const renderView_t *renderView)
     }
     else
     {
-        // save current viewDef so it can be used if we enable r_lockSurfaces in the
-        // next frame
+        // save current viewDef so it can be used if we enable r_lockSurfaces in the next frame
         tr.lockSurfacesViewDef = *parms;
     }
 
@@ -1123,14 +1113,11 @@ int idRenderWorldLocal::BoundsInAreas(const idBounds &bounds, int *areas, int ma
     int numAreas = 0;
 
     assert(areas);
-    // assert( bounds[0][0] <= bounds[1][0] && bounds[0][1] <= bounds[1][1] &&
-    // bounds[0][2] <= bounds[1][2] );
-    //  DG: apparently this happens sometimes.. handle it more gracefully than an
-    //  assertion.
+    // assert( bounds[0][0] <= bounds[1][0] && bounds[0][1] <= bounds[1][1] && bounds[0][2] <= bounds[1][2] );
+    //  DG: apparently this happens sometimes.. handle it more gracefully than an assertion.
     if (bounds[0][0] > bounds[1][0] || bounds[0][1] > bounds[1][1] || bounds[0][2] > bounds[1][2])
     {
-        common->Warning("idRenderWorld::BoundsInAreas() called with invalid "
-                        "bounds: { { %f %f %f }, { %f %f %f } } !",
+        common->Warning("idRenderWorld::BoundsInAreas() called with invalid bounds: { { %f %f %f }, { %f %f %f } } !",
                         bounds[0][0], bounds[0][1], bounds[0][2], bounds[1][0], bounds[1][1], bounds[1][2]);
         return numAreas;
     }
@@ -1258,8 +1245,7 @@ bool idRenderWorldLocal::ModelTrace(modelTrace_t &trace, qhandle_t entityHandle,
 
     if (entityHandle < 0 || entityHandle >= entityDefs.Num())
     {
-        //		common->Error( "idRenderWorld::ModelTrace: index = %i",
-        // entityHandle );
+        //		common->Error( "idRenderWorld::ModelTrace: index = %i", entityHandle );
         return false;
     }
 
@@ -1434,8 +1420,7 @@ bool idRenderWorldLocal::Trace(modelTrace_t &trace, const idVec3 &start, const i
                 model = R_EntityDefDynamicModel(def);
                 if (!model)
                 {
-                    continue; // can happen with particle systems, which don't instantiate
-                              // without a valid view
+                    continue; // can happen with particle systems, which don't instantiate without a valid view
                 }
             }
 
@@ -1678,9 +1663,8 @@ Force the generation of all light / surface interactions at the start of a level
 If this isn't called, they will all be dynamically generated
 
 This really isn't all that helpful anymore, because the calculation of shadows
-and light interactions is deferred from
-idRenderWorldLocal::CreateLightDefInteractions(), but we use it as an oportunity
-to size the interactionTable
+and light interactions is deferred from idRenderWorldLocal::CreateLightDefInteractions(), but we
+use it as an oportunity to size the interactionTable
 ===================
 */
 void idRenderWorldLocal::GenerateAllInteractions()
@@ -1714,9 +1698,8 @@ void idRenderWorldLocal::GenerateAllInteractions()
     int end = Sys_Milliseconds();
     int msec = end - start;
 
-    common->Printf("idRenderWorld::GenerateAllInteractions, msec = %i, "
-                   "staticAllocCount = %i.\n",
-                   msec, tr.staticAllocCount);
+    common->Printf("idRenderWorld::GenerateAllInteractions, msec = %i, staticAllocCount = %i.\n", msec,
+                   tr.staticAllocCount);
 
     // build the interaction table
     if (r_useInteractionTable.GetBool())
@@ -2486,9 +2469,8 @@ const idMaterial *R_RemapShaderBySkin(const idMaterial *shader, const idDeclSkin
 
     if (customShader)
     {
-        // this is sort of a hack, but cause deformed surfaces to map to empty
-        // surfaces, so the item highlight overlay doesn't highlight the autosprite
-        // surface
+        // this is sort of a hack, but cause deformed surfaces to map to empty surfaces,
+        // so the item highlight overlay doesn't highlight the autosprite surface
         if (shader->Deform())
         {
             return NULL;

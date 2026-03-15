@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include <float.h>
 #include <math.h>
+#include <float.h>
 
 #include "sys/platform.h"
 
@@ -290,7 +287,7 @@ const char *idSIMD_AltiVec::GetName(void) const
 }
 
 /*
-        Helper Functions
+    Helper Functions
 */
 #if 0
 // Prints the values of a vector, useful for debugging but
@@ -320,7 +317,7 @@ inline void debugPrintVector( vector unsigned short v, char *msg ) {
   Reciprocal
 
   For each element in vector:
-        n = 1 / n
+    n = 1 / n
 ===============
 */
 
@@ -338,7 +335,7 @@ inline vector float Reciprocal(vector float v)
   ReciprocalSquareRoot
 
   For each element in vector:
-        n = 1 / sqrt(n)
+    n = 1 / sqrt(n)
 ===============
 */
 // Reciprocal square root estimate of a vector
@@ -361,7 +358,7 @@ inline vector float ReciprocalSquareRoot(vector float v)
   Divide
 
   For each element in vectors:
-        n = a / b
+    n = a / b
 ===============
 */
 // Use reciprocal estimate and multiply to divide a vector
@@ -375,7 +372,7 @@ inline vector float Divide(vector float a, vector float b)
   loadSplatUnalignedScalar
 
   For each element in vector:
-        n = s
+    n = s
 ===============
 */
 inline vector float loadSplatUnalignedScalar(const float *s)
@@ -391,11 +388,10 @@ inline vector float loadSplatUnalignedScalar(const float *s)
   VectorATan16
 
   For each element in vector:
-        n = idMath::ATan16( x, y )
+    n = idMath::ATan16( x, y )
 ===============
 */
-// calculates arc tangent of a vector with 16 bits of precision, based on atan16
-// in idMath
+// calculates arc tangent of a vector with 16 bits of precision, based on atan16 in idMath
 inline vector float VectorATan16(vector float x, vector float y)
 {
 
@@ -434,7 +430,7 @@ inline vector float VectorATan16(vector float x, vector float y)
   VectorSin16
 
   For each element in vector:
-        n = idMath::Sin16( v )
+    n = idMath::Sin16( v )
 ===============
 */
 inline vector float VectorSin16(vector float v)
@@ -474,11 +470,9 @@ inline vector float VectorSin16(vector float v)
     // these are the ones where a > PI + HALF_PI so set a = a - TWO_PI
     vecCmp3 = vec_cmpgt(vecResult, oneandhalfPI);
 
-    // we also want to set a = PI - a everywhere that !(a < PI) and !(a > PI +
-    // HALF_PI)
+    // we also want to set a = PI - a everywhere that !(a < PI) and !(a > PI + HALF_PI)
     vecCmp4 = vec_and(vec_xor(vecCmp3, (vector bool int)(1)),
-                      vec_xor(vecCmp1,
-                              (vector bool int)(1))); // everywhere that both of those are false
+                      vec_xor(vecCmp1, (vector bool int)(1))); // everywhere that both of those are false
 
     // these are ones where a < PI and a > HALF_PI so we set a = PI - a
     vecCmp1 = vec_and(vecCmp1, vecCmp2);
@@ -503,7 +497,7 @@ inline vector float VectorSin16(vector float v)
   vecSplatWithRunTime
 
   For each element in vector:
-        n = v(i)
+    n = v(i)
 ===============
 */
 // splats an element across a vector using a runtime variable
@@ -518,7 +512,7 @@ inline vector float vecSplatWithRunTime(vector float v, int i)
 ===============
   FastScalarInvSqrt
 
-        n = 1 / sqrt( f )
+    n = 1 / sqrt( f )
 ===============
 */
 inline float FastScalarInvSqrt(float f)
@@ -530,8 +524,7 @@ inline float FastScalarInvSqrt(float f)
     // Calculate a 5 bit starting estimate for the reciprocal sqrt
     estimate = __frsqrte(f + kSmallestFloat);
 
-    // if you require less precision, you may reduce the number of loop
-    // iterations.
+    // if you require less precision, you may reduce the number of loop iterations.
     //  This will do 2 rounds of NR
     estimate = estimate + 0.5f * estimate * (1.0f - f * estimate * estimate);
     estimate = estimate + 0.5f * estimate * (1.0f - f * estimate * estimate);
@@ -545,9 +538,9 @@ inline float FastScalarInvSqrt(float f)
 ===============
   FastScalarInvSqrt_x3
 
-        arg1 = 1 / sqrt( arg1 )
-        arg2 = 1 / sqrt( arg2 )
-        arg3 = 1 / sqrt( arg3 )
+    arg1 = 1 / sqrt( arg1 )
+    arg2 = 1 / sqrt( arg2 )
+    arg3 = 1 / sqrt( arg3 )
 ===============
 */
 inline void FastScalarInvSqrt_x3(float *arg1, float *arg2, float *arg3)
@@ -583,15 +576,14 @@ inline void FastScalarInvSqrt_x3(float *arg1, float *arg2, float *arg3)
 ===============
   FastScalarInvSqrt_x6
 
-        arg1 = 1 / sqrt( arg1 )
-        arg2 = 1 / sqrt( arg2 )
-        arg3 = 1 / sqrt( arg3 )
-        arg4 = 1 / sqrt( arg4 )
-        arg5 = 1 / sqrt( arg5 )
-        arg6 = 1 / sqrt( arg6 )
+    arg1 = 1 / sqrt( arg1 )
+    arg2 = 1 / sqrt( arg2 )
+    arg3 = 1 / sqrt( arg3 )
+    arg4 = 1 / sqrt( arg4 )
+    arg5 = 1 / sqrt( arg5 )
+    arg6 = 1 / sqrt( arg6 )
 
-        On a G5, you've got 2 pipeline stages to fill. (2 FPU's with 6 stages
-each)
+    On a G5, you've got 2 pipeline stages to fill. (2 FPU's with 6 stages each)
 ===============
 */
 inline void FastScalarInvSqrt_x6(float *arg1, float *arg2, float *arg3, float *arg4, float *arg5, float *arg6)
@@ -1285,8 +1277,8 @@ void VPCALL idSIMD_AltiVec::MulSub(float *dst, const float constant, const float
         v0 = vec_perm(v0_low, v0_hi, permVec1);
         v2 = vec_perm(v2_low, v2_hi, permVec1);
 
-        // we know dst will be aligned here because we already handled the
-        // preceeding unaligned cases
+        // we know dst will be aligned here because we already handled the preceeding
+        // unaligned cases
         v1 = vec_ld(0, &dst[i]);
         v3 = vec_ld(16, &dst[i]);
 
@@ -1402,8 +1394,8 @@ void VPCALL idSIMD_AltiVec::Dot(float *dst, const idVec3 &constant, const idVec3
         (vector unsigned char)(4, 5, 6, 7, 16, 17, 18, 19, 28, 29, 30, 31, 0, 1, 2, 3); // last 4 bytes are junk
     register vector unsigned char permY2 = (vector unsigned char)(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 24, 25, 26, 27);
 
-    register vector unsigned char permZ1 = (vector unsigned char)(8, 9, 10, 11, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6,
-                                                                  7); // last 8 bytes are junk
+    register vector unsigned char permZ1 =
+        (vector unsigned char)(8, 9, 10, 11, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7); // last 8 bytes are junk
     register vector unsigned char permZ2 =
         (vector unsigned char)(0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 28, 29, 30, 31);
 
@@ -1658,8 +1650,7 @@ void VPCALL idSIMD_AltiVec::Dot(float *dst, const idVec3 &constant, const idDraw
         dst[i] = constant * src[i].xyz;
     }
 
-    // every fourth one will have the same alignment. Make sure we've got enough
-    // here
+    // every fourth one will have the same alignment. Make sure we've got enough here
     if (i + 3 < count)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)src[i].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -1819,8 +1810,8 @@ void VPCALL idSIMD_AltiVec::Dot(float *dst, const idPlane &constant, const idVec
         (vector unsigned char)(4, 5, 6, 7, 16, 17, 18, 19, 28, 29, 30, 31, 0, 1, 2, 3); // last 4 bytes are junk
     register vector unsigned char permY2 = (vector unsigned char)(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 24, 25, 26, 27);
 
-    register vector unsigned char permZ1 = (vector unsigned char)(8, 9, 10, 11, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6,
-                                                                  7); // last 8 bytes are junk
+    register vector unsigned char permZ1 =
+        (vector unsigned char)(8, 9, 10, 11, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7); // last 8 bytes are junk
     register vector unsigned char permZ2 =
         (vector unsigned char)(0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 28, 29, 30, 31);
 
@@ -1918,8 +1909,7 @@ idSIMD_AltiVec::Dot
 */
 void VPCALL idSIMD_AltiVec::Dot(float *dst, const idPlane &constant, const idPlane *src, const int count)
 {
-    // #define OPER(X) dst[(X)] = constant.Normal() * src[(X)].Normal() +
-    // constant[3] * src[(X)][3];
+    // #define OPER(X) dst[(X)] = constant.Normal() * src[(X)].Normal() + constant[3] * src[(X)][3];
 
     // check plane size
     assert(sizeof(idPlane) == PLANE_OFFSET * sizeof(float));
@@ -2089,8 +2079,8 @@ void VPCALL idSIMD_AltiVec::Dot(float *dst, const idPlane &constant, const idDra
         dst[i] = constant.Normal() * src[i].xyz + constant[3];
     }
 
-    // every fourth one will have the same alignment, so can store these. Make
-    // sure we have enough so we don't run off the end of the array
+    // every fourth one will have the same alignment, so can store these. Make sure we
+    // have enough so we don't run off the end of the array
     if (i + 3 < count)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)src[i].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -2277,8 +2267,8 @@ void VPCALL idSIMD_AltiVec::Dot(float *dst, const idVec3 *src0, const idVec3 *sr
     register vector unsigned char permY1 =
         (vector unsigned char)(4, 5, 6, 7, 16, 17, 18, 19, 28, 29, 30, 31, 0, 1, 2, 3); // last 4 bytes are junk
     register vector unsigned char permY2 = (vector unsigned char)(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 24, 25, 26, 27);
-    register vector unsigned char permZ1 = (vector unsigned char)(8, 9, 10, 11, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6,
-                                                                  7); // last 8 bytes are junk
+    register vector unsigned char permZ1 =
+        (vector unsigned char)(8, 9, 10, 11, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7); // last 8 bytes are junk
     register vector unsigned char permZ2 =
         (vector unsigned char)(0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 28, 29, 30, 31);
 
@@ -2457,11 +2447,9 @@ void VPCALL idSIMD_AltiVec::Dot(float &dot, const float *src1, const float *src2
         vec_ste(runningTotal1, 0, &dot);
     }
 
-    // handle cleanup. when profiling the game, we found that most of the counts
-    // to this function were small, so it
-    //  spends a lot of time in this scalar code. It's already really really fast
-    //  (eg 1 TB tick) for scalar code for counts less than 50, so not much point
-    //  in trying to get vector code in on the action
+    // handle cleanup. when profiling the game, we found that most of the counts to this function were small, so it
+    //  spends a lot of time in this scalar code. It's already really really fast (eg 1 TB tick) for scalar code for
+    //  counts less than 50, so not much point in trying to get vector code in on the action
     for (; i < count; i++)
     {
         dot += src1[i] * src2[i];
@@ -3211,8 +3199,7 @@ void VPCALL idSIMD_AltiVec::MinMax(float &min, float &max, const float *src, con
 {
     min = idMath::INFINITY;
     max = -idMath::INFINITY;
-    // #define OPER(X) if ( src[(X)] < min ) {min = src[(X)];} if ( src[(X)] > max
-    // ) {max = src[(X)];}
+    // #define OPER(X) if ( src[(X)] < min ) {min = src[(X)];} if ( src[(X)] > max ) {max = src[(X)];}
 
     register vector float v0, v1, v2, v3;
     register vector float maxVec, minVec, tempMin, tempMax;
@@ -3291,9 +3278,8 @@ void VPCALL idSIMD_AltiVec::MinMax(idVec2 &min, idVec2 &max, const idVec2 *src, 
 {
     min[0] = min[1] = idMath::INFINITY;
     max[0] = max[1] = -idMath::INFINITY;
-    // #define OPER(X) const idVec2 &v = src[(X)]; if ( v[0] < min[0] ) { min[0] =
-    // v[0]; } if ( v[0] > max[0] ) { max[0] = v[0]; } if ( v[1] < min[1] ) {
-    // min[1] = v[1]; } if ( v[1] > max[1] ) { max[1] = v[1]; }
+    // #define OPER(X) const idVec2 &v = src[(X)]; if ( v[0] < min[0] ) { min[0] = v[0]; } if ( v[0] > max[0] ) { max[0]
+    // = v[0]; } if ( v[1] < min[1] ) { min[1] = v[1]; } if ( v[1] > max[1] ) { max[1] = v[1]; }
 
     idVec2 v;
     int i = 0;
@@ -3341,8 +3327,8 @@ void VPCALL idSIMD_AltiVec::MinMax(idVec2 &min, idVec2 &max, const idVec2 *src, 
             v3 = vec_max(vecLd3, vecLd4);
             v2 = vec_max(v2, v3);
 
-            // since its always X Y X Y we don't have to re-merge each time. we can
-            // wait until the end
+            // since its always X Y X Y we don't have to re-merge each time. we can wait
+            // until the end
             vecMin = vec_min(v0, vecMin);
             vecMax = vec_max(v2, vecMax);
         }
@@ -3394,10 +3380,9 @@ void VPCALL idSIMD_AltiVec::MinMax(idVec3 &min, idVec3 &max, const idVec3 *src, 
 {
     min[0] = min[1] = min[2] = idMath::INFINITY;
     max[0] = max[1] = max[2] = -idMath::INFINITY;
-    // #define OPER(X) const idVec3 &v = src[(X)]; if ( v[0] < min[0] ) { min[0] =
-    // v[0]; } if ( v[0] > max[0] ) { max[0] = v[0]; } if ( v[1] < min[1] ) {
-    // min[1] = v[1]; } if ( v[1] > max[1] ) { max[1] = v[1]; } if ( v[2] < min[2]
-    // ) { min[2] = v[2]; } if ( v[2] > max[2] ) { max[2] = v[2]; }
+    // #define OPER(X) const idVec3 &v = src[(X)]; if ( v[0] < min[0] ) { min[0] = v[0]; } if ( v[0] > max[0] ) { max[0]
+    // = v[0]; } if ( v[1] < min[1] ) { min[1] = v[1]; } if ( v[1] > max[1] ) { max[1] = v[1]; } if ( v[2] < min[2] ) {
+    // min[2] = v[2]; } if ( v[2] > max[2] ) { max[2] = v[2]; }
 
     int i = 0;
     const float *srcPtr = src[0].ToFloatPtr();
@@ -3946,8 +3931,7 @@ idSIMD_AltiVec::Clamp
 */
 void VPCALL idSIMD_AltiVec::Clamp(float *dst, const float *src, const float min, const float max, const int count)
 {
-    // #define OPER(X) dst[(X)] = src[(X)] < min ? min : src[(X)] > max ? max :
-    // src[(X)];
+    // #define OPER(X) dst[(X)] = src[(X)] < min ? min : src[(X)] > max ? max : src[(X)];
     register vector float v0, v1, v2, v3, v4, v5;
     register vector unsigned char permVec;
     register vector float v0_low, v0_hi, v1_low, v1_hi;
@@ -4122,14 +4106,13 @@ void VPCALL idSIMD_AltiVec::Zero16(float *dst, const int count)
 ============
 idSIMD_AltiVec::Negate16
 
-        Assumptions:
-                dst is aligned
+    Assumptions:
+        dst is aligned
 ============
 */
 void VPCALL idSIMD_AltiVec::Negate16(float *dst, const int count)
 {
-    // #define OPER(X) ptr[(X)] ^= ( 1 << 31 )		// IEEE 32 bits float
-    // sign bit
+    // #define OPER(X) ptr[(X)] ^= ( 1 << 31 )		// IEEE 32 bits float sign bit
 
     // dst is aligned
     assert(IS_16BYTE_ALIGNED(dst[0]));
@@ -4175,8 +4158,8 @@ void VPCALL idSIMD_AltiVec::Copy16(float *dst, const float *src, const int count
 ============
 idSIMD_AltiVec::Add16
 
-        Assumptions:
-                Assumes dst, src1, src2 all start at aligned address
+    Assumptions:
+        Assumes dst, src1, src2 all start at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::Add16(float *dst, const float *src1, const float *src2, const int count)
@@ -4223,8 +4206,8 @@ void VPCALL idSIMD_AltiVec::Add16(float *dst, const float *src1, const float *sr
 ============
 idSIMD_AltiVec::Sub16
 
-        Assumptions:
-                Assumes that dst, src1, and src2 all start at aligned address
+    Assumptions:
+        Assumes that dst, src1, and src2 all start at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::Sub16(float *dst, const float *src1, const float *src2, const int count)
@@ -4270,8 +4253,8 @@ void VPCALL idSIMD_AltiVec::Sub16(float *dst, const float *src1, const float *sr
 ============
 idSIMD_AltiVec::Mul16
 
-        Assumptions:
-                Assumes that dst and src1 start at aligned address
+    Assumptions:
+        Assumes that dst and src1 start at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::Mul16(float *dst, const float *src1, const float constant, const int count)
@@ -4317,8 +4300,8 @@ void VPCALL idSIMD_AltiVec::Mul16(float *dst, const float *src1, const float con
 ============
 idSIMD_AltiVec::AddAssign16
 
-        Assumptions:
-                Assumes that dst and src start at aligned address
+    Assumptions:
+        Assumes that dst and src start at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::AddAssign16(float *dst, const float *src, const int count)
@@ -4361,8 +4344,8 @@ void VPCALL idSIMD_AltiVec::AddAssign16(float *dst, const float *src, const int 
 ============
 idSIMD_AltiVec::SubAssign16
 
-        Assumptions:
-                Assumes that dst and src start at aligned address
+    Assumptions:
+        Assumes that dst and src start at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::SubAssign16(float *dst, const float *src, const int count)
@@ -4403,9 +4386,8 @@ void VPCALL idSIMD_AltiVec::SubAssign16(float *dst, const float *src, const int 
 ============
 idSIMD_AltiVec::MulAssign16
 
-        Assumptions:
-                Assumes that dst starts at aligned address and count is multiple
-of 4
+    Assumptions:
+        Assumes that dst starts at aligned address and count is multiple of 4
 ============
 */
 void VPCALL idSIMD_AltiVec::MulAssign16(float *dst, const float constant, const int count)
@@ -5152,15 +5134,13 @@ void VPCALL idSIMD_AltiVec::BlendJoints(idJointQuat *joints, const idJointQuat *
     // since lerp is a constant, we can special case the two cases if they're true
     if (lerp <= 0.0f)
     {
-        // this sets joints back to joints. No sense in doing no work, so just
-        // return
+        // this sets joints back to joints. No sense in doing no work, so just return
         return;
     }
 
     if (lerp >= 1.0f)
     {
-        // this copies each q from blendJoints to joints and copies each t from
-        // blendJoints to joints
+        // this copies each q from blendJoints to joints and copies each t from blendJoints to joints
         memcpy(joints[0].q.ToFloatPtr(), blendJoints[0].q.ToFloatPtr(), sizeof(idJointQuat) * numJoints);
         return;
     }
@@ -5262,8 +5242,8 @@ void VPCALL idSIMD_AltiVec::BlendJoints(idJointQuat *joints, const idJointQuat *
         vecCosom = vec_madd(vecFromZ, vecToZ, vecCosom);
         vecCosom = vec_madd(vecFromW, vecToW, vecCosom);
 
-        // if cosom is < 0, negate it and set temp to negated elements in to.
-        // otherwise, set temp to to
+        // if cosom is < 0, negate it and set temp to negated elements in to. otherwise, set temp to
+        // to
         vector bool int vecCmp, vecCmp2;
         vecCmp = vec_cmplt(vecCosom, zeroVector);
 
@@ -5345,8 +5325,8 @@ void VPCALL idSIMD_AltiVec::BlendJoints(idJointQuat *joints, const idJointQuat *
         vec_ste(vecToW, 12, (float *)jointPtr4);
 
         // lerp is  v1 + l * ( v2 - v1 );
-        // the idVec3 T is going to be 12 bytes after the Q, so we can do this
-        // without calling ToFloatPtr() again. since its
+        // the idVec3 T is going to be 12 bytes after the Q, so we can do this without calling ToFloatPtr() again. since
+        // its
         float *jointVecPtr = (float *)(jointPtr + 4);
         float *jointVecPtr2 = (float *)(jointPtr2 + 4);
         float *jointVecPtr3 = (float *)(jointPtr3 + 4);
@@ -5482,9 +5462,8 @@ idSIMD_AltiVec::ConvertJointQuatsToJointMats
 ============
 */
 
-// SSE doesn't vectorize this, and I don't think we should either. Its mainly
-// just copying data, there's very little math involved and it's not easily
-// parallelizable
+// SSE doesn't vectorize this, and I don't think we should either. Its mainly just copying data, there's very little
+// math involved and it's not easily parallelizable
 void VPCALL idSIMD_AltiVec::ConvertJointQuatsToJointMats(idJointMat *jointMats, const idJointQuat *jointQuats,
                                                          const int numJoints)
 {
@@ -5550,12 +5529,11 @@ void VPCALL idSIMD_AltiVec::ConvertJointMatsToJointQuats(idJointQuat *jointQuats
 
     int index;
 
-    // Since we use very little of the data we have to pull in for the altivec
-    // version, we end up with a lot of wasted math. Rather than try to force it
-    // to use altivec, I wrote an optimized version of InvSqrt for the G5, and
-    // made it use that instead. With only this change, we get a little bigger
-    // than 50% speedup, which is not too shabby. Should really replace
-    // idMath::InvSqrt with my function so everyone can benefit on G5.
+    // Since we use very little of the data we have to pull in for the altivec version, we end up with
+    // a lot of wasted math. Rather than try to force it to use altivec, I wrote an optimized version
+    // of InvSqrt for the G5, and made it use that instead. With only this change, we get a little
+    // bigger than 50% speedup, which is not too shabby. Should really replace idMath::InvSqrt with
+    // my function so everyone can benefit on G5.
 
     for (index = 0; index < numJoints; index++)
     {
@@ -5633,9 +5611,8 @@ void VPCALL idSIMD_AltiVec::TransformJoints(idJointMat *jointMats, const int *pa
 	}
 #else
 
-    // I don't think you can unroll this since the next iteration of the loop
-    // might depending on the previous iteration, depending on what the parents
-    // array looks like. This is true in the test code.
+    // I don't think you can unroll this since the next iteration of the loop might depending on the previous iteration,
+    // depending on what the parents array looks like. This is true in the test code.
     for (i = firstJoint; i <= lastJoint; i++)
     {
         assert(parents[i] < i);
@@ -5671,19 +5648,13 @@ void VPCALL idSIMD_AltiVec::TransformJoints(idJointMat *jointMats, const int *pa
         vector float C1, C2, C3;
 
         // matrix multiply
-        C1 = vec_madd(vecJointMat1, vec_splat(vecParentMat1, 0),
-                      zero); // m(0 to 3) * a(0)
-        C2 = vec_madd(vecJointMat1, vec_splat(vecParentMat2, 0),
-                      zero); //  m(4 to 7) * a(4)
-        C3 = vec_madd(vecJointMat1, vec_splat(vecParentMat3, 0),
-                      zero); // m(8 to 11) * a(8)
+        C1 = vec_madd(vecJointMat1, vec_splat(vecParentMat1, 0), zero); // m(0 to 3) * a(0)
+        C2 = vec_madd(vecJointMat1, vec_splat(vecParentMat2, 0), zero); //  m(4 to 7) * a(4)
+        C3 = vec_madd(vecJointMat1, vec_splat(vecParentMat3, 0), zero); // m(8 to 11) * a(8)
 
-        C1 = vec_madd(vecJointMat2, vec_splat(vecParentMat1, 1),
-                      C1); // add in m(4 to 7) * a(1)
-        C2 = vec_madd(vecJointMat2, vec_splat(vecParentMat2, 1),
-                      C2); // add in m(4 to 7) * a(5)
-        C3 = vec_madd(vecJointMat2, vec_splat(vecParentMat3, 1),
-                      C3); // add in m(4 to 7) * a(9)
+        C1 = vec_madd(vecJointMat2, vec_splat(vecParentMat1, 1), C1); // add in m(4 to 7) * a(1)
+        C2 = vec_madd(vecJointMat2, vec_splat(vecParentMat2, 1), C2); // add in m(4 to 7) * a(5)
+        C3 = vec_madd(vecJointMat2, vec_splat(vecParentMat3, 1), C3); // add in m(4 to 7) * a(9)
 
         C1 = vec_madd(vecJointMat3, vec_splat(vecParentMat1, 2), C1);
         C2 = vec_madd(vecJointMat3, vec_splat(vecParentMat2, 2), C2);
@@ -5717,9 +5688,8 @@ void VPCALL idSIMD_AltiVec::UntransformJoints(idJointMat *jointMats, const int *
 		jointMats[i] /= jointMats[parents[i]];
 	}
 #else
-    // I don't think you can unroll this since the next iteration of the loop
-    // might depending on the previous iteration, depending on what the parents
-    // array looks like. This is true in the test code.
+    // I don't think you can unroll this since the next iteration of the loop might depending on the previous iteration,
+    // depending on what the parents array looks like. This is true in the test code.
     for (i = lastJoint; i >= firstJoint; i--)
     {
         assert(parents[i] < i);
@@ -5807,8 +5777,8 @@ idSIMD_AltiVec::TransformVerts
 ============
 */
 
-// Here we don't have much for the vector unit to do, and the gain we get from
-// doing the math in parallel is eaten by doing unaligned stores.
+// Here we don't have much for the vector unit to do, and the gain we get from doing the math
+// in parallel is eaten by doing unaligned stores.
 void VPCALL idSIMD_AltiVec::TransformVerts(idDrawVert *verts, const int numVerts, const idJointMat *joints,
                                            const idVec4 *weights, const int *index, int numWeights)
 {
@@ -5945,8 +5915,7 @@ void VPCALL idSIMD_AltiVec::TracePointCull(byte *cullBits, byte &totalOr, const 
     vector unsigned char cullBitPerm = vec_lvsr(0, &cullBitVal[0]);
     int i = 0;
 
-    // every fourth one will have the same alignment. Make sure we've got enough
-    // here
+    // every fourth one will have the same alignment. Make sure we've got enough here
     if (i + 3 < numVerts)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)verts[0].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -6426,8 +6395,7 @@ void VPCALL idSIMD_AltiVec::DecalPointCull(byte *cullBits, const idPlane *planes
     vector unsigned char vBitPerm = vec_lvsr(0, &vBits[4]);
 
     i = 0;
-    // every fourth one will have the same alignment. Make sure we've got enough
-    // here
+    // every fourth one will have the same alignment. Make sure we've got enough here
     if (i + 3 < numVerts)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)verts[0].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -6525,8 +6493,7 @@ void VPCALL idSIMD_AltiVec::DecalPointCull(byte *cullBits, const idPlane *planes
         vecBitShifted7 = vec_sl((vector unsigned int)vecCmp7, vecShift1);
         vecBitShifted8 = vec_sl((vector unsigned int)vecCmp8, vecShift2);
 
-        // OR them all together (this is the same as adding them, since they're all
-        // only 1 bit set)
+        // OR them all together (this is the same as adding them, since they're all only 1 bit set)
         vecR1 = (vector unsigned int)(0); // zeroIntVector;
         vecR1 = vec_add(vecBitShifted1, vec_sld(vecBitShifted1, vecBitShifted1, 8));
         vecR1 = vec_add(vecR1, vec_sld(vecR1, vecR1, 4));
@@ -6586,8 +6553,7 @@ void VPCALL idSIMD_AltiVec::DecalPointCull(byte *cullBits, const idPlane *planes
         d4 = planes[4].Distance(v);
         d5 = planes[5].Distance(v);
 
-        // they check if the sign bit is set by casting as long and shifting right
-        // 31 places.
+        // they check if the sign bit is set by casting as long and shifting right 31 places.
         bits = FLOATSIGNBITSET(d0) << 0;
         bits |= FLOATSIGNBITSET(d1) << 1;
         bits |= FLOATSIGNBITSET(d2) << 2;
@@ -6767,8 +6733,7 @@ void VPCALL idSIMD_AltiVec::DecalPointCull(byte *cullBits, const idPlane *planes
         vecBitShifted7 = vec_sl((vector unsigned int)vecCmp7, vecShift1);
         vecBitShifted8 = vec_sl((vector unsigned int)vecCmp8, vecShift2);
 
-        // OR them all together (this is the same as adding them, since they're all
-        // only 1 bit set)
+        // OR them all together (this is the same as adding them, since they're all only 1 bit set)
         vecR1 = (vector unsigned int)(0); // zeroIntVector;
         vecR1 = vec_add(vecBitShifted1, vec_sld(vecBitShifted1, vecBitShifted1, 8));
         vecR1 = vec_add(vecR1, vec_sld(vecR1, vecR1, 4));
@@ -6828,8 +6793,7 @@ void VPCALL idSIMD_AltiVec::DecalPointCull(byte *cullBits, const idPlane *planes
         d4 = planes[4].Distance(v);
         d5 = planes[5].Distance(v);
 
-        // they check if the sign bit is set by casting as long and shifting right
-        // 31 places.
+        // they check if the sign bit is set by casting as long and shifting right 31 places.
         bits = FLOATSIGNBITSET(d0) << 0;
         bits |= FLOATSIGNBITSET(d1) << 1;
         bits |= FLOATSIGNBITSET(d2) << 2;
@@ -6916,8 +6880,7 @@ void VPCALL idSIMD_AltiVec::OverlayPointCull(byte *cullBits, idVec2 *texCoords, 
     vector unsigned char cullBitPerm = vec_lvsr(0, &cullBitVal[0]);
 
     i = 0;
-    // every fourth one will have the same alignment. Make sure we've got enough
-    // here
+    // every fourth one will have the same alignment. Make sure we've got enough here
     if (i + 3 < numVerts)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)verts[0].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -7268,7 +7231,7 @@ void VPCALL idSIMD_AltiVec::OverlayPointCull(byte *cullBits, idVec2 *texCoords, 
 ============
 idSIMD_AltiVec::DeriveTriPlanes
 
-        Derives a plane equation for each triangle.
+    Derives a plane equation for each triangle.
 ============
 */
 void VPCALL idSIMD_AltiVec::DeriveTriPlanes(idPlane *planes, const idDrawVert *verts, const int numVerts,
@@ -7587,10 +7550,10 @@ void VPCALL idSIMD_AltiVec::DeriveTriPlanes(idPlane *planes, const idDrawVert *v
 ============
 idSIMD_AltiVec::DeriveTangents
 
-        Derives the normal and orthogonal tangent vectors for the triangle
-vertices. For each vertex the normal and tangent vectors are derived from all
-triangles using the vertex which results in smooth tangents across the mesh. In
-the process the triangle planes are calculated as well.
+    Derives the normal and orthogonal tangent vectors for the triangle vertices.
+    For each vertex the normal and tangent vectors are derived from all triangles
+    using the vertex which results in smooth tangents across the mesh.
+    In the process the triangle planes are calculated as well.
 
 ============
 */
@@ -7730,9 +7693,8 @@ void VPCALL idSIMD_AltiVec::DeriveTangents(idPlane *planes, idDrawVert *verts, c
 ============
 idSIMD_AltiVec::DeriveUnsmoothedTangents
 
-        Derives the normal and orthogonal tangent vectors for the triangle
-vertices. For each vertex the normal and tangent vectors are derived from a
-single dominant triangle.
+    Derives the normal and orthogonal tangent vectors for the triangle vertices.
+    For each vertex the normal and tangent vectors are derived from a single dominant triangle.
 ============
 */
 #define DERIVE_UNSMOOTHED_BITANGENT
@@ -8233,9 +8195,8 @@ void VPCALL idSIMD_AltiVec::DeriveUnsmoothedTangents(idDrawVert *verts, const do
 ============
 idSIMD_AltiVec::DeriveUnsmoothedTangents
 
-        Derives the normal and orthogonal tangent vectors for the triangle
-vertices. For each vertex the normal and tangent vectors are derived from a
-single dominant triangle.
+    Derives the normal and orthogonal tangent vectors for the triangle vertices.
+    For each vertex the normal and tangent vectors are derived from a single dominant triangle.
 ============
 */
 #define DERIVE_UNSMOOTHED_BITANGENT
@@ -8316,8 +8277,8 @@ void VPCALL idSIMD_AltiVec::DeriveUnsmoothedTangents(idDrawVert *verts, const do
 ============
 idSIMD_AltiVec::NormalizeTangents
 
-        Normalizes each vertex normal and projects and normalizes the
-        tangent vectors onto the plane orthogonal to the vertex normal.
+    Normalizes each vertex normal and projects and normalizes the
+    tangent vectors onto the plane orthogonal to the vertex normal.
 ============
 */
 void VPCALL idSIMD_AltiVec::NormalizeTangents(idDrawVert *verts, const int numVerts)
@@ -8738,10 +8699,9 @@ void VPCALL idSIMD_AltiVec::NormalizeTangents(idDrawVert *verts, const int numVe
 ============
 idSIMD_AltiVec::CreateTextureSpaceLightVectors
 
-        Calculates light vectors in texture space for the given triangle
-vertices. For each vertex the direction towards the light origin is projected
-onto texture space. The light vectors are only calculated for the vertices
-referenced by the indexes.
+    Calculates light vectors in texture space for the given triangle vertices.
+    For each vertex the direction towards the light origin is projected onto texture space.
+    The light vectors are only calculated for the vertices referenced by the indexes.
 ============
 */
 
@@ -8840,11 +8800,10 @@ void VPCALL idSIMD_AltiVec::CreateTextureSpaceLightVectors(idVec3 *lightVectors,
 ============
 idSIMD_AltiVec::CreateSpecularTextureCoords
 
-        Calculates specular texture coordinates for the given triangle vertices.
-        For each vertex the normalized direction towards the light origin is
-added to the normalized direction towards the view origin and the result is
-projected onto texture space. The texture coordinates are only calculated for
-the vertices referenced by the indexes.
+    Calculates specular texture coordinates for the given triangle vertices.
+    For each vertex the normalized direction towards the light origin is added to the
+    normalized direction towards the view origin and the result is projected onto texture space.
+    The texture coordinates are only calculated for the vertices referenced by the indexes.
 ============
 */
 void VPCALL idSIMD_AltiVec::CreateSpecularTextureCoords(idVec4 *texCoords, const idVec3 &lightOrigin,
@@ -9435,8 +9394,7 @@ int VPCALL idSIMD_AltiVec::CreateVertexProgramShadowCache(idVec4 *vertexCache, c
     int i = 0;
 
 #ifndef DRAWVERT_PADDED
-    // every fourth one will have the same alignment. Make sure we've got enough
-    // here
+    // every fourth one will have the same alignment. Make sure we've got enough here
     if (i + 3 < numVerts)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)verts[0].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -9531,8 +9489,7 @@ int VPCALL idSIMD_AltiVec::CreateVertexProgramShadowCache(idVec4 *vertexCache, c
     int i = 0;
 
 #ifndef DRAWVERT_PADDED
-    // every fourth one will have the same alignment. Make sure we've got enough
-    // here
+    // every fourth one will have the same alignment. Make sure we've got enough here
     if (i + 3 < numVerts)
     {
         vertPerm1 = vec_add(vec_lvsl(-1, (float *)verts[0].xyz.ToFloatPtr()), (vector unsigned char)(1));
@@ -9640,8 +9597,8 @@ idSIMD_AltiVec::UpSamplePCMTo44kHz
 
   Duplicate samples for 44kHz output.
 
-        Assumptions:
-                Assumes that dest starts at aligned address
+    Assumptions:
+        Assumes that dest starts at aligned address
 ============
 */
 void idSIMD_AltiVec::UpSamplePCMTo44kHz(float *dest, const short *src, const int numSamples, const int kHz,
@@ -9663,8 +9620,8 @@ void idSIMD_AltiVec::UpSamplePCMTo44kHz(float *dest, const short *src, const int
     register vector unsigned char vecTop =
         (vector unsigned char)(8, 9, 10, 11, 8, 9, 10, 11, 12, 13, 14, 15, 12, 13, 14, 15);
 
-    // If this can be assumed true, we can eliminate another conditional that
-    // checks to see if we can load up a vector before the loop
+    // If this can be assumed true, we can eliminate another conditional that checks to see if we can
+    // load up a vector before the loop
     assert(numSamples >= 12);
 
     if (kHz == 11025)
@@ -9866,8 +9823,8 @@ idSIMD_AltiVec::UpSamplePCMTo44kHz
 
   Duplicate samples for 44kHz output.
 
-        Assumptions:
-                No assumptions
+    Assumptions:
+        No assumptions
 ============
 */
 void idSIMD_AltiVec::UpSamplePCMTo44kHz(float *dest, const short *src, const int numSamples, const int kHz,
@@ -10160,8 +10117,8 @@ idSIMD_AltiVec::UpSampleOGGTo44kHz
 
   Duplicate samples for 44kHz output.
 
-        Assumptions:
-                Assumes that dest starts at aligned address
+    Assumptions:
+        Assumes that dest starts at aligned address
 ============
 */
 void idSIMD_AltiVec::UpSampleOGGTo44kHz(float *dest, const float *const *ogg, const int numSamples, const int kHz,
@@ -10475,8 +10432,8 @@ idSIMD_AltiVec::UpSampleOGGTo44kHz
 
   Duplicate samples for 44kHz output.
 
-        Assumptions:
-                No assumptions
+    Assumptions:
+        No assumptions
 ============
 */
 void idSIMD_AltiVec::UpSampleOGGTo44kHz(float *dest, const float *const *ogg, const int numSamples, const int kHz,
@@ -10870,8 +10827,8 @@ void idSIMD_AltiVec::UpSampleOGGTo44kHz(float *dest, const float *const *ogg, co
 ============
 idSIMD_AltiVec::MixSoundTwoSpeakerMono
 
-        Assumptions:
-                Assumes that mixBuffer starts at aligned address
+    Assumptions:
+        Assumes that mixBuffer starts at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerMono(float *mixBuffer, const float *samples, const int numSamples,
@@ -10891,8 +10848,8 @@ void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerMono(float *mixBuffer, const float
     register vector float vecSamplesLd1, vecSamplesLd2;
     register vector float vecSamples1, vecSamples2, vecSamples3, vecSamples4;
 
-    register vector unsigned char permVec1 = (vector unsigned char)(0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6,
-                                                                    7); // 0,0,1,1
+    register vector unsigned char permVec1 =
+        (vector unsigned char)(0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7); // 0,0,1,1
     register vector unsigned char permVec2 =
         (vector unsigned char)(8, 9, 10, 11, 8, 9, 10, 11, 12, 13, 14, 15, 12, 13, 14, 15); // 2,2,3,3
     register vector unsigned char permVec3 =
@@ -10985,8 +10942,8 @@ void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerMono(float *mixBuffer, const float
 ============
 idSIMD_AltiVec::MixSoundTwoSpeakerMono
 
-        Assumptions:
-                No assumptions
+    Assumptions:
+        No assumptions
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerMono(float *mixBuffer, const float *samples, const int numSamples,
@@ -11003,8 +10960,8 @@ void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerMono(float *mixBuffer, const float
     register vector float vecSamplesLd1, vecSamplesLd2;
     register vector float vecSamples1, vecSamples2, vecSamples3, vecSamples4;
 
-    register vector unsigned char permVec1 = (vector unsigned char)(0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6,
-                                                                    7); // 0,0,1,1
+    register vector unsigned char permVec1 =
+        (vector unsigned char)(0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7); // 0,0,1,1
     register vector unsigned char permVec2 =
         (vector unsigned char)(8, 9, 10, 11, 8, 9, 10, 11, 12, 13, 14, 15, 12, 13, 14, 15); // 2,2,3,3
     register vector unsigned char permVec3 =
@@ -11106,8 +11063,8 @@ void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerMono(float *mixBuffer, const float
 ============
 idSIMD_AltiVec::MixSoundTwoSpeakerStereo
 
-        Assumptions:
-                Assumes that mixBuffer starts at aligned address
+    Assumptions:
+        Assumes that mixBuffer starts at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerStereo(float *mixBuffer, const float *samples, const int numSamples,
@@ -11208,8 +11165,8 @@ void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerStereo(float *mixBuffer, const flo
 ============
 idSIMD_AltiVec::MixSoundTwoSpeakerStereo
 
-        Assumptions:
-                No assumptions
+    Assumptions:
+        No assumptions
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerStereo(float *mixBuffer, const float *samples, const int numSamples,
@@ -11317,8 +11274,8 @@ void VPCALL idSIMD_AltiVec::MixSoundTwoSpeakerStereo(float *mixBuffer, const flo
 ============
 idSIMD_AltiVec::MixSoundSixSpeakerMono
 
-        Assumptions:
-                Assumes that mixBuffer starts at aligned address
+    Assumptions:
+        Assumes that mixBuffer starts at aligned address
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundSixSpeakerMono(float *mixBuffer, const float *samples, const int numSamples,
@@ -11467,8 +11424,8 @@ void VPCALL idSIMD_AltiVec::MixSoundSixSpeakerMono(float *mixBuffer, const float
 ============
 idSIMD_AltiVec::MixSoundSixSpeakerMono
 
-        Assumptions:
-                No assumptions
+    Assumptions:
+        No assumptions
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundSixSpeakerMono(float *mixBuffer, const float *samples, const int numSamples,
@@ -11626,8 +11583,8 @@ void VPCALL idSIMD_AltiVec::MixSoundSixSpeakerMono(float *mixBuffer, const float
 ============
 idSIMD_AltiVec::MixSoundSixSpeakerStereo
 
-        Assumptions:
-                Assumes that mixBuffer starts at aligned address
+    Assumptions:
+        Assumes that mixBuffer starts at aligned address
 ============
 */
 
@@ -11754,8 +11711,8 @@ void VPCALL idSIMD_AltiVec::MixSoundSixSpeakerStereo(float *mixBuffer, const flo
 ============
 idSIMD_AltiVec::MixSoundSixSpeakerStereo
 
-        Assumptions:
-                No assumptions
+    Assumptions:
+        No assumptions
 ============
 */
 void VPCALL idSIMD_AltiVec::MixSoundSixSpeakerStereo(float *mixBuffer, const float *samples, const int numSamples,

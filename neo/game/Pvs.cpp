@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/Timer.h"
 #include "sys/platform.h"
+#include "idlib/Timer.h"
 
 #include "Game_local.h"
 
@@ -49,11 +46,9 @@ typedef struct pvsPassage_s
 typedef struct pvsPortal_s
 {
     int areaNum;            // area this portal leads to
-    idWinding *w;           // winding goes counter clockwise seen from the area this portal
-                            // is part of
+    idWinding *w;           // winding goes counter clockwise seen from the area this portal is part of
     idBounds bounds;        // winding bounds
-    idPlane plane;          // winding plane, normal points towards the area this portal
-                            // leads to
+    idPlane plane;          // winding plane, normal points towards the area this portal leads to
     pvsPassage_t *passages; // passages to portals in the area this portal leads to
     bool done;              // true if pvs is calculated for this portal
     byte *vis;              // PVS for this portal
@@ -70,8 +65,7 @@ typedef struct pvsArea_s
 typedef struct pvsStack_s
 {
     struct pvsStack_s *next; // next stack entry
-    byte *mightSee;          // bit set for all portals that might be visible through this
-                             // passage/portal stack
+    byte *mightSee;          // bit set for all portals that might be visible through this passage/portal stack
 } pvsStack_t;
 
 /*
@@ -295,8 +289,7 @@ void idPVS::FrontPortalPVS(void) const
                 // if we the whole area is not at the front we need to check
                 if (areaSide != PLANESIDE_FRONT)
                 {
-                    // if the second portal is completely at the back side of the first
-                    // portal
+                    // if the second portal is completely at the back side of the first portal
                     side1 = p2->bounds.PlaneSide(p1->plane);
                     if (side1 == PLANESIDE_BACK)
                     {
@@ -311,8 +304,7 @@ void idPVS::FrontPortalPVS(void) const
                     continue;
                 }
 
-                // if the second portal is not completely at the front of the first
-                // portal
+                // if the second portal is not completely at the front of the first portal
                 if (side1 != PLANESIDE_FRONT)
                 {
                     // more accurate check
@@ -330,8 +322,7 @@ void idPVS::FrontPortalPVS(void) const
                     }
                 }
 
-                // if the first portal is not completely at the back side of the second
-                // portal
+                // if the first portal is not completely at the back side of the second portal
                 if (side2 != PLANESIDE_BACK)
                 {
                     // more accurate check
@@ -429,8 +420,7 @@ pvsStack_t *idPVS::FloodPassagePVS_r(pvsPortal_t *source, const pvsPortal_t *por
             {
                 // get new PVS which is decreased by going through this passage
                 m = *prevMightSee++ & *passageVis++ & *portalVis++;
-                // check if anything might be visible through this passage that wasn't
-                // yet visible
+                // check if anything might be visible through this passage that wasn't yet visible
                 more |= (m & ~(*sourceVis++));
                 // store new PVS
                 *mightSee++ = m;
@@ -443,8 +433,7 @@ pvsStack_t *idPVS::FloodPassagePVS_r(pvsPortal_t *source, const pvsPortal_t *por
             {
                 // get new PVS which is decreased by going through this passage
                 m = *prevMightSee++ & *passageVis++;
-                // check if anything might be visible through this passage that wasn't
-                // yet visible
+                // check if anything might be visible through this passage that wasn't yet visible
                 more |= (m & ~(*sourceVis++));
                 // store new PVS
                 *mightSee++ = m;
@@ -680,9 +669,8 @@ void idPVS::CreatePassages(void) const
             // if the source portal cannot see this portal
             if (!(source->mightSee[n >> 3] & (1 << (n & 7))))
             {
-                // not all portals in the area have to be visible because areas are not
-                // necesarily convex also no passage has to be created for the portal
-                // which is the opposite of the source
+                // not all portals in the area have to be visible because areas are not necesarily convex
+                // also no passage has to be created for the portal which is the opposite of the source
                 passage->canSee = NULL;
                 continue;
             }
@@ -740,8 +728,7 @@ void idPVS::CreatePassages(void) const
                         continue;
                     }
 
-                    // if not at the front of all bounding planes and thus not completely
-                    // inside the passage
+                    // if not at the front of all bounding planes and thus not completely inside the passage
                     if (front != numBounds)
                     {
 

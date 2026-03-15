@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
 #include "sys/platform.h"
+#include "framework/Common.h"
 
 #include "ai/AAS_local.h"
 
@@ -68,8 +65,7 @@ bool idAASLocal::EdgeSplitPoint(idVec3 &split, int edgeNum, const idPlane &plane
     d1 = v1 * plane.Normal() - plane.Dist();
     d2 = v2 * plane.Normal() - plane.Dist();
 
-    // if ( (d1 < CM_CLIP_EPSILON && d2 < CM_CLIP_EPSILON) || (d1 >
-    // -CM_CLIP_EPSILON && d2 > -CM_CLIP_EPSILON) ) {
+    // if ( (d1 < CM_CLIP_EPSILON && d2 < CM_CLIP_EPSILON) || (d1 > -CM_CLIP_EPSILON && d2 > -CM_CLIP_EPSILON) ) {
     if (FLOATSIGNBITSET(d1) == FLOATSIGNBITSET(d2))
     {
         return false;
@@ -82,9 +78,8 @@ bool idAASLocal::EdgeSplitPoint(idVec3 &split, int edgeNum, const idPlane &plane
 ============
 idAASLocal::FloorEdgeSplitPoint
 
-  calculates either the closest or furthest point on the floor of the area which
-also lies on the pathPlane the point has to be on the front side of the
-frontPlane to be valid
+  calculates either the closest or furthest point on the floor of the area which also lies on the pathPlane
+  the point has to be on the front side of the frontPlane to be valid
 ============
 */
 bool idAASLocal::FloorEdgeSplitPoint(idVec3 &bestSplit, int areaNum, const idPlane &pathPlane,
@@ -423,9 +418,8 @@ bool idAASLocal::WalkPathToGoal(aasPath_t &path, int areaNum, const idVec3 &orig
         if (curAreaNum == lastAreas[0] || curAreaNum == lastAreas[1] || curAreaNum == lastAreas[2] ||
             curAreaNum == lastAreas[3])
         {
-            common->Warning("idAASLocal::WalkPathToGoal: local routing minimum going "
-                            "from area %d to area %d",
-                            areaNum, goalAreaNum);
+            common->Warning("idAASLocal::WalkPathToGoal: local routing minimum going from area %d to area %d", areaNum,
+                            goalAreaNum);
             break;
         }
     }
@@ -623,9 +617,8 @@ bool idAASLocal::FlyPathToGoal(aasPath_t &path, int areaNum, const idVec3 &origi
         if (curAreaNum == lastAreas[0] || curAreaNum == lastAreas[1] || curAreaNum == lastAreas[2] ||
             curAreaNum == lastAreas[3])
         {
-            common->Warning("idAASLocal::FlyPathToGoal: local routing minimum going "
-                            "from area %d to area %d",
-                            areaNum, goalAreaNum);
+            common->Warning("idAASLocal::FlyPathToGoal: local routing minimum going from area %d to area %d", areaNum,
+                            goalAreaNum);
             break;
         }
     }
@@ -833,8 +826,8 @@ int idAASLocal::GetWallEdges(int areaNum, const idBounds &bounds, int travelFlag
         {
             if (reach->travelType & travelFlags)
             {
-                // if the area the reachability leads to hasn't been visited yet and the
-                // area bounds touch the search bounds
+                // if the area the reachability leads to hasn't been visited yet and the area bounds touch the search
+                // bounds
                 if (!areasVisited[reach->toAreaNum] && bounds.IntersectsBounds(file->GetArea(reach->toAreaNum).bounds))
                 {
                     areaQueue[queueEnd++] = reach->toAreaNum;

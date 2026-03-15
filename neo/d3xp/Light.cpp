@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
@@ -761,8 +758,7 @@ void idLight::BecomeBroken(idEntity *activator)
     renderEntity.shaderParms[SHADERPARM_MODE] = 1;
     renderLight.shaderParms[SHADERPARM_MODE] = 1;
 
-    // if the light has a sound, either start the alternate (broken) sound, or
-    // stop the sound
+    // if the light has a sound, either start the alternate (broken) sound, or stop the sound
     const char *parm = spawnArgs.GetString("snd_broken");
     if (refSound.shader || (parm && *parm))
     {
@@ -1190,10 +1186,10 @@ void idLight::WriteToSnapshot(idBitMsgDelta &msg) const
     // msg.WriteBits( lightParent.GetEntityNum(), GENTITYNUM_BITS );
 
     /*	// only helps prediction
-            msg.WriteInt( PackColor( fadeFrom ) );
-            msg.WriteInt( PackColor( fadeTo ) );
-            msg.WriteInt( fadeStart );
-            msg.WriteInt( fadeEnd );
+        msg.WriteInt( PackColor( fadeFrom ) );
+        msg.WriteInt( PackColor( fadeTo ) );
+        msg.WriteInt( fadeStart );
+        msg.WriteInt( fadeEnd );
     */
 
     // FIXME: send renderLight.shader
@@ -1231,9 +1227,8 @@ void idLight::ReadFromSnapshot(const idBitMsgDelta &msg)
     if (currentLevel != oldCurrentLevel)
     {
         // need to call On/Off for flickering lights to start/stop the sound
-        // while doing it this way rather than through events, the flickering is out
-        // of sync between clients but at least there is no question about saving
-        // the event and having them happening globally in the world
+        // while doing it this way rather than through events, the flickering is out of sync between clients
+        // but at least there is no question about saving the event and having them happening globally in the world
         if (currentLevel)
         {
             On();
@@ -1247,10 +1242,10 @@ void idLight::ReadFromSnapshot(const idBitMsgDelta &msg)
     // lightParentEntityNum = msg.ReadBits( GENTITYNUM_BITS );
 
     /*	// only helps prediction
-            UnpackColor( msg.ReadInt(), fadeFrom );
-            UnpackColor( msg.ReadInt(), fadeTo );
-            fadeStart = msg.ReadInt();
-            fadeEnd = msg.ReadInt();
+        UnpackColor( msg.ReadInt(), fadeFrom );
+        UnpackColor( msg.ReadInt(), fadeTo );
+        fadeStart = msg.ReadInt();
+        fadeEnd = msg.ReadInt();
     */
 
     // FIXME: read renderLight.shader

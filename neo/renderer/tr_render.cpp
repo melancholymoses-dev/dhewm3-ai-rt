@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/Cinematic.h"
-#include "renderer/VertexCache.h"
 #include "sys/platform.h"
+#include "renderer/VertexCache.h"
+#include "renderer/Cinematic.h"
 
 #include "renderer/tr_local.h"
 
@@ -358,9 +355,8 @@ void RB_GetShaderTextureMatrix(const float *shaderRegisters, const textureStage_
     matrix[8] = 0;
     matrix[12] = shaderRegisters[texture->matrix[0][2]];
 
-    // we attempt to keep scrolls from generating incredibly large texture values,
-    // but center rotations and center scales can still generate offsets that need
-    // to be > 1
+    // we attempt to keep scrolls from generating incredibly large texture values, but
+    // center rotations and center scales can still generate offsets that need to be > 1
     if (matrix[12] < -40 || matrix[12] > 40)
     {
         matrix[12] -= (int)matrix[12];
@@ -420,10 +416,9 @@ void RB_BindVariableStageImage(const textureStage_t *texture, const float *shade
             return;
         }
 
-        // offset time by shaderParm[7] (FIXME: make the time offset a parameter of
-        // the shader?) We make no attempt to optimize for multiple identical
-        // cinematics being in view, or for cinematics going at a lower framerate
-        // than the renderer.
+        // offset time by shaderParm[7] (FIXME: make the time offset a parameter of the shader?)
+        // We make no attempt to optimize for multiple identical cinematics being in view, or
+        // for cinematics going at a lower framerate than the renderer.
         cin = texture->cinematic->ImageForTime(
             (int)(1000 * (backEnd.viewDef->floatTime + backEnd.viewDef->renderView.shaderParms[11])));
 
@@ -674,9 +669,8 @@ void R_SetDrawInteraction(const shaderStage_t *surfaceStage, const float *surfac
         matrix[1][2] = 0;
         matrix[1][3] = surfaceRegs[surfaceStage->texture.matrix[1][2]];
 
-        // we attempt to keep scrolls from generating incredibly large texture
-        // values, but center rotations and center scales can still generate offsets
-        // that need to be > 1
+        // we attempt to keep scrolls from generating incredibly large texture values, but
+        // center rotations and center scales can still generate offsets that need to be > 1
         if (matrix[0][3] < -40 || matrix[0][3] > 40)
         {
             matrix[0][3] -= (int)matrix[0][3];
@@ -758,8 +752,8 @@ static void RB_SubmittInteraction(drawInteraction_t *din, void (*DrawInteraction
 =============
 RB_CreateSingleDrawInteractions
 
-This can be used by different draw_* backends to decompose a complex light /
-surface interaction into primitive interactions
+This can be used by different draw_* backends to decompose a complex light / surface
+interaction into primitive interactions
 =============
 */
 void RB_CreateSingleDrawInteractions(const drawSurf_t *surf, void (*DrawInteraction)(const drawInteraction_t *))
@@ -787,8 +781,7 @@ void RB_CreateSingleDrawInteractions(const drawSurf_t *surf, void (*DrawInteract
     {
         // r_supportNoSpecular -1 only allows nospecular if the map enables
         // it in the worldspawn by setting "allow_nospecular" "1"
-        // the value of that is saved in tr.allowNoSpecular by
-        // idRenderSystemLocal::EndLevelLoad()
+        // the value of that is saved in tr.allowNoSpecular by idRenderSystemLocal::EndLevelLoad()
         allowNoSpecular = tr.allowNoSpecular;
     }
 

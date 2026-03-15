@@ -20,8 +20,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/Vulkan/vk_common.h"
 
 // ---------------------------------------------------------------------------
-// RT extension function pointers (always loaded at runtime via
-// vkGetDeviceProcAddr)
+// RT extension function pointers (always loaded at runtime via vkGetDeviceProcAddr)
 //
 // vulkan-1.lib does not export KHR extension symbols — they must be fetched
 // from the driver at runtime regardless of SDK version.  We use a pfn_ prefix
@@ -98,8 +97,7 @@ struct vkRTState_t
 {
     vkTLAS_t tlas;
     vkShadowMask_t shadowMask[VK_MAX_FRAMES_IN_FLIGHT];
-    VkSampler shadowMaskSampler; // nearest-clamp, used when sampling shadow mask
-                                 // in lighting pass
+    VkSampler shadowMaskSampler; // nearest-clamp, used when sampling shadow mask in lighting pass
 
     // RT pipeline for shadow rays
     VkPipeline shadowPipeline;
@@ -128,13 +126,11 @@ extern vkRTState_t vkRT;
 // Load RT extension function pointers
 void VK_RT_LoadFunctionPointers(void);
 
-// Initialize the RT pipeline (called once after device creation when RT is
-// available)
+// Initialize the RT pipeline (called once after device creation when RT is available)
 void VK_RT_Init(void);
 void VK_RT_Shutdown(void);
 
-// Initialize the shadow ray pipeline and shadow mask images (called after
-// swapchain creation)
+// Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
 
 // Build/update BLAS for a mesh (called when geometry is added to the scene)

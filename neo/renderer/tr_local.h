@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -130,8 +127,7 @@ typedef struct drawSurf_s
     int dsFlags;                          // DSF_VIEW_INSIDE_SHADOW, etc
     struct vertCache_s *dynamicTexCoords; // float * in vertex cache memory
     // specular directions for non vertex program cards, skybox texcoords, etc
-    float particle_radius; // The radius of individual quads for soft particles
-                           // #3878
+    float particle_radius; // The radius of individual quads for soft particles #3878
 } drawSurf_t;
 
 typedef struct
@@ -160,8 +156,8 @@ typedef struct areaReference_s
     struct portalArea_s *area;         // so owners can find all the areas they are in
 } areaReference_t;
 
-// idRenderLight should become the new public interface replacing the qhandle_t
-// to light defs in the idRenderWorld interface
+// idRenderLight should become the new public interface replacing the qhandle_t to light defs in the idRenderWorld
+// interface
 class idRenderLight
 {
   public:
@@ -176,8 +172,8 @@ class idRenderLight
     virtual int GetIndex() = 0;
 };
 
-// idRenderEntity should become the new public interface replacing the qhandle_t
-// to entity defs in the idRenderWorld interface
+// idRenderEntity should become the new public interface replacing the qhandle_t to entity defs in the idRenderWorld
+// interface
 class idRenderEntity
 {
   public:
@@ -191,8 +187,7 @@ class idRenderEntity
     virtual void ForceUpdate() = 0;
     virtual int GetIndex() = 0;
 
-    // overlays are extra polygons that deform with animating models for blood and
-    // damage marks
+    // overlays are extra polygons that deform with animating models for blood and damage marks
     virtual void ProjectOverlay(const idPlane localTextureAxis[2], const idMaterial *material) = 0;
     virtual void RemoveDecals() = 0;
 };
@@ -213,8 +208,7 @@ class idRenderLightLocal : public idRenderLight
     bool lightHasMoved; // the light has changed its position since it was
                         // first added, so the prelight model is not valid
 
-    float modelMatrix[16]; // this is just a rearrangement of parms.axis and
-                           // parms.origin
+    float modelMatrix[16]; // this is just a rearrangement of parms.axis and parms.origin
 
     idRenderWorldLocal *world;
     int index; // in world lightdefs
@@ -223,8 +217,8 @@ class idRenderLightLocal : public idRenderLight
                  // interactions if !viewDef->connectedAreas[areaNum]
 
     int lastModifiedFrameNum; // to determine if it is constantly changing,
-                              // and should go in the dynamic frame memory, or
-                              // kept in the cached memory
+                              // and should go in the dynamic frame memory, or kept
+                              // in the cached memory
     bool archived;            // for demo writing
 
     // derived information
@@ -235,17 +229,14 @@ class idRenderLightLocal : public idRenderLight
 
     idVec3 globalLightOrigin; // accounting for lightCenter and parallel
 
-    idPlane frustum[6];            // in global space, positive side facing out, last two are
-                                   // front/back
+    idPlane frustum[6];            // in global space, positive side facing out, last two are front/back
     idWinding *frustumWindings[6]; // used for culling
     srfTriangles_t *frustumTris;   // triangulated frustumWindings[]
 
-    int numShadowFrustums; // one for projected lights, usually six for point
-                           // lights
+    int numShadowFrustums; // one for projected lights, usually six for point lights
     shadowFrustum_t shadowFrustums[6];
 
-    int viewCount; // if == tr.viewCount, the light is on the viewDef->viewLights
-                   // list
+    int viewCount; // if == tr.viewCount, the light is on the viewDef->viewLights list
     struct viewLight_s *viewLight;
 
     areaReference_t *references;     // each area the light is present in will have a lightRef
@@ -266,36 +257,31 @@ class idRenderEntityLocal : public idRenderEntity
     virtual void ForceUpdate();
     virtual int GetIndex();
 
-    // overlays are extra polygons that deform with animating models for blood and
-    // damage marks
+    // overlays are extra polygons that deform with animating models for blood and damage marks
     virtual void ProjectOverlay(const idPlane localTextureAxis[2], const idMaterial *material);
     virtual void RemoveDecals();
 
     renderEntity_t parms;
 
-    float modelMatrix[16]; // this is just a rearrangement of parms.axis and
-                           // parms.origin
+    float modelMatrix[16]; // this is just a rearrangement of parms.axis and parms.origin
 
     idRenderWorldLocal *world;
     int index; // in world entityDefs
 
     int lastModifiedFrameNum; // to determine if it is constantly changing,
-                              // and should go in the dynamic frame memory, or
-                              // kept in the cached memory
+                              // and should go in the dynamic frame memory, or kept
+                              // in the cached memory
     bool archived;            // for demo writing
 
-    idRenderModel *dynamicModel; // if parms.model->IsDynamicModel(), this is the
-                                 // generated data
-    int dynamicModelFrameCount;  // continuously animating dynamic models will
-                                 // recreate dynamicModel if this doesn't ==
-                                 // tr.viewCount
+    idRenderModel *dynamicModel; // if parms.model->IsDynamicModel(), this is the generated data
+    int dynamicModelFrameCount;  // continuously animating dynamic models will recreate
+                                 // dynamicModel if this doesn't == tr.viewCount
     idRenderModel *cachedDynamicModel;
 
-    idBounds referenceBounds; // the local bounds used to place entityRefs, either
-                              // from parms or a model
+    idBounds referenceBounds; // the local bounds used to place entityRefs, either from parms or a model
 
-    // a viewEntity_t is created whenever a idRenderEntityLocal is considered for
-    // inclusion in a given view, even if it turns out to not be visible
+    // a viewEntity_t is created whenever a idRenderEntityLocal is considered for inclusion
+    // in a given view, even if it turns out to not be visible
     int viewCount;                   // if tr.viewCount == viewCount, viewEntity is valid,
                                      // but the entity may still be off screen
     struct viewEntity_s *viewEntity; // in frame temporary memory
@@ -303,8 +289,8 @@ class idRenderEntityLocal : public idRenderEntity
     int visibleCount;
     // if tr.viewCount == visibleCount, at least one ambient
     // surface has actually been added by R_AddAmbientDrawsurfs
-    // note that an entity could still be in the view frustum and not be visible
-    // due to portal passing
+    // note that an entity could still be in the view frustum and not be visible due
+    // to portal passing
 
     idRenderModelDecal *decals;    // chain of decals that have been projected on this model
     idRenderModelOverlay *overlay; // blood overlays on animated models
@@ -317,25 +303,22 @@ class idRenderEntityLocal : public idRenderEntity
 
 #ifdef DHEWM3_RAYTRACING
     // Per-entity Bottom-Level Acceleration Structure (Vulkan RT).
-    // Allocated by VK_RT_BuildBLAS() when the entity is first seen; freed on
-    // FreeRenderEntity().
+    // Allocated by VK_RT_BuildBLAS() when the entity is first seen; freed on FreeRenderEntity().
     struct vkBLAS_t *blas; // NULL until built; rebuilt each frame for animated models
     int blasFrameCount;    // frame number when blas was last built
 #endif
 };
 
 // viewLights are allocated on the frame temporary stack memory
-// a viewLight contains everything that the back end needs out of an
-// idRenderLightLocal, which the front end may be modifying simultaniously if
-// running in SMP mode. a viewLight may exist even without any surfaces, and may
-// be relevent for fogging, but should never exist if its volume does not
-// intersect the view frustum
+// a viewLight contains everything that the back end needs out of an idRenderLightLocal,
+// which the front end may be modifying simultaniously if running in SMP mode.
+// a viewLight may exist even without any surfaces, and may be relevent for fogging,
+// but should never exist if its volume does not intersect the view frustum
 typedef struct viewLight_s
 {
     struct viewLight_s *next;
 
-    // back end should NOT reference the lightDef, because it can change when
-    // running SMP
+    // back end should NOT reference the lightDef, because it can change when running SMP
     idRenderLightLocal *lightDef;
 
     // for scissor clipping, local inside renderView viewport
@@ -348,14 +331,12 @@ typedef struct viewLight_s
     bool viewInsideLight;
 
     // true if globalLightOrigin is inside the view frustum, even if it may
-    // be obscured by geometry.  This allows us to skip shadows from non-visible
-    // objects
+    // be obscured by geometry.  This allows us to skip shadows from non-visible objects
     bool viewSeesGlobalLightOrigin;
 
     // if !viewInsideLight, the corresponding bit for each of the shadowFrustum
     // projection planes that the view is on the negative side of will be set,
-    // allowing us to skip drawing the projected caps of shadows if we can't see
-    // the face
+    // allowing us to skip drawing the projected caps of shadows if we can't see the face
     int viewSeesShadowPlaneBits;
 
     idVec3 globalLightOrigin;          // global light origin used by backend
@@ -373,19 +354,17 @@ typedef struct viewLight_s
     const struct drawSurf_s *translucentInteractions; // get shadows from everything
 } viewLight_t;
 
-// a viewEntity is created whenever a idRenderEntityLocal is considered for
-// inclusion in the current view, but it may still turn out to be culled.
+// a viewEntity is created whenever a idRenderEntityLocal is considered for inclusion
+// in the current view, but it may still turn out to be culled.
 // viewEntity are allocated on the frame temporary stack memory
-// a viewEntity contains everything that the back end needs out of a
-// idRenderEntityLocal, which the front end may be modifying simultaniously if
-// running in SMP mode. A single entityDef can generate multiple viewEntity_t in
-// a single frame, as when seen in a mirror
+// a viewEntity contains everything that the back end needs out of a idRenderEntityLocal,
+// which the front end may be modifying simultaniously if running in SMP mode.
+// A single entityDef can generate multiple viewEntity_t in a single frame, as when seen in a mirror
 typedef struct viewEntity_s
 {
     struct viewEntity_s *next;
 
-    // back end should NOT reference the entityDef, because it can change when
-    // running SMP
+    // back end should NOT reference the entityDef, because it can change when running SMP
     idRenderEntityLocal *entityDef;
 
     // for scissor clipping, local inside renderView viewport
@@ -453,9 +432,9 @@ typedef struct viewDef_s
     int numDrawSurfs;       // it is allocated in frame temporary memory
     int maxDrawSurfs;       // may be resized
 
-    struct viewLight_s *viewLights;   // chain of all viewLights effecting view
-    struct viewEntity_s *viewEntitys; // chain of all viewEntities effecting view,
-                                      // including off screen ones casting shadows
+    struct viewLight_s *viewLights; // chain of all viewLights effecting view
+    struct viewEntity_s
+        *viewEntitys; // chain of all viewEntities effecting view, including off screen ones casting shadows
     // we use viewEntities as a check to see if a given view consists solely
     // of 2D rendering, which we can optimize in certain ways.  A 2D view will
     // not have any viewEntities
@@ -466,8 +445,8 @@ typedef struct viewDef_s
     int areaNum; // -1 = not in a valid area
 
     bool *connectedAreas;
-    // An array in frame temporary memory that lists if an area can be reached
-    // without crossing a closed door.  This is used to avoid drawing interactions
+    // An array in frame temporary memory that lists if an area can be reached without
+    // crossing a closed door.  This is used to avoid drawing interactions
     // when the light is behind a closed door.
 
 } viewDef_t;
@@ -484,21 +463,17 @@ typedef struct
     idImage *diffuseImage;
     idImage *specularImage;
 
-    idVec4 diffuseColor;            // may have a light color baked into it, will be <
-                                    // tr.backEndRendererMaxLight
-    idVec4 specularColor;           // may have a light color baked into it, will be <
-                                    // tr.backEndRendererMaxLight
+    idVec4 diffuseColor;            // may have a light color baked into it, will be < tr.backEndRendererMaxLight
+    idVec4 specularColor;           // may have a light color baked into it, will be < tr.backEndRendererMaxLight
     stageVertexColor_t vertexColor; // applies to both diffuse and specular
 
     int ambientLight; // use tr.ambientNormalMap instead of normalization cube map
-    // (not a bool just to avoid an uninitialized memory check of the pad region
-    // by valgrind)
+    // (not a bool just to avoid an uninitialized memory check of the pad region by valgrind)
 
     // these are loaded into the vertex program
     idVec4 localLightOrigin;
     idVec4 localViewOrigin;
-    idVec4 lightProjection[4]; // in local coordinates, possibly with a texture
-                               // matrix baked in
+    idVec4 lightProjection[4]; // in local coordinates, possibly with a texture matrix baked in
     idVec4 bumpMatrix[2];
     idVec4 diffuseMatrix[2];
     idVec4 specularMatrix[2];
@@ -590,8 +565,7 @@ typedef struct
     // the currently building command list
     // commands can be inserted at the front if needed, as for required
     // dynamically generated textures
-    emptyCommand_t *cmdHead,
-        *cmdTail; // may be of other command type based on commandId
+    emptyCommand_t *cmdHead, *cmdTail; // may be of other command type based on commandId
 } frameData_t;
 
 extern frameData_t *frameData;
@@ -622,8 +596,7 @@ typedef struct
 {
     int c_sphere_cull_in, c_sphere_cull_clip, c_sphere_cull_out;
     int c_box_cull_in, c_box_cull_out;
-    int c_createInteractions; // number of calls to
-                              // idInteraction::CreateInteraction
+    int c_createInteractions; // number of calls to idInteraction::CreateInteraction
     int c_createLightTris;
     int c_createShadowVolumes;
     int c_generateMd5;
@@ -659,8 +632,7 @@ typedef struct
 
     int faceCulling;
     int glStateBits;
-    bool forceGlState; // the next GL_State will ignore glStateBits and set
-                       // everything
+    bool forceGlState; // the next GL_State will ignore glStateBits and set everything
 } glstate_t;
 
 typedef struct
@@ -705,16 +677,14 @@ typedef struct
     float lightTextureMatrix[16]; // only if lightStage->texture.hasMatrix
     float lightColor[4];          // evaluation of current light's color stage
 
-    float lightScale; // Every light color calaculation will be multiplied by
-                      // this, which will guarantee that the result is <
-                      // tr.backEndRendererMaxLight A card with high dynamic range
-                      // will have this set to 1.0
-    float overBright; // The amount that all light interactions must be multiplied
-                      // by with post processing to get the desired total light
-                      // level. A high dynamic range card will have this set to 1.0.
+    float lightScale; // Every light color calaculation will be multiplied by this,
+                      // which will guarantee that the result is < tr.backEndRendererMaxLight
+                      // A card with high dynamic range will have this set to 1.0
+    float overBright; // The amount that all light interactions must be multiplied by
+                      // with post processing to get the desired total light level.
+                      // A high dynamic range card will have this set to 1.0.
 
-    bool currentRenderCopied; // true if any material has already referenced
-                              // _currentRender
+    bool currentRenderCopied; // true if any material has already referenced _currentRender
 
     // our OpenGL state deltas
     glstate_t glState;
@@ -855,9 +825,8 @@ class idRenderSystemLocal : public idRenderSystem
     viewDef_t lockSurfacesViewDef;     // of locked position/view
     viewDef_t lockSurfacesRealViewDef; // of actual player position
 
-    viewEntity_t identitySpace; // can use if we don't know viewDef->worldSpace is valid
-    int stencilIncr,
-        stencilDecr; // GL_INCR / INCR_WRAP_EXT, GL_DECR / GL_DECR_EXT
+    viewEntity_t identitySpace;   // can use if we don't know viewDef->worldSpace is valid
+    int stencilIncr, stencilDecr; // GL_INCR / INCR_WRAP_EXT, GL_DECR / GL_DECR_EXT
 
     renderCrop_t renderCrops[MAX_RENDER_CROPS];
     int currentRenderCrop;
@@ -867,16 +836,13 @@ class idRenderSystemLocal : public idRenderSystem
     class idGuiModel *guiModel;
     class idGuiModel *demoGuiModel;
 
-    // DG: remember the original glConfig.vidWidth/Height values that get
-    // overwritten in BeginFrame()
-    //     so they can be reset in EndFrame() (Editors tend to mess up the
-    //     viewport by using BeginFrame())
+    // DG: remember the original glConfig.vidWidth/Height values that get overwritten in BeginFrame()
+    //     so they can be reset in EndFrame() (Editors tend to mess up the viewport by using BeginFrame())
     int origWidth;
     int origHeight;
 
     // DG: taken from the current map's worldspawn ("allow_nospecular")
-    //     true if (unlike in Vanilla Doom3) the "nospecular" parm of a light
-    //     should be respected
+    //     true if (unlike in Vanilla Doom3) the "nospecular" parm of a light should be respected
     bool allowNoSpecular;
 };
 
@@ -890,8 +856,7 @@ extern glconfig_t glConfig; // outside of TR since it shouldn't be cleared durin
 extern idCVar r_mode;              // video mode number
 extern idCVar r_displayRefresh;    // optional display refresh rate option for vid mode
 extern idCVar r_fullscreen;        // 0 = windowed, 1 = full screen
-extern idCVar r_fullscreenDesktop; // 0: 'real' fullscreen mode 1: keep
-                                   // resolution 'desktop' fullscreen mode
+extern idCVar r_fullscreenDesktop; // 0: 'real' fullscreen mode 1: keep resolution 'desktop' fullscreen mode
 extern idCVar r_multiSamples;      // number of antialiasing samples
 extern idCVar r_windowResizable;   // DG: allow resizing and maximizing the window
 
@@ -907,16 +872,13 @@ extern idCVar r_offsetUnits;    // polygon offset parameter
 extern idCVar r_singleTriangle; // only draw a single triangle per primitive
 extern idCVar r_clear;          // force screen clear every frame
 extern idCVar r_shadows;        // enable shadows
-extern idCVar r_subviewOnly;    // 1 = don't render main view, allowing subviews to
-                                // be debugged
-extern idCVar r_lightScale;     // all light intensities are multiplied by this,
-                                // which is normally 2
+extern idCVar r_subviewOnly;    // 1 = don't render main view, allowing subviews to be debugged
+extern idCVar r_lightScale;     // all light intensities are multiplied by this, which is normally 2
 extern idCVar r_flareSize;      // scale the flare deforms from the material def
 
 extern idCVar r_gamma;         // changes gamma tables
 extern idCVar r_brightness;    // changes gamma tables
-extern idCVar r_gammaInShader; // set gamma+brightness in shader instead of
-                               // modifying system gamma tables
+extern idCVar r_gammaInShader; // set gamma+brightness in shader instead of modifying system gamma tables
 
 extern idCVar r_renderer; // arb2, etc
 extern idCVar r_useGLSL;  // use GLSL backend instead of ARB assembly programs
@@ -933,71 +895,54 @@ extern idCVar r_rtDenoise;       // temporal denoising
 
 extern idCVar r_checkBounds; // compare all surface bounds with precalculated ones
 
-extern idCVar r_useLightPortalFlow;             // 1 = do a more precise area reference determination
-extern idCVar r_useShadowSurfaceScissor;        // 1 = scissor shadows by the scissor
-                                                // rect of the interaction surfaces
-extern idCVar r_useConstantMaterials;           // 1 = use pre-calculated material
-                                                // registers if possible
-extern idCVar r_useInteractionTable;            // create a full entityDefs * lightDefs table to make
-                                                // finding interactions faster
-extern idCVar r_useNodeCommonChildren;          // stop pushing reference bounds early
-                                                // when possible
-extern idCVar r_useSilRemap;                    // 1 = consider verts with the same XYZ, but
-                                                // different ST the same for shadows
-extern idCVar r_useCulling;                     // 0 = none, 1 = sphere, 2 = sphere + box
-extern idCVar r_useLightCulling;                // 0 = none, 1 = box, 2 = exact clip of polyhedron faces
-extern idCVar r_useLightScissors;               // 1 = use custom scissor rectangle for each light
-extern idCVar r_useClippedLightScissors;        // 0 = full screen when near clipped, 1 = exact
-                                                // when near clipped, 2 = exact always
-extern idCVar r_useEntityCulling;               // 0 = none, 1 = box
-extern idCVar r_useEntityScissors;              // 1 = use custom scissor rectangle for each entity
-extern idCVar r_useInteractionCulling;          // 1 = cull interactions
-extern idCVar r_useInteractionScissors;         // 1 = use a custom scissor rectangle
-                                                // for each interaction
-extern idCVar r_useFrustumFarDistance;          // if != 0 force the view frustum far
-                                                // distance to this distance
-extern idCVar r_useShadowCulling;               // try to cull shadows from partially visible lights
-extern idCVar r_usePreciseTriangleInteractions; // 1 = do winding clipping to determine if
-                                                // each ambiguous tri should be lit
-extern idCVar r_useTurboShadow;                 // 1 = use the infinite projection with W
-                                                // technique for dynamic shadows
-extern idCVar r_useExternalShadows;             // 1 = skip drawing caps when outside the light volume
-extern idCVar r_useOptimizedShadows;            // 1 = use the dmap generated static shadow volumes
-extern idCVar r_useShadowVertexProgram;         // 1 = do the shadow projection in the
-                                                // vertex program on capable cards
-extern idCVar r_useShadowProjectedCull;         // 1 = discard triangles outside light
-                                                // volume before shadowing
-extern idCVar r_useDeferredTangents;            // 1 = don't always calc tangents after deform
-extern idCVar r_useCachedDynamicModels;         // 1 = cache snapshots of dynamic models
-extern idCVar r_useTwoSidedStencil;             // 1 = do stencil shadows in one pass with
-                                                // different ops on each side
-extern idCVar r_useInfiniteFarZ;                // 1 = use the no-far-clip-plane trick
-extern idCVar r_useScissor;                     // 1 = scissor clip as portals and lights are processed
-extern idCVar r_usePortals;                     // 1 = use portals to perform area culling,
-                                                // otherwise draw everything
-extern idCVar r_useStateCaching;                // avoid redundant state changes in GL_*() calls
-extern idCVar r_useCombinerDisplayLists;        // if 1, put all nvidia register combiner
-                                                // programming in display lists
-extern idCVar r_useVertexBuffers;               // if 0, don't use ARB_vertex_buffer_object for vertexes
-extern idCVar r_useIndexBuffers;                // if 0, don't use ARB_vertex_buffer_object for indexes
-extern idCVar r_useEntityCallbacks;             // if 0, issue the callback immediately at
-                                                // update time, rather than defering
-extern idCVar r_lightAllBackFaces;              // light all the back faces, even when they
-                                                // would be shadowed
-extern idCVar r_useDepthBoundsTest;             // use depth bounds test to reduce shadow fill
+extern idCVar r_useLightPortalFlow;      // 1 = do a more precise area reference determination
+extern idCVar r_useShadowSurfaceScissor; // 1 = scissor shadows by the scissor rect of the interaction surfaces
+extern idCVar r_useConstantMaterials;    // 1 = use pre-calculated material registers if possible
+extern idCVar r_useInteractionTable;   // create a full entityDefs * lightDefs table to make finding interactions faster
+extern idCVar r_useNodeCommonChildren; // stop pushing reference bounds early when possible
+extern idCVar r_useSilRemap;           // 1 = consider verts with the same XYZ, but different ST the same for shadows
+extern idCVar r_useCulling;            // 0 = none, 1 = sphere, 2 = sphere + box
+extern idCVar r_useLightCulling;       // 0 = none, 1 = box, 2 = exact clip of polyhedron faces
+extern idCVar r_useLightScissors;      // 1 = use custom scissor rectangle for each light
+extern idCVar
+    r_useClippedLightScissors;     // 0 = full screen when near clipped, 1 = exact when near clipped, 2 = exact always
+extern idCVar r_useEntityCulling;  // 0 = none, 1 = box
+extern idCVar r_useEntityScissors; // 1 = use custom scissor rectangle for each entity
+extern idCVar r_useInteractionCulling;  // 1 = cull interactions
+extern idCVar r_useInteractionScissors; // 1 = use a custom scissor rectangle for each interaction
+extern idCVar r_useFrustumFarDistance;  // if != 0 force the view frustum far distance to this distance
+extern idCVar r_useShadowCulling;       // try to cull shadows from partially visible lights
+extern idCVar
+    r_usePreciseTriangleInteractions;    // 1 = do winding clipping to determine if each ambiguous tri should be lit
+extern idCVar r_useTurboShadow;          // 1 = use the infinite projection with W technique for dynamic shadows
+extern idCVar r_useExternalShadows;      // 1 = skip drawing caps when outside the light volume
+extern idCVar r_useOptimizedShadows;     // 1 = use the dmap generated static shadow volumes
+extern idCVar r_useShadowVertexProgram;  // 1 = do the shadow projection in the vertex program on capable cards
+extern idCVar r_useShadowProjectedCull;  // 1 = discard triangles outside light volume before shadowing
+extern idCVar r_useDeferredTangents;     // 1 = don't always calc tangents after deform
+extern idCVar r_useCachedDynamicModels;  // 1 = cache snapshots of dynamic models
+extern idCVar r_useTwoSidedStencil;      // 1 = do stencil shadows in one pass with different ops on each side
+extern idCVar r_useInfiniteFarZ;         // 1 = use the no-far-clip-plane trick
+extern idCVar r_useScissor;              // 1 = scissor clip as portals and lights are processed
+extern idCVar r_usePortals;              // 1 = use portals to perform area culling, otherwise draw everything
+extern idCVar r_useStateCaching;         // avoid redundant state changes in GL_*() calls
+extern idCVar r_useCombinerDisplayLists; // if 1, put all nvidia register combiner programming in display lists
+extern idCVar r_useVertexBuffers;        // if 0, don't use ARB_vertex_buffer_object for vertexes
+extern idCVar r_useIndexBuffers;         // if 0, don't use ARB_vertex_buffer_object for indexes
+extern idCVar r_useEntityCallbacks;      // if 0, issue the callback immediately at update time, rather than defering
+extern idCVar r_lightAllBackFaces;       // light all the back faces, even when they would be shadowed
+extern idCVar r_useDepthBoundsTest;      // use depth bounds test to reduce shadow fill
 
 extern idCVar r_supportNoSpecular; // support nospecular parm of lights
 
 extern idCVar r_skipPostProcess;     // skip all post-process renderings
 extern idCVar r_skipSuppress;        // ignore the per-view suppressions
 extern idCVar r_skipInteractions;    // skip all light/surface interaction drawing
-extern idCVar r_skipFrontEnd;        // bypasses all front end work, but 2D gui
-                                     // rendering still draws
+extern idCVar r_skipFrontEnd;        // bypasses all front end work, but 2D gui rendering still draws
 extern idCVar r_skipBackEnd;         // don't draw anything
 extern idCVar r_skipCopyTexture;     // do all rendering, but don't actually copyTexSubImage2D
 extern idCVar r_skipRender;          // skip 3D rendering, but pass 2D
-extern idCVar r_skipRenderContext;   // NULL the rendering context during backend
-                                     // 3D rendering
+extern idCVar r_skipRenderContext;   // NULL the rendering context during backend 3D rendering
 extern idCVar r_skipTranslucent;     // skip the translucent interaction rendering
 extern idCVar r_skipAmbient;         // bypasses all non-interaction drawing
 extern idCVar r_skipNewAmbient;      // bypasses all vertex/fragment program ambients
@@ -1006,36 +951,31 @@ extern idCVar r_skipFogLights;       // skip all fog lights
 extern idCVar r_skipSubviews;        // 1 = don't render any mirrors / cameras / etc
 extern idCVar r_skipGuiShaders;      // 1 = don't render any gui elements on surfaces
 extern idCVar r_skipParticles;       // 1 = don't render any particles
-extern idCVar r_skipUpdates;         // 1 = don't accept any entity or light updates,
-                                     // making everything static
+extern idCVar r_skipUpdates;         // 1 = don't accept any entity or light updates, making everything static
 extern idCVar r_skipDeforms;         // leave all deform materials in their original state
 extern idCVar r_skipDynamicTextures; // don't dynamically create textures
-extern idCVar r_skipLightScale;      // don't do any post-interaction light scaling,
-                                     // makes things dim on low-dynamic range cards
-extern idCVar r_skipBump;            // uses a flat surface instead of the bump map
-extern idCVar r_skipSpecular;        // use black for specular
-extern idCVar r_skipDiffuse;         // use black for diffuse
-extern idCVar r_skipOverlays;        // skip overlay surfaces
+extern idCVar
+    r_skipLightScale;     // don't do any post-interaction light scaling, makes things dim on low-dynamic range cards
+extern idCVar r_skipBump; // uses a flat surface instead of the bump map
+extern idCVar r_skipSpecular; // use black for specular
+extern idCVar r_skipDiffuse;  // use black for diffuse
+extern idCVar r_skipOverlays; // skip overlay surfaces
 extern idCVar r_skipROQ;
 
 extern idCVar r_ignoreGLErrors;
 
 extern idCVar r_forceLoadImages; // draw all images to screen after registration
 extern idCVar r_demonstrateBug;  // used during development to show IHV's their problems
-extern idCVar r_screenFraction;  // for testing fill rate, the resolution of the
-                                 // entire screen can be changed
+extern idCVar r_screenFraction;  // for testing fill rate, the resolution of the entire screen can be changed
 
-extern idCVar r_showUnsmoothedTangents;  // highlight geometry rendered with
-                                         // unsmoothed tangents
+extern idCVar r_showUnsmoothedTangents;  // highlight geometry rendered with unsmoothed tangents
 extern idCVar r_showSilhouette;          // highlight edges that are casting shadow planes
 extern idCVar r_showVertexColor;         // draws all triangles with the solid vertex color
 extern idCVar r_showUpdates;             // report entity and light updates and ref counts
 extern idCVar r_showDemo;                // report reads and writes to the demo file
 extern idCVar r_showDynamic;             // report stats on dynamic surface generation
-extern idCVar r_showLightScale;          // report the scale factor applied to drawing
-                                         // for overbrights
-extern idCVar r_showIntensity;           // draw the screen colors based on intensity, red
-                                         // = 0, green = 128, blue = 255
+extern idCVar r_showLightScale;          // report the scale factor applied to drawing for overbrights
+extern idCVar r_showIntensity;           // draw the screen colors based on intensity, red = 0, green = 128, blue = 255
 extern idCVar r_showDefs;                // report the number of modeDefs and lightDefs in view
 extern idCVar r_showTrace;               // show the intersection of an eye trace with the world
 extern idCVar r_showSmp;                 // show which end (front or back) is blocking
@@ -1045,12 +985,10 @@ extern idCVar r_showTris;                // enables wireframe rendering of the w
 extern idCVar r_showSurfaceInfo;         // show surface material name under crosshair
 extern idCVar r_showNormals;             // draws wireframe normals
 extern idCVar r_showEdges;               // draw the sil edges
-extern idCVar r_showViewEntitys;         // displays the bounding boxes of all view
-                                         // models and optionally the index
+extern idCVar r_showViewEntitys;         // displays the bounding boxes of all view models and optionally the index
 extern idCVar r_showTexturePolarity;     // shade triangles by texture area polarity
 extern idCVar r_showTangentSpace;        // shade triangles by tangent space
-extern idCVar r_showDominantTri;         // draw lines from vertexes to center of
-                                         // dominant triangles
+extern idCVar r_showDominantTri;         // draw lines from vertexes to center of dominant triangles
 extern idCVar r_showTextureVectors;      // draw each triangles texture (tangent) vectors
 extern idCVar r_showLights;              // 1 = print light info, 2 = also draw volumes
 extern idCVar r_showLightCount;          // colors surfaces based on light count
@@ -1059,8 +997,7 @@ extern idCVar r_showShadowCount;         // colors screen based on shadow volume
 extern idCVar r_showLightScissors;       // show light scissor rectangles
 extern idCVar r_showEntityScissors;      // show entity scissor rectangles
 extern idCVar r_showInteractionFrustums; // show a frustum for each interaction
-extern idCVar r_showInteractionScissors; // show screen rectangle which contains
-                                         // the interaction frustum
+extern idCVar r_showInteractionScissors; // show screen rectangle which contains the interaction frustum
 extern idCVar r_showMemory;              // print frame memory utilization
 extern idCVar r_showCull;                // report sphere and box culling stats
 extern idCVar r_showInteractions;        // report interaction generation activity
@@ -1083,8 +1020,7 @@ extern idCVar r_singleLight;         // suppress all but one light
 extern idCVar r_singleEntity;        // suppress all but one entity
 extern idCVar r_singleArea;          // only draw the portal area the view is actually in
 extern idCVar r_singleSurface;       // suppress all but one surface on each entity
-extern idCVar r_shadowPolygonOffset; // bias value added to depth test for
-                                     // stencil shadow drawing
+extern idCVar r_shadowPolygonOffset; // bias value added to depth test for stencil shadow drawing
 extern idCVar r_shadowPolygonFactor; // scale value for stencil shadow drawing
 
 extern idCVar r_jitter;            // randomly subpixel jitter the projection matrix
@@ -1101,10 +1037,8 @@ extern idCVar r_materialOverride; // override all materials
 
 extern idCVar r_debugRenderToTexture;
 
-extern idCVar r_glDebugContext;     // DG: use debug context to call logging
-                                    // callbacks on GL errors
-extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used
-                                    // for soft particles
+extern idCVar r_glDebugContext;     // DG: use debug context to call logging callbacks on GL errors
+extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
 extern idCVar r_useSoftParticles;
 
 /*
@@ -1143,8 +1077,8 @@ const int GLS_DSTBLEND_DST_ALPHA = 0x00000070;
 const int GLS_DSTBLEND_ONE_MINUS_DST_ALPHA = 0x00000080;
 const int GLS_DSTBLEND_BITS = 0x000000f0;
 
-// these masks are the inverse, meaning when set the glColorMask value will be
-// 0, preventing that channel from being written
+// these masks are the inverse, meaning when set the glColorMask value will be 0,
+// preventing that channel from being written
 const int GLS_DEPTHMASK = 0x00000100;
 const int GLS_REDMASK = 0x00000200;
 const int GLS_GREENMASK = 0x00000400;
@@ -1263,8 +1197,7 @@ bool R_CornerCullLocalBox(const idBounds &bounds, const float modelMatrix[16], i
 
 void R_AxisToModelMatrix(const idMat3 &axis, const idVec3 &origin, float modelMatrix[16]);
 
-// note that many of these assume a normalized matrix, and will not work with
-// scaled axis
+// note that many of these assume a normalized matrix, and will not work with scaled axis
 void R_GlobalPointToLocal(const float modelMatrix[16], const idVec3 &in, idVec3 &out);
 void R_GlobalVectorToLocal(const float modelMatrix[16], const idVec3 &in, idVec3 &out);
 void R_GlobalPlaneToLocal(const float modelMatrix[16], const idPlane &in, idPlane &out);
@@ -1497,23 +1430,18 @@ typedef enum
     PP_COLOR_ADD, // 17
 
     PP_LIGHT_FALLOFF_TQ = 20, // only for NV programs - DG: unused
-    PP_GAMMA_BRIGHTNESS = 21, // DG: for gamma in shader: { r_brightness,
-                              // r_brightness, r_brightness, 1/r_gamma }
+    PP_GAMMA_BRIGHTNESS = 21, // DG: for gamma in shader: { r_brightness, r_brightness, r_brightness, 1/r_gamma }
     // DG: for soft particles from TDM: reciprocal of _currentDepth size.
     //     Lets us convert a screen position to a texcoord in _currentDepth
     PP_CURDEPTH_RECIPR = 22,
-    // DG: for soft particles from TDM: particle radius, given as { radius,
-    // 1/(fadeRange), 1/radius }
-    //     fadeRange is the particle diameter for alpha blends (like smoke), but
-    //     the particle radius for additive blends (light glares), because
-    //     additive effects work differently. Fog is half as apparent when a wall
-    //     is in the middle of it. Light glares lose no visibility when they have
-    //     something to reflect off.
+    // DG: for soft particles from TDM: particle radius, given as { radius, 1/(fadeRange), 1/radius }
+    //     fadeRange is the particle diameter for alpha blends (like smoke), but the particle radius for additive
+    //     blends (light glares), because additive effects work differently. Fog is half as apparent when a wall
+    //     is in the middle of it. Light glares lose no visibility when they have something to reflect off.
     PP_PARTICLE_RADIUS = 23,
     // DG: for soft particles from TDM: color channel mask.
-    //     Particles with additive blend need their RGB channels modifying to
-    //     blend them out Particles with an alpha blend need their alpha channel
-    //     modifying.
+    //     Particles with additive blend need their RGB channels modifying to blend them out
+    //     Particles with an alpha blend need their alpha channel modifying.
     PP_PARTICLE_COLCHAN_MASK = 24,
 } programParameter_t;
 
@@ -1610,8 +1538,7 @@ bool R_GLSL_Available(void);
 
 TR_STENCILSHADOWS
 
-"facing" should have one more element than tri->numIndexes / 3, which should be
-set to 1
+"facing" should have one more element than tri->numIndexes / 3, which should be set to 1
 
 ============================================================
 */
@@ -1635,8 +1562,8 @@ TR_TURBOSHADOW
 
 Fast, non-clipped overshoot shadow volumes
 
-"facing" should have one more element than tri->numIndexes / 3, which should be
-set to 1 calling this function may modify "facing" based on culling
+"facing" should have one more element than tri->numIndexes / 3, which should be set to 1
+calling this function may modify "facing" based on culling
 
 ============================================================
 */
@@ -1663,8 +1590,8 @@ typedef struct
     int numVerts;
     glIndex_t *indexes; // caller should free
 
-    // indexes must be sorted frontCap, rearCap, silPlanes so the caps can be
-    // removed when the viewer is in a position that they don't need to see them
+    // indexes must be sorted frontCap, rearCap, silPlanes so the caps can be removed
+    // when the viewer is in a position that they don't need to see them
     int numFrontCapIndexes;
     int numRearCapIndexes;
     int numSilPlaneIndexes;
@@ -1721,24 +1648,23 @@ void R_CleanupTriangles(srfTriangles_t *tri, bool createNormals, bool identifySi
 void R_ReverseTriangles(srfTriangles_t *tri);
 
 // Only deals with vertexes and indexes, not silhouettes, planes, etc.
-// Does NOT perform a cleanup triangles, so there may be duplicated verts in the
-// result.
+// Does NOT perform a cleanup triangles, so there may be duplicated verts in the result.
 srfTriangles_t *R_MergeSurfaceList(const srfTriangles_t **surfaces, int numSurfaces);
 srfTriangles_t *R_MergeTriangles(const srfTriangles_t *tri1, const srfTriangles_t *tri2);
 
-// if the deformed verts have significant enough texture coordinate changes to
-// reverse the texture polarity of a triangle, the tangents will be incorrect
+// if the deformed verts have significant enough texture coordinate changes to reverse the texture
+// polarity of a triangle, the tangents will be incorrect
 void R_DeriveTangents(srfTriangles_t *tri, bool allocFacePlanes = true);
 
-// deformable meshes precalculate as much as possible from a base frame, then
-// generate complete srfTriangles_t from just a new set of vertexes
+// deformable meshes precalculate as much as possible from a base frame, then generate
+// complete srfTriangles_t from just a new set of vertexes
 typedef struct deformInfo_s
 {
     int numSourceVerts;
 
-    // numOutputVerts may be smaller if the input had duplicated or degenerate
-    // triangles it will often be larger if the input had mirrored texture seams
-    // that needed to be busted for proper tangent spaces
+    // numOutputVerts may be smaller if the input had duplicated or degenerate triangles
+    // it will often be larger if the input had mirrored texture seams that needed
+    // to be busted for proper tangent spaces
     int numOutputVerts;
 
     int numMirroredVerts;

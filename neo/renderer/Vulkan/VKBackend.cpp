@@ -1,8 +1,8 @@
 #include "renderer/Vulkan/VKBackend.h"
 #include "renderer/VertexCache.h"
-#include "renderer/Vulkan/vk_buffer.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_image.h"
+#include "renderer/Vulkan/vk_buffer.h"
 
 // Forward declarations - defined in vk_backend.cpp
 extern void VKimp_PreShutdown(void);
@@ -11,8 +11,7 @@ extern void VK_RB_DrawView(const void *data);
 void VKBackend::Init()
 {
     common->Printf("Starting Vulkan Backend");
-    // Reuses SDL window created by GL init; handles VKimp_Init + VKimp_PostInit
-    // internally
+    // Reuses SDL window created by GL init; handles VKimp_Init + VKimp_PostInit internally
     // TODO: decouple window creation from GLimp
     extern void VKimp_InitFromGlimp(int width, int height);
     VKimp_InitFromGlimp(glConfig.vidWidth, glConfig.vidHeight);

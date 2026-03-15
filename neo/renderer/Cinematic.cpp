@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,12 +37,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "renderer/Cinematic.h"
 
-// DG: get rid of libjpeg; as far as I can tell no roqs that actually use it
-// exist
+// DG: get rid of libjpeg; as far as I can tell no roqs that actually use it exist
 // #define ID_USE_LIBJPEG 1
 #ifdef ID_USE_LIBJPEG
-#include <jerror.h>
 #include <jpeglib.h>
+#include <jerror.h>
 #endif
 
 #define CIN_system 1
@@ -1553,8 +1549,8 @@ int JPEGBlit(byte *wStatus, byte *data, int datasize)
     // I don't think this code is actually used, because
     // * the jpeg encoder parts in the roq encoder are disabled with #if 0
     // * ffmpeg doesn't support ROQ_QUAD_JPEG and can decode all doom3 roqs anyway
-    common->Warning("Contrary to Daniel's assumption, JPEGBlit() is actually "
-                    "called! Please report that as a dhewm3 bug!\n");
+    common->Warning(
+        "Contrary to Daniel's assumption, JPEGBlit() is actually called! Please report that as a dhewm3 bug!\n");
 
 #else
     /* This struct contains the JPEG decompression parameters and pointers to
@@ -1644,12 +1640,12 @@ int JPEGBlit(byte *wStatus, byte *data, int datasize)
         unsigned int *buf = (unsigned int *)&buffer[0][0];
         unsigned int *out = (unsigned int *)wStatus;
         for(x=0;x<cinfo.output_width;x++) {
-                unsigned int pixel = buf[x];
-                byte *roof = (byte *)&pixel;
-                byte temp = roof[0];
-                roof[0] = roof[2];
-                roof[2] = temp;
-                out[x] = pixel;
+            unsigned int pixel = buf[x];
+            byte *roof = (byte *)&pixel;
+            byte temp = roof[0];
+            roof[0] = roof[2];
+            roof[2] = temp;
+            out[x] = pixel;
         }
         */
         wStatus -= row_stride;

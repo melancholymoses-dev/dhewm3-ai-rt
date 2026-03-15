@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
 #include "tools/compilers/dmap/dmap.h"
 
@@ -59,9 +56,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
   A case that causes recursive overflow with point to triangle fixing:
 
-                           A
-        C            D
-                           B
+               A
+    C            D
+               B
 
   Triangle ABC tests against point D and splits into triangles ADC and DBC
   Triangle DBC then tests against point A again and splits into ABC and ADB
@@ -69,17 +66,17 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 
   For a given source triangle
-        init the no-check list to hold the three triangle hashVerts
+    init the no-check list to hold the three triangle hashVerts
 
   recursiveFixTriAgainstHash
 
   recursiveFixTriAgainstHashVert_r
-        if hashVert is on the no-check list
-                exit
-        if the hashVert should split the triangle
-                add to the no-check list
-                recursiveFixTriAgainstHash(a)
-                recursiveFixTriAgainstHash(b)
+    if hashVert is on the no-check list
+        exit
+    if the hashVert should split the triangle
+        add to the no-check list
+        recursiveFixTriAgainstHash(a)
+        recursiveFixTriAgainstHash(b)
 
 */
 
@@ -138,8 +135,7 @@ struct hashVert_s *GetHashVert(idVec3 &v)
     }
 
     // see if a vertex near enough already exists
-    // this could still fail to find a near neighbor right at the hash block
-    // boundary
+    // this could still fail to find a near neighbor right at the hash block boundary
     for (hv = hashVerts[block[0]][block[1]][block[2]]; hv; hv = hv->next)
     {
 #if 0
@@ -682,8 +678,8 @@ void FixGlobalTjunctions(uEntity_t *e)
 
             idRenderModel *model = renderModelManager->FindModel(modelName);
 
-            //			common->Printf( "adding T junction verts for
-            //%s.\n", entity->mapEntity->epairs.GetString( "name" ) );
+            //			common->Printf( "adding T junction verts for %s.\n", entity->mapEntity->epairs.GetString( "name"
+            //) );
 
             idMat3 axis;
             // get the rotation matrix in either full form, or single angle form

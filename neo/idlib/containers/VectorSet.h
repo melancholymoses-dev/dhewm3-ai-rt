@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,15 +32,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __VECTORSET_H__
 #define __VECTORSET_H__
 
-#include "idlib/containers/HashIndex.h"
 #include "idlib/containers/List.h"
+#include "idlib/containers/HashIndex.h"
 
 /*
 ===============================================================================
 
-        Vector Set
+    Vector Set
 
-        Creates a set of vectors without duplicates.
+    Creates a set of vectors without duplicates.
 
 ===============================================================================
 */
@@ -184,9 +181,9 @@ ID_INLINE int idVectorSet<type, dimension>::FindVector(const type &v, const floa
 /*
 ===============================================================================
 
-        Vector Subset
+    Vector Subset
 
-        Creates a subset without duplicates from an existing list with vectors.
+    Creates a subset without duplicates from an existing list with vectors.
 
 ===============================================================================
 */

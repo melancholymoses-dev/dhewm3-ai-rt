@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
 
 #include "renderer/Model_local.h"
 
@@ -88,8 +85,8 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel(const struct renderEnti
         cachedModel = NULL;
     }
 
-    // this may be triggered by a model trace or other non-view related source, to
-    // which we should look like an empty model
+    // this may be triggered by a model trace or other non-view related source, to which we should look like an empty
+    // model
     if (renderEntity == NULL || viewDef == NULL)
     {
         delete cachedModel;
@@ -104,10 +101,8 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel(const struct renderEnti
 
     /*
     // if the entire system has faded out
-    if ( renderEntity->shaderParms[SHADERPARM_PARTICLE_STOPTIME] &&
-    viewDef->renderView.time * 0.001f >=
-    renderEntity->shaderParms[SHADERPARM_PARTICLE_STOPTIME] ) { delete
-    cachedModel; return NULL;
+    if ( renderEntity->shaderParms[SHADERPARM_PARTICLE_STOPTIME] && viewDef->renderView.time * 0.001f >=
+    renderEntity->shaderParms[SHADERPARM_PARTICLE_STOPTIME] ) { delete cachedModel; return NULL;
     }
     */
 
@@ -242,14 +237,13 @@ idRenderModel *idRenderModelPrt::InstantiateDynamicModel(const struct renderEnti
                 continue;
             }
 
-            // this is needed so aimed particles can calculate origins at different
-            // times
+            // this is needed so aimed particles can calculate origins at different times
             g.originalRandom = g.random;
 
             g.age = g.frac * stage->particleLife;
 
-            // if the particle doesn't get drawn because it is faded out or beyond a
-            // kill region, don't increment the verts
+            // if the particle doesn't get drawn because it is faded out or beyond a kill region, don't increment the
+            // verts
             numVerts += stage->CreateParticle(&g, verts + numVerts);
         }
 
@@ -338,14 +332,12 @@ int idRenderModelPrt::Memory() const
 ====================
 idRenderModelPrt::SetSofteningRadii
 
-Calculate "depth" of each particle stage that represents a 3d volume, so the
-particle can be allowed to overdraw solid geometry by the right amount, and the
-particle "thickness" (visibility) can be adjusted by how much of it is visible
-in front of the background surface.
+Calculate "depth" of each particle stage that represents a 3d volume, so the particle can
+be allowed to overdraw solid geometry by the right amount, and the particle "thickness" (visibility)
+can be adjusted by how much of it is visible in front of the background surface.
 
-"depth" is by default 0.8 of the particle radius, and particles less than 2
-units in size won't be softened. The particles that represent 3d volumes are the
-view-aligned ones. Others have depth set to 0.
+"depth" is by default 0.8 of the particle radius, and particles less than 2 units in size won't be softened.
+The particles that represent 3d volumes are the view-aligned ones. Others have depth set to 0.
 
 Cache these values rather than calculate them for each stage every frame.
 Added for soft particles -- SteveL #3878.
@@ -358,24 +350,21 @@ void idRenderModelPrt::SetSofteningRadii()
     for (int i = 0; i < particleSystem->stages.Num(); ++i)
     {
         const idParticleStage *ps = particleSystem->stages[i];
-        // DG: for now softeningRadius isn't configurable to avoid breaking the game
-        // DLL's ABI
-        //     => always behave like if ps->softeningRadius == -2, which means
-        //     "auto"
-        //        (doesn't make a difference, so far only TDM particles set the
-        //        softeningRadius)
+        // DG: for now softeningRadius isn't configurable to avoid breaking the game DLL's ABI
+        //     => always behave like if ps->softeningRadius == -2, which means "auto"
+        //        (doesn't make a difference, so far only TDM particles set the softeningRadius)
         /* if ( ps->softeningRadius > -2.0f )	// User has specified a setting
         {
-                softeningRadii[i] = ps->softeningRadius;
+            softeningRadii[i] = ps->softeningRadius;
         }
         else */
         if (ps->orientation == POR_VIEW) // Only view-aligned particle stages qualify for softening
         {
             float diameter = Max(ps->size.from, ps->size.to);
             float scale = Max(ps->aspect.from, ps->aspect.to);
-            diameter *= Max(scale, 1.0f); // aspect applies to 1 axis only. If it's < 1, the
-                                          // other axis will still be at scale 1
-            if (diameter > 2.0f)          // Particle is big enough to soften
+            diameter *=
+                Max(scale, 1.0f); // aspect applies to 1 axis only. If it's < 1, the other axis will still be at scale 1
+            if (diameter > 2.0f)  // Particle is big enough to soften
             {
                 softeningRadii[i] = diameter * 0.8f / 2.0f;
             }
@@ -384,8 +373,7 @@ void idRenderModelPrt::SetSofteningRadii()
                 softeningRadii[i] = 0.0f;
             }
         }
-        else // Particle isn't view-aligned, and no user setting. Don't change
-             // anything.
+        else // Particle isn't view-aligned, and no user setting. Don't change anything.
         {
             softeningRadii[i] = -1;
         }

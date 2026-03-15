@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Game.h"
-#include "framework/Session_local.h"
-#include "idlib/LangDict.h"
 #include "sys/platform.h"
+#include "idlib/LangDict.h"
+#include "framework/Session_local.h"
+#include "framework/Game.h"
 
 #include "framework/async/AsyncNetwork.h"
 
@@ -54,8 +51,7 @@ const char *authReplyMsg[] = {
     "#str_07205",
     //	"Access denied - CD Key in use",
     "#str_07206",
-    //	"Auth custom message", // placeholder - we propagate a message from the
-    // master
+    //	"Auth custom message", // placeholder - we propagate a message from the master
     "#str_07207",
     //	"Authorize Server - Waiting for client"
     "#str_07208"};
@@ -122,8 +118,7 @@ bool idAsyncServer::InitPort(void)
         }
         else
         {
-            // scan for multiple ports, in case other servers are running on this IP
-            // already
+            // scan for multiple ports, in case other servers are running on this IP already
             for (lastPort = 0; lastPort < NUM_SERVER_PORTS; lastPort++)
             {
                 if (serverPort.InitForPort(PORT_SERVER + lastPort))
@@ -205,8 +200,7 @@ void idAsyncServer::Spawn(void)
     // calculate a checksum on some of the essential data used
     serverDataChecksum = declManager->GetChecksum();
 
-    // get a pseudo random server id, but don't use the id which is reserved for
-    // connectionless packets
+    // get a pseudo random server id, but don't use the id which is reserved for connectionless packets
     serverId = Sys_Milliseconds() & CONNECTIONLESS_MESSAGE_ID_MASK;
 
     active = true;
@@ -303,9 +297,8 @@ void idAsyncServer::ExecuteMapChange(void)
         cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "disconnect\n");
         return;
     case FIND_ADDON:
-        // NOTE: we have no problem with addon dependencies here because if the map
-        // is in an addon pack that's already on search list, then all it's deps are
-        // assumed to be on search as well
+        // NOTE: we have no problem with addon dependencies here because if the map is in
+        // an addon pack that's already on search list, then all it's deps are assumed to be on search as well
         common->Printf("map %s is in an addon pak - reloading\n", mapName.c_str());
         addonReload = true;
         break;
@@ -322,10 +315,9 @@ void idAsyncServer::ExecuteMapChange(void)
         }
         // tell the clients to reconnect
         // FIXME: shouldn't they wait for the new pure list, then reload?
-        // in a lot of cases this is going to trigger two reloadEngines for the
-        // clients one to restart, the other one to set paks right ( with addon for
-        // instance ) can fix by reconnecting without reloading and waiting for the
-        // server to tell..
+        // in a lot of cases this is going to trigger two reloadEngines for the clients
+        // one to restart, the other one to set paks right ( with addon for instance )
+        // can fix by reconnecting without reloading and waiting for the server to tell..
         for (i = 0; i < MAX_ASYNC_CLIENTS; i++)
         {
             if (clients[i].clientState >= SCS_PUREWAIT && i != localClientNum)
@@ -351,8 +343,7 @@ void idAsyncServer::ExecuteMapChange(void)
     serverTime = 0;
 
     // initialize game id and time
-    gameInitId ^= Sys_Milliseconds(); // NOTE: make sure the gameInitId is always
-                                      // a positive number because negative
+    gameInitId ^= Sys_Milliseconds(); // NOTE: make sure the gameInitId is always a positive number because negative
                                       // numbers have special meaning
     gameFrame = 0;
     gameTime = 0;
@@ -714,8 +705,7 @@ void idAsyncServer::DuplicateUsercmds(int frame, int time)
     previousIndex = (frame - 1) & (MAX_USERCMD_BACKUP - 1);
     currentIndex = frame & (MAX_USERCMD_BACKUP - 1);
 
-    // duplicate previous user commands if no new commands are available for a
-    // client
+    // duplicate previous user commands if no new commands are available for a client
     for (i = 0; i < MAX_ASYNC_CLIENTS; i++)
     {
         if (clients[i].clientState == SCS_FREE)
@@ -1224,9 +1214,8 @@ bool idAsyncServer::SendEmptyToClient(int clientNum, bool force)
 
     if (idAsyncNetwork::verbose.GetInteger())
     {
-        common->Printf("sending empty to client %d: gameInitId = %d, gameFrame = "
-                       "%d, gameTime = %d\n",
-                       clientNum, gameInitId, gameFrame, gameTime);
+        common->Printf("sending empty to client %d: gameInitId = %d, gameFrame = %d, gameTime = %d\n", clientNum,
+                       gameInitId, gameFrame, gameTime);
     }
 
     msg.Init(msgBuf, sizeof(msgBuf));
@@ -1292,9 +1281,8 @@ void idAsyncServer::SendGameInitToClient(int clientNum)
 
     if (idAsyncNetwork::verbose.GetInteger())
     {
-        common->Printf("sending gameinit to client %d: gameInitId = %d, gameFrame "
-                       "= %d, gameTime = %d\n",
-                       clientNum, gameInitId, gameFrame, gameTime);
+        common->Printf("sending gameinit to client %d: gameInitId = %d, gameFrame = %d, gameTime = %d\n", clientNum,
+                       gameInitId, gameFrame, gameTime);
     }
 
     serverClient_t &client = clients[clientNum];
@@ -1336,9 +1324,8 @@ bool idAsyncServer::SendSnapshotToClient(int clientNum)
 
     if (idAsyncNetwork::verbose.GetInteger() == 2)
     {
-        common->Printf("sending snapshot to client %d: gameInitId = %d, gameFrame "
-                       "= %d, gameTime = %d\n",
-                       clientNum, gameInitId, gameFrame, gameTime);
+        common->Printf("sending snapshot to client %d: gameInitId = %d, gameFrame = %d, gameTime = %d\n", clientNum,
+                       gameInitId, gameFrame, gameTime);
     }
 
     // how far is the client ahead of the server minus the packet delay
@@ -1357,8 +1344,7 @@ bool idAsyncServer::SendSnapshotToClient(int clientNum)
     // write the game snapshot
     game->ServerWriteSnapshot(clientNum, client.snapshotSequence, msg, clientInPVS, MAX_ASYNC_CLIENTS);
 
-    // write the latest user commands from the other clients in the PVS to the
-    // snapshot
+    // write the latest user commands from the other clients in the PVS to the snapshot
     for (last = NULL, i = 0; i < MAX_ASYNC_CLIENTS; i++)
     {
         serverClient_t &client = clients[i];
@@ -1376,8 +1362,7 @@ bool idAsyncServer::SendSnapshotToClient(int clientNum)
 
         int maxRelay = idMath::ClampInt(1, MAX_USERCMD_RELAY, idAsyncNetwork::serverMaxUsercmdRelay.GetInteger());
 
-        // Max( 1, to always send at least one cmd, which we know we have because we
-        // call DuplicateUsercmds in RunFrame
+        // Max( 1, to always send at least one cmd, which we know we have because we call DuplicateUsercmds in RunFrame
         numUsercmds = Max(1, Min(client.gameFrame, gameFrame + maxRelay) - gameFrame);
         msg.WriteByte(i);
         msg.WriteByte(numUsercmds);
@@ -1419,8 +1404,7 @@ void idAsyncServer::ProcessUnreliableClientMessage(int clientNum, const idBitMsg
     acknowledgeSequence = msg.ReadInt();
     clientGameInitId = msg.ReadInt();
 
-    // while loading a map the client may send empty messages to keep the
-    // connection alive
+    // while loading a map the client may send empty messages to keep the connection alive
     if (clientGameInitId == GAME_INIT_ID_MAP_LOAD)
     {
         if (idAsyncNetwork::verbose.GetInteger())
@@ -1452,9 +1436,7 @@ void idAsyncServer::ProcessUnreliableClientMessage(int clientNum, const idBitMsg
         }
         else if (idAsyncNetwork::verbose.GetInteger())
         {
-            common->Printf("ignore unreliable msg from client %d, wrong gameInit, "
-                           "old sequence\n",
-                           clientNum);
+            common->Printf("ignore unreliable msg from client %d, wrong gameInit, old sequence\n", clientNum);
         }
         return;
     }
@@ -1541,8 +1523,7 @@ void idAsyncServer::ProcessUnreliableClientMessage(int clientNum, const idBitMsg
 
         if (idAsyncNetwork::verbose.GetInteger() == 2)
         {
-            common->Printf("received user command for client %d, gameInitId = %d, "
-                           "gameFrame, %d gameTime %d\n",
+            common->Printf("received user command for client %d, gameInitId = %d, gameFrame, %d gameTime %d\n",
                            clientNum, clientGameInitId, client.gameFrame, client.gameTime);
         }
         break;
@@ -1591,8 +1572,7 @@ void idAsyncServer::ProcessReliableClientMessages(int clientNum)
             break;
         }
         case CLIENT_RELIABLE_MESSAGE_PURE: {
-            // we get this message once the client has successfully updated it's pure
-            // list
+            // we get this message once the client has successfully updated it's pure list
             ProcessReliablePure(clientNum, msg);
             break;
         }
@@ -1783,8 +1763,7 @@ void idAsyncServer::ProcessChallengeMessage(const netadr_t from, const idBitMsg 
     {
         if (idAsyncNetwork::LANServer.GetBool())
         {
-            common->Printf("net_LANServer is enabled. Client %s is not a LAN "
-                           "address, will be rejected\n",
+            common->Printf("net_LANServer is enabled. Client %s is not a LAN address, will be rejected\n",
                            Sys_NetAdrToString(from));
             challenges[i].authState = CDK_ONLYLAN;
         }
@@ -1805,9 +1784,9 @@ void idAsyncServer::ProcessChallengeMessage(const netadr_t from, const idBitMsg 
 #else
     if (!Sys_IsLANAddress(from))
     {
-        common->Printf("Build Does not have CD Key Enforcement enabled. Client %s "
-                       "is not a LAN address, but will be accepted\n",
-                       Sys_NetAdrToString(from));
+        common->Printf(
+            "Build Does not have CD Key Enforcement enabled. Client %s is not a LAN address, but will be accepted\n",
+            Sys_NetAdrToString(from));
     }
     challenges[i].authState = CDK_OK;
 #endif
@@ -1954,8 +1933,7 @@ void idAsyncServer::ProcessConnectMessage(const netadr_t from, const idBitMsg &m
     // check the protocol version
     if (protocol != ASYNC_PROTOCOL_VERSION)
     {
-        // that's a msg back to a client, we don't know about it's localization, so
-        // send english
+        // that's a msg back to a client, we don't know about it's localization, so send english
         PrintOOB(from, SERVER_PRINT_BADPROTOCOL,
                  va("server uses protocol %d.%d\n", ASYNC_PROTOCOL_MAJOR, ASYNC_PROTOCOL_MINOR));
         return;
@@ -2012,8 +1990,8 @@ void idAsyncServer::ProcessConnectMessage(const netadr_t from, const idBitMsg &m
         if (challenges[ichallenge].authReplyMsg == AUTH_REPLY_UNKNOWN ||
             challenges[ichallenge].authReplyMsg == AUTH_REPLY_WAITING)
         {
-            // the client may be trying to connect to us in LAN mode, and the server
-            // disagrees let the client know so it would switch to authed connection
+            // the client may be trying to connect to us in LAN mode, and the server disagrees
+            // let the client know so it would switch to authed connection
             idBitMsg outMsg;
             byte msgBuf[MAX_MESSAGE_SIZE];
             outMsg.Init(msgBuf, sizeof(msgBuf));
@@ -2058,8 +2036,8 @@ void idAsyncServer::ProcessConnectMessage(const netadr_t from, const idBitMsg &m
     }
 
     // game may be passworded, client banned by IP or GUID
-    // if authState == CDK_PUREOK, the check was already performed once before
-    // entering pure checks but meanwhile, the max players may have been reached
+    // if authState == CDK_PUREOK, the check was already performed once before entering pure checks
+    // but meanwhile, the max players may have been reached
     msg.ReadString(password, sizeof(password));
     char reason[MAX_STRING_CHARS];
     allowReply_t reply = game->ServerAllowClient(numClients, Sys_NetAdrToString(from), guid, password, reason);
@@ -2089,8 +2067,7 @@ void idAsyncServer::ProcessConnectMessage(const netadr_t from, const idBitMsg &m
         }
     }
 
-    // push back decl checksum here when running pure. just an additional safe
-    // check
+    // push back decl checksum here when running pure. just an additional safe check
     if (sessLocal.mapSpawnData.serverInfo.GetInt("si_pure") && clientDataChecksum != serverDataChecksum)
     {
         PrintOOB(from, SERVER_PRINT_MISC, "#str_04844");
@@ -2199,9 +2176,7 @@ bool idAsyncServer::VerifyChecksumMessage(int clientNum, const netadr_t *from, c
         // just to make sure a broken client doesn't crash us
         if (numChecksums >= MAX_PURE_PAKS)
         {
-            common->Warning("MAX_PURE_PAKS ( %d ) exceeded in "
-                            "idAsyncServer::ProcessPureMessage\n",
-                            MAX_PURE_PAKS);
+            common->Warning("MAX_PURE_PAKS ( %d ) exceeded in idAsyncServer::ProcessPureMessage\n", MAX_PURE_PAKS);
             sprintf(reply, "#str_07144");
             return false;
         }
@@ -2286,16 +2261,12 @@ void idAsyncServer::ProcessReliablePure(int clientNum, const idBitMsg &msg)
 
     if (clients[clientNum].clientState != SCS_PUREWAIT)
     {
-        // should not happen unless something is very wrong. still, don't let this
-        // crash us, just get rid of the client
-        common->DPrintf("client %d: got reliable pure while != SCS_PUREWAIT, "
-                        "sending a reload\n",
-                        clientNum);
+        // should not happen unless something is very wrong. still, don't let this crash us, just get rid of the client
+        common->DPrintf("client %d: got reliable pure while != SCS_PUREWAIT, sending a reload\n", clientNum);
         outMsg.Init(msgBuf, sizeof(msgBuf));
         outMsg.WriteByte(SERVER_RELIABLE_MESSAGE_RELOAD);
         SendReliableMessage(clientNum, msg);
-        // go back to SCS_CONNECTED to sleep on the client until it goes away for a
-        // reconnect
+        // go back to SCS_CONNECTED to sleep on the client until it goes away for a reconnect
         clients[clientNum].clientState = SCS_CONNECTED;
         return;
     }
@@ -2415,11 +2386,9 @@ void idAsyncServer::ProcessGetInfoMessage(const netadr_t from, const idBitMsg &m
         outMsg.WriteString(sessLocal.mapSpawnData.userInfo[i].GetString("ui_name", "Player"));
     }
     outMsg.WriteByte(MAX_ASYNC_CLIENTS);
-    // Stradex: Originally Doom3 did outMsg.WriteLong( fileSystem->GetOSMask() );
-    // here
-    //          dhewm3 eliminated GetOSMask() and WriteLong() became WriteInt() as
-    //          it's supposed to write an int32 Sending -1 (instead of nothing at
-    //          all) restores compatibility with id's masterserver.
+    // Stradex: Originally Doom3 did outMsg.WriteLong( fileSystem->GetOSMask() ); here
+    //          dhewm3 eliminated GetOSMask() and WriteLong() became WriteInt() as it's supposed to write an int32
+    //          Sending -1 (instead of nothing at all) restores compatibility with id's masterserver.
     outMsg.WriteInt(-1);
 
     serverPort.SendPacket(from, outMsg.GetData(), outMsg.GetSize());
@@ -2428,8 +2397,7 @@ void idAsyncServer::ProcessGetInfoMessage(const netadr_t from, const idBitMsg &m
 /*
 ===============
 idAsyncServer::PrintLocalServerInfo
-see (client) "getInfo" -> (server) "infoResponse" ->
-(client)ProcessGetInfoMessage
+see (client) "getInfo" -> (server) "infoResponse" -> (client)ProcessGetInfoMessage
 ===============
 */
 void idAsyncServer::PrintLocalServerInfo(void)
@@ -2577,9 +2545,8 @@ bool idAsyncServer::ProcessMessage(const netadr_t from, idBitMsg &msg)
             return false; // out of order, duplicated, fragment, etc.
         }
 
-        // zombie clients still need to do the channel processing to make sure they
-        // don't need to retransmit the final reliable message, but they don't do
-        // any other processing
+        // zombie clients still need to do the channel processing to make sure they don't
+        // need to retransmit the final reliable message, but they don't do any other processing
         if (client.clientState == SCS_ZOMBIE)
         {
             return false;
@@ -2759,8 +2726,7 @@ void idAsyncServer::RunFrame(void)
 
     gameTimeResidual += msec;
 
-    // spin in place processing incoming packets until enough time lapsed to run a
-    // new game frame
+    // spin in place processing incoming packets until enough time lapsed to run a new game frame
     do
     {
 
@@ -2852,8 +2818,7 @@ void idAsyncServer::RunFrame(void)
         gameTimeResidual -= USERCMD_MSEC;
     }
 
-    // duplicate usercmds so there is always at least one available to send with
-    // snapshots
+    // duplicate usercmds so there is always at least one available to send with snapshots
     DuplicateUsercmds(gameFrame, gameTime);
 
     // send snapshots to connected clients
@@ -2878,8 +2843,7 @@ void idAsyncServer::RunFrame(void)
             continue;
         }
 
-        // send additional message fragments if the last message was too large to
-        // send at once
+        // send additional message fragments if the last message was too large to send at once
         if (client.channel.UnsentFragmentsLeft())
         {
             client.channel.SendNextFragment(serverPort, serverTime);
@@ -2907,8 +2871,7 @@ void idAsyncServer::RunFrame(void)
         // dedicated will verbose to console
         if (idAsyncNetwork::serverDedicated.GetBool() && serverTime >= nextAsyncStatsTime)
         {
-            common->Printf("delay = %d msec, total outgoing rate = %d KB/s, total "
-                           "incoming rate = %d KB/s\n",
+            common->Printf("delay = %d msec, total outgoing rate = %d KB/s, total incoming rate = %d KB/s\n",
                            GetDelay(), GetOutgoingRate() >> 10, GetIncomingRate() >> 10);
 
             for (i = 0; i < MAX_ASYNC_CLIENTS; i++)
@@ -2921,9 +2884,8 @@ void idAsyncServer::RunFrame(void)
 
                 if (outgoingRate != -1 && incomingRate != -1)
                 {
-                    common->Printf("client %d: out rate = %d B/s (% -2.1f%%), in rate = "
-                                   "%d B/s (% -2.1f%%)\n",
-                                   i, outgoingRate, outgoingCompression, incomingRate, incomingCompression);
+                    common->Printf("client %d: out rate = %d B/s (% -2.1f%%), in rate = %d B/s (% -2.1f%%)\n", i,
+                                   outgoingRate, outgoingCompression, incomingRate, incomingCompression);
                 }
             }
 
@@ -3105,8 +3067,7 @@ void idAsyncServer::ProcessDownloadRequestMessage(const netadr_t from, const idB
     byte tmpBuf[MAX_MESSAGE_SIZE];
     idBitMsg outMsg, tmpMsg;
     int dlRequest;
-    int voidSlots = 0; // to count and verbose the right number of paks requested
-                       // for downloads
+    int voidSlots = 0; // to count and verbose the right number of paks requested for downloads
 
     challenge = msg.ReadInt();
     clientId = msg.ReadShort();
@@ -3240,8 +3201,7 @@ void idAsyncServer::ProcessDownloadRequestMessage(const netadr_t from, const idB
                 tmpMsg.WriteInt(dlSize[i]);
             }
 
-            // keep last 5 bytes for an 'end of message' - SERVER_PAK_END and the
-            // totalDlSize long
+            // keep last 5 bytes for an 'end of message' - SERVER_PAK_END and the totalDlSize long
             if (outMsg.GetRemainingSpace() - tmpMsg.GetSize() > 5)
             {
                 outMsg.WriteData(tmpMsg.GetData(), tmpMsg.GetSize());

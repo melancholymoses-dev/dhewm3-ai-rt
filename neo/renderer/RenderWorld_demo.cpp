@@ -19,30 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/geometry/JointTransform.h"
 #include "framework/DeclSkin.h"
 #include "framework/DemoFile.h"
 #include "framework/EventLoop.h"
 #include "framework/Session.h"
-#include "idlib/geometry/JointTransform.h"
 #include "renderer/GuiModel.h"
 #include "renderer/ModelManager.h"
 #include "renderer/RenderWorld_local.h"
-#include "sound/sound.h"
-#include "sys/platform.h"
 #include "ui/UserInterface.h"
+#include "sound/sound.h"
 
 #include "renderer/tr_local.h"
 
@@ -65,8 +62,7 @@ void idRenderWorldLocal::StartWritingDemo(idDemoFile *demo)
 {
     int i;
 
-    // FIXME: we should track the idDemoFile locally, instead of snooping into
-    // session for it
+    // FIXME: we should track the idDemoFile locally, instead of snooping into session for it
 
     WriteLoadMap();
 
@@ -132,8 +128,7 @@ bool idRenderWorldLocal::ProcessDemoCommand(idDemoFile *readDemo, renderView_t *
 
         readDemo->ReadInt(header.version);
         // the internal version value got replaced by DS_VERSION at toplevel
-        // DG: bumped version to 5 for nospecular support, still support old demos
-        // though.
+        // DG: bumped version to 5 for nospecular support, still support old demos though.
         if (header.version != 4 && header.version != 5)
         {
             common->Error("Demo version mismatch.\n");
@@ -141,10 +136,8 @@ bool idRenderWorldLocal::ProcessDemoCommand(idDemoFile *readDemo, renderView_t *
 
         readDemo->ReadInt(header.sizeofRenderEntity);
         readDemo->ReadInt(header.sizeofRenderLight);
-        // DG: set allowNoSpecular from demo, if it's v5 (otherwise default to
-        // false)
-        //     when loading a normal map, this is "allow_nospecular" in the
-        //     worldspawn
+        // DG: set allowNoSpecular from demo, if it's v5 (otherwise default to false)
+        //     when loading a normal map, this is "allow_nospecular" in the worldspawn
         int allowNoSpecular = 0;
         if (header.version == 5)
         {
@@ -160,8 +153,7 @@ bool idRenderWorldLocal::ProcessDemoCommand(idDemoFile *readDemo, renderView_t *
         }
         InitFromMap(header.mapname);
 
-        // DG: must be set after InitFromMap(), because that sets it to false as a
-        // default
+        // DG: must be set after InitFromMap(), because that sets it to false as a default
         tr.allowNoSpecular = (allowNoSpecular != 0);
 
         newMap = true; // we will need to set demoTimeOffset
@@ -329,8 +321,7 @@ void idRenderWorldLocal::WriteLoadMap()
     session->writeDemo->WriteInt(DC_LOADMAP);
 
     demoHeader_t header;
-    // DG: Note: here strncpy() makes sense, because all chars of mapname get
-    // written
+    // DG: Note: here strncpy() makes sense, because all chars of mapname get written
     //     so it's good if the ones behind the actual name are *all* \0
     strncpy(header.mapname, mapName.c_str(), sizeof(header.mapname) - 1);
     header.mapname[sizeof(header.mapname) - 1] = '\0'; // make sure the last chars is also \0
@@ -426,8 +417,7 @@ void idRenderWorldLocal::WriteRenderView(const renderView_t *renderView)
     session->writeDemo->WriteMat3(renderView->viewaxis);
     session->writeDemo->WriteBool(renderView->cramZNear);
     session->writeDemo->WriteBool(renderView->forceUpdate);
-    // binary compatibility with old win32 version writing padded structures
-    // directly to disk
+    // binary compatibility with old win32 version writing padded structures directly to disk
     session->writeDemo->WriteUnsignedChar(0);
     session->writeDemo->WriteUnsignedChar(0);
     session->writeDemo->WriteInt(renderView->time);
@@ -699,10 +689,10 @@ void idRenderWorldLocal::WriteRenderEntity(qhandle_t handle, const renderEntity_
 
     /*
     if ( ent->decals ) {
-            ent->decals->WriteToDemoFile( session->readDemo );
+        ent->decals->WriteToDemoFile( session->readDemo );
     }
     if ( ent->overlay ) {
-            ent->overlay->WriteToDemoFile( session->writeDemo );
+        ent->overlay->WriteToDemoFile( session->writeDemo );
     }
     */
 
@@ -827,12 +817,12 @@ void idRenderWorldLocal::ReadRenderEntity()
 
     /*
     if ( ent.decals ) {
-            ent.decals = idRenderModelDecal::Alloc();
-            ent.decals->ReadFromDemoFile( session->readDemo );
+        ent.decals = idRenderModelDecal::Alloc();
+        ent.decals->ReadFromDemoFile( session->readDemo );
     }
     if ( ent.overlay ) {
-            ent.overlay = idRenderModelOverlay::Alloc();
-            ent.overlay->ReadFromDemoFile( session->readDemo );
+        ent.overlay = idRenderModelOverlay::Alloc();
+        ent.overlay->ReadFromDemoFile( session->readDemo );
     }
     */
 

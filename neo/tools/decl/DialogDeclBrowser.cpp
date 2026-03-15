@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -60,8 +57,8 @@ const int DECLTYPE_GUI = 127;
 
 toolTip_t DialogDeclBrowser::toolTips[] = {
     {IDC_DECLBROWSER_TREE, "decl browser"},
-    {IDC_DECLBROWSER_EDIT_SEARCH_NAMES, "search for declarations with matching name, use meta characters: *, ? "
-                                        "and [abc...]"},
+    {IDC_DECLBROWSER_EDIT_SEARCH_NAMES,
+     "search for declarations with matching name, use meta characters: *, ? and [abc...]"},
     {IDC_DECLBROWSER_EDIT_SEARCH_TEXT, "search for declarations containing text"},
     {IDC_DECLBROWSER_BUTTON_FIND, "find declarations matching the search strings"},
     {IDC_DECLBROWSER_BUTTON_EDIT, "edit selected declaration"},
@@ -494,10 +491,9 @@ void DeclBrowserInit(const idDict *spawnArgs)
     {
         g_DeclDialog->Create(IDD_DIALOG_DECLBROWSER);
         /*
-                        // FIXME: restore position
-                        CRect rct;
-                        g_DeclDialog->SetWindowPos( NULL, rct.left, rct.top, 0, 0,
-           SWP_NOSIZE );
+                // FIXME: restore position
+                CRect rct;
+                g_DeclDialog->SetWindowPos( NULL, rct.left, rct.top, 0, 0, SWP_NOSIZE );
         */
     }
 
@@ -850,14 +846,14 @@ DialogDeclBrowser::OnSizing
 void DialogDeclBrowser::OnSizing(UINT nSide, LPRECT lpRect)
 {
     /*
-            1 = left
-            2 = right
-            3 = top
-            4 = left - top
-            5 = right - top
-            6 = bottom
-            7 = left - bottom
-            8 = right - bottom
+        1 = left
+        2 = right
+        3 = top
+        4 = left - top
+        5 = right - top
+        6 = bottom
+        7 = left - bottom
+        8 = right - bottom
     */
 
     CDialog::OnSizing(nSide, lpRect);
@@ -926,8 +922,7 @@ DialogDeclBrowser::OnTreeDblclk
 */
 void DialogDeclBrowser::OnTreeDblclk(NMHDR *pNMHDR, LRESULT *pResult)
 {
-    // post a message as if the edit button was clicked to make sure the editor
-    // gets focus
+    // post a message as if the edit button was clicked to make sure the editor gets focus
     PostMessage(WM_COMMAND, (BN_CLICKED << 16) | editButton.GetDlgCtrlID(), 0);
 
     *pResult = 1;

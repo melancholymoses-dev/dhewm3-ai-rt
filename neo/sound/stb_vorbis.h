@@ -1,5 +1,4 @@
-// DG: updated from
-// https://github.com/sezero/stb/blob/stb_vorbis-sezero/stb_vorbis.c
+// DG: updated from https://github.com/sezero/stb/blob/stb_vorbis-sezero/stb_vorbis.c
 //     (commit 3ba957b34a949413886c9b8eb1842bdbd3957093 from Dec 12, 2023)
 
 // Ogg Vorbis audio decoder - v1.22 - public domain
@@ -46,31 +45,28 @@
 //    1.21    - 2021-07-02 - fix bug for files with no comments
 //    1.20    - 2020-07-11 - several small fixes
 //    1.19    - 2020-02-05 - warnings
-//    1.18    - 2020-02-02 - fix seek bugs; parse header comments; misc warnings
-//    etc. 1.17    - 2019-07-08 - fix CVE-2019-13217..CVE-2019-13223 (by
-//    ForAllSecure) 1.16    - 2019-03-04 - fix warnings 1.15    - 2019-02-07 -
-//    explicit failure if Ogg Skeleton data is found 1.14    - 2018-02-11 -
-//    delete bogus dealloca usage 1.13    - 2018-01-29 - fix truncation of last
-//    frame (hopefully) 1.12    - 2017-11-21 - limit residue begin/end to
-//    blocksize/2 to avoid large temp allocs in bad/corrupt files 1.11    -
-//    2017-07-23 - fix MinGW compilation 1.10    - 2017-03-03 - more robust
-//    seeking; fix negative ilog(); clear error in open_memory 1.09    -
-//    2016-04-04 - back out 'truncation of last frame' fix from previous version
-//    1.08    - 2016-04-02 - warnings; setup memory leaks; truncation of last
-//    frame 1.07    - 2015-01-16 - fixes for crashes on invalid files; warning
-//    fixes; const 1.06    - 2015-08-31 - full, correct support for seeking API
-//    (Dougall Johnson)
-//                           some crash fixes when out of memory or with corrupt
-//                           files fix some inappropriately signed shifts
+//    1.18    - 2020-02-02 - fix seek bugs; parse header comments; misc warnings etc.
+//    1.17    - 2019-07-08 - fix CVE-2019-13217..CVE-2019-13223 (by ForAllSecure)
+//    1.16    - 2019-03-04 - fix warnings
+//    1.15    - 2019-02-07 - explicit failure if Ogg Skeleton data is found
+//    1.14    - 2018-02-11 - delete bogus dealloca usage
+//    1.13    - 2018-01-29 - fix truncation of last frame (hopefully)
+//    1.12    - 2017-11-21 - limit residue begin/end to blocksize/2 to avoid large temp allocs in bad/corrupt files
+//    1.11    - 2017-07-23 - fix MinGW compilation
+//    1.10    - 2017-03-03 - more robust seeking; fix negative ilog(); clear error in open_memory
+//    1.09    - 2016-04-04 - back out 'truncation of last frame' fix from previous version
+//    1.08    - 2016-04-02 - warnings; setup memory leaks; truncation of last frame
+//    1.07    - 2015-01-16 - fixes for crashes on invalid files; warning fixes; const
+//    1.06    - 2015-08-31 - full, correct support for seeking API (Dougall Johnson)
+//                           some crash fixes when out of memory or with corrupt files
+//                           fix some inappropriately signed shifts
 //    1.05    - 2015-04-19 - don't define __forceinline if it's redundant
 //    1.04    - 2014-08-27 - fix missing const-correct case in API
 //    1.03    - 2014-08-07 - warning fixes
-//    1.02    - 2014-07-09 - declare qsort comparison as explicitly _cdecl in
-//    Windows 1.01    - 2014-06-18 - fix stb_vorbis_get_samples_float
-//    (interleaved was correct) 1.0     - 2014-05-26 - fix memory leaks; fix
-//    warnings; fix bugs in >2-channel;
-//                           (API change) report sample rate for
-//                           decode-full-file funcs
+//    1.02    - 2014-07-09 - declare qsort comparison as explicitly _cdecl in Windows
+//    1.01    - 2014-06-18 - fix stb_vorbis_get_samples_float (interleaved was correct)
+//    1.0     - 2014-05-26 - fix memory leaks; fix warnings; fix bugs in >2-channel;
+//                           (API change) report sample rate for decode-full-file funcs
 //
 // See end of file for full version history.
 
@@ -174,8 +170,8 @@ extern "C"
     // NOT WORKING YET after a seek with PULLDATA API
     extern int stb_vorbis_get_sample_offset(stb_vorbis *f);
 
-    //  this function returns the count of returned samples from the beginning of
-    //  the file. Functions "stb_vorbis_get_samples_*", "stb_vorbis_seek_*()" will
+    //  this function returns the count of returned samples from the beginning of the
+    //  file. Functions "stb_vorbis_get_samples_*", "stb_vorbis_seek_*()" will
     //  affect the returned value. Use this call to get the accurate sample position
     //  during playback.
     extern int stb_vorbis_get_playback_sample_offset(stb_vorbis *f);
@@ -201,14 +197,11 @@ extern "C"
     // create a vorbis decoder by passing in the initial data block containing
     //    the ogg&vorbis headers (you don't need to do parse them, just provide
     //    the first N bytes of the file--you're told if it's not enough, see below)
-    // on success, returns an stb_vorbis *, does not set error, returns the amount
-    // of
+    // on success, returns an stb_vorbis *, does not set error, returns the amount of
     //    data parsed/consumed on this call in *datablock_memory_consumed_in_bytes;
-    // on failure, returns NULL on error and sets *error, does not change
-    // *datablock_memory_consumed if returns NULL and *error is
-    // VORBIS_need_more_data, then the input block was
-    //       incomplete and you need to pass in a larger block from the start of the
-    //       file
+    // on failure, returns NULL on error and sets *error, does not change *datablock_memory_consumed
+    // if returns NULL and *error is VORBIS_need_more_data, then the input block was
+    //       incomplete and you need to pass in a larger block from the start of the file
 
     extern int stb_vorbis_decode_frame_pushdata(stb_vorbis *f, const unsigned char *datablock,
                                                 int datablock_length_in_bytes,
@@ -352,10 +345,10 @@ extern "C"
     // per channel.
 
     // Channel coercion rules:
-    //    Let M be the number of channels requested, and N the number of channels
-    //    present, and Cn be the nth channel; let stereo L be the sum of all L and
-    //    center channels, and stereo R be the sum of all R and center channels
-    //    (channel assignment from the vorbis spec).
+    //    Let M be the number of channels requested, and N the number of channels present,
+    //    and Cn be the nth channel; let stereo L be the sum of all L and center channels,
+    //    and stereo R be the sum of all R and center channels (channel assignment from the
+    //    vorbis spec).
     //        M    N       output
     //        1    k      sum(Ck) for all k
     //        2    *      stereo L, stereo R
@@ -367,10 +360,9 @@ extern "C"
     extern int stb_vorbis_get_samples_float_interleaved(stb_vorbis *f, int channels, float *buffer, int num_floats);
     extern int stb_vorbis_get_samples_float(stb_vorbis *f, int channels, float **buffer, int num_samples);
     // gets num_samples samples, not necessarily on a frame boundary--this requires
-    // buffering so you have to supply the buffers. DOES NOT APPLY THE COERCION
-    // RULES. Returns the number of samples stored per channel; it may be less than
-    // requested at the end of the file. If there are no more samples in the file,
-    // returns 0.
+    // buffering so you have to supply the buffers. DOES NOT APPLY THE COERCION RULES.
+    // Returns the number of samples stored per channel; it may be less than requested
+    // at the end of the file. If there are no more samples in the file, returns 0.
 
 #ifndef STB_VORBIS_NO_INTEGER_CONVERSION
     extern int stb_vorbis_get_samples_short_interleaved(stb_vorbis *f, int channels, short *buffer, int num_shorts);
@@ -378,9 +370,9 @@ extern "C"
 #endif
     // gets num_samples samples, not necessarily on a frame boundary--this requires
     // buffering so you have to supply the buffers. Applies the coercion rules above
-    // to produce 'channels' channels. Returns the number of samples stored per
-    // channel; it may be less than requested at the end of the file. If there are
-    // no more samples in the file, returns 0.
+    // to produce 'channels' channels. Returns the number of samples stored per channel;
+    // it may be less than requested at the end of the file. If there are no more
+    // samples in the file, returns 0.
 
 #endif
 
@@ -592,10 +584,10 @@ extern "C"
 #endif
 
 #ifndef STB_VORBIS_NO_CRT
-#include <assert.h>
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
+#include <math.h>
 #else // STB_VORBIS_NO_CRT
 #ifndef NULL
 #define NULL 0
@@ -908,8 +900,7 @@ struct stb_vorbis
     uint32 samples_output;
 
     // push mode scanning
-    int page_crc_tests; // only in push_mode: number of tests active; -1 if not
-                        // searching
+    int page_crc_tests; // only in push_mode: number of tests active; -1 if not searching
 #ifndef STB_VORBIS_NO_PUSHDATA_API
     CRCscan scan[STB_VORBIS_PUSHDATA_CRC_COUNT];
 #endif
@@ -965,8 +956,7 @@ static int error(vorb *f, enum STBVorbisError e)
 
 #define temp_block_array(f, count, size) make_block_array(temp_alloc(f, array_size_required(count, size)), count, size)
 
-// given a sufficiently large block of memory, make an array of pointers to
-// subblocks of it
+// given a sufficiently large block of memory, make an array of pointers to subblocks of it
 static void *make_block_array(void *mem, int count, int size)
 {
     if (!mem)
@@ -1071,9 +1061,8 @@ static float square(float x)
     return x * x;
 }
 
-// this is a weird definition of log2() for which log2(1) = 1, log2(2) = 2,
-// log2(4) = 3 as required by the specification. fast(?) implementation from
-// stb.h
+// this is a weird definition of log2() for which log2(1) = 1, log2(2) = 2, log2(4) = 3
+// as required by the specification. fast(?) implementation from stb.h
 // @OPTIMIZE: called multiple times per-packet with "constants"; move to setup
 static int ilog(int32 n)
 {
@@ -1267,9 +1256,9 @@ static void compute_sorted_huffman(Codebook *c, uint8 *lengths, uint32 *values)
 {
     int i, len;
     // build a list of all the entries
-    // OPTIMIZATION: don't include the short ones, since they'll be caught by
-    // FAST_HUFFMAN. this is kind of a frivolous optimization--I don't see any
-    // performance improvement, but it's like 4 extra lines of code, so.
+    // OPTIMIZATION: don't include the short ones, since they'll be caught by FAST_HUFFMAN.
+    // this is kind of a frivolous optimization--I don't see any performance improvement,
+    // but it's like 4 extra lines of code, so.
     if (!c->sparse)
     {
         int k = 0;
@@ -1290,8 +1279,8 @@ static void compute_sorted_huffman(Codebook *c, uint8 *lengths, uint32 *values)
     len = c->sparse ? c->sorted_entries : c->entries;
     // now we need to indicate how they correspond; we could either
     //   #1: sort a different data structure that says who they correspond to
-    //   #2: for each sorted entry, search the original list to find who
-    //   corresponds #3: for each original entry, find the sorted entry
+    //   #2: for each sorted entry, search the original list to find who corresponds
+    //   #3: for each original entry, find the sorted entry
     // #1 requires extra storage, #2 is slow, #3 can use binary search!
     for (i = 0; i < len; ++i)
     {
@@ -1603,8 +1592,7 @@ static int start_page_no_capturepattern(vorb *f)
     // @TODO: validate loc0,loc1 as valid positions?
     // stream serial number -- vorbis doesn't interleave, so discard
     get32(f);
-    // if (f->serial != get32(f)) return error(f,
-    // VORBIS_incorrect_stream_serial_number);
+    // if (f->serial != get32(f)) return error(f, VORBIS_incorrect_stream_serial_number);
     //  page sequence number
     n = get32(f);
     f->last_page = n;
@@ -1769,8 +1757,8 @@ static void flush_packet(vorb *f)
         ;
 }
 
-// @OPTIMIZE: this is the secondary bit decoder, so it's probably not as
-// important as the huffman decoder?
+// @OPTIMIZE: this is the secondary bit decoder, so it's probably not as important
+// as the huffman decoder?
 static uint32 get_bits(vorb *f, int n)
 {
     uint32 z;
@@ -1809,9 +1797,9 @@ static uint32 get_bits(vorb *f, int n)
 }
 
 // @OPTIMIZE: primary accumulator for huffman
-// expand the buffer to as many bits as possible without reading off end of
-// packet it might be nice to allow f->valid_bits and f->acc to be stored in
-// registers, e.g. cache them locally and decode locally
+// expand the buffer to as many bits as possible without reading off end of packet
+// it might be nice to allow f->valid_bits and f->acc to be stored in registers,
+// e.g. cache them locally and decode locally
 STB_FORCEINLINE void prep_huffman(vorb *f)
 {
     if (f->valid_bits <= 24)
@@ -2190,8 +2178,7 @@ static int predict_point(int x, int x0, int x1, int y0, int y1)
 {
     int dy = y1 - y0;
     int adx = x1 - x0;
-    // @OPTIMIZE: force int division to round in the right direction... is this
-    // necessary on x86?
+    // @OPTIMIZE: force int division to round in the right direction... is this necessary on x86?
     int err = abs(dy) * (x - x0);
     int off = err / adx;
     return dy < 0 ? y0 - off : y0 + off;
@@ -2953,9 +2940,8 @@ static void inverse_mdct(float *buffer, int n, vorb *f, int blocktype)
     // twiddle factors
     float *A = f->A[blocktype];
 
-    // IMDCT algorithm from "The use of multirate filter banks for coding of high
-    // quality digital audio" See notes about bugs in that paper in less-optimal
-    // implementation 'inverse_mdct_old' after this function.
+    // IMDCT algorithm from "The use of multirate filter banks for coding of high quality digital audio"
+    // See notes about bugs in that paper in less-optimal implementation 'inverse_mdct_old' after this function.
 
     // kernel from paper
 
@@ -3095,8 +3081,7 @@ static void inverse_mdct(float *buffer, int n, vorb *f, int blocktype)
     //   ld-6,-5,-4 all interleaved together
     //       the big win comes from getting rid of needless flops
     //         due to the constants on pass 5 & 4 being all 1 and 0;
-    //       combining them to be simultaneous to improve cache made little
-    //       difference
+    //       combining them to be simultaneous to improve cache made little difference
     imdct_step3_inner_s_loop_ld654(n >> 5, u, n2 - 1, A, n);
 
     // output is u
@@ -3443,18 +3428,14 @@ static int do_floor(vorb *f, Mapping *map, int i, int n, float *target, YTYPE *f
 // For a given frame:
 //     we compute samples from 0..n
 //     window_center is n/2
-//     we'll window and mix the samples from left_start to left_end with data
-//     from the previous frame all of the samples from left_end to right_start
-//     can be output without mixing; however,
-//        this interval is 0-length except when transitioning between short and
-//        long frames
-//     all of the samples from right_start to right_end need to be mixed with
-//     the next frame,
+//     we'll window and mix the samples from left_start to left_end with data from the previous frame
+//     all of the samples from left_end to right_start can be output without mixing; however,
+//        this interval is 0-length except when transitioning between short and long frames
+//     all of the samples from right_start to right_end need to be mixed with the next frame,
 //        which we don't have, so those get saved in a buffer
-//     frame N's right_end-right_start, the number of samples to mix with the
-//     next frame,
-//        has to be the same as frame N+1's left_end-left_start (which they are
-//        by construction)
+//     frame N's right_end-right_start, the number of samples to mix with the next frame,
+//        has to be the same as frame N+1's left_end-left_start (which they are by
+//        construction)
 
 static int vorbis_decode_initial(vorb *f, int *p_left_start, int *p_left_end, int *p_right_start, int *p_right_end,
                                  int *mode)
@@ -3769,8 +3750,8 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
         // this isn't to spec, but spec would require us to read ahead
         // and decode the size of all current frames--could be done,
         // but presumably it's not a commonly used feature
-        f->current_loc = 0u - n2; // start of first frame is positioned for discard (NB this is
-                                  // an intentional unsigned overflow/wrap-around)
+        f->current_loc = 0u - n2; // start of first frame is positioned for discard (NB this is an intentional unsigned
+                                  // overflow/wrap-around)
         // we might have to discard samples "from" the next frame too,
         // if we're lapping a large block then a small at the start?
         f->discard_samples_deferred = n - right_end;
@@ -3821,8 +3802,7 @@ static int vorbis_decode_packet_rest(vorb *f, int *len, Mode *m, int left_start,
                 {
                     *len = current_end - f->current_loc;
                 }
-                *len += left_start; // this doesn't seem right, but has no ill effect on
-                                    // my test files
+                *len += left_start; // this doesn't seem right, but has no ill effect on my test files
                 if (*len > right_end)
                     *len = right_end; // this should never happen
                 f->current_loc += *len;
@@ -3928,17 +3908,16 @@ static int is_whole_packet_present(stb_vorbis *f)
     // make sure that we have the packet available before continuing...
     // this requires a full ogg parse, but we know we can fetch from f->stream
 
-    // instead of coding this out explicitly, we could save the current read
-    // state, read the next packet with get8() until end-of-packet, check f->eof,
-    // then reset the state? but that would be slower, esp. since we'd have over
-    // 256 bytes of state to restore (primarily the page segment table)
+    // instead of coding this out explicitly, we could save the current read state,
+    // read the next packet with get8() until end-of-packet, check f->eof, then
+    // reset the state? but that would be slower, esp. since we'd have over 256 bytes
+    // of state to restore (primarily the page segment table)
 
     int s = f->next_seg, first = TRUE;
     uint8 *p = f->stream;
 
     if (s != -1)
-    { // if we're not starting the packet with a 'continue on next
-      // page' flag
+    { // if we're not starting the packet with a 'continue on next page' flag
         for (; s < f->segment_count; ++s)
         {
             p += f->segments[s];
@@ -3966,13 +3945,12 @@ static int is_whole_packet_present(stb_vorbis *f)
         if (p[4] != 0)
             return error(f, VORBIS_invalid_stream);
         if (first)
-        { // the first segment must NOT have 'continued_packet', later
-          // ones MUST
+        { // the first segment must NOT have 'continued_packet', later ones MUST
             if (f->previous_length)
                 if ((p[5] & PAGEFLAG_continued_packet))
                     return error(f, VORBIS_invalid_stream);
-            // if no previous length, we're resynching, so we can come in on a
-            // continued-packet, which we'll just drop
+            // if no previous length, we're resynching, so we can come in on a continued-packet,
+            // which we'll just drop
         }
         else
         {
@@ -4276,8 +4254,7 @@ static int start_decoder(vorb *f)
                 return error(f, VORBIS_outofmem);
             memcpy(c->codeword_lengths, lengths, c->entries);
             setup_temp_free(f, &f->temp_lengths,
-                            c->entries); // note this is only safe if there have been
-                                         // no intervening temp mallocs!
+                            c->entries); // note this is only safe if there have been no intervening temp mallocs!
             lengths = c->codeword_lengths;
             c->sparse = 0;
         }
@@ -4340,8 +4317,8 @@ static int start_decoder(vorb *f)
             c->sorted_codewords = (uint32 *)setup_malloc(f, sizeof(*c->sorted_codewords) * (c->sorted_entries + 1));
             if (c->sorted_codewords == NULL)
                 return error(f, VORBIS_outofmem);
-            // allocate an extra slot at the front so that c->sorted_values[-1] is
-            // defined so that we can catch that case without an extra if
+            // allocate an extra slot at the front so that c->sorted_values[-1] is defined
+            // so that we can catch that case without an extra if
             c->sorted_values = (int *)setup_malloc(f, sizeof(*c->sorted_values) * (c->sorted_entries + 1));
             if (c->sorted_values == NULL)
                 return error(f, VORBIS_outofmem);
@@ -4403,8 +4380,7 @@ static int start_decoder(vorb *f)
             {
                 int len, sparse = c->sparse;
                 float last = 0;
-                // pre-expand the lookup1-style multiplicands, to avoid a divide in the
-                // inner loop
+                // pre-expand the lookup1-style multiplicands, to avoid a divide in the inner loop
                 if (sparse)
                 {
                     if (c->sorted_entries == 0)
@@ -4822,12 +4798,12 @@ static int start_decoder(vorb *f)
             return error(f, VORBIS_outofmem);
     }
 
-    // @TODO: stb_vorbis_seek_start expects first_audio_page_offset to point to a
-    // page without PAGEFLAG_continued_packet, so this either points to the first
-    // page, or the page after the end of the headers. It might be cleaner to
-    // point to a page in the middle of the headers, when that's the page where
-    // the first audio packet starts, but we'd have to also correctly skip the end
-    // of any continued packet in stb_vorbis_seek_start.
+    // @TODO: stb_vorbis_seek_start expects first_audio_page_offset to point to a page
+    // without PAGEFLAG_continued_packet, so this either points to the first page, or
+    // the page after the end of the headers. It might be cleaner to point to a page
+    // in the middle of the headers, when that's the page where the first audio packet
+    // starts, but we'd have to also correctly skip the end of any continued packet in
+    // stb_vorbis_seek_start.
     if (f->next_seg == -1)
     {
         f->first_audio_page_offset = stb_vorbis_get_file_offset(f);
@@ -5106,8 +5082,7 @@ static int vorbis_search_for_page_pushdata(vorb *f, uint8 *data, int data_len)
                 f->previous_length = 0;                 // decode-but-don't-output one frame
                 f->next_seg = -1;                       // start a new page
                 f->current_loc = f->scan[i].sample_loc; // set the current sample location
-                                                        // to the amount we'd have decoded had we
-                                                        // decoded this page
+                                                        // to the amount we'd have decoded had we decoded this page
                 f->current_loc_valid = f->current_loc != ~0U;
                 return data_len;
             }
@@ -5203,9 +5178,8 @@ int stb_vorbis_decode_frame_pushdata(stb_vorbis *f,                   // the fil
     return (int)(f->stream - data);
 }
 
-stb_vorbis *stb_vorbis_open_pushdata(const unsigned char *data,
-                                     int data_len,   // the memory available for decoding
-                                     int *data_used, // only defined if result is not NULL
+stb_vorbis *stb_vorbis_open_pushdata(const unsigned char *data, int data_len, // the memory available for decoding
+                                     int *data_used,                          // only defined if result is not NULL
                                      int *error, const stb_vorbis_alloc *alloc)
 {
     stb_vorbis *f, p;
@@ -5753,8 +5727,7 @@ unsigned int stb_vorbis_stream_length_in_samples(stb_vorbis *f)
                 // set. whoops!
                 break;
             }
-            // previous_safe = last_page_loc+1; // NOTE: not used after this point,
-            // but note for debugging
+            // previous_safe = last_page_loc+1; // NOTE: not used after this point, but note for debugging
             last_page_loc = stb_vorbis_get_file_offset(f);
         }
 
@@ -5925,8 +5898,7 @@ typedef union {
 } float_conv;
 typedef char stb_vorbis_float_size_test[sizeof(float) == 4 && sizeof(int) == 4];
 #define FASTDEF(x) float_conv x
-// add (1<<23) to convert to int, then divide by 2^SHIFT, then add 0.5/2^SHIFT
-// to round
+// add (1<<23) to convert to int, then divide by 2^SHIFT, then add 0.5/2^SHIFT to round
 #define MAGIC(SHIFT) (1.5f * (1 << (23 - SHIFT)) + 0.5f / (1 << SHIFT))
 #define ADDEND(SHIFT) (((150 - SHIFT) << 23) + (1 << 22))
 #define FAST_SCALED_FLOAT_TO_INT(temp, x, s) (int)(temp.f = (x) + MAGIC(s), temp.i - ADDEND(s))
@@ -6318,64 +6290,59 @@ int stb_vorbis_get_samples_float(stb_vorbis *f, int channels, float **buffer, in
 #endif // STB_VORBIS_NO_PULLDATA_API
 
 /* Version history
-    1.17    - 2019-07-08 - fix CVE-2019-13217, -13218, -13219, -13220, -13221,
-   -13222, -13223 found with Mayhem by ForAllSecure 1.16    - 2019-03-04 - fix
-   warnings 1.15    - 2019-02-07 - explicit failure if Ogg Skeleton data is
-   found 1.14    - 2018-02-11 - delete bogus dealloca usage 1.13    - 2018-01-29
-   - fix truncation of last frame (hopefully) 1.12    - 2017-11-21 - limit
-   residue begin/end to blocksize/2 to avoid large temp allocs in bad/corrupt
-   files 1.11    - 2017-07-23 - fix MinGW compilation 1.10    - 2017-03-03 -
-   more robust seeking; fix negative ilog(); clear error in open_memory 1.09 -
-   2016-04-04 - back out 'avoid discarding last frame' fix from previous version
+    1.17    - 2019-07-08 - fix CVE-2019-13217, -13218, -13219, -13220, -13221, -13222, -13223
+                           found with Mayhem by ForAllSecure
+    1.16    - 2019-03-04 - fix warnings
+    1.15    - 2019-02-07 - explicit failure if Ogg Skeleton data is found
+    1.14    - 2018-02-11 - delete bogus dealloca usage
+    1.13    - 2018-01-29 - fix truncation of last frame (hopefully)
+    1.12    - 2017-11-21 - limit residue begin/end to blocksize/2 to avoid large temp allocs in bad/corrupt files
+    1.11    - 2017-07-23 - fix MinGW compilation
+    1.10    - 2017-03-03 - more robust seeking; fix negative ilog(); clear error in open_memory
+    1.09    - 2016-04-04 - back out 'avoid discarding last frame' fix from previous version
     1.08    - 2016-04-02 - fixed multiple warnings; fix setup memory leaks;
                            avoid discarding last frame of audio data
     1.07    - 2015-01-16 - fixed some warnings, fix mingw, const-correct API
-                           some more crash fixes when out of memory or with
-   corrupt files 1.06    - 2015-08-31 - full, correct support for seeking API
-   (Dougall Johnson) some crash fixes when out of memory or with corrupt files
+                           some more crash fixes when out of memory or with corrupt files
+    1.06    - 2015-08-31 - full, correct support for seeking API (Dougall Johnson)
+                           some crash fixes when out of memory or with corrupt files
     1.05    - 2015-04-19 - don't define __forceinline if it's redundant
     1.04    - 2014-08-27 - fix missing const-correct case in API
     1.03    - 2014-08-07 - Warning fixes
     1.02    - 2014-07-09 - Declare qsort compare function _cdecl on windows
     1.01    - 2014-06-18 - fix stb_vorbis_get_samples_float
-    1.0     - 2014-05-26 - fix memory leaks; fix warnings; fix bugs in
-   multichannel (API change) report sample rate for decode-full-file funcs
-    0.99996 - bracket #include <malloc.h> for macintosh compilation by Laurent
-   Gomila 0.99995 - use union instead of pointer-cast for fast-float-to-int to
-   avoid alias-optimization problem 0.99994 - change fast-float-to-int to work
-   in single-precision FPU mode, remove endian-dependence 0.99993 - remove
-   assert that fired on legal files with empty tables 0.99992 - rewind-to-start
+    1.0     - 2014-05-26 - fix memory leaks; fix warnings; fix bugs in multichannel
+                           (API change) report sample rate for decode-full-file funcs
+    0.99996 - bracket #include <malloc.h> for macintosh compilation by Laurent Gomila
+    0.99995 - use union instead of pointer-cast for fast-float-to-int to avoid alias-optimization problem
+    0.99994 - change fast-float-to-int to work in single-precision FPU mode, remove endian-dependence
+    0.99993 - remove assert that fired on legal files with empty tables
+    0.99992 - rewind-to-start
     0.99991 - bugfix to stb_vorbis_get_samples_short by Bernhard Wodo
     0.9999 - (should have been 0.99990) fix no-CRT support, compiling as C++
     0.9998 - add a full-decode function with a memory source
     0.9997 - fix a bug in the read-from-FILE case in 0.9996 addition
     0.9996 - query length of vorbis stream in samples/seconds
     0.9995 - bugfix to another optimization that only happened in certain files
-    0.9994 - bugfix to one of the optimizations that caused significant (but
-   inaudible?) errors 0.9993 - performance improvements; runs in 99% to 104% of
-   time of reference implementation 0.9992 - performance improvement of IMDCT;
-   now performs close to reference implementation 0.9991 - performance
-   improvement of IMDCT 0.999 - (should have been 0.9990) performance
-   improvement of IMDCT 0.998 - no-CRT support from Casey Muratori 0.997 -
-   bugfixes for bugs found by Terje Mathisen 0.996 - bugfix: fast-huffman decode
-   initialized incorrectly for sparse codebooks; fixing gives 10% speedup -
-   found by Terje Mathisen 0.995 - bugfix: fix to 'effective' overrun detection
-   - found by Terje Mathisen 0.994 - bugfix: garbage decode on final VQ symbol
-   of a non-multiple - found by Terje Mathisen 0.993 - bugfix: pushdata API
-   required 1 extra byte for empty page (failed to consume final page if empty)
-   - found by Terje Mathisen 0.992 - fixes for MinGW warning 0.991 - turn
-   fast-float-conversion on by default 0.990 - fix push-mode seek recovery if
-   you seek into the headers 0.98b - fix to bad release of 0.98 0.98 - fix
-   push-mode seek recovery; robustify float-to-int and support non-fast mode
-    0.97 - builds under c++ (typecasting, don't use 'class' keyword)
-    0.96 - somehow MY 0.95 was right, but the web one was wrong, so here's my
-   0.95 rereleased as 0.96, fixes a typo in the clamping code 0.95 - clamping
-   code for 16-bit functions 0.94 - not publically released 0.93 - fixed
-   all-zero-floor case (was decoding garbage) 0.92 - fixed a memory leak 0.91 -
-   conditional compiles to omit parts of the API and the infrastructure to
-   support them: STB_VORBIS_NO_PULLDATA_API, STB_VORBIS_NO_PUSHDATA_API,
-   STB_VORBIS_NO_STDIO, STB_VORBIS_NO_INTEGER_CONVERSION 0.90 - first public
-   release
+    0.9994 - bugfix to one of the optimizations that caused significant (but inaudible?) errors
+    0.9993 - performance improvements; runs in 99% to 104% of time of reference implementation
+    0.9992 - performance improvement of IMDCT; now performs close to reference implementation
+    0.9991 - performance improvement of IMDCT
+    0.999 - (should have been 0.9990) performance improvement of IMDCT
+    0.998 - no-CRT support from Casey Muratori
+    0.997 - bugfixes for bugs found by Terje Mathisen
+    0.996 - bugfix: fast-huffman decode initialized incorrectly for sparse codebooks; fixing gives 10% speedup - found
+   by Terje Mathisen 0.995 - bugfix: fix to 'effective' overrun detection - found by Terje Mathisen 0.994 - bugfix:
+   garbage decode on final VQ symbol of a non-multiple - found by Terje Mathisen 0.993 - bugfix: pushdata API required 1
+   extra byte for empty page (failed to consume final page if empty) - found by Terje Mathisen 0.992 - fixes for MinGW
+   warning 0.991 - turn fast-float-conversion on by default 0.990 - fix push-mode seek recovery if you seek into the
+   headers 0.98b - fix to bad release of 0.98 0.98 - fix push-mode seek recovery; robustify float-to-int and support
+   non-fast mode 0.97 - builds under c++ (typecasting, don't use 'class' keyword) 0.96 - somehow MY 0.95 was right, but
+   the web one was wrong, so here's my 0.95 rereleased as 0.96, fixes a typo in the clamping code 0.95 - clamping code
+   for 16-bit functions 0.94 - not publically released 0.93 - fixed all-zero-floor case (was decoding garbage) 0.92 -
+   fixed a memory leak 0.91 - conditional compiles to omit parts of the API and the infrastructure to support them:
+   STB_VORBIS_NO_PULLDATA_API, STB_VORBIS_NO_PUSHDATA_API, STB_VORBIS_NO_STDIO, STB_VORBIS_NO_INTEGER_CONVERSION 0.90 -
+   first public release
 */
 
 #endif // STB_VORBIS_HEADER_ONLY

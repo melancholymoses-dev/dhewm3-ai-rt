@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/RenderSystem.h"
 #include "sys/platform.h"
+#include "renderer/RenderSystem.h"
 
-#include "Fx.h"
-#include "Player.h"
-#include "SmokeParticles.h"
 #include "gamesys/SysCvar.h"
+#include "Player.h"
+#include "Fx.h"
+#include "SmokeParticles.h"
 
 #include "Item.h"
 
@@ -850,8 +847,7 @@ void idObjective::Event_Trigger(idEntity *activator)
                 player->GiveObjective(spawnArgs.GetString("objectivetitle"), spawnArgs.GetString("objectivetext"),
                                       shotName);
 
-                // a tad slow but keeps from having to update all objectives in all maps
-                // with a name ptr
+                // a tad slow but keeps from having to update all objectives in all maps with a name ptr
                 for (int i = 0; i < gameLocal.num_entities; i++)
                 {
                     if (gameLocal.entities[i] && gameLocal.entities[i]->IsType(idObjectiveComplete::Type))
@@ -1166,8 +1162,7 @@ idEntity *idMoveableItem::DropItem(const char *classname, const idVec3 &origin, 
     args.Set("classname", classname);
     args.Set("dropped", "1");
 
-    // we sometimes drop idMoveables here, so set 'nodrop' to 1 so that it doesn't
-    // get put on the floor
+    // we sometimes drop idMoveables here, so set 'nodrop' to 1 so that it doesn't get put on the floor
     args.Set("nodrop", "1");
 
     if (activateDelay)
@@ -1191,8 +1186,7 @@ idEntity *idMoveableItem::DropItem(const char *classname, const idVec3 &origin, 
         {
             removeDelay = 5 * 60 * 1000;
         }
-        // always remove a dropped item after 5 minutes in case it dropped to an
-        // unreachable location
+        // always remove a dropped item after 5 minutes in case it dropped to an unreachable location
         item->PostEventMS(&EV_Remove, removeDelay);
     }
     return item;
@@ -1203,16 +1197,16 @@ idEntity *idMoveableItem::DropItem(const char *classname, const idVec3 &origin, 
 idMoveableItem::DropItems
 
   The entity should have the following key/value pairs set:
-        "def_drop<type>Item"			"item def"
-        "drop<type>ItemJoint"			"joint name"
-        "drop<type>ItemRotation"		"pitch yaw roll"
-        "drop<type>ItemOffset"			"x y z"
-        "skin_drop<type>"				"skin name"
+    "def_drop<type>Item"			"item def"
+    "drop<type>ItemJoint"			"joint name"
+    "drop<type>ItemRotation"		"pitch yaw roll"
+    "drop<type>ItemOffset"			"x y z"
+    "skin_drop<type>"				"skin name"
   To drop multiple items the following key/value pairs can be used:
-        "def_drop<type>Item<X>"			"item def"
-        "drop<type>Item<X>Joint"		"joint name"
-        "drop<type>Item<X>Rotation"		"pitch yaw roll"
-        "drop<type>Item<X>Offset"		"x y z"
+    "def_drop<type>Item<X>"			"item def"
+    "drop<type>Item<X>Joint"		"joint name"
+    "drop<type>Item<X>Rotation"		"pitch yaw roll"
+    "drop<type>Item<X>Offset"		"x y z"
   where <X> is an aribtrary string.
 ================
 */

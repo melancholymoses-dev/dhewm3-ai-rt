@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Entity.h"
-#include "gamesys/SysCvar.h"
 #include "sys/platform.h"
+#include "gamesys/SysCvar.h"
+#include "Entity.h"
 
 #include "physics/Physics_Player.h"
 
@@ -95,9 +92,8 @@ float idPhysics_Player::CmdScale(const usercmd_t &cmd) const
     forwardmove = cmd.forwardmove;
     rightmove = cmd.rightmove;
 
-    // since the crouch key doubles as downward movement, ignore downward movement
-    // when we're on the ground otherwise crouch speed will be lower than
-    // specified
+    // since the crouch key doubles as downward movement, ignore downward movement when we're on the ground
+    // otherwise crouch speed will be lower than specified
     if (walking)
     {
         upmove = 0;
@@ -261,8 +257,7 @@ bool idPhysics_Player::SlideMove(bool gravity, bool stepUp, bool stepDown, bool 
             if (!nearGround)
             {
                 // trace down to see if the player is near the ground
-                // step checking when near the ground allows the player to move up
-                // stairs smoothly while jumping
+                // step checking when near the ground allows the player to move up stairs smoothly while jumping
                 stepEnd = current.origin + maxStepHeight * gravityNormal;
                 gameLocal.clip.Translation(downTrace, current.origin, stepEnd, clipModel, clipModel->GetAxis(),
                                            clipMask, self);
@@ -323,8 +318,8 @@ bool idPhysics_Player::SlideMove(bool gravity, bool stepUp, bool stepDown, bool 
 
             clipModel->SetPosition(current.origin, clipModel->GetAxis());
 
-            // clip movement, only push idMoveables, don't push entities the player is
-            // standing on apply impact to pushed objects
+            // clip movement, only push idMoveables, don't push entities the player is standing on
+            // apply impact to pushed objects
             pushFlags = PUSHFL_CLIP | PUSHFL_ONLYMOVEABLE | PUSHFL_NOGROUNDENTITIES | PUSHFL_APPLYIMPULSE;
 
             // clip & push
@@ -332,8 +327,7 @@ bool idPhysics_Player::SlideMove(bool gravity, bool stepUp, bool stepDown, bool 
 
             if (totalMass > 0.0f)
             {
-                // decrease velocity based on the total mass of the objects being pushed
-                // ?
+                // decrease velocity based on the total mass of the objects being pushed ?
                 current.velocity *= 1.0f - idMath::ClampFloat(0.0f, 1000.0f, totalMass - 20.0f) * (1.0f / 950.0f);
                 pushed = true;
             }
@@ -356,8 +350,8 @@ bool idPhysics_Player::SlideMove(bool gravity, bool stepUp, bool stepDown, bool 
 
         if (numplanes >= MAX_CLIP_PLANES)
         {
-            // MrElusive: I think we have some relatively high poly LWO models with a
-            // lot of slanted tris where it may hit the max clip planes
+            // MrElusive: I think we have some relatively high poly LWO models with a lot of slanted tris
+            // where it may hit the max clip planes
             current.velocity = vec3_origin;
             return true;
         }
@@ -796,8 +790,7 @@ void idPhysics_Player::WalkMove(void)
         }
     }
 
-    // when a player gets hit, they temporarily lose full control, which allows
-    // them to be moved a bit
+    // when a player gets hit, they temporarily lose full control, which allows them to be moved a bit
     if ((groundMaterial && groundMaterial->GetSurfaceFlags() & SURF_SLICK) ||
         current.movementFlags & PMF_TIME_KNOCKBACK)
     {
@@ -1846,17 +1839,16 @@ void idPhysics_Player::Restore(idRestoreGame *savefile)
     savefile->ReadInt((int &)waterLevel);
     savefile->ReadInt(waterType);
 
-    /* DG: It can apparently happen that the player saves while the clipModel's
-     * axis are modified by idPush::TryRotatePushEntity() ->
-     * idPhysics_Player::Rotate() -> idClipModel::Link() Normally idPush seems to
-     * reset them to the identity matrix in the next frame, but apparently not
-     * when coming from a savegame. Usually clipModel->axis is the identity
-     * matrix, and if it isn't there's clipping bugs like CheckGround() reporting
-     * that it's steep even though the player is only trying to walk up normal
-     * stairs. Resetting the axis to mat3_identity when restoring a savegame works
-     * around that issue and makes sure players can go on playing if their
-     * savegame was "corrupted" by saving while idPush was active. See
-     * https://github.com/dhewm/dhewm3/issues/328 for more details */
+    /* DG: It can apparently happen that the player saves while the clipModel's axis are
+     *     modified by idPush::TryRotatePushEntity() -> idPhysics_Player::Rotate() -> idClipModel::Link()
+     *     Normally idPush seems to reset them to the identity matrix in the next frame,
+     *     but apparently not when coming from a savegame.
+     *     Usually clipModel->axis is the identity matrix, and if it isn't there's clipping bugs
+     *     like CheckGround() reporting that it's steep even though the player is only trying to
+     *     walk up normal stairs.
+     *     Resetting the axis to mat3_identity when restoring a savegame works around that issue
+     *     and makes sure players can go on playing if their savegame was "corrupted" by saving
+     *     while idPush was active. See https://github.com/dhewm/dhewm3/issues/328 for more details */
     if (clipModel != NULL)
     {
         clipModel->SetPosition(clipModel->GetOrigin(), mat3_identity);

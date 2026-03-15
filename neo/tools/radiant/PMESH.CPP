@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "CapDialog.h"
-#include "DialogInfo.h"
 #include "qe3.h"
+#include "DialogInfo.h"
+#include "CapDialog.h"
 
 // externs
 extern void MemFile_fprintf(CMemFile *pMemFile, const char *pText, ...);
@@ -56,9 +53,8 @@ patchMesh_t *MakeNewPatch(int width, int height)
     pm->width = width;
     pm->height = height;
     pm->verts = reinterpret_cast<idDrawVert *>(Mem_ClearedAlloc(sizeof(idDrawVert) * width * height));
-    // pm->ctrl =
-    // reinterpret_cast<idDrawVert*>(Mem_ClearedAlloc(sizeof(idDrawVert) * width *
-    // height)); pm->ctrl = &pm->verts;
+    // pm->ctrl = reinterpret_cast<idDrawVert*>(Mem_ClearedAlloc(sizeof(idDrawVert) * width * height));
+    // pm->ctrl = &pm->verts;
     return pm;
 }
 
@@ -168,20 +164,20 @@ bool Patch_Intersect(patchMesh_t *pm, idVec3 origin, idVec3 direction, float &sc
     int width = cp.GetWidth();
     int height = cp.GetHeight();
     for ( i = 0 ; i < width - 1; i++ ) {
-            for ( j = 0 ; j < height - 1; j++ ) {
-                    // v1-v2-v3-v4 makes a quad
-                    int v1, v2, v3, v4;
-                    v1 = j * width + i;
-                    v2 = v1 + 1;
-                    v3 = v1 + width + 1;
-                    v4 = v1 + width;
-                    if (RayIntersectsTri(origin, direction, (cp)[v1].xyz,
-    (cp)[v2].xyz, (cp)[v3].xyz)) { return true;
-                    }
-                    if (RayIntersectsTri(origin, direction, (cp)[v3].xyz,
-    (cp)[v4].xyz, (cp)[v1].xyz)) { return true;
-                    }
+        for ( j = 0 ; j < height - 1; j++ ) {
+            // v1-v2-v3-v4 makes a quad
+            int v1, v2, v3, v4;
+            v1 = j * width + i;
+            v2 = v1 + 1;
+            v3 = v1 + width + 1;
+            v4 = v1 + width;
+            if (RayIntersectsTri(origin, direction, (cp)[v1].xyz, (cp)[v2].xyz, (cp)[v3].xyz)) {
+                return true;
             }
+            if (RayIntersectsTri(origin, direction, (cp)[v3].xyz, (cp)[v4].xyz, (cp)[v1].xyz)) {
+                return true;
+            }
+        }
     }
     return false;
     */
@@ -711,8 +707,8 @@ void Patch_Weld(patchMesh_t *p, patchMesh_t *p2)
 // used for a save spot
 patchMesh_t *patchSave = NULL;
 
-// Tracks the selected patch for point manipulation/update. FIXME: Need to
-// revert back to a generalized brush approach
+// Tracks the selected patch for point manipulation/update. FIXME: Need to revert back to a generalized
+// brush approach
 //--int  g_nSelectedPatch = -1;
 
 // HACK: for tracking which view generated the click
@@ -747,17 +743,14 @@ enum
     BEND_STATE_COUNT
 };
 
-const char *g_pBendStateMsg[] = {"Use TAB to cycle through available bend axis. Press ENTER when the "
-                                 "desired one is highlighted.",
-                                 "Use TAB to cycle through available rotation axis. This will LOCK around "
-                                 "that point. You may also use Shift + Middle Click to select an arbitrary "
-                                 "point. Press ENTER when the desired one is highlighted",
-                                 "Use TAB to choose which side to bend. Press ENTER when the desired one is "
-                                 "highlighted.",
-                                 "Use the MOUSE to bend the patch. It uses the same ui rules as Free "
-                                 "Rotation. Press ENTER to accept the bend, press ESC to abandon it and "
-                                 "exit Bend mode",
-                                 ""};
+const char *g_pBendStateMsg[] = {
+    "Use TAB to cycle through available bend axis. Press ENTER when the desired one is highlighted.",
+    "Use TAB to cycle through available rotation axis. This will LOCK around that point. You may also use Shift + "
+    "Middle Click to select an arbitrary point. Press ENTER when the desired one is highlighted",
+    "Use TAB to choose which side to bend. Press ENTER when the desired one is highlighted.",
+    "Use the MOUSE to bend the patch. It uses the same ui rules as Free Rotation. Press ENTER to accept the bend, "
+    "press ESC to abandon it and exit Bend mode",
+    ""};
 
 // INSERT states
 enum
@@ -766,8 +759,8 @@ enum
     INSERT_STATE_COUNT
 };
 
-const char *g_pInsertStateMsg[] = {"Use TAB to cycle through available rows/columns for insertion/deletion. "
-                                   "Press INS to insert at the highlight, DEL to remove the pair"};
+const char *g_pInsertStateMsg[] = {"Use TAB to cycle through available rows/columns for insertion/deletion. Press INS "
+                                   "to insert at the highlight, DEL to remove the pair"};
 
 float *g_InversePoints[1024];
 
@@ -1250,8 +1243,7 @@ Patch_Naturalize
 ==================
 texture = TotalTexture * LengthToThisControlPoint / TotalControlPointLength
 
-dist( this control point to first control point ) / dist ( last control pt to
-first)
+dist( this control point to first control point ) / dist ( last control pt to first)
 */
 void Patch_Naturalize(patchMesh_t *p, bool horz, bool vert, bool alt)
 {
@@ -1296,21 +1288,21 @@ void Patch_Naturalize(patchMesh_t *p, bool horz, bool vert, bool alt)
 /*
   if (bIBevel)
   {
-        VectorCopy(p->ctrl(1,0], p->ctrl(1,1]);
+    VectorCopy(p->ctrl(1,0], p->ctrl(1,1]);
   }
 
   if (bIEndcap)
   {
-        VectorCopy(p->ctrl(3,0], p->ctrl(4,1]);
-        VectorCopy(p->ctrl(2,0], p->ctrl(3,1]);
-        VectorCopy(p->ctrl(2,0], p->ctrl(2,1]);
-        VectorCopy(p->ctrl(2,0], p->ctrl(1,1]);
-        VectorCopy(p->ctrl(1,0], p->ctrl(0,1]);
-        VectorCopy(p->ctrl(1,0], p->ctrl(0,2]);
-        VectorCopy(p->ctrl(1,0], p->ctrl(1,2]);
-        VectorCopy(p->ctrl(2,0], p->ctrl(2,2]);
-        VectorCopy(p->ctrl(3,0], p->ctrl(3,2]);
-        VectorCopy(p->ctrl(3,0], p->ctrl(4,2]);
+    VectorCopy(p->ctrl(3,0], p->ctrl(4,1]);
+    VectorCopy(p->ctrl(2,0], p->ctrl(3,1]);
+    VectorCopy(p->ctrl(2,0], p->ctrl(2,1]);
+    VectorCopy(p->ctrl(2,0], p->ctrl(1,1]);
+    VectorCopy(p->ctrl(1,0], p->ctrl(0,1]);
+    VectorCopy(p->ctrl(1,0], p->ctrl(0,2]);
+    VectorCopy(p->ctrl(1,0], p->ctrl(1,2]);
+    VectorCopy(p->ctrl(2,0], p->ctrl(2,2]);
+    VectorCopy(p->ctrl(3,0], p->ctrl(3,2]);
+    VectorCopy(p->ctrl(3,0], p->ctrl(4,2]);
   }
 */
 
@@ -1471,8 +1463,7 @@ brush_t *Cap(patchMesh_t *pParent, bool bByColumn, bool bFirst)
     vMin[0] = vMin[1] = vMin[2] = 99999;
     vMax[0] = vMax[1] = vMax[2] = -99999;
 
-    // we seam the column edge, FIXME: this might need to be able to seem either
-    // edge
+    // we seam the column edge, FIXME: this might need to be able to seem either edge
     //
     int nSize = (bByColumn) ? pParent->width : pParent->height;
     int nIndex = (bFirst) ? 0 : (bByColumn) ? pParent->height - 1 : pParent->width - 1;
@@ -1798,8 +1789,7 @@ void GenerateEndCaps(brush_t *brushParent, bool bBevel, bool bEndcap, bool bInve
     pParent = brushParent->pPatch;
 
     Patch_CalcBounds(pParent, vMin, vMax);
-    // basically generate two endcaps, place them, and link the three brushes with
-    // a func_group
+    // basically generate two endcaps, place them, and link the three brushes with a func_group
 
     if (pParent->width > 9)
     {
@@ -2585,8 +2575,7 @@ extern float ShadeForNormal(idVec3 normal);
 DrawPatchMesh
 =================
 */
-// FIXME: this routine needs to be reorganized.. should be about 1/4 the size
-// and complexity
+// FIXME: this routine needs to be reorganized.. should be about 1/4 the size and complexity
 void DrawPatchMesh(patchMesh_t *pm, bool bPoints, int *list, bool bShade = false)
 {
     int i, j;
@@ -2629,22 +2618,19 @@ void DrawPatchMesh(patchMesh_t *pm, bool bPoints, int *list, bool bShade = false
         int width = cp->GetWidth();
         int height = cp->GetHeight();
         /*
-                                for (i = 0; i < width; i++) {
-                                        for (j = 0; j < height; j++) {
-                                                qglBegin(GL_POINTS);
-                                                int index = j * width + i;
-                                                qglVertex3fv((*cp)[index].xyz);
-                                                qglEnd();
-                                                char msg[64];
-                                                sprintf(msg, "(%0.3f, %0.3f,
-           %0.3f)(%0.3f, %0.3f)", (*cp)[index].xyz.x, (*cp)[index].xyz.y,
-           (*cp)[index].xyz.z, (*cp)[index].st.x, (*cp)[index].st.y);
-                                                qglRasterPos3f((*cp)[index].xyz.x +
-           1, (*cp)[index].xyz.y + 1, (*cp)[index].xyz.z + 1); qglCallLists
-           (strlen(msg), GL_UNSIGNED_BYTE, msg);
-                                        }
-                                }
-                */
+                    for (i = 0; i < width; i++) {
+                        for (j = 0; j < height; j++) {
+                            qglBegin(GL_POINTS);
+                            int index = j * width + i;
+                            qglVertex3fv((*cp)[index].xyz);
+                            qglEnd();
+                            char msg[64];
+                            sprintf(msg, "(%0.3f, %0.3f, %0.3f)(%0.3f, %0.3f)", (*cp)[index].xyz.x, (*cp)[index].xyz.y,
+           (*cp)[index].xyz.z, (*cp)[index].st.x, (*cp)[index].st.y); qglRasterPos3f((*cp)[index].xyz.x + 1,
+           (*cp)[index].xyz.y + 1, (*cp)[index].xyz.z + 1); qglCallLists (strlen(msg), GL_UNSIGNED_BYTE, msg);
+                        }
+                    }
+            */
 #ifdef TEST_SURFACE_CLIPPING
         int n;
         idSurface *surf = cp;
@@ -2751,8 +2737,7 @@ void DrawPatchMesh(patchMesh_t *pm, bool bPoints, int *list, bool bShade = false
     idVec3 *pSelectedPoints[256];
     int nIndex = 0;
 
-    // FIXME: this bend painting code needs to be rolled up significantly as it is
-    // a mess right now
+    // FIXME: this bend painting code needs to be rolled up significantly as it is a mess right now
     if (bPoints && (g_qeglobals.d_select_mode == sel_curvepoint || g_qeglobals.d_select_mode == sel_area ||
                     g_bPatchBendMode || g_bPatchInsertMode))
     {
@@ -3822,8 +3807,7 @@ brush_t *Patch_Parse(bool bOld)
 
     if (g_qeglobals.m_bBrushPrimitMode)
     {
-        // we are in brush primit mode, but maybe it's a classic patch that needs
-        // converting, test "}"
+        // we are in brush primit mode, but maybe it's a classic patch that needs converting, test "}"
         if (strcmp(token, "}") && strcmp(token, "("))
         {
             ParseEpair(pm->epairs);
@@ -3850,8 +3834,7 @@ void Patch_Write(patchMesh_t *p, CMemFile *file)
 {
     if (g_qeglobals.bSurfacePropertiesPlugin)
     {
-        common->Printf("WARNING: Patch_Write to a CMemFile and Surface Properties "
-                       "plugin not done\n");
+        common->Printf("WARNING: Patch_Write to a CMemFile and Surface Properties plugin not done\n");
     }
 
     if (p->explicitSubdivisions)
@@ -4840,8 +4823,7 @@ void Patch_Thicken(int nAmount, bool bSeam)
 
         if (bSeam)
         {
-            // FIXME: this should detect if any edges of the patch are closed and act
-            // appropriately
+            // FIXME: this should detect if any edges of the patch are closed and act appropriately
             //
             if (!(p->type & PATCH_CYLINDER))
             {
@@ -4943,8 +4925,8 @@ void Patch_Thicken(int nAmount, bool bSeam)
 /*
 lets get another list together as far as necessities..
 
-*snapping stuff to the grid (i will only snap movements by the mouse to the
-grid.. snapping the rotational bend stuff will fubar everything)
+*snapping stuff to the grid (i will only snap movements by the mouse to the grid.. snapping the rotational bend stuff
+will fubar everything)
 
 capping bevels/endcaps
 
@@ -5229,48 +5211,43 @@ const char *Patch_GetKeyValue(patchMesh_t *p, const char *pKey)
     return "";
 }
 
-// Real nitpicky, but could you make CTRL-S save the current map with the
-// current name? (ie: File/Save)
+// Real nitpicky, but could you make CTRL-S save the current map with the current name? (ie: File/Save)
 /*
 Feature addition.
-When reading in textures, please check for the presence of a file called
-"textures.link" or something, which contains one line such as;
+When reading in textures, please check for the presence of a file called "textures.link" or something, which contains
+one line such as;
 
 g:\quake3\baseq3\textures\common
 
- So that, when I'm reading in, lets say, my \eerie directory, it goes through
-and adds my textures to the palette, along with everything in common.
+ So that, when I'm reading in, lets say, my \eerie directory, it goes through and adds my textures to the palette, along
+with everything in common.
 
-  Don't forget to add "Finer texture alignment" to the list. I'd like to be able
-to move in 0.1 increments using the Shift-Arrow Keys.
+  Don't forget to add "Finer texture alignment" to the list. I'd like to be able to move in 0.1 increments using the
+Shift-Arrow Keys.
 
-  No. Sometimes textures are drawn the wrong way on patches. We'd like the
-ability to flip a texture. Like the way X/Y scale -1 used to worked.
+  No. Sometimes textures are drawn the wrong way on patches. We'd like the ability to flip a texture. Like the way X/Y
+scale -1 used to worked.
 
   1) Easier way of deleting rows, columns
-2) Fine tuning of textures on patches (X/Y shifts other than with the surface
-dialog) 2) Patch matrix transposition
+2) Fine tuning of textures on patches (X/Y shifts other than with the surface dialog)
+2) Patch matrix transposition
 
-  1) Actually, bump texture flipping on patches to the top of the list of things
-to do. 2) When you select a patch, and hit S, it should read in the selected
-patch texture. Should not work if you multiselect patches and hit S 3) Brandon
-has a wierd anomoly. He fine-tunes a patch with caps. It looks fine when the
-patch is selected, but as soon as he escapes out, it reverts to it's pre-tuned
-state. When he selects the patch again, it looks tuned
+  1) Actually, bump texture flipping on patches to the top of the list of things to do.
+2) When you select a patch, and hit S, it should read in the selected patch texture. Should not work if you multiselect
+patches and hit S 3) Brandon has a wierd anomoly. He fine-tunes a patch with caps. It looks fine when the patch is
+selected, but as soon as he escapes out, it reverts to it's pre-tuned state. When he selects the patch again, it looks
+tuned
 
 
 *1) Flipping textures on patches
-*2) When you select a patch, and hit S, it should read in the selected patch
-texture. Should not work if you multiselect patches and hit S 3) Easier way of
-deleting rows columns *4) Thick Curves 5) Patch matrix transposition 6) Inverted
+*2) When you select a patch, and hit S, it should read in the selected patch texture. Should not work if you multiselect
+patches and hit S 3) Easier way of deleting rows columns *4) Thick Curves 5) Patch matrix transposition 6) Inverted
 cylinder capping *7) bugs *8) curve speed
 
-  Have a new feature request. "Compute Bounding Box" for mapobjects (md3 files).
-This would be used for misc_mapobject (essentially, drop in 3DS Max models into
-our maps)
+  Have a new feature request. "Compute Bounding Box" for mapobjects (md3 files). This would be used for misc_mapobject
+(essentially, drop in 3DS Max models into our maps)
 
-  Ok, Feature Request. Load and draw MD3's in the Camera view with proper
-bounding boxes. This should be off misc_model
+  Ok, Feature Request. Load and draw MD3's in the Camera view with proper bounding boxes. This should be off misc_model
 
   Feature Addition: View/Hide Hint Brushes -- This should be a specific case.
 */

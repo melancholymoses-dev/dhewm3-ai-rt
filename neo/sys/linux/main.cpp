@@ -19,31 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include <errno.h>
-#include <fcntl.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
+#include <fcntl.h>
 
-// #include <SDL_main.h> - not needed, dhewm3 doesn't currently use SDL's
-// SDL_main
+// #include <SDL_main.h> - not needed, dhewm3 doesn't currently use SDL's SDL_main
 
-#include "framework/FileSystem.h"
-#include "framework/Licensee.h"
 #include "sys/platform.h"
+#include "framework/Licensee.h"
+#include "framework/FileSystem.h"
 #include "sys/posix/posix_public.h"
 #include "sys/sys_local.h"
 
@@ -51,8 +47,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #undef snprintf // no, I don't want to use idStr::snPrintf() here.
 
-// lots of code following to get the current executable dir, taken from Yamagi
-// Quake II and actually based on DG_Snippets.h
+// lots of code following to get the current executable dir, taken from Yamagi Quake II
+// and actually based on DG_Snippets.h
 
 #if defined(__linux) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
 #include <unistd.h> // readlink(), amongst others
@@ -212,8 +208,7 @@ bool Sys_GetPath(sysPath_t type, idStr &path)
         if (Sys_GetPath(PATH_EXE, path))
         {
             path = path.StripFilename();
-            // the path should have a base dir in it, otherwise it probably just
-            // contains the executable
+            // the path should have a base dir in it, otherwise it probably just contains the executable
             idStr testPath = path + "/" BASE_GAMEDIR;
             if (stat(testPath.c_str(), &st) != -1 && S_ISDIR(st.st_mode))
             {
@@ -322,8 +317,7 @@ Sys_DoStartProcess
 if we don't fork, this function never returns
 the no-fork lets you keep the terminal when you're about to spawn an installer
 
-if the command contains spaces, system() is used. Otherwise the more
-straightforward execl ( system() blows though )
+if the command contains spaces, system() is used. Otherwise the more straightforward execl ( system() blows though )
 ==================
 */
 void Sys_DoStartProcess(const char *exeName, bool dofork)
@@ -384,8 +378,8 @@ void Sys_DoStartProcess(const char *exeName, bool dofork)
             if (system(exeName) == -1)
                 printf("system failed: %s\n", strerror(errno));
             else
-                sleep(1); // on some systems I've seen that starting the new process and
-                          // exiting this one should not be too close
+                sleep(1); // on some systems I've seen that starting the new process and exiting this one should not be
+                          // too close
         }
         else
         {
@@ -437,8 +431,7 @@ void idSysLocal::OpenURL(const char *url, bool quit)
     }
     fileSystem->CloseFile(script_file);
 
-    // if we are going to quit, only accept a single URL before quitting and
-    // spawning the script
+    // if we are going to quit, only accept a single URL before quitting and spawning the script
     if (quit)
     {
         quit_spamguard = true;
@@ -463,10 +456,8 @@ int main(int argc, char **argv)
     if (getuid() == 0)
     {
         printf("Doom 3 shouldn't be run as root! Backing out to save your ass. If\n");
-        printf("you really know what you're doing, edit neo/sys/linux/main.cpp and "
-               "remove\n");
-        printf("this check. But don't complain if an imp kills your bunny "
-               "afterwards!:)\n");
+        printf("you really know what you're doing, edit neo/sys/linux/main.cpp and remove\n");
+        printf("this check. But don't complain if an imp kills your bunny afterwards!:)\n");
 
         return 1;
     }

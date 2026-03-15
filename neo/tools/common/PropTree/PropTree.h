@@ -13,8 +13,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 #if !defined(AFX_PROPT_H__386AA426_6FB7_4B4B_9563_C4CC045BB0C9__INCLUDED_)
 #define AFX_PROPT_H__386AA426_6FB7_4B4B_9563_C4CC045BB0C9__INCLUDED_
@@ -30,35 +30,40 @@
 #endif
 
 #ifndef _PROPTREE_DLL
-        #ifdef _UNICODE
-                #ifdef _DEBUG
-                        #pragma comment(lib, "PropTreeDU")
-                        #pragma message("Automatically linking with
-PropTreeDU.dll (Debug Unicode)") #else #pragma comment(lib, "PropTreeU") #pragma
-message("Automatically linking with PropTreeU.dll (Release Unicode)") #endif
+    #ifdef _UNICODE
+        #ifdef _DEBUG
+            #pragma comment(lib, "PropTreeDU")
+            #pragma message("Automatically linking with PropTreeDU.dll (Debug Unicode)")
         #else
-                #ifdef _DEBUG
-                        #pragma comment(lib, "PropTreeD")
-                        #pragma message("Automatically linking with
-PropTreeD.dll (Debug)") #else #pragma comment(lib, "PropTree") #pragma
-message("Automatically linking with PropTree.dll (Release)") #endif #endif //
-_UNICODE #endif // _PROPTREE_DLL
+            #pragma comment(lib, "PropTreeU")
+            #pragma message("Automatically linking with PropTreeU.dll (Release Unicode)")
+        #endif
+    #else
+        #ifdef _DEBUG
+            #pragma comment(lib, "PropTreeD")
+            #pragma message("Automatically linking with PropTreeD.dll (Debug)")
+        #else
+            #pragma comment(lib, "PropTree")
+            #pragma message("Automatically linking with PropTree.dll (Release)")
+        #endif
+    #endif // _UNICODE
+#endif // _PROPTREE_DLL
 */
 
 #define PROPTREE_API
 
-#include "PropTreeInfo.h"
 #include "PropTreeList.h"
+#include "PropTreeInfo.h"
 
 #include "PropTreeItem.h"
-#include "PropTreeItemButton.h"
-#include "PropTreeItemCheck.h"
-#include "PropTreeItemColor.h"
-#include "PropTreeItemCombo.h"
+#include "PropTreeItemStatic.h"
 #include "PropTreeItemEdit.h"
+#include "PropTreeItemCombo.h"
+#include "PropTreeItemColor.h"
+#include "PropTreeItemCheck.h"
+#include "PropTreeItemButton.h"
 #include "PropTreeItemEditButton.h"
 #include "PropTreeItemFileEdit.h"
-#include "PropTreeItemStatic.h"
 
 class CPropTree;
 
@@ -203,8 +208,7 @@ class PROPTREE_API CPropTree : public CWnd
 
   public:
     //
-    // functions used by CPropTreeItem (you normally dont need to call these
-    // directly)
+    // functions used by CPropTreeItem (you normally dont need to call these directly)
     //
 
     void AddToVisibleList(CPropTreeItem *pItem);
@@ -281,7 +285,6 @@ class PROPTREE_API CPropTree : public CWnd
 /////////////////////////////////////////////////////////////////////////////
 
 //{{AFX_INSERT_LOCATION}}
-// Microsoft Visual C++ will insert additional declarations immediately before
-// the previous line.
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.
 
 #endif // !defined(AFX_PROPT_H__386AA426_6FB7_4B4B_9563_C4CC045BB0C9__INCLUDED_)

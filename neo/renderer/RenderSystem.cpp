@@ -19,28 +19,25 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
-#include "framework/DemoFile.h"
+#include "sys/platform.h"
+#include "idlib/containers/List.h"
 #include "framework/EventLoop.h"
 #include "framework/Session.h"
-#include "idlib/containers/List.h"
-#include "renderer/GuiModel.h"
-#include "renderer/Material.h"
+#include "framework/DemoFile.h"
 #include "renderer/ModelManager.h"
-#include "renderer/RenderWorld_local.h"
+#include "renderer/Material.h"
+#include "renderer/GuiModel.h"
 #include "renderer/VertexCache.h"
-#include "sys/platform.h"
+#include "renderer/RenderWorld_local.h"
 
 #include "renderer/tr_local.h"
 
@@ -255,8 +252,7 @@ static void R_CheckCvars(void)
     if (r_gammaInShader.IsModified())
     {
         r_gammaInShader.ClearModified();
-        // reload shaders so they either add or remove the code for setting
-        // gamma/brightness in shader
+        // reload shaders so they either add or remove the code for setting gamma/brightness in shader
         R_ReloadARBPrograms_f(idCmdArgs());
 
         if (r_gammaInShader.GetBool())
@@ -266,8 +262,7 @@ static void R_CheckCvars(void)
         }
         else
         {
-            common->Printf("Will apply r_gamma and r_brightness in hardware "
-                           "(possibly on all screens)\n");
+            common->Printf("Will apply r_gamma and r_brightness in hardware (possibly on all screens)\n");
             R_SetColorMappings();
         }
     }
@@ -556,8 +551,7 @@ void idRenderSystemLocal::DrawBigStringExt(int x, int y, const char *string, con
 ==================
 SetBackEndRenderer
 
-Check for changes in the back end renderSystem, possibly invalidating cached
-data
+Check for changes in the back end renderSystem, possibly invalidating cached data
 ==================
 */
 void idRenderSystemLocal::SetBackEndRenderer()
@@ -823,8 +817,7 @@ void idRenderSystemLocal::EndFrame(int *frontEndMsec, int *backEndMsec)
     // DG: restore the original size that was set before BeginFrame() overwrote it
     //     with its function-arguments, so editors don't mess up our viewport.
     //     (unsure why/how this at least *kinda* worked in original Doom3,
-    //      maybe glConfig.vidWidth/Height was reset if the window gained focus or
-    //      sth)
+    //      maybe glConfig.vidWidth/Height was reset if the window gained focus or sth)
     glConfig.vidWidth = origWidth;
     glConfig.vidHeight = origHeight;
 }
@@ -833,8 +826,7 @@ void idRenderSystemLocal::EndFrame(int *frontEndMsec, int *backEndMsec)
 =====================
 RenderViewToViewport
 
-Converts from SCREEN_WIDTH / SCREEN_HEIGHT coordinates to current cropped pixel
-coordinates
+Converts from SCREEN_WIDTH / SCREEN_HEIGHT coordinates to current cropped pixel coordinates
 =====================
 */
 void idRenderSystemLocal::RenderViewToViewport(const renderView_t *renderView, idScreenRect *viewport)
@@ -907,8 +899,7 @@ void idRenderSystemLocal::CropRenderSize(int width, int height, bool makePowerOf
         }
     }
 
-    // convert from virtual SCREEN_WIDTH/SCREEN_HEIGHT coordinates to physical
-    // OpenGL pixels
+    // convert from virtual SCREEN_WIDTH/SCREEN_HEIGHT coordinates to physical OpenGL pixels
     renderView_t renderView;
     renderView.x = 0;
     renderView.y = 0;
@@ -928,14 +919,12 @@ void idRenderSystemLocal::CropRenderSize(int width, int height, bool makePowerOf
         height = renderView.height;
     }
 
-    // if makePowerOfTwo, drop to next lower power of two after scaling to
-    // physical pixels
+    // if makePowerOfTwo, drop to next lower power of two after scaling to physical pixels
     if (makePowerOfTwo)
     {
         width = RoundDownToPowerOfTwo(width);
         height = RoundDownToPowerOfTwo(height);
-        // FIXME: megascreenshots with offset viewports don't work right with this
-        // yet
+        // FIXME: megascreenshots with offset viewports don't work right with this yet
     }
 
     renderCrop_t *rc = &renderCrops[currentRenderCrop];
@@ -952,8 +941,7 @@ void idRenderSystemLocal::CropRenderSize(int width, int height, bool makePowerOf
 
     if (currentRenderCrop == MAX_RENDER_CROPS)
     {
-        common->Error("idRenderSystemLocal::CropRenderSize: currentRenderCrop == "
-                      "MAX_RENDER_CROPS");
+        common->Error("idRenderSystemLocal::CropRenderSize: currentRenderCrop == MAX_RENDER_CROPS");
     }
 
     currentRenderCrop++;

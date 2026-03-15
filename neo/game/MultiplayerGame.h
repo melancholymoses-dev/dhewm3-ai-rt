@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -44,7 +41,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Basic DOOM multiplayer
+    Basic DOOM multiplayer
 
 ===============================================================================
 */
@@ -75,8 +72,7 @@ typedef struct mpPlayerState_s
     int teamFragCount; // team kills
     int wins;          // wins
     playerVote_t vote; // player's vote
-    bool scoreBoardUp; // toggle based on player scoreboard button, used to
-                       // activate de-activate the scoreboard gui
+    bool scoreBoardUp; // toggle based on player scoreboard button, used to activate de-activate the scoreboard gui
     bool ingame;
 } mpPlayerState_t;
 
@@ -153,8 +149,7 @@ class idMultiplayerGame
         COUNTDOWN,    // post warmup pre-game
         GAMEON,       // game is on
         SUDDENDEATH,  // game is on but in sudden death, first frag wins
-        GAMEREVIEW,   // game is over, scoreboard is up. we wait si_gameReviewPause
-                      // seconds (which has a min value)
+        GAMEREVIEW,   // game is over, scoreboard is up. we wait si_gameReviewPause seconds (which has a min value)
         NEXTGAME,
         STATE_COUNT
     } gameState_t;
@@ -317,20 +312,17 @@ class idMultiplayerGame
     int lastChatLineTime;
 
     // rankings are used by UpdateScoreboard and UpdateHud
-    int numRankedPlayers; // ranked players, others may be empty slots or
-                          // spectators
+    int numRankedPlayers; // ranked players, others may be empty slots or spectators
     idPlayer *rankedPlayers[MAX_CLIENTS];
 
-    bool pureReady; // defaults to false, set to true once server game is running
-                    // with pure checksums
+    bool pureReady; // defaults to false, set to true once server game is running with pure checksums
     int fragLimitTimeout;
 
     int switchThrottle[3];
     int voiceChatThrottle;
 
     gameType_t lastGameType; // for restarts
-    int startFragLimit;      // synchronize to clients in initial state, set on ->
-                             // GAMEON
+    int startFragLimit;      // synchronize to clients in initial state, set on -> GAMEON
 
   private:
     void UpdatePlayerRanks();
@@ -360,13 +352,12 @@ class idMultiplayerGame
     bool EnoughClientsToPlay(void);
     void ClearChatData(void);
     void DrawChat(void);
-    // go through the clients, and see if they want to be respawned, and if the
-    // game allows it called during normal gameplay for death -> respawn cycles
+    // go through the clients, and see if they want to be respawned, and if the game allows it
+    // called during normal gameplay for death -> respawn cycles
     // and for a spectator who want back in the game (see param)
     void CheckRespawns(idPlayer *spectator = NULL);
     void ForceReady();
-    // when clients disconnect or join spectate during game, check if we need to
-    // end the game
+    // when clients disconnect or join spectate during game, check if we need to end the game
     void CheckAbortGame(void);
     void MessageMode(const idCmdArgs &args);
     void DisableMenu(void);

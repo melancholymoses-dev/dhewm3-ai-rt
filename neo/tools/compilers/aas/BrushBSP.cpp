@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
 #include "sys/platform.h"
+#include "framework/FileSystem.h"
 
 #include "tools/compilers/aas/BrushBSP.h"
 
@@ -764,8 +761,7 @@ int idBrushBSP::BrushSplitterStats(const idBrush *brush, int planeNum, const idP
         }
     }
 
-    // if brush sides are split and the brush only pokes one unit through the
-    // plane
+    // if brush sides are split and the brush only pokes one unit through the plane
     if (stats.numSplits > lastNumSplits && (brush_front < 1.0f || brush_back > -1.0f))
     {
         stats.epsilonBrushes++;
@@ -841,8 +837,7 @@ int idBrushBSP::FindSplitter(idBrushBSPNode *node, const idPlaneSet &planeList, 
                 numBrushSides -= b->GetNumSides();
                 // best value we can get using this plane as a splitter
                 value = f * (stats.numFacing + numBrushSides) - 10 * stats.numSplits - stats.epsilonBrushes * 1000;
-                // if the best value for this plane can't get any better than the best
-                // value we have
+                // if the best value for this plane can't get any better than the best value we have
                 if (value < bestValue)
                 {
                     break;
@@ -1319,8 +1314,7 @@ void idBrushBSP::MakeNodePortal(idBrushBSPNode *node)
 ============
 idBrushBSP::SplitNodePortals
 
-  Move or split the portals that bound the node so that the node's children have
-portals instead of node.
+  Move or split the portals that bound the node so that the node's children have portals instead of node.
 ============
 */
 #define SPLIT_WINDING_EPSILON 0.001f
@@ -1648,8 +1642,7 @@ void idBrushBSP::FloodThroughPortals_r(idBrushBSPNode *node, int contents, int d
             continue;
         }
 
-        // can't flood through the portal if it has the seperating contents at the
-        // other side
+        // can't flood through the portal if it has the seperating contents at the other side
         if (p->nodes[!s]->contents & contents)
         {
             continue;
@@ -1927,8 +1920,7 @@ void idBrushBSP::MergeLeafNodePortals(idBrushBSPNode *node, int skipContents)
         }
     }
 
-    // pass 2: merge all portals in the same plane if they all have the skip
-    // contents at the other side
+    // pass 2: merge all portals in the same plane if they all have the skip contents at the other side
     for (p1 = node->GetPortals(); p1; p1 = nextp1)
     {
         s1 = (p1->GetNode(1) == node);
@@ -1939,8 +1931,7 @@ void idBrushBSP::MergeLeafNodePortals(idBrushBSPNode *node, int skipContents)
             continue;
         }
 
-        // test if all portals in this plane have the skip contents at the other
-        // side
+        // test if all portals in this plane have the skip contents at the other side
         foundPortal = false;
         for (p2 = node->GetPortals(); p2; p2 = nextp2)
         {
@@ -1985,8 +1976,7 @@ void idBrushBSP::MergeLeafNodePortals(idBrushBSPNode *node, int skipContents)
         }
     }
 
-    // pass 3: try to merge portals in the same plane that have the skip contents
-    // at the other side
+    // pass 3: try to merge portals in the same plane that have the skip contents at the other side
     for (p1 = node->GetPortals(); p1; p1 = nextp1)
     {
         s1 = (p1->GetNode(1) == node);
@@ -2171,8 +2161,7 @@ void idBrushBSP::UpdateTreeAfterMerge_r(idBrushBSPNode *node, const idBounds &bo
 ============
 idBrushBSP::TryMergeLeafNodes
 
-  NOTE: multiple brances of the BSP tree might point to the same leaf node after
-merging
+  NOTE: multiple brances of the BSP tree might point to the same leaf node after merging
 ============
 */
 bool idBrushBSP::TryMergeLeafNodes(idBrushBSPPortal *portal, int side)
@@ -2211,8 +2200,7 @@ bool idBrushBSP::TryMergeLeafNodes(idBrushBSPPortal *portal, int side)
                 plane = p1->plane;
             }
 
-            // all the non seperating portals of the other node should be at the front
-            // or on the plane
+            // all the non seperating portals of the other node should be at the front or on the plane
             for (p2 = nodes[j]->portals; p2; p2 = p2->next[s2])
             {
                 s2 = (p2->nodes[1] == nodes[j]);
@@ -2281,8 +2269,7 @@ bool idBrushBSP::TryMergeLeafNodes(idBrushBSPPortal *portal, int side)
 ============
 idBrushBSP::MeltFloor_r
 
-  flood through portals touching the bounds to find all vertices that might be
-inside the bounds
+  flood through portals touching the bounds to find all vertices that might be inside the bounds
 ============
 */
 void idBrushBSP::MeltFlood_r(idBrushBSPNode *node, int skipContents, idBounds &bounds,

@@ -14,9 +14,9 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#include "renderer/Vulkan/vk_common.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
+#include "renderer/Vulkan/vk_common.h"
 
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkShaderModule VK_LoadSPIRVFromMemory(const uint32_t *code, size_t codeSize);
@@ -52,16 +52,14 @@ struct VkInteractionUBO
     int useShadowMask;  // 1 when RT shadow mask is valid this frame
     float _pad;
 };
-// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE =
-// 384.
+// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE = 384.
 
 // ---------------------------------------------------------------------------
 // Pipeline layout for the interaction pass
 // Binding layout:
 //   set 0 binding 0: UBO (VkInteractionUBO)
-//   set 0 binding 1..6: combined image samplers (bump, falloff, proj, diffuse,
-//   specular, specTable) set 0 binding 7:    shadow mask sampler (RT output or
-//   1x1 white fallback)
+//   set 0 binding 1..6: combined image samplers (bump, falloff, proj, diffuse, specular, specTable)
+//   set 0 binding 7:    shadow mask sampler (RT output or 1x1 white fallback)
 // ---------------------------------------------------------------------------
 
 // vkPipelines_t declared in vk_common.h
@@ -81,8 +79,7 @@ static VkDescriptorSetLayout VK_CreateInteractionDescLayout(void)
     bindings[0].descriptorCount = 1;
     bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Bindings 1-6: samplers (bump, falloff, lightProj, diffuse, specular,
-    // specTable)
+    // Bindings 1-6: samplers (bump, falloff, lightProj, diffuse, specular, specTable)
     for (int i = 1; i <= 6; i++)
     {
         bindings[i].binding = (uint32_t)i;
@@ -91,8 +88,7 @@ static VkDescriptorSetLayout VK_CreateInteractionDescLayout(void)
         bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
 
-    // Binding 7: shadow mask (RT shadow output, or 1x1 white fallback when RT is
-    // off)
+    // Binding 7: shadow mask (RT shadow output, or 1x1 white fallback when RT is off)
     bindings[7].binding = 7;
     bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[7].descriptorCount = 1;
@@ -175,8 +171,7 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout)
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/interaction.frag.spv");
     if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE)
     {
-        common->Warning("VK: interaction shaders not found, Vulkan interaction "
-                        "pipeline unavailable");
+        common->Warning("VK: interaction shaders not found, Vulkan interaction pipeline unavailable");
         if (vertModule)
             vkDestroyShaderModule(vk.device, vertModule, NULL);
         if (fragModule)
@@ -233,8 +228,7 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout)
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Depth+stencil: EQUAL depth test (for interaction pass), stencil test reads
-    // shadow mask
+    // Depth+stencil: EQUAL depth test (for interaction pass), stencil test reads shadow mask
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;

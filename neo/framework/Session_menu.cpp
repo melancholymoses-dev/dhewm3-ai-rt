@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Console.h"
-#include "framework/FileSystem.h"
-#include "framework/Game.h"
-#include "framework/async/AsyncNetwork.h"
-#include "idlib/LangDict.h"
-#include "sound/sound.h"
 #include "sys/platform.h"
+#include "idlib/LangDict.h"
+#include "framework/async/AsyncNetwork.h"
+#include "framework/FileSystem.h"
+#include "framework/Console.h"
+#include "framework/Game.h"
+#include "sound/sound.h"
 #include "ui/UserInterface.h"
 
 #include "framework/Session_local.h"
@@ -46,8 +43,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 idCVar idSessionLocal::gui_configServerRate("gui_configServerRate", "0",
                                             CVAR_GUI | CVAR_ARCHIVE | CVAR_ROM | CVAR_INTEGER, "");
 
-extern idCVar joy_gamepadLayout; // DG: used here to update bindings window when
-                                 // cvar is changed
+extern idCVar joy_gamepadLayout; // DG: used here to update bindings window when cvar is changed
 
 // implements the setup for, and commands from, the main menu
 
@@ -344,8 +340,7 @@ void idSessionLocal::SetMainMenuGuiVars(void)
 
     guiMainMenu->SetStateInt("com_machineSpec", com_machineSpec.GetInteger());
 
-    // "inetGame" will hold a hand-typed inet address, which is not archived to a
-    // cvar
+    // "inetGame" will hold a hand-typed inet address, which is not archived to a cvar
     guiMainMenu->SetStateString("inetGame", "");
 
     // key bind names
@@ -402,8 +397,7 @@ bool idSessionLocal::HandleSaveGameMenuCommand(idCmdArgs &args, int &icmd)
         if (saveGameName && saveGameName[0])
         {
 
-            // First see if the file already exists unless they pass '1' to authorize
-            // the overwrite
+            // First see if the file already exists unless they pass '1' to authorize the overwrite
             if (icmd == args.Argc() || atoi(args.Argv(icmd++)) == 0)
             {
                 idStr saveFileName = saveGameName;
@@ -449,8 +443,7 @@ bool idSessionLocal::HandleSaveGameMenuCommand(idCmdArgs &args, int &icmd)
 
             sessLocal.SaveGame(saveGameName);
             SetSaveGameGuiVars();
-            // DG: select item 0 => select savegame just created (should be on top as
-            // it's newest)
+            // DG: select item 0 => select savegame just created (should be on top as it's newest)
             guiActive->SetStateInt("loadgame_sel_0", 0);
             guiActive->StateChanged(com_frameTime);
         }
@@ -557,8 +550,7 @@ void idSessionLocal::HandleRestartMenuCommands(const char *menuCommand)
             if (com_disableAutoSaves.GetBool() // DG: support com_disableAutoSaves
                 || !LoadGame(GetAutoSaveName(mapSpawnData.serverInfo.GetString("si_map"))))
             {
-                // If we can't load the autosave (or they're disabled) then just restart
-                // the map
+                // If we can't load the autosave (or they're disabled) then just restart the map
                 MoveToNewMap(mapSpawnData.serverInfo.GetString("si_map"));
             }
             continue;
@@ -707,9 +699,8 @@ void idSessionLocal::HandleMainMenuCommands(const char *menuCommand)
             {
                 StartNewGame("game/mars_city1");
             }
-            // need to do this here to make sure com_frameTime is correct or the gui
-            // activates with a time that is "however long map load took" time in the
-            // past
+            // need to do this here to make sure com_frameTime is correct or the gui activates with a time that
+            // is "however long map load took" time in the past
             common->GUIFrame(false, false);
             SetGUI(guiIntro, NULL);
             guiIntro->StateChanged(com_frameTime, true);
@@ -951,8 +942,8 @@ void idSessionLocal::HandleMainMenuCommands(const char *menuCommand)
             if (!dedicated && !cvarSystem->GetCVarBool("net_LANServer") &&
                 cvarSystem->GetCVarInteger("si_maxPlayers") > 4)
             {
-                // "Dedicated server mode is recommended for internet servers with more
-                // than 4 players. Continue in listen mode?"
+                // "Dedicated server mode is recommended for internet servers with more than 4 players. Continue in
+                // listen mode?"
                 if (!MessageBox(MSG_YESNO, common->GetLanguageDict()->GetString("#str_00100625"),
                                 common->GetLanguageDict()->GetString("#str_00100626"), true, "yes")[0])
                 {
@@ -1219,8 +1210,8 @@ void idSessionLocal::HandleMainMenuCommands(const char *menuCommand)
 
         if (!idStr::Icmp(cmd, "SetCDKey"))
         {
-            // we can't do this from inside the HandleMainMenuCommands code, otherwise
-            // the message box stuff gets confused
+            // we can't do this from inside the HandleMainMenuCommands code, otherwise the message box stuff gets
+            // confused
             cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "promptKey\n");
             continue;
         }
@@ -1240,8 +1231,7 @@ void idSessionLocal::HandleMainMenuCommands(const char *menuCommand)
         if (!idStr::Icmp(cmd, "checkKeys"))
         {
 #if ID_ENFORCE_KEY
-            // not a strict check so you silently auth in the background without
-            // bugging the user
+            // not a strict check so you silently auth in the background without bugging the user
             if (!session->CDKeysAreValid(false))
             {
                 cmdSystem->BufferCommandText(CMD_EXEC_NOW, "promptKey force");
@@ -1385,8 +1375,7 @@ void idSessionLocal::DispatchCommand(idUserInterface *gui, const char *menuComma
         }
         else if (strstr(cmd, "sound ") == cmd)
         {
-            // pipe the GUI sound commands not handled by the game to the main menu
-            // code
+            // pipe the GUI sound commands not handled by the game to the main menu code
             HandleMainMenuCommands(cmd);
         }
     }
@@ -1428,8 +1417,7 @@ void idSessionLocal::MenuEvent(const sysEvent_t *event)
 
     if (!menuCommand || !menuCommand[0])
     {
-        // If the menu didn't handle the event, and it's a key down event for an F
-        // key, run the bind
+        // If the menu didn't handle the event, and it's a key down event for an F key, run the bind
         if (event->evType == SE_KEY && event->evValue2 == 1 && event->evValue >= K_F1 && event->evValue <= K_F12)
         {
             idKeyInput::ExecKeyBinding(event->evValue);
@@ -1451,8 +1439,7 @@ void idSessionLocal::GuiFrameEvents()
     sysEvent_t ev;
     idUserInterface *gui;
 
-    // DG: if joy_gamepadLayout changes, the binding names in the main/controls
-    // menu must be updated
+    // DG: if joy_gamepadLayout changes, the binding names in the main/controls menu must be updated
     if (joy_gamepadLayout.IsModified())
     {
         if (guiMainMenu != NULL)
@@ -1462,8 +1449,8 @@ void idSessionLocal::GuiFrameEvents()
         joy_gamepadLayout.ClearModified();
     }
 
-    // stop generating move and button commands when a local console or menu is
-    // active running here so SP, async networking and no game all go through it
+    // stop generating move and button commands when a local console or menu is active
+    // running here so SP, async networking and no game all go through it
     if (console->Active() || guiActive)
     {
         usercmdGen->InhibitUsercmd(INHIBIT_SESSION, true);
@@ -1647,8 +1634,7 @@ const char *idSessionLocal::MessageBox(msgBoxType_t type, const char *message, c
 
     if (wait)
     {
-        // play one frame ignoring events so we don't get confused by parasite
-        // button releases
+        // play one frame ignoring events so we don't get confused by parasite button releases
         msgIgnoreButtons = true;
         common->GUIFrame(true, network);
         msgIgnoreButtons = false;

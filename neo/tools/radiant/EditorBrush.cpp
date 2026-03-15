@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,8 +34,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "qe3.h"
 #include <GL/glu.h>
 
-#include "../../renderer/model_local.h" // for idRenderModelMD5
 #include "../../renderer/tr_local.h"
+#include "../../renderer/model_local.h" // for idRenderModelMD5
 
 void Brush_UpdateLightPoints(brush_t *b, const idVec3 &offset);
 void Brush_DrawCurve(brush_t *b, bool bSelected, bool cam);
@@ -454,13 +451,12 @@ void Face_TextureVectors(face_t *f, float STfromXYZ[2][4])
 #ifdef _DEBUG
 
     //
-    // ++timo when playing with patches, this sometimes get called and the Warning
-    // is displayed find some way out ..
+    // ++timo when playing with patches, this sometimes get called and the Warning is
+    // displayed find some way out ..
     //
     if (g_qeglobals.m_bBrushPrimitMode && !g_qeglobals.bNeedConvert)
     {
-        common->Printf("Warning : illegal call of Face_TextureVectors in brush "
-                       "primitive mode\n");
+        common->Printf("Warning : illegal call of Face_TextureVectors in brush primitive mode\n");
     }
 #endif
     td = &f->texdef;
@@ -807,8 +803,8 @@ idWinding *Brush_MakeFaceWinding(brush_t *b, face_t *face, bool keepOnPlaneWindi
 Brush_Build
 
   Builds a brush rendering data and also sets the min/max bounds
-  TTimo added a bConvert flag to convert between old and new brush texture
-formats TTimo brush grouping: update the group treeview if necessary
+  TTimo added a bConvert flag to convert between old and new brush texture formats
+  TTimo brush grouping: update the group treeview if necessary
 ================
 */
 void Brush_Build(brush_t *b, bool bSnap, bool bMarkMap, bool bConvert, bool updateLights)
@@ -818,13 +814,12 @@ void Brush_Build(brush_t *b, bool bSnap, bool bMarkMap, bool bConvert, bool upda
 #ifdef _DEBUG
     if (!g_qeglobals.m_bBrushPrimitMode && bConvert)
     {
-        common->Printf("Warning : conversion from brush primitive to old brush "
-                       "format not implemented\n");
+        common->Printf("Warning : conversion from brush primitive to old brush format not implemented\n");
     }
 #endif
     //
-    // if bConvert is set and g_qeglobals.bNeedConvert is not, that just means we
-    // need convert for this brush only
+    // if bConvert is set and g_qeglobals.bNeedConvert is not, that just means we need
+    // convert for this brush only
     //
     if (bConvert && !g_qeglobals.bNeedConvert)
     {
@@ -918,8 +913,7 @@ void Brush_SplitBrushByFace(brush_t *in, face_t *f, brush_t **front, brush_t **b
 ================
 Brush_BestSplitFace
 
-  returns the best face to split the brush with. return NULL if the brush is
-convex
+  returns the best face to split the brush with. return NULL if the brush is convex
 ================
 */
 face_t *Brush_BestSplitFace(brush_t *b)
@@ -1141,8 +1135,8 @@ int Brush_MoveVertex(brush_t *b, const idVec3 &vertex, const idVec3 &delta, idVe
     while (!done)
     {
         //
-        // chop off triangles from all brush faces that use the to be moved vertex
-        // store pointers to these chopped off triangles in movefaces[]
+        // chop off triangles from all brush faces that use the to be moved vertex store
+        // pointers to these chopped off triangles in movefaces[]
         //
         nummovefaces = 0;
         for (face = b->brush_faces; face; face = face->next)
@@ -1266,8 +1260,8 @@ int Brush_MoveVertex(brush_t *b, const idVec3 &vertex, const idVec3 &delta, idVe
         }
 
         //
-        // now movefaces contains pointers to triangle faces that contain the to be
-        // moved vertex
+        // now movefaces contains pointers to triangle faces that contain the to be moved
+        // vertex
         //
         done = true;
         VectorCopy(end, mid);
@@ -1556,9 +1550,8 @@ void Brush_ResetFaceOriginals(brush_t *b)
 Brush_Parse
 
   The brush is NOT linked to any list
-  FIXME: when using old brush primitives, the test loop for "Brush" and
-"patchDef2" "patchDef3" run before each face parsing. It works, but it's a
-performance hit
+  FIXME: when using old brush primitives, the test loop for "Brush" and "patchDef2" "patchDef3"
+  run before each face parsing. It works, but it's a performance hit
 ================
 */
 brush_t *Brush_Parse(idVec3 origin)
@@ -1594,16 +1587,14 @@ brush_t *Brush_Parse(idVec3 origin)
             {
                 if (g_qeglobals.bOldBrushes)
                 {
-                    common->Printf("Warning : old brushes and brush primitive in the "
-                                   "same file are not allowed ( Brush_Parse )\n");
+                    common->Printf(
+                        "Warning : old brushes and brush primitive in the same file are not allowed ( Brush_Parse )\n");
                 }
             }
             else
             {
-                // ++Timo write new brush primitive -> old conversion code for Q3->Q2
-                // conversions ?
-                common->Printf("Warning : conversion code from brush primitive not "
-                               "done ( Brush_Parse )\n");
+                // ++Timo write new brush primitive -> old conversion code for Q3->Q2 conversions ?
+                common->Printf("Warning : conversion code from brush primitive not done ( Brush_Parse )\n");
             }
 
             bool newFormat = false;
@@ -1663,8 +1654,8 @@ brush_t *Brush_Parse(idVec3 origin)
                 // check the map is not mixing the two kinds of brushes
                 if (g_qeglobals.bPrimitBrushes)
                 {
-                    common->Printf("Warning : old brushes and brush primitive in the "
-                                   "same file are not allowed ( Brush_Parse )\n");
+                    common->Printf(
+                        "Warning : old brushes and brush primitive in the same file are not allowed ( Brush_Parse )\n");
                 }
 
                 // set the "need" conversion flag
@@ -1674,8 +1665,8 @@ brush_t *Brush_Parse(idVec3 origin)
             f = Face_Alloc();
 
             //
-            // add the brush to the end of the chain, so loading and saving a map
-            // doesn't reverse the order
+            // add the brush to the end of the chain, so loading and saving a map doesn't
+            // reverse the order
             //
             f->next = NULL;
             if (!b->brush_faces)
@@ -1737,8 +1728,8 @@ brush_t *Brush_Parse(idVec3 origin)
         f->d_texture = Texture_ForName(f->texdef.name);
 
         //
-        // FIXME: idMaterial f->texdef.flags = f->d_texture->flags; f->texdef.value
-        // = f->d_texture->value; f->texdef.contents = f->d_texture->contents;
+        // FIXME: idMaterial f->texdef.flags = f->d_texture->flags; f->texdef.value =
+        // f->d_texture->value; f->texdef.contents = f->d_texture->contents;
         //
         if (TokenAvailable())
         {
@@ -1756,8 +1747,8 @@ brush_t *Brush_Parse(idVec3 origin)
 ================
 QERApp_MapPrintf_FILE
 
-  callback for surface properties plugin must fit a PFN_QERAPP_MAPPRINTF ( see
-isurfaceplugin.h ) carefully initialize !
+  callback for surface properties plugin must fit a PFN_QERAPP_MAPPRINTF ( see isurfaceplugin.h )
+  carefully initialize !
 ================
 */
 FILE *g_File;
@@ -1830,7 +1821,7 @@ const char *Brush_GetKeyValue(brush_t *b, const char *pKey)
 ================
 Brush_Write
 
-        save all brushes as Brush primitive format
+    save all brushes as Brush primitive format
 ================
 */
 void Brush_Write(brush_t *b, FILE *f, const idVec3 &origin, bool newFormat)
@@ -2022,8 +2013,8 @@ void Brush_Write(brush_t *b, FILE *f, const idVec3 &origin, bool newFormat)
 ================
 QERApp_MapPrintf_MEMFILE
 
-  callback for surface properties plugin must fit a PFN_QERAPP_MAPPRINTF ( see
-isurfaceplugin.h ) carefully initialize !
+  callback for surface properties plugin must fit a PFN_QERAPP_MAPPRINTF ( see isurfaceplugin.h )
+  carefully initialize !
 ================
 */
 CMemFile *g_pMemFile;
@@ -2250,8 +2241,8 @@ brush_t *Brush_Create(idVec3 mins, idVec3 maxs, texdef_t *texdef)
     brush_t *b;
 
     //
-    // brush primitive mode : convert texdef to brushprimit_texdef ? most of the
-    // time texdef is empty
+    // brush primitive mode : convert texdef to brushprimit_texdef ? most of the time
+    // texdef is empty
     //
     for (i = 0; i < 3; i++)
     {
@@ -2337,8 +2328,7 @@ void Brush_Scale(brush_t *b)
 ================
 Brush_CreatePyramid
 
-  Create non-textured pyramid for light entities The brush is NOT linked to any
-list
+  Create non-textured pyramid for light entities The brush is NOT linked to any list
 ================
 */
 brush_t *Brush_CreatePyramid(idVec3 mins, idVec3 maxs, texdef_t *texdef)
@@ -2567,8 +2557,7 @@ Brush_Free
   Removes owner entity if this was the last brush unless owner is the world.
   Removes from groups
 
-  set bRemoveNode to false to avoid trying to delete the item in group view tree
-control
+  set bRemoveNode to false to avoid trying to delete the item in group view tree control
 ================
 */
 void Brush_Free(brush_t *b, bool bRemoveNode)
@@ -3076,13 +3065,11 @@ void Brush_RemoveFromList(brush_t *b)
 SetFaceTexdef
 
   Doesn't set the curve flags.
-  NOTE: never trust f->d_texture here, f->texdef and f->d_texture are out of
-sync when called by Brush_SetTexture use Texture_ForName() to find the right
-shader
+  NOTE: never trust f->d_texture here, f->texdef and f->d_texture are out of sync when
+  called by Brush_SetTexture use Texture_ForName() to find the right shader
   FIXME: send the right shader ( qtexture_t * ) in the parameters ?
   TTimo: surface plugin, added an IPluginTexdef* parameter if not NULL,
-  get ->Copy() of it into the face ( and remember to hook ) if NULL, ask for a
-default
+  get ->Copy() of it into the face ( and remember to hook ) if NULL, ask for a default
 ================
 */
 void SetFaceTexdef(brush_t *b, face_t *f, texdef_t *texdef, brushprimit_texdef_t *brushprimit_texdef, bool bFitScale)
@@ -3271,8 +3258,7 @@ void AddMovePlane(idPlane *p)
 ================
 Brush_SelectFaceForDragging
 
-  Adds the faces planepts to move_points, and rotates and adds the planepts of
-adjacent face if shear is set
+  Adds the faces planepts to move_points, and rotates and adds the planepts of adjacent face if shear is set
 ================
 */
 void Brush_SelectFaceForDragging(brush_t *b, face_t *f, bool shear)
@@ -3329,8 +3315,8 @@ void Brush_SelectFaceForDragging(brush_t *b, face_t *f, bool shear)
     }
 
     //
-    // if shearing, take all the planes adjacent to selected faces and rotate
-    // their points so the edge clipped by a selcted face has two of the points
+    // if shearing, take all the planes adjacent to selected faces and rotate their
+    // points so the edge clipped by a selcted face has two of the points
     //
     if (!shear)
     {
@@ -3408,8 +3394,7 @@ void Brush_SelectFaceForDragging(brush_t *b, face_t *f, bool shear)
 ================
 Brush_SideSelect
 
-  The mouse click did not hit the brush, so grab one or more side planes for
-dragging.
+  The mouse click did not hit the brush, so grab one or more side planes for dragging.
 ================
 */
 void Brush_SideSelect(brush_t *b, idVec3 origin, idVec3 dir, bool shear)
@@ -3682,8 +3667,8 @@ void Brush_BuildWindings(brush_t *b, bool bSnap, bool keepOnPlaneWinding, bool u
                 if (g_qeglobals.bNeedConvert)
                 {
                     //
-                    // we have parsed old brushes format and need conversion convert old
-                    // brush texture representation to new format
+                    // we have parsed old brushes format and need conversion convert old brush texture
+                    // representation to new format
                     //
                     FaceToBrushPrimitFace(face);
 #ifdef _DEBUG
@@ -3696,9 +3681,8 @@ void Brush_BuildWindings(brush_t *b, bool bSnap, bool keepOnPlaneWinding, bool u
                 }
 
                 //
-                // use new texture representation to compute texture coordinates in
-                // debug mode we will check against old code and warn if there are
-                // differences
+                // use new texture representation to compute texture coordinates in debug mode we
+                // will check against old code and warn if there are differences
                 //
                 EmitBrushPrimitTextureCoordinates(face, w);
             }
@@ -3981,8 +3965,8 @@ eclass_t *HasModel(brush_t *b)
             if (e != NULL)
             {
                 //
-                // we need to scale the brush to the proper size based on the model load
-                // recreate brush just like in load/save
+                // we need to scale the brush to the proper size based on the model load recreate
+                // brush just like in load/save
                 //
                 VectorAdd(vMin, b->owner->origin, vMin);
                 VectorAdd(vMax, b->owner->origin, vMax);
@@ -4638,12 +4622,11 @@ void Brush_DrawModel(brush_t *b, bool camera, bool bSelected)
             // draw selection tints
             /*
             if ( camera && g_PrefsDlg.m_nEntityShowState != ENTITY_WIREFRAME ) {
-                    qglPolygonMode ( GL_FRONT_AND_BACK , GL_FILL );
-                    qglColor3fv (
-            g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES].ToFloatPtr () );
-                    qglEnable ( GL_BLEND );
-                    qglBlendFunc ( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-                    DrawRenderModel( model, b->owner->origin, axis, camera );
+                qglPolygonMode ( GL_FRONT_AND_BACK , GL_FILL );
+                qglColor3fv ( g_qeglobals.d_savedinfo.colors[COLOR_SELBRUSHES].ToFloatPtr () );
+                qglEnable ( GL_BLEND );
+                qglBlendFunc ( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+                DrawRenderModel( model, b->owner->origin, axis, camera );
             }
             */
 
@@ -5325,37 +5308,41 @@ void Brush_DrawCurve(brush_t *b, bool bSelected, bool cam)
             }
         }
         /*
-                        if ( cam ) {
-                                idSurface_SweptSpline *ss = SplineToSweptSpline(
-           b->owner->curve ); if ( ss ) { idMaterial *mat =
-           declManager->FindMaterial( "_default" ); mat->GetEditorImage()->Bind();
-                                        qglPolygonMode( GL_FRONT_AND_BACK, GL_FILL
-           ); qglBegin( GL_TRIANGLES ); const int *indexes = ss->GetIndexes(); const
-           idDrawVert *verts = ss->GetVertices(); for ( j = 0; j <
-           ss->GetNumIndexes(); j += 3 ) { for ( k = 0; k < 3; k++ ) { int	index =
-           indexes[ j + 2 - k ]; float f = ShadeForNormal( verts[index].normal  );
-                                                        qglColor3f( f, f, f );
-                                                        qglTexCoord2fv(
-           verts[index].st.ToFloatPtr() ); qglVertex3fv(
-           verts[index].xyz.ToFloatPtr() );
-                                                }
-                                        }
-                                        qglEnd();
-                                        delete ss;
-                                }
-                        } else {
+                if ( cam ) {
+                    idSurface_SweptSpline *ss = SplineToSweptSpline( b->owner->curve );
+                    if ( ss ) {
+                        idMaterial *mat = declManager->FindMaterial( "_default" );
+                        mat->GetEditorImage()->Bind();
+                        qglPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+                        qglBegin( GL_TRIANGLES );
+                        const int *indexes = ss->GetIndexes();
+                        const idDrawVert *verts = ss->GetVertices();
+                        for ( j = 0; j < ss->GetNumIndexes(); j += 3 ) {
+                            for ( k = 0; k < 3; k++ ) {
+                                int	index = indexes[ j + 2 - k ];
+                                float f = ShadeForNormal( verts[index].normal  );
+                                qglColor3f( f, f, f );
+                                qglTexCoord2fv( verts[index].st.ToFloatPtr() );
+                                qglVertex3fv( verts[index].xyz.ToFloatPtr() );
+                            }
+                        }
+                        qglEnd();
+                        delete ss;
+                    }
+                } else {
         */
         /*			qglPointSize( 1.0f );
-                                qglBegin( GL_POINTS );
-                                if ( i + 1  < maxage ) {
-                                        int start = b->owner->curve->GetTime( i );
-                                        int end = b->owner->curve->GetTime( i + 1 );
-                                        int inc = (end - start) / POINTS_PER_KNOT;
-                                        for ( int j = 0; j < POINTS_PER_KNOT; j++ )
-           { idVec3 v = b->owner->curve->GetCurrentValue( start ); qglVertex3f( v.x,
-           v.y, v.z ); start += inc;
-                                        }
-                                }*/
+                    qglBegin( GL_POINTS );
+                    if ( i + 1  < maxage ) {
+                        int start = b->owner->curve->GetTime( i );
+                        int end = b->owner->curve->GetTime( i + 1 );
+                        int inc = (end - start) / POINTS_PER_KNOT;
+                        for ( int j = 0; j < POINTS_PER_KNOT; j++ ) {
+                            idVec3 v = b->owner->curve->GetCurrentValue( start );
+                            qglVertex3f( v.x, v.y, v.z );
+                            start += inc;
+                        }
+                    }*/
         // DHM - _D3XP : Makes it easier to see curve
         qglBegin(GL_LINE_STRIP);
         if (i + 1 < maxage)
@@ -5372,7 +5359,7 @@ void Brush_DrawCurve(brush_t *b, bool bSelected, bool cam)
         }
         qglEnd();
         /*
-                        }
+                }
         */
     }
     qglPointSize(1);
@@ -5556,10 +5543,9 @@ void Brush_DrawXY(brush_t *b, int nViewType, bool bSelected, bool ignoreViewType
         }
         qglEnd();
         /*
-                        for (i = 0; i < 3; i++) {
-                                glLabeledPoint(idVec4(1, 0, 0, 1),
-           face->planepts[i], 3, va("%i", i));
-                        }
+                for (i = 0; i < 3; i++) {
+                    glLabeledPoint(idVec4(1, 0, 0, 1), face->planepts[i], 3, va("%i", i));
+                }
         */
     }
 
@@ -5750,8 +5736,7 @@ void Brush_Print(brush_t *b)
 ================
 Brush_MakeSidedCone
 
-  Makes the current brush have the given number of 2d sides and turns it into a
-cone
+  Makes the current brush have the given number of 2d sides and turns it into a cone
 ================
 */
 void Brush_MakeSidedCone(int sides)
@@ -5851,8 +5836,7 @@ void Brush_MakeSidedCone(int sides)
 ================
 Brush_MakeSidedSphere
 
-  Makes the current brushhave the given number of 2d sides and turns it into a
-sphere
+  Makes the current brushhave the given number of 2d sides and turns it into a sphere
 ================
 */
 void Brush_MakeSidedSphere(int sides)
@@ -5947,34 +5931,32 @@ void Face_FitTexture(face_t *face, float nHeight, float nWidth)
     else
     {
         /*
-         * winding_t *w; idBounds bounds; int i; float width, height, temp; float
-         * rot_width, rot_height; float cosv,sinv,ang; float min_t, min_s, max_t,
-         * max_s; float s,t; idVec3 vecs[2]; idVec3 coords[4]; texdef_t *td; if
-         * (nHeight < 1) { nHeight = 1; } if (nWidth < 1) { nWidth = 1; }
-         * bounds.Clear(); td = &face->texdef; w = face->face_winding; if (!w) {
-         * return; } for (i=0 ; i<w->numpoints ; i++) { bounds.AddPoint( w->p[i] );
-         * } // // get the current angle // ang = td->rotate / 180 * Q_PI; sinv =
-         * sin(ang); cosv = cos(ang); // get natural texture axis
+         * winding_t *w; idBounds bounds; int i; float width, height, temp; float rot_width,
+         * rot_height; float cosv,sinv,ang; float min_t, min_s, max_t, max_s; float s,t;
+         * idVec3 vecs[2]; idVec3 coords[4]; texdef_t *td; if (nHeight < 1) { nHeight = 1;
+         * } if (nWidth < 1) { nWidth = 1; } bounds.Clear(); td = &face->texdef; w =
+         * face->face_winding; if (!w) { return; } for (i=0 ; i<w->numpoints ; i++) {
+         * bounds.AddPoint( w->p[i] ); } // // get the current angle // ang = td->rotate /
+         * 180 * Q_PI; sinv = sin(ang); cosv = cos(ang); // get natural texture axis
          * TextureAxisFromPlane(&face->plane, vecs[0], vecs[1]); min_s = DotProduct(
-         * bounds.b[0], vecs[0] ); min_t = DotProduct( bounds.b[0], vecs[1] ); max_s
-         * = DotProduct( bounds.b[1], vecs[0] ); max_t = DotProduct( bounds.b[1],
-         * vecs[1] ); width = max_s - min_s; height = max_t - min_t; coords[0][0] =
-         * min_s; coords[0][1] = min_t; coords[1][0] = max_s; coords[1][1] = min_t;
-         * coords[2][0] = min_s; coords[2][1] = max_t; coords[3][0] = max_s;
-         * coords[3][1] = max_t; min_s = min_t = 999999; max_s = max_t = -999999;
-         * for (i=0; i<4; i++) { s = cosv
+         * bounds.b[0], vecs[0] ); min_t = DotProduct( bounds.b[0], vecs[1] ); max_s =
+         * DotProduct( bounds.b[1], vecs[0] ); max_t = DotProduct( bounds.b[1], vecs[1] );
+         * width = max_s - min_s; height = max_t - min_t; coords[0][0] = min_s;
+         * coords[0][1] = min_t; coords[1][0] = max_s; coords[1][1] = min_t; coords[2][0]
+         * = min_s; coords[2][1] = max_t; coords[3][0] = max_s; coords[3][1] = max_t;
+         * min_s = min_t = 999999; max_s = max_t = -999999; for (i=0; i<4; i++) { s = cosv
          * * coords[i][0] - sinv * coords[i][1]; t = sinv * coords[i][0] + cosv *
-         * coords[i][1]; if (i&1) { if (s > max_s) { max_s = s; } } else { if (s <
-         * min_s) { min_s = s; } if (i<2) { if (t < min_t) { min_t = t; } } else {
-         * if (t > max_t) { max_t = t; } } } } rot_width = (max_s - min_s);
-         * rot_height = (max_t - min_t); td->scale[0] =
+         * coords[i][1]; if (i&1) { if (s > max_s) { max_s = s; } } else { if (s < min_s)
+         * { min_s = s; } if (i<2) { if (t < min_t) { min_t = t; } } else { if (t > max_t)
+         * { max_t = t; } } } } rot_width = (max_s - min_s); rot_height = (max_t - min_t);
+         * td->scale[0] =
          * -(rot_width/((float)(face->d_texture->GetEditorImage()->uploadWidth*nWidth)));
          * td->scale[1] =
          * -(rot_height/((float)(face->d_texture->GetEditorImage()->uploadHeight*nHeight)));
          * td->shift[0] = min_s/td->scale[0]; temp = (int)(td->shift[0] /
          * (face->d_texture->GetEditorImage()->uploadWidth*nWidth)); temp =
-         * (temp+1)*face->d_texture->GetEditorImage()->uploadWidth*nWidth;
-         * td->shift[0] = (int)(temp -
+         * (temp+1)*face->d_texture->GetEditorImage()->uploadWidth*nWidth; td->shift[0] =
+         * (int)(temp -
          * td->shift[0])%(face->d_texture->GetEditorImage()->uploadWidth*nWidth);
          * td->shift[1] = min_t/td->scale[1]; temp = (int)(td->shift[1] /
          * (face->d_texture->GetEditorImage()->uploadHeight*nHeight)); temp =

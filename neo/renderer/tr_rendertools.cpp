@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "renderer/simplex.h" // line font definition
+#include "renderer/VertexCache.h"
 #include "renderer/Cinematic.h"
 #include "renderer/RenderWorld_local.h"
-#include "renderer/VertexCache.h"
-#include "renderer/simplex.h" // line font definition
-#include "sys/platform.h"
 
 #include "renderer/tr_local.h"
 
@@ -505,9 +502,8 @@ void RB_ShowDepthBuffer(void)
         // qglColor4f( 0.0f, 0.0f, 0.5f, 1.0f );
 
         const float tx = 0, ty = 0;
-        // the actual texturesize of currentDepthImage is the next bigger power of
-        // two (POT), so the normalized width/height of the part of it we actually
-        // wanna show is the following
+        // the actual texturesize of currentDepthImage is the next bigger power of two (POT),
+        // so the normalized width/height of the part of it we actually wanna show is the following
         const float tw = float(glConfig.vidWidth) / float(globalImages->currentDepthImage->uploadWidth);
         const float th = float(glConfig.vidHeight) / float(globalImages->currentDepthImage->uploadHeight);
 
@@ -542,9 +538,8 @@ void RB_ShowDepthBuffer(void)
         memset(depthReadback, 0, glConfig.vidWidth * glConfig.vidHeight * 4);
 
         qglReadPixels(0, 0, glConfig.vidWidth, glConfig.vidHeight, GL_DEPTH_COMPONENT, GL_FLOAT, depthReadback);
-#if 0 // the following looks better, but is different from the
-      // !r_skipDepthCapture.GetBool() case above (which draws the captured
-      // depth buffer unaltered, unless we add a shader)
+#if 0 // the following looks better, but is different from the !r_skipDepthCapture.GetBool() case above
+      // (which draws the captured depth buffer unaltered, unless we add a shader)
 		for ( int i = 0, n=glConfig.vidWidth * glConfig.vidHeight; i < n ; i++ ) {
 			float& px = ((float *)depthReadback)[i];
 			float d = px;
@@ -1757,9 +1752,9 @@ static void RB_ShowEdges(drawSurf_t **drawSurfs, int numDrawSurfs)
 RB_ShowLights
 
 Visualize all light volumes used in the current scene
-r_showLights 1	: just print volumes numbers, highlighting ones covering the
-view r_showLights 2	: also draw planes of each volume r_showLights 3
-: also draw edges of each volume
+r_showLights 1	: just print volumes numbers, highlighting ones covering the view
+r_showLights 2	: also draw planes of each volume
+r_showLights 3	: also draw edges of each volume
 ==============
 */
 void RB_ShowLights(void)
@@ -2232,8 +2227,7 @@ void RB_ShowDebugLines(void)
     }
 
     // draw lines
-    GL_State(GLS_POLYMODE_LINE); //| GLS_DEPTHMASK ); //| GLS_SRCBLEND_ONE |
-                                 // GLS_DSTBLEND_ONE );
+    GL_State(GLS_POLYMODE_LINE); //| GLS_DEPTHMASK ); //| GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE );
     qglLineWidth(width);
 
     if (!r_debugLineDepthTest.GetBool())

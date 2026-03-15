@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,7 +35,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Samples a set of user commands from player input.
+    Samples a set of user commands from player input.
 
 ===============================================================================
 */
@@ -103,8 +100,7 @@ class usercmd_t
     signed char rightmove;   // left/right movement
     signed char upmove;      // up/down movement
     short angles[3];         // view angles
-    short mx;                // mouse delta x - DG: not really delta, but from continuousMouseX
-                             // which accumulates
+    short mx;                // mouse delta x - DG: not really delta, but from continuousMouseX which accumulates
     short my;                // mouse delta y - DG: same but from continuousMouseY
     signed char impulse;     // impulse command
     byte flags;              // additional flags
@@ -145,9 +141,8 @@ class idUsercmdGen
     // Clears view angles.
     virtual void ClearAngles(void) = 0;
 
-    // When the console is down or the menu is up, only emit default usercmd, so
-    // the player isn't moving around. Each subsystem (session and game) may want
-    // an inhibit will OR the requests.
+    // When the console is down or the menu is up, only emit default usercmd, so the player isn't moving around.
+    // Each subsystem (session and game) may want an inhibit will OR the requests.
     virtual void InhibitUsercmd(inhibit_t subsystem, bool inhibit) = 0;
 
     // Returns a buffered command for the given game tic.
@@ -156,8 +151,7 @@ class idUsercmdGen
     // Called async at regular intervals.
     virtual void UsercmdInterrupt(void) = 0;
 
-    // Set a value that can safely be referenced by UsercmdInterrupt() for each
-    // key binding.
+    // Set a value that can safely be referenced by UsercmdInterrupt() for each key binding.
     virtual int CommandStringUsercmdData(const char *cmdString) = 0;
 
     // Returns the number of user commands.

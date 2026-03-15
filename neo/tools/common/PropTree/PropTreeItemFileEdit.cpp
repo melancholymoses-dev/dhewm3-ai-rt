@@ -3,8 +3,8 @@
 // #include "stdafx.h"
 #include "tools/edit_gui_common.h"
 
-#include "PropTreeItemFileEdit.h"
 #include "proptree.h"
+#include "PropTreeItemFileEdit.h"
 
 #include "../../../sys/win32/rc/proptree_Resource.h"
 

@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../sys/win32/rc/DeclEditor_resource.h"
-#include "../../sys/win32/rc/SoundEditor_resource.h"
-#include "../../sys/win32/rc/common_resource.h"
 #include "../../sys/win32/win_local.h"
+#include "../../sys/win32/rc/common_resource.h"
+#include "../../sys/win32/rc/SoundEditor_resource.h"
 #include "../comafx/DialogName.h"
+#include "../../sys/win32/rc/DeclEditor_resource.h"
 #include "../decl/DialogDeclEditor.h"
 
 #include "DialogSound.h"
@@ -166,10 +163,9 @@ void SoundEditorInit(const idDict *spawnArgs)
     {
         g_SoundDialog->Create(IDD_DIALOG_SOUND);
         /*
-                        // FIXME: restore position
-                        CRect rct;
-                        g_SoundDialog->SetWindowPos( NULL, rct.left, rct.top, 0,0,
-           SWP_NOSIZE );
+                // FIXME: restore position
+                CRect rct;
+                g_SoundDialog->SetWindowPos( NULL, rct.left, rct.top, 0,0, SWP_NOSIZE );
         */
     }
 
@@ -485,8 +481,7 @@ HTREEITEM CDialogSound::AddStrList(const char *root, const idStrList &list, int 
                     newItem = *check;
                 }
 
-                // HTREEITEM newItem = FindTreeItem(&treeSounds, item, name.Left(index,
-                // out), item);
+                // HTREEITEM newItem = FindTreeItem(&treeSounds, item, name.Left(index, out), item);
                 if (newItem == NULL)
                 {
                     newItem = treeSounds.InsertItem(out, item);

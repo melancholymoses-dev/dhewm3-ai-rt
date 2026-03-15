@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,15 +34,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "framework/DeclPDA.h"
 
-#include "Entity.h"
 #include "physics/Force_Drag.h"
+#include "Entity.h"
 
 class Player;
 
 /*
 ===============================================================================
 
-        Ingame cursor.
+    Ingame cursor.
 
 ===============================================================================
 */
@@ -69,7 +66,7 @@ class idCursor3D : public idEntity
 /*
 ===============================================================================
 
-        Allows entities to be dragged through the world with physics.
+    Allows entities to be dragged through the world with physics.
 
 ===============================================================================
 */
@@ -107,7 +104,7 @@ class idDragEntity
 /*
 ===============================================================================
 
-        Handles ingame entity editing.
+    Handles ingame entity editing.
 
 ===============================================================================
 */

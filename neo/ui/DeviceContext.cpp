@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/geometry/DrawVert.h"
 #include "sys/platform.h"
+#include "idlib/geometry/DrawVert.h"
 
 #include "ui/DeviceContext.h"
 
@@ -328,10 +325,10 @@ void idDeviceContext::SetMenuScaleFix(bool enable)
         {
             // widescreen (4:3 is 1.333 3:2 is 1.5, 16:10 is 1.6, 16:9 is 1.7778)
             // => we need to scale and offset X
-            // All the coordinates here assume 640x480 (VIRTUAL_WIDTH x
-            // VIRTUAL_HEIGHT) screensize, so to fit a 4:3 menu into 640x480 stretched
-            // to a widescreen, we need do decrease the width to something smaller
-            // than 640 and center the result with an offset
+            // All the coordinates here assume 640x480 (VIRTUAL_WIDTH x VIRTUAL_HEIGHT)
+            // screensize, so to fit a 4:3 menu into 640x480 stretched to a widescreen,
+            // we need do decrease the width to something smaller than 640 and center
+            // the result with an offset
             float scaleX = virtualAspectRatio / aspectRatio;
             float offsetX = (1.0f - scaleX) * (VIRTUAL_WIDTH * 0.5f); // (640 - scale*640)/2
             fixScaleForMenu.Set(scaleX, 1);
@@ -355,8 +352,7 @@ void idDeviceContext::SetMenuScaleFix(bool enable)
     }
 }
 
-// DG: Note: not sure if AdjustCoords() works entirely as it should, but it
-// seems
+// DG: Note: not sure if AdjustCoords() works entirely as it should, but it seems
 //     good enough for the idRenderWindow with the mars globe in the main menu
 void idDeviceContext::AdjustCoords(float *x, float *y, float *w, float *h)
 {
@@ -392,8 +388,8 @@ void idDeviceContext::AdjustCoords(float *x, float *y, float *w, float *h)
 }
 
 // fva/DG: added adjustCoords argument for CstDoom3 anchored GUIs and our old
-//         scale-menus-to-4:3-fix, it basically replaces calling
-//         AdjustCoords(&x, &y, &w, &h) before calling this
+//         scale-menus-to-4:3-fix, it basically replaces calling AdjustCoords(&x, &y, &w, &h)
+//         before calling this
 void idDeviceContext::DrawStretchPic(float x, float y, float w, float h, float s1, float t1, float s2, float t2,
                                      const idMaterial *shader, bool adjustCoords)
 {
@@ -484,8 +480,7 @@ void idDeviceContext::DrawStretchPic(float x, float y, float w, float h, float s
     {
         for (int i = 0; i < 4; ++i)
         {
-            // Note: if cstAdjustCoords == false; cst_*Offset is 0, so that doesn't
-            // require special handling
+            // Note: if cstAdjustCoords == false; cst_*Offset is 0, so that doesn't require special handling
             float x = verts[i].xyz[0] * xScale + cst_xOffset;
             float y = verts[i].xyz[1] * yScale + cst_yOffset;
             verts[i].xyz[0] = x * fixScaleForMenu.x + fixOffsetForMenu.x;
@@ -616,8 +611,8 @@ void idDeviceContext::DrawMaterialRotated(float x, float y, float w, float h, co
 }
 
 // fva/DG: added adjustCoords argument for CstDoom3 anchored GUIs and our old
-//         scale-menus-to-4:3-fix, it basically replaces calling
-//         AdjustCoords(&x, &y, &w, &h) before calling this
+//         scale-menus-to-4:3-fix, it basically replaces calling AdjustCoords(&x, &y, &w, &h)
+//         before calling this
 void idDeviceContext::DrawStretchPicRotated(float x, float y, float w, float h, float s1, float t1, float s2, float t2,
                                             const idMaterial *shader, float angle, bool adjustCoords)
 {
@@ -704,8 +699,7 @@ void idDeviceContext::DrawStretchPicRotated(float x, float y, float w, float h, 
         verts[3].xyz += origin;
     }
 
-    // Generate a translation so we can translate to the center of the image
-    // rotate and draw
+    // Generate a translation so we can translate to the center of the image rotate and draw
     idVec3 origTrans;
     origTrans.x = x + (w / 2);
     origTrans.y = y + (h / 2);
@@ -737,8 +731,7 @@ void idDeviceContext::DrawStretchPicRotated(float x, float y, float w, float h, 
     {
         for (int i = 0; i < 4; ++i)
         {
-            // Note: if cstAdjustCoords == false; cst_*Offset is 0, so that doesn't
-            // require special handling
+            // Note: if cstAdjustCoords == false; cst_*Offset is 0, so that doesn't require special handling
             float x = verts[i].xyz[0] * xScale + cst_xOffset;
             float y = verts[i].xyz[1] * yScale + cst_yOffset;
             verts[i].xyz[0] = x * fixScaleForMenu.x + fixOffsetForMenu.x;
@@ -850,23 +843,20 @@ void idDeviceContext::DrawCursor(float *x, float *y, float size)
     renderSystem->SetColor(colorWhite);
 
     // DG: originally, this just called AdjustCoords() and then DrawStretchPic().
-    //     It had to be adjusted to scale menus and other fullscreen GUIs to 4:3
-    //     aspect ratio and for the CstDoom3 anchored GUIs, so all that is now
-    //     done here
+    //     It had to be adjusted to scale menus and other fullscreen GUIs to 4:3 aspect ratio
+    //     and for the CstDoom3 anchored GUIs, so all that is now done here
 
     // the following block used to be Adjust(Cursor)Coords()
     // (no point in keeping that function when it's only used here)
 
-    // if cstAdjustCoords is used, x and y shouldn't be scaled, otherwise the
-    // cursor moves to a window border
+    // if cstAdjustCoords is used, x and y shouldn't be scaled, otherwise the cursor moves to a window border
     if (!cstAdjustCoords)
     {
         *x *= xScale;
         *y *= yScale;
     }
 
-    // the *actual* sizes and position used (but not set to *x and *y) need to
-    // apply the menu fixes
+    // the *actual* sizes and position used (but not set to *x and *y) need to apply the menu fixes
     float sizeW = size * fixScaleForMenu.x * xScale;
     float sizeH = size * fixScaleForMenu.y * yScale;
     float fixedX = *x * fixScaleForMenu.x + fixOffsetForMenu.x;
@@ -1355,57 +1345,58 @@ idRegion *idDeviceContext::GetTextRegion(const char *text, float textScale, idRe
 #endif
     return NULL;
     /*
-            if (text == NULL) {
-                    return;
+        if (text == NULL) {
+            return;
+        }
+
+        textPtr = text;
+        if (*textPtr == '\0') {
+            return;
+        }
+
+        y = lineSkip + rectDraw.y + yStart;
+        len = 0;
+        buff[0] = '\0';
+        newLine = 0;
+        newLineWidth = 0;
+        p = textPtr;
+
+        textWidth = 0;
+        while (p) {
+            if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\0') {
+                newLine = len;
+                newLinePtr = p + 1;
+                newLineWidth = textWidth;
             }
 
-            textPtr = text;
-            if (*textPtr == '\0') {
-                    return;
-            }
+            if ((newLine && textWidth > rectDraw.w) || *p == '\n' || *p == '\0') {
+                if (len) {
 
-            y = lineSkip + rectDraw.y + yStart;
-            len = 0;
-            buff[0] = '\0';
-            newLine = 0;
-            newLineWidth = 0;
-            p = textPtr;
+                    float x = rectDraw.x ;
 
-            textWidth = 0;
-            while (p) {
-                    if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\0') {
-                            newLine = len;
-                            newLinePtr = p + 1;
-                            newLineWidth = textWidth;
+                    buff[newLine] = '\0';
+                    DrawText(x, y, textScale, color, buff, 0, 0, 0);
+                    if (!wrap) {
+                        return;
                     }
+                }
 
-                    if ((newLine && textWidth > rectDraw.w) || *p == '\n' || *p ==
-       '\0') { if (len) {
+                if (*p == '\0') {
+                    break;
+                }
 
-                                    float x = rectDraw.x ;
-
-                                    buff[newLine] = '\0';
-                                    DrawText(x, y, textScale, color, buff, 0, 0,
-       0); if (!wrap) { return;
-                                    }
-                            }
-
-                            if (*p == '\0') {
-                                    break;
-                            }
-
-                            y += lineSkip + 5;
-                            p = newLinePtr;
-                            len = 0;
-                            newLine = 0;
-                            newLineWidth = 0;
-                            continue;
-                    }
-
-                    buff[len++] = *p++;
-                    buff[len] = '\0';
-                    textWidth = TextWidth( buff, textScale, -1 );
+                y += lineSkip + 5;
+                p = newLinePtr;
+                len = 0;
+                newLine = 0;
+                newLineWidth = 0;
+                continue;
             }
+
+            buff[len++] = *p++;
+            buff[len] = '\0';
+            textWidth = TextWidth( buff, textScale, -1 );
+        }
     */
 }
 
@@ -1484,17 +1475,15 @@ int idDeviceContext::DrawText(const char *text, float textScale, int textAlign, 
         }
 
         int nextCharWidth = (idStr::CharIsPrintable(*p) ? CharWidth(*p, textScale) : cursorSkip);
-        // FIXME: this is a temp hack until the guis can be fixed not not overflow
-        // the bounding rectangles
-        //		  the side-effect is that list boxes and edit boxes will draw
-        // over their scroll bars 	The following line and the !linebreak in the if
-        // statement below should be removed
+        // FIXME: this is a temp hack until the guis can be fixed not not overflow the bounding rectangles
+        //		  the side-effect is that list boxes and edit boxes will draw over their scroll bars
+        //	The following line and the !linebreak in the if statement below should be removed
         nextCharWidth = 0;
 
         if (!lineBreak && (textWidth + nextCharWidth) > rectDraw.w)
         {
-            // The next character will cause us to overflow, if we haven't yet found a
-            // suitable break spot, set it to be this character
+            // The next character will cause us to overflow, if we haven't yet found a suitable
+            // break spot, set it to be this character
             if (len > 0 && newLine == 0)
             {
                 newLine = len;
@@ -1505,8 +1494,7 @@ int idDeviceContext::DrawText(const char *text, float textScale, int textAlign, 
         }
         else if (lineBreak || (wrap && (*p == ' ' || *p == '\t')))
         {
-            // The next character is in view, so if we are a break character, store
-            // our position
+            // The next character is in view, so if we are a break character, store our position
             newLine = len;
             newLinePtr = p + 1;
             newLineWidth = textWidth;

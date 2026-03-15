@@ -24,10 +24,10 @@ the Free Software Foundation, either version 3 of the License, or
 
 #ifdef DHEWM3_VULKAN
 
-#include "renderer/Image.h"
-#include "renderer/Vulkan/vk_common.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/Image.h"
+#include "renderer/tr_local.h"
+#include "renderer/Vulkan/vk_common.h"
 
 #include <math.h> // log2, floor
 #include <string.h>

@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Session_local.h"
 #include "sound/sound.h"
-#include "sys/platform.h"
 #include "ui/DeviceContext.h"
-#include "ui/UserInterfaceLocal.h"
 #include "ui/Window.h"
+#include "ui/UserInterfaceLocal.h"
 
 #include "ui/GameSSDWindow.h"
 
@@ -470,6 +467,7 @@ void SSDAsteroid::Init(idGameSSDWindow *_game, const idVec3 &startPosition, cons
 
 void SSDAsteroid::EntityUpdate()
 {
+
     SSDMover::EntityUpdate();
 }
 
@@ -723,8 +721,7 @@ void SSDExplosion::Init(idGameSSDWindow *_game, const idVec3 &_position, const i
     killBuddy = _killBuddy;
     followBuddy = _followBuddy;
 
-    // Explosion Starts from nothing and will increase in size until it gets to
-    // final size
+    // Explosion Starts from nothing and will increase in size until it gets to final size
     size.Zero();
 
     noPlayerDamage = true;
@@ -1273,7 +1270,7 @@ void SSDPowerup::Init(idGameSSDWindow *_game, float _speed, float _rotation)
 
     /*OutputDebugString(va("Powerup: %d\n", powerupType));
     if(powerupType == 0) {
-            int x = 0;
+        int x = 0;
     }*/
 
     SetMaterial(powerupMaterials[powerupType][powerupState]);
@@ -1850,11 +1847,13 @@ void idGameSSDWindow::ResetEntities()
 
 void idGameSSDWindow::StartGame()
 {
+
     gameStats.gameRunning = true;
 }
 
 void idGameSSDWindow::StopGame()
 {
+
     gameStats.gameRunning = false;
 }
 
@@ -2047,8 +2046,7 @@ void idGameSSDWindow::CheckForHits()
 
                     ent->OnStrikePlayer();
 
-                    // The entity hit the player figure out what is was and act
-                    // appropriately
+                    // The entity hit the player figure out what is was and act appropriately
                     if (ent->type == SSD_ENTITY_ASTEROID)
                     {
                         AsteroidStruckPlayer(static_cast<SSDAsteroid *>(ent));
@@ -2150,16 +2148,14 @@ void idGameSSDWindow::FireWeapon(int key)
         {
             // Aim the projectile from the bottom of the screen directly at the ent
             // SSDProjectile* newProj = new SSDProjectile(this, idVec3(320,0,0),
-            // gameStats.levelStats.targetEnt->position,
-            // weaponData[gameStats.currentWeapon].speed,
+            // gameStats.levelStats.targetEnt->position, weaponData[gameStats.currentWeapon].speed,
             // weaponData[gameStats.currentWeapon].size);
             SSDProjectile *newProj = SSDProjectile::GetNewProjectile(
                 this, idVec3(0, -180, 0), gameStats.levelStats.targetEnt->position,
                 weaponData[gameStats.currentWeapon].speed, weaponData[gameStats.currentWeapon].size);
             entities.Append(newProj);
             // newProj = SSDProjectile::GetNewProjectile(this, idVec3(-320,-0,0),
-            // gameStats.levelStats.targetEnt->position,
-            // weaponData[gameStats.currentWeapon].speed,
+            // gameStats.levelStats.targetEnt->position, weaponData[gameStats.currentWeapon].speed,
             // weaponData[gameStats.currentWeapon].size); entities.Append(newProj);
 
             // We hit something
@@ -2181,11 +2177,9 @@ void idGameSSDWindow::FireWeapon(int key)
         }
         else
         {
-            ////Aim the projectile at the cursor position all the way to the far
-            /// clipping
-            // SSDProjectile* newProj = SSDProjectile::GetNewProjectile(this,
-            // idVec3(0,-180,0), idVec3(cursorWorld.x, cursorWorld.y,
-            // (Z_FAR-Z_NEAR)/2.0f), weaponData[gameStats.currentWeapon].speed,
+            ////Aim the projectile at the cursor position all the way to the far clipping
+            // SSDProjectile* newProj = SSDProjectile::GetNewProjectile(this, idVec3(0,-180,0), idVec3(cursorWorld.x,
+            // cursorWorld.y, (Z_FAR-Z_NEAR)/2.0f), weaponData[gameStats.currentWeapon].speed,
             // weaponData[gameStats.currentWeapon].size);
 
             // Aim the projectile so it crosses the cursor 1/4 of screen
@@ -2201,13 +2195,11 @@ void idGameSSDWindow::FireWeapon(int key)
         PlaySound("arcade_blaster");
 
     } /*else if (key == K_MOUSE2) {
-            if(gameStats.levelStats.targetEnt) {
-                    if(gameStats.levelStats.targetEnt->type ==
-    SSD_ENTITY_ASTRONAUT) {
-                            HitAstronaut(static_cast<SSDAstronaut*>(gameStats.levelStats.targetEnt),
-    key);
-                    }
+        if(gameStats.levelStats.targetEnt) {
+            if(gameStats.levelStats.targetEnt->type == SSD_ENTITY_ASTRONAUT) {
+                HitAstronaut(static_cast<SSDAstronaut*>(gameStats.levelStats.targetEnt), key);
             }
+        }
     }*/
 }
 
@@ -2216,8 +2208,8 @@ SSDEntity *idGameSSDWindow::EntityHitTest(const idVec2 &pt)
 
     for (int i = 0; i < entities.Num(); i++)
     {
-        // Since we ZOrder the entities every frame we can stop at the first entity
-        // we hit. ToDo: Make sure this assumption is true
+        // Since we ZOrder the entities every frame we can stop at the first entity we hit.
+        // ToDo: Make sure this assumption is true
         if (entities[i]->HitTest(pt))
         {
             return entities[i];
@@ -2246,8 +2238,8 @@ void idGameSSDWindow::HitAsteroid(SSDAsteroid *asteroid, int key)
         asteroid->noHit = true;
 
         gameStats.levelStats.destroyedAsteroids++;
-        // if(gameStats.levelStats.destroyedAsteroids >=
-        // levelData[gameStats.currentLevel].needToWin) { 	LevelComplete();
+        // if(gameStats.levelStats.destroyedAsteroids >= levelData[gameStats.currentLevel].needToWin) {
+        //	LevelComplete();
         // }
     }
     else
@@ -2340,8 +2332,8 @@ void idGameSSDWindow::OnNuke()
     PlaySound("arcade_explode");
 
     // Check to see if a nuke ends the level
-    /*if(gameStats.levelStats.destroyedAsteroids >=
-    levelData[gameStats.currentLevel].needToWin) { LevelComplete();
+    /*if(gameStats.levelStats.destroyedAsteroids >= levelData[gameStats.currentLevel].needToWin) {
+        LevelComplete();
 
     }*/
 }
@@ -2365,6 +2357,7 @@ void idGameSSDWindow::OnRescueAll()
 
 void idGameSSDWindow::OnSuperBlaster()
 {
+
     StartSuperBlaster();
 }
 

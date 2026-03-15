@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Session.h"
 #include "sys/platform.h"
+#include "framework/Session.h"
 #include "ui/DeviceContext.h"
-#include "ui/UserInterfaceLocal.h"
 #include "ui/Window.h"
+#include "ui/UserInterfaceLocal.h"
 
 #include "ui/SimpleWindow.h"
 
@@ -214,8 +211,7 @@ void idSimpleWindow::DrawBackground(const idRectangle &drawRect)
             float scalex, scaley;
             if (flags & WIN_NATURALMAT)
             {
-                // DG: now also multiplied with matScalex/y, don't see a reason not to
-                // support that
+                // DG: now also multiplied with matScalex/y, don't see a reason not to support that
                 //     (it allows scaling a tiled background image)
                 scalex = (drawRect.w / background->GetImageWidth()) * matScalex;
                 scaley = (drawRect.h / background->GetImageHeight()) * matScaley;
@@ -565,8 +561,7 @@ void idSimpleWindow::ReadFromSaveGame(idFile *savefile)
     backGroundName.ReadFromSaveGame(savefile);
 
     // #modified-fva; BEGIN
-    //  TODO: why does this have to be read from the savegame anyway, does it
-    //  change?
+    //  TODO: why does this have to be read from the savegame anyway, does it change?
     if (session->GetSaveGameVersion() >= 18)
     {
         cstAnchor.ReadFromSaveGame(savefile);

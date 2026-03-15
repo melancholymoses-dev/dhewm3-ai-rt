@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../sys/win32/rc/guied_resource.h"
 #include "../../sys/win32/win_local.h"
 #include "ColorButton.h"
 #include "MaskEdit.h"
+#include "../../sys/win32/rc/guied_resource.h"
 
 static HHOOK gAlphaHook = NULL;
 static HWND gAlphaDlg = NULL;
@@ -249,8 +246,7 @@ INT_PTR CALLBACK AlphaSelectDlg_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
         gAlphaHook = SetWindowsHookEx(WH_GETMESSAGE, AlphaSelectDlg_GetMsgProc, NULL, GetCurrentThreadId());
         color = GetRValue(ColorButton_GetColor((HWND)lParam));
 
-        // The lParam for the alpha select dialog is the window handle of the button
-        // pressed
+        // The lParam for the alpha select dialog is the window handle of the button pressed
         SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
 
         // Subclass the alpha

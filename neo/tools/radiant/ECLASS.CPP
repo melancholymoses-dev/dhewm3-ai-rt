@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../renderer/tr_local.h"
-#include "io.h"
 #include "qe3.h"
+#include "io.h"
+#include "../../renderer/tr_local.h"
 
 struct evarPrefix_t
 {
@@ -68,8 +65,7 @@ A ? size means take the exact brush size.
 
 Flag names can follow the size description:
 
-/*QUAKED func_door (0 .5 .8) ? START_OPEN STONE_SOUND DOOR_DONT_LINK GOLD_KEY
-SILVER_KEY
+/*QUAKED func_door (0 .5 .8) ? START_OPEN STONE_SOUND DOOR_DONT_LINK GOLD_KEY SILVER_KEY
 
 */
 
@@ -233,17 +229,17 @@ eclass_t *EClass_InitFromDict(const idDict *d, const char *name)
     }
 
     /*
-            while( kv != NULL ) {
-                    kv->key.Right( kv->key.Length() - 11, varname );
-                    str += va( "'%s':\t %s", varname.c_str(), kv->value.c_str() );
-                    if ( d->GetString( varname, "", defaultStr ) &&
-       defaultStr.Length() ) { str += va( "  Default '%s'.", defaultStr.c_str() );
-                    }
-                    str += "\n";
-                    kv = d->MatchPrefix( "editor_var ", kv );
+        while( kv != NULL ) {
+            kv->key.Right( kv->key.Length() - 11, varname );
+            str += va( "'%s':\t %s", varname.c_str(), kv->value.c_str() );
+            if ( d->GetString( varname, "", defaultStr ) && defaultStr.Length() ) {
+                str += va( "  Default '%s'.", defaultStr.c_str() );
             }
+            str += "\n";
+            kv = d->MatchPrefix( "editor_var ", kv );
+        }
 
-            e->comments = Mem_CopyString( str.c_str() );
+        e->comments = Mem_CopyString( str.c_str() );
     */
 
     // concatenate all variable comments

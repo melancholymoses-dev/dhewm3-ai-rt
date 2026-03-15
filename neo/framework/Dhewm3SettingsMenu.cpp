@@ -10,13 +10,13 @@
 
 #include "idlib/LangDict.h"
 
-#include "DeclEntityDef.h"
 #include "KeyInput.h"
+#include "UsercmdGen.h" // key bindings
+#include "DeclEntityDef.h"
 #include "Session_local.h" // sessLocal.GetActiveMenu()
-#include "UsercmdGen.h"    // key bindings
 
-#include "../libs/imgui/imgui_internal.h"
 #include "sys/sys_imgui.h"
+#include "../libs/imgui/imgui_internal.h"
 
 #include "renderer/tr_local.h" // render cvars
 #include "sound/snd_local.h"   // sound cvars
@@ -88,33 +88,28 @@ static bool IsKeyPressed(ImGuiKey key)
     return ImGui::IsKeyPressed(key, false);
 }
 
-// is Enter (or Keypad Enter) or gamepad A (or equivalent on non-xinput-devices)
-// pressed? used for confirmation in popup dialogs, and to initiate key binding
-// in the binding tables
+// is Enter (or Keypad Enter) or gamepad A (or equivalent on non-xinput-devices) pressed?
+// used for confirmation in popup dialogs, and to initiate key binding in the binding tables
 static bool IsConfirmKeyPressed()
 {
     return IsKeyPressed(ImGuiKey_Enter) || IsKeyPressed(ImGuiKey_KeypadEnter) || IsKeyPressed(ImGuiKey_GamepadFaceDown);
 }
 
-// is Delete, Backspace or gamepad Y (or equivalent on non-xinput-devices)
-// pressed?
+// is Delete, Backspace or gamepad Y (or equivalent on non-xinput-devices) pressed?
 static bool IsClearKeyPressed()
 {
     return IsKeyPressed(ImGuiKey_Delete) || IsKeyPressed(ImGuiKey_Backspace) || IsKeyPressed(ImGuiKey_GamepadFaceUp);
 }
 
-// is Escape or gamepad Start or gamepad B (or equivalents on
-// non-xinput-devices) pressed?
+// is Escape or gamepad Start or gamepad B (or equivalents on non-xinput-devices) pressed?
 static bool IsCancelKeyPressed()
 {
     // using Escape, gamepad Start and gamepad B for cancel, except in the
     // binding case, there only Esc and Start work (so gamepad B can be bound),
     // but the binding popup doesn't use this function anyway
 
-    // Note: In Doom3, Escape opens/closes the main menu, so in dhewm3 the gamepad
-    // Start button
-    //       behaves the same, incl. the specialty that it can't be bound by the
-    //       user
+    // Note: In Doom3, Escape opens/closes the main menu, so in dhewm3 the gamepad Start button
+    //       behaves the same, incl. the specialty that it can't be bound by the user
     return IsKeyPressed(ImGuiKey_Escape) || IsKeyPressed(ImGuiKey_GamepadFaceRight) ||
            IsKeyPressed(ImGuiKey_GamepadStart);
 }
@@ -153,8 +148,7 @@ const char *GetKeyName(int keyNum, bool localized = true)
         oneChar[0] = keyNum - 32; // to uppercase
         return oneChar;
     }
-    // handle scancodes separately, because ImGui uses UTF-8, while dhewm3 uses
-    // ISO8859-1
+    // handle scancodes separately, because ImGui uses UTF-8, while dhewm3 uses ISO8859-1
     if (keyNum >= K_FIRST_SCANCODE && keyNum <= K_LAST_SCANCODE)
     {
         const char *scName = NULL;
@@ -175,8 +169,7 @@ const char *GetKeyName(int keyNum, bool localized = true)
     return idKeyInput::KeyNumToString(keyNum, localized);
 }
 
-// background color for the first column of the binding table, that contains the
-// name of the command
+// background color for the first column of the binding table, that contains the name of the command
 static ImU32 displayNameBGColor = 0;
 
 static const ImVec4 RedButtonColor(1.00f, 0.17f, 0.17f, 0.58f);
@@ -198,16 +191,15 @@ enum BindingEntrySelectionState
     BESS_Selected,
     BESS_WantBind,
     BESS_WantClear,
-    BESS_WantRebind // we were in WantBind, but the key is already bound to
-                    // another command, so show a confirmation popup
+    BESS_WantRebind // we were in WantBind, but the key is already bound to another command, so show a confirmation
+                    // popup
 };
 
 struct BoundKey
 {
     int keyNum = -1;
     idStr keyName;
-    idStr internalKeyName; // the one used in bind commands in the D3 console and
-                           // config
+    idStr internalKeyName; // the one used in bind commands in the D3 console and config
 
     void Set(int _keyNum)
     {
@@ -251,11 +243,9 @@ struct BindingEntry
     {
         BIND_NONE = -1, // no binding currently selected
         // all are selected (clicked command name column): clear all,
-        //   or add a new binding in some visible column (idx in bindings <
-        //   numBindingColumns)
+        //   or add a new binding in some visible column (idx in bindings < numBindingColumns)
         BIND_ALL = -2,
-        // append new binding at the end, or set it in unused bindings entry, if any
-        // (used by AllBindingsWindow)
+        // append new binding at the end, or set it in unused bindings entry, if any (used by AllBindingsWindow)
         BIND_APPEND = -3
     };
     // which binding is currently selected in the UI, if any (and only if this
@@ -316,28 +306,24 @@ struct BindingEntry
     }
 
     // also updates this->selectedColumn
-    void UpdateSelectionState(int bindIdx,
-                              /* in+out */ BindingEntrySelectionState &selState)
+    void UpdateSelectionState(int bindIdx, /* in+out */ BindingEntrySelectionState &selState)
     {
-        // if currently a popup is shown for creating a new binding or clearing one
-        // (BESS_WantBind or BESS_WantClear), everything is still rendered, but in a
-        // disabled (greyed out) state and shouldn't handle any input => then
-        // there's not much to do here,
+        // if currently a popup is shown for creating a new binding or clearing one (BESS_WantBind
+        // or BESS_WantClear), everything is still rendered, but in a disabled (greyed out) state
+        // and shouldn't handle any input => then there's not much to do here,
         //  except for highlighting at the end of the function
         if (selState < BESS_WantBind)
         {
             if (ImGui::IsItemFocused())
             {
-                // Note: even when using the mouse, clicking a selectable will make it
-                // focused,
-                //  so it's possible to select a command (or specific binding of a
-                //  command) with the mouse and then press Enter to (re)bind it or
-                //  Delete to clear it. So whether something is selected mostly is
-                //  equivalent to it being focused. In the initial development of this
-                //  code that wasn't the case, so there *might* be some small
-                //  inconsistencies due to that; but also intentional special cases,
-                //  like a binding entry being drawn as selected while one of the popups
-                //  is open to modify it
+                // Note: even when using the mouse, clicking a selectable will make it focused,
+                //  so it's possible to select a command (or specific binding of a command)
+                //  with the mouse and then press Enter to (re)bind it or Delete to clear it.
+                //  So whether something is selected mostly is equivalent to it being focused.
+                //  In the initial development of this code that wasn't the case, so there
+                //  *might* be some small inconsistencies due to that; but also intentional
+                //  special cases, like a binding entry being drawn as selected while
+                //  one of the popups is open to modify it
                 //  (=> it doesn't have focus then because the popup has focus)
                 //  That's not just cosmetical, selState and selectedBinding are
                 //  used to configure the popup.
@@ -356,8 +342,7 @@ struct BindingEntry
                         if (bindings.Num() == 0)
                         {
                             D3::ImGuiHooks::ShowWarningOverlay(
-                                "No keys are bound to this command, so there's nothing to "
-                                "unbind");
+                                "No keys are bound to this command, so there's nothing to unbind");
                             nothingToClear = true;
                         }
                     }
@@ -376,8 +361,7 @@ struct BindingEntry
             }
             else if (selectedBinding == bindIdx && selState != BESS_NotSelected)
             {
-                // apparently this was still selected last frame, but is not focused
-                // anymore => unselect it
+                // apparently this was still selected last frame, but is not focused anymore => unselect it
                 selState = BESS_NotSelected;
             }
 
@@ -385,11 +369,9 @@ struct BindingEntry
             { // mouse cursor is on this item
                 if (bindIdx == BIND_ALL)
                 {
-                    // if the first column (command name, like "Move Left") is hovered,
-                    // highlight the whole row A normal Selectable would use
-                    // ImGuiCol_HeaderHovered, but I use that as the "selected" color (in
-                    // Draw()), so use the next brighter thing (ImGuiCol_HeaderActive)
-                    // here.
+                    // if the first column (command name, like "Move Left") is hovered, highlight the whole row
+                    // A normal Selectable would use ImGuiCol_HeaderHovered, but I use that as the "selected"
+                    // color (in Draw()), so use the next brighter thing (ImGuiCol_HeaderActive) here.
                     ImU32 highlightRowColor = ImGui::GetColorU32(ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlightRowColor);
                 }
@@ -407,8 +389,8 @@ struct BindingEntry
         // this column is selected => highlight it
         if (selState != BESS_NotSelected && selectedBinding == bindIdx)
         {
-            // ImGuiCol_Header would be the regular "selected cell/row" color that
-            // Selectable would use but ImGuiCol_HeaderHovered is more visible, IMO
+            // ImGuiCol_Header would be the regular "selected cell/row" color that Selectable would use
+            // but ImGuiCol_HeaderHovered is more visible, IMO
             ImU32 highlightRowColor = ImGui::GetColorU32(ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
             ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, highlightRowColor);
 
@@ -416,10 +398,8 @@ struct BindingEntry
             {
                 // the displayName column is selected => highlight the whole row
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, highlightRowColor);
-                // (yes, still set the highlight color for ImGuiTableBgTarget_CellBg
-                // above for extra
-                //  highlighting of the column 0 cell, otherwise it'd look darker due to
-                //  displayNameBGColor)
+                // (yes, still set the highlight color for ImGuiTableBgTarget_CellBg above for extra
+                //  highlighting of the column 0 cell, otherwise it'd look darker due to displayNameBGColor)
             }
         }
     }
@@ -438,9 +418,8 @@ struct BindingEntry
         winMinSize.x += fontSize * 2.0f;
         const ImGuiViewport &viewPort = *ImGui::GetMainViewport();
         ImVec2 maxWinSize(viewPort.WorkSize.x, viewPort.WorkSize.y * 0.9f);
-        // make sure the window is big enough to show the full title (incl.
-        // displayName) and that it fits into the screen (it can scroll if it gets
-        // too long)
+        // make sure the window is big enough to show the full title (incl. displayName)
+        // and that it fits into the screen (it can scroll if it gets too long)
         ImGui::SetNextWindowSizeConstraints(winMinSize, maxWinSize);
 
         static ImVec2 winPos;
@@ -493,8 +472,8 @@ struct BindingEntry
                 if (ImGui::BeginItemTooltip())
                 {
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-                    ImGui::Text("You can close this window with Escape (or %s) or by clicking "
-                                "the little (x) button or by clicking the [++] button again.",
+                    ImGui::Text("You can close this window with Escape (or %s) or by clicking the little (x) button or "
+                                "by clicking the [++] button again.",
                                 GetGamepadCancelButtonNames());
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
@@ -515,8 +494,7 @@ struct BindingEntry
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
 
-                    ImGui::PushID(bnd); // the buttons have the same names in every row,
-                                        // so push the row number as ID
+                    ImGui::PushID(bnd); // the buttons have the same names in every row, so push the row number as ID
 
                     bool colHasBinding = bindings[bnd].keyNum != -1;
                     const char *keyName = "";
@@ -531,10 +509,9 @@ struct BindingEntry
 
                     if (selectedBinding == BIND_ALL)
                     {
-                        // if all bindings are selected from the binding table (for clear
-                        // all), mark the whole first row here. otherwise, nothing is marked
-                        // here, as in this window only the buttons are clickble, not the
-                        // key cells
+                        // if all bindings are selected from the binding table (for clear all),
+                        // mark the whole first row here. otherwise, nothing is marked here,
+                        // as in this window only the buttons are clickble, not the key cells
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, highlightRowColor);
                     }
 
@@ -605,8 +582,7 @@ struct BindingEntry
 
             if (!workRect.Contains(winRect))
             {
-                // this window is at least partly outside the visible area of the screen
-                // (or SDL window)
+                // this window is at least partly outside the visible area of the screen (or SDL window)
                 // => move it around so it's completely visible, if possible
                 ImRect r_avoid(btnMin, btnMax);
                 r_avoid.Expand(ImGui::GetStyle().ItemInnerSpacing);
@@ -651,8 +627,7 @@ struct BindingEntry
             ImGui::TableSetColumnIndex(0);
             ImGui::AlignTextToFramePadding();
 
-            // the first column (with the display name in it) gets a different
-            // background color
+            // the first column (with the display name in it) gets a different background color
             ImGui::TableSetBgColor(ImGuiTableBgTarget_CellBg, displayNameBGColor);
 
             BindingEntrySelectionState newSelState = oldSelState;
@@ -699,14 +674,12 @@ struct BindingEntry
             }
 
             ImGui::TableSetColumnIndex(numBindingColumns + 1);
-            // the last column contains a "++" button that opens a window that lists
-            // all bindings for this rows command (including ones not listed in the
-            // table because of lack of columns) if there actually are more bindings
-            // than columns, the button is red, else it has the default color clicking
-            // the button again will close the window, and the buttons color depends
-            // on whether its window is open or not. only one such window can be open
-            // at at time, clicking the button in another row closes the current
-            // window and opens a new one
+            // the last column contains a "++" button that opens a window that lists all bindings
+            // for this rows command (including ones not listed in the table because of lack of columns)
+            // if there actually are more bindings than columns, the button is red, else it has the default color
+            // clicking the button again will close the window, and the buttons color depends on whether
+            // its window is open or not. only one such window can be open at at time, clicking the
+            // button in another row closes the current window and opens a new one
             static int showAllBindingsMenuRowNum = -1;
             bool allBindWinWasOpen = (showAllBindingsMenuRowNum == bindRowNum);
             int styleColorsToPop = 0;
@@ -723,8 +696,7 @@ struct BindingEntry
                 }
             }
             else
-            { // more bindings than can be shown in the table => make ++ button
-              // red
+            { // more bindings than can be shown in the table => make ++ button red
                 ImGui::PushStyleColor(ImGuiCol_Button, allBindWinWasOpen ? RedButtonHoveredColor : RedButtonColor);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                                       allBindWinWasOpen ? RedButtonColor : RedButtonHoveredColor);
@@ -732,8 +704,7 @@ struct BindingEntry
                 styleColorsToPop = 3;
             }
 
-            // TODO: close the window if another row has been selected (or used to
-            // create/delete a binding or whatever)?
+            // TODO: close the window if another row has been selected (or used to create/delete a binding or whatever)?
             bool newOpen = false;
             if (ImGui::Button("++"))
             {
@@ -749,8 +720,7 @@ struct BindingEntry
             ImVec2 btnMax = ImGui::GetItemRectMax();
             if (numBindings > numBindingColumns)
             {
-                ImGui::SetItemTooltip("There are additional bindings for %s.\nClick "
-                                      "here to show all its bindings.",
+                ImGui::SetItemTooltip("There are additional bindings for %s.\nClick here to show all its bindings.",
                                       displayName.c_str());
             }
             else
@@ -831,10 +801,8 @@ struct BindingEntry
             bool confirmedByKey = false;
             if (!newOpen && !ImGui::IsAnyItemFocused())
             {
-                // if no item is focused (=> not using keyboard or gamepad navigation to
-                // select
-                //  [Ok] or [Cancel] button), check if Enter has been pressed to confirm
-                //  deletion
+                // if no item is focused (=> not using keyboard or gamepad navigation to select
+                //  [Ok] or [Cancel] button), check if Enter has been pressed to confirm deletion
                 // (otherwise, enter can be used to chose the selected button)
                 // also, don't do this when just opened, because then enter might still
                 // be pressed from selecting the Unbind button in the AllBindingsWindow
@@ -978,8 +946,7 @@ struct BindingEntry
 
             // disable keyboard and gamepad input while the bind popup is open
             // (the mouse can still be used to click the Cancel button, and Escape
-            //  and Gamepad Start will be handled specially as well to allow
-            //  canceling)
+            //  and Gamepad Start will be handled specially as well to allow canceling)
             io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_NavEnableKeyboard);
         }
 
@@ -1026,12 +993,10 @@ struct BindingEntry
             }
             else if (!newOpen)
             {
-                // find out if any key is pressed and bind that (except for Esc which
-                // can't be bound and is already handled though IsCancelKeyPressed()
-                // above) (but don't run this when the popup has just been opened,
-                // because then
-                //  the key that opened this, likely Enter, is still registered as
-                //  pressed)
+                // find out if any key is pressed and bind that (except for Esc which can't be
+                // bound and is already handled though IsCancelKeyPressed() above)
+                // (but don't run this when the popup has just been opened, because then
+                //  the key that opened this, likely Enter, is still registered as pressed)
 
                 int pressedKey = -1;
 
@@ -1040,8 +1005,7 @@ struct BindingEntry
                     if (k == K_ESCAPE || k == K_JOY_BTN_START || k == K_CONSOLE)
                         continue; // unbindable keys
                     if (!clickFieldHovered && k >= K_MOUSE1 && k <= K_MOUSE3)
-                        continue; // mouse buttons must be clicked within the field to bind
-                                  // them
+                        continue; // mouse buttons must be clicked within the field to bind them
 
                     if (idKeyInput::IsDown(k))
                     {
@@ -1080,8 +1044,7 @@ struct BindingEntry
                         BindingEntry *oldBE = FindBindingEntryForKey(pressedKey);
                         if (oldBE == this)
                         {
-                            // that key is already bound to this command, show warning,
-                            // otherwise do nothing
+                            // that key is already bound to this command, show warning, otherwise do nothing
                             const char *keyName = GetKeyName(pressedKey);
                             idStr warning = idStr::Format("Key '%s' is already bound to this command (%s)!", keyName,
                                                           displayName.c_str());
@@ -1091,8 +1054,7 @@ struct BindingEntry
                         }
                         else
                         {
-                            // that key is already bound to some other command, show
-                            // confirmation popup
+                            // that key is already bound to some other command, show confirmation popup
                             rebindKeyNum = pressedKey;
                             rebindOtherEntry = oldBE; // NULL for commands this menu doesn't know!
 
@@ -1126,9 +1088,9 @@ struct BindingEntry
             else
             {
                 const char *commandName = idKeyInput::GetBinding(rebindKeyNum);
-                ImGui::Text("Key '%s' is already bound to command '%s'\n (not handled "
-                            "by this menu)!\nBind to %s instead?",
-                            keyName, commandName, displayName.c_str());
+                ImGui::Text(
+                    "Key '%s' is already bound to command '%s'\n (not handled by this menu)!\nBind to %s instead?",
+                    keyName, commandName, displayName.c_str());
             }
 
             ImGui::NewLine();
@@ -1145,10 +1107,8 @@ struct BindingEntry
             bool confirmedByKey = false;
             if (!newOpen && !ImGui::IsAnyItemFocused())
             {
-                // if no item is focused (=> not using keyboard or gamepad navigation to
-                // select
-                //  [Ok] or [Cancel] button), check if Enter has been pressed to confirm
-                //  deletion
+                // if no item is focused (=> not using keyboard or gamepad navigation to select
+                //  [Ok] or [Cancel] button), check if Enter has been pressed to confirm deletion
                 // (otherwise, enter can be used to chose the selected button)
                 // but don't do this when just opened, because then enter might still
                 // be pressed from trying to bind Enter in the BindPopup
@@ -1163,8 +1123,7 @@ struct BindingEntry
                 }
                 // Note: AddKeyBinding() eventually calls idKeyInput::SetBinding()
                 //   which implicitly unbinds the old binding when it sets the new one,
-                //   so for the rebindOtherEntry == nullptr case there's nothing else to
-                //   do
+                //   so for the rebindOtherEntry == nullptr case there's nothing else to do
                 AddKeyBinding(rebindKeyNum);
 
                 rebindOtherEntry = nullptr;
@@ -1202,8 +1161,7 @@ struct BindingEntry
                 (selectedBinding < 0 && selectedBinding != BIND_ALL) ||
                 (selectedBinding >= 0 && bindings[selectedBinding].keyNum == -1))
             {
-                // there are no bindings at all for this command, or at least not in the
-                // selected column
+                // there are no bindings at all for this command, or at least not in the selected column
                 // => don't show popup, but keep the cell selected
                 selectionState = BESS_Selected;
                 return;
@@ -1320,8 +1278,7 @@ static void InitBindingEntries()
         {"_zoom", "Zoom View", "#str_02120"},
         {"clientDropWeapon", "Drop Weapon", "#str_04071"},
 
-        // also the heading for weapons, but the weapons entries are generated
-        // below..
+        // also the heading for weapons, but the weapons entries are generated below..
         {nullptr, "Weapons", "#str_01416"},
     };
 
@@ -1362,17 +1319,14 @@ static void InitBindingEntries()
         bindingEntries.Append(BindingEntry(bet));
     }
 
-    // player.def defines, in player_base, used by player_doommarine and
-    // player_doommarine_mp (and player_doommarine_ctf), "def_weapon0"
-    // "weapon_fists", "def_weapon1"  "weapon_pistol" etc
+    // player.def defines, in player_base, used by player_doommarine and player_doommarine_mp (and
+    // player_doommarine_ctf), "def_weapon0"  "weapon_fists", "def_weapon1"  "weapon_pistol" etc
     // => get all those definitions (up to MAX_WEAPONS=16) from Player, and then
     //    get the entities for the corresponding keys ("weapon_fists" etc),
-    //    which should have an entry like "inv_name"  "Pistol" (could also be
-    //    #str_00100207 though!)
+    //    which should have an entry like "inv_name"  "Pistol" (could also be #str_00100207 though!)
 
-    // hardcorps uses: idCVar pm_character("pm_character", "0", CVAR_GAME |
-    // CVAR_BOOL, "Change Player character. 1 = Scarlet. 0 = Doom Marine"); but I
-    // guess (hope) they use the same weapons..
+    // hardcorps uses: idCVar pm_character("pm_character", "0", CVAR_GAME | CVAR_BOOL, "Change Player character. 1 =
+    // Scarlet. 0 = Doom Marine"); but I guess (hope) they use the same weapons..
     const idDict *playerDict = GetEntityDefDict("player_doommarine");
     const idDict *playerDictMP = GetEntityDefDict("player_doommarine_mp");
     bool impulse27used = false;
@@ -1398,12 +1352,10 @@ static void InitBindingEntries()
         }
 
         // TODO: could also handle weapontoggles, in playerDict(MP):
-        // "weapontoggle1"		"2,1" // _impulse1 toggles between def_weapon2
-        // and def_weapon1 "weapontoggle4"		"5,4" // _impulse4 toggles
-        // between def_weapon5 and def_weapon4
+        // "weapontoggle1"		"2,1" // _impulse1 toggles between def_weapon2 and def_weapon1
+        // "weapontoggle4"		"5,4" // _impulse4 toggles between def_weapon5 and def_weapon4
 
-        // note: weapon_PDA is skipped, because the generic open PDA action is
-        // _impulse19
+        // note: weapon_PDA is skipped, because the generic open PDA action is _impulse19
         if (weapName != nullptr && weapName[0] != '\0' && idStr::Icmp(weapName, "weapon_pda") != 0)
         {
             const idDict *weapDict = GetEntityDefDict(weapName);
@@ -1437,9 +1389,9 @@ static void InitBindingEntries()
     // _impulse22 is "spectate", handled in "Other" section
     bindingEntries.Append(BindingEntry("_impulse23", "_impulse23"));
     bindingEntries.Append(BindingEntry("_impulse24", "_impulse24"));
-    bindingEntries.Append(BindingEntry("_impulse25", "_impulse25",
-                                       "In RoE's Capture The Flag with si_midnight = 2, this "
-                                       "appears to toggle some kind of light"));
+    bindingEntries.Append(
+        BindingEntry("_impulse25", "_impulse25",
+                     "In RoE's Capture The Flag with si_midnight = 2, this appears to toggle some kind of light"));
     bindingEntries.Append(BindingEntry("_impulse26", "_impulse26"));
     if (!impulse27used)
     {
@@ -1456,8 +1408,7 @@ static void InitBindingEntries()
 }
 
 // this initialization should be done every time the bindings tab is opened,
-// in case the bindings have been changed in the mean time (through console or
-// classic menu)
+// in case the bindings have been changed in the mean time (through console or classic menu)
 static void UpdateKeyBindingsInEntries()
 {
 
@@ -1518,33 +1469,31 @@ static void DrawBindingsMenu()
 
         numBindingColumns = idMath::ClampInt(1, 10, numBindingColumns);
 
-        // calculate the background color for the first column of the key binding
-        // tables (it contains the command, while the other columns contain the keys
-        // bound to that command)
+        // calculate the background color for the first column of the key binding tables
+        // (it contains the command, while the other columns contain the keys bound to that command)
         displayNameBGColor = ImGui::GetColorU32(ImGuiCol_TableHeaderBg, 0.5f);
 
         if (ImGui::TreeNode("Usage Help"))
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 
-            ImGui::TextWrapped("Double click a keybinding entry below to bind a (different) key, or "
-                               "select it by clicking it once or navigating to it with cursor keys "
-                               "or gamepad and pressing Enter (or %s) to (re)bind it.",
-                               GetGamepadBindNowButtonName());
-            ImGui::TextWrapped("Remove a key binding (unbind) by selecting it and "
-                               "pressing Backspace or Delete (or %s).",
-                               GetGamepadUnbindButtonName());
-            ImGui::TextWrapped("If you select the first column (with the command name), you can "
-                               "unbind all keybindings for that command, or add another keybinding "
-                               "for it without overwriting an existing one.");
-            ImGui::TextWrapped("You can unselect the currently selected binding by "
-                               "clicking it again or by pressing Escape (or %s).",
-                               GetGamepadCancelButtonNames());
-            ImGui::TextWrapped("The [++] button on the right opens (or closes) a window that shows "
-                               "all keys bound to the corresponding command (even if it's more than "
-                               "the number of binding columns) and has buttons to configure them. "
-                               "It's red when there actually are more key bound than can be shown "
-                               "in the columns of this window.");
+            ImGui::TextWrapped(
+                "Double click a keybinding entry below to bind a (different) key, or select it by clicking it once or "
+                "navigating to it with cursor keys or gamepad and pressing Enter (or %s) to (re)bind it.",
+                GetGamepadBindNowButtonName());
+            ImGui::TextWrapped(
+                "Remove a key binding (unbind) by selecting it and pressing Backspace or Delete (or %s).",
+                GetGamepadUnbindButtonName());
+            ImGui::TextWrapped(
+                "If you select the first column (with the command name), you can unbind all keybindings for that "
+                "command, or add another keybinding for it without overwriting an existing one.");
+            ImGui::TextWrapped(
+                "You can unselect the currently selected binding by clicking it again or by pressing Escape (or %s).",
+                GetGamepadCancelButtonNames());
+            ImGui::TextWrapped("The [++] button on the right opens (or closes) a window that shows all keys bound to "
+                               "the corresponding command (even if it's more than the number of binding columns) and "
+                               "has buttons to configure them. It's red when there actually are more key bound than "
+                               "can be shown in the columns of this window.");
 
             ImGui::PopStyleColor(); // ImGuiCol_Text
             ImGui::TreePop();
@@ -1558,8 +1507,7 @@ static void DrawBindingsMenu()
     static int selectedRow = -1;
     static BindingEntrySelectionState selectionState = BESS_NotSelected;
 
-    // make the key column entries in the bindings table center-aligned instead of
-    // left-aligned
+    // make the key column entries in the bindings table center-aligned instead of left-aligned
     ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.0f));
 
     ImU32 borderCol = ImGui::GetColorU32(ImGuiCol_TableBorderLight, 0.5f);
@@ -1568,12 +1516,11 @@ static void DrawBindingsMenu()
     ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV;
 
     // inTable: are we currently adding elements to a table of bindings?
-    //  (we're not when adding a heading from bindingEntries: existing tables are
-    //  ended
+    //  (we're not when adding a heading from bindingEntries: existing tables are ended
     //   before a heading and a new table is started afterwards)
     bool inTable = false;
-    // did the last ImGui::BeginTable() call return true (or is it not currently
-    // visible)? (init to true so the first heading before any bindings is shown)
+    // did the last ImGui::BeginTable() call return true (or is it not currently visible)?
+    // (init to true so the first heading before any bindings is shown)
     bool lastBeginTable = true;
     int tableNum = 1;
 
@@ -1581,8 +1528,7 @@ static void DrawBindingsMenu()
     const float commandColumnWidth = ImGui::CalcTextSize("dhewm3 settings menu").x + defFramePadding.x * 2.0f;
     const float overflowColumnWidth = ImGui::CalcTextSize("++").x + defFramePadding.x * 2.0f;
 
-    // this handles the "regular" binding entries, i.e. everything but the
-    // "obscure" impulses list
+    // this handles the "regular" binding entries, i.e. everything but the "obscure" impulses list
     for (int i = 0, n = firstObscureEntryIndex; i < n; ++i)
     {
         BindingEntry &be = bindingEntries[i];
@@ -1612,9 +1558,8 @@ static void DrawBindingsMenu()
         }
         else if (isHeading && inTable)
         {
-            // we've been adding elements to a table (unless lastBeginTable = false)
-            // that hasn't been closed with EndTable() yet, but now we're at a heading
-            // so the table is done
+            // we've been adding elements to a table (unless lastBeginTable = false) that hasn't
+            // been closed with EndTable() yet, but now we're at a heading so the table is done
             if (lastBeginTable)
             {
                 ImGui::EndTable();
@@ -1623,8 +1568,7 @@ static void DrawBindingsMenu()
         }
 
         if (lastBeginTable)
-        { // if ImGui::BeginTable() returned false, don't draw
-          // its elements
+        { // if ImGui::BeginTable() returned false, don't draw its elements
             BindingEntrySelectionState bess = (selectedRow == i) ? selectionState : BESS_NotSelected;
             bess = be.Draw(i, bess);
             if (bess != BESS_NotSelected)
@@ -1634,8 +1578,7 @@ static void DrawBindingsMenu()
             }
             else if (selectedRow == i)
             {
-                // this row was selected, but be.Draw() returned BESS_NotSelected, so
-                // unselect it
+                // this row was selected, but be.Draw() returned BESS_NotSelected, so unselect it
                 selectedRow = -1;
             }
         }
@@ -1649,8 +1592,8 @@ static void DrawBindingsMenu()
     const int numBindingEntries = bindingEntries.Num();
     // now the obscure impulses, unless they're hidden
     bool showObscImp = ImGui::CollapsingHeader("Obscure Impulses");
-    AddDescrTooltip("_impulseXY commands that are usually unused, but might be "
-                    "used by some mods, e.g. for additional weapons");
+    AddDescrTooltip(
+        "_impulseXY commands that are usually unused, but might be used by some mods, e.g. for additional weapons");
     if (showObscImp)
     {
         if (ImGui::BeginTable("bindTabObsc", numBindingColumns + 2, tableFlags))
@@ -1678,8 +1621,7 @@ static void DrawBindingsMenu()
                 }
                 else if (selectedRow == i)
                 {
-                    // this row was selected, but be.Draw() returned BESS_NotSelected, so
-                    // unselect it
+                    // this row was selected, but be.Draw() returned BESS_NotSelected, so unselect it
                     selectedRow = -1;
                 }
             }
@@ -1739,8 +1681,7 @@ struct CVarOption
     const char *label = nullptr;
     DrawCallback drawCallback = nullptr;
     OptionType type = OT_NONE;
-    // TODO: the following two could be a union, together with drawCallback and
-    // possibly others!
+    // TODO: the following two could be a union, together with drawCallback and possibly others!
     float minVal = 0.0f;
     float maxVal = 0.0f;
 
@@ -1851,8 +1792,7 @@ static CVarOption controlOptions[] = {
                [](idCVar &cvar) {
                    int val = cvar.GetInteger();
                    if (ImGui::Combo("Invert Mouse Look", &val,
-                                    "Don't Invert Mouse\0Invert Up/Down\0Invert "
-                                    "Left/Right\0Invert Both Directions\0"))
+                                    "Don't Invert Mouse\0Invert Up/Down\0Invert Left/Right\0Invert Both Directions\0"))
                    {
                        cvar.SetInteger(val);
                    }
@@ -1869,13 +1809,13 @@ static CVarOption controlOptions[] = {
                [](idCVar &cvar) {
                    int sel = cvar.GetInteger() + 1; // -1 .. 3 => 0 .. 4
                    int selOrig = sel;
-                   // -1: auto (needs SDL 2.0.12 or newer), 0: XBox-style, 1:
-                   // Nintendo-style, 2: PS4/5-style, 3: PS2/3-style
+                   // -1: auto (needs SDL 2.0.12 or newer), 0: XBox-style, 1: Nintendo-style, 2: PS4/5-style, 3:
+                   // PS2/3-style
                    const char *items[] = {"Auto-Detect", "XBox Controller-like", "Nintendo-style",
                                           "Playstation 4/5 Controller-like", "Playstation 2/3 Controller-like"};
                    ImGui::Combo("Gamepad Layout", &sel, items, IM_ARRAYSIZE(items));
-                   AddCVarOptionTooltips(cvar, "Button Layout of Gamepad (esp. for the displayed "
-                                               "names of the 4 buttons on the right)");
+                   AddCVarOptionTooltips(
+                       cvar, "Button Layout of Gamepad (esp. for the displayed names of the 4 buttons on the right)");
                    if (sel != selOrig)
                    {
                        cvar.SetInteger(sel - 1);
@@ -1885,13 +1825,11 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_triggerThreshold", "Trigger Threshold/Deadzone", OT_FLOAT, 0.0f, 0.99f),
     CVarOption("joy_pitchSpeed", "Pitch speed (for looking up/down)", OT_INT, 60.0f, 600.0f),
     CVarOption("joy_yawSpeed", "Yaw speed (for looking left/right)", OT_INT, 60.0f, 600.0f),
-    // TODO: joy_invertLook? (I don't really see the point, one can just bind
-    // move stick up to look down)
+    // TODO: joy_invertLook? (I don't really see the point, one can just bind move stick up to look down)
     CVarOption("joy_gammaLook", "Use logarithmic gamma curve instead of power curve for axes", OT_BOOL),
     CVarOption("joy_powerScale", "If using power curve, this is the exponent", OT_FLOAT, 0.1f,
                10.0f), // TODO: what are sensible min/max values?
-    // TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they
-    // were "bad idea"
+                       // TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they were "bad idea"
 };
 
 struct VidMode
@@ -1941,15 +1879,14 @@ static CVarOption videoOptionsImmediately[] = {
                        if (GLimp_SetSwapInterval(curVsync))
                        {
                            r_swapInterval.SetInteger(curVsync);
-                           // this was just set with GLimp_SetSwapInterval(), no reason to
-                           // set it again in R_CheckCvars()
+                           // this was just set with GLimp_SetSwapInterval(), no reason to set it again in
+                           // R_CheckCvars()
                            r_swapInterval.ClearModified();
                        }
                        else
                        {
                            D3::ImGuiHooks::ShowWarningOverlay(
-                               "Setting VSync (GL SwapInterval) failed, maybe try another "
-                               "mode");
+                               "Setting VSync (GL SwapInterval) failed, maybe try another mode");
                        }
                    }
                    else
@@ -1989,8 +1926,7 @@ static CVarOption videoOptionsImmediately[] = {
     CVarOption("r_scaleMenusTo43", "Scale fullscreen menus to 4:3", OT_BOOL),
     CVarOption("r_screenshotFormat",
                [](idCVar &cvar) {
-                   // "Screenshot format. 0 = TGA (default), 1 = BMP, 2 = PNG, 3 =
-                   // JPG"
+                   // "Screenshot format. 0 = TGA (default), 1 = BMP, 2 = PNG, 3 = JPG"
                    int curFormat = idMath::ClampInt(0, 3, cvar.GetInteger());
                    if (ImGui::Combo("Screenshot Format", &curFormat, "TGA\0BMP\0PNG\0JPG\0"))
                    {
@@ -2009,13 +1945,12 @@ static CVarOption videoOptionsImmediately[] = {
                        if (enable && r_enableDepthCapture.GetInteger() == 0)
                        {
                            r_enableDepthCapture.SetInteger(-1);
-                           D3::ImGuiHooks::ShowWarningOverlay("Capturing the Depth Buffer was disabled.\nEnabled it "
-                                                              "because soft particles need it!");
+                           D3::ImGuiHooks::ShowWarningOverlay(
+                               "Capturing the Depth Buffer was disabled.\nEnabled it because soft particles need it!");
                        }
                    }
-                   const char *descr = "! Can slow down rendering !\nSoften particle transitions "
-                                       "when player walks through them or they cross solid "
-                                       "geometry. Needs r_enableDepthCapture.";
+                   const char *descr = "! Can slow down rendering !\nSoften particle transitions when player walks "
+                                       "through them or they cross solid geometry. Needs r_enableDepthCapture.";
                    AddCVarOptionTooltips(cvar, descr);
                }),
 
@@ -2024,8 +1959,7 @@ static CVarOption videoOptionsImmediately[] = {
                [](idCVar &cvar) {
                    int sel = idMath::ClampInt(-1, 1, cvar.GetInteger()) + 1; // +1 for -1..1 to 0..2
                    if (ImGui::Combo("Capture Depth Buffer to Texture", &sel,
-                                    "Auto (enable if needed for Soft "
-                                    "Particles)\0Disabled\0Always Enabled\0"))
+                                    "Auto (enable if needed for Soft Particles)\0Disabled\0Always Enabled\0"))
                    {
                        --sel; // back to -1..1 from 0..2
                        cvar.SetInteger(sel);
@@ -2033,8 +1967,8 @@ static CVarOption videoOptionsImmediately[] = {
                        {
                            r_useSoftParticles.SetBool(false);
                            D3::ImGuiHooks::ShowWarningOverlay(
-                               "You disabled capturing the Depth Buffer.\nDisabling Soft "
-                               "Particles because they need the depth buffer texture.");
+                               "You disabled capturing the Depth Buffer.\nDisabling Soft Particles because they need "
+                               "the depth buffer texture.");
                        }
                    }
                    AddCVarOptionTooltips(cvar);
@@ -2045,28 +1979,29 @@ static CVarOption videoOptionsImmediately[] = {
     CVarOption("r_skipBump", "Disable Bump Maps", OT_BOOL),
 
 #ifdef DHEWM3_RAYTRACING
-    CVarOption("r_rtShadows",
-               [](idCVar &cvar) {
-                   bool isVulkan = (idStr::Icmpn(r_backend.GetString(), "vulkan", 6) == 0);
-                   if (!isVulkan)
-                   {
-                       ImGui::BeginDisabled();
-                   }
-                   bool enabled = cvar.GetBool();
-                   if (ImGui::Checkbox("Ray Traced Shadows (RTX)", &enabled))
-                   {
-                       cvar.SetBool(enabled);
-                   }
-                   if (!isVulkan)
-                   {
-                       ImGui::EndDisabled();
-                   }
-                   const char *descr = isVulkan ? "Replace stencil shadow volumes with hardware ray "
-                                                  "traced shadows.\nRequires an RTX-capable GPU."
-                                                : "Ray traced shadows require the Vulkan backend "
-                                                  "(r_backend vulkan).";
-                   AddCVarOptionTooltips(cvar, descr);
-               }),
+    CVarOption(
+        "r_rtShadows",
+        [](idCVar &cvar) {
+            bool isVulkan = (idStr::Icmpn(r_backend.GetString(), "vulkan", 6) == 0);
+            if (!isVulkan)
+            {
+                ImGui::BeginDisabled();
+            }
+            bool enabled = cvar.GetBool();
+            if (ImGui::Checkbox("Ray Traced Shadows (RTX)", &enabled))
+            {
+                cvar.SetBool(enabled);
+            }
+            if (!isVulkan)
+            {
+                ImGui::EndDisabled();
+            }
+            const char *descr =
+                isVulkan
+                    ? "Replace stencil shadow volumes with hardware ray traced shadows.\nRequires an RTX-capable GPU."
+                    : "Ray traced shadows require the Vulkan backend (r_backend vulkan).";
+            AddCVarOptionTooltips(cvar, descr);
+        }),
 #endif // DHEWM3_RAYTRACING
 
 };
@@ -2175,8 +2110,7 @@ static bool VideoHasApplyableChanges()
     {
         return true;
     }
-    // Note: value of image_useNormalCompression is only relevant if
-    // image_usePrecompressedTextures is enabled
+    // Note: value of image_useNormalCompression is only relevant if image_usePrecompressedTextures is enabled
     if (initialUsePrecomprTextures && (initialUseNormalCompr != globalImages->image_useNormalCompression.GetInteger() ||
                                        initialUseCompression != globalImages->image_useCompression.GetInteger()))
     {
@@ -2251,17 +2185,15 @@ static void DrawVideoOptionsMenu()
     ImGui::SameLine();
     if (ImGui::Button("Load Quality Preset"))
     {
-        com_machineSpec.SetInteger(qualityPreset); // TODO: or always set this even
-                                                   // if button is not pressed?
-        // execMachineSpec might change the MSAA value, so remember the old one
-        // (that's currently used)
+        com_machineSpec.SetInteger(qualityPreset); // TODO: or always set this even if button is not pressed?
+        // execMachineSpec might change the MSAA value, so remember the old one (that's currently used)
         const int oldMSAA = r_multiSamples.GetInteger();
         cmdSystem->BufferCommandText(CMD_EXEC_NOW, "execMachineSpec nores\n");
 
         if (oldMSAA > 0 && qualityPreset >= 2)
         {
-            // the user already changed the MSAA at some point, and chose High or
-            // Ultra Quality, which both set MSAA to 0 - restore users setting
+            // the user already changed the MSAA at some point, and chose High or Ultra Quality,
+            // which both set MSAA to 0 - restore users setting
             r_multiSamples.SetInteger(oldMSAA);
         }
     }
@@ -2277,16 +2209,14 @@ static void DrawVideoOptionsMenu()
     }
     AddTooltip("r_fullscreen");
     bool fullscreenDesktop = r_fullscreenDesktop.GetBool();
-    if (ImGui::Checkbox("Fullscreen Desktop Mode: Use borderless window at "
-                        "desktop resolution for fullscreen",
+    if (ImGui::Checkbox("Fullscreen Desktop Mode: Use borderless window at desktop resolution for fullscreen",
                         &fullscreenDesktop))
     {
         r_fullscreenDesktop.SetBool(fullscreenDesktop);
     }
     AddTooltip("r_fullscreenDesktop");
-    AddDescrTooltip("ignores the resolution configured in dhewm3, doesn't switch "
-                    "the display resolution, can prevent issues like desktop "
-                    "icons being rearranged after running the game");
+    AddDescrTooltip("ignores the resolution configured in dhewm3, doesn't switch the display resolution, can prevent "
+                    "issues like desktop icons being rearranged after running the game");
 
     // Video Mode / Resolution
     static int selModeIdx = -1; // index within our vidModes array
@@ -2357,10 +2287,8 @@ static void DrawVideoOptionsMenu()
     {
         ImGui::TextDisabled("Current Resolution: %g x %g (Physical: %d x %d)", glConfig.winWidth, glConfig.winHeight,
                             glConfig.vidWidth, glConfig.vidHeight);
-        AddDescrTooltip("Apparently your system is using a HighDPI mode, where the "
-                        "logical resolution (used to specify"
-                        " window sizes) is lower than the physical resolution "
-                        "(number of pixels actually rendered).");
+        AddDescrTooltip("Apparently your system is using a HighDPI mode, where the logical resolution (used to specify"
+                        " window sizes) is lower than the physical resolution (number of pixels actually rendered).");
         float scale = float(glConfig.vidWidth) / glConfig.winWidth;
         int pw = scale * displayRect.w;
         int ph = scale * displayRect.h;
@@ -2386,35 +2314,32 @@ static void DrawVideoOptionsMenu()
 
     int usePreComprTex = globalImages->image_usePrecompressedTextures.GetInteger();
     if (ImGui::Combo("Use precompressed (.dds) textures", &usePreComprTex,
-                     "No, only uncompressed\0Yes, no matter which format\0Only "
-                     "if high quality (BPCT/BC7)\0"))
+                     "No, only uncompressed\0Yes, no matter which format\0Only if high quality (BPCT/BC7)\0"))
     {
         globalImages->image_usePrecompressedTextures.SetInteger(usePreComprTex);
-        // by default I guess people also want compressed normal maps when using
-        // this especially relevant for retexturing packs that only ship BC7 DDS
-        // files (otherwise the lowres TGA normalmaps would be used)
+        // by default I guess people also want compressed normal maps when using this
+        // especially relevant for retexturing packs that only ship BC7 DDS files
+        // (otherwise the lowres TGA normalmaps would be used)
         if (usePreComprTex)
         {
             cvarSystem->SetCVarInteger("image_useNormalCompression", 2);
         }
     }
-    const char *descr = "Use precompressed (.dds) textures. Faster loading, use less VRAM, "
-                        "possibly worse image quality.\n"
-                        "May also be used by highres retexturing packs for BC7-compressed "
-                        "textures (there image quality is not noticeably impaired)";
+    const char *descr =
+        "Use precompressed (.dds) textures. Faster loading, use less VRAM, possibly worse image quality.\n"
+        "May also be used by highres retexturing packs for BC7-compressed textures (there image quality is not "
+        "noticeably impaired)";
     AddCVarOptionTooltips(globalImages->image_usePrecompressedTextures, descr);
 
     int useCompression = globalImages->image_useCompression.GetInteger();
-    if (ImGui::Combo("Compress uncompressed textures on load", &useCompression,
-                     "Leave uncompressed (best quality)\0Compress with S3TC (aka "
-                     "DXT aka BC1-3)\0Compress with BPCT (BC7)\0"))
+    if (ImGui::Combo(
+            "Compress uncompressed textures on load", &useCompression,
+            "Leave uncompressed (best quality)\0Compress with S3TC (aka DXT aka BC1-3)\0Compress with BPCT (BC7)\0"))
     {
         globalImages->image_useCompression.SetInteger(useCompression);
     }
-    descr = "When loading non-precompressed textures, compress them so they use "
-            "less VRAM.\n"
-            "Uncompressed has best quality. BC7 has better quality than S3TC, "
-            "but may increase loading times";
+    descr = "When loading non-precompressed textures, compress them so they use less VRAM.\n"
+            "Uncompressed has best quality. BC7 has better quality than S3TC, but may increase loading times";
     AddCVarOptionTooltips(globalImages->image_useCompression, descr);
 
     ImGui::BeginDisabled(!usePreComprTex && !useCompression);
@@ -2426,11 +2351,9 @@ static void DrawVideoOptionsMenu()
     }
     if (usePreComprTex)
     {
-        const char *descr = "Also use precompressed textures for normalmaps or compress them on "
-                            "load.\n"
+        const char *descr = "Also use precompressed textures for normalmaps or compress them on load.\n"
                             "Uncompressed often has better quality, but uses more VRAM.\n"
-                            "When using highres retexturing packs, you should definitely enable "
-                            "this.";
+                            "When using highres retexturing packs, you should definitely enable this.";
         AddCVarOptionTooltips(globalImages->image_useNormalCompression, descr);
     }
     else
@@ -2453,8 +2376,7 @@ static void DrawVideoOptionsMenu()
         {
             ApplyVideoSettings();
         }
-        AddTooltip("Click to apply the settings above, might restart the renderer "
-                   "(but not the game)");
+        AddTooltip("Click to apply the settings above, might restart the renderer (but not the game)");
     }
 
     ImGui::SameLine();
@@ -2464,8 +2386,7 @@ static void DrawVideoOptionsMenu()
     {
         ImGui::BeginDisabled();
         ImGui::Button("Reset");
-        AddTooltip("The window's current state is like it was when opening the "
-                   "menu, so there's nothing to reset");
+        AddTooltip("The window's current state is like it was when opening the menu, so there's nothing to reset");
         ImGui::EndDisabled();
     }
     else
@@ -2494,8 +2415,7 @@ static void DrawVideoOptionsMenu()
 
         if (glConfig.glDebugOutputAvailable && glConfig.haveDebugContext)
         {
-            ImGui::Text("    using an OpenGL debug context to show warnings from the "
-                        "OpenGL driver");
+            ImGui::Text("    using an OpenGL debug context to show warnings from the OpenGL driver");
         }
 
         ImGui::EndDisabled();
@@ -2503,8 +2423,7 @@ static void DrawVideoOptionsMenu()
     }
     else
     {
-        AddTooltip("Click to show information about the currently used Graphics "
-                   "Card (GPU)");
+        AddTooltip("Click to show information about the currently used Graphics Card (GPU)");
     }
 }
 
@@ -2593,8 +2512,7 @@ static void DrawAudioOptionsMenu()
         ImGui::BeginDisabled();
         bool b = false;
         ImGui::Checkbox("Use EAX/EFX Reverb Effects", &b);
-        AddTooltip("EFX effects are not available in your OpenAL "
-                   "implementation.\nConsider using OpenAL-Soft.");
+        AddTooltip("EFX effects are not available in your OpenAL implementation.\nConsider using OpenAL-Soft.");
         ImGui::EndDisabled();
     }
     else
@@ -2605,8 +2523,7 @@ static void DrawAudioOptionsMenu()
             idSoundSystemLocal::s_useEAXReverb.SetBool(useReverb);
             if (useReverb != idSoundSystemLocal::useEFXReverb)
             {
-                D3::ImGuiHooks::ShowWarningOverlay("Enabling/disabling EFX only takes "
-                                                   "effect after restarting dhewm3!");
+                D3::ImGuiHooks::ShowWarningOverlay("Enabling/disabling EFX only takes effect after restarting dhewm3!");
             }
         }
         AddTooltip("s_useEAXReverb");
@@ -2647,8 +2564,8 @@ static void DrawAudioOptionsMenu()
         ImGui::BeginDisabled();
         int c = 0;
         ImGui::Combo("OpenAL output limiter", &c, "Auto (let OpenAL decide)\0");
-        AddTooltip("Your OpenAL version doesn't support configuring output-limiter "
-                   "(needs ALC_SOFT_output_limiter extension)");
+        AddTooltip(
+            "Your OpenAL version doesn't support configuring output-limiter (needs ALC_SOFT_output_limiter extension)");
         ImGui::EndDisabled();
     }
 
@@ -2666,8 +2583,7 @@ static void DrawAudioOptionsMenu()
         ImGui::BeginDisabled();
         int c = 0;
         ImGui::Combo("Use HRTF", &c, "Auto (let OpenAL decide)\0");
-        AddTooltip("Your OpenAL version doesn't support configuring HRTF (needs "
-                   "ALC_SOFT_HRTF extension)");
+        AddTooltip("Your OpenAL version doesn't support configuring HRTF (needs ALC_SOFT_HRTF extension)");
         ImGui::EndDisabled();
     }
 
@@ -2807,22 +2723,20 @@ static void DrawAudioOptionsMenu()
             case ALC_HRTF_ENABLED_SOFT:
                 break;
             case ALC_HRTF_DENIED_SOFT:
-                ImGui::TextWrapped("HRTF is disabled because it's not allowed on the device, or "
-                                   "disabled in the config (alsoft.conf/alsoftrc/alsoft.ini - "
-                                   "ALC_HRTF_DENIED_SOFT)");
+                ImGui::TextWrapped("HRTF is disabled because it's not allowed on the device, or disabled in the config "
+                                   "(alsoft.conf/alsoftrc/alsoft.ini - ALC_HRTF_DENIED_SOFT)");
                 break;
             case ALC_HRTF_REQUIRED_SOFT:
-                ImGui::TextWrapped("HRTF is enabled because it's required, either by the hardware or "
-                                   "by the config (alsoft.conf/alsoftrc/alsoft.ini - "
-                                   "ALC_HRTF_REQUIRED_SOFT)");
+                ImGui::TextWrapped("HRTF is enabled because it's required, either by the hardware or by the config "
+                                   "(alsoft.conf/alsoftrc/alsoft.ini - ALC_HRTF_REQUIRED_SOFT)");
                 break;
             case ALC_HRTF_HEADPHONES_DETECTED_SOFT:
-                ImGui::TextWrapped("HRTF is enabled because the device was detected as "
-                                   "headphones (ALC_HRTF_HEADPHONES_DETECTED_SOFT)");
+                ImGui::TextWrapped("HRTF is enabled because the device was detected as headphones "
+                                   "(ALC_HRTF_HEADPHONES_DETECTED_SOFT)");
                 break;
             case ALC_HRTF_UNSUPPORTED_FORMAT_SOFT:
-                ImGui::TextWrapped("HRTF is disabled because it's unsupported with the current "
-                                   "format, e.g. not stereo (ALC_HRTF_UNSUPPORTED_FORMAT_SOFT)");
+                ImGui::TextWrapped("HRTF is disabled because it's unsupported with the current format, e.g. not stereo "
+                                   "(ALC_HRTF_UNSUPPORTED_FORMAT_SOFT)");
                 break;
             default:
                 ImGui::Text("Not sure why HRTF is %s, unknown status value %d!", hrtfEnabled ? "enabled" : "disabled ",
@@ -2843,9 +2757,7 @@ static void DrawAudioOptionsMenu()
 static CVarOption gameOptions[] = {
     CVarOption("Movement and Weapons"),
     CVarOption("in_alwaysRun", "Always Run (Multiplayer-only by default)", OT_BOOL),
-    CVarOption("in_allowAlwaysRunInSP",
-               "Allow Always Run and Toggle Run in Singleplayer\n(Stamina is "
-               "still limited!)",
+    CVarOption("in_allowAlwaysRunInSP", "Allow Always Run and Toggle Run in Singleplayer\n(Stamina is still limited!)",
                OT_BOOL),
     CVarOption("in_toggleRun", "Toggle Run (Multiplayer-only by default)", OT_BOOL),
     CVarOption("in_toggleCrouch", "Toggle Crouch", OT_BOOL),
@@ -2870,13 +2782,11 @@ void InitGameOptionsMenu()
 {
     ui_nameVar = cvarSystem->Find("ui_name");
 
-    // Note: ImGui uses UTF-8 for strings, Doom3 uses ISO8859-1, so we need to
-    // translate
+    // Note: ImGui uses UTF-8 for strings, Doom3 uses ISO8859-1, so we need to translate
     if (D3_ISO8859_1toUTF8(ui_nameVar->GetString(), playerNameBuf, sizeof(playerNameBuf)) == nullptr)
     {
-        // returning NULL means playerNameBuf wasn't big enough - that shouldn't
-        // happen, at least the player name input in the original menu only allowed
-        // 40 chars
+        // returning NULL means playerNameBuf wasn't big enough - that shouldn't happen,
+        // at least the player name input in the original menu only allowed 40 chars
         playerNameBuf[sizeof(playerNameBuf) - 1] = '\0';
     }
 
@@ -2918,15 +2828,14 @@ void DrawGameOptionsMenu()
         {
             playerNameIso[40] = '\0'; // limit to 40 chars, like the original menu
             ui_nameVar->SetString(playerNameIso);
-            // update the playerNameBuf to reflect the name as it is now: limited to
-            // 40 chars and possibly containing '!' from non-translatable unicode
-            // chars
+            // update the playerNameBuf to reflect the name as it is now: limited to 40 chars
+            // and possibly containing '!' from non-translatable unicode chars
             D3_ISO8859_1toUTF8(ui_nameVar->GetString(), playerNameBuf, sizeof(playerNameBuf));
         }
         else
         {
-            D3::ImGuiHooks::ShowWarningOverlay("Player Name way too long (max 40 chars) or contains invalid UTF-8 "
-                                               "encoding!");
+            D3::ImGuiHooks::ShowWarningOverlay(
+                "Player Name way too long (max 40 chars) or contains invalid UTF-8 encoding!");
             playerNameBuf[0] = '\0';
         }
     }
@@ -2987,14 +2896,13 @@ static void DrawOtherOptionsMenu()
     {
         D3::ImGuiHooks::CopyCurrentStyle(onlyChanges);
     }
-    AddTooltip("Generates C++ code for the current style settings (incl. colors) "
-               "and copies it into the clipboard");
+    AddTooltip("Generates C++ code for the current style settings (incl. colors) and copies it into the clipboard");
 
     ImGui::SameLine();
 
     ImGui::Checkbox("Only changed settings", &onlyChanges);
-    AddTooltip("Only generate C++ code for attributes/colors that are changed "
-               "compared to the default (dark) ImGui theme");
+    AddTooltip(
+        "Only generate C++ code for attributes/colors that are changed compared to the default (dark) ImGui theme");
 
     ImGui::Spacing();
 
@@ -3029,9 +2937,8 @@ static void InitDhewm3SettingsMenu()
     InitGameOptionsMenu();
 
     const ImGuiStyle &style = ImGui::GetStyle();
-    float defaultWidth = ImGui::CalcTextSize("Control BindingsControl OptionsVideo OptionsAudio "
-                                             "OptionsGame OptionsOther Options")
-                             .x;
+    float defaultWidth =
+        ImGui::CalcTextSize("Control BindingsControl OptionsVideo OptionsAudio OptionsGame OptionsOther Options").x;
     defaultWidth += 2.0f * style.WindowPadding.x + 12.0f * style.FramePadding.x + 5.0f * style.ItemInnerSpacing.x;
     ImVec2 displaySize = ImGui::GetIO().DisplaySize;
     settingsMenuDefaultSize.x = fminf(defaultWidth, displaySize.x * 0.8f);
@@ -3048,27 +2955,23 @@ void Com_DrawDhewm3SettingsMenu()
 
     if (!d3settingsWinInitialized)
     {
-        // NOTE: InitDhewm3SettingsMenu() must be called after/by NewFrame(),
-        // because it calls
-        //       ImGui::CalcTextSize() which needs a valid font texture. Especially
-        //       after switching between windowed and fullscreen mode with
-        //       Alt-Enter, calling it from Com_OpenCloseDhewm3SettingsMenu() caused
-        //       problems (crashes)
+        // NOTE: InitDhewm3SettingsMenu() must be called after/by NewFrame(), because it calls
+        //       ImGui::CalcTextSize() which needs a valid font texture. Especially after
+        //       switching between windowed and fullscreen mode with Alt-Enter, calling it from
+        //       Com_OpenCloseDhewm3SettingsMenu() caused problems (crashes)
         InitDhewm3SettingsMenu();
     }
 
     // to avoid people being too confused by the collapse window feature,
-    // uncollapse it when it's being opened (so pressing F10 twice will restore
-    // your window)
+    // uncollapse it when it's being opened (so pressing F10 twice will restore your window)
     ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
-    // for some reason ImGui doesn't calculate a sane default window size when
-    // using childwindows in the tabs and on first use the window is just the
-    // icons in the taskbar so set a sane default size the first time it's opened
-    // (afterwards the size set by the user is respected)
+    // for some reason ImGui doesn't calculate a sane default window size when using
+    // childwindows in the tabs and on first use the window is just the icons in the taskbar
+    // so set a sane default size the first time it's opened (afterwards the size set by the
+    // user is respected)
     ImGui::SetNextWindowSize(settingsMenuDefaultSize, ImGuiCond_FirstUseEver);
-    // set a sane default pos first time each session (if the window somehow gets
-    // "lost" after switching to a lower resolution, restarting dhewm3 will fix
-    // it)
+    // set a sane default pos first time each session (if the window somehow gets "lost" after
+    // switching to a lower resolution, restarting dhewm3 will fix it)
     ImGui::SetNextWindowPos(settingsMenuDefaultPos, ImGuiCond_Once);
 
     ImGui::Begin("dhewm3 Settings", &showSettingsWindow);
@@ -3153,9 +3056,8 @@ void Com_OpenCloseDhewm3SettingsMenu(bool open)
             // if we're in a SP game, pause the game.
             // g_stopTime is the best we have for this..
             // advantage of this, compared to the main menu with its settings menu:
-            // gamma and brightness can be modified and the effect is visible in
-            // realtime, but (at least in SP..) the player is still safe from monsters
-            // while doing this
+            // gamma and brightness can be modified and the effect is visible in realtime,
+            // but (at least in SP..) the player is still safe from monsters while doing this
             idCVar *stopTime = cvarSystem->Find("g_stoptime");
             if (stopTime != nullptr)
             {
@@ -3208,8 +3110,7 @@ void Com_Dhewm3Settings_f(const idCmdArgs &args)
 
 void Com_Dhewm3Settings_f(const idCmdArgs &args)
 {
-    common->Warning("Dear ImGui is disabled in this build, so the dhewm3 "
-                    "settings menu is not available!");
+    common->Warning("Dear ImGui is disabled in this build, so the dhewm3 settings menu is not available!");
 }
 
 #endif

@@ -19,28 +19,25 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/DemoFile.h"
+#include "sys/platform.h"
 #include "idlib/containers/VectorSet.h"
-#include "renderer/Model_ase.h"
+#include "framework/DemoFile.h"
+#include "renderer/tr_local.h"
 #include "renderer/Model_local.h"
+#include "renderer/Model_ase.h"
 #include "renderer/Model_lwo.h"
 #include "renderer/Model_ma.h"
 #include "renderer/VertexCache.h"
-#include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "renderer/Model.h"
 
@@ -647,8 +644,7 @@ state of the noSelfShadow flag.
 Creates mirrored copies of two sided surfaces with normal maps, which would
 otherwise light funny.
 
-Extends the bounds of deformed surfaces so they don't cull incorrectly at screen
-edges.
+Extends the bounds of deformed surfaces so they don't cull incorrectly at screen edges.
 
 ================
 */
@@ -928,8 +924,8 @@ bool idRenderModelStatic::ConvertASEToModelSurfaces(const struct aseModel_s *ase
 
         bool normalsParsed = mesh->normalsParsed;
 
-        // completely ignore any explict normals on surfaces with a renderbump
-        // command which will guarantee the best contours and least vertexes.
+        // completely ignore any explict normals on surfaces with a renderbump command
+        // which will guarantee the best contours and least vertexes.
         const char *rb = im1->GetRenderBump();
         if (rb && rb[0])
         {
@@ -1112,8 +1108,7 @@ bool idRenderModelStatic::ConvertASEToModelSurfaces(const struct aseModel_s *ase
             common->FatalError("ConvertASEToModelSurfaces: vertex miscount in ASE file %s", name.c_str());
         }
 
-        // an ASE allows the texture coordinates to be scaled, translated, and
-        // rotated
+        // an ASE allows the texture coordinates to be scaled, translated, and rotated
         if (ase->materials.Num() == 0)
         {
             uOffset = vOffset = 0.0f;
@@ -1279,9 +1274,7 @@ bool idRenderModelStatic::ConvertLWOToModelSurfaces(const struct st_lwObject *lw
     // vertex positions
     if (layer->point.count <= 0)
     {
-        common->Warning("ConvertLWOToModelSurfaces: model \'%s\' has bad or "
-                        "missing vertex data",
-                        name.c_str());
+        common->Warning("ConvertLWOToModelSurfaces: model \'%s\' has bad or missing vertex data", name.c_str());
         return false;
     }
 
@@ -1397,16 +1390,15 @@ bool idRenderModelStatic::ConvertLWOToModelSurfaces(const struct st_lwObject *lw
 
         bool normalsParsed = true;
 
-        // completely ignore any explict normals on surfaces with a renderbump
-        // command which will guarantee the best contours and least vertexes.
+        // completely ignore any explict normals on surfaces with a renderbump command
+        // which will guarantee the best contours and least vertexes.
         const char *rb = im1->GetRenderBump();
         if (rb && rb[0])
         {
             normalsParsed = false;
         }
 
-        // we need to find out how many unique vertex / texcoord combinations there
-        // are
+        // we need to find out how many unique vertex / texcoord combinations there are
 
         // the maximum possible number of combined vertexes is the number of indexes
         mvTable = (matchVert_t *)R_ClearedStaticAlloc(layer->polygon.count * 3 * sizeof(mvTable[0]));
@@ -1442,9 +1434,9 @@ bool idRenderModelStatic::ConvertLWOToModelSurfaces(const struct st_lwObject *lw
 
             if (poly->nverts != 3)
             {
-                common->Warning("ConvertLWOToModelSurfaces: model %s has too many "
-                                "verts for a poly! Make sure you triplet it down",
-                                name.c_str());
+                common->Warning(
+                    "ConvertLWOToModelSurfaces: model %s has too many verts for a poly! Make sure you triplet it down",
+                    name.c_str());
                 continue;
             }
 
@@ -1457,8 +1449,7 @@ bool idRenderModelStatic::ConvertLWOToModelSurfaces(const struct st_lwObject *lw
                 normal.y = poly->v[k].norm[2];
                 normal.z = poly->v[k].norm[1];
 
-                // LWO models aren't all that pretty when it comes down to the floating
-                // point values they store
+                // LWO models aren't all that pretty when it comes down to the floating point values they store
                 normal.FixDegenerateNormal();
 
                 tv = 0;
@@ -1715,9 +1706,8 @@ struct aseModel_s *idRenderModelStatic::ConvertLWOToASE(const struct st_lwObject
 
             if (poly->nverts != 3)
             {
-                common->Warning("ConvertLWOToASE: model %s has too many verts for a "
-                                "poly! Make sure you triplet it down",
-                                fileName);
+                common->Warning(
+                    "ConvertLWOToASE: model %s has too many verts for a poly! Make sure you triplet it down", fileName);
                 continue;
             }
 
@@ -1940,8 +1930,8 @@ bool idRenderModelStatic::ConvertMAToModelSurfaces(const struct maModel_s *ma)
 
         bool normalsParsed = mesh->normalsParsed;
 
-        // completely ignore any explict normals on surfaces with a renderbump
-        // command which will guarantee the best contours and least vertexes.
+        // completely ignore any explict normals on surfaces with a renderbump command
+        // which will guarantee the best contours and least vertexes.
         const char *rb = im1->GetRenderBump();
         if (rb && rb[0])
         {
@@ -2006,9 +1996,8 @@ bool idRenderModelStatic::ConvertMAToModelSurfaces(const struct maModel_s *ma)
             }
         }
 
-        // we need to find out how many unique vertex / texcoord / color
-        // combinations there are, because MA tracks them separately but we need
-        // them unified
+        // we need to find out how many unique vertex / texcoord / color combinations
+        // there are, because MA tracks them separately but we need them unified
 
         // the maximum possible number of combined vertexes is the number of indexes
         mvTable = (matchVert_t *)R_ClearedStaticAlloc(mesh->numFaces * 3 * sizeof(mvTable[0]));
@@ -2127,8 +2116,7 @@ bool idRenderModelStatic::ConvertMAToModelSurfaces(const struct maModel_s *ma)
             common->FatalError("ConvertMAToModelSurfaces: vertex miscount in MA file %s", name.c_str());
         }
 
-        // an MA allows the texture coordinates to be scaled, translated, and
-        // rotated
+        // an MA allows the texture coordinates to be scaled, translated, and rotated
         // BSM: Todo: Does Maya support this and if so how
         // if ( ase->materials.Num() == 0 ) {
         uOffset = vOffset = 0.0f;
@@ -2435,8 +2423,7 @@ bool idRenderModelStatic::LoadFLT(const char *fileName)
 
     surface.geometry = tri;
     surface.id = 0;
-    surface.shader = tr.defaultMaterial; // declManager->FindMaterial(
-                                         // "shaderDemos/megaTexture" );
+    surface.shader = tr.defaultMaterial; // declManager->FindMaterial( "shaderDemos/megaTexture" );
 
     this->AddSurface(surface);
 

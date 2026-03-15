@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/FileSystem.h"
 #include "framework/KeyInput.h"
-#include "sys/platform.h"
 #include "ui/DeviceContext.h"
-#include "ui/SliderWindow.h"
-#include "ui/UserInterfaceLocal.h"
 #include "ui/Window.h"
+#include "ui/UserInterfaceLocal.h"
+#include "ui/SliderWindow.h"
 
 #include "ui/EditWindow.h"
 
@@ -231,8 +228,7 @@ const char *idEditWindow::HandleEvent(const sysEvent_t *event, bool *updateVisua
 
     if (wrap)
     {
-        // need to call this to allow proper focus and capturing on embedded
-        // children
+        // need to call this to allow proper focus and capturing on embedded children
         ret = idWindow::HandleEvent(event, updateVisuals);
         if (ret && *ret)
         {
@@ -746,8 +742,7 @@ void idEditWindow::InitCvar()
     {
         if (text.GetName() == NULL)
         {
-            common->Warning("idEditWindow::InitCvar: gui '%s' window '%s' has an "
-                            "empty cvar string",
+            common->Warning("idEditWindow::InitCvar: gui '%s' window '%s' has an empty cvar string",
                             gui->GetSourceFile(), name.c_str());
         }
         cvar = NULL;
@@ -757,8 +752,7 @@ void idEditWindow::InitCvar()
     cvar = cvarSystem->Find(cvarStr);
     if (!cvar)
     {
-        common->Warning("idEditWindow::InitCvar: gui '%s' window '%s' references "
-                        "undefined cvar '%s'",
+        common->Warning("idEditWindow::InitCvar: gui '%s' window '%s' references undefined cvar '%s'",
                         gui->GetSourceFile(), name.c_str(), cvarStr.c_str());
         return;
     }

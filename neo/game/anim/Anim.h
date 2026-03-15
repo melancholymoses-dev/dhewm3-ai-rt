@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 #ifndef __ANIM_H__
 #define __ANIM_H__
 
-#include "idlib/Dict.h"
-#include "idlib/containers/HashTable.h"
 #include "idlib/containers/StrList.h"
+#include "idlib/containers/HashTable.h"
+#include "idlib/Dict.h"
 #include "renderer/Model.h"
 
 #include "physics/Clip.h"
@@ -49,8 +46,7 @@ const int ANIM_MaxAnimsPerChannel = 3;
 const int ANIM_MaxSyncedAnims = 3;
 
 //
-// animation channels.  make sure to change script/doom_defs.script if you add
-// any channels, or change their order
+// animation channels.  make sure to change script/doom_defs.script if you add any channels, or change their order
 //
 const int ANIMCHANNEL_ALL = 0;
 const int ANIMCHANNEL_TORSO = 1;
@@ -74,8 +70,7 @@ class idRestoreGame;
 
 typedef struct
 {
-    int cycleCount; // how many times the anim has wrapped to the begining (0 for
-                    // clamped anims)
+    int cycleCount; // how many times the anim has wrapped to the begining (0 for clamped anims)
     int frame1;
     int frame2;
     float frontlerp;
@@ -98,19 +93,15 @@ typedef struct
 } jointInfo_t;
 
 //
-// joint modifier modes.  make sure to change script/doom_defs.script if you add
-// any, or change their order.
+// joint modifier modes.  make sure to change script/doom_defs.script if you add any, or change their order.
 //
 typedef enum
 {
     JOINTMOD_NONE,           // no modification
-    JOINTMOD_LOCAL,          // modifies the joint's position or orientation in joint local
-                             // space
-    JOINTMOD_LOCAL_OVERRIDE, // sets the joint's position or orientation in joint
-                             // local space
+    JOINTMOD_LOCAL,          // modifies the joint's position or orientation in joint local space
+    JOINTMOD_LOCAL_OVERRIDE, // sets the joint's position or orientation in joint local space
     JOINTMOD_WORLD,          // modifies joint's position or orientation in model space
-    JOINTMOD_WORLD_OVERRIDE  // sets the joint's position or orientation in model
-                             // space
+    JOINTMOD_WORLD_OVERRIDE  // sets the joint's position or orientation in model space
 } jointModTransform_t;
 
 typedef struct
@@ -204,7 +195,7 @@ typedef struct
 /*
 ==============================================================================================
 
-        idModelExport
+    idModelExport
 
 ==============================================================================================
 */
@@ -241,7 +232,7 @@ class idModelExport
 /*
 ==============================================================================================
 
-        idMD5Anim
+    idMD5Anim
 
 ==============================================================================================
 */
@@ -288,8 +279,7 @@ class idMD5Anim
     const idVec3 &TotalMovementDelta(void) const;
     const char *Name(void) const;
 
-    void GetFrameBlend(int framenum,
-                       frameBlend_t &frame) const; // frame 1 is first frame
+    void GetFrameBlend(int framenum, frameBlend_t &frame) const; // frame 1 is first frame
     void ConvertTimeToFrame(int time, int cyclecount, frameBlend_t &frame) const;
 
     void GetOrigin(idVec3 &offset, int currentTime, int cyclecount) const;
@@ -300,7 +290,7 @@ class idMD5Anim
 /*
 ==============================================================================================
 
-        idAnim
+    idAnim
 
 ==============================================================================================
 */
@@ -339,8 +329,7 @@ class idAnim
     void CallFrameCommands(idEntity *ent, int from, int to) const;
     bool HasFrameCommands(void) const;
 
-    // returns first frame (zero based) that command occurs.  returns -1 if not
-    // found.
+    // returns first frame (zero based) that command occurs.  returns -1 if not found.
     int FindFrameForFrameCommand(frameCommandType_t framecommand, const frameCommand_t **command) const;
     void SetAnimFlags(const animFlags_t &animflags);
     const animFlags_t &GetAnimFlags(void) const;
@@ -349,7 +338,7 @@ class idAnim
 /*
 ==============================================================================================
 
-        idDeclModelDef
+    idDeclModelDef
 
 ==============================================================================================
 */
@@ -408,7 +397,7 @@ class idDeclModelDef : public idDecl
 /*
 ==============================================================================================
 
-        idAnimBlend
+    idAnimBlend
 
 ==============================================================================================
 */
@@ -483,7 +472,7 @@ class idAnimBlend
 /*
 ==============================================================================================
 
-        idAFPoseJointMod
+    idAFPoseJointMod
 
 ==============================================================================================
 */
@@ -515,7 +504,7 @@ ID_INLINE idAFPoseJointMod::idAFPoseJointMod(void)
 /*
 ==============================================================================================
 
-        idAnimator
+    idAnimator
 
 ==============================================================================================
 */
@@ -572,8 +561,7 @@ class idAnimator
     void PlayAnim(int channelNum, int animnum, int currenttime, int blendTime);
 
     // copies the current anim from fromChannelNum to channelNum.
-    // the copied anim will have frame commands disabled to avoid executing them
-    // twice.
+    // the copied anim will have frame commands disabled to avoid executing them twice.
     void SyncAnimChannels(int channelNum, int fromChannelNum, int currenttime, int blendTime);
 
     void SetJointPos(jointHandle_t jointnum, jointModTransform_t transform_type, const idVec3 &pos);
@@ -636,7 +624,7 @@ class idAnimator
 /*
 ==============================================================================================
 
-        idAnimManager
+    idAnimManager
 
 ==============================================================================================
 */

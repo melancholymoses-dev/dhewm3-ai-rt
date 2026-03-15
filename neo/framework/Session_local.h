@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,12 +32,12 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __SESSIONLOCAL_H__
 #define __SESSIONLOCAL_H__
 
-#include "framework/DeclEntityDef.h"
-#include "framework/KeyInput.h"
+#include "idlib/containers/StrList.h"
+#include "idlib/Dict.h"
 #include "framework/Session.h"
 #include "framework/UsercmdGen.h"
-#include "idlib/Dict.h"
-#include "idlib/containers/StrList.h"
+#include "framework/KeyInput.h"
+#include "framework/DeclEntityDef.h"
 #include "renderer/RenderSystem.h"
 #include "renderer/RenderWorld.h"
 #include "ui/ListGUI.h"
@@ -53,16 +50,16 @@ IsGuiActive();
 IsPlayingRenderDemo();
 
 if connected to a server
-        if handshaking
-        if map loading
-        if in game
+    if handshaking
+    if map loading
+    if in game
 else if a game loaded
-        if in load game menu
-        if main menu up
+    if in load game menu
+    if main menu up
 else if playing render demo
 else
-        if error dialog
-        full console
+    if error dialog
+    full console
 
 */
 
@@ -178,8 +175,7 @@ class idSessionLocal : public idSession
     idStr GetAutoSaveName(const char *mapName) const;
 
     bool LoadGame(const char *saveName);
-    // DG: added saveFileName so we can set a sensible filename for autosaves (see
-    // comment in MoveToNewMap())
+    // DG: added saveFileName so we can set a sensible filename for autosaves (see comment in MoveToNewMap())
     bool SaveGame(const char *saveName, bool autosave = false, const char *saveFileName = NULL);
 
     bool QuickSave();
@@ -219,9 +215,8 @@ class idSessionLocal : public idSession
     // console print that happens
     int lastPacifierTime;
 
-    // this is the information required to be set before ExecuteMapChange() is
-    // called, which can be saved off at any time with the following commands so
-    // it can all be played back
+    // this is the information required to be set before ExecuteMapChange() is called,
+    // which can be saved off at any time with the following commands so it can all be played back
     mapSpawnData_t mapSpawnData;
     idStr currentMapName; // for checking reload on same level
     bool mapSpawned;      // cleared on Stop()
@@ -396,8 +391,7 @@ class idSessionLocal : public idSession
 
     idStr authMsg;
 
-    bool demoversion; // DG: true if running the Demo version of Doom3, for
-                      // FT_IsDemo (see Common.h)
+    bool demoversion; // DG: true if running the Demo version of Doom3, for FT_IsDemo (see Common.h)
 };
 
 extern idSessionLocal sessLocal;

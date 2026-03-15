@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,9 +37,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 // because the implemenations are in openal_stub.cpp
 // this is ensured by defining AL_LIBTYPE_STATIC before including the AL headers
 #define AL_LIBTYPE_STATIC
-// newer versions of openal-soft set the noexcept attribute to functions, older
-// ones didn't just disable that so the stub functions continue to match the
-// prototypes in the header
+// newer versions of openal-soft set the noexcept attribute to functions, older ones didn't
+// just disable that so the stub functions continue to match the prototypes in the header
 #define AL_DISABLE_NOEXCEPT
 #endif
 
@@ -50,10 +46,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include <AL/alc.h>
 #include <AL/alext.h>
 
-// DG: make this code build with older OpenAL headers that don't know about
-// ALC_SOFT_HRTF
-//     which provides LPALCRESETDEVICESOFT for
-//     idSoundSystemLocal::alcResetDeviceSOFT()
+// DG: make this code build with older OpenAL headers that don't know about ALC_SOFT_HRTF
+//     which provides LPALCRESETDEVICESOFT for idSoundSystemLocal::alcResetDeviceSOFT()
 #ifndef ALC_SOFT_HRTF
 typedef ALCboolean(ALC_APIENTRY *LPALCRESETDEVICESOFT)(ALCdevice *device, const ALCint *attribs);
 #endif
@@ -72,9 +66,8 @@ typedef ALCboolean(ALC_APIENTRY *LPALCRESETDEVICESOFT)(ALCdevice *device, const 
 #define ALC_SURROUND_6_1_SOFT 0x1505
 #define ALC_SURROUND_7_1_SOFT 0x1506
 #endif
-// the following formats are defined in
-// https://openal-soft.org/openal-extensions/SOFT_output_mode.txt but commented
-// out in OpenAL Softs current AL/alext.h
+// the following formats are defined in https://openal-soft.org/openal-extensions/SOFT_output_mode.txt
+// but commented out in OpenAL Softs current AL/alext.h
 #ifndef ALC_MONO_SOFT
 #define ALC_MONO_SOFT 0x1500
 #endif
@@ -128,8 +121,8 @@ class idSoundWorldLocal;
 /*
 ===================================================================================
 
-        General extended waveform format structure.
-        Use this for all NON PCM formats.
+    General extended waveform format structure.
+    Use this for all NON PCM formats.
 
 ===================================================================================
 */
@@ -146,8 +139,7 @@ struct waveformatex_s
     word nBlockAlign;      /* block size of data */
     word wBitsPerSample;   /* Number of bits per sample of mono data */
     word cbSize;           /* The count in bytes of the size of
-                                                                extra information (after
-                              cbSize) */
+                                extra information (after cbSize) */
 } PACKED;
 
 typedef waveformatex_s waveformatex_t;
@@ -266,8 +258,7 @@ class idWaveFile
     dword mulDataSize;
 
     void *ogg;     // only !NULL when !s_realTimeDecoding
-    byte *oggData; // the contents of the .ogg for stbi_vorbis (it doesn't support
-                   // custom reading callbacks)
+    byte *oggData; // the contents of the .ogg for stbi_vorbis (it doesn't support custom reading callbacks)
     bool isOgg;
 
   private:
@@ -508,8 +499,7 @@ class idSoundChannel
     idSampleDecoder *decoder;
     float diversity;
     float lastVolume; // last calculated volume based on distance
-    float lastV[6];   // last calculated volume for each speaker, so we can smoothly
-                      // fade
+    float lastV[6];   // last calculated volume for each speaker, so we can smoothly fade
     idSoundFade channelFade;
     bool triggered;
     ALuint openalSource;
@@ -518,8 +508,7 @@ class idSoundChannel
     ALuint lastopenalStreamingBuffer[3];
     bool stopped;
 
-    bool paused; // DG: currently paused, but generally still playing - for when
-                 // menu is open etc
+    bool paused; // DG: currently paused, but generally still playing - for when menu is open etc
 
     bool disallowSlow;
 };
@@ -532,14 +521,14 @@ class idSoundEmitterLocal : public idSoundEmitter
 
     //----------------------------------------------
 
-    // the "time" parameters should be game time in msec, which is used to make
-    // queries return deterministic values regardless of async buffer scheduling
+    // the "time" parameters should be game time in msec, which is used to make queries
+    // return deterministic values regardless of async buffer scheduling
 
     // a non-immediate free will let all currently playing sounds complete
     virtual void Free(bool immediate);
 
-    // the parms specified will be the default overrides for all sounds started on
-    // this emitter. NULL is acceptable for parms
+    // the parms specified will be the default overrides for all sounds started on this emitter.
+    // NULL is acceptable for parms
     virtual void UpdateEmitter(const idVec3 &origin, int listenerId, const soundShaderParms_t *parms);
 
     // returns the length of the started sound in msec
@@ -579,15 +568,13 @@ class idSoundEmitterLocal : public idSoundEmitter
     int listenerId;
     soundShaderParms_t parms; // default overrides for all channels
 
-    // the following are calculated in UpdateEmitter, and don't need to be
-    // archived
+    // the following are calculated in UpdateEmitter, and don't need to be archived
     float maxDistance;       // greatest of all playing channel distances
-    int lastValidPortalArea; // so an emitter that slides out of the world
-                             // continues playing
+    int lastValidPortalArea; // so an emitter that slides out of the world continues playing
     bool playing;            // if false, no channel is active
     bool hasShakes;
-    idVec3 spatializedOrigin; // the virtual sound origin, either the real sound
-                              // origin, or a point through a portal chain
+    idVec3 spatializedOrigin; // the virtual sound origin, either the real sound origin,
+                              // or a point through a portal chain
     float realDistance;       // in meters
     float distance;           // in meters, this may be the straight-line distance, or
                               // it may go through a chain of portals.  If there
@@ -796,8 +783,7 @@ class idSoundSystemLocal : public idSoundSystem
     // shutdown routine
     virtual void Shutdown(void);
 
-    // sound is attached to the window, and must be recreated when the window is
-    // changed
+    // sound is attached to the window, and must be recreated when the window is changed
     virtual bool ShutdownHW(void);
     virtual bool InitHW(void);
 
@@ -820,8 +806,8 @@ class idSoundSystemLocal : public idSoundSystem
     // specifying NULL will cause silence to be played
     virtual void SetPlayingSoundWorld(idSoundWorld *soundWorld);
 
-    // some tools, like the sound dialog, may be used in both the game and the
-    // editor This can return NULL, so check!
+    // some tools, like the sound dialog, may be used in both the game and the editor
+    // This can return NULL, so check!
     virtual idSoundWorld *GetPlayingSoundWorld(void);
 
     virtual void BeginLevelLoad(void);
@@ -844,13 +830,11 @@ class idSoundSystemLocal : public idSoundSystem
     void FreeOpenALSource(ALuint handle);
 
     // returns true if openalDevice is still available,
-    // otherwise it will try to recover the device and return false while it's
-    // gone (display audio sound devices sometimes disappear for a few seconds
-    // when switching resolution)
+    // otherwise it will try to recover the device and return false while it's gone
+    // (display audio sound devices sometimes disappear for a few seconds when switching resolution)
     bool CheckDeviceAndRecoverIfNeeded();
-    // resets the OpenAL device, applying the settings of s_alHRTF and
-    // s_alOutputLimiter returns false if that failed, or the necessary OpenAL
-    // extension isn't available
+    // resets the OpenAL device, applying the settings of s_alHRTF and s_alOutputLimiter
+    // returns false if that failed, or the necessary OpenAL extension isn't available
     bool ResetALDevice();
 
     idSoundCache *soundCache;
@@ -859,8 +843,7 @@ class idSoundSystemLocal : public idSoundSystem
 
     int olddwCurrentWritePos; // statistics
     int buffers;              // statistics
-    int CurrentSoundTime;     // set by the async thread and only used by the main
-                              // thread
+    int CurrentSoundTime;     // set by the async thread and only used by the main thread
 
     unsigned int nextWriteBlock;
 
@@ -912,8 +895,7 @@ class idSoundSystemLocal : public idSoundSystem
     static int EFXAvailable;
 
     static bool alHRTFavailable;          // needs ALC_SOFT_HRTF extension
-    static bool alOutputLimiterAvailable; // needs ALC_SOFT_output_limiter
-                                          // extension (+ HRTF extension)
+    static bool alOutputLimiterAvailable; // needs ALC_SOFT_output_limiter extension (+ HRTF extension)
     static bool alEnumerateAllAvailable;  // needs ALC_ENUMERATE_ALL_EXT
     static bool alIsDisconnectAvailable;  // needs ALC_EXT_disconnect
     static bool alOutputModeAvailable;    // needs ALC_SOFT_output_mode
@@ -990,8 +972,7 @@ class idSoundSample
     ~idSoundSample();
 
     idStr name;          // name of the sample file
-    ID_TIME_T timestamp; // the most recent of all images used in creation, for
-                         // reloadImages command
+    ID_TIME_T timestamp; // the most recent of all images used in creation, for reloadImages command
 
     waveformatex_t objectInfo; // what are we caching
     int objectSize;            // size of waveform in samples, excludes the header
@@ -1003,8 +984,7 @@ class idSoundSample
     bool defaultSound;
     bool onDemand;
     bool purged;
-    bool levelLoadReferenced; // so we can tell which samples aren't needed any
-                              // more
+    bool levelLoadReferenced; // so we can tell which samples aren't needed any more
 
     int LengthIn44kHzSamples() const;
     ID_TIME_T GetNewTimeStamp(void) const;

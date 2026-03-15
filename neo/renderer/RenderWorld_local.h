@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -56,8 +53,7 @@ typedef struct portal_s
 typedef struct doublePortal_s
 {
     struct portal_s *portals[2];
-    int blockingBits; // PS_BLOCK_VIEW, PS_BLOCK_AIR, etc, set by doors that shut
-                      // them off
+    int blockingBits; // PS_BLOCK_VIEW, PS_BLOCK_AIR, etc, set by doors that shut them off
 
     // A portal will be considered closed if it is past the
     // fog-out point in a fog volume.  We only support a single
@@ -69,9 +65,9 @@ typedef struct doublePortal_s
 typedef struct portalArea_s
 {
     int areaNum;
-    int connectedAreaNum[NUM_PORTAL_ATTRIBUTES]; // if two areas have matching connectedAreaNum,
-                                                 // they are not separated by a portal with the
-                                                 // apropriate PS_BLOCK_* blockingBits
+    int connectedAreaNum[NUM_PORTAL_ATTRIBUTES]; // if two areas have matching connectedAreaNum, they are
+                                                 // not separated by a portal with the apropriate PS_BLOCK_*
+                                                 // blockingBits
     int viewCount;                               // set by R_FindViewLightsAndEntities
     portal_t *portals;                           // never changes after load
     areaReference_t entityRefs;                  // head/tail of doubly linked list, may change
@@ -85,8 +81,7 @@ typedef struct
     idPlane plane;
     int children[2];        // negative numbers are (-1 - areaNumber), 0 = solid
     int commonChildrenArea; // if all children are either solid or a single area,
-                            // this is the area number, else
-                            // CHILDREN_HAVE_MULTIPLE_AREAS
+                            // this is the area number, else CHILDREN_HAVE_MULTIPLE_AREAS
 } areaNode_t;
 
 class idRenderWorldLocal : public idRenderWorld
@@ -191,10 +186,10 @@ class idRenderWorldLocal : public idRenderWorld
     idBlockAlloc<areaNumRef_t, 1024> areaNumRefAllocator;
 
     // all light / entity interactions are referenced here for fast lookup without
-    // having to crawl the doubly linked lists.  EnntityDefs are sequential for
-    // better cache access, because the table is accessed by light in
-    // idRenderWorldLocal::CreateLightDefInteractions() Growing this table is time
-    // consuming, so we add a pad value to the number of entityDefs and lightDefs
+    // having to crawl the doubly linked lists.  EnntityDefs are sequential for better
+    // cache access, because the table is accessed by light in idRenderWorldLocal::CreateLightDefInteractions()
+    // Growing this table is time consuming, so we add a pad value to the number
+    // of entityDefs and lightDefs
     idInteraction **interactionTable;
     int interactionTableWidth;  // entityDefs
     int interactionTableHeight; // lightDefs

@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/Model_local.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
+#include "renderer/Model_local.h"
 
 #include "renderer/ModelOverlay.h"
 
@@ -111,8 +108,8 @@ void idRenderModelOverlay::FreeSurface(overlaySurface_t *surface)
 idRenderModelOverlay::CreateOverlay
 
 This projects on both front and back sides to avoid seams
-The material should be clamped, because entire triangles are added, some of
-which may extend well past the 0.0 to 1.0 texture range
+The material should be clamped, because entire triangles are added, some of which
+may extend well past the 0.0 to 1.0 texture range
 =====================
 */
 void idRenderModelOverlay::CreateOverlay(const idRenderModel *model, const idPlane localTextureAxis[2],
@@ -137,8 +134,7 @@ void idRenderModelOverlay::CreateOverlay(const idRenderModel *model, const idPla
     }
 
     // make temporary buffers for the building process
-    // DG: using Mem_MallocA() instead of alloca() to avoid stack overflows with
-    // large models
+    // DG: using Mem_MallocA() instead of alloca() to avoid stack overflows with large models
     size_t vertSize = maxVerts * sizeof(overlayVertex_t);
     bool vertsOnStack;
     overlayVertex_t *overlayVerts = (overlayVertex_t *)Mem_MallocA(vertSize, vertsOnStack);
@@ -206,8 +202,7 @@ void idRenderModelOverlay::CreateOverlay(const idRenderModel *model, const idPla
                 continue;
             }
 
-            // we could do more precise triangle culling, like the light interaction
-            // does, if desired
+            // we could do more precise triangle culling, like the light interaction does, if desired
 
             // keep this triangle
             for (int vnum = 0; vnum < 3; vnum++)
@@ -303,8 +298,7 @@ void idRenderModelOverlay::AddOverlaySurfacesToModel(idRenderModel *baseModel)
 
     if (baseModel->IsDynamicModel() != DM_STATIC)
     {
-        common->Error("idRenderModelOverlay::AddOverlaySurfacesToModel: baseModel "
-                      "is not a static model");
+        common->Error("idRenderModelOverlay::AddOverlaySurfacesToModel: baseModel is not a static model");
     }
 
     assert(dynamic_cast<idRenderModelStatic *>(baseModel) != NULL);
@@ -406,11 +400,10 @@ void idRenderModelOverlay::AddOverlaySurfacesToModel(idRenderModel *baseModel)
 
                 if (overlayVert->vertexNum >= baseSurf->geometry->numVerts)
                 {
-                    // This can happen when playing a demofile and a model has been
-                    // changed since it was recorded, so just issue a warning and go on.
-                    common->Warning("idRenderModelOverlay::AddOverlaySurfacesToModel: "
-                                    "overlay vertex out of range.  Model has probably "
-                                    "changed since generating the overlay.");
+                    // This can happen when playing a demofile and a model has been changed since it was recorded, so
+                    // just issue a warning and go on.
+                    common->Warning("idRenderModelOverlay::AddOverlaySurfacesToModel: overlay vertex out of range.  "
+                                    "Model has probably changed since generating the overlay.");
                     FreeSurface(surf);
                     materials[k]->surfaces.RemoveIndex(i);
                     staticModel->DeleteSurfaceWithId(newSurf->id);
@@ -425,8 +418,7 @@ void idRenderModelOverlay::AddOverlaySurfacesToModel(idRenderModel *baseModel)
         newTri->numIndexes = numIndexes;
         R_BoundTriSurf(newTri);
 
-        staticModel->overlaysAdded++; // so we don't create an overlay on an overlay
-                                      // surface
+        staticModel->overlaysAdded++; // so we don't create an overlay on an overlay surface
     }
 }
 

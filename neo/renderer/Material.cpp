@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/math/Interpolate.h"
 #include "renderer/Cinematic.h"
 #include "renderer/tr_local.h"
-#include "sound/sound.h"
-#include "sys/platform.h"
-#include "ui/UserInterface.h"
 #include "ui/Window.h"
+#include "ui/UserInterface.h"
+#include "sound/sound.h"
 
 #include "renderer/Material.h"
 
@@ -68,8 +65,7 @@ same texture matrix calculations a half dozen times.
 
 */
 
-// keep all of these on the stack, when they are static it makes material
-// parsing non-reentrant
+// keep all of these on the stack, when they are static it makes material parsing non-reentrant
 typedef struct mtrParsingData_s
 {
     bool registerIsTemporary[MAX_EXPRESSION_REGISTERS];
@@ -265,19 +261,17 @@ typedef struct
 
 static const infoParm_t infoParms[] = {
     // game relevant attributes
-    {"solid", 0, 0, CONTENTS_SOLID},                           // may need to override a clearSolid
-    {"water", 1, 0, CONTENTS_WATER},                           // used for water
-    {"playerclip", 0, 0, CONTENTS_PLAYERCLIP},                 // solid to players
-    {"monsterclip", 0, 0, CONTENTS_MONSTERCLIP},               // solid to monsters
-    {"moveableclip", 0, 0, CONTENTS_MOVEABLECLIP},             // solid to moveable entities
-    {"ikclip", 0, 0, CONTENTS_IKCLIP},                         // solid to IK
-    {"blood", 0, 0, CONTENTS_BLOOD},                           // used to detect blood decals
-    {"trigger", 0, 0, CONTENTS_TRIGGER},                       // used for triggers
-    {"aassolid", 0, 0, CONTENTS_AAS_SOLID},                    // solid for AAS
-    {"aasobstacle", 0, 0, CONTENTS_AAS_OBSTACLE},              // used to compile an obstacle into AAS that can be
-                                                               // enabled/disabled
-    {"flashlight_trigger", 0, 0, CONTENTS_FLASHLIGHT_TRIGGER}, // used for triggers that are activated by
-                                                               // the flashlight
+    {"solid", 0, 0, CONTENTS_SOLID},               // may need to override a clearSolid
+    {"water", 1, 0, CONTENTS_WATER},               // used for water
+    {"playerclip", 0, 0, CONTENTS_PLAYERCLIP},     // solid to players
+    {"monsterclip", 0, 0, CONTENTS_MONSTERCLIP},   // solid to monsters
+    {"moveableclip", 0, 0, CONTENTS_MOVEABLECLIP}, // solid to moveable entities
+    {"ikclip", 0, 0, CONTENTS_IKCLIP},             // solid to IK
+    {"blood", 0, 0, CONTENTS_BLOOD},               // used to detect blood decals
+    {"trigger", 0, 0, CONTENTS_TRIGGER},           // used for triggers
+    {"aassolid", 0, 0, CONTENTS_AAS_SOLID},        // solid for AAS
+    {"aasobstacle", 0, 0, CONTENTS_AAS_OBSTACLE},  // used to compile an obstacle into AAS that can be enabled/disabled
+    {"flashlight_trigger", 0, 0, CONTENTS_FLASHLIGHT_TRIGGER}, // used for triggers that are activated by the flashlight
     {"nonsolid", 1, 0, 0},                                     // clears the solid flag
     {"nullNormal", 0, SURF_NULLNORMAL, 0},                     // renderbump will draw as 0x80 0x80 0x80
 
@@ -1260,10 +1254,10 @@ An open brace has been parsed
 
 
 {
-        if <expression>
-        map <imageprogram>
-        "nearest" "linear" "clamp" "zeroclamp" "uncompressed" "highquality"
-"nopicmip" scroll, scale, rotate
+    if <expression>
+    map <imageprogram>
+    "nearest" "linear" "clamp" "zeroclamp" "uncompressed" "highquality" "nopicmip"
+    scroll, scale, rotate
 }
 
 =================
@@ -2457,8 +2451,7 @@ void idMaterial::ParseMaterial(idLexer &src)
         }
     }
 
-    // currently a surface can only have one unique texgen for all the stages on
-    // old hardware
+    // currently a surface can only have one unique texgen for all the stages on old hardware
     texgen_t firstGen = TG_EXPLICIT;
     for (i = 0; i < numStages; i++)
     {
@@ -2552,8 +2545,8 @@ bool idMaterial::Parse(const char *text, const int textLength)
     // automatically determine coverage if not explicitly set
     if (coverage == MC_BAD)
     {
-        // automatically set MC_TRANSLUCENT if we don't have any interaction stages
-        // and the first stage is blended and not an alpha test mask or a subview
+        // automatically set MC_TRANSLUCENT if we don't have any interaction stages and
+        // the first stage is blended and not an alpha test mask or a subview
         if (!numStages)
         {
             // non-visible
@@ -2617,8 +2610,8 @@ bool idMaterial::Parse(const char *text, const int textLength)
         }
     }
 
-    // anything that references _currentRender will automatically get sort =
-    // SS_POST_PROCESS and coverage = MC_TRANSLUCENT
+    // anything that references _currentRender will automatically get sort = SS_POST_PROCESS
+    // and coverage = MC_TRANSLUCENT
 
     for (i = 0; i < numStages; i++)
     {
@@ -2700,16 +2693,16 @@ bool idMaterial::Parse(const char *text, const int textLength)
     // that have the same sort value will at least sort consistantly, instead
     // of flickering back and forth
     /* this messed up in-game guis
-            if ( sort != SS_SUBVIEW ) {
-                    int	hash, l;
+        if ( sort != SS_SUBVIEW ) {
+            int	hash, l;
 
-                    l = name.Length();
-                    hash = 0;
-                    for ( int i = 0 ; i < l ; i++ ) {
-                            hash ^= name[i];
-                    }
-                    sort += hash * 0.01;
+            l = name.Length();
+            hash = 0;
+            for ( int i = 0 ; i < l ; i++ ) {
+                hash ^= name[i];
             }
+            sort += hash * 0.01;
+        }
     */
 
     if (numStages)
@@ -2730,8 +2723,8 @@ bool idMaterial::Parse(const char *text, const int textLength)
         memcpy(expressionRegisters, pd->shaderRegisters, numRegisters * sizeof(expressionRegisters[0]));
     }
 
-    // see if the registers are completely constant, and don't need to be
-    // evaluated per-surface
+    // see if the registers are completely constant, and don't need to be evaluated
+    // per-surface
     CheckForConstantRegisters();
 
     pd = NULL; // the pointer will be invalid after exiting this function

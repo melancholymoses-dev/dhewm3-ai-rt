@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Entity.h"
-#include "Game_local.h"
-#include "Moveable.h"
-#include "Player.h"
-#include "physics/Physics_Actor.h"
 #include "sys/platform.h"
+#include "physics/Physics_Actor.h"
+#include "Entity.h"
+#include "Player.h"
+#include "Moveable.h"
+#include "Game_local.h"
 
 #include "physics/Push.h"
 
@@ -852,8 +849,7 @@ int idPush::TryRotatePushEntity(trace_t &results, idEntity *check, idClipModel *
     // always pushed when standing on the pusher
     if (physics->IsGroundClipModel(clipModel->GetEntity()->entityNumber, clipModel->GetId()))
     {
-        // rotate the entity colliding with all other entities except the pusher
-        // itself
+        // rotate the entity colliding with all other entities except the pusher itself
         ClipEntityRotation(trace, check, NULL, clipModel, rotation);
         // if there is a collision
         if (trace.fraction < 1.0f)
@@ -868,8 +864,7 @@ int idPush::TryRotatePushEntity(trace_t &results, idEntity *check, idClipModel *
             if (results.fraction < 1.0f)
             {
 
-                // FIXME: try to push the blocking entity as well or try to slide along
-                // collision plane(s)?
+                // FIXME: try to push the blocking entity as well or try to slide along collision plane(s)?
 
                 results.c.normal = -results.c.normal;
                 results.c.dist = -results.c.dist;
@@ -893,8 +888,7 @@ int idPush::TryRotatePushEntity(trace_t &results, idEntity *check, idClipModel *
         newRotation.Scale(-1);
         //
         ClipEntityRotation(results, check, clipModel, NULL, newRotation);
-        // if no collision with the pusher then the entity is not pushed by the
-        // pusher
+        // if no collision with the pusher then the entity is not pushed by the pusher
         if (results.fraction >= 1.0f)
         {
 #ifdef ROTATIONAL_PUSH_DEBUG
@@ -915,16 +909,14 @@ int idPush::TryRotatePushEntity(trace_t &results, idEntity *check, idClipModel *
         rotationPoint = results.c.point;
         // angle along which the entity will be pushed
         checkAngle = rotation.GetAngle() * (1.0f - results.fraction);
-        // rotate the entity colliding with all other entities except the pusher
-        // itself
+        // rotate the entity colliding with all other entities except the pusher itself
         newRotation.Set(rotation.GetOrigin(), rotation.GetVec(), checkAngle);
         ClipEntityRotation(trace, check, NULL, clipModel, newRotation);
         // if there is a collision
         if (trace.fraction < 1.0f)
         {
 
-            // FIXME: try to push the blocking entity as well or try to slide along
-            // collision plane(s)?
+            // FIXME: try to push the blocking entity as well or try to slide along collision plane(s)?
 
             results.c.normal = -results.c.normal;
             results.c.dist = -results.c.dist;
@@ -1031,23 +1023,21 @@ int idPush::TryTranslatePushEntity(trace_t &results, idEntity *check, idClipMode
     // always pushed when standing on the pusher
     if (physics->IsGroundClipModel(clipModel->GetEntity()->entityNumber, clipModel->GetId()))
     {
-        // move the entity colliding with all other entities except the pusher
-        // itself
+        // move the entity colliding with all other entities except the pusher itself
         ClipEntityTranslation(trace, check, NULL, clipModel, move);
         // if there is a collision
         if (trace.fraction < 1.0f)
         {
             // vector along which the entity is pushed
             checkMove = move * trace.fraction;
-            // test if the entity can stay at it's partly pushed position by moving
-            // the entity in reverse only colliding with pusher
+            // test if the entity can stay at it's partly pushed position by moving the entity in reverse only colliding
+            // with pusher
             ClipEntityTranslation(results, check, clipModel, NULL, -(move - checkMove));
             // if there is a collision
             if (results.fraction < 1.0f)
             {
 
-                // FIXME: try to push the blocking entity as well or try to slide along
-                // collision plane(s)?
+                // FIXME: try to push the blocking entity as well or try to slide along collision plane(s)?
 
                 results.c.normal = -results.c.normal;
                 results.c.dist = -results.c.dist;
@@ -1066,16 +1056,14 @@ int idPush::TryTranslatePushEntity(trace_t &results, idEntity *check, idClipMode
     {
         // move entity in reverse only colliding with pusher
         ClipEntityTranslation(results, check, clipModel, NULL, -move);
-        // if no collision with the pusher then the entity is not pushed by the
-        // pusher
+        // if no collision with the pusher then the entity is not pushed by the pusher
         if (results.fraction >= 1.0f)
         {
             return PUSH_NO;
         }
         // vector along which the entity is pushed
         checkMove = move * (1.0f - results.fraction);
-        // move the entity colliding with all other entities except the pusher
-        // itself
+        // move the entity colliding with all other entities except the pusher itself
         ClipEntityTranslation(trace, check, NULL, clipModel, checkMove);
         // if there is a collisions
         if (trace.fraction < 1.0f)
@@ -1086,38 +1074,36 @@ int idPush::TryTranslatePushEntity(trace_t &results, idEntity *check, idClipMode
 
             // FIXME: try to push the blocking entity as well ?
             // FIXME: handle sliding along more than one collision plane ?
-            // FIXME: this code has issues, player pushing box into corner in
-            // "maps/mre/aaron/test.map"
+            // FIXME: this code has issues, player pushing box into corner in "maps/mre/aaron/test.map"
 
             /*
-                                    oldOrigin = physics->GetOrigin();
+                        oldOrigin = physics->GetOrigin();
 
-                                    // movement still remaining
-                                    checkMove *= (1.0f - trace.fraction);
+                        // movement still remaining
+                        checkMove *= (1.0f - trace.fraction);
 
-                                    // project the movement along the collision plane
-                                    if ( !checkMove.ProjectAlongPlane( trace.c.normal,
-               0.1f, 1.001f ) ) { return PUSH_BLOCKED;
-                                    }
-                                    checkMove *= 1.001f;
+                        // project the movement along the collision plane
+                        if ( !checkMove.ProjectAlongPlane( trace.c.normal, 0.1f, 1.001f ) ) {
+                            return PUSH_BLOCKED;
+                        }
+                        checkMove *= 1.001f;
 
-                                    // move entity from collision point along the
-               collision plane physics->SetOrigin( trace.endpos );
-                                    ClipEntityTranslation( trace, check, NULL, NULL,
-               checkMove );
+                        // move entity from collision point along the collision plane
+                        physics->SetOrigin( trace.endpos );
+                        ClipEntityTranslation( trace, check, NULL, NULL, checkMove );
 
-                                    if ( trace.fraction < 1.0f ) {
-                                            physics->SetOrigin( oldOrigin );
-                                            return PUSH_BLOCKED;
-                                    }
+                        if ( trace.fraction < 1.0f ) {
+                            physics->SetOrigin( oldOrigin );
+                            return PUSH_BLOCKED;
+                        }
 
-                                    checkMove = trace.endpos - oldOrigin;
+                        checkMove = trace.endpos - oldOrigin;
 
-                                    // move entity in reverse only colliding with
-               pusher physics->SetOrigin( trace.endpos ); ClipEntityTranslation(
-               trace, check, clipModel, NULL, -move );
+                        // move entity in reverse only colliding with pusher
+                        physics->SetOrigin( trace.endpos );
+                        ClipEntityTranslation( trace, check, clipModel, NULL, -move );
 
-                                    physics->SetOrigin( oldOrigin );
+                        physics->SetOrigin( oldOrigin );
             */
             if (trace.fraction < 1.0f)
             {
@@ -1640,8 +1626,7 @@ float idPush::ClipPush(trace_t &results, idEntity *pusher, const int flags, cons
     rotation = (oldAxis.Transpose() * newAxis).ToRotation();
     rotation.SetOrigin(newOrigin);
     rotation.Normalize180();
-    rotation.ReCalculateMatrix(); // recalculate the rotation matrix to avoid
-                                  // accumulating rounding errors
+    rotation.ReCalculateMatrix(); // recalculate the rotation matrix to avoid accumulating rounding errors
 
     // if the pusher rotates
     if (rotation.GetAngle() != 0.0f)

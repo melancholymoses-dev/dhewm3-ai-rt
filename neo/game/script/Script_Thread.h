@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,9 +32,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __SCRIPT_THREAD_H__
 #define __SCRIPT_THREAD_H__
 
+#include "script/Script_Interpreter.h"
 #include "gamesys/Class.h"
 #include "gamesys/Event.h"
-#include "script/Script_Interpreter.h"
 
 extern const idEventDef EV_Thread_Execute;
 extern const idEventDef EV_Thread_SetCallback;
@@ -231,12 +228,12 @@ class idThread : public idClass
     void WaitSec(float time);
     void WaitFrame(void);
 
-    // NOTE: If this is called from within a event called by this thread, the
-    // function arguments will be invalid after calling this function.
+    // NOTE: If this is called from within a event called by this thread, the function arguments will be invalid after
+    // calling this function.
     void CallFunction(const function_t *func, bool clearStack);
 
-    // NOTE: If this is called from within a event called by this thread, the
-    // function arguments will be invalid after calling this function.
+    // NOTE: If this is called from within a event called by this thread, the function arguments will be invalid after
+    // calling this function.
     void CallFunction(idEntity *obj, const function_t *func, bool clearStack);
 
     void DisplayInfo();

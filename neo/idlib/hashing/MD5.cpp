@@ -1,5 +1,5 @@
-#include "idlib/Lib.h"
 #include "sys/platform.h"
+#include "idlib/Lib.h"
 
 #include "idlib/hashing/MD5.h"
 

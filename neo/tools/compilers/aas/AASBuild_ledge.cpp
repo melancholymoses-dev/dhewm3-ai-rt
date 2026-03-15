@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -251,8 +248,7 @@ void idAASBuild::LedgeSubdivFlood_r(idBrushBSPNode *node, const idLedge *ledge)
                 continue;
             }
 
-            // split the area if some part of the floor portal is inside the expanded
-            // ledge
+            // split the area if some part of the floor portal is inside the expanded ledge
             w = ledge->ChopWinding(p1->GetWinding());
             if (!w)
             {
@@ -294,16 +290,14 @@ void idAASBuild::LedgeSubdivFlood_r(idBrushBSPNode *node, const idLedge *ledge)
             continue;
         }
 
-        // flood through this portal if the portal is partly inside the expanded
-        // ledge
+        // flood through this portal if the portal is partly inside the expanded ledge
         w = ledge->ChopWinding(p1->GetWinding());
         if (!w)
         {
             continue;
         }
         delete w;
-        // add to list, cannot flood directly cause portals might be split on the
-        // way
+        // add to list, cannot flood directly cause portals might be split on the way
         nodeList.Append(p1->GetNode(!s1));
     }
 
@@ -319,8 +313,7 @@ void idAASBuild::LedgeSubdivFlood_r(idBrushBSPNode *node, const idLedge *ledge)
 idAASBuild::LedgeSubdivLeafNodes_r
 
   The node the ledge was originally part of might be split by other ledges.
-  Here we recurse down the tree from the original node to find all the new leaf
-nodes the ledge might be part of.
+  Here we recurse down the tree from the original node to find all the new leaf nodes the ledge might be part of.
 ============
 */
 void idAASBuild::LedgeSubdivLeafNodes_r(idBrushBSPNode *node, const idLedge *ledge)
@@ -639,7 +632,7 @@ void idAASBuild::WriteLedgeMap(const idStr &fileName, const idStr &ext)
 idAASBuild::LedgeSubdivision
 
   NOTE: this assumes the bounding box is higher than the maximum step height
-                only ledges with vertical sides are considered
+        only ledges with vertical sides are considered
 ============
 */
 void idAASBuild::LedgeSubdivision(idBrushBSP &bsp)

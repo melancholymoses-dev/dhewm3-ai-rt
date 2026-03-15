@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +32,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __MATH_VECTOR_H__
 #define __MATH_VECTOR_H__
 
-#include "idlib/Heap.h"
 #include "idlib/math/Math.h"
 #include "idlib/math/Random.h"
 #include "idlib/math/Simd.h"
+#include "idlib/Heap.h"
 
 /*
 ===============================================================================
@@ -88,11 +85,10 @@ class idVec2
 
     friend idVec2 operator*(const float a, const idVec2 b);
 
-    bool Compare(const idVec2 &a) const; // exact compare, no epsilon
-    bool Compare(const idVec2 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idVec2 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idVec2 &a) const;  // exact compare, no epsilon
+    bool Compare(const idVec2 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idVec2 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idVec2 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idVec2 &a) const;                   // exact compare, no epsilon
 
     float Length(void) const;
     float LengthFast(void) const;
@@ -400,11 +396,10 @@ class idVec3
 
     friend idVec3 operator*(const float a, const idVec3 b);
 
-    bool Compare(const idVec3 &a) const; // exact compare, no epsilon
-    bool Compare(const idVec3 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idVec3 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idVec3 &a) const;  // exact compare, no epsilon
+    bool Compare(const idVec3 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idVec3 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idVec3 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idVec3 &a) const;                   // exact compare, no epsilon
 
     bool FixDegenerateNormal(void); // fix degenerate axial cases
     bool FixDenormals(void);        // change tiny numbers to zero
@@ -434,8 +429,7 @@ class idVec3
     float *ToFloatPtr(void);
     const char *ToString(int precision = 2) const;
 
-    void NormalVectors(idVec3 &left,
-                       idVec3 &down) const; // vector should be normalized
+    void NormalVectors(idVec3 &left, idVec3 &down) const; // vector should be normalized
     void OrthogonalBasis(idVec3 &left, idVec3 &up) const;
 
     void ProjectOntoPlane(const idVec3 &normal, const float overBounce = 1.0f);
@@ -997,11 +991,10 @@ class idVec4
 
     friend idVec4 operator*(const float a, const idVec4 b);
 
-    bool Compare(const idVec4 &a) const; // exact compare, no epsilon
-    bool Compare(const idVec4 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idVec4 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idVec4 &a) const;  // exact compare, no epsilon
+    bool Compare(const idVec4 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idVec4 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idVec4 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idVec4 &a) const;                   // exact compare, no epsilon
 
     float Length(void) const;
     float LengthSqr(void) const;
@@ -1391,11 +1384,10 @@ class idVec6
 
     friend idVec6 operator*(const float a, const idVec6 b);
 
-    bool Compare(const idVec6 &a) const; // exact compare, no epsilon
-    bool Compare(const idVec6 &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idVec6 &a) const;  // exact compare, no epsilon
-    bool operator!=(const idVec6 &a) const;  // exact compare, no epsilon
+    bool Compare(const idVec6 &a) const;                      // exact compare, no epsilon
+    bool Compare(const idVec6 &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idVec6 &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idVec6 &a) const;                   // exact compare, no epsilon
 
     float Length(void) const;
     float LengthSqr(void) const;
@@ -1671,8 +1663,7 @@ ID_INLINE float *idVec6::ToFloatPtr(void)
 //
 //  The vector lives on 16 byte aligned and 16 byte padded memory.
 //
-//	NOTE: due to the temporary memory pool idVecX cannot be used by multiple
-// threads
+//	NOTE: due to the temporary memory pool idVecX cannot be used by multiple threads
 //
 //===============================================================
 
@@ -1713,11 +1704,10 @@ class idVecX
 
     friend idVecX operator*(const float a, const idVecX b);
 
-    bool Compare(const idVecX &a) const; // exact compare, no epsilon
-    bool Compare(const idVecX &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idVecX &a) const;  // exact compare, no epsilon
-    bool operator!=(const idVecX &a) const;  // exact compare, no epsilon
+    bool Compare(const idVecX &a) const;                      // exact compare, no epsilon
+    bool Compare(const idVecX &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idVecX &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idVecX &a) const;                   // exact compare, no epsilon
 
     void SetSize(int size);
     void ChangeSize(int size, bool makeZero = false);
@@ -2331,7 +2321,7 @@ ID_INLINE idVec3 idPolar3::ToVec3(void) const
 /*
 ===============================================================================
 
-        Old 3D vector macros, should no longer be used.
+    Old 3D vector macros, should no longer be used.
 
 ===============================================================================
 */

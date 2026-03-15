@@ -19,33 +19,26 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
+#include "qe3.h"
 #include "Radiant.h"
 #include "autocaulk.h"
-#include "qe3.h"
 
-// Note: the code in here looks pretty goofy in places, and probably doesn't use
-// the new Q4 class stuff fully,
-//   but I just got it in and compiling from the JK2/SOF2 Radiants via some ugly
-//   code replaces, and it works, so there.
-// Also, a bunch of Radiant fields no longer exist in this codebase, likewise
-// the whole point of passing in the bool
-//	to this code, but I've just left it as-is. A designer tested it and
-// pronounced it fine.
+// Note: the code in here looks pretty goofy in places, and probably doesn't use the new Q4 class stuff fully,
+//   but I just got it in and compiling from the JK2/SOF2 Radiants via some ugly code replaces, and it works, so there.
+// Also, a bunch of Radiant fields no longer exist in this codebase, likewise the whole point of passing in the bool
+//	to this code, but I've just left it as-is. A designer tested it and pronounced it fine.
 
 // #pragma warning( disable : 4786)
 // #include <list>
@@ -151,16 +144,13 @@ void Select_AutoCaulk()
                     continue;
 
                 // idMaterial stuff no longer support this, not sure what else to do.
-                //   Searching for other occurences of QER_NOCARVE just shows people
-                //   REMing the code and ignoring ths issue...
+                //   Searching for other occurences of QER_NOCARVE just shows people REMing the code and ignoring ths
+                //   issue...
                 //
-                //				if
-                //(pScannedBrush->brush_faces->d_texture->bFromShader &&
-                //(pScannedBrush->brush_faces->d_texture->TestMaterialFlag(QER_NOCARVE)))
-                //					continue;
+                //				if (pScannedBrush->brush_faces->d_texture->bFromShader &&
+                //(pScannedBrush->brush_faces->d_texture->TestMaterialFlag(QER_NOCARVE))) 					continue;
 
-                // basic-reject first to see if brushes can even possibly touch
-                // (coplanar counts as touching)
+                // basic-reject first to see if brushes can even possibly touch (coplanar counts as touching)
                 //
                 int i;
                 for (i = 0; i < 3; i++)
@@ -174,8 +164,7 @@ void Select_AutoCaulk()
                 if (i != 3)
                     continue; // can't be touching
 
-                // ok, now for the clever stuff, we need to detect only those faces that
-                // are both coplanar and smaller
+                // ok, now for the clever stuff, we need to detect only those faces that are both coplanar and smaller
                 //	or equal to the face they're coplanar with...
                 //
                 for (pSelectedFace = pSelectedBrush->brush_faces; pSelectedFace; pSelectedFace = pSelectedFace->next)
@@ -183,24 +172,21 @@ void Select_AutoCaulk()
                     idWinding *pSelectedWinding = pSelectedFace->face_winding;
 
                     if (!pSelectedWinding)
-                        continue; // freed face, probably won't happen here, but who knows
-                                  // with this program?
+                        continue; // freed face, probably won't happen here, but who knows with this program?
 
                     //				SquaredFace_t SelectedSquaredFace;
-                    //				WindingToSquaredFace(
-                    //&SelectedSquaredFace, pSelectedWinding);
+                    //				WindingToSquaredFace( &SelectedSquaredFace, pSelectedWinding);
 
                     for (face_t *pScannedFace = pScannedBrush->brush_faces; pScannedFace;
                          pScannedFace = pScannedFace->next)
                     {
-                        // don't even try caulking against a system face, because these are
-                        // often transparent and will leave holes
+                        // don't even try caulking against a system face, because these are often transparent and will
+                        // leave holes
                         //
                         if (!strnicmp(pScannedFace->d_texture->GetName(), "system/", 7))
                             continue;
 
-                        // and don't try caulking against something inherently
-                        // transparent...
+                        // and don't try caulking against something inherently transparent...
                         //
                         if (pScannedFace->d_texture->TestMaterialFlag(QER_TRANS))
                             continue;
@@ -208,28 +194,22 @@ void Select_AutoCaulk()
                         idWinding *pScannedWinding = pScannedFace->face_winding;
 
                         if (!pScannedWinding)
-                            continue; // freed face, probably won't happen here, but who knows
-                                      // with this program?
+                            continue; // freed face, probably won't happen here, but who knows with this program?
 
-                        //					SquaredFace_t
-                        // ScannedSquaredFace; 					WindingToSquaredFace( &ScannedSquaredFace,
-                        // pScannedWinding);
+                        //					SquaredFace_t ScannedSquaredFace;
+                        //					WindingToSquaredFace( &ScannedSquaredFace, pScannedWinding);
 
-                        /*					if
-                           (VectorCompare(ScannedSquaredFace.v3NormalisedRotationVector,
+                        /*					if (VectorCompare(ScannedSquaredFace.v3NormalisedRotationVector,
                            SelectedSquaredFace.v3NormalisedRotationVector)
-                                                                        &&
-                                                                        VectorCompare(ScannedSquaredFace.v3NormalisedElevationVector,
+                                                &&
+                                                VectorCompare(ScannedSquaredFace.v3NormalisedElevationVector,
                            SelectedSquaredFace.v3NormalisedElevationVector)
-                                                                        )
+                                                )
                         */
                         {
-                            // brush faces are in parallel planes to each other, so check that
-                            // their normals
-                            //	are opposite, by adding them together and testing for
-                            // zero...
-                            // (if normals are opposite, then faces can be against/touching
-                            // each other?)
+                            // brush faces are in parallel planes to each other, so check that their normals
+                            //	are opposite, by adding them together and testing for zero...
+                            // (if normals are opposite, then faces can be against/touching each other?)
                             //
                             idVec3 v3ZeroTest;
                             idVec3 v3Zero;
@@ -240,8 +220,7 @@ void Select_AutoCaulk()
                             {
                                 // planes are facing each other...
                                 //
-                                // coplanar? (this is some maths of Gil's, which I don't even
-                                // pretend to understand)
+                                // coplanar? (this is some maths of Gil's, which I don't even pretend to understand)
                                 //
                                 float fTotalDist = 0;
                                 for (int _i = 0; _i < 3; _i++)
@@ -255,8 +234,7 @@ void Select_AutoCaulk()
                                 if (fTotalDist > 0.01)
                                     continue;
 
-                                // every point in the selected face must be within (or equal to)
-                                // the bounds of the
+                                // every point in the selected face must be within (or equal to) the bounds of the
                                 //	scanned face...
                                 //
                                 // work out the bounds first...
@@ -314,8 +292,7 @@ void Select_AutoCaulk()
         if (pCaulk)
         {
             //
-            // and call some other junk that Radiant wants so so we can use it
-            // later...
+            // and call some other junk that Radiant wants so so we can use it later...
             //
             texdef_t tex;
             memset(&tex, 0, sizeof(tex));
@@ -337,8 +314,7 @@ void Select_AutoCaulk()
                 pFace->d_texture = pCaulk;
                 pFace->texdef = tex;
 
-                Face_FitTexture(pFace, 1,
-                                1); // this doesn't work here for some reason... duh.
+                Face_FitTexture(pFace, 1, 1); // this doesn't work here for some reason... duh.
                 Brush_Build(pBrush);
 
                 iFacesCaulked++;

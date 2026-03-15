@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,9 +32,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __SCRIPT_INTERPRETER_H__
 #define __SCRIPT_INTERPRETER_H__
 
+#include "script/Script_Program.h"
 #include "Entity.h"
 #include "Game_local.h"
-#include "script/Script_Program.h"
 
 class idThread;
 
@@ -162,24 +159,21 @@ ID_INLINE void idInterpreter::Push(intptr_t value)
     int val = value;
     assert(value == val && "I really assumed that value would always fit into 32bit");
     // dhewm3 used to store these values on localstack[] as intptr_t, even though
-    // they always seem to be int32. Unfortunately, all the code reading
-    // localstack[] gets the pointer to &localstack[ localstackUsed ] and then
-    // interprets that as int* or float* or whatever. So with 64bit machines it's
-    // stored as the wrong size (intptr_t is int64, int is int32), and on Big
-    // Endian the values are just 0 (or UINT_MAX if value < 0) - on Little Endian
+    // they always seem to be int32. Unfortunately, all the code reading localstack[]
+    // gets the pointer to &localstack[ localstackUsed ] and then interprets that
+    // as int* or float* or whatever.
+    // So with 64bit machines it's stored as the wrong size (intptr_t is int64, int is int32),
+    // and on Big Endian the values are just 0 (or UINT_MAX if value < 0) - on Little Endian
     // the first 4 bytes are the ones with actual data so the bug was hidden).
-    // To fix this, now a regular itn is stored at `&localstack[ localstackUsed
-    // ]`, as expected by the code using localstack[].
-    // TODO: once this has been tested more (and the assertion above has never
-    // triggered),
-    //       change idInterpreter::Push() to take a regular int argument instead
-    //       of intptr_t.
+    // To fix this, now a regular itn is stored at `&localstack[ localstackUsed ]`,
+    // as expected by the code using localstack[].
+    // TODO: once this has been tested more (and the assertion above has never triggered),
+    //       change idInterpreter::Push() to take a regular int argument instead of intptr_t.
     int *stackVar = (int *)&localstack[localstackUsed];
     *stackVar = val;
 
-    // even though a 32bit int is put onto the stack, increase it by
-    // sizeof(intptr_t) so it remains aligned to multiples of the native pointer
-    // size
+    // even though a 32bit int is put onto the stack, increase it by sizeof(intptr_t)
+    // so it remains aligned to multiples of the native pointer size
     localstackUsed += sizeof(intptr_t);
 }
 

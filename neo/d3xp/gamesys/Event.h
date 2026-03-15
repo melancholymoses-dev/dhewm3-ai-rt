@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,16 +32,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __SYS_EVENT_H__
 #define __SYS_EVENT_H__
 
-#include "cm/CollisionModel.h"
 #include "idlib/containers/LinkList.h"
+#include "cm/CollisionModel.h"
 
 // Event are used for scheduling tasks and for linking script commands.
 
 #define D_EVENT_MAXARGS                                                                                                \
-    8 // if changed, enable the CREATE_EVENT_CODE define in Event.cpp to generate
-      // switch statement for idClass::ProcessEventArgPtr. running the game will
-      // then generate c:\doom\base\events.txt, the contents of which should be
-      // copied into the switch statement.
+    8 // if changed, enable the CREATE_EVENT_CODE define in Event.cpp to generate switch statement for
+      // idClass::ProcessEventArgPtr. running the game will then generate c:\doom\base\events.txt, the contents of which
+      // should be copied into the switch statement.
 
 // stack size of idVec3, aligned to native pointer size
 #define E_EVENT_SIZEOF_VEC ((sizeof(idVec3) + (sizeof(intptr_t) - 1)) & ~(sizeof(intptr_t) - 1))

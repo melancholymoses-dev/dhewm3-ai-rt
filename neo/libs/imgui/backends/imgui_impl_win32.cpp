@@ -1,127 +1,88 @@
-// dear imgui: Platform Backend for Windows (standard windows API for 32-bits
-// AND 64-bits applications) This needs to be used along with a Renderer (e.g.
-// DirectX11, OpenGL3, Vulkan..)
+// dear imgui: Platform Backend for Windows (standard windows API for 32-bits AND 64-bits applications)
+// This needs to be used along with a Renderer (e.g. DirectX11, OpenGL3, Vulkan..)
 
 // Implemented features:
-//  [X] Platform: Clipboard support (for Win32 this is actually part of core
-//  dear imgui) [X] Platform: Mouse support. Can discriminate
-//  Mouse/TouchScreen/Pen. [X] Platform: Keyboard support. Since 1.87 we are
-//  using the io.AddKeyEvent() function. Pass ImGuiKey values to all key
-//  functions e.g. ImGui::IsKeyPressed(ImGuiKey_Space). [Legacy VK_* values are
-//  obsolete since 1.87 and not supported since 1.91.5] [X] Platform: Gamepad
-//  support. Enabled with 'io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad'.
-//  [X] Platform: Mouse cursor shape and visibility
-//  (ImGuiBackendFlags_HasMouseCursors). Disable with 'io.ConfigFlags |=
-//  ImGuiConfigFlags_NoMouseCursorChange'.
+//  [X] Platform: Clipboard support (for Win32 this is actually part of core dear imgui)
+//  [X] Platform: Mouse support. Can discriminate Mouse/TouchScreen/Pen.
+//  [X] Platform: Keyboard support. Since 1.87 we are using the io.AddKeyEvent() function. Pass ImGuiKey values to all
+//  key functions e.g. ImGui::IsKeyPressed(ImGuiKey_Space). [Legacy VK_* values are obsolete since 1.87 and not
+//  supported since 1.91.5] [X] Platform: Gamepad support. Enabled with 'io.ConfigFlags |=
+//  ImGuiConfigFlags_NavEnableGamepad'. [X] Platform: Mouse cursor shape and visibility
+//  (ImGuiBackendFlags_HasMouseCursors). Disable with 'io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange'.
 
-// You can use unmodified imgui_impl_* files in your project. See examples/
-// folder for examples of using this. Prefer including the entire imgui/
-// repository into your project (either as a copy or as a submodule), and only
-// build the backends you need. Learn about Dear ImGui:
+// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build
+// the backends you need. Learn about Dear ImGui:
 // - FAQ                  https://dearimgui.com/faq
 // - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/
-// folder).
+// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
 // Configuration flags to add in your imconfig file:
-// #define IMGUI_IMPL_WIN32_DISABLE_GAMEPAD              // Disable gamepad
-// support. This was meaningful before <1.81 but we now load XInput dynamically
-// so the option is now less relevant.
+// #define IMGUI_IMPL_WIN32_DISABLE_GAMEPAD              // Disable gamepad support. This was meaningful before <1.81
+// but we now load XInput dynamically so the option is now less relevant.
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
-//  2024-07-08: Inputs: Fixed ImGuiMod_Super being mapped to VK_APPS instead of
-//  VK_LWIN||VK_RWIN. (#7768) 2023-10-05: Inputs: Added support for extra
-//  ImGuiKey values: F13 to F24 function keys, app back/forward keys.
-//  2023-09-25: Inputs: Synthesize key-down event on key-up for VK_SNAPSHOT /
-//  ImGuiKey_PrintScreen as Windows doesn't emit it (same behavior as GLFW/SDL).
-//  2023-09-07: Inputs: Added support for keyboard codepage conversion for when
-//  application is compiled in MBCS mode and using a non-Unicode window.
-//  2023-04-19: Added ImGui_ImplWin32_InitForOpenGL() to facilitate combining
-//  raw Win32/Winapi with OpenGL. (#3218) 2023-04-04: Inputs: Added support for
-//  io.AddMouseSourceEvent() to discriminate
-//  ImGuiMouseSource_Mouse/ImGuiMouseSource_TouchScreen/ImGuiMouseSource_Pen.
-//  (#2702) 2023-02-15: Inputs: Use WM_NCMOUSEMOVE / WM_NCMOUSELEAVE to track
-//  mouse position over non-client area (e.g. OS decorations) when app is not
-//  focused. (#6045, #6162) 2023-02-02: Inputs: Flipping WM_MOUSEHWHEEL
-//  (horizontal mouse-wheel) value to match other backends and offer consistent
-//  horizontal scrolling direction. (#4019, #6096, #1463) 2022-10-11: Using
-//  'nullptr' instead of 'NULL' as per our switch to C++11. 2022-09-28: Inputs:
-//  Convert WM_CHAR values with MultiByteToWideChar() when window class was
-//  registered as MBCS (not Unicode). 2022-09-26: Inputs: Renamed
-//  ImGuiKey_ModXXX introduced in 1.87 to ImGuiMod_XXX (old names still
-//  supported). 2022-01-26: Inputs: replaced short-lived io.AddKeyModsEvent()
-//  (added two weeks ago) with io.AddKeyEvent() using ImGuiKey_ModXXX flags.
-//  Sorry for the confusion. 2021-01-20: Inputs: calling new
-//  io.AddKeyAnalogEvent() for gamepad support, instead of writing directly to
-//  io.NavInputs[]. 2022-01-17: Inputs: calling new io.AddMousePosEvent(),
-//  io.AddMouseButtonEvent(), io.AddMouseWheelEvent() API (1.87+). 2022-01-17:
-//  Inputs: always update key mods next and before a key event (not in NewFrame)
-//  to fix input queue with very low framerates. 2022-01-12: Inputs: Update
-//  mouse inputs using WM_MOUSEMOVE/WM_MOUSELEAVE + fallback to provide it when
-//  focused but not hovered/captured. More standard and will allow us to pass it
-//  to future input queue API. 2022-01-12: Inputs: Maintain our own copy of
-//  MouseButtonsDown mask instead of using ImGui::IsAnyMouseDown() which will be
-//  obsoleted. 2022-01-10: Inputs: calling new io.AddKeyEvent(),
-//  io.AddKeyModsEvent() + io.SetKeyEventNativeData() API (1.87+). Support for
-//  full ImGuiKey range. 2021-12-16: Inputs: Fill
-//  VK_LCONTROL/VK_RCONTROL/VK_LSHIFT/VK_RSHIFT/VK_LMENU/VK_RMENU for
-//  completeness. 2021-08-17: Calling io.AddFocusEvent() on
-//  WM_SETFOCUS/WM_KILLFOCUS messages. 2021-08-02: Inputs: Fixed keyboard
-//  modifiers being reported when host window doesn't have focus. 2021-07-29:
-//  Inputs: MousePos is correctly reported when the host platform window is
-//  hovered but not focused (using TrackMouseEvent() to receive WM_MOUSELEAVE
-//  events). 2021-06-29: Reorganized backend to pull data from a single
-//  structure to facilitate usage with multiple-contexts (all g_XXXX access
-//  changed to bd->XXXX). 2021-06-08: Fixed ImGui_ImplWin32_EnableDpiAwareness()
-//  and ImGui_ImplWin32_GetDpiScaleForMonitor() to handle Windows 8.1/10
-//  features without a manifest (per-monitor DPI, and properly calls
-//  SetProcessDpiAwareness() on 8.1). 2021-03-23: Inputs: Clearing keyboard down
-//  array when losing focus (WM_KILLFOCUS). 2021-02-18: Added
-//  ImGui_ImplWin32_EnableAlphaCompositing(). Non Visual Studio users will need
-//  to link with dwmapi.lib (MinGW/gcc: use -ldwmapi). 2021-02-17: Fixed
-//  ImGui_ImplWin32_EnableDpiAwareness() attempting to get
-//  SetProcessDpiAwareness from shcore.dll on Windows 8 whereas it is only
-//  supported on Windows 8.1. 2021-01-25: Inputs: Dynamically loading XInput
-//  DLL. 2020-12-04: Misc: Fixed setting of io.DisplaySize to
-//  invalid/uninitialized data when after hwnd has been closed. 2020-03-03:
-//  Inputs: Calling AddInputCharacterUTF16() to support surrogate pairs leading
-//  to codepoint >= 0x10000 (for more complete CJK inputs) 2020-02-17: Added
-//  ImGui_ImplWin32_EnableDpiAwareness(), ImGui_ImplWin32_GetDpiScaleForHwnd(),
-//  ImGui_ImplWin32_GetDpiScaleForMonitor() helper functions. 2020-01-14:
-//  Inputs: Added support for #define
-//  IMGUI_IMPL_WIN32_DISABLE_GAMEPAD/IMGUI_IMPL_WIN32_DISABLE_LINKING_XINPUT.
-//  2019-12-05: Inputs: Added support for ImGuiMouseCursor_NotAllowed mouse
-//  cursor. 2019-05-11: Inputs: Don't filter value from WM_CHAR before calling
-//  AddInputCharacter(). 2019-01-17: Misc: Using GetForegroundWindow()+IsChild()
-//  instead of GetActiveWindow() to be compatible with windows created in a
-//  different thread or parent. 2019-01-17: Inputs: Added support for mouse
-//  buttons 4 and 5 via WM_XBUTTON* messages. 2019-01-15: Inputs: Added support
-//  for XInput gamepads (if ImGuiConfigFlags_NavEnableGamepad is set by user
-//  application). 2018-11-30: Misc: Setting up io.BackendPlatformName so it can
-//  be displayed in the About Window. 2018-06-29: Inputs: Added support for the
-//  ImGuiMouseCursor_Hand cursor. 2018-06-10: Inputs: Fixed handling of mouse
-//  wheel messages to support fine position messages (typically sent by
-//  track-pads). 2018-06-08: Misc: Extracted imgui_impl_win32.cpp/.h away from
-//  the old combined DX9/DX10/DX11/DX12 examples. 2018-03-20: Misc: Setup
-//  io.BackendFlags ImGuiBackendFlags_HasMouseCursors and
-//  ImGuiBackendFlags_HasSetMousePos flags + honor
-//  ImGuiConfigFlags_NoMouseCursorChange flag. 2018-02-20: Inputs: Added support
-//  for mouse cursors (ImGui::GetMouseCursor() value and WM_SETCURSOR message
-//  handling). 2018-02-06: Inputs: Added mapping for ImGuiKey_Space. 2018-02-06:
-//  Inputs: Honoring the io.WantSetMousePos by repositioning the mouse (when
-//  using navigation and ImGuiConfigFlags_NavMoveMouse is set). 2018-02-06:
-//  Misc: Removed call to ImGui::Shutdown() which is not available from 1.60
-//  WIP, user needs to call CreateContext/DestroyContext themselves. 2018-01-20:
-//  Inputs: Added Horizontal Mouse Wheel support. 2018-01-08: Inputs: Added
-//  mapping for ImGuiKey_Insert. 2018-01-05: Inputs: Added WM_LBUTTONDBLCLK
-//  double-click handlers for window classes with the CS_DBLCLKS flag.
-//  2017-10-23: Inputs: Added WM_SYSKEYDOWN / WM_SYSKEYUP handlers so e.g. the
-//  VK_MENU key can be read. 2017-10-23: Inputs: Using Win32
-//  ::SetCapture/::GetCapture() to retrieve mouse positions outside the client
-//  area when dragging. 2016-11-12: Inputs: Only call Win32 ::SetCursor(nullptr)
-//  when io.MouseDrawCursor is set.
+//  2024-07-08: Inputs: Fixed ImGuiMod_Super being mapped to VK_APPS instead of VK_LWIN||VK_RWIN. (#7768)
+//  2023-10-05: Inputs: Added support for extra ImGuiKey values: F13 to F24 function keys, app back/forward keys.
+//  2023-09-25: Inputs: Synthesize key-down event on key-up for VK_SNAPSHOT / ImGuiKey_PrintScreen as Windows doesn't
+//  emit it (same behavior as GLFW/SDL). 2023-09-07: Inputs: Added support for keyboard codepage conversion for when
+//  application is compiled in MBCS mode and using a non-Unicode window. 2023-04-19: Added
+//  ImGui_ImplWin32_InitForOpenGL() to facilitate combining raw Win32/Winapi with OpenGL. (#3218) 2023-04-04: Inputs:
+//  Added support for io.AddMouseSourceEvent() to discriminate
+//  ImGuiMouseSource_Mouse/ImGuiMouseSource_TouchScreen/ImGuiMouseSource_Pen. (#2702) 2023-02-15: Inputs: Use
+//  WM_NCMOUSEMOVE / WM_NCMOUSELEAVE to track mouse position over non-client area (e.g. OS decorations) when app is not
+//  focused. (#6045, #6162) 2023-02-02: Inputs: Flipping WM_MOUSEHWHEEL (horizontal mouse-wheel) value to match other
+//  backends and offer consistent horizontal scrolling direction. (#4019, #6096, #1463) 2022-10-11: Using 'nullptr'
+//  instead of 'NULL' as per our switch to C++11. 2022-09-28: Inputs: Convert WM_CHAR values with MultiByteToWideChar()
+//  when window class was registered as MBCS (not Unicode). 2022-09-26: Inputs: Renamed ImGuiKey_ModXXX introduced
+//  in 1.87 to ImGuiMod_XXX (old names still supported). 2022-01-26: Inputs: replaced short-lived io.AddKeyModsEvent()
+//  (added two weeks ago) with io.AddKeyEvent() using ImGuiKey_ModXXX flags. Sorry for the confusion. 2021-01-20:
+//  Inputs: calling new io.AddKeyAnalogEvent() for gamepad support, instead of writing directly to io.NavInputs[].
+//  2022-01-17: Inputs: calling new io.AddMousePosEvent(), io.AddMouseButtonEvent(), io.AddMouseWheelEvent() API
+//  (1.87+). 2022-01-17: Inputs: always update key mods next and before a key event (not in NewFrame) to fix input queue
+//  with very low framerates. 2022-01-12: Inputs: Update mouse inputs using WM_MOUSEMOVE/WM_MOUSELEAVE + fallback to
+//  provide it when focused but not hovered/captured. More standard and will allow us to pass it to future input queue
+//  API. 2022-01-12: Inputs: Maintain our own copy of MouseButtonsDown mask instead of using ImGui::IsAnyMouseDown()
+//  which will be obsoleted. 2022-01-10: Inputs: calling new io.AddKeyEvent(), io.AddKeyModsEvent() +
+//  io.SetKeyEventNativeData() API (1.87+). Support for full ImGuiKey range. 2021-12-16: Inputs: Fill
+//  VK_LCONTROL/VK_RCONTROL/VK_LSHIFT/VK_RSHIFT/VK_LMENU/VK_RMENU for completeness. 2021-08-17: Calling
+//  io.AddFocusEvent() on WM_SETFOCUS/WM_KILLFOCUS messages. 2021-08-02: Inputs: Fixed keyboard modifiers being reported
+//  when host window doesn't have focus. 2021-07-29: Inputs: MousePos is correctly reported when the host platform
+//  window is hovered but not focused (using TrackMouseEvent() to receive WM_MOUSELEAVE events). 2021-06-29: Reorganized
+//  backend to pull data from a single structure to facilitate usage with multiple-contexts (all g_XXXX access changed
+//  to bd->XXXX). 2021-06-08: Fixed ImGui_ImplWin32_EnableDpiAwareness() and ImGui_ImplWin32_GetDpiScaleForMonitor() to
+//  handle Windows 8.1/10 features without a manifest (per-monitor DPI, and properly calls SetProcessDpiAwareness()
+//  on 8.1). 2021-03-23: Inputs: Clearing keyboard down array when losing focus (WM_KILLFOCUS). 2021-02-18: Added
+//  ImGui_ImplWin32_EnableAlphaCompositing(). Non Visual Studio users will need to link with dwmapi.lib (MinGW/gcc: use
+//  -ldwmapi). 2021-02-17: Fixed ImGui_ImplWin32_EnableDpiAwareness() attempting to get SetProcessDpiAwareness from
+//  shcore.dll on Windows 8 whereas it is only supported on Windows 8.1. 2021-01-25: Inputs: Dynamically loading XInput
+//  DLL. 2020-12-04: Misc: Fixed setting of io.DisplaySize to invalid/uninitialized data when after hwnd has been
+//  closed. 2020-03-03: Inputs: Calling AddInputCharacterUTF16() to support surrogate pairs leading to codepoint >=
+//  0x10000 (for more complete CJK inputs) 2020-02-17: Added ImGui_ImplWin32_EnableDpiAwareness(),
+//  ImGui_ImplWin32_GetDpiScaleForHwnd(), ImGui_ImplWin32_GetDpiScaleForMonitor() helper functions. 2020-01-14: Inputs:
+//  Added support for #define IMGUI_IMPL_WIN32_DISABLE_GAMEPAD/IMGUI_IMPL_WIN32_DISABLE_LINKING_XINPUT. 2019-12-05:
+//  Inputs: Added support for ImGuiMouseCursor_NotAllowed mouse cursor. 2019-05-11: Inputs: Don't filter value from
+//  WM_CHAR before calling AddInputCharacter(). 2019-01-17: Misc: Using GetForegroundWindow()+IsChild() instead of
+//  GetActiveWindow() to be compatible with windows created in a different thread or parent. 2019-01-17: Inputs: Added
+//  support for mouse buttons 4 and 5 via WM_XBUTTON* messages. 2019-01-15: Inputs: Added support for XInput gamepads
+//  (if ImGuiConfigFlags_NavEnableGamepad is set by user application). 2018-11-30: Misc: Setting up
+//  io.BackendPlatformName so it can be displayed in the About Window. 2018-06-29: Inputs: Added support for the
+//  ImGuiMouseCursor_Hand cursor. 2018-06-10: Inputs: Fixed handling of mouse wheel messages to support fine position
+//  messages (typically sent by track-pads). 2018-06-08: Misc: Extracted imgui_impl_win32.cpp/.h away from the old
+//  combined DX9/DX10/DX11/DX12 examples. 2018-03-20: Misc: Setup io.BackendFlags ImGuiBackendFlags_HasMouseCursors and
+//  ImGuiBackendFlags_HasSetMousePos flags + honor ImGuiConfigFlags_NoMouseCursorChange flag. 2018-02-20: Inputs: Added
+//  support for mouse cursors (ImGui::GetMouseCursor() value and WM_SETCURSOR message handling). 2018-02-06: Inputs:
+//  Added mapping for ImGuiKey_Space. 2018-02-06: Inputs: Honoring the io.WantSetMousePos by repositioning the mouse
+//  (when using navigation and ImGuiConfigFlags_NavMoveMouse is set). 2018-02-06: Misc: Removed call to
+//  ImGui::Shutdown() which is not available from 1.60 WIP, user needs to call CreateContext/DestroyContext themselves.
+//  2018-01-20: Inputs: Added Horizontal Mouse Wheel support.
+//  2018-01-08: Inputs: Added mapping for ImGuiKey_Insert.
+//  2018-01-05: Inputs: Added WM_LBUTTONDBLCLK double-click handlers for window classes with the CS_DBLCLKS flag.
+//  2017-10-23: Inputs: Added WM_SYSKEYDOWN / WM_SYSKEYUP handlers so e.g. the VK_MENU key can be read.
+//  2017-10-23: Inputs: Using Win32 ::SetCapture/::GetCapture() to retrieve mouse positions outside the client area when
+//  dragging. 2016-11-12: Inputs: Only call Win32 ::SetCursor(nullptr) when io.MouseDrawCursor is set.
 
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
@@ -129,10 +90,10 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <dwmapi.h>
-#include <tchar.h>
 #include <windows.h>
 #include <windowsx.h> // GET_X_LPARAM(), GET_Y_LPARAM()
+#include <tchar.h>
+#include <dwmapi.h>
 
 // Using XInput for gamepad (will load DLL dynamically)
 #ifndef IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
@@ -144,14 +105,13 @@ typedef DWORD(WINAPI *PFN_XInputGetState)(DWORD, XINPUT_STATE *);
 // Clang/GCC warnings with -Weverything
 #if defined(__clang__)
 #pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wcast-function-type" // warning: cast between incompatible function types
-                                                        // (for loader)
+#pragma clang diagnostic ignored                                                                                       \
+    "-Wcast-function-type" // warning: cast between incompatible function types (for loader)
 #endif
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"            // warning: unknown option after '#pragma GCC diagnostic' kind
-#pragma GCC diagnostic ignored "-Wcast-function-type" // warning: cast between incompatible function types
-                                                      // (for loader)
+#pragma GCC diagnostic ignored "-Wcast-function-type" // warning: cast between incompatible function types (for loader)
 #endif
 
 struct ImGui_ImplWin32_Data
@@ -179,14 +139,11 @@ struct ImGui_ImplWin32_Data
     }
 };
 
-// Backend data stored in io.BackendPlatformUserData to allow support for
-// multiple Dear ImGui contexts It is STRONGLY preferred that you use docking
-// branch with multi-viewports (== single Dear ImGui context + multiple windows)
-// instead of multiple Dear ImGui contexts.
-// FIXME: multi-context support is not well tested and probably dysfunctional in
-// this backend.
-// FIXME: some shared resources (mouse cursor shape, gamepad) are mishandled
-// when using multi-context.
+// Backend data stored in io.BackendPlatformUserData to allow support for multiple Dear ImGui contexts
+// It is STRONGLY preferred that you use docking branch with multi-viewports (== single Dear ImGui context + multiple
+// windows) instead of multiple Dear ImGui contexts.
+// FIXME: multi-context support is not well tested and probably dysfunctional in this backend.
+// FIXME: some shared resources (mouse cursor shape, gamepad) are mishandled when using multi-context.
 static ImGui_ImplWin32_Data *ImGui_ImplWin32_GetBackendData()
 {
     return ImGui::GetCurrentContext() ? (ImGui_ImplWin32_Data *)ImGui::GetIO().BackendPlatformUserData : nullptr;
@@ -224,10 +181,9 @@ static bool ImGui_ImplWin32_InitEx(void *hwnd, bool platform_has_own_dc)
     ImGui_ImplWin32_Data *bd = IM_NEW(ImGui_ImplWin32_Data)();
     io.BackendPlatformUserData = (void *)bd;
     io.BackendPlatformName = "imgui_impl_win32";
-    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors; // We can honor GetMouseCursor() values
-                                                          // (optional)
-    io.BackendFlags |= ImGuiBackendFlags_HasSetMousePos;  // We can honor io.WantSetMousePos
-                                                          // requests (optional, rarely used)
+    io.BackendFlags |= ImGuiBackendFlags_HasMouseCursors; // We can honor GetMouseCursor() values (optional)
+    io.BackendFlags |=
+        ImGuiBackendFlags_HasSetMousePos; // We can honor io.WantSetMousePos requests (optional, rarely used)
 
     bd->hWnd = (HWND)hwnd;
     bd->TicksPerSecond = perf_frequency;
@@ -351,22 +307,20 @@ static void ImGui_ImplWin32_AddKeyEvent(ImGuiIO &io, ImGuiKey key, bool down, in
                                         int native_scancode = -1)
 {
     io.AddKeyEvent(key, down);
-    io.SetKeyEventNativeData(key, native_keycode,
-                             native_scancode); // To support legacy indexing (<1.87 user code)
+    io.SetKeyEventNativeData(key, native_keycode, native_scancode); // To support legacy indexing (<1.87 user code)
     IM_UNUSED(native_scancode);
 }
 
 static void ImGui_ImplWin32_ProcessKeyEventsWorkarounds(ImGuiIO &io)
 {
-    // Left & right Shift keys: when both are pressed together, Windows tend to
-    // not generate the WM_KEYUP event for the first released one.
+    // Left & right Shift keys: when both are pressed together, Windows tend to not generate the WM_KEYUP event for the
+    // first released one.
     if (ImGui::IsKeyDown(ImGuiKey_LeftShift) && !IsVkDown(VK_LSHIFT))
         ImGui_ImplWin32_AddKeyEvent(io, ImGuiKey_LeftShift, false, VK_LSHIFT);
     if (ImGui::IsKeyDown(ImGuiKey_RightShift) && !IsVkDown(VK_RSHIFT))
         ImGui_ImplWin32_AddKeyEvent(io, ImGuiKey_RightShift, false, VK_RSHIFT);
 
-    // Sometimes WM_KEYUP for Win key is not passed down to the app (e.g. for
-    // Win+V on some setups, according to GLFW).
+    // Sometimes WM_KEYUP for Win key is not passed down to the app (e.g. for Win+V on some setups, according to GLFW).
     if (ImGui::IsKeyDown(ImGuiKey_LeftSuper) && !IsVkDown(VK_LWIN))
         ImGui_ImplWin32_AddKeyEvent(io, ImGuiKey_LeftSuper, false, VK_LWIN);
     if (ImGui::IsKeyDown(ImGuiKey_RightSuper) && !IsVkDown(VK_RWIN))
@@ -390,8 +344,8 @@ static void ImGui_ImplWin32_UpdateMouseData(ImGuiIO &io)
     const bool is_app_focused = (focused_window == bd->hWnd);
     if (is_app_focused)
     {
-        // (Optional) Set OS mouse position from Dear ImGui if requested (rarely
-        // used, only when io.ConfigNavMoveSetMousePos is enabled by user)
+        // (Optional) Set OS mouse position from Dear ImGui if requested (rarely used, only when
+        // io.ConfigNavMoveSetMousePos is enabled by user)
         if (io.WantSetMousePos)
         {
             POINT pos = {(int)io.MousePos.x, (int)io.MousePos.y};
@@ -399,9 +353,8 @@ static void ImGui_ImplWin32_UpdateMouseData(ImGuiIO &io)
                 ::SetCursorPos(pos.x, pos.y);
         }
 
-        // (Optional) Fallback to provide mouse position when focused (WM_MOUSEMOVE
-        // already provides this when hovered or captured) This also fills a short
-        // gap when clicking non-client area: WM_NCMOUSELEAVE -> modal OS move ->
+        // (Optional) Fallback to provide mouse position when focused (WM_MOUSEMOVE already provides this when hovered
+        // or captured) This also fills a short gap when clicking non-client area: WM_NCMOUSELEAVE -> modal OS move ->
         // gap -> WM_NCMOUSEMOVE
         if (!io.WantSetMousePos && bd->MouseTrackedArea == 0)
         {
@@ -417,14 +370,13 @@ static void ImGui_ImplWin32_UpdateGamepads(ImGuiIO &io)
 {
 #ifndef IMGUI_IMPL_WIN32_DISABLE_GAMEPAD
     ImGui_ImplWin32_Data *bd = ImGui_ImplWin32_GetBackendData(io);
-    // if ((io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) == 0) // FIXME:
-    // Technically feeding gamepad shouldn't depend on this now that they are
-    // regular inputs.
+    // if ((io.ConfigFlags & ImGuiConfigFlags_NavEnableGamepad) == 0) // FIXME: Technically feeding gamepad shouldn't
+    // depend on this now that they are regular inputs.
     //     return;
 
-    // Calling XInputGetState() every frame on disconnected gamepads is
-    // unfortunately too slow. Instead we refresh gamepad availability by calling
-    // XInputGetCapabilities() _only_ after receiving WM_DEVICECHANGE.
+    // Calling XInputGetState() every frame on disconnected gamepads is unfortunately too slow.
+    // Instead we refresh gamepad availability by calling XInputGetCapabilities() _only_ after receiving
+    // WM_DEVICECHANGE.
     if (bd->WantUpdateHasGamepad)
     {
         XINPUT_CAPABILITIES caps = {};
@@ -485,8 +437,7 @@ static void ImGui_ImplWin32_UpdateGamepads(ImGuiIO &io)
 void ImGui_ImplWin32_NewFrame()
 {
     ImGui_ImplWin32_Data *bd = ImGui_ImplWin32_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Context or backend not initialized? Did you call "
-                               "ImGui_ImplWin32_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized? Did you call ImGui_ImplWin32_Init()?");
     ImGuiIO &io = ImGui::GetIO();
 
     // Setup display size (every frame to accommodate for window resizing)
@@ -519,13 +470,11 @@ void ImGui_ImplWin32_NewFrame()
 }
 
 // Map VK_xxx to ImGuiKey_xxx.
-// Not static to allow third-party code to use that if they want to (but
-// undocumented)
+// Not static to allow third-party code to use that if they want to (but undocumented)
 ImGuiKey ImGui_ImplWin32_KeyEventToImGuiKey(WPARAM wParam, LPARAM lParam);
 ImGuiKey ImGui_ImplWin32_KeyEventToImGuiKey(WPARAM wParam, LPARAM lParam)
 {
-    // There is no distinct VK_xxx for keypad enter, instead it is VK_RETURN +
-    // KF_EXTENDED.
+    // There is no distinct VK_xxx for keypad enter, instead it is VK_RETURN + KF_EXTENDED.
     if ((wParam == VK_RETURN) && (HIWORD(lParam) & KF_EXTENDED))
         return ImGuiKey_KeypadEnter;
 
@@ -770,8 +719,7 @@ ImGuiKey ImGui_ImplWin32_KeyEventToImGuiKey(WPARAM wParam, LPARAM lParam)
     }
 }
 
-// Allow compilation with old Windows SDK. MinGW doesn't have default
-// _WIN32_WINNT/WINVER versions.
+// Allow compilation with old Windows SDK. MinGW doesn't have default _WIN32_WINNT/WINVER versions.
 #ifndef WM_MOUSEHWHEEL
 #define WM_MOUSEHWHEEL 0x020E
 #endif
@@ -780,10 +728,9 @@ ImGuiKey ImGui_ImplWin32_KeyEventToImGuiKey(WPARAM wParam, LPARAM lParam)
 #endif
 
 // Helper to obtain the source of mouse messages.
-// See
-// https://learn.microsoft.com/en-us/windows/win32/tablet/system-events-and-mouse-messages
-// Prefer to call this at the top of the message handler to avoid the
-// possibility of other Win32 calls interfering with this.
+// See https://learn.microsoft.com/en-us/windows/win32/tablet/system-events-and-mouse-messages
+// Prefer to call this at the top of the message handler to avoid the possibility of other Win32 calls interfering with
+// this.
 static ImGuiMouseSource ImGui_ImplWin32_GetMouseSourceFromMessageExtraInfo()
 {
     LPARAM extra_info = ::GetMessageExtraInfo();
@@ -795,18 +742,15 @@ static ImGuiMouseSource ImGui_ImplWin32_GetMouseSourceFromMessageExtraInfo()
 }
 
 // Win32 message handler (process Win32 mouse/keyboard inputs, etc.)
-// Call from your application's message handler. Keep calling your message
-// handler unless this function returns TRUE. When implementing your own
-// backend, you can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags
-// to tell if Dear ImGui wants to use your inputs.
-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your
-// main application, or clear/overwrite your copy of the mouse data.
-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to
-// your main application, or clear/overwrite your copy of the keyboard data.
-// Generally you may always pass all inputs to Dear ImGui, and hide them from
-// your application based on those two flags. PS: We treat DBLCLK messages as
-// regular mouse down messages, so this code will work on windows classes that
-// have the CS_DBLCLKS flag set. Our own example app code doesn't set this flag.
+// Call from your application's message handler. Keep calling your message handler unless this function returns TRUE.
+// When implementing your own backend, you can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if
+// Dear ImGui wants to use your inputs.
+// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite
+// your copy of the mouse data.
+// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or
+// clear/overwrite your copy of the keyboard data. Generally you may always pass all inputs to Dear ImGui, and hide them
+// from your application based on those two flags. PS: We treat DBLCLK messages as regular mouse down messages, so this
+// code will work on windows classes that have the CS_DBLCLKS flag set. Our own example app code doesn't set this flag.
 
 // Copy either line into your .cpp file to forward declare the function:
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam,
@@ -816,16 +760,14 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hWnd, UINT m
 
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    // Most backends don't have silent checks like this one, but we need it
-    // because WndProc are called early in CreateWindow(). We silently allow both
-    // context or just only backend data to be nullptr.
+    // Most backends don't have silent checks like this one, but we need it because WndProc are called early in
+    // CreateWindow(). We silently allow both context or just only backend data to be nullptr.
     if (ImGui::GetCurrentContext() == nullptr)
         return 0;
     return ImGui_ImplWin32_WndProcHandlerEx(hwnd, msg, wParam, lParam, ImGui::GetIO());
 }
 
-// This version is in theory thread-safe in the sense that no path should access
-// ImGui::GetCurrentContext().
+// This version is in theory thread-safe in the sense that no path should access ImGui::GetCurrentContext().
 IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, ImGuiIO &io)
 {
     ImGui_ImplWin32_Data *bd = ImGui_ImplWin32_GetBackendData(io);
@@ -906,8 +848,7 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hwnd, UINT msg, WPA
             button = (GET_XBUTTON_WPARAM(wParam) == XBUTTON1) ? 3 : 4;
         }
         if (bd->MouseButtonsDown == 0 && ::GetCapture() == nullptr)
-            ::SetCapture(hwnd); // Allow us to read mouse coordinates when dragging
-                                // mouse outside of our window bounds.
+            ::SetCapture(hwnd); // Allow us to read mouse coordinates when dragging mouse outside of our window bounds.
         bd->MouseButtonsDown |= 1 << button;
         io.AddMouseSourceEvent(mouse_source);
         io.AddMouseButtonEvent(button, true);
@@ -963,8 +904,7 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hwnd, UINT msg, WPA
             const int vk = (int)wParam;
             const int scancode = (int)LOBYTE(HIWORD(lParam));
 
-            // Special behavior for VK_SNAPSHOT / ImGuiKey_PrintScreen as Windows
-            // doesn't emit the key down event.
+            // Special behavior for VK_SNAPSHOT / ImGuiKey_PrintScreen as Windows doesn't emit the key down event.
             if (key == ImGuiKey_PrintScreen && !is_key_down)
                 ImGui_ImplWin32_AddKeyEvent(io, key, true, vk, scancode);
 
@@ -975,8 +915,7 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hwnd, UINT msg, WPA
             // Submit individual left/right modifier events
             if (vk == VK_SHIFT)
             {
-                // Important: Shift keys tend to get stuck when pressed together,
-                // missing key-up events are corrected in
+                // Important: Shift keys tend to get stuck when pressed together, missing key-up events are corrected in
                 // ImGui_ImplWin32_ProcessKeyEventsWorkarounds()
                 if (IsVkDown(VK_LSHIFT) == is_key_down)
                 {
@@ -1034,8 +973,7 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hwnd, UINT msg, WPA
         }
         return 0;
     case WM_SETCURSOR:
-        // This is required to restore cursor when transitioning from e.g resize
-        // borders to client area.
+        // This is required to restore cursor when transitioning from e.g resize borders to client area.
         if (LOWORD(lParam) == HTCLIENT && ImGui_ImplWin32_UpdateMouseCursor(io, bd->LastMouseCursor))
             return 1;
         return 0;
@@ -1052,27 +990,21 @@ IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandlerEx(HWND hwnd, UINT msg, WPA
 //--------------------------------------------------------------------------------------------------------
 // DPI-related helpers (optional)
 //--------------------------------------------------------------------------------------------------------
-// - Use to enable DPI awareness without having to create an application
-// manifest.
-// - Your own app may already do this via a manifest or explicit calls. This is
-// mostly useful for our examples/ apps.
-// - In theory we could call simple functions from Windows SDK such as
-// SetProcessDPIAware(), SetProcessDpiAwareness(), etc.
-//   but most of the functions provided by Microsoft require Windows 8.1/10+ SDK
-//   at compile time and Windows 8/10+ at runtime, neither we want to require
-//   the user to have. So we dynamically select and load those functions to
-//   avoid dependencies.
+// - Use to enable DPI awareness without having to create an application manifest.
+// - Your own app may already do this via a manifest or explicit calls. This is mostly useful for our examples/ apps.
+// - In theory we could call simple functions from Windows SDK such as SetProcessDPIAware(), SetProcessDpiAwareness(),
+// etc.
+//   but most of the functions provided by Microsoft require Windows 8.1/10+ SDK at compile time and Windows 8/10+ at
+//   runtime, neither we want to require the user to have. So we dynamically select and load those functions to avoid
+//   dependencies.
 //---------------------------------------------------------------------------------------------------------
-// This is the scheme successfully used by GLFW (from which we borrowed some of
-// the code) and other apps aiming to be highly portable.
-// ImGui_ImplWin32_EnableDpiAwareness() is just a helper called by main.cpp, we
-// don't call it automatically. If you are trying to implement your own backend
-// for your own engine, you may ignore that noise.
+// This is the scheme successfully used by GLFW (from which we borrowed some of the code) and other apps aiming to be
+// highly portable. ImGui_ImplWin32_EnableDpiAwareness() is just a helper called by main.cpp, we don't call it
+// automatically. If you are trying to implement your own backend for your own engine, you may ignore that noise.
 //---------------------------------------------------------------------------------------------------------
 
-// Perform our own check with RtlVerifyVersionInfo() instead of using functions
-// from <VersionHelpers.h> as they require a manifest to be functional for
-// checks above 8.1. See https://github.com/ocornut/imgui/issues/4200
+// Perform our own check with RtlVerifyVersionInfo() instead of using functions from <VersionHelpers.h> as they
+// require a manifest to be functional for checks above 8.1. See https://github.com/ocornut/imgui/issues/4200
 static BOOL _IsWindowsVersionOrGreater(WORD major, WORD minor, WORD)
 {
     typedef LONG(WINAPI * PFN_RtlVerifyVersionInfo)(OSVERSIONINFOEXW *, ULONG, ULONGLONG);
@@ -1127,8 +1059,7 @@ typedef HRESULT(WINAPI *PFN_SetProcessDpiAwareness)(PROCESS_DPI_AWARENESS); // S
 typedef HRESULT(WINAPI *PFN_GetDpiForMonitor)(HMONITOR, MONITOR_DPI_TYPE, UINT *,
                                               UINT *); // Shcore.lib + dll, Windows 8.1+
 typedef DPI_AWARENESS_CONTEXT(WINAPI *PFN_SetThreadDpiAwarenessContext)(
-    DPI_AWARENESS_CONTEXT); // User32.lib + dll, Windows 10 v1607+ (Creators
-                            // Update)
+    DPI_AWARENESS_CONTEXT); // User32.lib + dll, Windows 10 v1607+ (Creators Update)
 
 // Helper function to enable DPI awareness without setting up a manifest
 void ImGui_ImplWin32_EnableDpiAwareness()
@@ -1159,8 +1090,7 @@ void ImGui_ImplWin32_EnableDpiAwareness()
 }
 
 #if defined(_MSC_VER) && !defined(NOGDI)
-#pragma comment(lib, "gdi32") // Link with gdi32.lib for GetDeviceCaps(). MinGW
-                              // will require linking with '-lgdi32'
+#pragma comment(lib, "gdi32") // Link with gdi32.lib for GetDeviceCaps(). MinGW will require linking with '-lgdi32'
 #endif
 
 float ImGui_ImplWin32_GetDpiScaleForMonitor(void *monitor)
@@ -1200,14 +1130,12 @@ float ImGui_ImplWin32_GetDpiScaleForHwnd(void *hwnd)
 //--------------------------------------------------------------------------------------------------------
 
 #if defined(_MSC_VER)
-#pragma comment(lib, "dwmapi") // Link with dwmapi.lib. MinGW will require
-                               // linking with '-ldwmapi'
+#pragma comment(lib, "dwmapi") // Link with dwmapi.lib. MinGW will require linking with '-ldwmapi'
 #endif
 
 // [experimental]
-// Borrowed from GLFW's function updateFramebufferTransparency() in
-// src/win32_window.c (the Dwm* functions are Vista era functions but we are
-// borrowing logic from GLFW)
+// Borrowed from GLFW's function updateFramebufferTransparency() in src/win32_window.c
+// (the Dwm* functions are Vista era functions but we are borrowing logic from GLFW)
 void ImGui_ImplWin32_EnableAlphaCompositing(void *hwnd)
 {
     if (!_IsWindowsVistaOrGreater())

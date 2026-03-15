@@ -94,8 +94,7 @@ static unsigned char PADDING[64] = {0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         (a) = ROTATE_LEFT((a), (s));                                                                                   \
     }
 
-/* Encodes input (UINT4) into output (unsigned char). Assumes len is a multiple
- * of 4. */
+/* Encodes input (UINT4) into output (unsigned char). Assumes len is a multiple of 4. */
 static void Encode(unsigned char *output, UINT4 *input, unsigned int len)
 {
     unsigned int i, j;
@@ -109,8 +108,7 @@ static void Encode(unsigned char *output, UINT4 *input, unsigned int len)
     }
 }
 
-/* Decodes input (unsigned char) into output (UINT4). Assumes len is a multiple
- * of 4. */
+/* Decodes input (unsigned char) into output (UINT4). Assumes len is a multiple of 4. */
 static void Decode(UINT4 *output, const unsigned char *input, unsigned int len)
 {
     unsigned int i, j;
@@ -204,8 +202,8 @@ void MD4_Init(MD4_CTX *context)
     context->state[3] = 0x10325476;
 }
 
-/* MD4 block update operation. Continues an MD4 message-digest operation,
- * processing another message block, and updating the context. */
+/* MD4 block update operation. Continues an MD4 message-digest operation, processing another message block, and updating
+ * the context. */
 void MD4_Update(MD4_CTX *context, const unsigned char *input, unsigned int inputLen)
 {
     unsigned int i, index, partLen;
@@ -245,8 +243,7 @@ void MD4_Update(MD4_CTX *context, const unsigned char *input, unsigned int input
     memcpy((POINTER)&context->buffer[index], (POINTER)&input[i], inputLen - i);
 }
 
-/* MD4 finalization. Ends an MD4 message-digest operation, writing the message
- * digest and zeroizing the context. */
+/* MD4 finalization. Ends an MD4 message-digest operation, writing the message digest and zeroizing the context. */
 void MD4_Final(MD4_CTX *context, unsigned char digest[16])
 {
     unsigned char bits[8];

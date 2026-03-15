@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -72,15 +69,13 @@ class idDeviceContext
     int DrawText(const char *text, float textScale, int textAlign, idVec4 color, idRectangle rectDraw, bool wrap,
                  int cursor = -1, bool calcOnly = false, idList<int> *breaks = NULL, int limit = 0);
     void DrawMaterialRect(float x, float y, float w, float h, float size, const idMaterial *mat, const idVec4 &color);
-    // fva/DG: added adjustCoords argument for CstDoom3 anchored GUIs and our old
-    // scale-menus-to-4:3-fix
+    // fva/DG: added adjustCoords argument for CstDoom3 anchored GUIs and our old scale-menus-to-4:3-fix
     void DrawStretchPic(float x, float y, float w, float h, float s0, float t0, float s1, float t1,
                         const idMaterial *mat, bool adjustCoords = false);
 
     void DrawMaterialRotated(float x, float y, float w, float h, const idMaterial *mat, const idVec4 &color,
                              float scalex = 1.0, float scaley = 1.0, float angle = 0.0f);
-    // fva/DG: added adjustCoords argument for CstDoom3 anchored GUIs and our old
-    // scale-menus-to-4:3-fix
+    // fva/DG: added adjustCoords argument for CstDoom3 anchored GUIs and our old scale-menus-to-4:3-fix
     void DrawStretchPicRotated(float x, float y, float w, float h, float s0, float t0, float s1, float t1,
                                const idMaterial *mat, float angle = 0.0f, bool adjustCoords = false);
 
@@ -105,8 +100,7 @@ class idDeviceContext
 
     void DrawCursor(float *x, float *y, float size);
     void SetCursor(int n);
-    // DG: Note: not sure if AdjustCoords() works entirely as it should, but it
-    // seems
+    // DG: Note: not sure if AdjustCoords() works entirely as it should, but it seems
     //     good enough for the idRenderWindow with the mars globe in the main menu
     void AdjustCoords(float *x, float *y, float *w, float *h);
     bool ClippedCoords(float *x, float *y, float *w, float *h);
@@ -138,8 +132,7 @@ class idDeviceContext
     void SetMenuScaleFix(bool enable);
     bool IsMenuScaleFixActive() const
     {
-        // also using this for cstAdjustCoords, it basically means "you need to call
-        // AdjustCoords()
+        // also using this for cstAdjustCoords, it basically means "you need to call AdjustCoords()
         return fixOffsetForMenu.x != 0.0f || fixOffsetForMenu.y != 0.0f || cstAdjustCoords;
     }
 

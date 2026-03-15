@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/geometry/JointTransform.h"
 #include "sys/platform.h"
+#include "idlib/geometry/JointTransform.h"
 
 #include "gamesys/SysCvar.h"
 
@@ -187,8 +184,7 @@ bool idAF::UpdateAnimation(void)
     renderAxis = baseAxis.Transpose() * axis;
     renderOrigin = origin - baseOrigin * renderAxis;
 
-    // create an animation frame which reflects the current pose of the
-    // articulated figure
+    // create an animation frame which reflects the current pose of the articulated figure
     animator->InitAFPose();
     for (i = 0; i < jointMods.Num(); i++)
     {
@@ -251,8 +247,7 @@ idBounds idAF::GetBounds(void) const
 ================
 idAF::SetupPose
 
-  Transforms the articulated figure to match the current animation pose of the
-given entity.
+  Transforms the articulated figure to match the current animation pose of the given entity.
 ================
 */
 void idAF::SetupPose(idEntity *ent, int time)
@@ -313,8 +308,8 @@ void idAF::SetupPose(idEntity *ent, int time)
 ================
 idAF::ChangePose
 
-   Change the articulated figure to match the current animation pose of the
-given entity and set the velocity relative to the previous pose.
+   Change the articulated figure to match the current animation pose of the given entity
+   and set the velocity relative to the previous pose.
 ================
 */
 void idAF::ChangePose(idEntity *ent, int time)
@@ -686,8 +681,7 @@ bool idAF::LoadBody(const idDeclAF_Body *fb, const idJointMat *joints)
         body->SetContactMotorDirection(fb->contactMotorDirection.ToVec3());
     }
 
-    // update table to find the nearest articulated figure body for a joint of the
-    // skeletal model
+    // update table to find the nearest articulated figure body for a joint of the skeletal model
     animator->GetJointList(fb->containedJoints, jointList);
     for (i = 0; i < jointList.Num(); i++)
     {
@@ -937,27 +931,26 @@ bool idAF::Load(idEntity *ent, const char *fileName)
 
     if (file->bodies.Num() == 0 || file->bodies[0]->jointName != "origin")
     {
-        gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' at "
-                          "(%s) has no body which modifies the origin joint.",
-                          name.c_str(), ent->name.c_str(), ent->GetPhysics()->GetOrigin().ToString(0));
+        gameLocal.Warning(
+            "idAF::Load: articulated figure '%s' for entity '%s' at (%s) has no body which modifies the origin joint.",
+            name.c_str(), ent->name.c_str(), ent->GetPhysics()->GetOrigin().ToString(0));
         return false;
     }
 
     modelDef = animator->ModelDef();
     if (modelDef == NULL || modelDef->GetState() == DS_DEFAULTED)
     {
-        gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' at "
-                          "(%s) has no or defaulted modelDef '%s'",
-                          name.c_str(), ent->name.c_str(), ent->GetPhysics()->GetOrigin().ToString(0),
-                          modelDef ? modelDef->GetName() : "");
+        gameLocal.Warning(
+            "idAF::Load: articulated figure '%s' for entity '%s' at (%s) has no or defaulted modelDef '%s'",
+            name.c_str(), ent->name.c_str(), ent->GetPhysics()->GetOrigin().ToString(0),
+            modelDef ? modelDef->GetName() : "");
         return false;
     }
 
     model = animator->ModelHandle();
     if (model == NULL || model->IsDefaultModel())
     {
-        gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' at "
-                          "(%s) has no or defaulted model '%s'",
+        gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' at (%s) has no or defaulted model '%s'",
                           name.c_str(), ent->name.c_str(), ent->GetPhysics()->GetOrigin().ToString(0),
                           model ? model->Name() : "");
         return false;
@@ -967,8 +960,7 @@ bool idAF::Load(idEntity *ent, const char *fileName)
     modifiedAnim = animator->GetAnim(ARTICULATED_FIGURE_ANIM);
     if (!modifiedAnim)
     {
-        gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' at "
-                          "(%s) has no modified animation '%s'",
+        gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' at (%s) has no modified animation '%s'",
                           name.c_str(), ent->name.c_str(), ent->GetPhysics()->GetOrigin().ToString(0),
                           ARTICULATED_FIGURE_ANIM);
         return false;
@@ -1027,10 +1019,9 @@ bool idAF::Load(idEntity *ent, const char *fileName)
         idAFConstraint *constraint = physicsObj.GetConstraint(i);
         for (j = 0; j < file->constraints.Num(); j++)
         {
-            // DG: FIXME: GCC rightfully complains that file->constraints[j]->type and
-            // constraint->GetType()
-            //  are of different enum types, and their values are different in some
-            //  cases: CONSTRAINT_HINGESTEERING has no DECLAF_CONSTRAINT_ equivalent,
+            // DG: FIXME: GCC rightfully complains that file->constraints[j]->type and constraint->GetType()
+            //  are of different enum types, and their values are different in some cases:
+            //  CONSTRAINT_HINGESTEERING has no DECLAF_CONSTRAINT_ equivalent,
             //  and thus DECLAF_CONSTRAINT_SLIDER != CONSTRAINT_SLIDER (5 != 6)
             //  and DECLAF_CONSTRAINT_SPRING != CONSTRAINT_SPRING (6 != 10)
             if (file->constraints[j]->name.Icmp(constraint->GetName()) == 0 &&
@@ -1065,10 +1056,10 @@ bool idAF::Load(idEntity *ent, const char *fileName)
     {
         if (jointBody[i] == -1)
         {
-            gameLocal.Warning("idAF::Load: articulated figure '%s' for entity '%s' "
-                              "at (%s) joint '%s' is not contained by a body",
-                              name.c_str(), self->name.c_str(), self->GetPhysics()->GetOrigin().ToString(0),
-                              animator->GetJointName((jointHandle_t)i));
+            gameLocal.Warning(
+                "idAF::Load: articulated figure '%s' for entity '%s' at (%s) joint '%s' is not contained by a body",
+                name.c_str(), self->name.c_str(), self->GetPhysics()->GetOrigin().ToString(0),
+                animator->GetJointName((jointHandle_t)i));
         }
     }
 
@@ -1418,9 +1409,8 @@ void idAF::AddBindConstraints(void)
         }
         else
         {
-            gameLocal.Warning("idAF::AddBindConstraints: unknown constraint type "
-                              "'%s' on entity '%s'",
-                              type.c_str(), self->name.c_str());
+            gameLocal.Warning("idAF::AddBindConstraints: unknown constraint type '%s' on entity '%s'", type.c_str(),
+                              self->name.c_str());
         }
 
         lexer.FreeSource();

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -58,8 +55,8 @@ const char *idSIMD_SSE3::GetName(void) const
 
 #include <xmmintrin.h>
 
-#include "idlib/geometry/DrawVert.h"
 #include "idlib/geometry/JointTransform.h"
+#include "idlib/geometry/DrawVert.h"
 #include "idlib/math/Vector.h"
 
 #define SHUFFLEPS(x, y, z, w) (((x) & 3) << 6 | ((y) & 3) << 4 | ((z) & 3) << 2 | ((w) & 3))
@@ -69,45 +66,45 @@ const char *idSIMD_SSE3::GetName(void) const
 
 /*
 
-        The first argument of an instruction macro is the destination
-        and the second argument is the source operand. The destination
-        operand can be _xmm0 to _xmm7 only. The source operand can be
-        any one of the registers _xmm0 to _xmm7 or _eax, _ecx, _edx, _esp,
-        _ebp, _ebx, _esi, or _edi that contains the effective address.
+    The first argument of an instruction macro is the destination
+    and the second argument is the source operand. The destination
+    operand can be _xmm0 to _xmm7 only. The source operand can be
+    any one of the registers _xmm0 to _xmm7 or _eax, _ecx, _edx, _esp,
+    _ebp, _ebx, _esi, or _edi that contains the effective address.
 
-        For instance:  haddps   xmm0, xmm1
-        becomes:       haddps( _xmm0, _xmm1 )
-        and:           haddps   xmm0, [esi]
-        becomes:       haddps( _xmm0, _esi )
+    For instance:  haddps   xmm0, xmm1
+    becomes:       haddps( _xmm0, _xmm1 )
+    and:           haddps   xmm0, [esi]
+    becomes:       haddps( _xmm0, _esi )
 
-        The ADDRESS_ADDC macro can be used when the effective source address
-        is formed by adding a constant to a general purpose register.
-        For instance:  haddps   xmm0, [esi+48]
-        becomes:       haddps( _xmm0, ADDRESS_ADDC( _esi, 48 ) )
+    The ADDRESS_ADDC macro can be used when the effective source address
+    is formed by adding a constant to a general purpose register.
+    For instance:  haddps   xmm0, [esi+48]
+    becomes:       haddps( _xmm0, ADDRESS_ADDC( _esi, 48 ) )
 
-        The ADDRESS_ADDR macro can be used when the effective source address
-        is formed by adding two general purpose registers.
-        For instance:  haddps   xmm0, [esi+eax]
-        becomes:       haddps( _xmm0, ADDRESS_ADDR( _esi, _eax ) )
+    The ADDRESS_ADDR macro can be used when the effective source address
+    is formed by adding two general purpose registers.
+    For instance:  haddps   xmm0, [esi+eax]
+    becomes:       haddps( _xmm0, ADDRESS_ADDR( _esi, _eax ) )
 
-        The ADDRESS_ADDRC macro can be used when the effective source address
-        is formed by adding two general purpose registers and a constant.
-        The constant must be in the range [-128, 127].
-        For instance:  haddps   xmm0, [esi+eax+48]
-        becomes:       haddps( _xmm0, ADDRESS_ADDRC( _esi, _eax, 48 ) )
+    The ADDRESS_ADDRC macro can be used when the effective source address
+    is formed by adding two general purpose registers and a constant.
+    The constant must be in the range [-128, 127].
+    For instance:  haddps   xmm0, [esi+eax+48]
+    becomes:       haddps( _xmm0, ADDRESS_ADDRC( _esi, _eax, 48 ) )
 
-        The ADDRESS_SCALEADDR macro can be used when the effective source
-   address is formed by adding a scaled general purpose register to another
-   general purpose register. The scale must be either 1, 2, 4 or 8. For
-   instance:  haddps   xmm0, [esi+eax*4] becomes:       haddps( _xmm0,
-   ADDRESS_SCALEADDR( _esi, _eax, 4 ) )
+    The ADDRESS_SCALEADDR macro can be used when the effective source address is formed
+    by adding a scaled general purpose register to another general purpose register.
+    The scale must be either 1, 2, 4 or 8.
+    For instance:  haddps   xmm0, [esi+eax*4]
+    becomes:       haddps( _xmm0, ADDRESS_SCALEADDR( _esi, _eax, 4 ) )
 
-        The ADDRESS_SCALEADDRC macro can be used when the effective source
-   address is formed by adding a scaled general purpose register to another
-   general purpose register and also adding a constant. The scale must be either
-   1, 2, 4 or 8. The constant must be in the range [-128, 127]. For instance:
-   haddps   xmm0, [esi+eax*4+64] becomes:       haddps( _xmm0,
-   ADDRESS_SCALEADDRC( _esi, _eax, 4, 64 ) )
+    The ADDRESS_SCALEADDRC macro can be used when the effective source address is formed
+    by adding a scaled general purpose register to another general purpose register and
+    also adding a constant. The scale must be either 1, 2, 4 or 8. The constant must
+    be in the range [-128, 127].
+    For instance:  haddps   xmm0, [esi+eax*4+64]
+    becomes:       haddps( _xmm0, ADDRESS_SCALEADDRC( _esi, _eax, 4, 64 ) )
 
 */
 
@@ -142,38 +139,34 @@ const char *idSIMD_SSE3::GetName(void) const
 #define ADDRESS_SCALEADDRC(reg0, reg1, scale, constant)                                                                \
     0x44 _asm _emit((reg1 & 7) << 3) | (reg0 & 7) | RSCALE(scale) _asm _emit constant
 
-// Packed Single-FP Add/Subtract ( dst[0]=dst[0]+src[0], dst[1]=dst[1]-src[1],
-// dst[2]=dst[2]+src[2], dst[3]=dst[3]-src[3] )
+// Packed Single-FP Add/Subtract ( dst[0]=dst[0]+src[0], dst[1]=dst[1]-src[1], dst[2]=dst[2]+src[2],
+// dst[3]=dst[3]-src[3] )
 #define addsubps(dst, src) _asm _emit 0xF2 _asm _emit 0x0F _asm _emit 0xD0 _asm _emit((dst & 7) << 3) | src
 
 // Packed Double-FP Add/Subtract ( dst[0]=dst[0]+src[0], dst[1]=dst[1]-src[1] )
 #define addsubpd(dst, src) _asm _emit 0x66 _asm _emit 0x0F _asm _emit 0xD0 _asm _emit((dst & 7) << 3) | src
 
-// Packed Single-FP Horizontal Add ( dst[0]=dst[0]+dst[1], dst[1]=dst[2]+dst[3],
-// dst[2]=src[0]+src[1], dst[3]=src[2]+src[3] )
+// Packed Single-FP Horizontal Add ( dst[0]=dst[0]+dst[1], dst[1]=dst[2]+dst[3], dst[2]=src[0]+src[1],
+// dst[3]=src[2]+src[3] )
 #define haddps(dst, src) _asm _emit 0xF2 _asm _emit 0x0F _asm _emit 0x7C _asm _emit((dst & 7) << 3) | src
 
-// Packed Double-FP Horizontal Add ( dst[0]=dst[0]+dst[1], dst[1]=src[0]+src[1]
-// )
+// Packed Double-FP Horizontal Add ( dst[0]=dst[0]+dst[1], dst[1]=src[0]+src[1] )
 #define haddpd(dst, src) _asm _emit 0x66 _asm _emit 0x0F _asm _emit 0x7C _asm _emit((dst & 7) << 3) | src
 
-// Packed Single-FP Horizontal Subtract ( dst[0]=dst[0]-dst[1],
-// dst[1]=dst[2]-dst[3], dst[2]=src[0]-src[1], dst[3]=src[2]-src[3] )
+// Packed Single-FP Horizontal Subtract ( dst[0]=dst[0]-dst[1], dst[1]=dst[2]-dst[3], dst[2]=src[0]-src[1],
+// dst[3]=src[2]-src[3] )
 #define hsubps(dst, src) _asm _emit 0xF2 _asm _emit 0x0F _asm _emit 0x7D _asm _emit((dst & 7) << 3) | src
 
-// Packed Double-FP Horizontal Subtract ( dst[0]=dst[0]-dst[1],
-// dst[1]=src[0]-src[1] )
+// Packed Double-FP Horizontal Subtract ( dst[0]=dst[0]-dst[1], dst[1]=src[0]-src[1] )
 #define hsubpd(dst, src) _asm _emit 0x66 _asm _emit 0x0F _asm _emit 0x7D _asm _emit((dst & 7) << 3) | src
 
-// Move Packed Single-FP Low and Duplicate ( dst[0]=src[0], dst[1]=src[0],
-// dst[2]=src[2], dst[3]=src[2] )
+// Move Packed Single-FP Low and Duplicate ( dst[0]=src[0], dst[1]=src[0], dst[2]=src[2], dst[3]=src[2] )
 #define movsldup(dst, src) _asm _emit 0xF3 _asm _emit 0x0F _asm _emit 0x12 _asm _emit((dst & 7) << 3) | src
 
 // Move One Double-FP Low and Duplicate ( dst[0]=src[0], dst[1]=src[0] )
 #define movdldup(dst, src) _asm _emit 0xF2 _asm _emit 0x0F _asm _emit 0x12 _asm _emit((dst & 7) << 3) | src
 
-// Move Packed Single-FP High and Duplicate ( dst[0]=src[1], dst[1]=src[1],
-// dst[2]=src[3], dst[3]=src[3] )
+// Move Packed Single-FP High and Duplicate ( dst[0]=src[1], dst[1]=src[1], dst[2]=src[3], dst[3]=src[3] )
 #define movshdup(dst, src) _asm _emit 0xF3 _asm _emit 0x0F _asm _emit 0x16 _asm _emit((dst & 7) << 3) | src
 
 // Move One Double-FP High and Duplicate ( dst[0]=src[1], dst[1]=src[1] )

@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
 #include "sys/platform.h"
+#include "framework/FileSystem.h"
 
 #include "sound/snd_local.h"
 
@@ -152,8 +149,7 @@ bool idSoundShader::Parse(const char *text, const int textLength)
     src.SetFlags(DECL_LEXER_FLAGS);
     src.SkipUntilString("{");
 
-    // deeper functions can set this, which will cause MakeDefault() to be called
-    // at the end
+    // deeper functions can set this, which will cause MakeDefault() to be called at the end
     errorDuringParse = false;
 
     if (!ParseShader(src) || errorDuringParse)
@@ -261,8 +257,7 @@ bool idSoundShader::ParseShader(idLexer &src)
         {
             parms.volume = src.ParseFloat();
         }
-        // leadinVolume is used to allow light breaking leadin sounds to be much
-        // louder than the broken loop
+        // leadinVolume is used to allow light breaking leadin sounds to be much louder than the broken loop
         else if (!token.Icmp("leadinVolume"))
         {
             leadinVolume = src.ParseFloat();
@@ -376,8 +371,7 @@ bool idSoundShader::ParseShader(idLexer &src)
         {
             parms.soundShaderFlags |= SSF_OMNIDIRECTIONAL;
         }
-        // onDemand can't be a parms, because we must track all references and
-        // overrides would confuse it
+        // onDemand can't be a parms, because we must track all references and overrides would confuse it
         else if (!token.Icmp("onDemand"))
         {
             // no longer loading sounds on demand

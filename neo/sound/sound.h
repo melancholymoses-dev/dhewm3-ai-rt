@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,15 +32,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __SOUND__
 #define __SOUND__
 
+#include "idlib/math/Vector.h"
 #include "framework/DeclManager.h"
 #include "framework/DemoFile.h"
-#include "idlib/math/Vector.h"
 #include "renderer/Cinematic.h"
 
 /*
 ===============================================================================
 
-        SOUND SHADER DECL
+    SOUND SHADER DECL
 
 ===============================================================================
 */
@@ -67,8 +64,7 @@ static const int SSF_UNCLAMPED = BIT(7);          // don't clamp calculated volu
 static const int SSF_NO_FLICKER = BIT(8);         // always return 1.0 for volume queries
 static const int SSF_NO_DUPS = BIT(9);            // try not to play the same sound twice in a row
 
-// these options can be overriden from sound shader defaults on a per-emitter
-// and per-channel basis
+// these options can be overriden from sound shader defaults on a per-emitter and per-channel basis
 typedef struct
 {
     float minDistance;
@@ -81,13 +77,12 @@ typedef struct
 
 const int SOUND_MAX_LIST_WAVS = 32;
 
-// sound classes are used to fade most sounds down inside cinematics, leaving
-// dialog flagged with a non-zero class full volume
+// sound classes are used to fade most sounds down inside cinematics, leaving dialog
+// flagged with a non-zero class full volume
 const int SOUND_MAX_CLASSES = 4;
 
 // it is somewhat tempting to make this a virtual class to hide the private
-// details here, but that doesn't fit easily with the decl manager at the
-// moment.
+// details here, but that doesn't fit easily with the decl manager at the moment.
 class idSoundShader : public idDecl
 {
   public:
@@ -109,8 +104,7 @@ class idSoundShader : public idDecl
     virtual float GetMaxDistance() const;
 
     // returns NULL if an AltSound isn't defined in the shader.
-    // we use this for pairing a specific broken light sound with a normal light
-    // sound
+    // we use this for pairing a specific broken light sound with a normal light sound
     virtual const idSoundShader *GetAltSound() const;
 
     virtual bool HasDefaultSound() const;
@@ -135,8 +129,7 @@ class idSoundShader : public idDecl
     const idSoundShader *altSound;
     idStr desc; // description
     bool errorDuringParse;
-    float leadinVolume; // allows light breaking leadin sounds to be much louder
-                        // than the broken loop
+    float leadinVolume; // allows light breaking leadin sounds to be much louder than the broken loop
 
     idSoundSample *leadins[SOUND_MAX_LIST_WAVS];
     int numLeadins;
@@ -151,7 +144,7 @@ class idSoundShader : public idDecl
 /*
 ===============================================================================
 
-        SOUND EMITTER
+    SOUND EMITTER
 
 ===============================================================================
 */
@@ -160,8 +153,7 @@ class idSoundShader : public idDecl
 static const int SCHANNEL_ANY = 0; // used in queries and commands to effect every channel at once, in
                                    // startSound to have it not override any other channel
 static const int SCHANNEL_ONE = 1; // any following integer can be used as a channel number
-typedef int s_channelType;         // the game uses its own series of enums, and we
-                                   // don't want to require casts
+typedef int s_channelType;         // the game uses its own series of enums, and we don't want to require casts
 
 class idSoundEmitter
 {
@@ -175,8 +167,8 @@ class idSoundEmitter
     // reusable by the soundWorld
     virtual void Free(bool immediate) = 0;
 
-    // the parms specified will be the default overrides for all sounds started on
-    // this emitter. NULL is acceptable for parms
+    // the parms specified will be the default overrides for all sounds started on this emitter.
+    // NULL is acceptable for parms
     virtual void UpdateEmitter(const idVec3 &origin, int listenerId, const soundShaderParms_t *parms) = 0;
 
     // returns the length of the started sound in msec
@@ -189,16 +181,14 @@ class idSoundEmitter
     // to is in Db (sigh), over is in seconds
     virtual void FadeSound(const s_channelType channel, float to, float over) = 0;
 
-    // returns true if there are any sounds playing from this emitter.  There is
-    // some conservative slop at the end to remove inconsistent race conditions
-    // with the sound thread updates.
+    // returns true if there are any sounds playing from this emitter.  There is some conservative
+    // slop at the end to remove inconsistent race conditions with the sound thread updates.
     // FIXME: network game: on a dedicated server, this will always be false
     virtual bool CurrentlyPlaying(void) const = 0;
 
     // returns a 0.0 to 1.0 value based on the current sound amplitude, allowing
     // graphic effects to be modified in time with the audio.
-    // just samples the raw wav file, it doesn't account for volume overrides in
-    // the
+    // just samples the raw wav file, it doesn't account for volume overrides in the
     virtual float CurrentAmplitude(void) = 0;
 
     // for save games.  Index will always be > 0
@@ -208,7 +198,7 @@ class idSoundEmitter
 /*
 ===============================================================================
 
-        SOUND WORLD
+    SOUND WORLD
 
 There can be multiple independent sound worlds, just as there can be multiple
 independent render worlds.  The prime example is the editor sound preview
@@ -238,8 +228,8 @@ class idSoundWorld
 
     // where is the camera/microphone
     // listenerId allows listener-private and antiPrivate sounds to be filtered
-    // gameTime is in msec, and is used to time sound queries and removals so that
-    // they are independent of any race conditions with the async update
+    // gameTime is in msec, and is used to time sound queries and removals so that they are independent
+    // of any race conditions with the async update
     virtual void PlaceListener(const idVec3 &origin, const idMat3 &axis, const int listenerId, const int gameTime,
                                const idStr &areaName) = 0;
 
@@ -262,15 +252,15 @@ class idSoundWorld
     virtual void UnPause(void) = 0;
     virtual bool IsPaused(void) = 0;
 
-    // Write the sound output to multiple wav files.  Note that this does not use
-    // the work done by AsyncUpdate, it mixes explicitly in the foreground every
-    // PlaceOrigin(), under the assumption that we are rendering out screenshots
-    // and the gameTime is going much slower than real time. path should not
-    // include an extension, and the generated filenames will be: <path>_left.raw,
-    // <path>_right.raw, or <path>_51left.raw, <path>_51right.raw,
-    // <path>_51center.raw, <path>_51lfe.raw, <path>_51backleft.raw,
-    // <path>_51backright.raw, If only two channel mixing is enabled, the left and
-    // right .raw files will also be combined into a stereo .wav file.
+    // Write the sound output to multiple wav files.  Note that this does not use the
+    // work done by AsyncUpdate, it mixes explicitly in the foreground every PlaceOrigin(),
+    // under the assumption that we are rendering out screenshots and the gameTime is going
+    // much slower than real time.
+    // path should not include an extension, and the generated filenames will be:
+    // <path>_left.raw, <path>_right.raw, or <path>_51left.raw, <path>_51right.raw,
+    // <path>_51center.raw, <path>_51lfe.raw, <path>_51backleft.raw, <path>_51backright.raw,
+    // If only two channel mixing is enabled, the left and right .raw files will also be
+    // combined into a stereo .wav file.
     virtual void AVIOpen(const char *path, const char *name) = 0;
     virtual void AVIClose(void) = 0;
 
@@ -286,7 +276,7 @@ class idSoundWorld
 /*
 ===============================================================================
 
-        SOUND SYSTEM
+    SOUND SYSTEM
 
 ===============================================================================
 */
@@ -318,8 +308,7 @@ class idSoundSystem
     // shutdown routine
     virtual void Shutdown(void) = 0;
 
-    // sound is attached to the window, and must be recreated when the window is
-    // changed
+    // sound is attached to the window, and must be recreated when the window is changed
     virtual bool InitHW(void) = 0;
     virtual bool ShutdownHW(void) = 0;
 
@@ -346,8 +335,8 @@ class idSoundSystem
     // specifying NULL will cause silence to be played
     virtual void SetPlayingSoundWorld(idSoundWorld *soundWorld) = 0;
 
-    // some tools, like the sound dialog, may be used in both the game and the
-    // editor This can return NULL, so check!
+    // some tools, like the sound dialog, may be used in both the game and the editor
+    // This can return NULL, so check!
     virtual idSoundWorld *GetPlayingSoundWorld(void) = 0;
 
     // Mark all soundSamples as currently unused,
@@ -365,8 +354,7 @@ class idSoundSystem
     // prints memory info
     virtual void PrintMemInfo(MemInfo_t *mi) = 0;
 
-    // is EFX support present - -1: disabled at compile time, 0: no suitable
-    // hardware, 1: ok
+    // is EFX support present - -1: disabled at compile time, 0: no suitable hardware, 1: ok
     virtual int IsEFXAvailable(void) = 0;
 };
 

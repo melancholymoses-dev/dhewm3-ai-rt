@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -177,10 +174,9 @@ bool R_PreciseCullSurface(const drawSurf_t *drawSurf, idBounds &ndcBounds)
         const idVec3 &v2 = tri->verts[tri->indexes[i + 1]].xyz;
         const idVec3 &v3 = tri->verts[tri->indexes[i + 2]].xyz;
 
-        // this is a hack, because R_GlobalPointToLocal doesn't work with the
-        // non-normalized axis that we get from the gui view transform.  It doesn't
-        // hurt anything, because we know that all gui generated surfaces are front
-        // facing
+        // this is a hack, because R_GlobalPointToLocal doesn't work with the non-normalized
+        // axis that we get from the gui view transform.  It doesn't hurt anything, because
+        // we know that all gui generated surfaces are front facing
         if (tr.guiRecursionLevel == 0)
         {
             // we don't care that it isn't normalized,
@@ -538,10 +534,10 @@ bool R_GenerateSurfaceSubview(drawSurf_t *drawSurf)
     if (r_lockSurfaces.GetBool() && tr.viewDef == tr.primaryView)
     {
         // we need the scissor for the "real" viewDef (actual camera position etc)
-        // so mirrors don't "float around" when looking around with r_lockSurfaces
-        // enabled So do the same calculation as before, but with real viewDef (but
-        // don't replace calculation above, so the whole mirror or whatever is
-        // skipped if not visible in locked view!)
+        // so mirrors don't "float around" when looking around with r_lockSurfaces enabled
+        // So do the same calculation as before, but with real viewDef (but don't replace
+        // calculation above, so the whole mirror or whatever is skipped if not visible in
+        // locked view!)
         viewDef_t *origViewDef = tr.viewDef;
         tr.viewDef = &tr.lockSurfacesRealViewDef;
         R_PreciseCullSurface(drawSurf, ndcBounds);
@@ -559,12 +555,11 @@ bool R_GenerateSurfaceSubview(drawSurf_t *drawSurf)
 
         scissor.Intersect(tr.viewDef->scissor);
 
-        // TBH I'm not 100% happy with how this is handled - you won't get reliable
-        // information on what's rendered in a mirror this way. Intersecting with
-        // the orig. scissor looks "best". For handling this "properly" we'd need
-        // the whole "locked viewDef vs real viewDef" thing for every subview
-        // (instead of just once for the primaryView) which would be a lot of work
-        // for a corner case...
+        // TBH I'm not 100% happy with how this is handled - you won't get reliable information
+        // on what's rendered in a mirror this way. Intersecting with the orig. scissor looks "best".
+        // For handling this "properly" we'd need the whole "locked viewDef vs real viewDef" thing
+        // for every subview (instead of just once for the primaryView) which would be a lot of
+        // work for a corner case...
         scissor.Intersect(origScissor);
         tr.viewDef = origViewDef;
     } // DG end

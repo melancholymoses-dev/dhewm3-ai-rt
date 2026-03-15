@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Session.h"
-#include "framework/async/AsyncNetwork.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "framework/async/AsyncNetwork.h"
+#include "framework/Session.h"
+#include "renderer/tr_local.h"
 
 #include "renderer/Image.h"
 
@@ -60,23 +57,21 @@ idCVar idImageManager::image_colorMipLevels("image_colorMipLevels", "0", CVAR_RE
                                             "development aid to see texture mip usage");
 idCVar idImageManager::image_preload("image_preload", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                                      "if 0, dynamically load all images");
-idCVar idImageManager::image_useCompression("image_useCompression", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                                            "Compress textures on load so they use less VRAM. 1 = compress with "
-                                            "S3TC/DXT when uploading 2 = compress with BPTC when uploading (if "
-                                            "available) "
-                                            "0 = upload uncompressed (unless image_usePrecompressedTextures is 1 and "
-                                            "it's loaded from a precompressed .dds file)");
+idCVar idImageManager::image_useCompression(
+    "image_useCompression", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "Compress textures on load so they use less VRAM. 1 = compress with S3TC/DXT when uploading 2 = compress with BPTC "
+    "when uploading (if available) "
+    "0 = upload uncompressed (unless image_usePrecompressedTextures is 1 and it's loaded from a precompressed .dds "
+    "file)");
 idCVar idImageManager::image_useAllFormats("image_useAllFormats", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                                            "allow alpha/intensity/luminance/luminance+alpha");
 idCVar idImageManager::image_useNormalCompression(
     "image_useNormalCompression", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-    "2 = use rxgb compression for normal maps, 1 = use 256 color compression "
-    "for normal maps if available");
+    "2 = use rxgb compression for normal maps, 1 = use 256 color compression for normal maps if available");
 idCVar idImageManager::image_usePrecompressedTextures(
     "image_usePrecompressedTextures", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-    "1 = use .dds files if present 2 = only use .dds files if they contain "
-    "BPTC (BC7) textures (those have higher quality than S3TC/DXT) 0 = use "
-    "uncompressed textures");
+    "1 = use .dds files if present 2 = only use .dds files if they contain BPTC (BC7) textures (those have higher "
+    "quality than S3TC/DXT) 0 = use uncompressed textures");
 idCVar idImageManager::image_writePrecompressedTextures("image_writePrecompressedTextures", "0",
                                                         CVAR_RENDERER | CVAR_BOOL, "write .dds files if necessary");
 idCVar idImageManager::image_writeNormalTGA("image_writeNormalTGA", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -90,8 +85,7 @@ idCVar idImageManager::image_useOffLineCompression("image_useOfflineCompression"
 idCVar idImageManager::image_cacheMinK("image_cacheMinK", "200", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                                        "maximum KB of precompressed files to read at specification time");
 idCVar idImageManager::image_cacheMegs("image_cacheMegs", "20", CVAR_RENDERER | CVAR_ARCHIVE,
-                                       "maximum MB set aside for temporary loading of full-sized precompressed "
-                                       "images");
+                                       "maximum MB set aside for temporary loading of full-sized precompressed images");
 idCVar idImageManager::image_useCache("image_useCache", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                                       "1 = do background load image caching");
 idCVar idImageManager::image_showBackgroundLoads("image_showBackgroundLoads", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -239,8 +233,8 @@ static void R_Specular2DTableImage(idImage *image)
             int b = (int)(pow(f, y) * 255.0f);
             if (b == 0)
             {
-                // as soon as b equals zero all remaining values in this column are
-                // going to be zero we early out to avoid pow() underflows
+                // as soon as b equals zero all remaining values in this column are going to be zero
+                // we early out to avoid pow() underflows
                 break;
             }
 
@@ -487,8 +481,7 @@ static void R_AmbientNormalImage(idImage *image)
     {
         pics[i] = data[0][0];
     }
-    // this must be a cube map for fragment programs to simply substitute for the
-    // normalization cube map
+    // this must be a cube map for fragment programs to simply substitute for the normalization cube map
     image->GenerateCubeImage(pics, 2, TF_DEFAULT, true, TD_HIGH_QUALITY);
 }
 
@@ -1171,8 +1164,7 @@ void R_ReloadImages_f(const idCmdArgs &args)
     globalImages->ChangeTextureFilter();
 
     all = false;
-    checkPrecompressed = false; // if we are doing this as a vid_restart, look for
-                                // precompressed like normal
+    checkPrecompressed = false; // if we are doing this as a vid_restart, look for precompressed like normal
 
     if (args.Argc() == 2)
     {
@@ -1317,8 +1309,8 @@ void R_ListImages_f(const idCmdArgs &args)
 
     if (failed)
     {
-        common->Printf("usage: listImages [ sorted | partial | unloaded | cached | uncached | "
-                       "tagged | duplicated | touched | classify | showOverSized ]\n");
+        common->Printf("usage: listImages [ sorted | partial | unloaded | cached | uncached | tagged | duplicated | "
+                       "touched | classify | showOverSized ]\n");
         return;
     }
 
@@ -1382,8 +1374,7 @@ void R_ListImages_f(const idCmdArgs &args)
             }
         }
 
-        // "listimages touched" will list only images bound since the last
-        // "listimages touched" call
+        // "listimages touched" will list only images bound since the last "listimages touched" call
         if (touched)
         {
             if (image->bindCount == 0)
@@ -1690,8 +1681,7 @@ idImage *idImageManager::ImageFromFile(const char *_name, textureFilter_t filter
         return globalImages->defaultImage;
     }
 
-    // strip any .tga file extensions from anywhere in the _name, including image
-    // program parameters
+    // strip any .tga file extensions from anywhere in the _name, including image program parameters
     name = _name;
     name.Replace(".tga", "");
     name.BackSlashesToSlashes();
@@ -1717,8 +1707,8 @@ idImage *idImageManager::ImageFromFile(const char *_name, textureFilter_t filter
 
             if (image->filter != filter || image->repeat != repeat)
             {
-                // we might want to have the system reset these parameters on every bind
-                // and share the image data
+                // we might want to have the system reset these parameters on every bind and
+                // share the image data
                 continue;
             }
 
@@ -1733,9 +1723,8 @@ idImage *idImageManager::ImageFromFile(const char *_name, textureFilter_t filter
                 return image;
             }
 
-            // the same image is being requested, but with a different allowDownSize
-            // or depth so pick the highest of the two and reload the old image with
-            // those parameters
+            // the same image is being requested, but with a different allowDownSize or depth
+            // so pick the highest of the two and reload the old image with those parameters
             if (!image->allowDownSize)
             {
                 allowDownSize = false;
@@ -1778,9 +1767,8 @@ idImage *idImageManager::ImageFromFile(const char *_name, textureFilter_t filter
     //
     image = AllocImage(name);
 
-    // HACK: to allow keep fonts from being mip'd, as new ones will be introduced
-    // with localization this keeps us from having to make a material for each
-    // font tga
+    // HACK: to allow keep fonts from being mip'd, as new ones will be introduced with localization
+    // this keeps us from having to make a material for each font tga
     if (name.Find("fontImage_") >= 0)
     {
         allowDownSize = false;
@@ -1795,12 +1783,10 @@ idImage *idImageManager::ImageFromFile(const char *_name, textureFilter_t filter
 
     image->levelLoadReferenced = true;
 
-    // also create a shrunken version if we are going to dynamically cache the
-    // full size image
+    // also create a shrunken version if we are going to dynamically cache the full size image
     if (image->ShouldImageBePartialCached())
     {
-        // if we only loaded part of the file, create a new idImage for the shrunken
-        // version
+        // if we only loaded part of the file, create a new idImage for the shrunken version
         image->partialImage = new idImage;
 
         image->partialImage->allowDownSize = allowDownSize;
@@ -1812,8 +1798,8 @@ idImage *idImageManager::ImageFromFile(const char *_name, textureFilter_t filter
 
         image->partialImage->levelLoadReferenced = true;
 
-        // we don't bother hooking this into the hash table for lookup, but we do
-        // add it to the manager list for listImages
+        // we don't bother hooking this into the hash table for lookup, but we do add it to the manager
+        // list for listImages
         globalImages->images.Append(image->partialImage);
         image->partialImage->imgName = image->imgName;
         image->partialImage->isPartialImage = true;
@@ -1866,8 +1852,7 @@ idImage *idImageManager::GetImage(const char *_name) const
         return globalImages->defaultImage;
     }
 
-    // strip any .tga file extensions from anywhere in the _name, including image
-    // program parameters
+    // strip any .tga file extensions from anywhere in the _name, including image program parameters
     name = _name;
     name.Replace(".tga", "");
     name.BackSlashesToSlashes();
@@ -1933,8 +1918,7 @@ void R_CombineCubeImages_f(const idCmdArgs &args)
     if (args.Argc() != 2)
     {
         common->Printf("usage: combineCubeImages <baseName>\n");
-        common->Printf(" combines basename[1-6][0001-9999].tga to "
-                       "basenameCM[0001-9999].tga\n");
+        common->Printf(" combines basename[1-6][0001-9999].tga to basenameCM[0001-9999].tga\n");
         common->Printf(" 1: forward 2:right 3:back 4:left 5:up 6:down\n");
         return;
     }
@@ -2032,9 +2016,7 @@ void idImage::StartBackgroundImageLoad()
 
     if (!precompressedFile)
     {
-        common->Warning("idImageManager::StartBackgroundImageLoad: %s wasn't a "
-                        "precompressed file",
-                        imgName.c_str());
+        common->Warning("idImageManager::StartBackgroundImageLoad: %s wasn't a precompressed file", imgName.c_str());
         return;
     }
 
@@ -2253,8 +2235,7 @@ void idImageManager::Init()
     accumImage = ImageFromFunction("_accum", R_RGBA8Image);
     scratchCubeMapImage = ImageFromFunction("_scratchCubeMap", makeNormalizeVectorCubeMap);
     currentRenderImage = ImageFromFunction("_currentRender", R_RGBA8Image);
-    currentDepthImage = ImageFromFunction("_currentDepth",
-                                          R_DepthImage); // #3877. Allow shaders to access scene depth
+    currentDepthImage = ImageFromFunction("_currentDepth", R_DepthImage); // #3877. Allow shaders to access scene depth
 
     cmdSystem->AddCommand("reloadImages", R_ReloadImages_f, CMD_FL_RENDERER, "reloads images");
     cmdSystem->AddCommand("listImages", R_ListImages_f, CMD_FL_RENDERER, "lists images");
@@ -2348,15 +2329,13 @@ void idImageManager::EndLevelLoad()
 
         if (!image->levelLoadReferenced && !image->referencedOutsideLevelLoad)
         {
-            //			common->Printf( "Purging %s\n",
-            // image->imgName.c_str() );
+            //			common->Printf( "Purging %s\n", image->imgName.c_str() );
             purgeCount++;
             image->PurgeImage();
         }
         else if (image->texnum != idImage::TEXTURE_NOT_LOADED)
         {
-            //			common->Printf( "Keeping %s\n",
-            // image->imgName.c_str() );
+            //			common->Printf( "Keeping %s\n", image->imgName.c_str() );
             keepCount++;
         }
     }
@@ -2372,8 +2351,7 @@ void idImageManager::EndLevelLoad()
 
         if (image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED && !image->partialImage)
         {
-            //			common->Printf( "Loading %s\n",
-            // image->imgName.c_str() );
+            //			common->Printf( "Loading %s\n", image->imgName.c_str() );
             loadCount++;
             image->ActuallyLoadImage(true, false);
 

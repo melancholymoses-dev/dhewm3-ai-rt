@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,11 +32,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __DICT_H__
 #define __DICT_H__
 
-#include "idlib/Parser.h"
-#include "idlib/Str.h"
 #include "idlib/containers/StrPool.h"
 #include "idlib/math/Angles.h"
 #include "idlib/math/Matrix.h"
+#include "idlib/Str.h"
+#include "idlib/Parser.h"
 
 /*
 ===============================================================================
@@ -167,8 +164,7 @@ class idDict
     // finds the next key/value pair with the given key prefix.
     // lastMatch can be used to do additional searches past the first match.
     const idKeyValue *MatchPrefix(const char *prefix, const idKeyValue *lastMatch = NULL) const;
-    // randomly chooses one of the key/value pairs with the given key prefix and
-    // returns it's value
+    // randomly chooses one of the key/value pairs with the given key prefix and returns it's value
     const char *RandomPrefix(const char *prefix, idRandom &random) const;
 
     void WriteToFileHandle(idFile *f) const;

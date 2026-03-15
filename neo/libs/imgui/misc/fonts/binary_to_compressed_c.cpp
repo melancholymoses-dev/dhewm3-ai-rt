@@ -1,28 +1,24 @@
 // dear imgui
 // (binary_to_compressed_c.cpp)
-// Helper tool to turn a file into a C array, if you want to embed font data in
-// your source code.
+// Helper tool to turn a file into a C array, if you want to embed font data in your source code.
 
 // The data is first compressed with stb_compress() to reduce source code size.
 // Then stored in a C array:
-// - Base85:   ~5 bytes of source code for 4 bytes of input data. 5 bytes stored
-// in binary (suggested by @mmalex).
-// - As int:  ~11 bytes of source code for 4 bytes of input data. 4 bytes stored
-// in binary. Endianness dependant, need swapping on big-endian CPU.
-// - As char: ~12 bytes of source code for 4 bytes of input data. 4 bytes stored
-// in binary. Not endianness dependant. Load compressed TTF fonts with
-// ImGui::GetIO().Fonts->AddFontFromMemoryCompressedTTF()
+// - Base85:   ~5 bytes of source code for 4 bytes of input data. 5 bytes stored in binary (suggested by @mmalex).
+// - As int:  ~11 bytes of source code for 4 bytes of input data. 4 bytes stored in binary. Endianness dependant, need
+// swapping on big-endian CPU.
+// - As char: ~12 bytes of source code for 4 bytes of input data. 4 bytes stored in binary. Not endianness dependant.
+// Load compressed TTF fonts with ImGui::GetIO().Fonts->AddFontFromMemoryCompressedTTF()
 
 // Build with, e.g:
 //   # cl.exe binary_to_compressed_c.cpp
 //   # g++ binary_to_compressed_c.cpp
 //   # clang++ binary_to_compressed_c.cpp
-// You can also find a precompiled Windows binary in the binary/demo package
-// available from https://github.com/ocornut/imgui
+// You can also find a precompiled Windows binary in the binary/demo package available from
+// https://github.com/ocornut/imgui
 
 // Usage:
-//   binary_to_compressed_c.exe [-nocompress] [-nostatic] [-base85] <inputfile>
-//   <symbolname>
+//   binary_to_compressed_c.exe [-nocompress] [-nostatic] [-base85] <inputfile> <symbolname>
 // Usage example:
 //   # binary_to_compressed_c.exe myfont.ttf MyFont > myfont.cpp
 //   # binary_to_compressed_c.exe -base85 myfont.ttf MyFont > myfont.cpp
@@ -30,10 +26,10 @@
 //   Base85 encoding will be obsoleted by future version of Dear ImGui!
 
 #define _CRT_SECURE_NO_WARNINGS
-#include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
+#include <assert.h>
 
 // stb_compress* from stb.h - declaration
 typedef unsigned int stb_uint;
@@ -54,16 +50,12 @@ int main(int argc, char **argv)
 {
     if (argc < 3)
     {
-        printf("Syntax: %s [-u8|-u32|-base85] [-nocompress] [-nostatic] "
-               "<inputfile> <symbolname>\n",
-               argv[0]);
+        printf("Syntax: %s [-u8|-u32|-base85] [-nocompress] [-nostatic] <inputfile> <symbolname>\n", argv[0]);
         printf("Source encoding types:\n");
-        printf(" -u8     = ~12 bytes of source per 4 bytes of data. 4 bytes in "
-               "binary.\n");
-        printf(" -u32    = ~11 bytes of source per 4 bytes of data. 4 bytes in "
-               "binary. Need endianness swapping on big-endian.\n");
-        printf(" -base85 =  ~5 bytes of source per 4 bytes of data. 5 bytes in "
-               "binary. Need decoder.\n");
+        printf(" -u8     = ~12 bytes of source per 4 bytes of data. 4 bytes in binary.\n");
+        printf(" -u32    = ~11 bytes of source per 4 bytes of data. 4 bytes in binary. Need endianness swapping on "
+               "big-endian.\n");
+        printf(" -base85 =  ~5 bytes of source per 4 bytes of data. 5 bytes in binary. Need decoder.\n");
         return 0;
     }
 
@@ -160,9 +152,8 @@ bool binary_to_compressed_c(const char *filename, const char *symbol, SourceEnco
         char prev_c = 0;
         for (int src_i = 0; src_i < compressed_sz; src_i += 4)
         {
-            // This is made a little more complicated by the fact that ??X sequences
-            // are interpreted as trigraphs by old C/C++ compilers. So we need to
-            // escape pairs of ??.
+            // This is made a little more complicated by the fact that ??X sequences are interpreted as trigraphs by old
+            // C/C++ compilers. So we need to escape pairs of ??.
             unsigned int d = *(unsigned int *)(compressed + src_i);
             for (unsigned int n5 = 0; n5 < 5; n5++, d /= 85)
             {
@@ -278,8 +269,7 @@ static void stb__write(unsigned char v)
     ++stb__outbytes;
 }
 
-// #define stb_out(v)    (stb__out ? *stb__out++ = (stb_uchar) (v) :
-// stb__write((stb_uchar) (v)))
+// #define stb_out(v)    (stb__out ? *stb__out++ = (stb_uchar) (v) : stb__write((stb_uchar) (v)))
 #define stb_out(v)                                                                                                     \
     do                                                                                                                 \
     {                                                                                                                  \

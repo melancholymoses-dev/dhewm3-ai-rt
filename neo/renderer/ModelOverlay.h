@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,7 +35,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Render model overlay for adding decals on top of dynamic models.
+    Render model overlay for adding decals on top of dynamic models.
 
 ===============================================================================
 */
@@ -84,8 +81,7 @@ class idRenderModelOverlay
     // texture since no new clip vertexes are generated.
     void CreateOverlay(const idRenderModel *model, const idPlane localTextureAxis[2], const idMaterial *material);
 
-    // Creates new model surfaces for baseModel, which should be a static
-    // instantiation of a dynamic model.
+    // Creates new model surfaces for baseModel, which should be a static instantiation of a dynamic model.
     void AddOverlaySurfacesToModel(idRenderModel *baseModel);
 
     // Removes overlay surfaces from the model.

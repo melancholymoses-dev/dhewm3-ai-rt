@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -41,7 +38,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Render Model
+    Render Model
 
 ===============================================================================
 */
@@ -53,9 +50,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define MD5_CAMERA_EXT "md5camera"
 #define MD5_VERSION 10
 
-// using shorts for triangle indexes can save a significant amount of traffic,
-// but to support the large models that renderBump loads, they need to be 32
-// bits
+// using shorts for triangle indexes can save a significant amount of traffic, but
+// to support the large models that renderBump loads, they need to be 32 bits
 #if 1
 
 #define GL_INDEX_TYPE GL_UNSIGNED_INT
@@ -70,14 +66,12 @@ typedef short glIndex_t;
 
 typedef struct
 {
-    // NOTE: making this a glIndex is dubious, as there can be 2x the faces as
-    // verts
+    // NOTE: making this a glIndex is dubious, as there can be 2x the faces as verts
     glIndex_t p1, p2; // planes defining the edge
     glIndex_t v1, v2; // verts defining the edge
 } silEdge_t;
 
-// this is used for calculating unsmoothed normals and tangents for deformed
-// models
+// this is used for calculating unsmoothed normals and tangents for deformed models
 typedef struct dominantTri_s
 {
     glIndex_t v2, v3;
@@ -104,33 +98,26 @@ typedef struct srfTriangles_s
 
     int ambientViewCount; // if == tr.viewCount, it is visible this view
 
-    bool generateNormals;      // create normals from geometry, instead of using
-                               // explicit ones
+    bool generateNormals;      // create normals from geometry, instead of using explicit ones
     bool tangentsCalculated;   // set when the vertex tangents have been calculated
     bool facePlanesCalculated; // set when the face planes have been calculated
     bool perfectHull;          // true if there aren't any dangling edges
-    bool deformedSurface;      // if true, indexes, silIndexes, mirrorVerts, and
-                               // silEdges are pointers into the original surface, and
-                               // should not be freed
+    bool deformedSurface;      // if true, indexes, silIndexes, mirrorVerts, and silEdges are
+                               // pointers into the original surface, and should not be freed
 
     int numVerts;      // number of vertices
     idDrawVert *verts; // vertices, allocated with special allocator
 
-    int numIndexes;     // for shadows, this has both front and rear end caps and
-                        // silhouette planes
+    int numIndexes;     // for shadows, this has both front and rear end caps and silhouette planes
     glIndex_t *indexes; // indexes, allocated with special allocator
 
-    glIndex_t *silIndexes; // indexes changed to be the first vertex with same
-                           // XYZ, ignoring normal and texcoords
+    glIndex_t *silIndexes; // indexes changed to be the first vertex with same XYZ, ignoring normal and texcoords
 
-    int numMirroredVerts; // this many verts at the end of the vert list are
-                          // tangent mirrors
-    int *mirroredVerts;   // tri->mirroredVerts[0] is the mirror of tri->numVerts -
-                          // tri->numMirroredVerts + 0
+    int numMirroredVerts; // this many verts at the end of the vert list are tangent mirrors
+    int *mirroredVerts;   // tri->mirroredVerts[0] is the mirror of tri->numVerts - tri->numMirroredVerts + 0
 
     int numDupVerts; // number of duplicate vertexes
-    int *dupVerts;   // pairs of the number of the first vertex and the number of
-                     // the duplicate vertex
+    int *dupVerts;   // pairs of the number of the first vertex and the number of the duplicate vertex
 
     int numSilEdges;     // number of silhouette edges
     silEdge_t *silEdges; // silhouette edges
@@ -140,22 +127,18 @@ typedef struct srfTriangles_s
     dominantTri_t *dominantTris; // [numVerts] for deformed surface fast tangent calculation
 
     int numShadowIndexesNoFrontCaps; // shadow volumes with front caps omitted
-    int numShadowIndexesNoCaps;      // shadow volumes with the front and rear caps
-                                     // omitted
+    int numShadowIndexesNoCaps;      // shadow volumes with the front and rear caps omitted
 
-    int shadowCapPlaneBits; // bits 0-5 are set when that plane of the interacting
-                            // light has triangles projected on it, which means
-                            // that if the view is on the outside of that plane,
-                            // we need to draw the rear caps of the shadow volume
+    int shadowCapPlaneBits; // bits 0-5 are set when that plane of the interacting light has triangles
+                            // projected on it, which means that if the view is on the outside of that
+                            // plane, we need to draw the rear caps of the shadow volume
                             // turboShadows will have SHADOW_CAP_INFINITE
 
-    shadowCache_t *shadowVertexes; // these will be copied to shadowCache when it
-                                   // is going to be drawn. these are NULL when
-                                   // vertex programs are available
+    shadowCache_t *shadowVertexes; // these will be copied to shadowCache when it is going to be drawn.
+                                   // these are NULL when vertex programs are available
 
-    struct srfTriangles_s *ambientSurface; // for light interactions, point back at the original
-                                           // surface that generated the interaction, which we will
-                                           // get the ambientCache from
+    struct srfTriangles_s *ambientSurface; // for light interactions, point back at the original surface that generated
+                                           // the interaction, which we will get the ambientCache from
 
     struct srfTriangles_s *nextDeferredFree; // chain of tris to free next frame
 
@@ -178,10 +161,8 @@ typedef struct modelSurface_s
 typedef enum
 {
     DM_STATIC,    // never creates a dynamic model
-    DM_CACHED,    // once created, stays constant until the entity is updated
-                  // (animating characters)
-    DM_CONTINUOUS // must be recreated for every single view (time dependent
-                  // things like particles)
+    DM_CACHED,    // once created, stays constant until the entity is updated (animating characters)
+    DM_CONTINUOUS // must be recreated for every single view (time dependent things like particles)
 } dynamicModel_t;
 
 typedef enum
@@ -212,13 +193,11 @@ class idRenderModel
     virtual void InitFromFile(const char *fileName) = 0;
 
     // renderBump uses this to load the very high poly count models, skipping the
-    // shadow and tangent generation, along with some surface cleanup to make it
-    // load faster
+    // shadow and tangent generation, along with some surface cleanup to make it load faster
     virtual void PartialInitFromFile(const char *fileName) = 0;
 
-    // this is used for dynamically created surfaces, which are assumed to not be
-    // reloadable. It can be called again to clear out the surfaces of a dynamic
-    // model for regeneration.
+    // this is used for dynamically created surfaces, which are assumed to not be reloadable.
+    // It can be called again to clear out the surfaces of a dynamic model for regeneration.
     virtual void InitEmpty(const char *name) = 0;
 
     // dynamic model instantiations will be created with this
@@ -228,23 +207,21 @@ class idRenderModel
 
     // cleans all the geometry and performs cross-surface processing
     // like shadow hulls
-    // Creates the duplicated back side geometry for two sided, alpha tested, lit
-    // materials This does not need to be called if none of the surfaces added
-    // with AddSurface require light interaction, and all the triangles are
-    // already well formed.
+    // Creates the duplicated back side geometry for two sided, alpha tested, lit materials
+    // This does not need to be called if none of the surfaces added with AddSurface require
+    // light interaction, and all the triangles are already well formed.
     virtual void FinishSurfaces() = 0;
 
     // frees all the data, but leaves the class around for dangling references,
     // which can regenerate the data with LoadModel()
     virtual void PurgeModel() = 0;
 
-    // resets any model information that needs to be reset on a same level load
-    // etc.. currently only implemented for liquids
+    // resets any model information that needs to be reset on a same level load etc..
+    // currently only implemented for liquids
     virtual void Reset() = 0;
 
-    // used for initial loads, reloadModel, and reloading the data of purged
-    // models Upon exit, the model will absolutely be valid, but possibly as a
-    // default model
+    // used for initial loads, reloadModel, and reloading the data of purged models
+    // Upon exit, the model will absolutely be valid, but possibly as a default model
     virtual void LoadModel() = 0;
 
     // internal use
@@ -299,12 +276,11 @@ class idRenderModel
     // if some surfaces are noSelfShadow and others aren't
     virtual srfTriangles_t *ShadowHull() const = 0;
 
-    // models of the form "_area*" may have a prelight shadow model associated
-    // with it
+    // models of the form "_area*" may have a prelight shadow model associated with it
     virtual bool IsStaticWorldModel() const = 0;
 
-    // models parsed from inside map files or dynamically created cannot be
-    // reloaded by reloadmodels
+    // models parsed from inside map files or dynamically created cannot be reloaded by
+    // reloadmodels
     virtual bool IsReloadable() const = 0;
 
     // md3, md5, particles, etc

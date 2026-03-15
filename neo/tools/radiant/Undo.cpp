@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "Radiant.h"
 #include "qe3.h"
+#include "Radiant.h"
 
 /*
 
@@ -44,15 +41,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 basic setup:
 
-<-g_undolist---------g_lastundo> <---map data--->
-<-g_lastredo---------g_redolist->
+<-g_undolist---------g_lastundo> <---map data---> <-g_lastredo---------g_redolist->
 
 
-  undo/redo on the world_entity is special, only the epair changes are
-remembered and the world entity never gets deleted.
+  undo/redo on the world_entity is special, only the epair changes are remembered
+  and the world entity never gets deleted.
 
   FIXME: maybe reset the Undo system at map load
-                 maybe also reset the entityId at map load
+         maybe also reset the entityId at map load
 */
 
 typedef struct undo_s
@@ -93,17 +89,15 @@ int Undo_MemorySize(void)
     size = 0;
     for (undo = g_undolist; undo; undo = undo->next)
     {
-            for (pBrush = undo->brushlist.next ; pBrush != NULL && pBrush !=
-    &undo->brushlist ; pBrush = pBrush->next)
-            {
-                    size += Brush_MemorySize(pBrush);
-            }
-            for (pEntity = undo->entitylist.next; pEntity != NULL && pEntity !=
-    &undo->entitylist; pEntity = pEntity->next)
-            {
-                    size += Entity_MemorySize(pEntity);
-            }
-            size += sizeof(undo_t);
+        for (pBrush = undo->brushlist.next ; pBrush != NULL && pBrush != &undo->brushlist ; pBrush = pBrush->next)
+        {
+            size += Brush_MemorySize(pBrush);
+        }
+        for (pEntity = undo->entitylist.next; pEntity != NULL && pEntity != &undo->entitylist; pEntity = pEntity->next)
+        {
+            size += Entity_MemorySize(pEntity);
+        }
+        size += sizeof(undo_t);
     }
     return size;
     */
@@ -590,8 +584,7 @@ void Undo_End(void)
         Undo_FreeFirstUndo();
     }
     //
-    // Sys_Status("undo size = %d, undo memory = %d\n", g_undoSize,
-    // g_undoMemorySize);
+    // Sys_Status("undo size = %d, undo memory = %d\n", g_undoSize, g_undoMemorySize);
 }
 
 /*

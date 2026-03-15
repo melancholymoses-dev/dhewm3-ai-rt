@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __ASYNCNETWORK_H__
 #define __ASYNCNETWORK_H__
 
-#include "framework/CVarSystem.h"
-#include "framework/Compressor.h"
-#include "framework/Licensee.h"
-#include "framework/UsercmdGen.h"
+#include "idlib/BitMsg.h"
+#include "framework/async/MsgChannel.h"
 #include "framework/async/AsyncClient.h"
 #include "framework/async/AsyncServer.h"
-#include "framework/async/MsgChannel.h"
-#include "idlib/BitMsg.h"
+#include "framework/Compressor.h"
+#include "framework/Licensee.h"
+#include "framework/CVarSystem.h"
+#include "framework/UsercmdGen.h"
 
 /*
 ===============================================================================
@@ -143,8 +140,7 @@ class idAsyncNetwork
     static bool DuplicateUsercmd(const usercmd_t &previousUserCmd, usercmd_t &currentUserCmd, int frame, int time);
     static bool UsercmdInputChanged(const usercmd_t &previousUserCmd, const usercmd_t &currentUserCmd);
 
-    // returns true if the corresponding master is set to something (and could be
-    // resolved)
+    // returns true if the corresponding master is set to something (and could be resolved)
     static bool GetMasterAddress(int index, netadr_t &adr);
     // get the hardcoded idnet master, equivalent to GetMasterAddress( 0, .. )
     static netadr_t GetMasterAddress(void);
@@ -162,19 +158,15 @@ class idAsyncNetwork
     static idCVar serverSnapshotDelay;         // number of milliseconds between snapshots
     static idCVar serverMaxClientRate;         // maximum outgoing rate to clients
     static idCVar clientMaxRate;               // maximum rate from server requested by client
-    static idCVar serverMaxUsercmdRelay;       // maximum number of usercmds relayed to
-                                               // other clients
+    static idCVar serverMaxUsercmdRelay;       // maximum number of usercmds relayed to other clients
     static idCVar serverZombieTimeout;         // time out in seconds for zombie clients
     static idCVar serverClientTimeout;         // time out in seconds for connected clients
     static idCVar clientServerTimeout;         // time out in seconds for server
     static idCVar serverDrawClient;            // the server draws the view of this client
     static idCVar serverRemoteConsolePassword; // remote console password
-    static idCVar clientPrediction;            // how many additional milliseconds the
-                                               // clients runs ahead
-    static idCVar clientMaxPrediction;         // max milliseconds into the future a
-                                               // client can run prediction
-    static idCVar clientUsercmdBackup;         // how many usercmds the client sends from
-                                               // previous frames
+    static idCVar clientPrediction;            // how many additional milliseconds the clients runs ahead
+    static idCVar clientMaxPrediction;         // max milliseconds into the future a client can run prediction
+    static idCVar clientUsercmdBackup;         // how many usercmds the client sends from previous frames
     static idCVar clientRemoteConsoleAddress;  // remote console address
     static idCVar clientRemoteConsolePassword; // remote console password
     static idCVar master0;                     // idnet master server
@@ -183,12 +175,11 @@ class idAsyncNetwork
     static idCVar master3;                     // 3rd master server
     static idCVar master4;                     // 4th master server
     static idCVar LANServer;                   // LAN mode
-    static idCVar serverReloadEngine;          // reload engine on map change instead of
-                                               // growing the referenced paks
-    static idCVar serverAllowServerMod;        // let a pure server start with a different game
-                                               // code than what is referenced in game code
-    static idCVar idleServer;                  // serverinfo reply, indicates all clients are idle
-    static idCVar clientDownload;              // preferred download policy
+    static idCVar serverReloadEngine;          // reload engine on map change instead of growing the referenced paks
+    static idCVar
+        serverAllowServerMod; // let a pure server start with a different game code than what is referenced in game code
+    static idCVar idleServer; // serverinfo reply, indicates all clients are idle
+    static idCVar clientDownload; // preferred download policy
 
     // same message used for offline check and network reply
     static void BuildInvalidKeyMsg(idStr &msg, bool valid[2]);

@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Player.h"
+#include "sys/platform.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
-#include "sys/platform.h"
+#include "Player.h"
 
 #include "Camera.h"
 
@@ -518,8 +515,8 @@ void idCameraAnim::Start(void)
     gameLocal.SetCamera(this);
     BecomeActive(TH_THINK);
 
-    // if the player has already created the renderview for this frame, have him
-    // update it again so that the camera starts this frame
+    // if the player has already created the renderview for this frame, have him update it again so that the camera
+    // starts this frame
     if (gameLocal.GetLocalPlayer()->GetRenderView()->time == gameLocal.time)
     {
         gameLocal.GetLocalPlayer()->CalculateRenderView();
@@ -563,9 +560,8 @@ void idCameraAnim::Think(void)
 
     if (thinkFlags & TH_THINK)
     {
-        // check if we're done in the Think function when the cinematic is being
-        // skipped (idCameraAnim::GetViewParms isn't called when skipping
-        // cinematics).
+        // check if we're done in the Think function when the cinematic is being skipped (idCameraAnim::GetViewParms
+        // isn't called when skipping cinematics).
         if (!gameLocal.skipCinematic)
         {
             return;
@@ -634,8 +630,7 @@ void idCameraAnim::GetViewParms(renderView_t *view)
     if (camera.Num() == 0)
     {
         // we most likely are in the middle of a restore
-        // FIXME: it would be better to fix it so this doesn't get called during a
-        // restore
+        // FIXME: it would be better to fix it so this doesn't get called during a restore
         return;
     }
 
@@ -692,9 +687,8 @@ void idCameraAnim::GetViewParms(renderView_t *view)
         }
     }
 
-    // clamp to the first frame.  also check if this is a one frame anim.  one
-    // frame anims would end immediately, but since they're mainly used for static
-    // cams anyway, just stay on it infinitely.
+    // clamp to the first frame.  also check if this is a one frame anim.  one frame anims would end immediately,
+    // but since they're mainly used for static cams anyway, just stay on it infinitely.
     if ((frame < 0) || (camera.Num() < 2))
     {
         view->viewaxis = camera[0].q.ToQuat().ToMat3();
@@ -719,8 +713,7 @@ void idCameraAnim::GetViewParms(renderView_t *view)
         Stop();
         if (gameLocal.GetCamera() != NULL)
         {
-            // we activated another camera when we stopped, so get it's viewparms
-            // instead
+            // we activated another camera when we stopped, so get it's viewparms instead
             gameLocal.GetCamera()->GetViewParms(view);
             return;
         }

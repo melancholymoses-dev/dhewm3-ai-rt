@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,16 +32,16 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_PVS_H__
 #define __GAME_PVS_H__
 
-#include "idlib/bv/Bounds.h"
 #include "idlib/geometry/Winding.h"
 #include "idlib/math/Vector.h"
+#include "idlib/bv/Bounds.h"
 
 /*
 ===================================================================================
 
-        PVS
+    PVS
 
-        Note: mirrors and other special view portals are not taken into account
+    Note: mirrors and other special view portals are not taken into account
 
 ===================================================================================
 */
@@ -79,10 +76,9 @@ class idPVS
     void Init(void);
     void Shutdown(void);
     // get the area(s) the source is in
-    int GetPVSArea(const idVec3 &point) const; // returns the area number
-    int GetPVSAreas(const idBounds &bounds, int *areas,
-                    int maxAreas) const; // returns number of areas
-                                         // setup current PVS for the source
+    int GetPVSArea(const idVec3 &point) const;                               // returns the area number
+    int GetPVSAreas(const idBounds &bounds, int *areas, int maxAreas) const; // returns number of areas
+                                                                             // setup current PVS for the source
     pvsHandle_t SetupCurrentPVS(const idVec3 &source, const pvsType_t type = PVS_NORMAL) const;
     pvsHandle_t SetupCurrentPVS(const idBounds &source, const pvsType_t type = PVS_NORMAL) const;
     pvsHandle_t SetupCurrentPVS(const int sourceArea, const pvsType_t type = PVS_NORMAL) const;
@@ -116,8 +112,7 @@ class idPVS
     bool *connectedAreas;
     int *areaQueue;
     byte *areaPVS;
-    // current PVS for a specific source possibly taking portal states
-    // (open/closed) into account
+    // current PVS for a specific source possibly taking portal states (open/closed) into account
     mutable pvsCurrent_t currentPVS[MAX_CURRENT_PVS];
     // used to create PVS
     int portalVisBytes;

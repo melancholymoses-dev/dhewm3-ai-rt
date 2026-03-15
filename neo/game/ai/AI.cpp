@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/math/Quat.h"
 #include "sys/platform.h"
+#include "idlib/math/Quat.h"
 
+#include "gamesys/SysCvar.h"
 #include "Moveable.h"
 #include "SmokeParticles.h"
-#include "gamesys/SysCvar.h"
 
 #include "ai/AI.h"
 
@@ -828,8 +825,8 @@ void idAI::Spawn(void)
             jointScale = spawnArgs.GetAngles(kv->GetKey(), "0 0 0");
             jointScale.roll = 0.0f;
 
-            // if no scale on any component, then don't bother adding it.  this may be
-            // done to zero out rotation from an inherited entitydef.
+            // if no scale on any component, then don't bother adding it.  this may be done to
+            // zero out rotation from an inherited entitydef.
             if (jointScale != ang_zero)
             {
                 lookJoints.Append(joint);
@@ -839,8 +836,7 @@ void idAI::Spawn(void)
         kv = spawnArgs.MatchPrefix("look_joint", kv);
     }
 
-    // calculate joint positions on attack frames so we can do proper "can hit"
-    // tests
+    // calculate joint positions on attack frames so we can do proper "can hit" tests
     CalculateAttackOffsets();
 
     eyeMin = spawnArgs.GetAngles("eye_turn_min", "-10 -30 0");
@@ -1174,8 +1170,7 @@ void idAI::Think(void)
         }
         else
         {
-            // clear the ik before we do anything else so the skeleton doesn't get
-            // updated twice
+            // clear the ik before we do anything else so the skeleton doesn't get updated twice
             walkIK.ClearJointMods();
 
             switch (move.moveType)
@@ -1224,8 +1219,7 @@ void idAI::Think(void)
             }
         }
 
-        // clear pain flag so that we recieve any damage between now and the next
-        // time we run the script
+        // clear pain flag so that we recieve any damage between now and the next time we run the script
         AI_PAIN = false;
         AI_SPECIAL_DAMAGE = 0;
         AI_PUSHED = false;
@@ -1242,16 +1236,14 @@ void idAI::Think(void)
 
     if (fl.hidden && allowHiddenMovement)
     {
-        // UpdateAnimation won't call frame commands when hidden, so call them here
-        // when we allow hidden movement
+        // UpdateAnimation won't call frame commands when hidden, so call them here when we allow hidden movement
         animator.ServiceAnims(gameLocal.previousTime, gameLocal.time);
     }
-    /*	this still draws in retail builds.. not sure why.. don't care at this
-       point. if ( !aas && developer.GetBool() && !fl.hidden && !num_cinematics )
-       { gameRenderWorld->DrawText( "No AAS",
-       physicsObj.GetAbsBounds().GetCenter(), 0.1f, colorWhite,
+    /*	this still draws in retail builds.. not sure why.. don't care at this point.
+        if ( !aas && developer.GetBool() && !fl.hidden && !num_cinematics ) {
+            gameRenderWorld->DrawText( "No AAS", physicsObj.GetAbsBounds().GetCenter(), 0.1f, colorWhite,
        gameLocal.GetLocalPlayer()->viewAngles.ToMat3(), 1, gameLocal.msec );
-            }
+        }
     */
 
     UpdateMuzzleFlash();
@@ -1264,7 +1256,7 @@ void idAI::Think(void)
 
 /***********************************************************************
 
-        AI script state management
+    AI script state management
 
 ***********************************************************************/
 
@@ -1316,7 +1308,7 @@ void idAI::UpdateAIScript(void)
 
 /***********************************************************************
 
-        navigation
+    navigation
 
 ***********************************************************************/
 
@@ -1580,12 +1572,10 @@ bool idAI::PathToGoal(aasPath_t &path, int areaNum, const idVec3 &origin, int go
 =====================
 idAI::TravelDistance
 
-Returns the approximate travel distance from one position to the goal, or if no
-AAS, the straight line distance.
+Returns the approximate travel distance from one position to the goal, or if no AAS, the straight line distance.
 
-This is feakin' slow, so it's not good to do it too many times per frame.  It
-also is slower the further you are from the goal, so try to break the goals up
-into shorter distances.
+This is feakin' slow, so it's not good to do it too many times per frame.  It also is slower the further you
+are from the goal, so try to break the goals up into shorter distances.
 =====================
 */
 float idAI::TravelDistance(const idVec3 &start, const idVec3 &end) const
@@ -1689,8 +1679,7 @@ void idAI::StopMove(moveStatus_t status)
 =====================
 idAI::FaceEnemy
 
-Continually face the enemy's last known position.  MoveDone is always true in
-this case.
+Continually face the enemy's last known position.  MoveDone is always true in this case.
 =====================
 */
 bool idAI::FaceEnemy(void)
@@ -2659,7 +2648,7 @@ void idAI::BlockedFailSafe(void)
 
 /***********************************************************************
 
-        turning
+    turning
 
 ***********************************************************************/
 
@@ -2816,7 +2805,7 @@ bool idAI::TurnToward(const idVec3 &pos)
 
 /***********************************************************************
 
-        Movement
+    Movement
 
 ***********************************************************************/
 
@@ -2828,9 +2817,8 @@ idAI::ApplyImpulse
 void idAI::ApplyImpulse(idEntity *ent, int id, const idVec3 &point, const idVec3 &impulse)
 {
     // FIXME: Jim take a look at this and see if this is a reasonable thing to do
-    // instead of a spawnArg flag.. Sabaoth is the only slide monster ( and should
-    // be the only one for D3 ) and we don't want him taking physics impulses as
-    // it can knock him off the path
+    // instead of a spawnArg flag.. Sabaoth is the only slide monster ( and should be the only one for D3 )
+    // and we don't want him taking physics impulses as it can knock him off the path
     if (move.moveType != MOVETYPE_STATIC && move.moveType != MOVETYPE_SLIDE)
     {
         idActor::ApplyImpulse(ent, id, point, impulse);
@@ -2852,9 +2840,9 @@ void idAI::GetMoveDelta(const idMat3 &oldaxis, const idMat3 &axis, idVec3 &delta
 
     if (modelOffset != vec3_zero)
     {
-        // the pivot of the monster's model is around its origin, and not around the
-        // bounding box's origin, so we have to compensate for this when the model
-        // is offset so that the monster still appears to rotate around it's origin.
+        // the pivot of the monster's model is around its origin, and not around the bounding
+        // box's origin, so we have to compensate for this when the model is offset so that
+        // the monster still appears to rotate around it's origin.
         oldModelOrigin = modelOffset * oldaxis;
         modelOrigin = modelOffset * axis;
         delta += oldModelOrigin - modelOrigin;
@@ -2936,9 +2924,8 @@ void idAI::CheckObstacleAvoidance(const idVec3 &goalPos, idVec3 &newPos)
     }
     else if (path.seekPosObstacle)
     {
-        // if the AI is very close to the path.seekPos already and
-        // path.seekPosObstacle != NULL then we want to push the
-        // path.seekPosObstacle entity out of the way
+        // if the AI is very close to the path.seekPos already and path.seekPosObstacle != NULL
+        // then we want to push the path.seekPosObstacle entity out of the way
         AI_OBSTACLE_IN_PATH = true;
 
         // check if we're past where the goalPos was pushed out of the obstacle
@@ -2951,8 +2938,7 @@ void idAI::CheckObstacleAvoidance(const idVec3 &goalPos, idVec3 &newPos)
         }
     }
 
-    // if we had an obstacle, set our move status based on the type, and kick it
-    // out of the way if it's a moveable
+    // if we had an obstacle, set our move status based on the type, and kick it out of the way if it's a moveable
     if (obstacle)
     {
         if (obstacle->IsType(idActor::Type))
@@ -3642,7 +3628,7 @@ void idAI::StaticMove(void)
 
 /***********************************************************************
 
-        Damage
+    Damage
 
 ***********************************************************************/
 
@@ -3683,8 +3669,7 @@ int idAI::ReactionTo(const idEntity *ent)
         return ATTACK_ON_SIGHT | ATTACK_ON_DAMAGE | ATTACK_ON_ACTIVATE;
     }
 
-    // monsters will fight when attacked by lower ranked monsters.  rank 0 never
-    // fights back.
+    // monsters will fight when attacked by lower ranked monsters.  rank 0 never fights back.
     if (rank && (actor->rank < rank))
     {
         return ATTACK_ON_DAMAGE;
@@ -3800,8 +3785,7 @@ const idDeclParticle *idAI::SpawnParticlesOnJoint(particleEmitter_t &pe, const c
         BecomeActive(TH_UPDATEPARTICLES);
         if (!gameLocal.time)
         {
-            // particles with time of 0 don't show, so set the time differently on the
-            // first frame
+            // particles with time of 0 don't show, so set the time differently on the first frame
             pe.time = 1;
         }
         else
@@ -3896,8 +3880,7 @@ void idAI::Killed(idEntity *inflictor, idEntity *attacker, int damage, const idV
 
     if (spawnArgs.GetString("model_death", "", &modelDeath))
     {
-        // lost soul is only case that does not use a ragdoll and has a model_death
-        // so get the death sound in here
+        // lost soul is only case that does not use a ragdoll and has a model_death so get the death sound in here
         StartSound("snd_death", SND_CHANNEL_VOICE, 0, false, NULL);
         renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.time);
         SetModel(modelDeath);
@@ -3931,7 +3914,7 @@ void idAI::Killed(idEntity *inflictor, idEntity *attacker, int damage, const idV
 
 /***********************************************************************
 
-        Targeting/Combat
+    Targeting/Combat
 
 ***********************************************************************/
 
@@ -4000,8 +3983,7 @@ void idAI::PlayCinematic(void)
 
     if (head.GetEntity())
     {
-        // since the body anim was updated, we need to run physics to update the
-        // position of the head
+        // since the body anim was updated, we need to run physics to update the position of the head
         RunPhysics();
 
         // make sure our model gets updated
@@ -4057,8 +4039,7 @@ void idAI::Activate(idEntity *activator)
             SetEnemy(player);
         }
 
-        // update the script in cinematics so that entities don't start anims or
-        // show themselves a frame late.
+        // update the script in cinematics so that entities don't start anims or show themselves a frame late.
         if (cinematic)
         {
             UpdateAIScript();
@@ -4073,8 +4054,7 @@ void idAI::Activate(idEntity *activator)
 
             if (head.GetEntity())
             {
-                // since the body anim was updated, we need to run physics to update the
-                // position of the head
+                // since the body anim was updated, we need to run physics to update the position of the head
                 RunPhysics();
 
                 // make sure our model gets updated
@@ -4556,13 +4536,12 @@ void idAI::CalculateAttackOffsets(void)
     }
     num = modelDef->NumAnims();
 
-    // needs to be off while getting the offsets so that we account for the
-    // distance the monster moves in the attack anim
+    // needs to be off while getting the offsets so that we account for the distance the monster moves in the attack
+    // anim
     animator.RemoveOriginOffset(false);
 
-    // anim number 0 is reserved for non-existant anims.  to avoid off by one
-    // issues, just allocate an extra spot for launch offsets so that anim number
-    // can be used without subtracting 1.
+    // anim number 0 is reserved for non-existant anims.  to avoid off by one issues, just allocate an extra spot for
+    // launch offsets so that anim number can be used without subtracting 1.
     missileLaunchOffset.SetGranularity(1);
     missileLaunchOffset.SetNum(num + 1);
     missileLaunchOffset[0].Zero();
@@ -4579,8 +4558,7 @@ void idAI::CalculateAttackOffsets(void)
                 joint = animator.GetJointHandle(command->string->c_str());
                 if (joint == INVALID_JOINT)
                 {
-                    gameLocal.Error("Invalid joint '%s' on 'launch_missile' frame "
-                                    "command on frame %d of model '%s'",
+                    gameLocal.Error("Invalid joint '%s' on 'launch_missile' frame command on frame %d of model '%s'",
                                     command->string->c_str(), frame, modelDef->GetName());
                 }
                 GetJointTransformForAnim(joint, i, FRAME2MS(frame), missileLaunchOffset[i], axis);
@@ -4817,8 +4795,7 @@ idProjectile *idAI::LaunchProjectile(const char *jointname, idEntity *target, bo
     }
     else
     {
-        // projectile bounds bigger than the owner bounds, so just start it from the
-        // center
+        // projectile bounds bigger than the owner bounds, so just start it from the center
         start = ownerBounds.GetCenter();
     }
 
@@ -4829,16 +4806,15 @@ idProjectile *idAI::LaunchProjectile(const char *jointname, idEntity *target, bo
     GetAimDir(muzzle, target, this, dir);
     ang = dir.ToAngles();
 
-    // adjust his aim so it's not perfect.  uses sine based movement so the
-    // tracers appear less random in their spread.
+    // adjust his aim so it's not perfect.  uses sine based movement so the tracers appear less random in their spread.
     float t = MS2SEC(gameLocal.time + entityNumber * 497);
     ang.pitch += idMath::Sin16(t * 5.1) * attack_accuracy;
     ang.yaw += idMath::Sin16(t * 6.7) * attack_accuracy;
 
     if (clampToAttackCone)
     {
-        // clamp the attack direction to be within monster's attack cone so he
-        // doesn't do things like throw the missile backwards if you're behind him
+        // clamp the attack direction to be within monster's attack cone so he doesn't do
+        // things like throw the missile backwards if you're behind him
         diff = idMath::AngleDelta(ang.yaw, current_yaw);
         if (diff > attack_cone)
         {
@@ -4882,12 +4858,11 @@ idProjectile *idAI::LaunchProjectile(const char *jointname, idEntity *target, bo
 ================
 idAI::DamageFeedback
 
-callback function for when another entity received damage from this entity.
-damage can be adjusted and returned to the caller.
+callback function for when another entity received damage from this entity.  damage can be adjusted and returned to the
+caller.
 
-FIXME: This gets called when we call idPlayer::CalcDamagePoints from
-idAI::AttackMelee, which then checks for a saving throw, possibly forcing a
-miss.  This is harmless behavior ATM, but is not intuitive.
+FIXME: This gets called when we call idPlayer::CalcDamagePoints from idAI::AttackMelee, which then checks for a saving
+throw, possibly forcing a miss.  This is harmless behavior ATM, but is not intuitive.
 ================
 */
 void idAI::DamageFeedback(idEntity *victim, idEntity *inflictor, int &damage)
@@ -5131,8 +5106,7 @@ void idAI::PushWithAF(void)
             continue;
         }
 
-        // make sure we havent pushed this entity already.  this avoids causing
-        // double damage
+        // make sure we havent pushed this entity already.  this avoids causing double damage
         for (j = 0; j < num_pushed; j++)
         {
             if (pushed_ents[j] == touchList[i].touchedEnt)
@@ -5160,7 +5134,7 @@ void idAI::PushWithAF(void)
 
 /***********************************************************************
 
-        Misc
+    Misc
 
 ***********************************************************************/
 
@@ -5471,7 +5445,7 @@ void idAI::TriggerParticles(const char *jointName)
 
 /***********************************************************************
 
-        Head & torso aiming
+    Head & torso aiming
 
 ***********************************************************************/
 
@@ -5545,16 +5519,13 @@ bool idAI::UpdateAnimationControllers(void)
         CopyJointsFromBodyToHead();
     }
 
-    // Update the IK after we've gotten all the joint positions we need, but
-    // before we set any joint positions. Getting the joint positions causes the
-    // joints to be updated.  The IK gets joint positions itself (which are
-    // already up to date because of getting the joints in this function) and then
-    // sets their positions, which forces the heirarchy to be updated again next
-    // time we get a joint or present the model.  If IK is enabled, or if we have
-    // a seperate head, we end up transforming the joints twice per frame.
-    // Characters with no head entity and no ik will only transform their joints
-    // once.  Set g_debuganim to the current entity number in order to see how
-    // many times an entity transforms the joints per frame.
+    // Update the IK after we've gotten all the joint positions we need, but before we set any joint positions.
+    // Getting the joint positions causes the joints to be updated.  The IK gets joint positions itself (which
+    // are already up to date because of getting the joints in this function) and then sets their positions, which
+    // forces the heirarchy to be updated again next time we get a joint or present the model.  If IK is enabled,
+    // or if we have a seperate head, we end up transforming the joints twice per frame.  Characters with no
+    // head entity and no ik will only transform their joints once.  Set g_debuganim to the current entity number
+    // in order to see how many times an entity transforms the joints per frame.
     idActor::UpdateAnimationControllers();
 
     idEntity *focusEnt = focusEntity.GetEntity();
@@ -5584,8 +5555,8 @@ bool idAI::UpdateAnimationControllers(void)
 
     currentFocusPos = currentFocusPos + (focusPos - currentFocusPos) * eyeFocusRate;
 
-    // determine yaw from origin instead of from focus joint since joint may be
-    // offset, which can cause us to bounce between two angles
+    // determine yaw from origin instead of from focus joint since joint may be offset, which can cause us to bounce
+    // between two angles
     dir = focusPos - orientationJointPos;
     newLookAng.yaw = idMath::AngleNormalize180(dir.ToYaw() - orientationJointYaw);
     newLookAng.roll = 0.0f;

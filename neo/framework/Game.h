@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +32,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_H__
 #define __GAME_H__
 
-#include "framework/UsercmdGen.h"
 #include "idlib/BitMsg.h"
 #include "idlib/Dict.h"
 #include "idlib/containers/StrList.h"
+#include "framework/UsercmdGen.h"
 #include "renderer/RenderWorld.h"
 #include "sound/sound.h"
 
@@ -53,7 +50,7 @@ class idNetworkSystem;
 /*
 ===============================================================================
 
-        Public game interface with methods to run the game.
+    Public game interface with methods to run the game.
 
 ===============================================================================
 */
@@ -66,9 +63,8 @@ typedef struct
     int heartRate;
     int stamina;
     int combat;
-    bool syncNextGameFrame; // used when cinematics are skipped to prevent session
-                            // from simulating several game frames to keep the
-                            // game time in sync with real time
+    bool syncNextGameFrame; // used when cinematics are skipped to prevent session from simulating several game frames
+                            // to keep the game time in sync with real time
 } gameReturn_t;
 
 typedef enum
@@ -99,14 +95,12 @@ class idGame
     // Shut down the entire game.
     virtual void Shutdown(void) = 0;
 
-    // Set the local client number. Distinguishes listen ( == 0 ) / dedicated ( ==
-    // -1 )
+    // Set the local client number. Distinguishes listen ( == 0 ) / dedicated ( == -1 )
     virtual void SetLocalClient(int clientNum) = 0;
 
     // Sets the user info for a client.
-    // if canModify is true, the game can modify the user info in the returned
-    // dictionary pointer, server will forward the change back canModify is never
-    // true on network client
+    // if canModify is true, the game can modify the user info in the returned dictionary pointer, server will forward
+    // the change back canModify is never true on network client
     virtual const idDict *SetUserInfo(int clientNum, const idDict &userInfo, bool isClient, bool canModify) = 0;
 
     // Retrieve the game's userInfo dict for a client.
@@ -132,8 +126,7 @@ class idGame
     virtual bool InitFromSaveGame(const char *mapName, idRenderWorld *renderWorld, idSoundWorld *soundWorld,
                                   idFile *saveGameFile) = 0;
 
-    // Saves the current game state, the session may have written some data to the
-    // file already.
+    // Saves the current game state, the session may have written some data to the file already.
     virtual void SaveGame(idFile *saveGameFile) = 0;
 
     // Shut down the current map.
@@ -157,9 +150,8 @@ class idGame
     // get the games menu if appropriate ( multiplayer )
     virtual idUserInterface *StartMenu() = 0;
 
-    // When the game is running it's own UI fullscreen, GUI commands are passed
-    // through here return NULL once the fullscreen UI mode should stop, or "main"
-    // to go to main menu
+    // When the game is running it's own UI fullscreen, GUI commands are passed through here
+    // return NULL once the fullscreen UI mode should stop, or "main" to go to main menu
     virtual const char *HandleGuiCommands(const char *menuCommand) = 0;
 
     // main menu commands not caught in the engine are passed here
@@ -178,16 +170,14 @@ class idGame
     // Disconnects a client and removes the player entity from the game.
     virtual void ServerClientDisconnect(int clientNum) = 0;
 
-    // Writes initial reliable messages a client needs to recieve when first
-    // joining the game.
+    // Writes initial reliable messages a client needs to recieve when first joining the game.
     virtual void ServerWriteInitialReliableMessages(int clientNum) = 0;
 
     // Writes a snapshot of the server game state for the given client.
     virtual void ServerWriteSnapshot(int clientNum, int sequence, idBitMsg &msg, byte *clientInPVS,
                                      int numPVSClients) = 0;
 
-    // Patches the network entity states at the server with a snapshot for the
-    // given client.
+    // Patches the network entity states at the server with a snapshot for the given client.
     virtual bool ServerApplySnapshot(int clientNum, int sequence) = 0;
 
     // Processes a reliable message from a client.
@@ -228,7 +218,7 @@ extern idGame *game;
 /*
 ===============================================================================
 
-        Public game interface with methods for in-game editing.
+    Public game interface with methods for in-game editing.
 
 ===============================================================================
 */
@@ -238,11 +228,9 @@ typedef struct
     idSoundEmitter *referenceSound; // this is the interface to the sound system, created
                                     // with idSoundWorld::AllocSoundEmitter() when needed
     idVec3 origin;
-    int listenerId;              // SSF_PRIVATE_SOUND only plays if == listenerId from
-                                 // PlaceListener no spatialization will be performed if ==
-                                 // listenerID
-    const idSoundShader *shader; // this really shouldn't be here, it is a
-                                 // holdover from single channel behavior
+    int listenerId;              // SSF_PRIVATE_SOUND only plays if == listenerId from PlaceListener
+                                 // no spatialization will be performed if == listenerID
+    const idSoundShader *shader; // this really shouldn't be here, it is a holdover from single channel behavior
     float diversity;             // 0.0 to 1.0 value used to select which
                                  // samples in a multi-sample list from the shader are used
     bool waitfortrigger;         // don't start it at spawn time
@@ -266,8 +254,7 @@ class idProgram;
 class idInterpreter;
 typedef struct prstack_s prstack_t;
 
-// FIXME: this interface needs to be reworked but it properly separates code for
-// the time being
+// FIXME: this interface needs to be reworked but it properly separates code for the time being
 class idGameEdit
 {
   public:
@@ -275,8 +262,7 @@ class idGameEdit
     {
     }
 
-    // These are the canonical idDict to parameter parsing routines used by both
-    // the game and tools.
+    // These are the canonical idDict to parameter parsing routines used by both the game and tools.
     virtual void ParseSpawnArgsToRenderLight(const idDict *args, renderLight_t *renderLight);
     virtual void ParseSpawnArgsToRenderEntity(const idDict *args, renderEntity_t *renderEntity);
     virtual void ParseSpawnArgsToRefSound(const idDict *args, refSound_t *refSound);
@@ -397,7 +383,7 @@ class idGameEditExt : public idGameEdit
 /*
 ===============================================================================
 
-        Game API.
+    Game API.
 
 ===============================================================================
 */

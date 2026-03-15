@@ -19,35 +19,32 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Light.h"
-#include "Misc.h"
-#include "Player.h"
-#include "Sound.h"
-#include "WorldSpawn.h"
-#include "ai/AI.h"
+#include "sys/platform.h"
 #include "gamesys/SysCvar.h"
 #include "physics/Physics_Monster.h"
-#include "sys/platform.h"
+#include "ai/AI.h"
+#include "Player.h"
+#include "Light.h"
+#include "WorldSpawn.h"
+#include "Sound.h"
+#include "Misc.h"
 
 #include "GameEdit.h"
 
 /*
 ===============================================================================
 
-        Ingame cursor.
+    Ingame cursor.
 
 ===============================================================================
 */
@@ -120,7 +117,7 @@ void idCursor3D::Think(void)
 /*
 ===============================================================================
 
-        Allows entities to be dragged through the world with physics.
+    Allows entities to be dragged through the world with physics.
 
 ===============================================================================
 */
@@ -233,8 +230,7 @@ void idDragEntity::Update(idPlayer *player)
 
                         // joint being dragged
                         newJoint = CLIPMODEL_ID_TO_JOINT_HANDLE(trace.c.id);
-                        // get the body id from the trace model id which might be a joint
-                        // handle
+                        // get the body id from the trace model id which might be a joint handle
                         trace.c.id = af->BodyForClipModelId(trace.c.id);
                         // get the name of the body being dragged
                         newBodyName = af->GetAFPhysics()->GetBody(trace.c.id)->GetName();
@@ -462,7 +458,7 @@ void idDragEntity::UnbindSelected(void)
 /*
 ===============================================================================
 
-        Handles ingame entity editing.
+    Handles ingame entity editing.
 
 ===============================================================================
 */
@@ -760,7 +756,7 @@ void idEditEntities::DisplayEntities(void)
 /*
 ===============================================================================
 
-        idGameEdit
+    idGameEdit
 
 ===============================================================================
 */
@@ -880,8 +876,7 @@ const char *idGameEdit::GetUniqueEntityName(const char *classname) const
     int id;
     static char name[1024];
 
-    // can only have MAX_GENTITIES, so if we have a spot available, we're
-    // guaranteed to find one
+    // can only have MAX_GENTITIES, so if we have a spot available, we're guaranteed to find one
     for (id = 0; id < MAX_GENTITIES; id++)
     {
         idStr::snPrintf(name, sizeof(name), "%s_%d", classname, id);
@@ -1365,8 +1360,8 @@ void idGameEditExt::MSG_WriteScriptList(idBitMsg *msg)
     for (int i = 0; i < program->NumFilenames(); i++)
     {
         idStr file = program->GetFilename(i);
-        // fix this. it seams that scripts triggered by the runtime are stored with
-        // a wrong path the use // instead of '\'
+        // fix this. it seams that scripts triggered by the runtime are stored with a wrong path
+        // the use // instead of '\'
         file.BackSlashesToSlashes();
         msg->WriteString(file);
     }

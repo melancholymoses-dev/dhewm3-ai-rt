@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,15 +33,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define private public
 #define protected public
 
-#include "framework/Common.h"
-#include "framework/FileSystem.h"
-#include "idlib/Lexer.h"
-#include "idlib/bv/Bounds.h"
+#include "sys/platform.h"
 #include "idlib/containers/LinkList.h"
 #include "idlib/containers/StaticList.h"
-#include "idlib/math/Interpolate.h"
 #include "idlib/math/Quat.h"
-#include "sys/platform.h"
+#include "idlib/math/Interpolate.h"
+#include "idlib/bv/Bounds.h"
+#include "idlib/Lexer.h"
+#include "framework/Common.h"
+#include "framework/FileSystem.h"
 
 #include "Entity.h"
 
@@ -56,8 +53,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "TypeInfo.h"
 
-// disabled because it's adds about 64MB to state dumps and takes a really long
-// time
+// disabled because it's adds about 64MB to state dumps and takes a really long time
 // #define DUMP_GAMELOCAL
 
 typedef void (*WriteVariableType_t)(const char *varName, const char *varType, const char *scope, const char *prefix,
@@ -1041,8 +1037,7 @@ int idTypeInfoTools::WriteVariable_r(const void *varPtr, const char *varName, co
         idList<int> *list = ((idList<int> *)varPtr);
         Write(varName, varType, scope, prefix, ".num", va("%d", list->Num()), NULL, 0);
         // NOTE: we don't care about the amount of memory allocated
-        // Write( varName, varType, scope, prefix, ".size", va( "%d", list->Size()
-        // ), NULL, 0 );
+        // Write( varName, varType, scope, prefix, ".size", va( "%d", list->Size() ), NULL, 0 );
         Write(varName, varType, scope, prefix, ".granularity", va("%d", list->GetGranularity()), NULL, 0);
 
         if (list->Num() && ParseTemplateArguments(typeSrc, templateArgs))
@@ -1278,11 +1273,10 @@ int idTypeInfoTools::WriteVariable_r(const void *varPtr, const char *varName, co
             }
             else
             {
-                Write(varName, varType, scope, prefix, "",
-                      va("<unknown template argument type '%s' for "
-                         "idInterpolateAccelDecelLinear>",
-                         templateArgs.c_str()),
-                      NULL, 0);
+                Write(
+                    varName, varType, scope, prefix, "",
+                    va("<unknown template argument type '%s' for idInterpolateAccelDecelLinear>", templateArgs.c_str()),
+                    NULL, 0);
             }
         }
     }
@@ -1322,9 +1316,7 @@ int idTypeInfoTools::WriteVariable_r(const void *varPtr, const char *varName, co
             else
             {
                 Write(varName, varType, scope, prefix, "",
-                      va("<unknown template argument type '%s' for "
-                         "idInterpolateAccelDecelSine>",
-                         templateArgs.c_str()),
+                      va("<unknown template argument type '%s' for idInterpolateAccelDecelSine>", templateArgs.c_str()),
                       NULL, 0);
             }
         }

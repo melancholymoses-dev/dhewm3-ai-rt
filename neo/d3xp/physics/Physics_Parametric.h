@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -43,36 +40,34 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===================================================================================
 
-        Parametric physics
+    Parametric physics
 
-        Used for predefined or scripted motion. The motion of an object is
-completely parametrized. By adjusting the parameters an object is forced to
-follow a predefined path. The parametric physics is typically used for doors,
-bridges, rotating fans etc.
+    Used for predefined or scripted motion. The motion of an object is completely
+    parametrized. By adjusting the parameters an object is forced to follow a
+    predefined path. The parametric physics is typically used for doors, bridges,
+    rotating fans etc.
 
 ===================================================================================
 */
 
 typedef struct parametricPState_s
 {
-    int time;                                                     // physics time
-    int atRest;                                                   // set when simulation is suspended
-    idVec3 origin;                                                // world origin
-    idAngles angles;                                              // world angles
-    idMat3 axis;                                                  // world axis
-    idVec3 localOrigin;                                           // local origin
-    idAngles localAngles;                                         // local angles
-    idExtrapolate<idVec3> linearExtrapolation;                    // extrapolation based description
-                                                                  // of the position over time
-    idExtrapolate<idAngles> angularExtrapolation;                 // extrapolation based description of the
-                                                                  // orientation over time
-    idInterpolateAccelDecelLinear<idVec3> linearInterpolation;    // interpolation based description of the position
-                                                                  // over time
-    idInterpolateAccelDecelLinear<idAngles> angularInterpolation; // interpolation based description of the
-                                                                  // orientation over time
-    idCurve_Spline<idVec3> *spline;                               // spline based description of the position over time
-    idInterpolateAccelDecelLinear<float> splineInterpolate;       // position along the spline over time
-    bool useSplineAngles;                                         // set the orientation using the spline
+    int time;                                     // physics time
+    int atRest;                                   // set when simulation is suspended
+    idVec3 origin;                                // world origin
+    idAngles angles;                              // world angles
+    idMat3 axis;                                  // world axis
+    idVec3 localOrigin;                           // local origin
+    idAngles localAngles;                         // local angles
+    idExtrapolate<idVec3> linearExtrapolation;    // extrapolation based description of the position over time
+    idExtrapolate<idAngles> angularExtrapolation; // extrapolation based description of the orientation over time
+    idInterpolateAccelDecelLinear<idVec3>
+        linearInterpolation; // interpolation based description of the position over time
+    idInterpolateAccelDecelLinear<idAngles>
+        angularInterpolation;       // interpolation based description of the orientation over time
+    idCurve_Spline<idVec3> *spline; // spline based description of the position over time
+    idInterpolateAccelDecelLinear<float> splineInterpolate; // position along the spline over time
+    bool useSplineAngles;                                   // set the orientation using the spline
 } parametricPState_t;
 
 class idPhysics_Parametric : public idPhysics_Base

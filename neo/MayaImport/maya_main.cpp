@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,9 +32,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "sys/platform.h"
 
 #include "Maya5.0/maya.h"
-// #include "Maya6.0/maya.h"			// must also change include
-// directory in project from "MayaImport\Maya4.5\include" to
-// "MayaImport\Maya6.0\include" (requires MSDev 7.1)
+// #include "Maya6.0/maya.h"			// must also change include directory in project from
+// "MayaImport\Maya4.5\include" to "MayaImport\Maya6.0\include" (requires MSDev 7.1)
 #include "MayaImport/exporter.h"
 #include "MayaImport/maya_main.h"
 
@@ -419,7 +415,7 @@ MFnDagNode *GetParent(MFnDagNode *joint)
 /*
 ==============================================================================================
 
-        idTokenizer
+    idTokenizer
 
 ==============================================================================================
 */
@@ -484,7 +480,7 @@ const char *idTokenizer::NextToken(const char *errorstring)
 /*
 ==============================================================================================
 
-        idExportOptions
+    idExportOptions
 
 ==============================================================================================
 */
@@ -579,10 +575,8 @@ idExportOptions::idExportOptions(const char *commandline, const char *ospath)
         else if (token == "-rename")
         {
             // parse joint to rename
-            joints.from = tokens.NextToken("Missing joint name for -rename.  Usage: "
-                                           "-rename [joint name] [new name]");
-            joints.to = tokens.NextToken("Missing new name for -rename.  Usage: "
-                                         "-rename [joint name] [new name]");
+            joints.from = tokens.NextToken("Missing joint name for -rename.  Usage: -rename [joint name] [new name]");
+            joints.to = tokens.NextToken("Missing new name for -rename.  Usage: -rename [joint name] [new name]");
             renamejoints.Append(joints);
         }
         else if (token == "-prefix")
@@ -592,10 +586,8 @@ idExportOptions::idExportOptions(const char *commandline, const char *ospath)
         else if (token == "-parent")
         {
             // parse joint to reparent
-            joints.from = tokens.NextToken("Missing joint name for -parent.  Usage: "
-                                           "-parent [joint name] [new parent]");
-            joints.to = tokens.NextToken("Missing new parent for -parent.  Usage: "
-                                         "-parent [joint name] [new parent]");
+            joints.from = tokens.NextToken("Missing joint name for -parent.  Usage: -parent [joint name] [new parent]");
+            joints.to = tokens.NextToken("Missing new parent for -parent.  Usage: -parent [joint name] [new parent]");
             remapjoints.Append(joints);
         }
         else if (!token.Icmp("-sourcedir"))
@@ -616,11 +608,9 @@ idExportOptions::idExportOptions(const char *commandline, const char *ospath)
         else if (token == "-range")
         {
             // parse frame range to export
-            token = tokens.NextToken("Missing start frame for -range.  Usage: -range "
-                                     "[start frame] [end frame]");
+            token = tokens.NextToken("Missing start frame for -range.  Usage: -range [start frame] [end frame]");
             startframe = atoi(token);
-            token = tokens.NextToken("Missing end frame for -range.  Usage: -range "
-                                     "[start frame] [end frame]");
+            token = tokens.NextToken("Missing end frame for -range.  Usage: -range [start frame] [end frame]");
             endframe = atoi(token);
 
             if (startframe > endframe)
@@ -631,8 +621,8 @@ idExportOptions::idExportOptions(const char *commandline, const char *ospath)
         else if (!token.Icmp("-cycleStart"))
         {
             // parse start frame of cycle
-            token = tokens.NextToken("Missing cycle start frame for -cycleStart.  "
-                                     "Usage: -cycleStart [first frame of cycle]");
+            token = tokens.NextToken(
+                "Missing cycle start frame for -cycleStart.  Usage: -cycleStart [first frame of cycle]");
             cycleStart = atoi(token);
         }
         else if (token == "-scale")
@@ -682,8 +672,7 @@ idExportOptions::idExportOptions(const char *commandline, const char *ospath)
         else if (token == "-quatprecision")
         {
             // parse quaternion precision
-            token = tokens.NextToken("Missing value for -quatprecision.  Usage: "
-                                     "-quatprecision [precision]");
+            token = tokens.NextToken("Missing value for -quatprecision.  Usage: -quatprecision [precision]");
             quatPrecision = atof(token);
             if (quatPrecision < 0.0f)
             {
@@ -693,26 +682,24 @@ idExportOptions::idExportOptions(const char *commandline, const char *ospath)
         else if (token == "-jointthreshold")
         {
             // parse joint threshold
-            token = tokens.NextToken("Missing weight for -jointthreshold.  Usage: "
-                                     "-jointthreshold [minimum joint weight]");
+            token =
+                tokens.NextToken("Missing weight for -jointthreshold.  Usage: -jointthreshold [minimum joint weight]");
             jointThreshold = atof(token);
         }
         else if (token == "-skipmesh")
         {
-            token = tokens.NextToken("Missing name for -skipmesh.  Usage: -skipmesh "
-                                     "[name of mesh to skip]");
+            token = tokens.NextToken("Missing name for -skipmesh.  Usage: -skipmesh [name of mesh to skip]");
             skipmeshes.AddUnique(token);
         }
         else if (token == "-keepmesh")
         {
-            token = tokens.NextToken("Missing name for -keepmesh.  Usage: -keepmesh "
-                                     "[name of mesh to keep]");
+            token = tokens.NextToken("Missing name for -keepmesh.  Usage: -keepmesh [name of mesh to keep]");
             keepmeshes.AddUnique(token);
         }
         else if (token == "-jointgroup")
         {
-            token = tokens.NextToken("Missing name for -jointgroup.  Usage: -jointgroup "
-                                     "[group name] [joint1] [joint2]...[joint n]");
+            token = tokens.NextToken(
+                "Missing name for -jointgroup.  Usage: -jointgroup [group name] [joint1] [joint2]...[joint n]");
             group = groups.Ptr();
             for (i = 0; i < groups.Num(); i++, group++)
             {
@@ -1539,9 +1526,8 @@ int idMayaExport::GetMayaFrameNum(int num) const
 
     if (options.cycleStart > options.startframe)
     {
-        // in cycles, the last frame is a duplicate of the first frame, so with
-        // cycleStart we need to duplicate one of the interior frames instead and
-        // chop off the first frame.
+        // in cycles, the last frame is a duplicate of the first frame, so with cycleStart we need to
+        // duplicate one of the interior frames instead and chop off the first frame.
         frameNum = options.cycleStart + num;
         if (frameNum > options.endframe)
         {
@@ -1601,8 +1587,7 @@ void idMayaExport::PruneJoints(idStrList &keepjoints, idStr &prefix)
     idExportJoint *parent;
     int num_weights;
 
-    // if we don't have any joints specified to keep, mark the ones used by the
-    // meshes as keep
+    // if we don't have any joints specified to keep, mark the ones used by the meshes as keep
     if (!keepjoints.Num() && !prefix.Length())
     {
         if (!model.meshes.Num() || options.ignoreMeshes)
@@ -2058,8 +2043,7 @@ bool idMayaExport::RemapParents(idList<idNamePair> &remapjoints)
         joint->exportNode.ParentTo(parent->exportNode);
     }
 
-    // if we have an origin, make it the first node in the export list, otherwise
-    // add one
+    // if we have an origin, make it the first node in the export list, otherwise add one
     origin = model.FindJoint("origin");
     if (!origin)
     {
@@ -2585,8 +2569,8 @@ void idMayaExport::CreateMesh(float scale)
                 {
                     if (numNonZeroWeights)
                     {
-                        MayaError("Error on mesh '%s': Vertex %d doesn't have any joint "
-                                  "weights exceeding jointThreshold (%f).",
+                        MayaError("Error on mesh '%s': Vertex %d doesn't have any joint weights exceeding "
+                                  "jointThreshold (%f).",
                                   mesh->name.c_str(), num, options.jointThreshold);
                     }
                     else
@@ -2600,9 +2584,8 @@ void idMayaExport::CreateMesh(float scale)
                     MayaError("Error on mesh '%s': Combined weight of 0 on vertex %d.", mesh->name.c_str(), num);
                 }
                 // if ( numNonZeroWeights ) {
-                //	common->Printf( "Mesh '%s': skipped %d out of %d weights on
-                // vertex %d\n", mesh->name.c_str(), numNonZeroWeights, numNonZeroWeights
-                //+ vert->numWeights, num );
+                //	common->Printf( "Mesh '%s': skipped %d out of %d weights on vertex %d\n", mesh->name.c_str(),
+                //numNonZeroWeights, numNonZeroWeights + vert->numWeights, num );
                 // }
 
                 // normalize the joint weights
@@ -3192,8 +3175,7 @@ void idMayaExport::CreateAnimation(idMat3 &align)
             frameNum = i + (options.cycleStart - options.startframe);
             if (frameNum >= model.numFrames)
             {
-                // wrap around, skipping the first frame, since it's a dupe of the last
-                // frame
+                // wrap around, skipping the first frame, since it's a dupe of the last frame
                 frameNum -= model.numFrames - 1;
                 shiftorigin = true;
             }
@@ -3327,8 +3309,7 @@ void idMayaExport::ConvertModel(void)
     }
     else if (options.cycleStart == options.endframe)
     {
-        // end frame is a duplicate of the first frame in cycles, so just disable
-        // cycleStart
+        // end frame is a duplicate of the first frame in cycles, so just disable cycleStart
         options.cycleStart = options.startframe;
     }
 
@@ -3626,9 +3607,8 @@ bool dllEntry(int version, idCommon *common, idSys *sys)
 
     if (version != MD5_VERSION)
     {
-        common->Printf("Error initializing Maya exporter: DLL version %d different "
-                       "from .exe version %d\n",
-                       MD5_VERSION, version);
+        common->Printf("Error initializing Maya exporter: DLL version %d different from .exe version %d\n", MD5_VERSION,
+                       version);
         return false;
     }
 
@@ -3649,8 +3629,7 @@ bool dllEntry(int version, idCommon *common, idSys *sys)
     return true;
 }
 
-// Force type checking on the interface functions to help ensure that they match
-// the ones in the .exe
+// Force type checking on the interface functions to help ensure that they match the ones in the .exe
 const exporterDLLEntry_t ValidateEntry = &dllEntry;
 const exporterInterface_t ValidateConvert = &Maya_ConvertModel;
 const exporterShutdown_t ValidateShutdown = &Maya_Shutdown;

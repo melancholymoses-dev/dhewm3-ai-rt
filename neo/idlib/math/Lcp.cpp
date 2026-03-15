@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -64,17 +61,14 @@ class idLCP_Square : public idLCP
     idVecX f, a;             // force and acceleration
     idVecX delta_f, delta_a; // delta force and delta acceleration
     idMatX clamped;          // LU factored sub matrix for clamped variables
-    idVecX diagonal;         // reciprocal of diagonal of U of the LU factored sub matrix
-                             // for clamped variables
+    idVecX diagonal;         // reciprocal of diagonal of U of the LU factored sub matrix for clamped variables
     int numUnbounded;        // number of unbounded variables
     int numClamped;          // number of clamped variables
     float **rowPtrs;         // pointers to the rows of m
     int *boxIndex;           // box index
-    int *side;               // tells if a variable is at the low boundary = -1, high boundary =
-                             // 1 or inbetween = 0
+    int *side;               // tells if a variable is at the low boundary = -1, high boundary = 1 or inbetween = 0
     int *permuted;           // index to keep track of the permutation
-    bool padded;             // set to true if the rows of the initial matrix are 16 byte
-                             // padded
+    bool padded;             // set to true if the rows of the initial matrix are 16 byte padded
 
   private:
     bool FactorClamped(void);
@@ -253,8 +247,7 @@ void idLCP_Square::RemoveClamped(int r)
 
     numClamped--;
 
-    // no need to swap and update the factored matrix when the last row and column
-    // are removed
+    // no need to swap and update the factored matrix when the last row and column are removed
     if (r == numClamped)
     {
         return;
@@ -431,12 +424,10 @@ ID_INLINE void idLCP_Square::CalcAccelDelta(int d)
     int j;
     float dot;
 
-    // only the not clamped variables, including the current variable, can have a
-    // change in acceleration
+    // only the not clamped variables, including the current variable, can have a change in acceleration
     for (j = numClamped; j <= d; j++)
     {
-        // only the clamped variables and the current variable have a force delta
-        // unequal zero
+        // only the clamped variables and the current variable have a force delta unequal zero
         SIMDProcessor->Dot(dot, rowPtrs[j], delta_f.ToFloatPtr(), numClamped);
         delta_a[j] = dot + rowPtrs[j][d] * delta_f[d];
     }
@@ -451,8 +442,7 @@ idLCP_Square::ChangeForce
 */
 ID_INLINE void idLCP_Square::ChangeForce(int d, float step)
 {
-    // only the clamped variables and current variable have a force delta unequal
-    // zero
+    // only the clamped variables and current variable have a force delta unequal zero
     SIMDProcessor->MulAdd(f.ToFloatPtr(), step, delta_f.ToFloatPtr(), numClamped);
     f[d] += step * delta_f[d];
 }
@@ -466,8 +456,7 @@ idLCP_Square::ChangeAccel
 */
 ID_INLINE void idLCP_Square::ChangeAccel(int d, float step)
 {
-    // only the not clamped variables, including the current variable, can have an
-    // acceleration unequal zero
+    // only the not clamped variables, including the current variable, can have an acceleration unequal zero
     SIMDProcessor->MulAdd(a.ToFloatPtr() + numClamped, step, delta_a.ToFloatPtr() + numClamped, d - numClamped + 1);
 }
 
@@ -573,8 +562,7 @@ void idLCP_Square::GetMaxStep(int d, float dir, float &maxStep, int &limit, int 
         {
             continue;
         }
-        // ignore variables for which the force is not allowed to take any
-        // substantial value
+        // ignore variables for which the force is not allowed to take any substantial value
         if (lo[i] >= -LCP_BOUND_EPSILON && hi[i] <= LCP_BOUND_EPSILON)
         {
             continue;
@@ -722,8 +710,8 @@ bool idLCP_Square::Solve(const idMatX &o_m, idVecX &o_x, const idVecX &o_b, cons
     for (i = numUnbounded; i < m.GetNumRows(); i++)
     {
 
-        // once we hit the box start index we can initialize the low and high
-        // boundaries of the variables using the box index
+        // once we hit the box start index we can initialize the low and high boundaries of the variables using the box
+        // index
         if (i == boxStartIndex)
         {
             for (j = 0; j < boxStartIndex; j++)
@@ -840,8 +828,7 @@ bool idLCP_Square::Solve(const idMatX &o_m, idVecX &o_x, const idVecX &o_b, cons
             }
             }
 
-            // if the current variable limited the step we can continue with the next
-            // variable
+            // if the current variable limited the step we can continue with the next variable
             if (limit == i)
             {
                 break;
@@ -964,21 +951,17 @@ class idLCP_Symmetric : public idLCP
     idVecX f, a;             // force and acceleration
     idVecX delta_f, delta_a; // delta force and delta acceleration
     idMatX clamped;          // LDLt factored sub matrix for clamped variables
-    idVecX diagonal;         // reciprocal of diagonal of LDLt factored sub matrix for
-                             // clamped variables
+    idVecX diagonal;         // reciprocal of diagonal of LDLt factored sub matrix for clamped variables
     idVecX solveCache1;      // intermediate result cached in SolveClamped
     idVecX solveCache2;      // "
     int numUnbounded;        // number of unbounded variables
     int numClamped;          // number of clamped variables
-    int clampedChangeStart;  // lowest row/column changed in the clamped matrix
-                             // during an iteration
+    int clampedChangeStart;  // lowest row/column changed in the clamped matrix during an iteration
     float **rowPtrs;         // pointers to the rows of m
     int *boxIndex;           // box index
-    int *side;               // tells if a variable is at the low boundary = -1, high boundary =
-                             // 1 or inbetween = 0
+    int *side;               // tells if a variable is at the low boundary = -1, high boundary = 1 or inbetween = 0
     int *permuted;           // index to keep track of the permutation
-    bool padded;             // set to true if the rows of the initial matrix are 16 byte
-                             // padded
+    bool padded;             // set to true if the rows of the initial matrix are 16 byte padded
 
   private:
     bool FactorClamped(void);
@@ -1083,8 +1066,7 @@ void idLCP_Symmetric::AddClamped(int r, bool useSolveCache)
     if (useSolveCache)
     {
 
-        // the lower triangular solve was cached in SolveClamped called by
-        // CalcForceDelta
+        // the lower triangular solve was cached in SolveClamped called by CalcForceDelta
         memcpy(clamped[numClamped], solveCache2.ToFloatPtr(), numClamped * sizeof(float));
         // calculate row dot product
         SIMDProcessor->Dot(dot, solveCache2.ToFloatPtr(), solveCache1.ToFloatPtr(), numClamped);
@@ -1137,8 +1119,7 @@ void idLCP_Symmetric::RemoveClamped(int r)
 
     numClamped--;
 
-    // no need to swap and update the factored matrix when the last row and column
-    // are removed
+    // no need to swap and update the factored matrix when the last row and column are removed
     if (r == numClamped)
     {
         return;
@@ -1166,8 +1147,7 @@ void idLCP_Symmetric::RemoveClamped(int r)
             return;
         }
 
-        // calculate the row/column to be added to the lower right sub matrix
-        // starting at (r, r)
+        // calculate the row/column to be added to the lower right sub matrix starting at (r, r)
         original = rowPtrs[numClamped];
         ptr = rowPtrs[r];
         addSub[0] = ptr[0] - original[numClamped];
@@ -1203,8 +1183,7 @@ void idLCP_Symmetric::RemoveClamped(int r)
             return;
         }
 
-        // calculate the row/column to be added to the lower right sub matrix
-        // starting at (r, r)
+        // calculate the row/column to be added to the lower right sub matrix starting at (r, r)
         for (i = 0; i < r; i++)
         {
             v[i] = clamped[r][i] * clamped[i][i];
@@ -1366,12 +1345,10 @@ ID_INLINE void idLCP_Symmetric::CalcAccelDelta(int d)
     int j;
     float dot;
 
-    // only the not clamped variables, including the current variable, can have a
-    // change in acceleration
+    // only the not clamped variables, including the current variable, can have a change in acceleration
     for (j = numClamped; j <= d; j++)
     {
-        // only the clamped variables and the current variable have a force delta
-        // unequal zero
+        // only the clamped variables and the current variable have a force delta unequal zero
         SIMDProcessor->Dot(dot, rowPtrs[j], delta_f.ToFloatPtr(), numClamped);
         delta_a[j] = dot + rowPtrs[j][d] * delta_f[d];
     }
@@ -1386,8 +1363,7 @@ idLCP_Symmetric::ChangeForce
 */
 ID_INLINE void idLCP_Symmetric::ChangeForce(int d, float step)
 {
-    // only the clamped variables and current variable have a force delta unequal
-    // zero
+    // only the clamped variables and current variable have a force delta unequal zero
     SIMDProcessor->MulAdd(f.ToFloatPtr(), step, delta_f.ToFloatPtr(), numClamped);
     f[d] += step * delta_f[d];
 }
@@ -1401,8 +1377,7 @@ idLCP_Symmetric::ChangeAccel
 */
 ID_INLINE void idLCP_Symmetric::ChangeAccel(int d, float step)
 {
-    // only the not clamped variables, including the current variable, can have an
-    // acceleration unequal zero
+    // only the not clamped variables, including the current variable, can have an acceleration unequal zero
     SIMDProcessor->MulAdd(a.ToFloatPtr() + numClamped, step, delta_a.ToFloatPtr() + numClamped, d - numClamped + 1);
 }
 
@@ -1508,8 +1483,7 @@ void idLCP_Symmetric::GetMaxStep(int d, float dir, float &maxStep, int &limit, i
         {
             continue;
         }
-        // ignore variables for which the force is not allowed to take any
-        // substantial value
+        // ignore variables for which the force is not allowed to take any substantial value
         if (lo[i] >= -LCP_BOUND_EPSILON && hi[i] <= LCP_BOUND_EPSILON)
         {
             continue;
@@ -1661,8 +1635,8 @@ bool idLCP_Symmetric::Solve(const idMatX &o_m, idVecX &o_x, const idVecX &o_b, c
 
         clampedChangeStart = 0;
 
-        // once we hit the box start index we can initialize the low and high
-        // boundaries of the variables using the box index
+        // once we hit the box start index we can initialize the low and high boundaries of the variables using the box
+        // index
         if (i == boxStartIndex)
         {
             for (j = 0; j < boxStartIndex; j++)
@@ -1779,8 +1753,7 @@ bool idLCP_Symmetric::Solve(const idMatX &o_m, idVecX &o_x, const idVecX &o_b, c
             }
             }
 
-            // if the current variable limited the step we can continue with the next
-            // variable
+            // if the current variable limited the step we can continue with the next variable
             if (limit == i)
             {
                 break;

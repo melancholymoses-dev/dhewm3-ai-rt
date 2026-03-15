@@ -19,36 +19,33 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/KeyInput.h"
-#include "framework/UsercmdGen.h"
-#include "idlib/containers/HashTable.h"
 #include "sys/platform.h"
-#include "ui/BindWindow.h"
-#include "ui/ChoiceWindow.h"
+#include "idlib/containers/HashTable.h"
+#include "framework/UsercmdGen.h"
+#include "framework/KeyInput.h"
 #include "ui/DeviceContext.h"
+#include "ui/UserInterfaceLocal.h"
 #include "ui/EditWindow.h"
+#include "ui/ChoiceWindow.h"
+#include "ui/SliderWindow.h"
+#include "ui/BindWindow.h"
+#include "ui/ListWindow.h"
+#include "ui/RenderWindow.h"
+#include "ui/MarkerWindow.h"
 #include "ui/FieldWindow.h"
+#include "ui/GameSSDWindow.h"
 #include "ui/GameBearShootWindow.h"
 #include "ui/GameBustOutWindow.h"
-#include "ui/GameSSDWindow.h"
-#include "ui/ListWindow.h"
-#include "ui/MarkerWindow.h"
-#include "ui/RenderWindow.h"
-#include "ui/SliderWindow.h"
-#include "ui/UserInterfaceLocal.h"
 //  gui editor is more integrated into the window now
 #include "tools/guied/GEWindowWrapper.h"
 
@@ -899,9 +896,8 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals)
                         }
                         if (child->Contains(child->clientRect, gui->CursorX(), gui->CursorY()))
                         {
-                            // if ((gui_edit.GetBool() && (child->flags & WIN_SELECTED)) ||
-                            // (!gui_edit.GetBool() && (child->flags & WIN_MOVABLE))) {
-                            //	SetCapture(child);
+                            // if ((gui_edit.GetBool() && (child->flags & WIN_SELECTED)) || (!gui_edit.GetBool() &&
+                            // (child->flags & WIN_MOVABLE))) { 	SetCapture(child);
                             // }
                             SetFocus(child);
                             const char *childRet = child->HandleEvent(event, updateVisuals);
@@ -1017,8 +1013,8 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals)
                         return childRet;
                     }
 
-                    // If the window didn't handle the tab, then move the focus to the
-                    // next window or the previous window if shift is held down
+                    // If the window didn't handle the tab, then move the focus to the next window
+                    // or the previous window if shift is held down
 
                     int direction = 1;
                     if (idKeyInput::IsDown(K_SHIFT))
@@ -1086,8 +1082,7 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals)
                             parent = child->GetParent();
                             if (parent == gui->GetDesktop())
                             {
-                                // We got back to the desktop, so wrap around but don't actually
-                                // go to the desktop
+                                // We got back to the desktop, so wrap around but don't actually go to the desktop
                                 parent = NULL;
                                 child = NULL;
                             }
@@ -1383,8 +1378,7 @@ void idWindow::DrawBackground(const idRectangle &drawRect)
         float scalex, scaley;
         if (flags & WIN_NATURALMAT)
         {
-            // DG: now also multiplied with matScalex/y, don't see a reason not to
-            // support that
+            // DG: now also multiplied with matScalex/y, don't see a reason not to support that
             //     (it allows scaling a tiled background image)
             scalex = (drawRect.w / background->GetImageWidth()) * matScalex;
             scaley = (drawRect.h / background->GetImageHeight()) * matScaley;
@@ -1502,8 +1496,7 @@ void idWindow::Redraw(float x, float y)
     if (flags & WIN_DESKTOP)
     {
         // only scale desktop windows (will automatically scale its sub-windows)
-        // that EITHER have the scaleto43 flag set OR are fullscreen menus and
-        // r_scaleMenusTo43 is 1
+        // that EITHER have the scaleto43 flag set OR are fullscreen menus and r_scaleMenusTo43 is 1
         if ((flags & WIN_SCALETO43) ||
             ((flags & WIN_MENUGUI) && r_scaleMenusTo43.GetBool() && !(flags & WIN_NO_SCALETO43)))
         {
@@ -1543,8 +1536,8 @@ void idWindow::Redraw(float x, float y)
     // #modified-fva; BEGIN
     /*
     //if (flags & WIN_DESKTOP) {
-            // see if this window forces a new aspect ratio
-            dc->SetSize(forceAspectWidth, forceAspectHeight);
+        // see if this window forces a new aspect ratio
+        dc->SetSize(forceAspectWidth, forceAspectHeight);
     //}
     */
     if (parent && parent->cstAnchor != idDeviceContext::CST_ANCHOR_NONE)
@@ -1986,9 +1979,9 @@ bool idWindow::ParseScript(idParser *src, idGuiScriptList &list, int *timeParm, 
 
     idToken token;
 
-    // scripts start with { ( unless parm is true ) and have ; separated command
-    // lists.. commands are command, arg.. basically we want everything between
-    // the { } as it will be interpreted at run time
+    // scripts start with { ( unless parm is true ) and have ; separated command lists.. commands are command,
+    // arg.. basically we want everything between the { } as it will be interpreted at
+    // run time
 
     if (elseBlock)
     {
@@ -3048,10 +3041,8 @@ bool idWindow::Parse(idParser *src, bool rebuild)
             // set the marker after the vec4 name
             src->SetMarker();
 
-            // FIXME: how about we add the var to the desktop instead of this window
-            // so it won't get deleted
-            //        when this window is destoyed which even happens during parsing
-            //        with simple windows ?
+            // FIXME: how about we add the var to the desktop instead of this window so it won't get deleted
+            //        when this window is destoyed which even happens during parsing with simple windows ?
             // definedVars.Append(var);
             gui->GetDesktop()->definedVars.Append(var);
             gui->GetDesktop()->regList.AddReg(work, idRegister::VEC4, src, gui->GetDesktop(), var);
@@ -3433,37 +3424,35 @@ intptr_t idWindow::EmitOp(intptr_t a, intptr_t b, wexpOpType_t opType, wexpOp_t 
 {
     wexpOp_t *op;
     /*
-            // optimize away identity operations
-            if ( opType == WOP_TYPE_ADD ) {
-                    if ( !registerIsTemporary[a] && shaderRegisters[a] == 0 ) {
-                            return b;
-                    }
-                    if ( !registerIsTemporary[b] && shaderRegisters[b] == 0 ) {
-                            return a;
-                    }
-                    if ( !registerIsTemporary[a] && !registerIsTemporary[b] ) {
-                            return ExpressionConstant( shaderRegisters[a] +
-       shaderRegisters[b] );
-                    }
+        // optimize away identity operations
+        if ( opType == WOP_TYPE_ADD ) {
+            if ( !registerIsTemporary[a] && shaderRegisters[a] == 0 ) {
+                return b;
             }
-            if ( opType == WOP_TYPE_MULTIPLY ) {
-                    if ( !registerIsTemporary[a] && shaderRegisters[a] == 1 ) {
-                            return b;
-                    }
-                    if ( !registerIsTemporary[a] && shaderRegisters[a] == 0 ) {
-                            return a;
-                    }
-                    if ( !registerIsTemporary[b] && shaderRegisters[b] == 1 ) {
-                            return a;
-                    }
-                    if ( !registerIsTemporary[b] && shaderRegisters[b] == 0 ) {
-                            return b;
-                    }
-                    if ( !registerIsTemporary[a] && !registerIsTemporary[b] ) {
-                            return ExpressionConstant( shaderRegisters[a] *
-       shaderRegisters[b] );
-                    }
+            if ( !registerIsTemporary[b] && shaderRegisters[b] == 0 ) {
+                return a;
             }
+            if ( !registerIsTemporary[a] && !registerIsTemporary[b] ) {
+                return ExpressionConstant( shaderRegisters[a] + shaderRegisters[b] );
+            }
+        }
+        if ( opType == WOP_TYPE_MULTIPLY ) {
+            if ( !registerIsTemporary[a] && shaderRegisters[a] == 1 ) {
+                return b;
+            }
+            if ( !registerIsTemporary[a] && shaderRegisters[a] == 0 ) {
+                return a;
+            }
+            if ( !registerIsTemporary[b] && shaderRegisters[b] == 1 ) {
+                return a;
+            }
+            if ( !registerIsTemporary[b] && shaderRegisters[b] == 0 ) {
+                return b;
+            }
+            if ( !registerIsTemporary[a] && !registerIsTemporary[b] ) {
+                return ExpressionConstant( shaderRegisters[a] * shaderRegisters[b] );
+            }
+        }
     */
     op = ExpressionOp();
 
@@ -4131,8 +4120,7 @@ void idWindow::WriteToDemoFile(class idDemoFile *f)
         f->WriteVec4(transitions[i].interp.GetStartValue());
         f->WriteVec4(transitions[i].interp.GetEndValue());
 
-        // write to keep win32 render demo format compatiblity - we don't actually
-        // read them back anymore
+        // write to keep win32 render demo format compatiblity - we don't actually read them back anymore
         f->WriteInt(transitions[i].interp.GetExtrapolate()->GetExtrapolationType());
         f->WriteFloat(transitions[i].interp.GetExtrapolate()->GetStartTime());
         f->WriteFloat(transitions[i].interp.GetExtrapolate()->GetDuration());
@@ -4464,8 +4452,7 @@ void idWindow::ReadFromSaveGame(idFile *savefile)
     }
 
     // #modified-fva; BEGIN
-    //  TODO: why does this have to be read from the savegame anyway, does it
-    //  change?
+    //  TODO: why does this have to be read from the savegame anyway, does it change?
     if (session->GetSaveGameVersion() >= 18)
     {
         cstAnchor.ReadFromSaveGame(savefile);

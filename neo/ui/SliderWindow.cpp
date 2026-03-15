@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/KeyInput.h"
 #include "sys/platform.h"
+#include "framework/KeyInput.h"
 #include "ui/DeviceContext.h"
-#include "ui/UserInterfaceLocal.h"
 #include "ui/Window.h"
+#include "ui/UserInterfaceLocal.h"
 
 #include "ui/SliderWindow.h"
 
@@ -441,8 +438,7 @@ void idSliderWindow::InitCvar()
     {
         if (!buddyWin)
         {
-            common->Warning("idSliderWindow::InitCvar: gui '%s' window '%s' has an "
-                            "empty cvar string",
+            common->Warning("idSliderWindow::InitCvar: gui '%s' window '%s' has an empty cvar string",
                             gui->GetSourceFile(), name.c_str());
         }
         cvar_init = true;
@@ -453,8 +449,7 @@ void idSliderWindow::InitCvar()
     cvar = cvarSystem->Find(cvarStr);
     if (!cvar)
     {
-        common->Warning("idSliderWindow::InitCvar: gui '%s' window '%s' references "
-                        "undefined cvar '%s'",
+        common->Warning("idSliderWindow::InitCvar: gui '%s' window '%s' references undefined cvar '%s'",
                         gui->GetSourceFile(), name.c_str(), cvarStr.c_str());
         cvar_init = true;
         return;

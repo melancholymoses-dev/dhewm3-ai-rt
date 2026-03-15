@@ -19,27 +19,24 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "DialogInfo.h"
-#include "DialogTextures.h"
-#include "EditViewDlg.h"
+#include "qe3.h"
 #include "Radiant.h"
 #include "WaitDlg.h"
-#include "qe3.h"
+#include "DialogTextures.h"
+#include "DialogInfo.h"
+#include "EditViewDlg.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -935,8 +932,7 @@ void CDialogTextures::addStrList(const char *root, const idStrList &list, int id
                 {
                     newItem = *check;
                 }
-                // HTREEITEM	newItem = FindTreeItem(&m_treeTextures, item,
-                // name.Left(index, out), item);
+                // HTREEITEM	newItem = FindTreeItem(&m_treeTextures, item, name.Left(index, out), item);
                 if (newItem == NULL)
                 {
                     newItem = m_treeTextures.InsertItem(out, item);
@@ -1010,13 +1006,13 @@ void CDialogTextures::addGuis(bool rootItems)
 void CDialogTextures::addScripts(bool rootItems)
 {
     /*
-            idFileList *files;
+        idFileList *files;
 
-            files = fileSystem->ListFilesExt( "def", ".script" );
+        files = fileSystem->ListFilesExt( "def", ".script" );
 
-            if ( files->GetNumFiles() ) {
-                    addStrList("Scripts", files->GetList(), 3);
-            }
+        if ( files->GetNumFiles() ) {
+            addStrList("Scripts", files->GetList(), 3);
+        }
     */
 }
 
@@ -1076,12 +1072,11 @@ void CDialogTextures::OnPreview()
 // void CDialogTextures::OnSave()
 //{
 /*
-        CString str;
-        m_wndEditShader.GetWindowText(str);
-        if (currentFile.length() && str.GetLength()) {
-                fileSystem->WriteFile(currentFile, str.GetBuffer(0),
-   str.GetLength());
-        }
+    CString str;
+    m_wndEditShader.GetWindowText(str);
+    if (currentFile.length() && str.GetLength()) {
+        fileSystem->WriteFile(currentFile, str.GetBuffer(0), str.GetLength());
+    }
 */
 //}
 
@@ -1217,17 +1212,17 @@ void CDialogTextures::OnMaterialEdit()
 void CDialogTextures::OnMaterialInfo()
 {
     /*
-            idStr str;
-            if (editMaterial) {
-                    str = "File: ";
-                    str += editMaterial->getFileName();
-                    str += "\r\nName: ";
-                    str = editMaterial->getName();
-                    ShowInfoDialog(str);
-            } else if (editGui.Length()) {
-                    str = "File: ";
-                    str += editGui;
-                    ShowInfoDialog(str);
-            }
+        idStr str;
+        if (editMaterial) {
+            str = "File: ";
+            str += editMaterial->getFileName();
+            str += "\r\nName: ";
+            str = editMaterial->getName();
+            ShowInfoDialog(str);
+        } else if (editGui.Length()) {
+            str = "File: ";
+            str += editGui;
+            ShowInfoDialog(str);
+        }
     */
 }

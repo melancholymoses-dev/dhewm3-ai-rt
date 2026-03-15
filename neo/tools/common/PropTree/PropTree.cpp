@@ -13,8 +13,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 // #include "stdafx.h"
 #include "tools/edit_gui_common.h"
@@ -38,24 +38,24 @@ HINSTANCE ghInst;
 
 /*extern "C" int APIENTRY DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID)
 {
-        if (dwReason == DLL_PROCESS_ATTACH)
-        {
-                TRACE0("PROPTREE.DLL Initializing!\n");
+    if (dwReason == DLL_PROCESS_ATTACH)
+    {
+        TRACE0("PROPTREE.DLL Initializing!\n");
 
-                if (!AfxInitExtensionModule(PropTreeDLL, hInstance))
-                        return 0;
+        if (!AfxInitExtensionModule(PropTreeDLL, hInstance))
+            return 0;
 
-                new CDynLinkLibrary(PropTreeDLL);
+        new CDynLinkLibrary(PropTreeDLL);
 
-                ghInst = hInstance;
-        }
-        else if (dwReason == DLL_PROCESS_DETACH)
-        {
-                TRACE0("PROPTREE.DLL Terminating!\n");
-                AfxTermExtensionModule(PropTreeDLL);
-        }
+        ghInst = hInstance;
+    }
+    else if (dwReason == DLL_PROCESS_DETACH)
+    {
+        TRACE0("PROPTREE.DLL Terminating!\n");
+        AfxTermExtensionModule(PropTreeDLL);
+    }
 
-        return 1;
+    return 1;
 }*/
 
 void InitPropTree(HINSTANCE hInstance)

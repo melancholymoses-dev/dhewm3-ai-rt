@@ -26,12 +26,11 @@ BUILDING:
    You can #define STBIW_MALLOC(), STBIW_REALLOC(), and STBIW_FREE() to replace
    malloc,realloc,free.
    You can #define STBIW_MEMMOVE() to replace memmove()
-   You can #define STBIW_ZLIB_COMPRESS to use a custom zlib-style compress
-function for PNG compression (instead of the builtin one), it must have the
-following signature: unsigned char * my_compress(unsigned char *data, int
-data_len, int *out_len, int quality); The returned data will be freed with
-STBIW_FREE() (free() by default), so it must be heap allocated with
-STBIW_MALLOC() (malloc() by default),
+   You can #define STBIW_ZLIB_COMPRESS to use a custom zlib-style compress function
+   for PNG compression (instead of the builtin one), it must have the following signature:
+   unsigned char * my_compress(unsigned char *data, int data_len, int *out_len, int quality);
+   The returned data will be freed with STBIW_FREE() (free() by default),
+   so it must be heap allocated with STBIW_MALLOC() (malloc() by default),
 
 UNICODE:
 
@@ -45,37 +44,30 @@ USAGE:
 
    There are five functions, one for each image file format:
 
-     int stbi_write_png(char const *filename, int w, int h, int comp, const void
-*data, int stride_in_bytes); int stbi_write_bmp(char const *filename, int w, int
-h, int comp, const void *data); int stbi_write_tga(char const *filename, int w,
-int h, int comp, const void *data); int stbi_write_jpg(char const *filename, int
-w, int h, int comp, const void *data, int quality); int stbi_write_hdr(char
-const *filename, int w, int h, int comp, const float *data);
+     int stbi_write_png(char const *filename, int w, int h, int comp, const void *data, int stride_in_bytes);
+     int stbi_write_bmp(char const *filename, int w, int h, int comp, const void *data);
+     int stbi_write_tga(char const *filename, int w, int h, int comp, const void *data);
+     int stbi_write_jpg(char const *filename, int w, int h, int comp, const void *data, int quality);
+     int stbi_write_hdr(char const *filename, int w, int h, int comp, const float *data);
 
-     void stbi_flip_vertically_on_write(int flag); // flag is non-zero to flip
-data vertically
+     void stbi_flip_vertically_on_write(int flag); // flag is non-zero to flip data vertically
 
-   There are also five equivalent functions that use an arbitrary write
-function. You are expected to open/close your file-equivalent before and after
-calling these:
+   There are also five equivalent functions that use an arbitrary write function. You are
+   expected to open/close your file-equivalent before and after calling these:
 
-     int stbi_write_png_to_func(stbi_write_func *func, void *context, int w, int
-h, int comp, const void  *data, int stride_in_bytes); int
-stbi_write_bmp_to_func(stbi_write_func *func, void *context, int w, int h, int
-comp, const void  *data); int stbi_write_tga_to_func(stbi_write_func *func, void
-*context, int w, int h, int comp, const void  *data); int
-stbi_write_hdr_to_func(stbi_write_func *func, void *context, int w, int h, int
-comp, const float *data); int stbi_write_jpg_to_func(stbi_write_func *func, void
-*context, int x, int y, int comp, const void *data, int quality);
+     int stbi_write_png_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const void  *data, int
+stride_in_bytes); int stbi_write_bmp_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const void
+*data); int stbi_write_tga_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const void  *data); int
+stbi_write_hdr_to_func(stbi_write_func *func, void *context, int w, int h, int comp, const float *data); int
+stbi_write_jpg_to_func(stbi_write_func *func, void *context, int x, int y, int comp, const void *data, int quality);
 
    where the callback is:
       void stbi_write_func(void *context, void *data, int size);
 
    You can configure it with these global variables:
-      int stbi_write_tga_with_rle;             // defaults to true; set to 0 to
-disable RLE int stbi_write_png_compression_level;    // defaults to 8; set to
-higher for more compression int stbi_write_force_png_filter;         // defaults
-to -1; set to 0..5 to force a filter mode
+      int stbi_write_tga_with_rle;             // defaults to true; set to 0 to disable RLE
+      int stbi_write_png_compression_level;    // defaults to 8; set to higher for more compression
+      int stbi_write_force_png_filter;         // defaults to -1; set to 0..5 to force a filter mode
 
 
    You can define STBI_WRITE_NO_STDIO to disable the file variant of these
@@ -161,8 +153,7 @@ LICENSE
 
 #include <stdlib.h>
 
-// if STB_IMAGE_WRITE_STATIC causes problems, try defining STBIWDEF to 'inline'
-// or 'static inline'
+// if STB_IMAGE_WRITE_STATIC causes problems, try defining STBIWDEF to 'inline' or 'static inline'
 #ifndef STBIWDEF
 #ifdef STB_IMAGE_WRITE_STATIC
 #define STBIWDEF static
@@ -222,10 +213,10 @@ STBIWDEF void stbi_flip_vertically_on_write(int flip_boolean);
 #include <stdio.h>
 #endif // STBI_WRITE_NO_STDIO
 
-#include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #if defined(STBIW_MALLOC) && defined(STBIW_FREE) && (defined(STBIW_REALLOC) || defined(STBIW_REALLOC_SIZED))
 // ok
@@ -302,8 +293,8 @@ static void stbi__stdio_write(void *context, void *data, int size)
 #define STBIW_EXTERN extern
 #endif
 STBIW_EXTERN
-__declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int cp, unsigned long flags, const char *str, int cbmb,
-                                                        wchar_t *widestr, int cchwide);
+    __declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int cp, unsigned long flags, const char *str,
+                                                            int cbmb, wchar_t *widestr, int cchwide);
 STBIW_EXTERN __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int cp, unsigned long flags,
                                                                      const wchar_t *widestr, int cchwide, char *str,
                                                                      int cbmb, const char *defchar, int *used_default);
@@ -449,8 +440,7 @@ static void stbiw__write_pixel(stbi__write_context *s, int rgb_dir, int comp, in
 
     switch (comp)
     {
-    case 2: // 2 pixels = mono + alpha, alpha is written separately, so same as
-            // 1-channel case
+    case 2: // 2 pixels = mono + alpha, alpha is written separately, so same as 1-channel case
     case 1:
         if (expand_mono)
             stbiw__write3(s, d[0], d[0], d[0]); // monochrome bmp
@@ -537,9 +527,8 @@ static int stbi_write_bmp_core(stbi__write_context *s, int x, int y, int comp, c
         return stbiw__outfile(s, -1, -1, x, y, comp, 1, (void *)data, 0, pad,
                               "11 4 22 4"
                               "4 44 22 444444",
-                              'B', 'M', 14 + 40 + (x * 3 + pad) * y, 0, 0,
-                              14 + 40,                            // file header
-                              40, x, y, 1, 24, 0, 0, 0, 0, 0, 0); // bitmap header
+                              'B', 'M', 14 + 40 + (x * 3 + pad) * y, 0, 0, 14 + 40, // file header
+                              40, x, y, 1, 24, 0, 0, 0, 0, 0, 0);                   // bitmap header
     }
     else
     {
@@ -835,8 +824,7 @@ static void stbiw__write_hdr_scanline(stbi__write_context *s, int width, int nco
                 }
                 // if there's a run, output it
                 if (r + 2 < width)
-                { // same test as what we break out of in search
-                  // loop, so only true if we break'd
+                { // same test as what we break out of in search loop, so only true if we break'd
                     // find next byte after run
                     while (r < width && comp[r] == comp[x])
                         ++r;
@@ -861,8 +849,7 @@ static int stbi_write_hdr_core(stbi__write_context *s, int x, int y, int comp, f
         return 0;
     else
     {
-        // Each component is stored separately. Allocate scratch space for full
-        // output scanline.
+        // Each component is stored separately. Allocate scratch space for full output scanline.
         unsigned char *scratch = (unsigned char *)STBIW_MALLOC(x * 4);
         int i, len;
         char buffer[128];
@@ -911,8 +898,7 @@ STBIWDEF int stbi_write_hdr(char const *filename, int x, int y, int comp, const 
 //
 
 #ifndef STBIW_ZLIB_COMPRESS
-// stretchy buffer; stbiw__sbpush() == vector<>::push_back() -- stbiw__sbcount()
-// == vector<>::size()
+// stretchy buffer; stbiw__sbpush() == vector<>::push_back() -- stbiw__sbcount() == vector<>::size()
 #define stbiw__sbraw(a) ((int *)(void *)(a) - 2)
 #define stbiw__sbm(a) stbiw__sbraw(a)[0]
 #define stbiw__sbn(a) stbiw__sbraw(a)[1]
@@ -1066,8 +1052,7 @@ STBIWDEF unsigned char *stbi_zlib_compress(unsigned char *data, int data_len, in
 
         if (bestloc)
         {
-            // "lazy matching" - check match at *next* byte, and if it's better, do
-            // cur byte as literal
+            // "lazy matching" - check match at *next* byte, and if it's better, do cur byte as literal
             h = stbiw__zhash(data + i + 1) & (stbiw__ZHASH - 1);
             hlist = hash_table[h];
             n = stbiw__sbcount(hlist);
@@ -1128,9 +1113,8 @@ STBIWDEF unsigned char *stbi_zlib_compress(unsigned char *data, int data_len, in
             int blocklen = data_len - j;
             if (blocklen > 32767)
                 blocklen = 32767;
-            stbiw__sbpush(out,
-                          data_len - j == blocklen);   // BFINAL = ?, BTYPE = 0 -- no compression
-            stbiw__sbpush(out, STBIW_UCHAR(blocklen)); // LEN
+            stbiw__sbpush(out, data_len - j == blocklen); // BFINAL = ?, BTYPE = 0 -- no compression
+            stbiw__sbpush(out, STBIW_UCHAR(blocklen));    // LEN
             stbiw__sbpush(out, STBIW_UCHAR(blocklen >> 8));
             stbiw__sbpush(out, STBIW_UCHAR(~blocklen)); // NLEN
             stbiw__sbpush(out, STBIW_UCHAR(~blocklen >> 8));
@@ -1348,8 +1332,7 @@ STBIWDEF unsigned char *stbi_write_png_to_mem(const unsigned char *pixels, int s
             {
                 stbiw__encode_png_line((unsigned char *)(pixels), stride_bytes, x, y, j, n, filter_type, line_buffer);
 
-                // Estimate the entropy of the line using this filter; the less, the
-                // better.
+                // Estimate the entropy of the line using this filter; the less, the better.
                 est = 0;
                 for (i = 0; i < x * n; ++i)
                 {
@@ -1362,14 +1345,12 @@ STBIWDEF unsigned char *stbi_write_png_to_mem(const unsigned char *pixels, int s
                 }
             }
             if (filter_type != best_filter)
-            { // If the last iteration already got us
-              // the best filter, don't redo it
+            { // If the last iteration already got us the best filter, don't redo it
                 stbiw__encode_png_line((unsigned char *)(pixels), stride_bytes, x, y, j, n, best_filter, line_buffer);
                 filter_type = best_filter;
             }
         }
-        // when we get here, filter_type contains the filter type, and line_buffer
-        // contains the data
+        // when we get here, filter_type contains the filter type, and line_buffer contains the data
         filt[j * (x * n + 1)] = (unsigned char)filter_type;
         STBIW_MEMMOVE(filt + j * (x * n + 1) + 1, line_buffer, x * n);
     }
@@ -1454,8 +1435,7 @@ STBIWDEF int stbi_write_png_to_func(stbi_write_func *func, void *context, int x,
  * JPEG writer
  *
  * This is based on Jon Olick's jo_jpeg.cpp:
- * public domain Simple, Minimalistic JPEG writer -
- * http://www.jonolick.com/code.html
+ * public domain Simple, Minimalistic JPEG writer - http://www.jonolick.com/code.html
  */
 
 static const unsigned char stbiw__jpg_ZigZag[] = {0,  1,  5,  6,  14, 15, 27, 28, 2,  4,  7,  13, 16, 26, 29, 42,
@@ -1578,9 +1558,8 @@ static int stbiw__jpg_processDU(stbi__write_context *s, int *bitBuf, int *bitCnt
             float v;
             i = y * du_stride + x;
             v = CDU[i] * fdtbl[j];
-            // DU[stbiw__jpg_ZigZag[j]] = (int)(v < 0 ? ceilf(v - 0.5f) : floorf(v +
-            // 0.5f)); ceilf() and floorf() are C99, not C89, but I /think/ they're
-            // not needed here anyway?
+            // DU[stbiw__jpg_ZigZag[j]] = (int)(v < 0 ? ceilf(v - 0.5f) : floorf(v + 0.5f));
+            // ceilf() and floorf() are C99, not C89, but I /think/ they're not needed here anyway?
             DU[stbiw__jpg_ZigZag[j]] = (int)(v < 0 ? v - 0.5f : v + 0.5f);
         }
     }
@@ -1954,8 +1933,9 @@ STBIWDEF int stbi_write_jpg(char const *filename, int x, int y, int comp, const 
 
 /* Revision history
       1.16  (2021-07-11)
-             make Deflate code emit uncompressed blocks when it would otherwise
-   expand support writing BMPs with alpha channel 1.15  (2020-07-13) unknown
+             make Deflate code emit uncompressed blocks when it would otherwise expand
+             support writing BMPs with alpha channel
+      1.15  (2020-07-13) unknown
       1.14  (2020-02-02) updated JPEG writer to downsample chroma channels
       1.13
       1.12
@@ -1966,13 +1946,24 @@ STBIWDEF int stbi_write_jpg(char const *filename, int x, int y, int comp, const 
       1.09  (2018-02-11)
              fix typo in zlib quality API, improve STB_I_W_STATIC in C++
       1.08  (2018-01-29)
-             add stbi__flip_vertically_on_write, external zlib, zlib quality,
-   choose PNG filter 1.07  (2017-07-24) doc fix 1.06 (2017-07-23) writing JPEG
-   (using Jon Olick's code) 1.05   ??? 1.04 (2017-03-03) monochrome BMP
-   expansion 1.03   ??? 1.02 (2016-04-02) avoid allocating large structures on
-   the stack 1.01 (2016-01-16) STBIW_REALLOC_SIZED: support allocators with no
-   realloc support avoid race-condition in crc initialization minor compile
-   issues 1.00 (2015-09-14) installable file IO function 0.99 (2015-09-13)
+             add stbi__flip_vertically_on_write, external zlib, zlib quality, choose PNG filter
+      1.07  (2017-07-24)
+             doc fix
+      1.06 (2017-07-23)
+             writing JPEG (using Jon Olick's code)
+      1.05   ???
+      1.04 (2017-03-03)
+             monochrome BMP expansion
+      1.03   ???
+      1.02 (2016-04-02)
+             avoid allocating large structures on the stack
+      1.01 (2016-01-16)
+             STBIW_REALLOC_SIZED: support allocators with no realloc support
+             avoid race-condition in crc initialization
+             minor compile issues
+      1.00 (2015-09-14)
+             installable file IO function
+      0.99 (2015-09-13)
              warning fixes; TGA rle support
       0.98 (2015-04-08)
              added STBIW_MALLOC, STBIW_ASSERT etc

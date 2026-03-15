@@ -45,12 +45,13 @@
 //
 // Version history:
 //
-//     1.01  (2021-07-11)  always use large rect mode, expose STBRP__MAXVAL in
-//     public section 1.00  (2019-02-25)  avoid small space waste; gracefully
-//     fail too-wide rectangles 0.99  (2019-02-07)  warning fixes 0.11
-//     (2017-03-03)  return packing success/fail result 0.10  (2016-10-25)
-//     remove cast-away-const to avoid warnings 0.09  (2016-08-27)  fix compiler
-//     warnings 0.08  (2015-09-13)  really fix bug with empty rects (w=0 or h=0)
+//     1.01  (2021-07-11)  always use large rect mode, expose STBRP__MAXVAL in public section
+//     1.00  (2019-02-25)  avoid small space waste; gracefully fail too-wide rectangles
+//     0.99  (2019-02-07)  warning fixes
+//     0.11  (2017-03-03)  return packing success/fail result
+//     0.10  (2016-10-25)  remove cast-away-const to avoid warnings
+//     0.09  (2016-08-27)  fix compiler warnings
+//     0.08  (2015-09-13)  really fix bug with empty rects (w=0 or h=0)
 //     0.07  (2015-09-13)  fix bug with empty rects (w=0 or h=0)
 //     0.06  (2015-04-15)  added STBRP_SORT to allow replacing qsort
 //     0.05:  added STBRP_ASSERT to allow replacing assert
@@ -133,8 +134,7 @@ extern "C"
     STBRP_DEF void stbrp_init_target(stbrp_context *context, int width, int height, stbrp_node *nodes, int num_nodes);
     // Initialize a rectangle packer to:
     //    pack a rectangle that is 'width' by 'height' in dimensions
-    //    using temporary storage provided by the array 'nodes', which is
-    //    'num_nodes' long
+    //    using temporary storage provided by the array 'nodes', which is 'num_nodes' long
     //
     // You must call this function every time you start packing into a new target.
     //
@@ -144,16 +144,13 @@ extern "C"
     //
     // Note: to guarantee best results, either:
     //       1. make sure 'num_nodes' >= 'width'
-    //   or  2. call stbrp_allow_out_of_mem() defined below with 'allow_out_of_mem =
-    //   1'
+    //   or  2. call stbrp_allow_out_of_mem() defined below with 'allow_out_of_mem = 1'
     //
-    // If you don't do either of the above things, widths will be quantized to
-    // multiples of small integers to guarantee the algorithm doesn't run out of
-    // temporary storage.
+    // If you don't do either of the above things, widths will be quantized to multiples
+    // of small integers to guarantee the algorithm doesn't run out of temporary storage.
     //
-    // If you do #2, then the non-quantized algorithm will be used, but the
-    // algorithm may run out of temporary storage and be unable to pack some
-    // rectangles.
+    // If you do #2, then the non-quantized algorithm will be used, but the algorithm
+    // may run out of temporary storage and be unable to pack some rectangles.
 
     STBRP_DEF void stbrp_setup_allow_out_of_mem(stbrp_context *context, int allow_out_of_mem);
     // Optionally call this function after init but before doing any packing to
@@ -193,8 +190,7 @@ extern "C"
         int num_nodes;
         stbrp_node *active_head;
         stbrp_node *free_head;
-        stbrp_node extra[2]; // we allocate two extra nodes so optimal user-node-count
-                             // is 'width' not 'width+2'
+        stbrp_node extra[2]; // we allocate two extra nodes so optimal user-node-count is 'width' not 'width+2'
     };
 
 #ifdef __cplusplus
@@ -283,8 +279,7 @@ STBRP_DEF void stbrp_init_target(stbrp_context *context, int width, int height, 
     context->num_nodes = num_nodes;
     stbrp_setup_allow_out_of_mem(context, 0);
 
-    // node 0 is the full width, node 1 is the sentinel (lets us not store width
-    // explicitly)
+    // node 0 is the full width, node 1 is the sentinel (lets us not store width explicitly)
     context->extra[0].x = 0;
     context->extra[0].y = 0;
     context->extra[0].next = &context->extra[1];
@@ -380,8 +375,7 @@ static stbrp__findresult stbrp__skyline_find_best_pos(stbrp_context *c, int widt
         int y, waste;
         y = stbrp__skyline_find_min_y(c, node, node->x, width, &waste);
         if (c->heuristic == STBRP_HEURISTIC_Skyline_BL_sortHeight)
-        { // actually just want to test
-          // BL
+        { // actually just want to test BL
             // bottom left
             if (y < best_y)
             {
@@ -409,8 +403,7 @@ static stbrp__findresult stbrp__skyline_find_best_pos(stbrp_context *c, int widt
 
     best_x = (best == NULL) ? 0 : (*best)->x;
 
-    // if doing best-fit (BF), we also have to try aligning right edge to each
-    // node position
+    // if doing best-fit (BF), we also have to try aligning right edge to each node position
     //
     // e.g, if fitting
     //
@@ -423,8 +416,7 @@ static stbrp__findresult stbrp__skyline_find_best_pos(stbrp_context *c, int widt
     //   |             ____________|
     //   |____________|
     //
-    // then right-aligned reduces waste, but bottom-left BL is always chooses
-    // left-aligned
+    // then right-aligned reduces waste, but bottom-left BL is always chooses left-aligned
     //
     // This makes BF take about 2x the time
 

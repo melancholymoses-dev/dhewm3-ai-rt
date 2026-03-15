@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __WINDING2D_H__
 #define __WINDING2D_H__
 
-#include "idlib/math/Plane.h"
 #include "idlib/math/Vector.h"
+#include "idlib/math/Plane.h"
 
 /*
 ===============================================================================
 
-        A 2D winding is an arbitrary convex 2D polygon defined by an array of
-points.
+    A 2D winding is an arbitrary convex 2D polygon defined by an array of points.
 
 ===============================================================================
 */
@@ -65,12 +61,11 @@ class idWinding2D
     void Expand(const float d);
     void ExpandForAxialBox(const idVec2 bounds[2]);
 
-    // splits the winding into a front and back winding, the winding itself stays
-    // unchanged returns a SIDE_?
+    // splits the winding into a front and back winding, the winding itself stays unchanged
+    // returns a SIDE_?
     int Split(const idVec3 &plane, const float epsilon, idWinding2D **front, idWinding2D **back) const;
-    // cuts off the part at the back side of the plane, returns true if some part
-    // was at the front if there is nothing at the front the number of points is
-    // set to zero
+    // cuts off the part at the back side of the plane, returns true if some part was at the front
+    // if there is nothing at the front the number of points is set to zero
     bool ClipInPlace(const idVec3 &plane, const float epsilon = ON_EPSILON, const bool keepOn = false);
 
     idWinding2D *Copy(void) const;

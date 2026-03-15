@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,32 +39,32 @@ class idFile;
 /*
 ===============================================================================
 
-        Declaration Manager
+    Declaration Manager
 
-        All "small text" data types, like materials, sound shaders, fx files,
-        entity defs, etc. are managed uniformly, allowing reloading, purging,
-        listing, printing, etc. All "large text" data types that never have more
-        than one declaration in a given file, like maps, models, AAS files, etc.
-        are not handled here.
+    All "small text" data types, like materials, sound shaders, fx files,
+    entity defs, etc. are managed uniformly, allowing reloading, purging,
+    listing, printing, etc. All "large text" data types that never have more
+    than one declaration in a given file, like maps, models, AAS files, etc.
+    are not handled here.
 
-        A decl will never, ever go away once it is created. The manager is
-        garranteed to always return the same decl pointer for a decl type/name
-        combination. The index of a decl in the per type list also stays the
-        same throughout the lifetime of the engine. Although the pointer to
-        a decl always stays the same, one should never maintain pointers to
-        data inside decls. The data stored in a decl is not garranteed to stay
-        the same for more than one engine frame.
+    A decl will never, ever go away once it is created. The manager is
+    garranteed to always return the same decl pointer for a decl type/name
+    combination. The index of a decl in the per type list also stays the
+    same throughout the lifetime of the engine. Although the pointer to
+    a decl always stays the same, one should never maintain pointers to
+    data inside decls. The data stored in a decl is not garranteed to stay
+    the same for more than one engine frame.
 
-        The decl indexes of explicitely defined decls are garrenteed to be
-        consistent based on the parsed decl files. However, the indexes of
-        implicit decls may be different based on the order in which levels
-        are loaded.
+    The decl indexes of explicitely defined decls are garrenteed to be
+    consistent based on the parsed decl files. However, the indexes of
+    implicit decls may be different based on the order in which levels
+    are loaded.
 
-        The decl namespaces are separate for each type. Comments for decls go
-        above the text definition to keep them associated with the proper decl.
+    The decl namespaces are separate for each type. Comments for decls go
+    above the text definition to keep them associated with the proper decl.
 
-        During decl parsing, errors should never be issued, only warnings
-        followed by a call to MakeDefault().
+    During decl parsing, errors should never be issued, only warnings
+    followed by a call to MakeDefault().
 
 ===============================================================================
 */
@@ -98,19 +95,17 @@ typedef enum
 typedef enum
 {
     DS_UNPARSED,
-    DS_DEFAULTED, // set if a parse failed due to an error, or the lack of any
-                  // source
+    DS_DEFAULTED, // set if a parse failed due to an error, or the lack of any source
     DS_PARSED
 } declState_t;
 
-const int DECL_LEXER_FLAGS = LEXFL_NOSTRINGCONCAT |             // multiple strings seperated by whitespaces are not
-                                                                // concatenated
-                             LEXFL_NOSTRINGESCAPECHARS |        // no escape characters inside strings
-                             LEXFL_ALLOWPATHNAMES |             // allow path seperators in names
-                             LEXFL_ALLOWMULTICHARLITERALS |     // allow multi character literals
-                             LEXFL_ALLOWBACKSLASHSTRINGCONCAT | // allow multiple strings seperated by
-                                                                // '\' to be concatenated
-                             LEXFL_NOFATALERRORS;               // just set a flag instead of fatal erroring
+const int DECL_LEXER_FLAGS =
+    LEXFL_NOSTRINGCONCAT |             // multiple strings seperated by whitespaces are not concatenated
+    LEXFL_NOSTRINGESCAPECHARS |        // no escape characters inside strings
+    LEXFL_ALLOWPATHNAMES |             // allow path seperators in names
+    LEXFL_ALLOWMULTICHARLITERALS |     // allow multi character literals
+    LEXFL_ALLOWBACKSLASHSTRINGCONCAT | // allow multiple strings seperated by '\' to be concatenated
+    LEXFL_NOFATALERRORS;               // just set a flag instead of fatal erroring
 
 class idDeclBase
 {
@@ -166,15 +161,13 @@ class idDecl
         return base->GetType();
     }
 
-    // Returns the decl state which is usefull for finding out if a decl
-    // defaulted.
+    // Returns the decl state which is usefull for finding out if a decl defaulted.
     declState_t GetState(void) const
     {
         return base->GetState();
     }
 
-    // Returns true if the decl was defaulted or the text was created with a call
-    // to SetDefaultText.
+    // Returns true if the decl was defaulted or the text was created with a call to SetDefaultText.
     bool IsImplicit(void) const
     {
         return base->IsImplicit();
@@ -370,8 +363,8 @@ class idDeclManager
     virtual declType_t GetDeclTypeFromName(const char *typeName) const = 0;
 
     // If makeDefault is true, a default decl of appropriate type will be created
-    // if an explicit one isn't found. If makeDefault is false, NULL will be
-    // returned if the decl wasn't explcitly defined.
+    // if an explicit one isn't found. If makeDefault is false, NULL will be returned
+    // if the decl wasn't explcitly defined.
     virtual const idDecl *FindType(declType_t type, const char *name, bool makeDefault = true) = 0;
 
     virtual const idDecl *FindDeclWithoutParsing(declType_t type, const char *name, bool makeDefault = true) = 0;
@@ -382,8 +375,8 @@ class idDeclManager
     virtual int GetNumDecls(declType_t type) = 0;
 
     // The complete lists of decls can be walked to populate editor browsers.
-    // If forceParse is set false, you can get the decl to check name / filename /
-    // etc. without causing it to parse the source and load media.
+    // If forceParse is set false, you can get the decl to check name / filename / etc.
+    // without causing it to parse the source and load media.
     virtual const idDecl *DeclByIndex(declType_t type, int index, bool forceParse = true) = 0;
 
     // List and print decls.

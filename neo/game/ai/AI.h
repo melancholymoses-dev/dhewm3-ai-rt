@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,15 +32,15 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __AI_H__
 #define __AI_H__
 
-#include "Actor.h"
-#include "Entity.h"
-#include "Projectile.h"
 #include "physics/Physics_Monster.h"
+#include "Entity.h"
+#include "Actor.h"
+#include "Projectile.h"
 
 /*
 ===============================================================================
 
-        idAI
+    idAI
 
 ===============================================================================
 */
@@ -105,8 +102,7 @@ typedef enum
 
 //
 // status results from move commands
-// make sure to change script/doom_defs.script if you add any, or change their
-// order
+// make sure to change script/doom_defs.script if you add any, or change their order
 //
 typedef enum
 {
@@ -202,8 +198,7 @@ class idMoveState
     idVec3 moveDest;
     idVec3 moveDir; // used for wandering and slide moves
     idEntityPtr<idEntity> goalEntity;
-    idVec3 goalEntityOrigin; // move to entity uses this to avoid checking the
-                             // floor position every frame
+    idVec3 goalEntityOrigin; // move to entity uses this to avoid checking the floor position every frame
     int toAreaNum;
     int startTime;
     int duration;
@@ -349,18 +344,15 @@ class idAI : public idActor
 
     bool allowMove;           // disables any animation movement
     bool allowHiddenMovement; // allows character to still move around while hidden
-    bool disableGravity;      // disables gravity and allows vertical movement by the
-                              // animation
-    bool af_push_moveables;   // allow the articulated figure to push moveable
-                              // objects
+    bool disableGravity;      // disables gravity and allows vertical movement by the animation
+    bool af_push_moveables;   // allow the articulated figure to push moveable objects
 
     // weapon/attack vars
     bool lastHitCheckResult;
     int lastHitCheckTime;
     int lastAttackTime;
     float melee_range;
-    float projectile_height_to_distance_ratio; // calculates the maximum height a
-                                               // projectile can be thrown
+    float projectile_height_to_distance_ratio; // calculates the maximum height a projectile can be thrown
     idList<idVec3> missileLaunchOffset;
 
     const idDict *projectileDef;

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,18 +32,18 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_WEAPON_H__
 #define __GAME_WEAPON_H__
 
-#include "Actor.h"
-#include "Entity.h"
-#include "Grabber.h"
-#include "Light.h"
 #include "script/Script_Thread.h"
+#include "Entity.h"
+#include "Light.h"
+#include "Grabber.h"
+#include "Actor.h"
 
 class idFuncEmitter;
 
 /*
 ===============================================================================
 
-        Player Weapon
+    Player Weapon
 
 ===============================================================================
 */
@@ -254,8 +251,7 @@ class idWeapon : public idAnimatedEntity
     idVec3 viewWeaponOrigin;
     idMat3 viewWeaponAxis;
 
-    // the muzzle bone's position, used for launching projectiles and trailing
-    // smoke
+    // the muzzle bone's position, used for launching projectiles and trailing smoke
     idVec3 muzzleOrigin;
     idMat3 muzzleAxis;
 
@@ -303,13 +299,12 @@ class idWeapon : public idAnimatedEntity
 
     // ammo management
     ammo_t ammoType;
-    int ammoRequired; // amount of ammo to use each shot.  0 means weapon doesn't
-                      // need ammo.
+    int ammoRequired; // amount of ammo to use each shot.  0 means weapon doesn't need ammo.
     int clipSize;     // 0 means no reload
     int ammoClip;
     int lowAmmo;    // if ammo in clip hits this threshold, snd_
-    bool powerAmmo; // true if the clip reduction is a factor of the power setting
-                    // when a projectile is launched
+    bool powerAmmo; // true if the clip reduction is a factor of the power setting when
+                    // a projectile is launched
     // mp client
     bool isFiring;
 

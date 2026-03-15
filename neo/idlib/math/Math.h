@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -144,65 +141,48 @@ class idMath
 
     static float RSqrt(float x); // reciprocal square root, returns huge number when x == 0.0
 
-    static float InvSqrt(float x);    // inverse square root with 32 bits precision,
-                                      // returns huge number when x == 0.0
-    static float InvSqrt16(float x);  // inverse square root with 16 bits precision, returns
-                                      // huge number when x == 0.0
-    static double InvSqrt64(float x); // inverse square root with 64 bits precision, returns
-                                      // huge number when x == 0.0
+    static float InvSqrt(float x);    // inverse square root with 32 bits precision, returns huge number when x == 0.0
+    static float InvSqrt16(float x);  // inverse square root with 16 bits precision, returns huge number when x == 0.0
+    static double InvSqrt64(float x); // inverse square root with 64 bits precision, returns huge number when x == 0.0
 
     static float Sqrt(float x);    // square root with 32 bits precision
     static float Sqrt16(float x);  // square root with 16 bits precision
     static double Sqrt64(float x); // square root with 64 bits precision
 
     static float Sin(float a);    // sine with 32 bits precision
-    static float Sin16(float a);  // sine with 16 bits precision, maximum absolute
-                                  // error is 2.3082e-09
+    static float Sin16(float a);  // sine with 16 bits precision, maximum absolute error is 2.3082e-09
     static double Sin64(float a); // sine with 64 bits precision
 
     static float Cos(float a);    // cosine with 32 bits precision
-    static float Cos16(float a);  // cosine with 16 bits precision, maximum
-                                  // absolute error is 2.3082e-09
+    static float Cos16(float a);  // cosine with 16 bits precision, maximum absolute error is 2.3082e-09
     static double Cos64(float a); // cosine with 64 bits precision
 
-    static void SinCos(float a, float &s,
-                       float &c); // sine and cosine with 32 bits precision
-    static void SinCos16(float a, float &s,
-                         float &c); // sine and cosine with 16 bits precision
-    static void SinCos64(float a, double &s,
-                         double &c); // sine and cosine with 64 bits precision
+    static void SinCos(float a, float &s, float &c);     // sine and cosine with 32 bits precision
+    static void SinCos16(float a, float &s, float &c);   // sine and cosine with 16 bits precision
+    static void SinCos64(float a, double &s, double &c); // sine and cosine with 64 bits precision
 
     static float Tan(float a);    // tangent with 32 bits precision
-    static float Tan16(float a);  // tangent with 16 bits precision, maximum
-                                  // absolute error is 1.8897e-08
+    static float Tan16(float a);  // tangent with 16 bits precision, maximum absolute error is 1.8897e-08
     static double Tan64(float a); // tangent with 64 bits precision
 
-    static float ASin(float a);    // arc sine with 32 bits precision, input is
-                                   // clamped to [-1, 1] to avoid a silent NaN
-    static float ASin16(float a);  // arc sine with 16 bits precision, maximum
-                                   // absolute error is 6.7626e-05
+    static float ASin(float a);    // arc sine with 32 bits precision, input is clamped to [-1, 1] to avoid a silent NaN
+    static float ASin16(float a);  // arc sine with 16 bits precision, maximum absolute error is 6.7626e-05
     static double ASin64(float a); // arc sine with 64 bits precision
 
-    static float ACos(float a);    // arc cosine with 32 bits precision, input is
-                                   // clamped to [-1, 1] to avoid a silent NaN
-    static float ACos16(float a);  // arc cosine with 16 bits precision, maximum
-                                   // absolute error is 6.7626e-05
+    static float ACos(float a); // arc cosine with 32 bits precision, input is clamped to [-1, 1] to avoid a silent NaN
+    static float ACos16(float a);  // arc cosine with 16 bits precision, maximum absolute error is 6.7626e-05
     static double ACos64(float a); // arc cosine with 64 bits precision
 
     static float ATan(float a);    // arc tangent with 32 bits precision
-    static float ATan16(float a);  // arc tangent with 16 bits precision, maximum
-                                   // absolute error is 1.3593e-08
+    static float ATan16(float a);  // arc tangent with 16 bits precision, maximum absolute error is 1.3593e-08
     static double ATan64(float a); // arc tangent with 64 bits precision
 
     static float ATan(float y, float x);    // arc tangent with 32 bits precision
-    static float ATan16(float y, float x);  // arc tangent with 16 bits precision,
-                                            // maximum absolute error is 1.3593e-08
+    static float ATan16(float y, float x);  // arc tangent with 16 bits precision, maximum absolute error is 1.3593e-08
     static double ATan64(float y, float x); // arc tangent with 64 bits precision
 
-    static float Pow(float x,
-                     float y); // x raised to the power y with 32 bits precision
-    static float Pow16(float x,
-                       float y);           // x raised to the power y with 16 bits precision
+    static float Pow(float x, float y);    // x raised to the power y with 32 bits precision
+    static float Pow16(float x, float y);  // x raised to the power y with 16 bits precision
     static double Pow64(float x, float y); // x raised to the power y with 64 bits precision
 
     static float Exp(float f);    // e raised to the power f with 32 bits precision
@@ -219,8 +199,7 @@ class idMath
 
     static int BitsForFloat(float f);     // minumum number of bits required to represent ceil( f )
     static int BitsForInteger(int i);     // minumum number of bits required to represent i
-    static int MaskForFloatSign(float f); // returns 0x00000000 if x >= 0.0f and
-                                          // returns 0xFFFFFFFF if x <= -0.0f
+    static int MaskForFloatSign(float f); // returns 0x00000000 if x >= 0.0f and returns 0xFFFFFFFF if x <= -0.0f
     static int MaskForIntegerSign(int i); // returns 0x00000000 if x >= 0 and returns 0xFFFFFFFF if x < 0
     static int FloorPowerOfTwo(int x);    // round x down to the nearest power of 2
     static int CeilPowerOfTwo(int x);     // round x up to the nearest power of 2
@@ -228,20 +207,17 @@ class idMath
     static int BitCount(int x);           // returns the number of 1 bits in x
     static int BitReverse(int x);         // returns the bit reverse of x
 
-    static int Abs(int x);               // returns the absolute value of the integer value (for
-                                         // reference only)
-    static float Fabs(float f);          // returns the absolute value of the floating point value
-    static float Floor(float f);         // returns the largest integer that is less than
-                                         // or equal to the given value
-    static float Ceil(float f);          // returns the smallest integer that is greater
-                                         // than or equal to the given value
-    static float Rint(float f);          // returns the nearest integer
-    static int Ftoi(float f);            // float to int conversion
-    static int FtoiFast(float f);        // fast float to int conversion but uses current
-                                         // FPU round mode (default round nearest)
-    static unsigned int Ftol(float f);   // float to int conversion
-    static unsigned int FtolFast(float); // fast float to int conversion but uses current FPU round
-                                         // mode (default round nearest)
+    static int Abs(int x);       // returns the absolute value of the integer value (for reference only)
+    static float Fabs(float f);  // returns the absolute value of the floating point value
+    static float Floor(float f); // returns the largest integer that is less than or equal to the given value
+    static float Ceil(float f);  // returns the smallest integer that is greater than or equal to the given value
+    static float Rint(float f);  // returns the nearest integer
+    static int Ftoi(float f);    // float to int conversion
+    static int FtoiFast(
+        float f); // fast float to int conversion but uses current FPU round mode (default round nearest)
+    static unsigned int Ftol(float f); // float to int conversion
+    static unsigned int FtolFast(
+        float); // fast float to int conversion but uses current FPU round mode (default round nearest)
 
     static signed char ClampChar(int i);
     static signed short ClampShort(int i);
@@ -1103,8 +1079,7 @@ ID_INLINE unsigned int idMath::FtolFast(float f)
     return ((((m >> -shift) | (m << shift)) & ~(e >> 31)) ^ s) - s;
 // #elif defined( __i386__ )
 #elif 0
-    // for some reason, on gcc I need to make sure i == 0 before performing a
-    // fistp
+    // for some reason, on gcc I need to make sure i == 0 before performing a fistp
     int i = 0;
     __asm__ __volatile__("fld %1\n"
                          "fistp %0\n"

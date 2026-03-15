@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/hashing/CRC32.h"
 #include "framework/Common.h"
 #include "framework/File.h"
-#include "idlib/hashing/CRC32.h"
-#include "sys/platform.h"
 
 #include "idlib/Dict.h"
 
@@ -77,8 +74,7 @@ idDict &idDict::operator=(const idDict &other)
 ================
 idDict::Copy
 
-  copy all key value pairs without removing existing key/value pairs not present
-in the other dict
+  copy all key value pairs without removing existing key/value pairs not present in the other dict
 ================
 */
 void idDict::Copy(const idDict &other)
@@ -111,8 +107,7 @@ void idDict::Copy(const idDict &other)
     {
         if (found && found[i] != -1)
         {
-            // first set the new value and then free the old value to allow proper
-            // self copying
+            // first set the new value and then free the old value to allow proper self copying
             const idPoolStr *oldValue = args[found[i]].value;
             args[found[i]].value = globalValues.CopyString(other.args[i].value);
             globalValues.FreeString(oldValue);
@@ -144,8 +139,7 @@ void idDict::TransferKeyValues(idDict &other)
 
     if (other.args.Num() && other.args[0].key->GetPool() != &globalKeys)
     {
-        common->FatalError("idDict::TransferKeyValues: can't transfer values "
-                           "across a DLL boundary");
+        common->FatalError("idDict::TransferKeyValues: can't transfer values across a DLL boundary");
         return;
     }
 
@@ -333,8 +327,7 @@ void idDict::Set(const char *key, const char *value)
     i = FindKeyIndex(key);
     if (i != -1)
     {
-        // first set the new value and then free the old value to allow proper self
-        // copying
+        // first set the new value and then free the old value to allow proper self copying
         const idPoolStr *oldValue = args[i].value;
         args[i].value = globalValues.AllocString(value);
         globalValues.FreeString(oldValue);

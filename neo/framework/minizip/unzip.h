@@ -1,10 +1,8 @@
 /* unzip.h -- IO for uncompress .zip files using zlib
    Version 1.1, February 14h, 2010
-   part of the MiniZip project - ( http://www.winimage.com/zLibDll/minizip.html
-  )
+   part of the MiniZip project - ( http://www.winimage.com/zLibDll/minizip.html )
 
-         Copyright (C) 1998-2010 Gilles Vollant (minizip) (
-  http://www.winimage.com/zLibDll/minizip.html )
+         Copyright (C) 1998-2010 Gilles Vollant (minizip) ( http://www.winimage.com/zLibDll/minizip.html )
 
          Modifications of Unzip for Zip64
          Copyright (C) 2007-2008 Even Rouault
@@ -179,8 +177,8 @@ typedef voidp unzFile;
          the "64" function take a const void* pointer, because the path is just the
            value passed to the open64_file_func callback.
          Under Windows, if UNICODE is defined, using fill_fopen64_filefunc, the path
-           is a pointer to a wide unicode string (LPCTSTR is LPCWSTR), so const
-      char* does not describe the reality
+           is a pointer to a wide unicode string (LPCTSTR is LPCWSTR), so const char*
+           does not describe the reality
     */
 
     extern unzFile ZEXPORT unzOpen2(const char *path, zlib_filefunc_def *pzlib_filefunc_def);
@@ -397,12 +395,14 @@ typedef voidp unzFile;
     extern unzFile unzReOpen(const char *path, unzFile file);
 
     /*
-      Re-Open a Zip file, i.e. clone an existing one and give it a new file
-      descriptor. path contain the full pathname (by example, on a Windows NT
-      computer "c:\\zlib\\zlib111.zip" or on an Unix computer "zlib/zlib111.zip". If
-      the zipfile cannot be opened (file don't exist or in not valid), the return
-      value is NULL. Else, the return value is a unzFile Handle, usable with other
-      function of this unzip package.
+      Re-Open a Zip file, i.e. clone an existing one and give it a new file descriptor.
+      path contain the full pathname (by example,
+         on a Windows NT computer "c:\\zlib\\zlib111.zip" or on an Unix computer
+         "zlib/zlib111.zip".
+         If the zipfile cannot be opened (file don't exist or in not valid), the
+           return value is NULL.
+         Else, the return value is a unzFile Handle, usable with other function
+           of this unzip package.
     */
 
 #ifdef __cplusplus

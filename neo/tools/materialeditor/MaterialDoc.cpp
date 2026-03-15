@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -55,14 +52,12 @@ MaterialDoc::~MaterialDoc(void)
 }
 
 /**
- * Initializes the MaterialDoc instance with a specific idMaterial. This method
- * will parse the material into the internal dictionary representation and
- * optionally allow the idMaterial object to reparse the source.
+ * Initializes the MaterialDoc instance with a specific idMaterial. This method will
+ * parse the material into the internal dictionary representation and optionally
+ * allow the idMaterial object to reparse the source.
  * @param material The idMaterial instance to use.
- * @param parseMaterial Flag to determine if the material should be parsed into
- * the editor representation.
- * @param parseRenderMaterial Flag to determine if the idMaterial object should
- * be reparsed.
+ * @param parseMaterial Flag to determine if the material should be parsed into the editor representation.
+ * @param parseRenderMaterial Flag to determine if the idMaterial object should be reparsed.
  */
 void MaterialDoc::SetRenderMaterial(idMaterial *material, bool parseMaterial, bool parseRenderMatierial)
 {
@@ -255,8 +250,7 @@ bool MaterialDoc::GetAttributeBool(int stage, const char *attribName, const char
  * @param stage The stage or -1 for the material.
  * @param attribName The name of the attribute.
  * @param value The value to set.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::SetAttribute(int stage, const char *attribName, const char *value, bool addUndo)
 {
@@ -297,8 +291,7 @@ void MaterialDoc::SetAttribute(int stage, const char *attribName, const char *va
  * @param stage The stage or -1 for the material.
  * @param attribName The name of the attribute.
  * @param value The value to set.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::SetAttributeInt(int stage, const char *attribName, int value, bool addUndo)
 {
@@ -330,8 +323,7 @@ void MaterialDoc::SetAttributeInt(int stage, const char *attribName, int value, 
  * @param stage The stage or -1 for the material.
  * @param attribName The name of the attribute.
  * @param value The value to set.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::SetAttributeFloat(int stage, const char *attribName, float value, bool addUndo)
 {
@@ -363,8 +355,7 @@ void MaterialDoc::SetAttributeFloat(int stage, const char *attribName, float val
  * @param stage The stage or -1 for the material.
  * @param attribName The name of the attribute.
  * @param value The value to set.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::SetAttributeBool(int stage, const char *attribName, bool value, bool addUndo)
 {
@@ -402,8 +393,7 @@ void MaterialDoc::SetAttributeBool(int stage, const char *attribName, bool value
 /**
  * Sets the material name.
  * @param materialName The new name of the material.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::SetMaterialName(const char *materialName, bool addUndo)
 {
@@ -476,8 +466,7 @@ void MaterialDoc::ApplySourceModify(idStr &text)
     if (sourceModify)
     {
 
-        // Changes in the source need to clear any undo redo buffer because we have
-        // no idea what has changed
+        // Changes in the source need to clear any undo redo buffer because we have no idea what has changed
         manager->ClearUndo();
         manager->ClearRedo();
 
@@ -486,13 +475,11 @@ void MaterialDoc::ApplySourceModify(idStr &text)
         idLexer src;
         src.LoadMemory(text, text.Length(), "Material");
 
-        src.SetFlags(LEXFL_NOSTRINGCONCAT |             // multiple strings seperated by whitespaces are
-                                                        // not concatenated
-                     LEXFL_NOSTRINGESCAPECHARS |        // no escape characters inside strings
-                     LEXFL_ALLOWPATHNAMES |             // allow path seperators in names
-                     LEXFL_ALLOWMULTICHARLITERALS |     // allow multi character literals
-                     LEXFL_ALLOWBACKSLASHSTRINGCONCAT | // allow multiple strings seperated
-                                                        // by '\' to be concatenated
+        src.SetFlags(LEXFL_NOSTRINGCONCAT |         // multiple strings seperated by whitespaces are not concatenated
+                     LEXFL_NOSTRINGESCAPECHARS |    // no escape characters inside strings
+                     LEXFL_ALLOWPATHNAMES |         // allow path seperators in names
+                     LEXFL_ALLOWMULTICHARLITERALS | // allow multi character literals
+                     LEXFL_ALLOWBACKSLASHSTRINGCONCAT | // allow multiple strings seperated by '\' to be concatenated
                      LEXFL_NOFATALERRORS                // just set a flag instead of fatal erroring
         );
 
@@ -519,6 +506,7 @@ void MaterialDoc::ApplySourceModify(idStr &text)
  */
 const char *MaterialDoc::GetEditSourceText()
 {
+
     return GenerateSourceText();
 }
 
@@ -526,8 +514,7 @@ const char *MaterialDoc::GetEditSourceText()
  * Adds a stage to the material.
  * @param stageType The type of the stage: normal or special.
  * @param stageName The name of the stage.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::AddStage(int stageType, const char *stageName, bool addUndo)
 {
@@ -554,8 +541,7 @@ void MaterialDoc::AddStage(int stageType, const char *stageName, bool addUndo)
  * @param stage The location to insert the stage.
  * @param stageType The type of the stage: normal or special.
  * @param stageName The name of the stage.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::InsertStage(int stage, int stageType, const char *stageName, bool addUndo)
 {
@@ -580,8 +566,7 @@ void MaterialDoc::InsertStage(int stage, int stageType, const char *stageName, b
 /**
  * Removes a stage from the material.
  * @param stage The stage to remove.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::RemoveStage(int stage, bool addUndo)
 {
@@ -620,8 +605,7 @@ void MaterialDoc::ClearStages()
  * Moves a stage from one location to another.
  * @param from The original location of the stage.
  * @param to The new location of the stage.
- * @param addUndo Flag that specifies if the system should add an undo
- * operation.
+ * @param addUndo Flag that specifies if the system should add an undo operation.
  */
 void MaterialDoc::MoveStage(int from, int to, bool addUndo)
 {
@@ -655,8 +639,7 @@ void MaterialDoc::MoveStage(int from, int to, bool addUndo)
 
 /**
  * Applies any changes to the material
- * @param force If true then the material will be applied regardless of the
- * number of changes.
+ * @param force If true then the material will be applied regardless of the number of changes.
  */
 void MaterialDoc::ApplyMaterialChanges(bool force)
 {
@@ -732,8 +715,7 @@ void MaterialDoc::Delete()
 }
 
 /**
- * Sets the proper internal states and notifies the MaterialDocManager once a
- * material has been changed.
+ * Sets the proper internal states and notifies the MaterialDocManager once a material has been changed.
  */
 void MaterialDoc::OnMaterialChanged()
 {
@@ -755,14 +737,13 @@ void MaterialDoc::ParseMaterialText(const char *source)
     /*idLexer src;
     src.LoadMemory(source, strlen(source), "material");
     src.SetFlags(
-            LEXFL_NOSTRINGCONCAT |			// multiple strings
-    seperated by whitespaces are not concatenated LEXFL_NOSTRINGESCAPECHARS |
-    // no escape characters inside strings LEXFL_ALLOWPATHNAMES |
-    // allow path seperators in names LEXFL_ALLOWMULTICHARLITERALS |	// allow
-    multi character literals LEXFL_ALLOWBACKSLASHSTRINGCONCAT |	// allow
-    multiple strings seperated by '\' to be concatenated LEXFL_NOFATALERRORS
-    // just set a flag instead of fatal erroring
-            );
+        LEXFL_NOSTRINGCONCAT |			// multiple strings seperated by whitespaces are not concatenated
+        LEXFL_NOSTRINGESCAPECHARS |		// no escape characters inside strings
+        LEXFL_ALLOWPATHNAMES |			// allow path seperators in names
+        LEXFL_ALLOWMULTICHARLITERALS |	// allow multi character literals
+        LEXFL_ALLOWBACKSLASHSTRINGCONCAT |	// allow multiple strings seperated by '\' to be concatenated
+        LEXFL_NOFATALERRORS				// just set a flag instead of fatal erroring
+        );
 
     //Skip the name becuase the material parsing code expects it
     src.SkipUntilString("{");*/
@@ -772,8 +753,8 @@ void MaterialDoc::ParseMaterialText(const char *source)
 }
 
 /**
- * Parses the source text from an idMaterial and initializes the editor
- * dictionary representation of the material.
+ * Parses the source text from an idMaterial and initializes the editor dictionary representation
+ * of the material.
  * @param src The idLexer object that contains the material text.
  */
 void MaterialDoc::ParseMaterial(idLexer *src)
@@ -829,8 +810,8 @@ void MaterialDoc::ParseMaterial(idLexer *src)
 }
 
 /**
- * Parses a single stage from the source text from an idMaterial and initializes
- * the editor dictionary representation of the material.
+ * Parses a single stage from the source text from an idMaterial and initializes the editor dictionary
+ * representation of the material.
  * @param src The idLexer object that contains the material text.
  */
 void MaterialDoc::ParseStage(idLexer *src)
@@ -883,8 +864,7 @@ void MaterialDoc::ParseStage(idLexer *src)
 
 /**
  * Adds a special stage to the material.
- * @param stageName The name of the special stage bumpmap, diffusemap or
- * specularmap
+ * @param stageName The name of the special stage bumpmap, diffusemap or specularmap
  * @param map The map for the special stage.
  */
 void MaterialDoc::AddSpecialMapStage(const char *stageName, const char *map)
@@ -897,12 +877,11 @@ void MaterialDoc::AddSpecialMapStage(const char *stageName, const char *map)
 }
 
 /**
- * Finds the appropriate material definition for the supplied token and
- * initializes the internal dictionary data.
+ * Finds the appropriate material definition for the supplied token and initializes the
+ * internal dictionary data.
  * @param token The token to lookup
  * @param src The idLexer that contains the material source text.
- * @param type The type of attribute grouping to use material, stage or special
- * stage.
+ * @param type The type of attribute grouping to use material, stage or special stage.
  * @param dict The dictionary to initialize.
  */
 bool MaterialDoc::ParseMaterialDef(idToken *token, idLexer *src, int type, idDict *dict)
@@ -1015,8 +994,7 @@ void MaterialDoc::WriteStage(int stage, idFile_Memory *file)
 
     // idStr stageName = GetAttribute(stage, "name");
     int type = GetAttributeInt(stage, "stagetype");
-    // if(!stageName.Icmp("diffusemap") || !stageName.Icmp("specularmap") ||
-    // !stageName.Icmp("bumpmap")) {
+    // if(!stageName.Icmp("diffusemap") || !stageName.Icmp("specularmap") || !stageName.Icmp("bumpmap")) {
     if (type == STAGE_TYPE_SPECIALMAP)
     {
         WriteSpecialMapStage(stage, file);

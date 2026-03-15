@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -427,8 +424,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
             edge1Num = file->edgeIndex[floorFace1->firstEdge + k];
             side1 = (edge1Num < 0);
             // NOTE: for water faces we must take the side area 1 is on into
-            // account because the face is shared and doesn't have to be oriented
-            // correctly
+            // account because the face is shared and doesn't have to be oriented correctly
             if (!(floorFace1->flags & FACE_FLOOR))
             {
                 side1 = (side1 == faceSide1);
@@ -439,8 +435,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
             v1 = file->vertices[edge1->vertexNum[!side1]];
             v2 = file->vertices[edge1->vertexNum[side1]];
             // get a vertical plane through the edge
-            // NOTE: normal is pointing into area 2 because the face edges are stored
-            // counter clockwise
+            // NOTE: normal is pointing into area 2 because the face edges are stored counter clockwise
             edgeVec = v2 - v1;
             normal = edgeVec.Cross(file->settings.invGravityDir);
             normal.Normalize();
@@ -463,8 +458,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
                     // vertices of the edge
                     v3 = file->vertices[edge2->vertexNum[0]];
                     v4 = file->vertices[edge2->vertexNum[1]];
-                    // check the distance between the two points and the vertical plane
-                    // through the edge of area1
+                    // check the distance between the two points and the vertical plane through the edge of area1
                     diff = normal * v3 - dist;
                     if (diff < -0.2f || diff > 0.2f)
                     {
@@ -481,8 +475,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
                     // edges if they overlap in the direction orthogonal to
                     // the gravity direction
                     orthogonal = file->settings.invGravityDir.Cross(normal);
-                    // invGravityDot = file->settings.invGravityDir *
-                    // file->settings.invGravityDir;
+                    // invGravityDot = file->settings.invGravityDir * file->settings.invGravityDir;
                     orthogonalDot = orthogonal * orthogonal;
                     // projection into the step plane
                     // NOTE: since gravity is vertical this is just the z coordinate
@@ -585,8 +578,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
                         }
                     }
 
-                    // if both distances are pretty much equal then we take the middle of
-                    // the points
+                    // if both distances are pretty much equal then we take the middle of the points
                     if (dist1 > dist2 - 1.0f && dist1 < dist2 + 1.0f)
                     {
                         dist = dist1;
@@ -606,8 +598,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
                         end = p2area2;
                     }
 
-                    // get the length of the overlapping part of the edges of the two
-                    // areas
+                    // get the length of the overlapping part of the edges of the two areas
                     length = (p2area2 - p1area2).Length();
 
                     if (floorFace1->flags & FACE_FLOOR)
@@ -696,8 +687,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
     //         |
     // ~~~~~~~~|
     //         |
-    //         |          higher than step height and water up to waterjump height
-    //         -> TFL_WATERJUMP
+    //         |          higher than step height and water up to waterjump height -> TFL_WATERJUMP
     // --------|
     //
     // ~~~~~~~~~~~~~~~~~~
@@ -705,8 +695,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
     //         |
     //         |
     //         |
-    //         |          higher than step height and low water up to the step ->
-    //         TFL_WATERJUMP
+    //         |          higher than step height and low water up to the step -> TFL_WATERJUMP
     // --------|
     //
     // check for a waterjump reachability
@@ -719,8 +708,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
         // if there IS water the sv_maxwaterjump height below the bestend point
         if (area1->flags & AREA_LIQUID)
         {
-            // don't create rediculous water jump reachabilities from areas very far
-            // below the water surface
+            // don't create rediculous water jump reachabilities from areas very far below the water surface
             if (water_bestDist < file->settings.maxWaterJumpHeight + 24)
             {
                 // water jumping from or towards a crouch only areas is not possible
@@ -748,8 +736,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
     //         |
     //         |
     //         |
-    //         |         higher than max step height lower than max barrier height
-    //         -> TFL_BARRIERJUMP
+    //         |         higher than max step height lower than max barrier height -> TFL_BARRIERJUMP
     // --------|
     //
     //         ---------
@@ -757,8 +744,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
     //         |
     //         |
     // ~~~~~~~~|         higher than max step height lower than max barrier height
-    // --------|         and a thin layer of water in the area to jump from ->
-    // TFL_BARRIERJUMP
+    // --------|         and a thin layer of water in the area to jump from -> TFL_BARRIERJUMP
     //
     // check for a barrier jump reachability
     if (floor_foundReach)
@@ -805,8 +791,7 @@ bool idAASReach::Reachability_Step_Barrier_WaterJump_WalkOffLedge(int area1num, 
     //         |
     //         |~~~~~~~~
     //         |
-    //         |          cannot step back but can waterjump back ->
-    //         TFL_WALKOFFLEDGE
+    //         |          cannot step back but can waterjump back -> TFL_WALKOFFLEDGE
     //         ---------  FIXME: create TFL_WALK reach??
     //
     // check for a walk or walk off ledge reachability

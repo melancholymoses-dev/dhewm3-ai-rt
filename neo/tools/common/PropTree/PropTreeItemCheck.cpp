@@ -13,14 +13,14 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 // #include "stdafx.h"
 #include "tools/edit_gui_common.h"
 
-#include "PropTreeItemCheck.h"
 #include "proptree.h"
+#include "PropTreeItemCheck.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -59,8 +59,7 @@ void CPropTreeItemCheck::DrawAttribute(CDC *pDC, const RECT &rc)
     // verify the window has been created
     if (!IsWindow(m_hWnd))
     {
-        TRACE0("CPropTreeItemCombo::DrawAttribute() - The window has not been "
-               "created\n");
+        TRACE0("CPropTreeItemCombo::DrawAttribute() - The window has not been created\n");
         return;
     }
 

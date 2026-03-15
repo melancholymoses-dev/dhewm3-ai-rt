@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -45,7 +42,7 @@ class idUserInterface;
 /*
 ===============================================================================
 
-        The session is the glue that holds games together between levels.
+    The session is the glue that holds games together between levels.
 
 ===============================================================================
 */
@@ -135,8 +132,8 @@ class idSession
 
     virtual void SetPlayingSoundWorld() = 0;
 
-    // this is used by the sound system when an OnDemand sound is loaded, so the
-    // game action doesn't advance and get things out of sync
+    // this is used by the sound system when an OnDemand sound is loaded, so the game action
+    // doesn't advance and get things out of sync
     virtual void TimeHitch(int msec) = 0;
 
     // read and write the cd key data to files
@@ -147,8 +144,8 @@ class idSession
     // returns NULL for if xp is true and xp key is not valid or not present
     virtual const char *GetCDKey(bool xp) = 0;
 
-    // check keys for validity when typed in by the user ( with checksum
-    // verification ) store the new set of keys if they are found valid
+    // check keys for validity when typed in by the user ( with checksum verification )
+    // store the new set of keys if they are found valid
     virtual bool CheckKey(const char *key, bool netConnect, bool offline_valid[2]) = 0;
 
     // verify the current set of keys for validity

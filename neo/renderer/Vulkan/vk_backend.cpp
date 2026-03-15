@@ -17,13 +17,13 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#include "renderer/VertexCache.h"
-#include "renderer/Vulkan/vk_buffer.h"
-#include "renderer/Vulkan/vk_common.h"
-#include "renderer/Vulkan/vk_image.h"
-#include "renderer/Vulkan/vk_raytracing.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/VertexCache.h"
+#include "renderer/tr_local.h"
+#include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_raytracing.h"
+#include "renderer/Vulkan/vk_image.h"
+#include "renderer/Vulkan/vk_buffer.h"
 #include <SDL.h>
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -54,8 +54,7 @@ struct vkUBORing_t
 static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
-// Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) +
-// applyGamma/pad (16)
+// Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
 // + screenSize vec2 + useShadowMask int + pad = 356 bytes -> round to 384.
 static const uint32_t INTERACTION_UBO_SIZE = 384;
 
@@ -129,9 +128,8 @@ static void VK_MultiplyMatrix4(const float *a, const float *b, float *out)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RB_DrawInteraction - record draw commands for one light-surface
-// interaction Called from VK_RB_DrawInteractions via
-// RB_CreateSingleDrawInteractions callback.
+// VK_RB_DrawInteraction - record draw commands for one light-surface interaction
+// Called from VK_RB_DrawInteractions via RB_CreateSingleDrawInteractions callback.
 // ---------------------------------------------------------------------------
 
 // We use a file-static to pass the command buffer through the callback
@@ -259,10 +257,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     bufInfo.offset = uboOffset;
     bufInfo.range = INTERACTION_UBO_SIZE;
 
-    // Collect the 6 texture images in binding order (matches interaction.frag
-    // samplers):
-    //  1=bump, 2=lightFalloff, 3=lightProjection, 4=diffuse, 5=specular,
-    //  6=specularTable
+    // Collect the 6 texture images in binding order (matches interaction.frag samplers):
+    //  1=bump, 2=lightFalloff, 3=lightProjection, 4=diffuse, 5=specular, 6=specularTable
     idImage *texImages[6] = {
         din->bumpImage,    din->lightFalloffImage,
         din->lightImage, // light projection
@@ -395,9 +391,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Stencil shadow pass (still using geometry-based stencil volumes)
         // Switch to shadow pipeline
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
-        // TODO: record shadow volume draw calls here from vLight->globalShadows /
-        // localShadows This is connected to vk_accelstruct.cpp when RT shadows
-        // replace this path.
+        // TODO: record shadow volume draw calls here from vLight->globalShadows / localShadows
+        // This is connected to vk_accelstruct.cpp when RT shadows replace this path.
 
         // Switch back to interaction pipeline for lit surfaces
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
@@ -487,8 +482,7 @@ void VK_RB_DrawView(const void *data)
     VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
     vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
 
-    // If RT is available and r_rtShadows is on, dispatch shadow rays before
-    // interaction pass
+    // If RT is available and r_rtShadows is on, dispatch shadow rays before interaction pass
 #ifdef DHEWM3_RAYTRACING
     if (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool())
     {

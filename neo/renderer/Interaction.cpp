@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
-#include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "renderer/Interaction.h"
 
@@ -340,8 +337,7 @@ static srfTriangles_t *R_CreateLightTris(const idRenderEntityLocal *ent, const s
     numIndexes = 0;
     indexes = NULL;
 
-    // it is debatable if non-shadowing lights should light back faces. we aren't
-    // at the moment
+    // it is debatable if non-shadowing lights should light back faces. we aren't at the moment
     if (r_lightAllBackFaces.GetBool() || light->lightShader->LightEffectsBackSides() ||
         shader->ReceivesLightingOnBackSides() || ent->parms.noSelfShadow || ent->parms.noShadow)
     {
@@ -378,8 +374,7 @@ static srfTriangles_t *R_CreateLightTris(const idRenderEntityLocal *ent, const s
         if (includeBackFaces)
         {
 
-            // the whole surface is lit so the light surface just references the
-            // indexes of the ambient surface
+            // the whole surface is lit so the light surface just references the indexes of the ambient surface
             R_ReferenceStaticTriSurfIndexes(newTri, tri);
             numIndexes = tri->numIndexes;
             bounds = tri->bounds;
@@ -387,9 +382,8 @@ static srfTriangles_t *R_CreateLightTris(const idRenderEntityLocal *ent, const s
         else
         {
 
-            // the light tris indexes are going to be a subset of the original indexes
-            // so we generally allocate too much memory here but we decrease the
-            // memory block when the number of indexes is known
+            // the light tris indexes are going to be a subset of the original indexes so we generally
+            // allocate too much memory here but we decrease the memory block when the number of indexes is known
             R_AllocStaticTriSurfIndexes(newTri, tri->numIndexes);
 
             // back face cull the individual triangles
@@ -411,17 +405,15 @@ static srfTriangles_t *R_CreateLightTris(const idRenderEntityLocal *ent, const s
             // get bounds for the surface
             SIMDProcessor->MinMax(bounds[0], bounds[1], tri->verts, indexes, numIndexes);
 
-            // decrease the size of the memory block to the size of the number of used
-            // indexes
+            // decrease the size of the memory block to the size of the number of used indexes
             R_ResizeStaticTriSurfIndexes(newTri, numIndexes);
         }
     }
     else
     {
 
-        // the light tris indexes are going to be a subset of the original indexes
-        // so we generally allocate too much memory here but we decrease the memory
-        // block when the number of indexes is known
+        // the light tris indexes are going to be a subset of the original indexes so we generally
+        // allocate too much memory here but we decrease the memory block when the number of indexes is known
         R_AllocStaticTriSurfIndexes(newTri, tri->numIndexes);
 
         // cull individual triangles
@@ -458,9 +450,8 @@ static srfTriangles_t *R_CreateLightTris(const idRenderEntityLocal *ent, const s
 
             if (r_usePreciseTriangleInteractions.GetBool())
             {
-                // do a precise clipped cull if none of the points is completely inside
-                // the frustum note that we do not actually use the clipped triangle,
-                // which would have Z fighting issues.
+                // do a precise clipped cull if none of the points is completely inside the frustum
+                // note that we do not actually use the clipped triangle, which would have Z fighting issues.
                 if (cullBits[i1] && cullBits[i2] && cullBits[i3])
                 {
                     int cull = cullBits[i1] | cullBits[i2] | cullBits[i3];
@@ -482,8 +473,7 @@ static srfTriangles_t *R_CreateLightTris(const idRenderEntityLocal *ent, const s
         // get bounds for the surface
         SIMDProcessor->MinMax(bounds[0], bounds[1], tri->verts, indexes, numIndexes);
 
-        // decrease the size of the memory block to the size of the number of used
-        // indexes
+        // decrease the size of the memory block to the size of the number of used indexes
         R_ResizeStaticTriSurfIndexes(newTri, numIndexes);
     }
 
@@ -720,8 +710,7 @@ void idInteraction::UnlinkAndFree(void)
 ===============
 idInteraction::MakeEmpty
 
-Makes the interaction empty and links it at the end of the entity's and light's
-interaction lists.
+Makes the interaction empty and links it at the end of the entity's and light's interaction lists.
 ===============
 */
 void idInteraction::MakeEmpty(void)
@@ -958,11 +947,11 @@ bool idInteraction::CullInteractionByViewFrustum(const idFrustum &viewFrustum)
 idInteraction::CreateInteraction
 
 Called when a entityDef and a lightDef are both present in a
-portalArea, and might be visible.  Performs cull checking before doing the
-expensive computations.
+portalArea, and might be visible.  Performs cull checking before doing the expensive
+computations.
 
-References tr.viewCount so lighting surfaces will only be created if the ambient
-surface is visible, otherwise it will be marked as deferred.
+References tr.viewCount so lighting surfaces will only be created if the ambient surface is visible,
+otherwise it will be marked as deferred.
 
 The results of this are cached and valid until the light or entity change.
 ====================
@@ -989,8 +978,7 @@ void idInteraction::CreateInteraction(const idRenderModel *model)
     shadowGen_t shadowGen = SG_DYNAMIC;
 
     // really large models, like outside terrain meshes, should use
-    // the more exactly culled static shadow path instead of the turbo shadow
-    // path.
+    // the more exactly culled static shadow path instead of the turbo shadow path.
     // FIXME: this is a HACK, we should probably have a material flag.
     if (bounds[1][0] - bounds[0][0] > 3000)
     {
@@ -1068,24 +1056,22 @@ void idInteraction::CreateInteraction(const idRenderModel *model)
         if (HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL)
         {
 
-            // if the light has an optimized shadow volume, don't create shadows for
-            // any models that are part of the base areas
+            // if the light has an optimized shadow volume, don't create shadows for any models that are part of the
+            // base areas
             if (lightDef->parms.prelightModel == NULL || !model->IsStaticWorldModel() ||
                 !r_useOptimizedShadows.GetBool())
             {
 
-                // this is the only place during gameplay (outside the utilities) that
-                // R_CreateShadowVolume() is called
+                // this is the only place during gameplay (outside the utilities) that R_CreateShadowVolume() is called
                 sint->shadowTris = R_CreateShadowVolume(entityDef, tri, lightDef, shadowGen, sint->cullInfo);
                 if (sint->shadowTris)
                 {
                     if (shader->Coverage() != MC_OPAQUE ||
                         (!r_skipSuppress.GetBool() && entityDef->parms.suppressSurfaceInViewID))
                     {
-                        // if any surface is a shadow-casting perforated or translucent
-                        // surface, or the base surface is suppressed in the view (world
-                        // weapon shadows) we can't use the external shadow optimizations
-                        // because we can see through some of the faces
+                        // if any surface is a shadow-casting perforated or translucent surface, or the
+                        // base surface is suppressed in the view (world weapon shadows) we can't use
+                        // the external shadow optimizations because we can see through some of the faces
                         sint->shadowTris->numShadowIndexesNoCaps = sint->shadowTris->numIndexes;
                         sint->shadowTris->numShadowIndexesNoFrontCaps = sint->shadowTris->numIndexes;
                     }
@@ -1151,8 +1137,7 @@ static bool R_PotentiallyInsideInfiniteShadow(const srfTriangles_t *occluder, co
 
     idVec3 ray = localView - localLight;
 
-    // intersect the ray from the view to the light with the near side of the
-    // bounds
+    // intersect the ray from the view to the light with the near side of the bounds
     for (int axis = 0; axis < 3; axis++)
     {
         float d, frac;
@@ -1218,8 +1203,7 @@ void idInteraction::AddActiveInteraction(void)
     vLight = lightDef->viewLight;
     vEntity = entityDef->viewEntity;
 
-    // do not waste time culling the interaction frustum if there will be no
-    // shadows
+    // do not waste time culling the interaction frustum if there will be no shadows
     if (!HasShadows())
     {
 
@@ -1249,8 +1233,7 @@ void idInteraction::AddActiveInteraction(void)
         shadowScissor = CalcInteractionScissorRectangle(tr.viewDef->viewFrustum);
     }
 
-    // get out before making the dynamic model if the shadow scissor rectangle is
-    // empty
+    // get out before making the dynamic model if the shadow scissor rectangle is empty
     if (shadowScissor.IsEmpty())
     {
         return;
@@ -1272,8 +1255,7 @@ void idInteraction::AddActiveInteraction(void)
     }
     dynamicModelFrameCount = entityDef->dynamicModelFrameCount;
 
-    // actually create the interaction if needed, building light and shadow
-    // surfaces as needed
+    // actually create the interaction if needed, building light and shadow surfaces as needed
     if (IsDeferred())
     {
         CreateInteraction(model);
@@ -1294,13 +1276,12 @@ void idInteraction::AddActiveInteraction(void)
     {
         surfaceInteraction_t *sint = &surfaces[i];
 
-        // see if the base surface is visible, we may still need to add shadows even
-        // if empty
+        // see if the base surface is visible, we may still need to add shadows even if empty
         if (!lightScissorsEmpty && sint->ambientTris && sint->ambientTris->ambientViewCount == tr.viewCount)
         {
 
-            // make sure we have created this interaction, which may have been
-            // deferred on a previous use that only needed the shadow
+            // make sure we have created this interaction, which may have been deferred
+            // on a previous use that only needed the shadow
             if (sint->lightTris == LIGHT_TRIS_DEFERRED)
             {
                 sint->lightTris = R_CreateLightTris(vEntity->entityDef, sint->ambientTris, vLight->lightDef,
@@ -1314,9 +1295,8 @@ void idInteraction::AddActiveInteraction(void)
             {
 
                 // try to cull before adding
-                // FIXME: this may not be worthwhile. We have already done culling on
-                // the ambient, but individual surfaces may still be cropped somewhat
-                // more
+                // FIXME: this may not be worthwhile. We have already done culling on the ambient,
+                // but individual surfaces may still be cropped somewhat more
                 if (!R_CullLocalBox(lightTris->bounds, vEntity->modelMatrix, 5, tr.viewDef->frustum))
                 {
 
@@ -1337,8 +1317,7 @@ void idInteraction::AddActiveInteraction(void)
                     // touch the ambient surface so it won't get purged
                     vertexCache.Touch(lightTris->ambientCache);
 
-                    // regenerate the lighting cache (for non-vertex program cards) if it
-                    // has been purged
+                    // regenerate the lighting cache (for non-vertex program cards) if it has been purged
                     if (!lightTris->lightingCache)
                     {
                         if (!R_CreateLightingCache(entityDef, lightDef, lightTris))
@@ -1425,12 +1404,11 @@ void idInteraction::AddActiveInteraction(void)
 
             // copy the shadow vertexes to the vertex cache if they have been purged
 
-            // if we are using shared shadowVertexes and letting a vertex program fix
-            // them up, get the shadowCache from the parent ambient surface
+            // if we are using shared shadowVertexes and letting a vertex program fix them up,
+            // get the shadowCache from the parent ambient surface
             if (!shadowTris->shadowVertexes)
             {
-                // the data may have been purged, so get the latest from the "home
-                // position"
+                // the data may have been purged, so get the latest from the "home position"
                 shadowTris->shadowCache = sint->ambientTris->shadowCache;
             }
 

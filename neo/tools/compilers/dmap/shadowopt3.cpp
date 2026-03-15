@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
 
 #include "tools/compilers/dmap/dmap.h"
 
@@ -44,29 +41,29 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
   make 2D projection for each vertex
 
   for each edge
-        add edge, generating new points at each edge intersection
+    add edge, generating new points at each edge intersection
 
   ?add all additional edges to make a full triangulation
 
   make full triangulation
 
   for each triangle
-        find midpoint
-        find original triangle with midpoint closest to view
-        annotate triangle with that data
-        project all vertexes to that plane
-        output the triangle as a front cap
+    find midpoint
+    find original triangle with midpoint closest to view
+    annotate triangle with that data
+    project all vertexes to that plane
+    output the triangle as a front cap
 
   snap all vertexes
   make a back plane projection for all vertexes
 
   for each edge
-        if one side doesn't have a triangle
-                make a sil edge to back plane projection
-                continue
-        if triangles on both sides have two verts in common
-                continue
-        make a sil edge from one triangle to the other
+    if one side doesn't have a triangle
+        make a sil edge to back plane projection
+        continue
+    if triangles on both sides have two verts in common
+        continue
+    make a sil edge from one triangle to the other
 
 
 
@@ -83,10 +80,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
   improvement, but the quadratic time nature of the optimization process
   probably makes it untenable.
 
-  There exists some small room for further triangle count optimizations of the
-volumes by collapsing internal surface geometry in some cases, or allowing
-original triangles to extend outside the exactly light frustum without being
-clipped, but it probably isn't worth it.
+  There exists some small room for further triangle count optimizations of the volumes
+  by collapsing internal surface geometry in some cases, or allowing original triangles
+  to extend outside the exactly light frustum without being clipped, but it probably
+  isn't worth it.
 
   Triangle count optimizations at the expense of a slight fill rate cost
   may be apropriate in some cases.
@@ -94,9 +91,9 @@ clipped, but it probably isn't worth it.
 
   Perform the complete clipping on all triangles
   for each vertex
-        project onto the apropriate plane and mark plane bit as in use
+    project onto the apropriate plane and mark plane bit as in use
 for each triangle
-        if points project onto different planes, clip
+    if points project onto different planes, clip
 */
 
 typedef struct
@@ -104,8 +101,7 @@ typedef struct
     idVec3 v[3];
     idVec3 edge[3]; // positive side is inside the triangle
     glIndex_t index[3];
-    idPlane plane; // positive side is forward for the triangle, which is away
-                   // from the light
+    idPlane plane; // positive side is forward for the triangle, which is away from the light
     int planeNum;  // from original triangle, not calculated from the clipped verts
 } shadowTri_t;
 
@@ -665,19 +661,19 @@ FragmentSilQuad
 Clip quads, or reconstruct?
 Generate them T-junction free, or require another pass of fix-tjunc?
 Call optimizer on a per-sil-plane basis?
-        will this ever introduce tjunctions with the front faces?
-        removal of planes can allow the rear projection to be farther optimized
+    will this ever introduce tjunctions with the front faces?
+    removal of planes can allow the rear projection to be farther optimized
 
 For quad clipping
-        PlaneThroughEdge
+    PlaneThroughEdge
 
 quad clipping introduces new vertexes
 
 Cannot just fragment edges, must emit full indexes
 
 what is the bounds on max indexes?
-        the worst case is that all edges but one carve an existing edge in the
-middle, giving twice the input number of indexes (I think)
+    the worst case is that all edges but one carve an existing edge in the middle,
+    giving twice the input number of indexes (I think)
 
 can we avoid knowing about projected positions and still optimize?
 
@@ -1125,8 +1121,7 @@ optimizedShadow_t SuperOptimizeOccluders(idVec4 *verts, glIndex_t *indexes, int 
 {
     memset(&ret, 0, sizeof(ret));
 
-    // generate outputTris, removing fragments that are occluded by closer
-    // fragments
+    // generate outputTris, removing fragments that are occluded by closer fragments
     ClipOccluders(verts, indexes, numIndexes, projectionOrigin);
 
     if (dmapGlobals.shadowOptLevel >= SO_CULL_OCCLUDED)
@@ -1353,9 +1348,8 @@ CreateLightShadow
 
 This is called from dmap in util/surface.cpp
 shadowerGroups should be exactly clipped to the light frustum before calling.
-shadowerGroups is optimized by this function, but the contents can be freed,
-because the returned lightShadow_t list is a further culling and optimization of
-the data.
+shadowerGroups is optimized by this function, but the contents can be freed, because the returned
+lightShadow_t list is a further culling and optimization of the data.
 ========================
 */
 srfTriangles_t *CreateLightShadow(optimizeGroup_t *shadowerGroups, const mapLight_t *light)
@@ -1400,9 +1394,8 @@ srfTriangles_t *CreateLightShadow(optimizeGroup_t *shadowerGroups, const mapLigh
     srfCullInfo_t cullInfo;
     memset(&cullInfo, 0, sizeof(cullInfo));
 
-    // call the normal shadow creation, but with the superOptimize flag set, which
-    // will call back to SuperOptimizeOccluders after clipping the triangles to
-    // each frustum
+    // call the normal shadow creation, but with the superOptimize flag set, which will
+    // call back to SuperOptimizeOccluders after clipping the triangles to each frustum
     srfTriangles_t *shadowTris;
     if (dmapGlobals.shadowOptLevel == SO_MERGE_SURFACES)
     {

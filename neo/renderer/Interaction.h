@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,11 +39,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Interaction between entityDef surfaces and a lightDef.
+    Interaction between entityDef surfaces and a lightDef.
 
-        Interactions with no lightTris and no shadowTris are still
-        valid, because they show that a given entityDef / lightDef
-        do not interact, even though they share one or more areas.
+    Interactions with no lightTris and no shadowTris are still
+    valid, because they show that a given entityDef / lightDef
+    do not interact, even though they share one or more areas.
 
 ===============================================================================
 */
@@ -124,8 +121,8 @@ class idInteraction
     idInteraction(void);
 
     // because these are generated and freed each game tic for active elements all
-    // over the world, we use a custom pool allocater to avoid memory allocation
-    // overhead and fragmentation
+    // over the world, we use a custom pool allocater to avoid memory allocation overhead
+    // and fragmentation
     static idInteraction *AllocAndLink(idRenderEntityLocal *edef, idRenderLightLocal *ldef);
 
     // unlinks from the entity and light, frees all surfaceInteractions,
@@ -135,9 +132,8 @@ class idInteraction
     // free the interaction surfaces
     void FreeSurfaces(void);
 
-    // makes the interaction empty for when the light and entity do not actually
-    // intersect all empty interactions are linked at the end of the light's and
-    // entity's interaction list
+    // makes the interaction empty for when the light and entity do not actually intersect
+    // all empty interactions are linked at the end of the light's and entity's interaction list
     void MakeEmpty(void);
 
     // returns true if the interaction is empty
@@ -159,8 +155,8 @@ class idInteraction
     // will be used to determine when we need to start purging old interactions
     int MemoryUsed(void);
 
-    // makes sure all necessary light surfaces and shadow surfaces are created,
-    // and calls R_LinkLightSurf() for each one
+    // makes sure all necessary light surfaces and shadow surfaces are created, and
+    // calls R_LinkLightSurf() for each one
     void AddActiveInteraction(void);
 
   private:
@@ -183,12 +179,12 @@ class idInteraction
     // unlink from entity and light lists
     void Unlink(void);
 
-    // try to determine if the entire interaction, including shadows, is
-    // guaranteed to be outside the view frustum
+    // try to determine if the entire interaction, including shadows, is guaranteed
+    // to be outside the view frustum
     bool CullInteractionByViewFrustum(const idFrustum &viewFrustum);
 
-    // determine the minimum scissor rect that will include the interaction
-    // shadows projected to the bounds of the light
+    // determine the minimum scissor rect that will include the interaction shadows
+    // projected to the bounds of the light
     idScreenRect CalcInteractionScissorRectangle(const idFrustum &viewFrustum);
 };
 

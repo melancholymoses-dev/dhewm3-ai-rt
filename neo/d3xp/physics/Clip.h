@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,8 +32,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __CLIP_H__
 #define __CLIP_H__
 
-#include "cm/CollisionModel.h"
 #include "idlib/geometry/TraceModel.h"
+#include "cm/CollisionModel.h"
 
 class idSaveGame;
 class idRestoreGame;
@@ -84,13 +81,12 @@ class idClipModel
     void Link(idClip &clp); // must have been linked with an entity and id before
     void Link(idClip &clp, idEntity *ent, int newId, const idVec3 &newOrigin, const idMat3 &newAxis,
               int renderModelHandle = -1);
-    void Unlink(void); // unlink from sectors
-    void SetPosition(const idVec3 &newOrigin,
-                     const idMat3 &newAxis);   // unlinks the clip model
-    void Translate(const idVec3 &translation); // unlinks the clip model
-    void Rotate(const idRotation &rotation);   // unlinks the clip model
-    void Enable(void);                         // enable for clipping
-    void Disable(void);                        // keep linked but disable for clipping
+    void Unlink(void);                                                // unlink from sectors
+    void SetPosition(const idVec3 &newOrigin, const idMat3 &newAxis); // unlinks the clip model
+    void Translate(const idVec3 &translation);                        // unlinks the clip model
+    void Rotate(const idRotation &rotation);                          // unlinks the clip model
+    void Enable(void);                                                // enable for clipping
+    void Disable(void);                                               // keep linked but disable for clipping
     void SetMaterial(const idMaterial *m);
     const idMaterial *GetMaterial(void) const;
     void SetContents(int newContents); // override contents

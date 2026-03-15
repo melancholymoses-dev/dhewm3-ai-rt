@@ -19,38 +19,35 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include <dirent.h>
-#include <dlfcn.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <pwd.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/types.h>
-#include <termios.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <dirent.h>
 #include <unistd.h>
+#include <sys/mman.h>
+#include <sys/time.h>
+#include <pwd.h>
+#include <dlfcn.h>
+#include <termios.h>
+#include <signal.h>
+#include <fcntl.h>
 
-#include "framework/EditField.h"
+#include "sys/platform.h"
+#include "idlib/containers/StrList.h"
 #include "framework/FileSystem.h"
 #include "framework/KeyInput.h"
+#include "framework/EditField.h"
 #include "framework/Licensee.h"
-#include "idlib/containers/StrList.h"
-#include "sys/platform.h"
 #include "sys/sys_local.h"
 
 #include "sys/posix/posix_public.h"
@@ -322,12 +319,11 @@ uintptr_t Sys_DLL_Load(const char *path)
     void *ret = dlopen(path, RTLD_NOW);
     if (ret == NULL)
     {
-        // dlopen() failed - this might be ok (we tried one possible path and the
-        // next will work) or it might be worth warning about (the lib existed but
-        // still couldn't be loaded, maybe a missing symbol or permission problems)
-        // unfortunately we only get a string from dlerror(), not some distinctive
-        // error code.. so use try to open() the file to get a better idea what went
-        // wrong
+        // dlopen() failed - this might be ok (we tried one possible path and the next will work)
+        // or it might be worth warning about (the lib existed but still couldn't be loaded,
+        // maybe a missing symbol or permission problems)
+        // unfortunately we only get a string from dlerror(), not some distinctive error code..
+        // so use try to open() the file to get a better idea what went wrong
 
         int fd = open(path, O_RDONLY);
         if (fd < 0)
@@ -335,8 +331,8 @@ uintptr_t Sys_DLL_Load(const char *path)
             int e = errno;
             if (e != ENOENT)
             {
-                // it didn't fail because the file doesn't exist - log it, might be
-                // interesting (=> likely permission problem)
+                // it didn't fail because the file doesn't exist - log it, might be interesting (=> likely permission
+                // problem)
                 common->Warning("Failed to load lib '%s'! Reason: %s ( %s )\n", path, dlerror(), strerror(e));
             }
         }
@@ -344,9 +340,8 @@ uintptr_t Sys_DLL_Load(const char *path)
         {
             // file could be opened, so it exists => log just dlerror()
             close(fd);
-            common->Warning("Failed to load lib '%s' even though it exists and is "
-                            "readable! Reason: %s\n",
-                            path, dlerror());
+            common->Warning("Failed to load lib '%s' even though it exists and is readable! Reason: %s\n", path,
+                            dlerror());
         }
     }
     return (uintptr_t)ret;
@@ -411,8 +406,7 @@ void Sys_FreeClipboardData(char *data)
 #if SDL_VERSION_ATLEAST(2, 0, 0)
     SDL_free(data);
 #else
-    assert(0 && "why is this called, Sys_GetClipboardData() isn't implemented "
-                "for SDL1.2");
+    assert(0 && "why is this called, Sys_GetClipboardData() isn't implemented for SDL1.2");
 #endif
 }
 
@@ -490,8 +484,7 @@ static void CrashPrintf(const char *msg, ...)
 
 #ifdef D3_HAVE_LIBBACKTRACE
 // non-ancient versions of GCC and clang include libbacktrace
-// for ancient versions it can be built from
-// https://github.com/ianlancetaylor/libbacktrace
+// for ancient versions it can be built from https://github.com/ianlancetaylor/libbacktrace
 #include <backtrace.h>
 #include <cxxabi.h> // for demangling C++ symbols
 
@@ -507,8 +500,7 @@ static void bt_syminfo_callback(void *data, uintptr_t pc, const char *symname, u
     if (symname != NULL)
     {
         int status;
-        // FIXME: sucks that __cxa_demangle() insists on using malloc().. but so
-        // does printf()
+        // FIXME: sucks that __cxa_demangle() insists on using malloc().. but so does printf()
         char *name = abi::__cxa_demangle(symname, NULL, NULL, &status);
         if (name != NULL)
         {
@@ -561,16 +553,13 @@ static void bt_error_dummy(void *data, const char *msg, int errnum)
 static int bt_simple_callback(void *data, uintptr_t pc)
 {
     int pcInfoWorked = 0;
-    // if this fails, the executable doesn't have debug info, that's ok (=> use
-    // bt_error_dummy())
+    // if this fails, the executable doesn't have debug info, that's ok (=> use bt_error_dummy())
     backtrace_pcinfo(bt_state, pc, bt_pcinfo_callback, bt_error_dummy, &pcInfoWorked);
     if (!pcInfoWorked)
     { // no debug info? use normal symbols instead
-        // yes, it would be easier to call backtrace_syminfo() in
-        // bt_pcinfo_callback() if function == NULL, but some libbacktrace versions
-        // (e.g. in Ubuntu 18.04's g++-7) don't call bt_pcinfo_callback at all if no
-        // debug info was available - which is also the reason backtrace_full()
-        // can't be used..
+        // yes, it would be easier to call backtrace_syminfo() in bt_pcinfo_callback() if function == NULL,
+        // but some libbacktrace versions (e.g. in Ubuntu 18.04's g++-7) don't call bt_pcinfo_callback
+        // at all if no debug info was available - which is also the reason backtrace_full() can't be used..
         backtrace_syminfo(bt_state, pc, bt_syminfo_callback, bt_error_callback, NULL);
     }
 
@@ -588,10 +577,9 @@ static void signalhandlerCrash(int sig)
             name = crashSigNames[i];
     }
 
-    // TODO: should probably use a custom print function around
-    // write(STDERR_FILENO, ...)
-    //       because printf() could allocate which is not good if processes state
-    //       is fscked (could use backtrace_symbols_fd() then)
+    // TODO: should probably use a custom print function around write(STDERR_FILENO, ...)
+    //       because printf() could allocate which is not good if processes state is fscked
+    //       (could use backtrace_symbols_fd() then)
     CrashPrintf("\n\nLooks like %s crashed with signal %s (%d) - sorry!\n", ENGINE_VERSION, name, sig);
 
 #ifdef D3_HAVE_LIBBACKTRACE
@@ -617,8 +605,7 @@ static void signalhandlerCrash(int sig)
         CrashPrintf("  %s\n", strings[i]);
     }
 
-    CrashPrintf("\n(Sorry it's not overly useful, build with libbacktrace "
-                "support to get function names)\n");
+    CrashPrintf("\n(Sorry it's not overly useful, build with libbacktrace support to get function names)\n");
 
     free(strings);
 
@@ -643,10 +630,10 @@ static void signalhandlerConsoleStuff(int sig)
 {
     if (sig == SIGTTIN)
     {
-        // we get this if dhewm3 was started in foreground, then put to sleep with
-        // ctrl-z and afterwards set to background.. as it's in background now,
-        // disable console input (if someone uses fg afterwards that's their
-        // problem, this is already obscure enough)
+        // we get this if dhewm3 was started in foreground, then put to sleep with ctrl-z
+        // and afterwards set to background..
+        // as it's in background now, disable console input
+        // (if someone uses fg afterwards that's their problem, this is already obscure enough)
         if (tty_enabled)
         {
             Sys_Printf("Sent to background, disabling terminal support.\n");
@@ -692,12 +679,10 @@ static bool createPathRecursive(char *path)
         char *lastDirSep = strrchr(path, '/');
         if (lastDirSep != NULL)
         {
-            *lastDirSep = '\0'; // cut off last part of the path and try first with
-                                // parent directory
+            *lastDirSep = '\0'; // cut off last part of the path and try first with parent directory
             bool ok = createPathRecursive(path);
             *lastDirSep = '/'; // restore path
-            // if parent dir was successfully created (or already existed), create
-            // this dir
+            // if parent dir was successfully created (or already existed), create this dir
             if (ok && mkdir(path, 0755) == 0)
             {
                 return true;
@@ -711,8 +696,7 @@ static bool createPathRecursive(char *path)
 void Posix_InitSignalHandlers(void)
 {
 #ifdef D3_HAVE_LIBBACKTRACE
-    // can't use idStr here and thus can't use Sys_GetPath(PATH_EXE) => added
-    // Posix_GetExePath()
+    // can't use idStr here and thus can't use Sys_GetPath(PATH_EXE) => added Posix_GetExePath()
     const char *exePath = Posix_GetExePath();
     bt_state = backtrace_create_state(exePath[0] ? exePath : NULL, 0, bt_error_callback, NULL);
 #endif
@@ -745,12 +729,11 @@ void Posix_InitSignalHandlers(void)
         }
         char logFileName[PATH_MAX] = {};
         int fullLogLen = snprintf(logFileName, sizeof(logFileName), "%s/dhewm3log.txt", logPath);
-        // cast to size_t which is unsigned and would get really big if fullLogLen <
-        // 0 (=> error in snprintf())
+        // cast to size_t which is unsigned and would get really big if fullLogLen < 0 (=> error in snprintf())
         if ((size_t)fullLogLen >= sizeof(logFileName))
         {
-            printf("WARNING: Couldn't create dhewm3log.txt at '%s' because its "
-                   "length would be '%d' which is > PATH_MAX (%zd) or < 0!\n",
+            printf("WARNING: Couldn't create dhewm3log.txt at '%s' because its length would be '%d' which is > "
+                   "PATH_MAX (%zd) or < 0!\n",
                    logPath, fullLogLen, (size_t)PATH_MAX);
             return;
         }
@@ -781,9 +764,7 @@ void Posix_InitSignalHandlers(void)
     }
     else
     {
-        printf("WARNING: Posix_GetSavePath() returned path with invalid length "
-               "'%zd'!\n",
-               savePathLen);
+        printf("WARNING: Posix_GetSavePath() returned path with invalid length '%zd'!\n", savePathLen);
     }
 }
 
@@ -825,10 +806,10 @@ void Posix_InitConsoleInput(void)
         /*
           ECHO: don't echo input characters
           ICANON: enable canonical mode.  This  enables  the  special
-                characters  EOF,  EOL,  EOL2, ERASE, KILL, REPRINT,
-                STATUS, and WERASE, and buffers by lines.
+            characters  EOF,  EOL,  EOL2, ERASE, KILL, REPRINT,
+            STATUS, and WERASE, and buffers by lines.
           ISIG: when any of the characters  INTR,  QUIT,  SUSP,  or
-                DSUSP are received, generate the corresponding signal
+            DSUSP are received, generate the corresponding signal
         */
         tc.c_lflag &= ~(ECHO | ICANON);
         /*
@@ -842,8 +823,8 @@ void Posix_InitConsoleInput(void)
         {
             if (disableTTYinput)
             {
-                // got SIGTTOU => running in the background (started with `./dhewm3 &`
-                // or similar) so we shouldn't take any console input
+                // got SIGTTOU => running in the background (started with `./dhewm3 &` or similar)
+                // so we shouldn't take any console input
                 Sys_Printf("Running in background, disabling terminal support.\n");
                 in_tty.SetBool(false);
                 return;
@@ -851,8 +832,7 @@ void Posix_InitConsoleInput(void)
             else
             {
                 Sys_Printf("tcsetattr failed: %s (%d)\n", strerror(errno), errno);
-                Sys_Printf("terminal support may not work correctly. Use +set in_tty 0 "
-                           "to disable it\n");
+                Sys_Printf("terminal support may not work correctly. Use +set in_tty 0 to disable it\n");
             }
         }
 #if 0
@@ -869,9 +849,7 @@ void Posix_InitConsoleInput(void)
             if (strcmp(term, "linux") != 0 && strcmp(term, "xterm") != 0 && idStr::Cmpn(term, "xterm-", 6) != 0 &&
                 strcmp(term, "screen") != 0)
             {
-                Sys_Printf("WARNING: terminal type '%s' is unknown. terminal support "
-                           "may not work correctly\n",
-                           term);
+                Sys_Printf("WARNING: terminal type '%s' is unknown. terminal support may not work correctly\n", term);
             }
         }
         Sys_Printf("terminal support enabled ( use +set in_tty 0 to disable )\n");
@@ -1231,9 +1209,8 @@ char *Sys_ConsoleInput(void)
     }
     else
     {
-        // disabled on OSX. works fine from a terminal, but launching from Finder is
-        // causing trouble I'm pretty sure it could be re-enabled if needed, and
-        // just handling the Finder failure case right (TTimo)
+        // disabled on OSX. works fine from a terminal, but launching from Finder is causing trouble
+        // I'm pretty sure it could be re-enabled if needed, and just handling the Finder failure case right (TTimo)
 #ifndef MACOS_X
         // no terminal support - read only complete lines
         int len;
@@ -1259,15 +1236,13 @@ char *Sys_ConsoleInput(void)
         if (len < 1)
         {
             Sys_Printf("read failed: %s\n",
-                       strerror(errno)); // something bad happened, cancel this line
-                                         // and print an error
+                       strerror(errno)); // something bad happened, cancel this line and print an error
             return NULL;
         }
 
         if (len == sizeof(input_ret))
         {
-            Sys_Printf("read overflow\n"); // things are likely to break, as input
-                                           // will be cut into pieces
+            Sys_Printf("read overflow\n"); // things are likely to break, as input will be cut into pieces
         }
 
         input_ret[len - 1] = '\0'; // rip off the \n and terminate

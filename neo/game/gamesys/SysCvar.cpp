@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/BuildVersion.h"
-#include "framework/Licensee.h"
 #include "sys/platform.h"
+#include "framework/Licensee.h"
+#include "framework/BuildVersion.h"
 
 #include "GameBase.h"
 #include "MultiplayerGame.h"
@@ -122,17 +119,14 @@ idCVar ui_chat("ui_chat", "0", CVAR_GAME | CVAR_USERINFO | CVAR_BOOL | CVAR_ROM 
 idCVar developer("developer", "0", CVAR_GAME | CVAR_BOOL, "");
 
 idCVar r_aspectRatio("r_aspectRatio", "-1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                     "aspect ratio of view:\n0 = 4:3\n1 = 16:9\n2 = 16:10\n-1 "
-                     "= auto (guess from resolution)",
-                     -1, 2);
+                     "aspect ratio of view:\n0 = 4:3\n1 = 16:9\n2 = 16:10\n-1 = auto (guess from resolution)", -1, 2);
 
 idCVar g_cinematic("g_cinematic", "1", CVAR_GAME | CVAR_BOOL,
-                   "skips updating entities that aren't marked 'cinematic' '1' "
-                   "during cinematics");
-idCVar g_cinematicMaxSkipTime("g_cinematicMaxSkipTime", "600", CVAR_GAME | CVAR_FLOAT,
-                              "# of seconds to allow game to run when skipping cinematic.  prevents "
-                              "lock-up when cinematic doesn't end.",
-                              0, 3600);
+                   "skips updating entities that aren't marked 'cinematic' '1' during cinematics");
+idCVar g_cinematicMaxSkipTime(
+    "g_cinematicMaxSkipTime", "600", CVAR_GAME | CVAR_FLOAT,
+    "# of seconds to allow game to run when skipping cinematic.  prevents lock-up when cinematic doesn't end.", 0,
+    3600);
 
 idCVar g_muzzleFlash("g_muzzleFlash", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL, "show muzzle flashes");
 idCVar g_projectileLights("g_projectileLights", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
@@ -153,12 +147,11 @@ idCVar g_skipFX("g_skipFX", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar g_skipParticles("g_skipParticles", "0", CVAR_GAME | CVAR_BOOL, "");
 
 idCVar g_disasm("g_disasm", "0", CVAR_GAME | CVAR_BOOL,
-                "disassemble script into base/script/disasm.txt on the local "
-                "drive when script is compiled");
+                "disassemble script into base/script/disasm.txt on the local drive when script is compiled");
 idCVar g_debugBounds("g_debugBounds", "0", CVAR_GAME | CVAR_BOOL, "checks for models with bounds > 2048");
-idCVar g_debugAnim("g_debugAnim", "-1", CVAR_GAME | CVAR_INTEGER,
-                   "displays information on which animations are playing on "
-                   "the specified entity number.  set to -1 to disable.");
+idCVar g_debugAnim(
+    "g_debugAnim", "-1", CVAR_GAME | CVAR_INTEGER,
+    "displays information on which animations are playing on the specified entity number.  set to -1 to disable.");
 idCVar g_debugMove("g_debugMove", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar g_debugDamage("g_debugDamage", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar g_debugWeapon("g_debugWeapon", "0", CVAR_GAME | CVAR_BOOL, "");
@@ -186,8 +179,7 @@ idCVar g_showPVS("g_showPVS", "0", CVAR_GAME | CVAR_INTEGER, "", 0, 2);
 idCVar g_showTargets("g_showTargets", "0", CVAR_GAME | CVAR_BOOL,
                      "draws entities and their targets.  hidden entities are drawn grey.");
 idCVar g_showTriggers("g_showTriggers", "0", CVAR_GAME | CVAR_BOOL,
-                      "draws trigger entities (orange) and their targets "
-                      "(green).  disabled triggers are drawn grey.");
+                      "draws trigger entities (orange) and their targets (green).  disabled triggers are drawn grey.");
 idCVar g_showCollisionWorld("g_showCollisionWorld", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar g_showCollisionModels("g_showCollisionModels", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar g_showCollisionTraces("g_showCollisionTraces", "0", CVAR_GAME | CVAR_BOOL, "");
@@ -199,15 +191,14 @@ idCVar g_showcamerainfo("g_showcamerainfo", "0", CVAR_GAME | CVAR_ARCHIVE,
 idCVar g_showTestModelFrame("g_showTestModelFrame", "0", CVAR_GAME | CVAR_BOOL,
                             "displays the current animation and frame # for testmodels");
 idCVar g_showActiveEntities("g_showActiveEntities", "0", CVAR_GAME | CVAR_BOOL,
-                            "draws boxes around thinking entities.  dormant entities (outside of pvs) "
-                            "are drawn yellow.  non-dormant are green.");
+                            "draws boxes around thinking entities.  dormant entities (outside of pvs) are drawn "
+                            "yellow.  non-dormant are green.");
 idCVar g_showEnemies("g_showEnemies", "0", CVAR_GAME | CVAR_BOOL,
                      "draws boxes around monsters that have targeted the the player");
 
 idCVar g_frametime("g_frametime", "0", CVAR_GAME | CVAR_BOOL, "displays timing information for each game frame");
 idCVar g_timeentities("g_timeEntities", "0", CVAR_GAME | CVAR_FLOAT,
-                      "when non-zero, shows entities whose think functions "
-                      "exceeded the # of milliseconds specified");
+                      "when non-zero, shows entities whose think functions exceeded the # of milliseconds specified");
 
 idCVar ai_debugScript("ai_debugScript", "-1", CVAR_GAME | CVAR_INTEGER,
                       "displays script calls for the specified monster entity number");
@@ -216,10 +207,10 @@ idCVar ai_debugTrajectory("ai_debugTrajectory", "0", CVAR_GAME | CVAR_BOOL, "dra
 idCVar ai_testPredictPath("ai_testPredictPath", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar ai_showCombatNodes("ai_showCombatNodes", "0", CVAR_GAME | CVAR_BOOL, "draws attack cones for monsters");
 idCVar ai_showPaths("ai_showPaths", "0", CVAR_GAME | CVAR_BOOL, "draws path_* entities");
-idCVar ai_showObstacleAvoidance("ai_showObstacleAvoidance", "0", CVAR_GAME | CVAR_INTEGER,
-                                "draws obstacle avoidance information for monsters.  if 2, draws obstacles "
-                                "for player, as well",
-                                0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar ai_showObstacleAvoidance(
+    "ai_showObstacleAvoidance", "0", CVAR_GAME | CVAR_INTEGER,
+    "draws obstacle avoidance information for monsters.  if 2, draws obstacles for player, as well", 0, 2,
+    idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar ai_blockedFailSafe("ai_blockedFailSafe", "1", CVAR_GAME | CVAR_BOOL, "enable blocked fail safe handling");
 
 idCVar g_dvTime("g_dvTime", "1", CVAR_GAME | CVAR_FLOAT, "");
@@ -242,9 +233,9 @@ idCVar g_editEntityMode("g_editEntityMode", "0", CVAR_GAME | CVAR_INTEGER,
                         "6 = entity names\n"
                         "7 = entity models",
                         0, 7, idCmdSystem::ArgCompletion_Integer<0, 7>);
-idCVar g_dragEntity("g_dragEntity", "0", CVAR_GAME | CVAR_BOOL,
-                    "allows dragging physics objects around by placing the "
-                    "crosshair over them and holding the fire button");
+idCVar g_dragEntity(
+    "g_dragEntity", "0", CVAR_GAME | CVAR_BOOL,
+    "allows dragging physics objects around by placing the crosshair over them and holding the fire button");
 idCVar g_dragDamping("g_dragDamping", "0.5", CVAR_GAME | CVAR_FLOAT, "");
 idCVar g_dragShowSelection("g_dragShowSelection", "0", CVAR_GAME | CVAR_BOOL, "");
 idCVar g_dropItemRotation("g_dropItemRotation", "", CVAR_GAME, "");
@@ -321,8 +312,7 @@ idCVar pm_spectatespeed("pm_spectatespeed", "450", CVAR_GAME | CVAR_NETWORKSYNC 
 idCVar pm_spectatebbox("pm_spectatebbox", "32", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                        "size of the spectator bounding box");
 idCVar pm_usecylinder("pm_usecylinder", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_BOOL,
-                      "use a cylinder approximation instead of a bounding box "
-                      "for player collision detection");
+                      "use a cylinder approximation instead of a bounding box for player collision detection");
 idCVar pm_minviewpitch("pm_minviewpitch", "-89", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                        "amount player's view can look up (negative values are up)");
 idCVar pm_maxviewpitch("pm_maxviewpitch", "89", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
@@ -331,8 +321,8 @@ idCVar pm_stamina("pm_stamina", "24", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
 idCVar pm_staminathreshold("pm_staminathreshold", "45", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                            "when stamina drops below this value, player gradually slows to a walk");
 idCVar pm_staminarate("pm_staminarate", "0.75", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
-                      "rate that player regains stamina. divide pm_stamina by this value to "
-                      "determine how long it takes to fully recharge.");
+                      "rate that player regains stamina. divide pm_stamina by this value to determine how long it "
+                      "takes to fully recharge.");
 idCVar pm_crouchheight("pm_crouchheight", "38", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                        "height of player's bounding box while crouched");
 idCVar pm_crouchviewheight("pm_crouchviewheight", "32", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
@@ -361,9 +351,9 @@ idCVar pm_thirdPersonRange("pm_thirdPersonRange", "80", CVAR_GAME | CVAR_NETWORK
                            "camera distance from player in 3rd person");
 idCVar pm_thirdPersonHeight("pm_thirdPersonHeight", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                             "height of camera from normal view height in 3rd person");
-idCVar pm_thirdPersonAngle("pm_thirdPersonAngle", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
-                           "direction of camera from player in 3rd person in "
-                           "degrees (0 = behind player, 180 = in front)");
+idCVar pm_thirdPersonAngle(
+    "pm_thirdPersonAngle", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
+    "direction of camera from player in 3rd person in degrees (0 = behind player, 180 = in front)");
 idCVar pm_thirdPersonClip("pm_thirdPersonClip", "1", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_BOOL,
                           "clip third person view into world space");
 idCVar pm_thirdPerson("pm_thirdPerson", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_BOOL, "enables third person view");
@@ -373,8 +363,7 @@ idCVar pm_modelView("pm_modelView", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_INT
                     "draws camera from POV of player model (1 = always, 2 = when dead)", 0, 2,
                     idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar pm_airTics("pm_air", "1800", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_INTEGER,
-                  "how long in milliseconds the player can go without air "
-                  "before he starts taking damage");
+                  "how long in milliseconds the player can go without air before he starts taking damage");
 
 idCVar g_showPlayerShadow("g_showPlayerShadow", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
                           "enables shadow of player model");
@@ -448,15 +437,15 @@ idCVar g_voteFlags("g_voteFlags", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_INTEG
 idCVar g_mapCycle("g_mapCycle", "mapcycle", CVAR_GAME | CVAR_ARCHIVE,
                   "map cycling script for multiplayer games - see mapcycle.scriptcfg");
 
-idCVar mod_validSkins("mod_validSkins",
-                      "skins/characters/player/marine_mp;skins/characters/player/"
-                      "marine_mp_green;skins/characters/player/marine_mp_blue;skins/characters/"
-                      "player/marine_mp_red;skins/characters/player/marine_mp_yellow",
-                      CVAR_GAME | CVAR_ARCHIVE, "valid skins for the game");
+idCVar mod_validSkins(
+    "mod_validSkins",
+    "skins/characters/player/marine_mp;skins/characters/player/marine_mp_green;skins/characters/player/"
+    "marine_mp_blue;skins/characters/player/marine_mp_red;skins/characters/player/marine_mp_yellow",
+    CVAR_GAME | CVAR_ARCHIVE, "valid skins for the game");
 
 idCVar net_serverDownload("net_serverDownload", "0", CVAR_GAME | CVAR_INTEGER | CVAR_ARCHIVE,
-                          "enable server download redirects. 0: off 1: redirect to si_serverURL 2: "
-                          "use builtin download. see net_serverDl cvars for configuration");
+                          "enable server download redirects. 0: off 1: redirect to si_serverURL 2: use builtin "
+                          "download. see net_serverDl cvars for configuration");
 idCVar net_serverDlBaseURL("net_serverDlBaseURL", "", CVAR_GAME | CVAR_ARCHIVE,
                            "base URL for the download redirection");
 idCVar net_serverDlTable("net_serverDlTable", "", CVAR_GAME | CVAR_ARCHIVE,

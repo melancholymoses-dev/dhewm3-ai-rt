@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -1087,31 +1084,30 @@ void idCameraDef::getActiveSegmentInfo(int segment, idVec3 &origin, idVec3 &dire
 	getCameraInfo(d * totalTime * 1000, origin, direction, fov);
 #endif
     /*
-            if (!cameraSpline.validTime()) {
-                    buildCamera();
+        if (!cameraSpline.validTime()) {
+            buildCamera();
+        }
+        origin = *cameraSpline.getSegmentPoint(segment);
+
+
+        idVec3 temp;
+
+        int numTargets = getTargetSpline()->controlPoints.Num();
+        int count = cameraSpline.splineTime.Num();
+        if (numTargets == 0) {
+            // follow the path
+            if (cameraSpline.getActiveSegment() < count - 1) {
+                temp = *cameraSpline.splinePoints[cameraSpline.getActiveSegment()+1];
             }
-            origin = *cameraSpline.getSegmentPoint(segment);
+        } else if (numTargets == 1) {
+            temp = *getTargetSpline()->controlPoints[0];
+        } else {
+            temp = *getTargetSpline()->getSegmentPoint(segment);
+        }
 
-
-            idVec3 temp;
-
-            int numTargets = getTargetSpline()->controlPoints.Num();
-            int count = cameraSpline.splineTime.Num();
-            if (numTargets == 0) {
-                    // follow the path
-                    if (cameraSpline.getActiveSegment() < count - 1) {
-                            temp =
-       *cameraSpline.splinePoints[cameraSpline.getActiveSegment()+1];
-                    }
-            } else if (numTargets == 1) {
-                    temp = *getTargetSpline()->controlPoints[0];
-            } else {
-                    temp = *getTargetSpline()->getSegmentPoint(segment);
-            }
-
-            temp -= origin;
-            temp.Normalize();
-            direction = temp;
+        temp -= origin;
+        temp.Normalize();
+        direction = temp;
     */
 }
 
@@ -1137,8 +1133,7 @@ bool idCameraDef::getCameraInfo(long time, idVec3 &origin, idVec3 &direction, fl
                 {
                     setActiveTargetByName(events[i]->getParam());
                     getActiveTarget()->start(startTime + events[i]->getTime());
-                    // common->Printf("Triggered event switch to target:
-                    // %s\n",events[i]->getParam());
+                    // common->Printf("Triggered event switch to target: %s\n",events[i]->getParam());
                 }
                 else if (events[i]->getType() == idCameraEvent::EVENT_TRIGGER)
                 {
@@ -1185,16 +1180,16 @@ bool idCameraDef::getCameraInfo(long time, idVec3 &origin, idVec3 &direction, fl
     if (numTargets == 0)
     {
         /*
-                        // follow the path
-                        if (cameraSpline.getActiveSegment() < count - 1) {
-                                temp =
-           *cameraSpline.splinePoints[cameraSpline.getActiveSegment()+1]; if (temp
-           == origin) { int index = cameraSpline.getActiveSegment() + 2; while (temp
-           == origin && index < count - 1) { temp =
-           *cameraSpline.splinePoints[index++];
-                                        }
-                                }
+                // follow the path
+                if (cameraSpline.getActiveSegment() < count - 1) {
+                    temp = *cameraSpline.splinePoints[cameraSpline.getActiveSegment()+1];
+                    if (temp == origin) {
+                        int index = cameraSpline.getActiveSegment() + 2;
+                        while (temp == origin && index < count - 1) {
+                            temp = *cameraSpline.splinePoints[index++];
                         }
+                    }
+                }
         */
     }
     else
@@ -1217,8 +1212,8 @@ idCameraDef::waitEvent
 bool idCameraDef::waitEvent(int index)
 {
     // for (int i = 0; i < events.Num(); i++) {
-    //	if (events[i]->getSegment() == index && events[i]->getType() ==
-    // idCameraEvent::EVENT_WAIT) { 		return true;
+    //	if (events[i]->getSegment() == index && events[i]->getType() == idCameraEvent::EVENT_WAIT) {
+    //		return true;
     //	}
     // }
     return false;
@@ -1320,32 +1315,34 @@ void idCameraDef::buildCamera()
         }
         case idCameraEvent::EVENT_SPEED: {
             /*
-                                            // take the average delay between up to
-               the next five segments float adjust = atof(events[i]->getParam()); int
-               index = events[i]->getSegment(); total = 0; count = 0;
+                            // take the average delay between up to the next five segments
+                            float adjust = atof(events[i]->getParam());
+                            int index = events[i]->getSegment();
+                            total = 0;
+                            count = 0;
 
-                                            // get total amount of time over the
-               remainder of the segment for (j = index; j < cameraSpline.numSegments()
-               - 1; j++) { total += cameraSpline.getSegmentTime(j + 1) -
-               cameraSpline.getSegmentTime(j); count++;
-                                            }
+                            // get total amount of time over the remainder of the segment
+                            for (j = index; j < cameraSpline.numSegments() - 1; j++) {
+                                total += cameraSpline.getSegmentTime(j + 1) - cameraSpline.getSegmentTime(j);
+                                count++;
+                            }
 
-                                            // multiply that by the adjustment
-                                            double newTotal = total * adjust;
-                                            // what is the difference..
-                                            newTotal -= total;
-                                            totalTime += newTotal / 1000;
+                            // multiply that by the adjustment
+                            double newTotal = total * adjust;
+                            // what is the difference..
+                            newTotal -= total;
+                            totalTime += newTotal / 1000;
 
-                                            // per segment difference
-                                            newTotal /= count;
-                                            int additive = newTotal;
+                            // per segment difference
+                            newTotal /= count;
+                            int additive = newTotal;
 
-                                            // now propogate that difference out to
-               each segment for (j = index; j < cameraSpline.numSegments(); j++) {
-                                                    cameraSpline.addSegmentTime(j,
-               additive); additive += newTotal;
-                                            }
-                                            break;
+                            // now propogate that difference out to each segment
+                            for (j = index; j < cameraSpline.numSegments(); j++) {
+                                cameraSpline.addSegmentTime(j, additive);
+                                additive += newTotal;
+                            }
+                            break;
             */
         }
         }
@@ -1356,9 +1353,8 @@ void idCameraDef::buildCamera()
         totalTime += waits[i];
     }
 
-    // on a new target switch, we need to take time to this point ( since last
-    // target switch ) and allocate it across the active target, then reset time
-    // to this point
+    // on a new target switch, we need to take time to this point ( since last target switch )
+    // and allocate it across the active target, then reset time to this point
     long timeSoFar = 0;
     long total = totalTime * 1000;
     for (i = 0; i < targets.Num(); i++)

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,39 +34,38 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "idlib/BitMsg.h"
 
-#include "GameBase.h"
 #include "gamesys/Class.h"
 #include "physics/Clip.h"
+#include "GameBase.h"
 
 /*
 ===============================================================================
 
-        Physics abstract class
+    Physics abstract class
 
-        A physics object is a tool to manipulate the position and orientation of
-        an entity. The physics object is a container for idClipModels used for
-        collision detection. The physics deals with moving these collision
-models through the world according to the laws of physics or other rules.
+    A physics object is a tool to manipulate the position and orientation of
+    an entity. The physics object is a container for idClipModels used for
+    collision detection. The physics deals with moving these collision models
+    through the world according to the laws of physics or other rules.
 
-        The mass of a clip model is the volume of the clip model times the
-density. An arbitrary mass can however be set for specific clip models or the
-        whole physics object. The contents of a clip model is a set of bit flags
-        that define the contents. The clip mask defines the contents a clip
-model collides with.
+    The mass of a clip model is the volume of the clip model times the density.
+    An arbitrary mass can however be set for specific clip models or the
+    whole physics object. The contents of a clip model is a set of bit flags
+    that define the contents. The clip mask defines the contents a clip model
+    collides with.
 
-        The linear velocity of a physics object is a vector that defines the
-        translation of the center of mass in units per second. The angular
-velocity of a physics object is a vector that passes through the center of mass.
-The direction of this vector defines the axis of rotation and the magnitude
-        defines the rate of rotation about the axis in radians per second.
-        The gravity is the change in velocity per second due to gravitational
-force.
+    The linear velocity of a physics object is a vector that defines the
+    translation of the center of mass in units per second. The angular velocity
+    of a physics object is a vector that passes through the center of mass. The
+    direction of this vector defines the axis of rotation and the magnitude
+    defines the rate of rotation about the axis in radians per second.
+    The gravity is the change in velocity per second due to gravitational force.
 
-        Entities update their visual position and orientation from the physics
-        using GetOrigin() and GetAxis(). Direct origin and axis changes of
-        entities should go through the physics. In other words the physics
-origin and axis are updated first and the entity updates it's visual position
-        from the physics.
+    Entities update their visual position and orientation from the physics
+    using GetOrigin() and GetAxis(). Direct origin and axis changes of
+    entities should go through the physics. In other words the physics origin
+    and axis are updated first and the entity updates it's visual position
+    from the physics.
 
 ===============================================================================
 */
@@ -113,15 +109,13 @@ class idPhysics : public idClass
     // get/set the contents of a specific clip model or the whole physics object
     virtual void SetContents(int contents, int id = -1) = 0;
     virtual int GetContents(int id = -1) const = 0;
-    // get/set the contents a specific clip model or the whole physics object
-    // collides with
+    // get/set the contents a specific clip model or the whole physics object collides with
     virtual void SetClipMask(int mask, int id = -1) = 0;
     virtual int GetClipMask(int id = -1) const = 0;
     // get the bounds of a specific clip model or the whole physics object
     virtual const idBounds &GetBounds(int id = -1) const = 0;
     virtual const idBounds &GetAbsBounds(int id = -1) const = 0;
-    // evaluate the physics with the given time step, returns true if the object
-    // moved
+    // evaluate the physics with the given time step, returns true if the object moved
     virtual bool Evaluate(int timeStepMSec, int endTimeMSec) = 0;
     // update the time without moving
     virtual void UpdateTime(int endTimeMSec) = 0;
@@ -139,8 +133,7 @@ class idPhysics : public idClass
     // save and restore the physics state
     virtual void SaveState(void) = 0;
     virtual void RestoreState(void) = 0;
-    // set the position and orientation in master space or world space if no
-    // master set
+    // set the position and orientation in master space or world space if no master set
     virtual void SetOrigin(const idVec3 &newOrigin, int id = -1) = 0;
     virtual void SetAxis(const idMat3 &newAxis, int id = -1) = 0;
     // translate or rotate the physics object in world space
@@ -189,8 +182,7 @@ class idPhysics : public idClass
     // get blocking info, returns NULL if the object is not blocked
     virtual const trace_t *GetBlockingInfo(void) const = 0;
     virtual idEntity *GetBlockingEntity(void) const = 0;
-    // movement end times in msec for reached events at the end of predefined
-    // motion
+    // movement end times in msec for reached events at the end of predefined motion
     virtual int GetLinearEndTime(void) const = 0;
     virtual int GetAngularEndTime(void) const = 0;
     // networking

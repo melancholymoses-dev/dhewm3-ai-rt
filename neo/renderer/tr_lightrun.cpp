@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Session.h"
 #include "renderer/ModelManager.h"
 #include "renderer/RenderWorld_local.h"
-#include "sys/platform.h"
 #include "ui/UserInterface.h"
 
 #include "renderer/tr_local.h"
@@ -99,9 +96,9 @@ generation procedure in dmap:
 carve original surfaces into areas
 
 for each light
-        build shadow volume and beam tree
-        cut all potentially lit surfaces into the beam tree
-                move lit fragments into a new optimize group
+    build shadow volume and beam tree
+    cut all potentially lit surfaces into the beam tree
+        move lit fragments into a new optimize group
 
 optimize groups
 
@@ -456,9 +453,8 @@ void R_DeriveLightData(idRenderLightLocal *light)
         R_LocalPlaneToGlobal(light->modelMatrix, temp, light->lightProject[i]);
     }
 
-    // adjust global light origin for off center projections and parallel
-    // projections we are just faking parallel by making it a very far off center
-    // for now
+    // adjust global light origin for off center projections and parallel projections
+    // we are just faking parallel by making it a very far off center for now
     if (light->parms.parallel)
     {
         idVec3 dir;
@@ -519,8 +515,8 @@ void R_CreateLightRefs(idRenderLightLocal *light)
 
     // determine the areaNum for the light origin, which may let us
     // cull the light if it is behind a closed door
-    // it is debatable if we want to use the entity origin or the center offset
-    // origin, but we definitely don't want to use a parallel offset origin
+    // it is debatable if we want to use the entity origin or the center offset origin,
+    // but we definitely don't want to use a parallel offset origin
     light->areaNum = light->world->PointInArea(light->globalLightOrigin);
     if (light->areaNum == -1)
     {
@@ -531,11 +527,10 @@ void R_CreateLightRefs(idRenderLightLocal *light)
     // area already has a reference
     tr.viewCount++;
 
-    // if we have a prelight model that includes all the shadows for the major
-    // world occluders, we can limit the area references to those visible through
-    // the portals from the light center. We can't do this in the normal case,
-    // because shadows are cast from back facing triangles, which may be in areas
-    // not directly visible to the light projection center.
+    // if we have a prelight model that includes all the shadows for the major world occluders,
+    // we can limit the area references to those visible through the portals from the light center.
+    // We can't do this in the normal case, because shadows are cast from back facing triangles, which
+    // may be in areas not directly visible to the light projection center.
     if (light->parms.prelightModel && r_useLightPortalFlow.GetBool() && light->lightShader->LightCastsShadows())
     {
         light->world->FlowLightThroughPortals(light);
@@ -898,8 +893,7 @@ void R_CheckForEntityDefsUsingModel(idRenderModel *model)
             if (def->parms.hModel == model)
             {
                 // assert( 0 );
-                //  this should never happen but Radiant messes it up all the time so
-                //  just free the derived data
+                //  this should never happen but Radiant messes it up all the time so just free the derived data
                 R_FreeEntityDefDerivedData(def, false, false);
             }
         }

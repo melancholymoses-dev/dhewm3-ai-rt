@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,8 +37,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Describes a complete rotation in degrees about an abritray axis.
-        A local rotation matrix is stored for fast rotation of multiple points.
+    Describes a complete rotation in degrees about an abritray axis.
+    A local rotation matrix is stored for fast rotation of multiple points.
 
 ===============================================================================
 */
@@ -58,9 +55,8 @@ class idRotation
 
     void Set(const idVec3 &rotationOrigin, const idVec3 &rotationVec, const float rotationAngle);
     void SetOrigin(const idVec3 &rotationOrigin);
-    void SetVec(const idVec3 &rotationVec); // has to be normalized
-    void SetVec(const float x, const float y,
-                const float z); // has to be normalized
+    void SetVec(const idVec3 &rotationVec);                   // has to be normalized
+    void SetVec(const float x, const float y, const float z); // has to be normalized
     void SetAngle(const float rotationAngle);
     void Scale(const float s);
     void ReCalculateMatrix(void);
@@ -75,11 +71,9 @@ class idRotation
     idRotation &operator/=(const float s);     // scale rotation
     idVec3 operator*(const idVec3 &v) const;   // rotate vector
 
-    friend idRotation operator*(const float s,
-                                const idRotation &r); // scale rotation
-    friend idVec3 operator*(const idVec3 &v,
-                            const idRotation &r);              // rotate vector
-    friend idVec3 &operator*=(idVec3 &v, const idRotation &r); // rotate vector
+    friend idRotation operator*(const float s, const idRotation &r); // scale rotation
+    friend idVec3 operator*(const idVec3 &v, const idRotation &r);   // rotate vector
+    friend idVec3 &operator*=(idVec3 &v, const idRotation &r);       // rotate vector
 
     idAngles ToAngles(void) const;
     idQuat ToQuat(void) const;

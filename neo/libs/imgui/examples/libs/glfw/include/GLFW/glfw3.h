@@ -1778,8 +1778,8 @@ extern "C"
      *  window, but the dock icon will be the same as the application bundle's icon.
      *  For more information on bundles, see the
      *  [Bundle Programming
-     * Guide](https://developer.apple.com/library/mac/documentation/CoreFoundation/Conceptual/CFBundles/)
-     *  in the Mac Developer Library.
+     * Guide](https://developer.apple.com/library/mac/documentation/CoreFoundation/Conceptual/CFBundles/) in the Mac
+     * Developer Library.
      *
      *  @remark @osx The first time a window is created the menu bar is populated
      *  with common commands like Hide, Quit and About.  The About entry opens
@@ -1944,8 +1944,8 @@ extern "C"
      *  window, but the dock icon will be the same as the application bundle's icon.
      *  For more information on bundles, see the
      *  [Bundle Programming
-     * Guide](https://developer.apple.com/library/mac/documentation/CoreFoundation/Conceptual/CFBundles/)
-     *  in the Mac Developer Library.
+     * Guide](https://developer.apple.com/library/mac/documentation/CoreFoundation/Conceptual/CFBundles/) in the Mac
+     * Developer Library.
      *
      *  @thread_safety This function must only be called from the main thread.
      *
@@ -1998,10 +1998,8 @@ extern "C"
      *  cannot and should not override these limits.
      *
      *  @param[in] window The window to query.
-     *  @param[in] xpos The x-coordinate of the upper-left corner of the client
-     * area.
-     *  @param[in] ypos The y-coordinate of the upper-left corner of the client
-     * area.
+     *  @param[in] xpos The x-coordinate of the upper-left corner of the client area.
+     *  @param[in] ypos The y-coordinate of the upper-left corner of the client area.
      *
      *  @errors Possible errors include @ref GLFW_NOT_INITIALIZED and @ref
      *  GLFW_PLATFORM_ERROR.
@@ -4032,10 +4030,10 @@ extern "C"
 
     /*! @brief Returns the Vulkan instance extensions required by GLFW.
      *
-     *  This function returns an array of names of Vulkan instance extensions
-     * required by GLFW for creating Vulkan surfaces for GLFW windows.  If
-     * successful, the list will always contains `VK_KHR_surface`, so if you don't
-     * require any additional extensions you can pass this list directly to the
+     *  This function returns an array of names of Vulkan instance extensions required
+     *  by GLFW for creating Vulkan surfaces for GLFW windows.  If successful, the
+     *  list will always contains `VK_KHR_surface`, so if you don't require any
+     *  additional extensions you can pass this list directly to the
      *  `VkInstanceCreateInfo` struct.
      *
      *  If Vulkan is not available on the machine, this function returns `NULL` and

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,8 +35,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "GEApp.h"
 #include "GEProperties.h"
-#include "GEStateModifier.h"
 #include "GEWindowWrapper.h"
+#include "GEStateModifier.h"
 
 /*
 ================
@@ -220,42 +217,40 @@ LRESULT CALLBACK rvGEProperties::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPA
             case PGN_ITEMCHANGED:
                 return (int)kv->AddModifier(nmpg->mName, nmpg->mValue);
                 /*
-                                                        case NM_KEYDOWN:
-                                                        {
-                                                                NMKEY* nmkey =
-                   (NMKEY*)hdr; if ( nmkey->nVKey == VK_DELETE )
-                                                                {
-                                                                        int sel =
-                   kv->mGrid.GetCurSel ( ); if ( sel != -1 )
-                                                                        {
-                                                                                const
-                   char* prop;
+                                    case NM_KEYDOWN:
+                                    {
+                                        NMKEY* nmkey = (NMKEY*)hdr;
+                                        if ( nmkey->nVKey == VK_DELETE )
+                                        {
+                                            int sel = kv->mGrid.GetCurSel ( );
+                                            if ( sel != -1 )
+                                            {
+                                                const char* prop;
 
-                                                                                prop =
-                   kv->mGrid.GetItemName(sel); if ( !idStr::Icmp ( prop, "rect" )
-                   || !idStr::Icmp ( prop, "visible" )	|| !idStr::Icmp ( prop, "name" )
-                   )
-                                                                                {
-                                                                                        MessageBeep ( MB_ICONASTERISK );
-                                                                                }
-                                                                                else
-                                                                                {
-                                                                                        idDict tempstate;
-                                                                                        tempstate =
-                   kv->mWrapper->GetStateDict ( ); tempstate.Delete ( prop ); kv->mWorkspace->GetModifierStack().Append
-                   ( new rvGEStateModifier ( "Property Change", kv->mWrapper->GetWindow(), tempstate ) );
-                                                                                        kv->mWorkspace->SetModified (
-                   true ); kv->mGrid.RemoveItem ( sel );
-                                                                                }
-                                                                        }
-                                                                }
-                                                                else
-                                                                {
-                                                                        SendMessage (
-                   gApp.GetMDIFrame(), WM_KEYDOWN, nmkey->nVKey, nmkey->uFlags );
-                                                                }
-                                                                break;
-                                                        }
+                                                prop = kv->mGrid.GetItemName(sel);
+                                                if ( !idStr::Icmp ( prop, "rect" )		||
+                                                     !idStr::Icmp ( prop, "visible" )	||
+                                                     !idStr::Icmp ( prop, "name" ) )
+                                                {
+                                                    MessageBeep ( MB_ICONASTERISK );
+                                                }
+                                                else
+                                                {
+                                                    idDict tempstate;
+                                                    tempstate = kv->mWrapper->GetStateDict ( );
+                                                    tempstate.Delete ( prop );
+                                                    kv->mWorkspace->GetModifierStack().Append ( new rvGEStateModifier (
+                   "Property Change", kv->mWrapper->GetWindow(), tempstate ) ); kv->mWorkspace->SetModified ( true );
+                                                    kv->mGrid.RemoveItem ( sel );
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            SendMessage ( gApp.GetMDIFrame(), WM_KEYDOWN, nmkey->nVKey, nmkey->uFlags );
+                                        }
+                                        break;
+                                    }
                 */
             }
         }

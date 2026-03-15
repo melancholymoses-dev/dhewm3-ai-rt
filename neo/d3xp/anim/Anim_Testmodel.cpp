@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
-#include "Player.h"
 #include "gamesys/SysCvar.h"
+#include "Player.h"
 
 #include "anim/Anim_Testmodel.h"
 
@@ -101,8 +98,7 @@ idTestModel::Restore
 */
 void idTestModel::Restore(idRestoreGame *savefile)
 {
-    // FIXME: one day we may actually want to save/restore test models, but for
-    // now we'll just delete them
+    // FIXME: one day we may actually want to save/restore test models, but for now we'll just delete them
     delete this;
 }
 
@@ -270,8 +266,8 @@ void idTestModel::Event_Footstep(void)
 ================
 idTestModel::ShouldConstructScriptObjectAtSpawn
 
-Called during idEntity::Spawn to see if it should construct the script object or
-not. Overridden by subclasses that need to spawn the script object themselves.
+Called during idEntity::Spawn to see if it should construct the script object or not.
+Overridden by subclasses that need to spawn the script object themselves.
 ================
 */
 bool idTestModel::ShouldConstructScriptObjectAtSpawn(void) const
@@ -307,8 +303,7 @@ void idTestModel::Think(void)
                 // cycle anim with origin reset
                 if (animator.NumFrames(anim) <= 1)
                 {
-                    // single frame animations end immediately, so just cycle it since
-                    // it's the same result
+                    // single frame animations end immediately, so just cycle it since it's the same result
                     animator.CycleAnim(ANIMCHANNEL_ALL, anim, gameLocal.time, FRAME2MS(g_testModelBlend.GetInteger()));
                     if (headAnim)
                     {
@@ -748,7 +743,7 @@ void idTestModel::BlendAnim(const idCmdArgs &args)
 
 /***********************************************************************
 
-        Testmodel console commands
+    Testmodel console commands
 
 ***********************************************************************/
 
@@ -913,8 +908,8 @@ void idTestModel::TestModel_f(const idCmdArgs &args)
         }
         else
         {
-            // allow map models with underscore prefixes to be tested during
-            // development without appending an ase
+            // allow map models with underscore prefixes to be tested during development
+            // without appending an ase
             if (name[0] != '_')
             {
                 name.DefaultFileExtension(".ase");

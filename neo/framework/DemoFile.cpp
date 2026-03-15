@@ -19,34 +19,30 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
-#include "framework/Licensee.h"
-#include "idlib/geometry/JointTransform.h"
 #include "sys/platform.h"
+#include "idlib/geometry/JointTransform.h"
+#include "framework/Licensee.h"
+#include "framework/FileSystem.h"
 
 #include "framework/DemoFile.h"
 
 idCVar idDemoFile::com_logDemos("com_logDemos", "0", CVAR_SYSTEM | CVAR_BOOL,
                                 "Write demo.log with debug information in it");
-idCVar idDemoFile::com_compressDemos("com_compressDemos", "1", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
-                                     "Compression scheme for demo files\n0: None    (Fast, large files)\n1: LZW "
-                                     "    (Fast to compress, Fast to decompress, medium/small files)\n2: LZSS   "
-                                     " (Slow to compress, Fast to decompress, small files)\n3: Huffman (Fast to "
-                                     "compress, Slow to decompress, medium files)\nSee also: The 'CompressDemo' "
-                                     "command");
+idCVar idDemoFile::com_compressDemos(
+    "com_compressDemos", "1", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
+    "Compression scheme for demo files\n0: None    (Fast, large files)\n1: LZW     (Fast to compress, Fast to "
+    "decompress, medium/small files)\n2: LZSS    (Slow to compress, Fast to decompress, small files)\n3: Huffman (Fast "
+    "to compress, Slow to decompress, medium files)\nSee also: The 'CompressDemo' command");
 idCVar idDemoFile::com_preloadDemos("com_preloadDemos", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_ARCHIVE,
                                     "Load the whole demo in to RAM before running it");
 
@@ -143,8 +139,7 @@ bool idDemoFile::OpenForReading(const char *fileName)
     else
     {
         // Ideally we would error out if the magic string isn't there,
-        // but for backwards compatibility we are going to assume it's just an
-        // uncompressed demo file
+        // but for backwards compatibility we are going to assume it's just an uncompressed demo file
         compression = 0;
         f->Rewind();
     }

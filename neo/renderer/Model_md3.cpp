@@ -19,28 +19,25 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/Model_local.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
+#include "renderer/Model_local.h"
 
 #include "renderer/Model_md3.h"
 
 /***********************************************************************
 
-        idMD3Mesh
+    idMD3Mesh
 
 ***********************************************************************/
 
@@ -189,8 +186,7 @@ void idRenderModelMD3::InitFromFile(const char *fileName)
         for (j = 0; j < surf->numShaders; j++, shader++)
         {
             const idMaterial *sh = declManager->FindMaterial(shader->name);
-            // DG: md3Shadder_t must use an index to the material instead of a
-            // pointer,
+            // DG: md3Shadder_t must use an index to the material instead of a pointer,
             //     otherwise the sizes are wrong on 64bit and we get data corruption
             shader->shaderIndex = (sh != NULL) ? shaders.AddUnique(sh) : -1;
         }
@@ -330,8 +326,7 @@ idRenderModel *idRenderModelMD3::InstantiateDynamicModel(const struct renderEnti
     surface = (md3Surface_t *)((byte *)md3 + md3->ofsSurfaces);
 
     // TODO: these need set by an entity
-    frame = ent->shaderParms[SHADERPARM_MD3_FRAME]; // probably want to keep
-                                                    // frames < 1000 or so
+    frame = ent->shaderParms[SHADERPARM_MD3_FRAME]; // probably want to keep frames < 1000 or so
     oldframe = ent->shaderParms[SHADERPARM_MD3_LASTFRAME];
     backlerp = ent->shaderParms[SHADERPARM_MD3_BACKLERP];
 
@@ -375,8 +370,7 @@ idRenderModel *idRenderModelMD3::InstantiateDynamicModel(const struct renderEnti
 
         R_BoundTriSurf(tri);
 
-        surf.id = staticModel->NumSurfaces(); // DG: make sure to initialize id;
-                                              // FIXME: or just set id to 0?
+        surf.id = staticModel->NumSurfaces(); // DG: make sure to initialize id; FIXME: or just set id to 0?
         staticModel->AddSurface(surf);
         staticModel->bounds.AddPoint(surf.geometry->bounds[0]);
         staticModel->bounds.AddPoint(surf.geometry->bounds[1]);
@@ -409,8 +403,7 @@ idBounds idRenderModelMD3::Bounds(const struct renderEntity_s *ent) const
     }
 
     md3Frame_t *frame = (md3Frame_t *)((byte *)md3 + md3->ofsFrames);
-    frame += (int)ent->shaderParms[SHADERPARM_MD3_FRAME]; // DG: use bounds of
-                                                          // current frame
+    frame += (int)ent->shaderParms[SHADERPARM_MD3_FRAME]; // DG: use bounds of current frame
 
     ret.AddPoint(frame->bounds[0]);
     ret.AddPoint(frame->bounds[1]);

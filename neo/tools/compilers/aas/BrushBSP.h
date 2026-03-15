@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,16 +32,16 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __BRUSHBSP_H__
 #define __BRUSHBSP_H__
 
-#include "idlib/MapFile.h"
-#include "idlib/containers/StrList.h"
 #include "idlib/containers/VectorSet.h"
+#include "idlib/containers/StrList.h"
 #include "idlib/geometry/Winding.h"
+#include "idlib/MapFile.h"
 #include "tools/compilers/aas/Brush.h"
 
 /*
 ===============================================================================
 
-        BrushBSP
+    BrushBSP
 
 ===============================================================================
 */
@@ -184,8 +181,7 @@ class idBrushBSPNode
         flags &= ~flag;
     }
     bool TestLeafNode(void);
-    // remove the flag from nodes found by flooding through portals to nodes with
-    // the flag set
+    // remove the flag from nodes found by flooding through portals to nodes with the flag set
     void RemoveFlagFlood(int flag);
     // recurse down the tree and remove the flag from all visited nodes
     void RemoveFlagRecurse(int flag);
@@ -239,8 +235,7 @@ class idBrushBSP
     void PruneMergedTree_r(idBrushBSPNode *node);
     // melt portal windings
     void MeltPortals(int skipContents);
-    // write a map file with a brush for every leaf node that has the given
-    // contents
+    // write a map file with a brush for every leaf node that has the given contents
     void WriteBrushMap(const idStr &fileName, const idStr &ext, int contents);
     // bounds for the whole tree
     const idBounds &GetTreeBounds(void) const

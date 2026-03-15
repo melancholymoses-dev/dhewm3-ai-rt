@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "script/Script_Program.h"
 #include "Entity.h"
 #include "Game_local.h"
-#include "script/Script_Program.h"
-#include "sys/platform.h"
 
 #include "Event.h"
 
@@ -95,8 +92,7 @@ idEventDef::idEventDef(const char *command, const char *formatspec, char returnT
         return;
     }
 
-    // make sure the format for the args is valid, calculate the formatspecindex,
-    // and the offsets for each arg
+    // make sure the format for the args is valid, calculate the formatspecindex, and the offsets for each arg
     bits = 0;
     argsize = 0;
     memset(argOffset, 0, sizeof(argOffset));
@@ -130,9 +126,7 @@ idEventDef::idEventDef(const char *command, const char *formatspec, char returnT
 
         default:
             eventError = true;
-            sprintf(eventErrorMsg,
-                    "idEventDef::idEventDef : Invalid arg format '%s' string for "
-                    "'%s' event.",
+            sprintf(eventErrorMsg, "idEventDef::idEventDef : Invalid arg format '%s' string for '%s' event.",
                     formatspec, name);
             return;
             break;
@@ -154,9 +148,8 @@ idEventDef::idEventDef(const char *command, const char *formatspec, char returnT
             {
                 eventError = true;
                 sprintf(eventErrorMsg,
-                        "idEvent '%s' defined twice with same name but differing "
-                        "format strings ('%s'!='%s').",
-                        command, formatspec, ev->formatspec);
+                        "idEvent '%s' defined twice with same name but differing format strings ('%s'!='%s').", command,
+                        formatspec, ev->formatspec);
                 return;
             }
 
@@ -164,9 +157,8 @@ idEventDef::idEventDef(const char *command, const char *formatspec, char returnT
             {
                 eventError = true;
                 sprintf(eventErrorMsg,
-                        "idEvent '%s' defined twice with same name but differing "
-                        "return types ('%c'!='%c').",
-                        command, returnType, ev->returnType);
+                        "idEvent '%s' defined twice with same name but differing return types ('%c'!='%c').", command,
+                        returnType, ev->returnType);
                 return;
             }
             // Don't bother putting the duplicate event in list.
@@ -304,8 +296,8 @@ idEvent *idEvent::Alloc(const idEventDef *evdef, int numargs, va_list args)
         arg = va_arg(args, idEventArg *);
         if (format[i] != arg->type)
         {
-            // when NULL is passed in for an entity, it gets cast as an integer 0, so
-            // don't give an error when it happens
+            // when NULL is passed in for an entity, it gets cast as an integer 0, so don't give an error when it
+            // happens
             if (!(((format[i] == D_EVENT_TRACE) || (format[i] == D_EVENT_ENTITY)) && (arg->type == 'd') &&
                   (arg->value == 0)))
             {
@@ -349,10 +341,9 @@ idEvent *idEvent::Alloc(const idEventDef *evdef, int numargs, va_list args)
                 *reinterpret_cast<bool *>(dataPtr) = true;
                 *reinterpret_cast<trace_t *>(dataPtr + sizeof(bool)) = *reinterpret_cast<const trace_t *>(arg->value);
 
-                // save off the material as a string since the pointer won't be valid in
-                // save games. since we save off the entire trace_t structure, if the
-                // material is NULL here, it will be NULL when we process it, so we
-                // don't need to save off anything in that case.
+                // save off the material as a string since the pointer won't be valid in save games.
+                // since we save off the entire trace_t structure, if the material is NULL here,
+                // it will be NULL when we process it, so we don't need to save off anything in that case.
                 if (reinterpret_cast<const trace_t *>(arg->value)->c.material)
                 {
                     materialName = reinterpret_cast<const trace_t *>(arg->value)->c.material->GetName();
@@ -398,14 +389,13 @@ void idEvent::CopyArgs(const idEventDef *evdef, int numargs, va_list args, intpt
         arg = va_arg(args, idEventArg *);
         if (format[i] != arg->type)
         {
-            // when NULL is passed in for an entity, it gets cast as an integer 0, so
-            // don't give an error when it happens
+            // when NULL is passed in for an entity, it gets cast as an integer 0, so don't give an error when it
+            // happens
             if (!(((format[i] == D_EVENT_TRACE) || (format[i] == D_EVENT_ENTITY)) && (arg->type == 'd') &&
                   (arg->value == 0)))
             {
-                gameLocal.Error("idEvent::CopyArgs : Wrong type passed in for arg # %d "
-                                "on '%s' event.",
-                                i, evdef->GetName());
+                gameLocal.Error("idEvent::CopyArgs : Wrong type passed in for arg # %d on '%s' event.", i,
+                                evdef->GetName());
             }
         }
 
@@ -605,9 +595,8 @@ void idEvent::ServiceEvents(void)
                 break;
 
             default:
-                gameLocal.Error("idEvent::ServiceEvents : Invalid arg format '%s' "
-                                "string for '%s' event.",
-                                formatspec, ev->GetName());
+                gameLocal.Error("idEvent::ServiceEvents : Invalid arg format '%s' string for '%s' event.", formatspec,
+                                ev->GetName());
             }
         }
 
@@ -620,9 +609,8 @@ void idEvent::ServiceEvents(void)
         // return the event to the free list
         event->Free();
 
-        // Don't allow ourselves to stay in here too long.  An abnormally high
-        // number of events being processed is evidence of an infinite loop of
-        // events.
+        // Don't allow ourselves to stay in here too long.  An abnormally high number
+        // of events being processed is evidence of an infinite loop of events.
         num++;
         if (num > MAX_EVENTSPERFRAME)
         {
@@ -824,8 +812,7 @@ void idEvent::Restore(idRestoreGame *savefile)
         savefile->ReadInt(argsize);
         if (argsize != event->eventdef->GetArgSize())
         {
-            savefile->Error("idEvent::Restore: arg size (%zd) doesn't match saved "
-                            "arg size(%d) on event '%s'",
+            savefile->Error("idEvent::Restore: arg size (%zd) doesn't match saved arg size(%d) on event '%s'",
                             event->eventdef->GetArgSize(), argsize, event->eventdef->GetName());
         }
         if (argsize)
@@ -893,8 +880,8 @@ void idEvent::Restore(idRestoreGame *savefile)
  ================
  idEvent::ReadTrace
 
- idRestoreGame has a ReadTrace procedure, but unfortunately idEvent wants the
- material string name at the of the data structure rather than in the middle
+ idRestoreGame has a ReadTrace procedure, but unfortunately idEvent wants the material
+ string name at the of the data structure rather than in the middle
  ================
  */
 void idEvent::RestoreTrace(idRestoreGame *savefile, trace_t &trace)
@@ -918,8 +905,8 @@ void idEvent::RestoreTrace(idRestoreGame *savefile, trace_t &trace)
  ================
  idEvent::WriteTrace
 
- idSaveGame has a WriteTrace procedure, but unfortunately idEvent wants the
-material string name at the of the data structure rather than in the middle
+ idSaveGame has a WriteTrace procedure, but unfortunately idEvent wants the material
+ string name at the of the data structure rather than in the middle
 ================
  */
 void idEvent::SaveTrace(idSaveGame *savefile, const trace_t &trace)
@@ -963,8 +950,7 @@ void CreateEventCallbackHandler(void)
     {
 
         file->Printf("\t/*******************************************************\n\n\t\t%d "
-                     "args\n\n\t*******************************************************/"
-                     "\n\n",
+                     "args\n\n\t*******************************************************/\n\n",
                      i);
 
         for (j = 0; j < (1 << i); j++)
@@ -998,12 +984,10 @@ void CreateEventCallbackHandler(void)
                 }
             }
 
-            file->Printf("\tcase %d :\n\t\ttypedef void ( "
-                         "idClass::*eventCallback_%s_t )( %s );\n",
+            file->Printf("\tcase %d :\n\t\ttypedef void ( idClass::*eventCallback_%s_t )( %s );\n",
                          (1 << (i + D_EVENT_MAXARGS)) + j, argString, string1.c_str());
-            file->Printf("\t\t( this->*( eventCallback_%s_t )callback )( %s "
-                         ");\n\t\tbreak;\n\n",
-                         argString, string2.c_str());
+            file->Printf("\t\t( this->*( eventCallback_%s_t )callback )( %s );\n\t\tbreak;\n\n", argString,
+                         string2.c_str());
         }
     }
 

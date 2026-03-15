@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,9 +32,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "tools/edit_gui_common.h"
 
 // #include "stdafx.h"
+#include "radiant.h"
 #include "GetString.h" // for ErrorBox() etc
 #include "qe3.h"
-#include "radiant.h"
 
 #include "EntKeyFindReplace.h"
 // #include "oddbits.h"
@@ -117,22 +114,22 @@ void CEntKeyFindReplace::OnReplace()
     UpdateData(DIALOG_TO_DATA);
     if (m_strFindKey.IsEmpty())
     {
-        ErrorBox("Empty FIND <key>!\n\n(This is only permitted for FIND, not "
-                 "replace, for safety reasons)");
+        ErrorBox("Empty FIND <key>!\n\n(This is only permitted for FIND, not replace, for safety reasons)");
     }
     else
     {
-        if (!m_strFindValue.IsEmpty() || GetYesNo(va("Empty FIND <value> means replace any existing ( & "
-                                                     "non-blank ) <value> for <key> \"%s\"\n\nProceed?",
-                                                     (LPCSTR)m_strFindKey)))
+        if (!m_strFindValue.IsEmpty() ||
+            GetYesNo(
+                va("Empty FIND <value> means replace any existing ( & non-blank ) <value> for <key> \"%s\"\n\nProceed?",
+                   (LPCSTR)m_strFindKey)))
         {
-            // another check, if they're trying to do a replace with a missing replace
-            // key, it'll just delete found keys...
+            // another check, if they're trying to do a replace with a missing replace key, it'll just delete found
+            // keys...
             //
             if ((!m_strReplaceKey.IsEmpty() && !m_strReplaceValue.IsEmpty()) ||
-                GetYesNo(va("Empty REPLACE <key> or <value> fields will just delete "
-                            "all occurence of <key> \"%s\"\n\nProceed?",
-                            m_strFindKey.GetString())))
+                GetYesNo(va(
+                    "Empty REPLACE <key> or <value> fields will just delete all occurence of <key> \"%s\"\n\nProceed?",
+                    m_strFindKey.GetString())))
             {
                 if (GetYesNo("Sure?"))
                 {
@@ -158,9 +155,8 @@ void CEntKeyFindReplace::OnFind()
     {
         //		if (m_strFindKey.IsEmpty() && m_bSelectAllMatchingEnts)
         //		{
-        //			if (GetYesNo("Warning! Having a blank FIND <key> and
-        // ticking \"Select all matching ents\" can take a LONG time to do (and is
-        // probably a wrong choice anyway?)\n\nProceed?"))
+        //			if (GetYesNo("Warning! Having a blank FIND <key> and ticking \"Select all matching ents\" can take a
+        //LONG time to do (and is probably a wrong choice anyway?)\n\nProceed?"))
         //			{
         //				CopyFields();
         //				EndDialog(ID_RET_FIND);

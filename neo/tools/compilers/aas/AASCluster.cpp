@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -120,8 +117,7 @@ bool idAASCluster::FloodClusterAreas_r(int areaNum, int clusterNum)
         {
             return true;
         }
-        // there's a reachability going from one cluster to another only in one
-        // direction
+        // there's a reachability going from one cluster to another only in one direction
         common->Error("cluster %d touched cluster %d at area %d\r\n", clusterNum, file->areas[areaNum].cluster,
                       areaNum);
         return false;
@@ -416,8 +412,7 @@ bool idAASCluster::TestPortals(void)
             continue;
         }
 
-        // may not removed this portal if it has a reversed reachability to a
-        // removed portal
+        // may not removed this portal if it has a reversed reachability to a removed portal
         for (reach = area->rev_reach; reach; reach = reach->rev_next)
         {
             area2 = &file->areas[reach->toAreaNum];
@@ -449,8 +444,7 @@ bool idAASCluster::TestPortals(void)
             continue;
         }
 
-        // this portal may not have reachabilities to a portal that doesn't seperate
-        // the same clusters
+        // this portal may not have reachabilities to a portal that doesn't seperate the same clusters
         for (reach = area->reach; reach; reach = reach->next)
         {
             area2 = &file->areas[reach->toAreaNum];

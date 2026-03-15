@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,29 +32,29 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __COLLISIONMODELMANAGER_H__
 #define __COLLISIONMODELMANAGER_H__
 
-#include "idlib/MapFile.h"
-#include "idlib/bv/Bounds.h"
 #include "idlib/geometry/TraceModel.h"
-#include "idlib/math/Matrix.h"
 #include "idlib/math/Vector.h"
+#include "idlib/math/Matrix.h"
+#include "idlib/bv/Bounds.h"
+#include "idlib/MapFile.h"
 
 class idMaterial;
 
 /*
 ===============================================================================
 
-        Trace model vs. polygonal model collision detection.
+    Trace model vs. polygonal model collision detection.
 
-        Short translations are the least expensive. Retrieving contact points is
-        about as cheap as a short translation. Position tests are more expensive
-        and rotations are most expensive.
+    Short translations are the least expensive. Retrieving contact points is
+    about as cheap as a short translation. Position tests are more expensive
+    and rotations are most expensive.
 
-        There is no position test at the start of a translation or rotation. In
-other words if a translation with start != end or a rotation with angle != 0
-starts in solid, this goes unnoticed and the collision result is undefined.
+    There is no position test at the start of a translation or rotation. In other
+    words if a translation with start != end or a rotation with angle != 0 starts
+    in solid, this goes unnoticed and the collision result is undefined.
 
-        A translation with start == end or a rotation with angle == 0 performs
-        a position test and fills in the trace_t structure accordingly.
+    A translation with start == end or a rotation with angle == 0 performs
+    a position test and fills in the trace_t structure accordingly.
 
 ===============================================================================
 */
@@ -97,11 +94,9 @@ typedef struct trace_s
 
 typedef int cmHandle_t;
 
-#define CM_CLIP_EPSILON 0.25f // always stay this distance away from any model
-#define CM_BOX_EPSILON 1.0f   // should always be larger than clip epsilon
-#define CM_MAX_TRACE_DIST                                                                                              \
-    4096.0f // maximum distance a trace model may be traced, point traces are
-            // unlimited
+#define CM_CLIP_EPSILON 0.25f     // always stay this distance away from any model
+#define CM_BOX_EPSILON 1.0f       // should always be larger than clip epsilon
+#define CM_MAX_TRACE_DIST 4096.0f // maximum distance a trace model may be traced, point traces are unlimited
 
 class idCollisionModelManager
 {
@@ -143,12 +138,10 @@ class idCollisionModelManager
     virtual void Rotation(trace_t *results, const idVec3 &start, const idRotation &rotation, const idTraceModel *trm,
                           const idMat3 &trmAxis, int contentMask, cmHandle_t model, const idVec3 &modelOrigin,
                           const idMat3 &modelAxis) = 0;
-    // Returns the contents touched by the trace model or 0 if the trace model is
-    // in free space.
+    // Returns the contents touched by the trace model or 0 if the trace model is in free space.
     virtual int Contents(const idVec3 &start, const idTraceModel *trm, const idMat3 &trmAxis, int contentMask,
                          cmHandle_t model, const idVec3 &modelOrigin, const idMat3 &modelAxis) = 0;
-    // Stores all contact points of the trace model with the model, returns the
-    // number of contacts.
+    // Stores all contact points of the trace model with the model, returns the number of contacts.
     virtual int Contacts(contactInfo_t *contacts, const int maxContacts, const idVec3 &start, const idVec6 &dir,
                          const float depth, const idTraceModel *trm, const idMat3 &trmAxis, int contentMask,
                          cmHandle_t model, const idVec3 &modelOrigin, const idMat3 &modelAxis) = 0;

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -106,8 +103,7 @@ brush_t *Brush_Merge(brush_t *brush1, brush_t *brush2, int onlyshape)
     }
     //
     shared = 0;
-    // check if the new brush would be convex... flipped planes make a brush
-    // non-convex
+    // check if the new brush would be convex... flipped planes make a brush non-convex
     for (face1 = brush1->brush_faces; face1; face1 = face1->next)
     {
         // don't check the faces of brush 1 and 2 touching each other
@@ -328,8 +324,7 @@ brush_t *Brush_MergeList(brush_t *brushlist, int onlyshape)
         return NULL;
     for (brush1 = brushlist; brush1; brush1 = brush1->next)
     {
-        // check if the new brush would be convex... flipped planes make a brush
-        // concave
+        // check if the new brush would be convex... flipped planes make a brush concave
         for (face1 = brush1->brush_faces; face1; face1 = face1->next)
         {
             // don't check face1 if it touches another brush
@@ -658,8 +653,7 @@ void CSG_Merge(void)
 
         if (b->brush_faces->d_texture && (b->brush_faces->d_texture->GetContentFlags() & CONTENTS_NOCSG))
         {
-            Sys_Status("Cannot add brushes using shaders that don't allows CSG "
-                       "operations.\n");
+            Sys_Status("Cannot add brushes using shaders that don't allows CSG operations.\n");
             return;
         }
 

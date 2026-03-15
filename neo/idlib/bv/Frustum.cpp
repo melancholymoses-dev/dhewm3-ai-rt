@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/containers/List.h"
 #include "sys/platform.h"
+#include "idlib/containers/List.h"
 
 #include "idlib/bv/Frustum.h"
 
@@ -2635,8 +2632,7 @@ bool idFrustum::ProjectionBounds(const idFrustum &frustum, idBounds &projectionB
         localScaled[1] *= dLeft;
         localScaled[2] *= dUp;
 
-        // test the outer edges of this frustum for intersection with the other
-        // frustum
+        // test the outer edges of this frustum for intersection with the other frustum
         if ((outside & 2) && (outside & 8))
         {
             frustum.LocalRayIntersection(localOrigin, localScaled[0] - localScaled[1] - localScaled[2], scale1, scale2);
@@ -2838,8 +2834,7 @@ void idFrustum::ClipFrustumToBox(const idBox &box, float clipFractions[4], int c
             clipPlanes[i] = 16 << index;
         }
 
-        // make sure the frustum is not clipped between the frustum origin and the
-        // near plane
+        // make sure the frustum is not clipped between the frustum origin and the near plane
         if (clipFractions[i] < minf)
         {
             clipFractions[i] = minf;
@@ -3152,8 +3147,7 @@ bool idFrustum::ClippedProjectionBounds(const idFrustum &frustum, const idBox &c
 
     // if the clipped frustum far end points are inside this frustum
     if (!(farCull && !(nearCull & farCull)) &&
-        // if the clipped frustum is not clipped to a single plane of the clip
-        // bounds
+        // if the clipped frustum is not clipped to a single plane of the clip bounds
         (clipPlanes[0] != clipPlanes[1] || clipPlanes[1] != clipPlanes[2] || clipPlanes[2] != clipPlanes[3]))
     {
 
@@ -3195,8 +3189,7 @@ bool idFrustum::ClippedProjectionBounds(const idFrustum &frustum, const idBox &c
         localAxis2 = clipBox.GetAxis() * transpose;
         BoxToPoints(localOrigin2, clipBox.GetExtents(), localAxis2, localPoints2);
 
-        // clip the edges of the clip bounds to the other frustum and add the
-        // clipped edges to the projection bounds
+        // clip the edges of the clip bounds to the other frustum and add the clipped edges to the projection bounds
         for (i = 0; i < 4; i++)
         {
             p1 = i;
@@ -3252,8 +3245,7 @@ bool idFrustum::ClippedProjectionBounds(const idFrustum &frustum, const idBox &c
         }
     }
 
-    // if the clipped frustum extends beyond two or more boundaries of this
-    // frustum
+    // if the clipped frustum extends beyond two or more boundaries of this frustum
     if (outside != 1 && outside != 2 && outside != 4 && outside != 8)
     {
 
@@ -3278,8 +3270,7 @@ bool idFrustum::ClippedProjectionBounds(const idFrustum &frustum, const idBox &c
         clipBounds[0] = -clipBox.GetExtents();
         clipBounds[1] = clipBox.GetExtents();
 
-        // test the outer edges of this frustum for intersection with both the other
-        // frustum and the clip bounds
+        // test the outer edges of this frustum for intersection with both the other frustum and the clip bounds
         if ((outside & 2) && (outside & 8))
         {
             frustum.LocalRayIntersection(localOrigin1, localAxis1[0] - localAxis1[1] - localAxis1[2], s1, s2);

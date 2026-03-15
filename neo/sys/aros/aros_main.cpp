@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,8 +34,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include <aros/debug.h>
 #undef ASSERT
 
-#include <proto/dos.h>
 #include <proto/exec.h>
+#include <proto/dos.h>
 
 // undefine - conflict with ID functions
 #undef Remove
@@ -52,26 +49,26 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #undef Printf
 #undef VPrintf
 
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <pwd.h>
-#include <signal.h>
-#include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/types.h>
-#include <termios.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <dirent.h>
 #include <unistd.h>
+#include <sys/time.h>
+#include <pwd.h>
+#include <termios.h>
+#include <signal.h>
+#include <fcntl.h>
 
 #include <SDL_main.h>
 
 #include "dll/dll.h"
 
-#include "framework/EditField.h"
+#include "sys/platform.h"
+#include "idlib/containers/StrList.h"
 #include "framework/FileSystem.h"
 #include "framework/KeyInput.h"
-#include "idlib/containers/StrList.h"
-#include "sys/platform.h"
+#include "framework/EditField.h"
 #include "sys/sys_local.h"
 
 #include "sys/aros/aros_public.h"
@@ -361,8 +358,7 @@ static void initLog()
     idStr::Append(logBkPath, sizeof(logBkPath), PATHSEPERATOR_STR "dhewm3log-old.txt");
     idStr::Append(logPath, sizeof(logPath), PATHSEPERATOR_STR "dhewm3log.txt");
 
-    rename(logPath, logBkPath); // I hope AROS supports this, but it's standard
-                                // C89 so it should
+    rename(logPath, logBkPath); // I hope AROS supports this, but it's standard C89 so it should
 
     consoleLog = fopen(logPath, "w");
     if (consoleLog == NULL)
@@ -453,8 +449,7 @@ void AROS_InitConsoleInput(void)
         if (tcsetattr(0, TCSADRAIN, &tc) == -1)
         {
             Sys_Printf("tcsetattr failed: %s\n", strerror(errno));
-            Sys_Printf("terminal support may not work correctly. Use +set in_tty 0 "
-                       "to disable it\n");
+            Sys_Printf("terminal support may not work correctly. Use +set in_tty 0 to disable it\n");
         }
         // make the output non blocking
         if (fcntl(STDOUT_FILENO, F_SETFL, fcntl(STDOUT_FILENO, F_GETFL, 0) | O_NONBLOCK) == -1)
@@ -469,9 +464,7 @@ void AROS_InitConsoleInput(void)
         {
             if (strcmp(term, "linux") && strcmp(term, "xterm") && strcmp(term, "xterm-color") && strcmp(term, "screen"))
             {
-                Sys_Printf("WARNING: terminal type '%s' is unknown. terminal support "
-                           "may not work correctly\n",
-                           term);
+                Sys_Printf("WARNING: terminal type '%s' is unknown. terminal support may not work correctly\n", term);
             }
         }
         Sys_Printf("terminal support enabled ( use +set in_tty 0 to disabled )\n");
@@ -588,216 +581,248 @@ Return NULL if a complete line is not ready.
 char *Sys_ConsoleInput(void)
 {
     /*
-        if ( tty_enabled ) {
-                char	key;
-                bool	hidden = false;
-                while ( ( key = getchar() ) != EOF ) {
-                        if ( !hidden ) {
-                                tty_Hide();
-                                hidden = true;
-                        }
-                        switch ( key ) {
-                        case 1:
-                                input_field.SetCursor( 0 );
-                                break;
-                        case 5:
-                                input_field.SetCursor( strlen(
-       input_field.GetBuffer() ) ); break; case 127: case 8:
-                                input_field.CharEvent( K_BACKSPACE );
-                                break;
-                        case '\n':
-                                idStr::Copynz( input_ret, input_field.GetBuffer(),
-       sizeof( input_ret ) ); assert( hidden ); tty_Show(); putchar(key);
-                                input_field.Clear();
-                                if ( history_count < CMD_HIST ) {
-                                        history[ history_count ] = input_ret;
-                                        history_count++;
-                                } else {
-                                        history[ history_start ] = input_ret;
-                                        history_start++;
-                                        history_start %= CMD_HIST;
-                                }
-                                history_current = 0;
-                                return input_ret;
-                        case '\t':
-                                input_field.AutoComplete();
-                                break;
-                        case 27: {
-                                // enter escape sequence mode
-                                if ( ( key = getchar() ) == EOF ) {
-                                        Sys_Printf( "dropping sequence: '27' " );
-                                        tty_FlushIn();
-                                        assert( hidden );
-                                        tty_Show();
-                                        return NULL;
-                                }
-                                switch ( key ) {
-                                case 79:
-                                        if ( ( key = getchar() ) == EOF ) {
-                                                Sys_Printf( "dropping sequence:
-       '27' '79' " ); tty_FlushIn(); assert( hidden ); tty_Show(); return NULL;
-                                        }
-                                        switch ( key ) {
-                                        case 72:
-                                                // xterm only
-                                                input_field.SetCursor( 0 );
-                                                break;
-                                        case 70:
-                                                // xterm only
-                                                input_field.SetCursor( strlen(
-       input_field.GetBuffer() ) ); break; default: Sys_Printf( "dropping
-       sequence: '27' '79' '%d' ", key ); tty_FlushIn(); assert( hidden );
-                                                tty_Show();
-                                                return NULL;
-                                        }
-                                        break;
-                                case 91: {
-                                        if ( ( key = getchar() ) == EOF ) {
-                                                Sys_Printf( "dropping sequence:
-       '27' '91' " ); tty_FlushIn(); assert( hidden ); tty_Show(); return NULL;
-                                        }
-                                        switch ( key ) {
-                                        case 49: {
-                                                if ( ( key = getchar() ) == EOF ||
-       key != 126 ) { Sys_Printf( "dropping sequence: '27' '91' '49' '%d' ", key
-       ); tty_FlushIn(); assert( hidden ); tty_Show(); return NULL;
-                                                }
-                                                // only screen and linux terms
-                                                input_field.SetCursor( 0 );
-                                                break;
-                                        }
-                                        case 50: {
-                                                if ( ( key = getchar() ) == EOF ||
-       key != 126 ) { Sys_Printf( "dropping sequence: '27' '91' '50' '%d' ", key
-       ); tty_FlushIn(); assert( hidden ); tty_Show(); return NULL;
-                                                }
-                                                // all terms
-                                                input_field.KeyDownEvent( K_INS );
-                                                break;
-                                        }
-                                        case 52: {
-                                                if ( ( key = getchar() ) == EOF ||
-       key != 126 ) { Sys_Printf( "dropping sequence: '27' '91' '52' '%d' ", key
-       ); tty_FlushIn(); assert( hidden ); tty_Show(); return NULL;
-                                                }
-                                                // only screen and linux terms
-                                                input_field.SetCursor( strlen(
-       input_field.GetBuffer() ) ); break;
-                                        }
-                                        case 51: {
-                                                if ( ( key = getchar() ) == EOF )
-       { Sys_Printf( "dropping sequence: '27' '91' '51' " ); tty_FlushIn();
-                                                        assert( hidden );
-                                                        tty_Show();
-                                                        return NULL;
-                                                }
-                                                if ( key == 126 ) {
-                                                        input_field.KeyDownEvent(
-       K_DEL ); break;
-                                                }
-                                                Sys_Printf( "dropping sequence:
-       '27' '91' '51' '%d'", key ); tty_FlushIn(); assert( hidden ); tty_Show();
-                                                return NULL;
-                                        }
-                                        case 65:
-                                        case 66: {
-                                                // history
-                                                if ( history_current == 0 ) {
-                                                        history_backup =
-       input_field;
-                                                }
-                                                if ( key == 65 ) {
-                                                        // up
-                                                        history_current++;
-                                                } else {
-                                                        // down
-                                                        history_current--;
-                                                }
-                                                // history_current cycle:
-                                                // 0: current edit
-                                                // 1 .. Min( CMD_HIST,
-       history_count ): back in history if ( history_current < 0 ) {
-                                                        history_current = Min(
-       CMD_HIST, history_count ); } else { history_current %= Min( CMD_HIST,
-       history_count ) + 1;
-                                                }
-                                                int index = -1;
-                                                if ( history_current == 0 ) {
-                                                        input_field =
-       history_backup; } else { index = history_start + Min( CMD_HIST,
-       history_count ) - history_current; index %= CMD_HIST; assert( index >= 0 &&
-       index < CMD_HIST ); input_field.SetBuffer( history[ index ] );
-                                                }
-                                                assert( hidden );
-                                                tty_Show();
-                                                return NULL;
-                                        }
-                                        case 67:
-                                                input_field.KeyDownEvent(
-       K_RIGHTARROW ); break; case 68: input_field.KeyDownEvent( K_LEFTARROW );
-                                                break;
-                                        default:
-                                                Sys_Printf( "dropping sequence:
-       '27' '91' '%d' ", key ); tty_FlushIn(); assert( hidden ); tty_Show();
-                                                return NULL;
-                                        }
-                                        break;
-                                }
-                                default:
-                                        Sys_Printf( "dropping sequence: '27' '%d'
-       ", key ); tty_FlushIn(); assert( hidden ); tty_Show(); return NULL;
-                                }
-                                break;
-                        }
-                        default:
-                                if ( key >= ' ' ) {
-                                        input_field.CharEvent( key );
-                                        break;
-                                }
-                                Sys_Printf( "dropping sequence: '%d' ", key );
-                                tty_FlushIn();
-                                assert( hidden );
-                                tty_Show();
-                                return NULL;
-                        }
+    if ( tty_enabled ) {
+        char	key;
+        bool	hidden = false;
+        while ( ( key = getchar() ) != EOF ) {
+            if ( !hidden ) {
+                tty_Hide();
+                hidden = true;
+            }
+            switch ( key ) {
+            case 1:
+                input_field.SetCursor( 0 );
+                break;
+            case 5:
+                input_field.SetCursor( strlen( input_field.GetBuffer() ) );
+                break;
+            case 127:
+            case 8:
+                input_field.CharEvent( K_BACKSPACE );
+                break;
+            case '\n':
+                idStr::Copynz( input_ret, input_field.GetBuffer(), sizeof( input_ret ) );
+                assert( hidden );
+                tty_Show();
+                putchar(key);
+                input_field.Clear();
+                if ( history_count < CMD_HIST ) {
+                    history[ history_count ] = input_ret;
+                    history_count++;
+                } else {
+                    history[ history_start ] = input_ret;
+                    history_start++;
+                    history_start %= CMD_HIST;
                 }
-                if ( hidden ) {
+                history_current = 0;
+                return input_ret;
+            case '\t':
+                input_field.AutoComplete();
+                break;
+            case 27: {
+                // enter escape sequence mode
+                if ( ( key = getchar() ) == EOF ) {
+                    Sys_Printf( "dropping sequence: '27' " );
+                    tty_FlushIn();
+                    assert( hidden );
+                    tty_Show();
+                    return NULL;
+                }
+                switch ( key ) {
+                case 79:
+                    if ( ( key = getchar() ) == EOF ) {
+                        Sys_Printf( "dropping sequence: '27' '79' " );
+                        tty_FlushIn();
+                        assert( hidden );
                         tty_Show();
-                }
-                return NULL;
-        } else {
-                // no terminal support - read only complete lines
-                int				len;
-                fd_set			fdset;
-                struct timeval	timeout;
-
-                FD_ZERO( &fdset );
-                FD_SET( STDIN_FILENO, &fdset );
-                timeout.tv_sec = 0;
-                timeout.tv_usec = 0;
-                if ( select( 1, &fdset, NULL, NULL, &timeout ) == -1 || !FD_ISSET(
-       0, &fdset ) ) { return NULL;
-                }
-
-                len = read( 0, input_ret, sizeof( input_ret ) );
-                if ( len == 0 ) {
-                        // EOF
                         return NULL;
+                    }
+                    switch ( key ) {
+                    case 72:
+                        // xterm only
+                        input_field.SetCursor( 0 );
+                        break;
+                    case 70:
+                        // xterm only
+                        input_field.SetCursor( strlen( input_field.GetBuffer() ) );
+                        break;
+                    default:
+                        Sys_Printf( "dropping sequence: '27' '79' '%d' ", key );
+                        tty_FlushIn();
+                        assert( hidden );
+                        tty_Show();
+                        return NULL;
+                    }
+                    break;
+                case 91: {
+                    if ( ( key = getchar() ) == EOF ) {
+                        Sys_Printf( "dropping sequence: '27' '91' " );
+                        tty_FlushIn();
+                        assert( hidden );
+                        tty_Show();
+                        return NULL;
+                    }
+                    switch ( key ) {
+                    case 49: {
+                        if ( ( key = getchar() ) == EOF  || key != 126 ) {
+                            Sys_Printf( "dropping sequence: '27' '91' '49' '%d' ", key );
+                            tty_FlushIn();
+                            assert( hidden );
+                            tty_Show();
+                            return NULL;
+                        }
+                        // only screen and linux terms
+                        input_field.SetCursor( 0 );
+                        break;
+                    }
+                    case 50: {
+                        if ( ( key = getchar() ) == EOF || key != 126 ) {
+                            Sys_Printf( "dropping sequence: '27' '91' '50' '%d' ", key );
+                            tty_FlushIn();
+                            assert( hidden );
+                            tty_Show();
+                            return NULL;
+                        }
+                        // all terms
+                        input_field.KeyDownEvent( K_INS );
+                        break;
+                    }
+                    case 52: {
+                        if ( ( key = getchar() ) == EOF || key != 126 ) {
+                            Sys_Printf( "dropping sequence: '27' '91' '52' '%d' ", key );
+                            tty_FlushIn();
+                            assert( hidden );
+                            tty_Show();
+                            return NULL;
+                        }
+                        // only screen and linux terms
+                        input_field.SetCursor( strlen( input_field.GetBuffer() ) );
+                        break;
+                    }
+                    case 51: {
+                        if ( ( key = getchar() ) == EOF ) {
+                            Sys_Printf( "dropping sequence: '27' '91' '51' " );
+                            tty_FlushIn();
+                            assert( hidden );
+                            tty_Show();
+                            return NULL;
+                        }
+                        if ( key == 126 ) {
+                            input_field.KeyDownEvent( K_DEL );
+                            break;
+                        }
+                        Sys_Printf( "dropping sequence: '27' '91' '51' '%d'", key );
+                        tty_FlushIn();
+                        assert( hidden );
+                        tty_Show();
+                        return NULL;
+                    }
+                    case 65:
+                    case 66: {
+                        // history
+                        if ( history_current == 0 ) {
+                            history_backup = input_field;
+                        }
+                        if ( key == 65 ) {
+                            // up
+                            history_current++;
+                        } else {
+                            // down
+                            history_current--;
+                        }
+                        // history_current cycle:
+                        // 0: current edit
+                        // 1 .. Min( CMD_HIST, history_count ): back in history
+                        if ( history_current < 0 ) {
+                            history_current = Min( CMD_HIST, history_count );
+                        } else {
+                            history_current %= Min( CMD_HIST, history_count ) + 1;
+                        }
+                        int index = -1;
+                        if ( history_current == 0 ) {
+                            input_field = history_backup;
+                        } else {
+                            index = history_start + Min( CMD_HIST, history_count ) - history_current;
+                            index %= CMD_HIST;
+                            assert( index >= 0 && index < CMD_HIST );
+                            input_field.SetBuffer( history[ index ] );
+                        }
+                        assert( hidden );
+                        tty_Show();
+                        return NULL;
+                    }
+                    case 67:
+                        input_field.KeyDownEvent( K_RIGHTARROW );
+                        break;
+                    case 68:
+                        input_field.KeyDownEvent( K_LEFTARROW );
+                        break;
+                    default:
+                        Sys_Printf( "dropping sequence: '27' '91' '%d' ", key );
+                        tty_FlushIn();
+                        assert( hidden );
+                        tty_Show();
+                        return NULL;
+                    }
+                    break;
                 }
-
-                if ( len < 1 ) {
-                        Sys_Printf( "read failed: %s\n", strerror( errno ) );
-       // something bad happened, cancel this line and print an error return NULL;
+                default:
+                    Sys_Printf( "dropping sequence: '27' '%d' ", key );
+                    tty_FlushIn();
+                    assert( hidden );
+                    tty_Show();
+                    return NULL;
                 }
-
-                if ( len == sizeof( input_ret ) ) {
-                        Sys_Printf( "read overflow\n" );	// things are likely to
-       break, as input will be cut into pieces
+                break;
+            }
+            default:
+                if ( key >= ' ' ) {
+                    input_field.CharEvent( key );
+                    break;
                 }
+                Sys_Printf( "dropping sequence: '%d' ", key );
+                tty_FlushIn();
+                assert( hidden );
+                tty_Show();
+                return NULL;
+            }
+        }
+        if ( hidden ) {
+            tty_Show();
+        }
+        return NULL;
+    } else {
+        // no terminal support - read only complete lines
+        int				len;
+        fd_set			fdset;
+        struct timeval	timeout;
 
-                input_ret[ len-1 ] = '\0';		// rip off the \n and
-       terminate return input_ret;
-        }*/
+        FD_ZERO( &fdset );
+        FD_SET( STDIN_FILENO, &fdset );
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 0;
+        if ( select( 1, &fdset, NULL, NULL, &timeout ) == -1 || !FD_ISSET( 0, &fdset ) ) {
+            return NULL;
+        }
+
+        len = read( 0, input_ret, sizeof( input_ret ) );
+        if ( len == 0 ) {
+            // EOF
+            return NULL;
+        }
+
+        if ( len < 1 ) {
+            Sys_Printf( "read failed: %s\n", strerror( errno ) );	// something bad happened, cancel this line and
+    print an error return NULL;
+        }
+
+        if ( len == sizeof( input_ret ) ) {
+            Sys_Printf( "read overflow\n" );	// things are likely to break, as input will be cut into pieces
+        }
+
+        input_ret[ len-1 ] = '\0';		// rip off the \n and terminate
+        return input_ret;
+    }*/
     return NULL;
 }
 
@@ -915,8 +940,7 @@ Sys_DoStartProcess
 if we don't fork, this function never returns
 the no-fork lets you keep the terminal when you're about to spawn an installer
 
-if the command contains spaces, system() is used. Otherwise the more
-straightforward execl ( system() blows though )
+if the command contains spaces, system() is used. Otherwise the more straightforward execl ( system() blows though )
 ==================
 */
 void Sys_DoStartProcess(const char *exeName, bool dofork)
@@ -951,8 +975,8 @@ void Sys_DoStartProcess(const char *exeName, bool dofork)
         if (system(exeName) == -1)
             printf("system failed: %s\n", strerror(errno));
         else
-            sleep(1); // on some systems I've seen that starting the new process and
-                      // exiting this one should not be too close
+            sleep(1); // on some systems I've seen that starting the new process and exiting this one should not be too
+                      // close
     }
     else
     {

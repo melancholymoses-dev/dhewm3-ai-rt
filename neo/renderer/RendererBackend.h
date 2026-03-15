@@ -1,10 +1,10 @@
 #pragma once
 
 #include "framework/Common.h"
-#include "renderer/Image.h"
 #include "renderer/Model.h"
-#include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
+#include "renderer/VertexCache.h"
+#include "renderer/Image.h"
 
 struct IBackend
 {

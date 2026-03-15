@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "tools/compilers/dmap/dmap.h"
 #include "sys/platform.h"
+#include "tools/compilers/dmap/dmap.h"
 
 #include "tools/compilers/compiler_public.h"
 
@@ -237,11 +234,10 @@ void Dmap(const idCmdArgs &args)
     common->Printf("---- dmap ----\n");
 
     dmapGlobals.fullCarve = true;
-    dmapGlobals.shadowOptLevel = SO_MERGE_SURFACES; // create shadows by merging all surfaces, but no super
-                                                    // optimization
-    //	dmapGlobals.shadowOptLevel = SO_CLIP_OCCLUDERS;		// remove
-    // occluders that are completely covered 	dmapGlobals.shadowOptLevel =
-    // SO_SIL_OPTIMIZE; 	dmapGlobals.shadowOptLevel = SO_CULL_OCCLUDED;
+    dmapGlobals.shadowOptLevel = SO_MERGE_SURFACES; // create shadows by merging all surfaces, but no super optimization
+    //	dmapGlobals.shadowOptLevel = SO_CLIP_OCCLUDERS;		// remove occluders that are completely covered
+    //	dmapGlobals.shadowOptLevel = SO_SIL_OPTIMIZE;
+    //	dmapGlobals.shadowOptLevel = SO_CULL_OCCLUDED;
 
     dmapGlobals.noLightCarve = true;
 

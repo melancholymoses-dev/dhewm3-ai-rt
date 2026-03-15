@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -98,8 +95,7 @@ void CVectorCtl::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
         BuildImage(lpDrawItemStruct);
         m_bImageChange = FALSE;
     }
-    pDC->BitBlt(0, 0, m_iWidth, m_iHeight, &m_dcMem, 0, 0,
-                SRCCOPY); // Update screen
+    pDC->BitBlt(0, 0, m_iWidth, m_iHeight, &m_dcMem, 0, 0, SRCCOPY); // Update screen
 }
 
 // Mouse was dragged
@@ -225,8 +221,7 @@ void CVectorCtl::RotateByXandY(double XRot, double YRot)
         m_dVec[2] = dz;
     }
     else
-    { // Otherwise, do not allow Z to be negative (light shines from
-      // behind)
+    { // Otherwise, do not allow Z to be negative (light shines from behind)
         m_dVec[2] = 0.0;
         m_dVec[0] = dx;
         m_dVec[1] = dy;
@@ -319,8 +314,7 @@ void CVectorCtl::CreateBackground()
     if (!m_bBmpCreated)
         return; //  No image yet
     if (!m_bBackgroundBitmapUsed)
-    { // No background used - fill with gradient
-      // color
+    { // No background used - fill with gradient color
         double r = GetRValue(m_clrBackgroundStart), g = GetGValue(m_clrBackgroundStart),
                b = GetBValue(m_clrBackgroundStart), rd = double(GetRValue(m_clrBackgroundEnd) - r) / double(m_iHeight),
                gd = double(GetGValue(m_clrBackgroundEnd) - g) / double(m_iHeight),

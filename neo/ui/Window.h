@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -36,12 +33,12 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define __WINDOW_H__
 
 #include "idlib/math/Interpolate.h"
-#include "ui/DeviceContext.h"
-#include "ui/GuiScript.h"
 #include "ui/Rectangle.h"
+#include "ui/DeviceContext.h"
 #include "ui/RegExp.h"
-#include "ui/SimpleWindow.h"
 #include "ui/Winvar.h"
+#include "ui/GuiScript.h"
+#include "ui/SimpleWindow.h"
 
 const int WIN_CHILD = 0x00000001;
 const int WIN_CAPTION = 0x00000002;
@@ -71,11 +68,9 @@ const int WIN_WANTENTER = 0x01000000;
 
 const int WIN_DESKTOP = 0x10000000;
 
-// DG: for the "scaleto43" window flag (=> scale window to 4:3 with "empty" bars
-// left/right or above/below)
+// DG: for the "scaleto43" window flag (=> scale window to 4:3 with "empty" bars left/right or above/below)
 const int WIN_SCALETO43 = 0x20000000;
-// DG: if a gui explicitly wants to be stretched despite r_scaleMenusTo43 1 it
-// can set `scaleto43 0`
+// DG: if a gui explicitly wants to be stretched despite r_scaleMenusTo43 1 it can set `scaleto43 0`
 //     (useful when using anchors in fullscreen menus)
 const int WIN_NO_SCALETO43 = 0x40000000;
 
@@ -489,8 +484,7 @@ class idWindow
     idList<idTimeLineEvent *> timeLineEvents;
     idList<idTransitionData> transitions;
 
-    static bool registerIsTemporary[MAX_EXPRESSION_REGISTERS]; // statics to assist during
-                                                               // parsing
+    static bool registerIsTemporary[MAX_EXPRESSION_REGISTERS]; // statics to assist during parsing
 
     idList<wexpOp_t> ops; // evaluate to make expressionRegisters
     idList<float> expressionRegisters;

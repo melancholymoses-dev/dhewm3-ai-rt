@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,7 +32,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Preprocessor settings for compiling different versions.
+    Preprocessor settings for compiling different versions.
 
 ===============================================================================
 */
@@ -45,21 +42,18 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 // #define ID_DEBUG_MEMORY
 // #define ID_DEBUG_UNINITIALIZED_MEMORY
 
-// if enabled, the console won't toggle upon ~, unless you start the binary with
-// +set com_allowConsole 1 Ctrl+Alt+~ will always toggle the console no matter
-// what
+// if enabled, the console won't toggle upon ~, unless you start the binary with +set com_allowConsole 1
+// Ctrl+Alt+~ will always toggle the console no matter what
 #ifndef ID_CONSOLE_LOCK
 #define ID_CONSOLE_LOCK 0
 #endif
 
-// useful for network debugging, turns off 'LAN' checks, all IPs are classified
-// 'internet'
+// useful for network debugging, turns off 'LAN' checks, all IPs are classified 'internet'
 #ifndef ID_NOLANADDRESS
 #define ID_NOLANADDRESS 0
 #endif
 
-// let .dds be loaded from FS without altering pure state. only for
-// developement.
+// let .dds be loaded from FS without altering pure state. only for developement.
 #ifndef ID_PURE_ALLOWDDS
 #define ID_PURE_ALLOWDDS 0
 #endif
@@ -79,8 +73,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 // compiled out.
 // #define ID_DEDICATED
 
-// don't define ID_ALLOW_TOOLS when we don't want tool code in the executable. -
-// DG: defined in cmake now
+// don't define ID_ALLOW_TOOLS when we don't want tool code in the executable. - DG: defined in cmake now
 #if 0 // defined( _WIN32 ) && defined(_MFC_VER) && !defined( ID_DEDICATED )
 #define ID_ALLOW_TOOLS
 #endif

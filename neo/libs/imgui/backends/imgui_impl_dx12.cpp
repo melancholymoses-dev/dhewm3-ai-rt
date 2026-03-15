@@ -2,71 +2,53 @@
 // This needs to be used along with a Platform Backend (e.g. Win32)
 
 // Implemented features:
-//  [X] Renderer: User texture binding. Use 'D3D12_GPU_DESCRIPTOR_HANDLE' as
-//  ImTextureID. Read the FAQ about ImTextureID! [X] Renderer: Large meshes
-//  support (64k+ vertices) even with 16-bit indices
-//  (ImGuiBackendFlags_RendererHasVtxOffset). [X] Renderer: Expose selected
-//  render state for draw callbacks to use. Access in
-//  '(ImGui_ImplXXXX_RenderState*)GetPlatformIO().Renderer_RenderState'.
+//  [X] Renderer: User texture binding. Use 'D3D12_GPU_DESCRIPTOR_HANDLE' as ImTextureID. Read the FAQ about
+//  ImTextureID! [X] Renderer: Large meshes support (64k+ vertices) even with 16-bit indices
+//  (ImGuiBackendFlags_RendererHasVtxOffset). [X] Renderer: Expose selected render state for draw callbacks to use.
+//  Access in '(ImGui_ImplXXXX_RenderState*)GetPlatformIO().Renderer_RenderState'.
 
-// The aim of imgui_impl_dx12.h/.cpp is to be usable in your engine without any
-// modification. IF YOU FEEL YOU NEED TO MAKE ANY CHANGE TO THIS CODE, please
-// share them and your feedback at https://github.com/ocornut/imgui/
+// The aim of imgui_impl_dx12.h/.cpp is to be usable in your engine without any modification.
+// IF YOU FEEL YOU NEED TO MAKE ANY CHANGE TO THIS CODE, please share them and your feedback at
+// https://github.com/ocornut/imgui/
 
-// You can use unmodified imgui_impl_* files in your project. See examples/
-// folder for examples of using this. Prefer including the entire imgui/
-// repository into your project (either as a copy or as a submodule), and only
-// build the backends you need. Learn about Dear ImGui:
+// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build
+// the backends you need. Learn about Dear ImGui:
 // - FAQ                  https://dearimgui.com/faq
 // - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/
-// folder).
+// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
-//  2024-12-09: DirectX12: Let user specifies the DepthStencilView format by
-//  setting ImGui_ImplDX12_InitInfo::DSVFormat. 2024-11-15: DirectX12: *BREAKING
-//  CHANGE* Changed ImGui_ImplDX12_Init() signature to take a
-//  ImGui_ImplDX12_InitInfo struct. Legacy ImGui_ImplDX12_Init() signature is
-//  still supported (will obsolete). 2024-11-15: DirectX12: *BREAKING CHANGE*
-//  User is now required to pass function pointers to allocate/free SRV
-//  Descriptors. We provide convenience legacy fields to pass a single
-//  descriptor, matching the old API, but upcoming features will want multiple.
-//  2024-10-23: DirectX12: Unmap() call specify written range. The range is
-//  informational and may be used by debug tools. 2024-10-07: DirectX12: Changed
-//  default texture sampler to Clamp instead of Repeat/Wrap. 2024-10-07:
-//  DirectX12: Expose selected render state in ImGui_ImplDX12_RenderState, which
-//  you can access in 'void* platform_io.Renderer_RenderState' during draw
-//  callbacks. 2024-10-07: DirectX12: Compiling with '#define ImTextureID=ImU64'
-//  is unnecessary now that dear imgui defaults ImTextureID to u64 instead of
-//  void*. 2022-10-11: Using 'nullptr' instead of 'NULL' as per our switch to
-//  C++11. 2021-06-29: Reorganized backend to pull data from a single structure
-//  to facilitate usage with multiple-contexts (all g_XXXX access changed to
-//  bd->XXXX). 2021-05-19: DirectX12: Replaced direct access to
-//  ImDrawCmd::TextureId with a call to ImDrawCmd::GetTexID(). (will become a
-//  requirement) 2021-02-18: DirectX12: Change blending equation to preserve
-//  alpha in output buffer. 2021-01-11: DirectX12: Improve Windows 7
-//  compatibility (for D3D12On7) by loading d3d12.dll dynamically. 2020-09-16:
-//  DirectX12: Avoid rendering calls with zero-sized scissor rectangle since it
-//  generates a validation layer warning. 2020-09-08: DirectX12: Clarified
-//  support for building on 32-bit systems by redefining ImTextureID.
-//  2019-10-18: DirectX12: *BREAKING CHANGE* Added extra ID3D12DescriptorHeap
-//  parameter to ImGui_ImplDX12_Init() function. 2019-05-29: DirectX12: Added
-//  support for large mesh (64K+ vertices), enable
-//  ImGuiBackendFlags_RendererHasVtxOffset flag. 2019-04-30: DirectX12: Added
-//  support for special ImDrawCallback_ResetRenderState callback to reset render
-//  state. 2019-03-29: Misc: Various minor tidying up. 2018-12-03: Misc: Added
-//  #pragma comment statement to automatically link with d3dcompiler.lib when
-//  using D3DCompile(). 2018-11-30: Misc: Setting up io.BackendRendererName so
-//  it can be displayed in the About Window. 2018-06-12: DirectX12: Moved the
-//  ID3D12GraphicsCommandList* parameter from NewFrame() to RenderDrawData().
-//  2018-06-08: Misc: Extracted imgui_impl_dx12.cpp/.h away from the old
-//  combined DX12+Win32 example. 2018-06-08: DirectX12: Use
-//  draw_data->DisplayPos and draw_data->DisplaySize to setup projection matrix
-//  and clipping rectangle (to ease support for future multi-viewport).
-//  2018-02-22: Merged into master with all Win32 code synchronized to other
-//  examples.
+//  2024-12-09: DirectX12: Let user specifies the DepthStencilView format by setting ImGui_ImplDX12_InitInfo::DSVFormat.
+//  2024-11-15: DirectX12: *BREAKING CHANGE* Changed ImGui_ImplDX12_Init() signature to take a ImGui_ImplDX12_InitInfo
+//  struct. Legacy ImGui_ImplDX12_Init() signature is still supported (will obsolete). 2024-11-15: DirectX12: *BREAKING
+//  CHANGE* User is now required to pass function pointers to allocate/free SRV Descriptors. We provide convenience
+//  legacy fields to pass a single descriptor, matching the old API, but upcoming features will want multiple.
+//  2024-10-23: DirectX12: Unmap() call specify written range. The range is informational and may be used by debug
+//  tools. 2024-10-07: DirectX12: Changed default texture sampler to Clamp instead of Repeat/Wrap. 2024-10-07:
+//  DirectX12: Expose selected render state in ImGui_ImplDX12_RenderState, which you can access in 'void*
+//  platform_io.Renderer_RenderState' during draw callbacks. 2024-10-07: DirectX12: Compiling with '#define
+//  ImTextureID=ImU64' is unnecessary now that dear imgui defaults ImTextureID to u64 instead of void*. 2022-10-11:
+//  Using 'nullptr' instead of 'NULL' as per our switch to C++11. 2021-06-29: Reorganized backend to pull data from a
+//  single structure to facilitate usage with multiple-contexts (all g_XXXX access changed to bd->XXXX). 2021-05-19:
+//  DirectX12: Replaced direct access to ImDrawCmd::TextureId with a call to ImDrawCmd::GetTexID(). (will become a
+//  requirement) 2021-02-18: DirectX12: Change blending equation to preserve alpha in output buffer. 2021-01-11:
+//  DirectX12: Improve Windows 7 compatibility (for D3D12On7) by loading d3d12.dll dynamically. 2020-09-16: DirectX12:
+//  Avoid rendering calls with zero-sized scissor rectangle since it generates a validation layer warning. 2020-09-08:
+//  DirectX12: Clarified support for building on 32-bit systems by redefining ImTextureID. 2019-10-18: DirectX12:
+//  *BREAKING CHANGE* Added extra ID3D12DescriptorHeap parameter to ImGui_ImplDX12_Init() function. 2019-05-29:
+//  DirectX12: Added support for large mesh (64K+ vertices), enable ImGuiBackendFlags_RendererHasVtxOffset flag.
+//  2019-04-30: DirectX12: Added support for special ImDrawCallback_ResetRenderState callback to reset render state.
+//  2019-03-29: Misc: Various minor tidying up.
+//  2018-12-03: Misc: Added #pragma comment statement to automatically link with d3dcompiler.lib when using
+//  D3DCompile(). 2018-11-30: Misc: Setting up io.BackendRendererName so it can be displayed in the About Window.
+//  2018-06-12: DirectX12: Moved the ID3D12GraphicsCommandList* parameter from NewFrame() to RenderDrawData().
+//  2018-06-08: Misc: Extracted imgui_impl_dx12.cpp/.h away from the old combined DX12+Win32 example.
+//  2018-06-08: DirectX12: Use draw_data->DisplayPos and draw_data->DisplaySize to setup projection matrix and clipping
+//  rectangle (to ease support for future multi-viewport). 2018-02-22: Merged into master with all Win32 code
+//  synchronized to other examples.
 
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
@@ -74,11 +56,10 @@
 
 // DirectX
 #include <d3d12.h>
-#include <d3dcompiler.h>
 #include <dxgi1_4.h>
+#include <d3dcompiler.h>
 #ifdef _MSC_VER
-#pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib
-                                    // as we are using D3DCompile() below.
+#pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib as we are using D3DCompile() below.
 #endif
 
 // DirectX12 data
@@ -115,10 +96,9 @@ struct ImGui_ImplDX12_Data
     }
 };
 
-// Backend data stored in io.BackendRendererUserData to allow support for
-// multiple Dear ImGui contexts It is STRONGLY preferred that you use docking
-// branch with multi-viewports (== single Dear ImGui context + multiple windows)
-// instead of multiple Dear ImGui contexts.
+// Backend data stored in io.BackendRendererUserData to allow support for multiple Dear ImGui contexts
+// It is STRONGLY preferred that you use docking branch with multi-viewports (== single Dear ImGui context + multiple
+// windows) instead of multiple Dear ImGui contexts.
 static ImGui_ImplDX12_Data *ImGui_ImplDX12_GetBackendData()
 {
     return ImGui::GetCurrentContext() ? (ImGui_ImplDX12_Data *)ImGui::GetIO().BackendRendererUserData : nullptr;
@@ -212,8 +192,7 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData *draw_data, ID3D12GraphicsCommandL
         return;
 
     // FIXME: I'm assuming that this only gets called once per frame!
-    // If not, we can't just re-allocate the IB or VB, we'll have to do a proper
-    // allocator.
+    // If not, we can't just re-allocate the IB or VB, we'll have to do a proper allocator.
     ImGui_ImplDX12_Data *bd = ImGui_ImplDX12_GetBackendData();
     bd->frameIndex = bd->frameIndex + 1;
     ImGui_ImplDX12_RenderBuffers *fr = &bd->pFrameResources[bd->frameIndex % bd->numFramesInFlight];
@@ -271,8 +250,7 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData *draw_data, ID3D12GraphicsCommandL
     }
 
     // Upload vertex/index data into a single contiguous GPU buffer
-    // During Map() we specify a null read range (as per DX12 API, this is
-    // informational and for tooling only)
+    // During Map() we specify a null read range (as per DX12 API, this is informational and for tooling only)
     void *vtx_resource, *idx_resource;
     D3D12_RANGE range = {0, 0};
     if (fr->VertexBuffer->Map(0, &range, &vtx_resource) != S_OK)
@@ -290,8 +268,7 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData *draw_data, ID3D12GraphicsCommandL
         idx_dst += draw_list->IdxBuffer.Size;
     }
 
-    // During Unmap() we specify the written range (as per DX12 API, this is
-    // informational and for tooling only)
+    // During Unmap() we specify the written range (as per DX12 API, this is informational and for tooling only)
     range.End = (SIZE_T)((intptr_t)vtx_dst - (intptr_t)vtx_resource);
     IM_ASSERT(range.End == draw_data->TotalVtxCount * sizeof(ImDrawVert));
     fr->VertexBuffer->Unmap(0, &range);
@@ -310,8 +287,7 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData *draw_data, ID3D12GraphicsCommandL
     platform_io.Renderer_RenderState = &render_state;
 
     // Render command lists
-    // (Because we merged all buffers into a single one, we maintain our own
-    // offset into them)
+    // (Because we merged all buffers into a single one, we maintain our own offset into them)
     int global_vtx_offset = 0;
     int global_idx_offset = 0;
     ImVec2 clip_off = draw_data->DisplayPos;
@@ -324,8 +300,8 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData *draw_data, ID3D12GraphicsCommandL
             if (pcmd->UserCallback != nullptr)
             {
                 // User callback, registered via ImDrawList::AddCallback()
-                // (ImDrawCallback_ResetRenderState is a special callback value used by
-                // the user to request the renderer to reset render state.)
+                // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer
+                // to reset render state.)
                 if (pcmd->UserCallback == ImDrawCallback_ResetRenderState)
                     ImGui_ImplDX12_SetupRenderState(draw_data, command_list, fr);
                 else
@@ -540,9 +516,8 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
         param[1].DescriptorTable.pDescriptorRanges = &descRange;
         param[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-        // Bilinear sampling is required by default. Set 'io.Fonts->Flags |=
-        // ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false'
-        // to allow point/nearest sampling.
+        // Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or
+        // 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling.
         D3D12_STATIC_SAMPLER_DESC staticSampler = {};
         staticSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
         staticSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -568,21 +543,18 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
                      D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
                      D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
-        // Load d3d12.dll and D3D12SerializeRootSignature() function address
-        // dynamically to facilitate using with D3D12On7. See if any version of
-        // d3d12.dll is already loaded in the process. If so, give preference to
-        // that.
+        // Load d3d12.dll and D3D12SerializeRootSignature() function address dynamically to facilitate using with
+        // D3D12On7. See if any version of d3d12.dll is already loaded in the process. If so, give preference to that.
         static HINSTANCE d3d12_dll = ::GetModuleHandleA("d3d12.dll");
         if (d3d12_dll == nullptr)
         {
-            // Attempt to load d3d12.dll from local directories. This will only
-            // succeed if (1) the current OS is Windows 7, and (2) there exists a
-            // version of d3d12.dll for Windows 7 (D3D12On7) in one of the following
-            // directories. See https://github.com/ocornut/imgui/pull/3696 for
-            // details.
+            // Attempt to load d3d12.dll from local directories. This will only succeed if
+            // (1) the current OS is Windows 7, and
+            // (2) there exists a version of d3d12.dll for Windows 7 (D3D12On7) in one of the following directories.
+            // See https://github.com/ocornut/imgui/pull/3696 for details.
             const char *localD3d12Paths[] = {".\\d3d12.dll", ".\\d3d12on7\\d3d12.dll",
-                                             ".\\12on7\\d3d12.dll"}; // A. current directory, B. used by some
-                                                                     // games, C. used in Microsoft D3D12On7 sample
+                                             ".\\12on7\\d3d12.dll"}; // A. current directory, B. used by some games, C.
+                                                                     // used in Microsoft D3D12On7 sample
             for (int i = 0; i < IM_ARRAYSIZE(localD3d12Paths); i++)
                 if ((d3d12_dll = ::LoadLibraryA(localD3d12Paths[i])) != nullptr)
                     break;
@@ -609,14 +581,11 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
         blob->Release();
     }
 
-    // By using D3DCompile() from <d3dcompiler.h> / d3dcompiler.lib, we introduce
-    // a dependency to a given version of d3dcompiler_XX.dll (see
-    // D3DCOMPILER_DLL_A) If you would like to use this DX12 sample code but
-    // remove this dependency you can:
-    //  1) compile once, save the compiled shader blobs into a file or source code
-    //  and assign them to psoDesc.VS/PS [preferred solution] 2) use code to
-    //  detect any version of the DLL and grab a pointer to D3DCompile from the
-    //  DLL.
+    // By using D3DCompile() from <d3dcompiler.h> / d3dcompiler.lib, we introduce a dependency to a given version of
+    // d3dcompiler_XX.dll (see D3DCOMPILER_DLL_A) If you would like to use this DX12 sample code but remove this
+    // dependency you can:
+    //  1) compile once, save the compiled shader blobs into a file or source code and assign them to psoDesc.VS/PS
+    //  [preferred solution] 2) use code to detect any version of the DLL and grab a pointer to D3DCompile from the DLL.
     // See https://github.com/ocornut/imgui/pull/638 for sources and details.
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc;
@@ -665,10 +634,8 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
 
         if (FAILED(D3DCompile(vertexShader, strlen(vertexShader), nullptr, nullptr, nullptr, "main", "vs_5_0", 0, 0,
                               &vertexShaderBlob, nullptr)))
-            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get
-                          // error showing in (const
-                          // char*)pErrorBlob->GetBufferPointer(). Make sure to
-                          // Release() the blob!
+            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get error showing in (const
+                          // char*)pErrorBlob->GetBufferPointer(). Make sure to Release() the blob!
         psoDesc.VS = {vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize()};
 
         // Create the input layout
@@ -704,10 +671,8 @@ bool ImGui_ImplDX12_CreateDeviceObjects()
                               &pixelShaderBlob, nullptr)))
         {
             vertexShaderBlob->Release();
-            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get
-                          // error showing in (const
-                          // char*)pErrorBlob->GetBufferPointer(). Make sure to
-                          // Release() the blob!
+            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get error showing in (const
+                          // char*)pErrorBlob->GetBufferPointer(). Make sure to Release() the blob!
         }
         psoDesc.PS = {pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize()};
     }
@@ -781,8 +746,7 @@ void ImGui_ImplDX12_InvalidateDeviceObjects()
     ImGui_ImplDX12_Texture *font_tex = &bd->FontTexture;
     bd->InitInfo.SrvDescriptorFreeFn(&bd->InitInfo, font_tex->hFontSrvCpuDescHandle, font_tex->hFontSrvGpuDescHandle);
     SafeRelease(font_tex->pTextureResource);
-    io.Fonts->SetTexID(0); // We copied bd->hFontSrvGpuDescHandle to
-                           // io.Fonts->TexID so let's clear that as well.
+    io.Fonts->SetTexID(0); // We copied bd->hFontSrvGpuDescHandle to io.Fonts->TexID so let's clear that as well.
 
     for (UINT i = 0; i < bd->numFramesInFlight; i++)
     {
@@ -811,9 +775,8 @@ bool ImGui_ImplDX12_Init(ImGui_ImplDX12_InitInfo *init_info)
 
     io.BackendRendererUserData = (void *)bd;
     io.BackendRendererName = "imgui_impl_dx12";
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset; // We can honor the
-                                                               // ImDrawCmd::VtxOffset field,
-                                                               // allowing for large meshes.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset; // We can honor the ImDrawCmd::VtxOffset field, allowing
+                                                               // for large meshes.
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     if (init_info->SrvDescriptorAllocFn == nullptr)
@@ -859,9 +822,8 @@ bool ImGui_ImplDX12_Init(ImGui_ImplDX12_InitInfo *init_info)
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
 // Legacy initialization API Obsoleted in 1.91.5
-// font_srv_cpu_desc_handle and font_srv_gpu_desc_handle are handles to a single
-// SRV descriptor to use for the internal font texture, they must be in
-// 'srv_descriptor_heap'
+// font_srv_cpu_desc_handle and font_srv_gpu_desc_handle are handles to a single SRV descriptor to use for the internal
+// font texture, they must be in 'srv_descriptor_heap'
 bool ImGui_ImplDX12_Init(ID3D12Device *device, int num_frames_in_flight, DXGI_FORMAT rtv_format,
                          ID3D12DescriptorHeap *srv_descriptor_heap,
                          D3D12_CPU_DESCRIPTOR_HANDLE font_srv_cpu_desc_handle,
@@ -898,8 +860,7 @@ void ImGui_ImplDX12_Shutdown()
 void ImGui_ImplDX12_NewFrame()
 {
     ImGui_ImplDX12_Data *bd = ImGui_ImplDX12_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call "
-                               "ImGui_ImplDX12_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplDX12_Init()?");
 
     if (!bd->pPipelineState)
         ImGui_ImplDX12_CreateDeviceObjects();

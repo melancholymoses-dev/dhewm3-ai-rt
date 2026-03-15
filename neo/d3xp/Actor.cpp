@@ -19,32 +19,29 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "gamesys/SysCvar.h"
+#include "script/Script_Thread.h"
 #include "Item.h"
 #include "Light.h"
 #include "Projectile.h"
 #include "WorldSpawn.h"
-#include "gamesys/SysCvar.h"
-#include "script/Script_Thread.h"
-#include "sys/platform.h"
 
 #include "Actor.h"
 
 /***********************************************************************
 
-        idAnimState
+    idAnimState
 
 ***********************************************************************/
 
@@ -362,7 +359,7 @@ bool idAnimState::UpdateState(void)
 
 /***********************************************************************
 
-        idActor
+    idActor
 
 ***********************************************************************/
 
@@ -476,8 +473,7 @@ idActor::idActor(void)
 {
     viewAxis.Identity();
 
-    scriptThread = NULL; // initialized by ConstructScriptObject, which is called
-                         // by idEntity::Spawn
+    scriptThread = NULL; // initialized by ConstructScriptObject, which is called by idEntity::Spawn
 
     use_combat_bbox = false;
     head = NULL;
@@ -596,9 +592,8 @@ void idActor::Spawn(void)
 
     walkIK.Init(this, IK_ANIM, modelOffset);
 
-    // the animation used to be set to the IK_ANIM at this point, but that was
-    // fixed, resulting in attachments not binding correctly, so we're stuck
-    // setting the IK_ANIM before attaching things.
+    // the animation used to be set to the IK_ANIM at this point, but that was fixed, resulting in
+    // attachments not binding correctly, so we're stuck setting the IK_ANIM before attaching things.
     animator.ClearAllAnims(gameLocal.time, 0);
     animator.SetFrame(ANIMCHANNEL_ALL, animator.GetAnim(IK_ANIM), 0, 0, 0);
 
@@ -610,8 +605,7 @@ void idActor::Spawn(void)
 
         args.Set("classname", kv->GetValue().c_str());
 
-        // make items non-touchable so the player can't take them out of the
-        // character's hands
+        // make items non-touchable so the player can't take them out of the character's hands
         args.Set("no_touch", "1");
 
         // don't let them drop to the floor
@@ -1398,7 +1392,7 @@ bool idActor::GetPhysicsToSoundTransform(idVec3 &origin, idMat3 &axis)
 
 /***********************************************************************
 
-        script state management
+    script state management
 
 ***********************************************************************/
 
@@ -1426,8 +1420,8 @@ void idActor::ShutdownThreads(void)
 ================
 idActor::ShouldConstructScriptObjectAtSpawn
 
-Called during idEntity::Spawn to see if it should construct the script object or
-not. Overridden by subclasses that need to spawn the script object themselves.
+Called during idEntity::Spawn to see if it should construct the script object or not.
+Overridden by subclasses that need to spawn the script object themselves.
 ================
 */
 bool idActor::ShouldConstructScriptObjectAtSpawn(void) const
@@ -1476,8 +1470,7 @@ idThread *idActor::ConstructScriptObject(void)
     // init the script object's data
     scriptObject.ClearObject();
 
-    // just set the current function on the script.  we'll execute in the
-    // subclasses.
+    // just set the current function on the script.  we'll execute in the subclasses.
     scriptThread->CallFunction(this, constructor, true);
 
     return scriptThread;
@@ -1584,7 +1577,7 @@ void idActor::UpdateScript(void)
 
 /***********************************************************************
 
-        vision
+    vision
 
 ***********************************************************************/
 
@@ -1765,7 +1758,7 @@ renderView_t *idActor::GetRenderView()
 
 /***********************************************************************
 
-        Model/Ragdoll
+    Model/Ragdoll
 
 ***********************************************************************/
 
@@ -2169,7 +2162,7 @@ void idActor::GetAASLocation(idAAS *aas, idVec3 &pos, int &areaNum) const
 
 /***********************************************************************
 
-        animation state
+    animation state
 
 ***********************************************************************/
 
@@ -2438,7 +2431,7 @@ void idActor::SyncAnimChannels(int channel, int syncToChannel, int blendFrames)
 
 /***********************************************************************
 
-        Damage
+    Damage
 
 ***********************************************************************/
 
@@ -2474,7 +2467,7 @@ idActor::Damage
 this		entity that is being damaged
 inflictor	entity that is causing the damage
 attacker	entity that caused the inflictor to damage targ
-        example: this=monster, inflictor=rocket, attacker=player
+    example: this=monster, inflictor=rocket, attacker=player
 
 dir			direction of the attack for knockback in global space
 point		point at which the damage is being inflicted, used for headshots
@@ -2798,7 +2791,7 @@ const char *idActor::GetDamageGroup(int location)
 
 /***********************************************************************
 
-        Events
+    Events
 
 ***********************************************************************/
 
@@ -3239,8 +3232,7 @@ void idActor::Event_IdleAnim(int channel, const char *animname)
         }
         else if (torsoAnim.IsIdle() && legsAnim.IsIdle())
         {
-            // everything is idle, so play the anim on the head and copy it to the
-            // torso and legs
+            // everything is idle, so play the anim on the head and copy it to the torso and legs
             headAnim.CycleAnim(anim);
             torsoAnim.animBlendFrames = headAnim.lastAnimBlendFrames;
             SyncAnimChannels(ANIMCHANNEL_TORSO, ANIMCHANNEL_HEAD, headAnim.lastAnimBlendFrames);

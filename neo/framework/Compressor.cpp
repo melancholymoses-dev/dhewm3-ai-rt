@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,7 +36,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 =================================================================================
 
-        idCompressor_None
+    idCompressor_None
 
 =================================================================================
 */
@@ -263,9 +260,9 @@ int idCompressor_None::Seek(long offset, fsOrigin_t origin)
 /*
 =================================================================================
 
-        idCompressor_BitStream
+    idCompressor_BitStream
 
-        Base class for bit stream compression.
+    Base class for bit stream compression.
 
 =================================================================================
 */
@@ -697,10 +694,10 @@ float idCompressor_BitStream::GetCompressionRatio(void) const
 /*
 =================================================================================
 
-        idCompressor_RunLength
+    idCompressor_RunLength
 
-        The following algorithm implements run length compression with an
-arbitrary word size.
+    The following algorithm implements run length compression with an arbitrary
+    word size.
 
 =================================================================================
 */
@@ -833,10 +830,10 @@ int idCompressor_RunLength::Read(void *outData, int outLength)
 /*
 =================================================================================
 
-        idCompressor_RunLength_ZeroBased
+    idCompressor_RunLength_ZeroBased
 
-        The following algorithm implements run length compression with an
-arbitrary word size for data with a lot of zero bits.
+    The following algorithm implements run length compression with an arbitrary
+    word size for data with a lot of zero bits.
 
 =================================================================================
 */
@@ -931,11 +928,11 @@ int idCompressor_RunLength_ZeroBased::Read(void *outData, int outLength)
 /*
 =================================================================================
 
-        idCompressor_Huffman
+    idCompressor_Huffman
 
-        The following algorithm is based on the adaptive Huffman algorithm
-described in Sayood's Data Compression book. The ranks are not actually stored,
-but implicitly defined by the location of a node within a doubly-linked list
+    The following algorithm is based on the adaptive Huffman algorithm described
+    in Sayood's Data Compression book. The ranks are not actually stored, but
+    implicitly defined by the location of a node within a doubly-linked list
 
 =================================================================================
 */
@@ -1602,10 +1599,10 @@ float idCompressor_Huffman::GetCompressionRatio(void) const
 /*
 =================================================================================
 
-        idCompressor_Arithmetic
+    idCompressor_Arithmetic
 
-        The following algorithm is based on the Arithmetic Coding methods
-described by Mark Nelson. The probability table is implicitly stored.
+    The following algorithm is based on the Arithmetic Coding methods described
+    by Mark Nelson. The probability table is implicitly stored.
 
 =================================================================================
 */
@@ -1891,8 +1888,7 @@ void idCompressor_Arithmetic::EncodeSymbol(acSymbol_t *symbol)
     {
         if ((high & AC_MSB_MASK) == (low & AC_MSB_MASK))
         {
-            // the high digits of low and high have converged, and can be written to
-            // the stream
+            // the high digits of low and high have converged, and can be written to the stream
             WriteBits(high >> AC_MSB_SHIFT, 1);
 
             while (underflowBits > 0)
@@ -1905,8 +1901,7 @@ void idCompressor_Arithmetic::EncodeSymbol(acSymbol_t *symbol)
         }
         else if ((low & AC_MSB2_MASK) && !(high & AC_MSB2_MASK))
         {
-            // underflow is in danger of happening, 2nd digits are converging but 1st
-            // digits don't match
+            // underflow is in danger of happening, 2nd digits are converging but 1st digits don't match
             underflowBits += 1;
             low &= AC_MSB2_MASK - 1;
             high |= AC_MSB2_MASK;
@@ -2081,22 +2076,21 @@ int idCompressor_Arithmetic::Read(void *outData, int outLength)
 /*
 =================================================================================
 
-        idCompressor_LZSS
+    idCompressor_LZSS
 
-        In 1977 Abraham Lempel and Jacob Ziv presented a dictionary based scheme
-for text compression called LZ77. For any new text LZ77 outputs an offset/length
-        pair to previously seen text and the next new byte after the previously
-seen text.
+    In 1977 Abraham Lempel and Jacob Ziv presented a dictionary based scheme for
+    text compression called LZ77. For any new text LZ77 outputs an offset/length
+    pair to previously seen text and the next new byte after the previously seen
+    text.
 
-        In 1982 James Storer and Thomas Szymanski presented a modification on
-the work of Lempel and Ziv called LZSS. LZ77 always outputs an offset/length
-pair, even if a match is only one byte long. An offset/length pair usually takes
-more than a single byte to store and the compression is not optimal for small
-match sizes. LZSS uses a bit flag which tells whether the following data is a
-literal (byte) or an offset/length pair.
+    In 1982 James Storer and Thomas Szymanski presented a modification on the work
+    of Lempel and Ziv called LZSS. LZ77 always outputs an offset/length pair, even
+    if a match is only one byte long. An offset/length pair usually takes more than
+    a single byte to store and the compression is not optimal for small match sizes.
+    LZSS uses a bit flag which tells whether the following data is a literal (byte)
+    or an offset/length pair.
 
-        The following algorithm is an implementation of LZSS with arbitrary word
-size.
+    The following algorithm is an implementation of LZSS with arbitrary word size.
 
 =================================================================================
 */
@@ -2424,9 +2418,9 @@ int idCompressor_LZSS::Read(void *outData, int outLength)
 /*
 =================================================================================
 
-        idCompressor_LZSS_WordAligned
+    idCompressor_LZSS_WordAligned
 
-        Outputs word aligned compressed data.
+    Outputs word aligned compressed data.
 
 =================================================================================
 */
@@ -2542,48 +2536,47 @@ void idCompressor_LZSS_WordAligned::DecompressBlock(void)
 /*
 =================================================================================
 
-        idCompressor_LZW
+    idCompressor_LZW
 
-        http://www.unisys.com/about__unisys/lzw
-        http://www.dogma.net/markn/articles/lzw/lzw.htm
-        http://www.cs.cf.ac.uk/Dave/Multimedia/node214.html
-        http://www.cs.duke.edu/csed/curious/compression/lzw.html
-        http://oldwww.rasip.fer.hr/research/compress/algorithms/fund/lz/lzw.html
+    http://www.unisys.com/about__unisys/lzw
+    http://www.dogma.net/markn/articles/lzw/lzw.htm
+    http://www.cs.cf.ac.uk/Dave/Multimedia/node214.html
+    http://www.cs.duke.edu/csed/curious/compression/lzw.html
+    http://oldwww.rasip.fer.hr/research/compress/algorithms/fund/lz/lzw.html
 
-        This is the same compression scheme used by GIF with the exception that
-        the EOI and clear codes are not explicitly stored.  Instead EOI happens
-        when the input stream runs dry and CC happens when the table gets to
-big.
+    This is the same compression scheme used by GIF with the exception that
+    the EOI and clear codes are not explicitly stored.  Instead EOI happens
+    when the input stream runs dry and CC happens when the table gets to big.
 
-        This is a derivation of LZ78, but the dictionary starts with all single
-        character values so only code words are output.  It is similar in theory
-        to LZ77, but instead of using the previous X bytes as a lookup table, a
-table is built as the stream is read.  The	compressor and decompressor use
-the same formula, so the tables should be exactly alike.  The only catch is the
-        decompressor is always one step behind the compressor and may get a code
-not yet in the table.  In this case, it is easy to determine what the next code
-        is going to be (it will be the previous string plus the first byte of
-the previous string).
+    This is a derivation of LZ78, but the dictionary starts with all single
+    character values so only code words are output.  It is similar in theory
+    to LZ77, but instead of using the previous X bytes as a lookup table, a table
+    is built as the stream is read.  The	compressor and decompressor use the
+    same formula, so the tables should be exactly alike.  The only catch is the
+    decompressor is always one step behind the compressor and may get a code not
+    yet in the table.  In this case, it is easy to determine what the next code
+    is going to be (it will be the previous string plus the first byte of the
+    previous string).
 
-        The dictionary can be any size, but 12 bits seems to produce best
-results for most sample data.  The code size is variable.  It starts with the
-minimum number of bits required to store the dictionary and automatically
-increases as the dictionary gets bigger (it starts at 9 bits and grows to 10
-bits when item 512 is added, 11 bits when 1024 is added, etc...) once the the
-dictionary is filled (4096 items for a 12 bit dictionary), the whole thing is
-cleared and the process starts over again.
+    The dictionary can be any size, but 12 bits seems to produce best results for
+    most sample data.  The code size is variable.  It starts with the minimum
+    number of bits required to store the dictionary and automatically increases
+    as the dictionary gets bigger (it starts at 9 bits and grows to 10 bits when
+    item 512 is added, 11 bits when 1024 is added, etc...) once the the dictionary
+    is filled (4096 items for a 12 bit dictionary), the whole thing is cleared and
+    the process starts over again.
 
-        The compressor increases the bit size after it adds the item, while the
-        decompressor does before it adds the item.  The difference is subtle,
-but it's because decompressor being one step behind.  Otherwise, the
-decompressor would read 512 with only 9 bits.
+    The compressor increases the bit size after it adds the item, while the
+    decompressor does before it adds the item.  The difference is subtle, but
+    it's because decompressor being one step behind.  Otherwise, the decompressor
+    would read 512 with only 9 bits.
 
-        If "Hello" is in the dictionary, then "Hell", "Hel", "He" and "H" will
-be too. We use this to our advantage by storing the index of the previous code,
-and the value of the last character.  This means when we traverse through the
-        dictionary, we get the characters in reverse.
+    If "Hello" is in the dictionary, then "Hell", "Hel", "He" and "H" will be too.
+    We use this to our advantage by storing the index of the previous code, and
+    the value of the last character.  This means when we traverse through the
+    dictionary, we get the characters in reverse.
 
-        Dictionary entries 0-255 are always going to have the values 0-255
+    Dictionary entries 0-255 are always going to have the values 0-255
 
 =================================================================================
 */
@@ -2820,8 +2813,7 @@ int idCompressor_LZW::Write(const void *inData, int inLength)
 /*
 ================
 idCompressor_LZW::WriteChain
-The chain is stored backwards, so we have to write it to a buffer then output
-the buffer in reverse
+The chain is stored backwards, so we have to write it to a buffer then output the buffer in reverse
 ================
 */
 int idCompressor_LZW::WriteChain(int code)
@@ -2900,7 +2892,7 @@ void idCompressor_LZW::DecompressBlock()
 /*
 =================================================================================
 
-        idCompressor
+    idCompressor
 
 =================================================================================
 */

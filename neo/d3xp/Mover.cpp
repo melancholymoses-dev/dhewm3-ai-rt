@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Player.h"
+#include "sys/platform.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
-#include "sys/platform.h"
+#include "Player.h"
 
 #include "Mover.h"
 
@@ -637,7 +634,7 @@ void idMover::Event_InitGuiTargets(void)
 
 /***********************************************************************
 
-        Translation control functions
+    Translation control functions
 
 ***********************************************************************/
 
@@ -861,7 +858,7 @@ void idMover::BeginMove(idThread *thread)
 
 /***********************************************************************
 
-        Rotation control functions
+    Rotation control functions
 
 ***********************************************************************/
 
@@ -1023,9 +1020,9 @@ void idMover::BeginRotation(idThread *thread, bool stopwhendone)
     lastCommand = MOVER_ROTATING;
     rotate_thread = 0;
 
-    // rotation always uses move_time so that if a move was started before the
-    // rotation, the rotation will take the same amount of time as the move.  If
-    // no move has been started and no time is set, the rotation takes 1 second.
+    // rotation always uses move_time so that if a move was started before the rotation,
+    // the rotation will take the same amount of time as the move.  If no move has been
+    // started and no time is set, the rotation takes 1 second.
     if (!move_time)
     {
         move_time = 1;
@@ -1091,7 +1088,7 @@ void idMover::BeginRotation(idThread *thread, bool stopwhendone)
 
 /***********************************************************************
 
-        Script callable routines
+    Script callable routines
 
 ***********************************************************************/
 
@@ -1255,8 +1252,7 @@ void idMover::Event_MoveAccelerateTo(float speed, float time)
 
     if (time < 0)
     {
-        gameLocal.Error("idMover::Event_MoveAccelerateTo: cannot set acceleration "
-                        "time less than 0.");
+        gameLocal.Error("idMover::Event_MoveAccelerateTo: cannot set acceleration time less than 0.");
     }
 
     dir = physicsObj.GetLinearVelocity();
@@ -1304,8 +1300,7 @@ void idMover::Event_MoveDecelerateTo(float speed, float time)
 
     if (time < 0)
     {
-        gameLocal.Error("idMover::Event_MoveDecelerateTo: cannot set deceleration "
-                        "time less than 0.");
+        gameLocal.Error("idMover::Event_MoveDecelerateTo: cannot set deceleration time less than 0.");
     }
 
     dir = physicsObj.GetLinearVelocity();
@@ -1729,7 +1724,7 @@ void idMover::SetPortalState(bool open)
 /*
 ===============================================================================
 
-        idSplinePath, holds a spline path to be used by an idMover
+    idSplinePath, holds a spline path to be used by an idMover
 
 ===============================================================================
 */
@@ -3095,8 +3090,7 @@ void idMover_Binary::GotoPosition1(void)
     // only partway up before reversing
     if (moverState == MOVER_1TO2)
     {
-        // use the physics times because this might be executed during the physics
-        // simulation
+        // use the physics times because this might be executed during the physics simulation
         partial = physicsObj.GetLinearEndTime() - physicsObj.GetTime();
         assert(partial >= 0);
         if (partial < 0)
@@ -3104,8 +3098,7 @@ void idMover_Binary::GotoPosition1(void)
             partial = 0;
         }
         MatchActivateTeam(MOVER_2TO1, physicsObj.GetTime() - partial);
-        // if already at at position 1 (partial == duration) execute the reached
-        // event
+        // if already at at position 1 (partial == duration) execute the reached event
         if (partial >= duration)
         {
             Event_Reached_BinaryMover();
@@ -3149,8 +3142,7 @@ void idMover_Binary::GotoPosition2(void)
     // only partway up before reversing
     if (moverState == MOVER_2TO1)
     {
-        // use the physics times because this might be executed during the physics
-        // simulation
+        // use the physics times because this might be executed during the physics simulation
         partial = physicsObj.GetLinearEndTime() - physicsObj.GetTime();
         assert(partial >= 0);
         if (partial < 0)
@@ -3158,8 +3150,7 @@ void idMover_Binary::GotoPosition2(void)
             partial = 0;
         }
         MatchActivateTeam(MOVER_1TO2, physicsObj.GetTime() - partial);
-        // if already at at position 2 (partial == duration) execute the reached
-        // event
+        // if already at at position 2 (partial == duration) execute the reached event
         if (partial >= duration)
         {
             Event_Reached_BinaryMover();
@@ -3726,8 +3717,7 @@ void idDoor::Spawn(void)
     spawnArgs.GetBool("player_only", "0", playerOnly);
 #endif
 
-    // expects syncLock to be a door that must be closed before this door will
-    // open
+    // expects syncLock to be a door that must be closed before this door will open
     spawnArgs.GetString("syncLock", "", syncLock);
 
     spawnArgs.GetString("buddy", "", buddyStr);
@@ -3735,8 +3725,7 @@ void idDoor::Spawn(void)
     spawnArgs.GetString("requires", "", requires);
     spawnArgs.GetInt("removeItem", "0", removeItem);
 
-    // ever separate piece of a door is considered solid when other team mates
-    // push entities
+    // ever separate piece of a door is considered solid when other team mates push entities
     fl.solidForTeam = true;
 
     // first position at start
@@ -3817,8 +3806,7 @@ void idDoor::Spawn(void)
         PostEventSec(&EV_Activate, spawnArgs.GetFloat("delay"), this);
     }
 
-    // sounds have a habit of stuttering when portals close, so make them
-    // unoccluded
+    // sounds have a habit of stuttering when portals close, so make them unoccluded
     refSound.parms.soundShaderFlags |= SSF_NO_OCCLUSION;
 
     companionDoor = NULL;

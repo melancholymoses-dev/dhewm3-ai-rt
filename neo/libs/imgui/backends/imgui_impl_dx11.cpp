@@ -2,71 +2,54 @@
 // This needs to be used along with a Platform Backend (e.g. Win32)
 
 // Implemented features:
-//  [X] Renderer: User texture binding. Use 'ID3D11ShaderResourceView*' as
-//  ImTextureID. Read the FAQ about ImTextureID! [X] Renderer: Large meshes
-//  support (64k+ vertices) even with 16-bit indices
-//  (ImGuiBackendFlags_RendererHasVtxOffset). [X] Renderer: Expose selected
-//  render state for draw callbacks to use. Access in
-//  '(ImGui_ImplXXXX_RenderState*)GetPlatformIO().Renderer_RenderState'.
+//  [X] Renderer: User texture binding. Use 'ID3D11ShaderResourceView*' as ImTextureID. Read the FAQ about ImTextureID!
+//  [X] Renderer: Large meshes support (64k+ vertices) even with 16-bit indices
+//  (ImGuiBackendFlags_RendererHasVtxOffset). [X] Renderer: Expose selected render state for draw callbacks to use.
+//  Access in '(ImGui_ImplXXXX_RenderState*)GetPlatformIO().Renderer_RenderState'.
 
-// You can use unmodified imgui_impl_* files in your project. See examples/
-// folder for examples of using this. Prefer including the entire imgui/
-// repository into your project (either as a copy or as a submodule), and only
-// build the backends you need. Learn about Dear ImGui:
+// You can use unmodified imgui_impl_* files in your project. See examples/ folder for examples of using this.
+// Prefer including the entire imgui/ repository into your project (either as a copy or as a submodule), and only build
+// the backends you need. Learn about Dear ImGui:
 // - FAQ                  https://dearimgui.com/faq
 // - Getting Started      https://dearimgui.com/getting-started
-// - Documentation        https://dearimgui.com/docs (same as your local docs/
-// folder).
+// - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
-//  2025-01-06: DirectX11: Expose VertexConstantBuffer in
-//  ImGui_ImplDX11_RenderState. Reset projection matrix in
-//  ImDrawCallback_ResetRenderState handler. 2024-10-07: DirectX11: Changed
-//  default texture sampler to Clamp instead of Repeat/Wrap. 2024-10-07:
-//  DirectX11: Expose selected render state in ImGui_ImplDX11_RenderState, which
-//  you can access in 'void* platform_io.Renderer_RenderState' during draw
-//  callbacks. 2022-10-11: Using 'nullptr' instead of 'NULL' as per our switch
-//  to C++11. 2021-06-29: Reorganized backend to pull data from a single
-//  structure to facilitate usage with multiple-contexts (all g_XXXX access
-//  changed to bd->XXXX). 2021-05-19: DirectX11: Replaced direct access to
-//  ImDrawCmd::TextureId with a call to ImDrawCmd::GetTexID(). (will become a
-//  requirement) 2021-02-18: DirectX11: Change blending equation to preserve
-//  alpha in output buffer. 2019-08-01: DirectX11: Fixed code querying the
-//  Geometry Shader state (would generally error with Debug layer enabled).
-//  2019-07-21: DirectX11: Backup, clear and restore Geometry Shader is any is
-//  bound when calling ImGui_ImplDX11_RenderDrawData. Clearing
-//  Hull/Domain/Compute shaders without backup/restore. 2019-05-29: DirectX11:
-//  Added support for large mesh (64K+ vertices), enable
-//  ImGuiBackendFlags_RendererHasVtxOffset flag. 2019-04-30: DirectX11: Added
-//  support for special ImDrawCallback_ResetRenderState callback to reset render
-//  state. 2018-12-03: Misc: Added #pragma comment statement to automatically
-//  link with d3dcompiler.lib when using D3DCompile(). 2018-11-30: Misc: Setting
-//  up io.BackendRendererName so it can be displayed in the About Window.
-//  2018-08-01: DirectX11: Querying for IDXGIFactory instead of IDXGIFactory1 to
-//  increase compatibility. 2018-07-13: DirectX11: Fixed unreleased resources in
-//  Init and Shutdown functions. 2018-06-08: Misc: Extracted
-//  imgui_impl_dx11.cpp/.h away from the old combined DX11+Win32 example.
-//  2018-06-08: DirectX11: Use draw_data->DisplayPos and draw_data->DisplaySize
-//  to setup projection matrix and clipping rectangle. 2018-02-16: Misc:
-//  Obsoleted the io.RenderDrawListsFn callback and exposed
-//  ImGui_ImplDX11_RenderDrawData() in the .h file so you can call it yourself.
-//  2018-02-06: Misc: Removed call to ImGui::Shutdown() which is not available
-//  from 1.60 WIP, user needs to call CreateContext/DestroyContext themselves.
-//  2016-05-07: DirectX11: Disabling depth-write.
+//  2025-01-06: DirectX11: Expose VertexConstantBuffer in ImGui_ImplDX11_RenderState. Reset projection matrix in
+//  ImDrawCallback_ResetRenderState handler. 2024-10-07: DirectX11: Changed default texture sampler to Clamp instead of
+//  Repeat/Wrap. 2024-10-07: DirectX11: Expose selected render state in ImGui_ImplDX11_RenderState, which you can access
+//  in 'void* platform_io.Renderer_RenderState' during draw callbacks. 2022-10-11: Using 'nullptr' instead of 'NULL' as
+//  per our switch to C++11. 2021-06-29: Reorganized backend to pull data from a single structure to facilitate usage
+//  with multiple-contexts (all g_XXXX access changed to bd->XXXX). 2021-05-19: DirectX11: Replaced direct access to
+//  ImDrawCmd::TextureId with a call to ImDrawCmd::GetTexID(). (will become a requirement) 2021-02-18: DirectX11: Change
+//  blending equation to preserve alpha in output buffer. 2019-08-01: DirectX11: Fixed code querying the Geometry Shader
+//  state (would generally error with Debug layer enabled). 2019-07-21: DirectX11: Backup, clear and restore Geometry
+//  Shader is any is bound when calling ImGui_ImplDX11_RenderDrawData. Clearing Hull/Domain/Compute shaders without
+//  backup/restore. 2019-05-29: DirectX11: Added support for large mesh (64K+ vertices), enable
+//  ImGuiBackendFlags_RendererHasVtxOffset flag. 2019-04-30: DirectX11: Added support for special
+//  ImDrawCallback_ResetRenderState callback to reset render state. 2018-12-03: Misc: Added #pragma comment statement to
+//  automatically link with d3dcompiler.lib when using D3DCompile(). 2018-11-30: Misc: Setting up io.BackendRendererName
+//  so it can be displayed in the About Window. 2018-08-01: DirectX11: Querying for IDXGIFactory instead of
+//  IDXGIFactory1 to increase compatibility. 2018-07-13: DirectX11: Fixed unreleased resources in Init and Shutdown
+//  functions. 2018-06-08: Misc: Extracted imgui_impl_dx11.cpp/.h away from the old combined DX11+Win32 example.
+//  2018-06-08: DirectX11: Use draw_data->DisplayPos and draw_data->DisplaySize to setup projection matrix and clipping
+//  rectangle. 2018-02-16: Misc: Obsoleted the io.RenderDrawListsFn callback and exposed ImGui_ImplDX11_RenderDrawData()
+//  in the .h file so you can call it yourself. 2018-02-06: Misc: Removed call to ImGui::Shutdown() which is not
+//  available from 1.60 WIP, user needs to call CreateContext/DestroyContext themselves. 2016-05-07: DirectX11:
+//  Disabling depth-write.
 
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
 #include "imgui_impl_dx11.h"
 
 // DirectX
+#include <stdio.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
-#include <stdio.h>
 #ifdef _MSC_VER
-#pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib
-                                    // as we are using D3DCompile() below.
+#pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib as we are using D3DCompile() below.
 #endif
 
 // DirectX11 data
@@ -102,10 +85,9 @@ struct VERTEX_CONSTANT_BUFFER_DX11
     float mvp[4][4];
 };
 
-// Backend data stored in io.BackendRendererUserData to allow support for
-// multiple Dear ImGui contexts It is STRONGLY preferred that you use docking
-// branch with multi-viewports (== single Dear ImGui context + multiple windows)
-// instead of multiple Dear ImGui contexts.
+// Backend data stored in io.BackendRendererUserData to allow support for multiple Dear ImGui contexts
+// It is STRONGLY preferred that you use docking branch with multi-viewports (== single Dear ImGui context + multiple
+// windows) instead of multiple Dear ImGui contexts.
 static ImGui_ImplDX11_Data *ImGui_ImplDX11_GetBackendData()
 {
     return ImGui::GetCurrentContext() ? (ImGui_ImplDX11_Data *)ImGui::GetIO().BackendRendererUserData : nullptr;
@@ -128,8 +110,7 @@ static void ImGui_ImplDX11_SetupRenderState(ImDrawData *draw_data, ID3D11DeviceC
 
     // Setup orthographic projection matrix into our constant buffer
     // Our visible imgui space lies from draw_data->DisplayPos (top left) to
-    // draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is
-    // (0,0) for single viewport apps.
+    // draw_data->DisplayPos+data_data->DisplaySize (bottom right). DisplayPos is (0,0) for single viewport apps.
     D3D11_MAPPED_SUBRESOURCE mapped_resource;
     if (device_ctx->Map(bd->pVertexConstantBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped_resource) == S_OK)
     {
@@ -161,14 +142,11 @@ static void ImGui_ImplDX11_SetupRenderState(ImDrawData *draw_data, ID3D11DeviceC
     device_ctx->PSSetSamplers(0, 1, &bd->pFontSampler);
     device_ctx->GSSetShader(nullptr, nullptr, 0);
     device_ctx->HSSetShader(nullptr, nullptr,
-                            0); // In theory we should backup and restore this as
-                                // well.. very infrequently used..
+                            0); // In theory we should backup and restore this as well.. very infrequently used..
     device_ctx->DSSetShader(nullptr, nullptr,
-                            0); // In theory we should backup and restore this as
-                                // well.. very infrequently used..
+                            0); // In theory we should backup and restore this as well.. very infrequently used..
     device_ctx->CSSetShader(nullptr, nullptr,
-                            0); // In theory we should backup and restore this as
-                                // well.. very infrequently used..
+                            0); // In theory we should backup and restore this as well.. very infrequently used..
 
     // Setup render state
     const float blend_factor[4] = {0.f, 0.f, 0.f, 0.f};
@@ -243,15 +221,13 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData *draw_data)
     device->Unmap(bd->pVB, 0);
     device->Unmap(bd->pIB, 0);
 
-    // Backup DX state that will be modified to restore it afterwards
-    // (unfortunately this is very ugly looking and verbose. Close your eyes!)
+    // Backup DX state that will be modified to restore it afterwards (unfortunately this is very ugly looking and
+    // verbose. Close your eyes!)
     struct BACKUP_DX11_STATE
     {
         UINT ScissorRectsCount, ViewportsCount;
-        D3D11_RECT
-        ScissorRects[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-        D3D11_VIEWPORT
-        Viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+        D3D11_RECT ScissorRects[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
+        D3D11_VIEWPORT Viewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
         ID3D11RasterizerState *RS;
         ID3D11BlendState *BlendState;
         FLOAT BlendFactor[4];
@@ -305,8 +281,7 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData *draw_data)
     platform_io.Renderer_RenderState = &render_state;
 
     // Render command lists
-    // (Because we merged all buffers into a single one, we maintain our own
-    // offset into them)
+    // (Because we merged all buffers into a single one, we maintain our own offset into them)
     int global_idx_offset = 0;
     int global_vtx_offset = 0;
     ImVec2 clip_off = draw_data->DisplayPos;
@@ -319,8 +294,8 @@ void ImGui_ImplDX11_RenderDrawData(ImDrawData *draw_data)
             if (pcmd->UserCallback != nullptr)
             {
                 // User callback, registered via ImDrawList::AddCallback()
-                // (ImDrawCallback_ResetRenderState is a special callback value used by
-                // the user to request the renderer to reset render state.)
+                // (ImDrawCallback_ResetRenderState is a special callback value used by the user to request the renderer
+                // to reset render state.)
                 if (pcmd->UserCallback == ImDrawCallback_ResetRenderState)
                     ImGui_ImplDX11_SetupRenderState(draw_data, device);
                 else
@@ -451,8 +426,8 @@ static void ImGui_ImplDX11_DestroyFontsTexture()
     {
         bd->pFontTextureView->Release();
         bd->pFontTextureView = nullptr;
-        ImGui::GetIO().Fonts->SetTexID(0); // We copied data->pFontTextureView to io.Fonts->TexID so let's
-                                           // clear that as well.
+        ImGui::GetIO().Fonts->SetTexID(
+            0); // We copied data->pFontTextureView to io.Fonts->TexID so let's clear that as well.
     }
 }
 
@@ -464,14 +439,12 @@ bool ImGui_ImplDX11_CreateDeviceObjects()
     if (bd->pFontSampler)
         ImGui_ImplDX11_InvalidateDeviceObjects();
 
-    // By using D3DCompile() from <d3dcompiler.h> / d3dcompiler.lib, we introduce
-    // a dependency to a given version of d3dcompiler_XX.dll (see
-    // D3DCOMPILER_DLL_A) If you would like to use this DX11 sample code but
-    // remove this dependency you can:
-    //  1) compile once, save the compiled shader blobs into a file or source code
-    //  and pass them to CreateVertexShader()/CreatePixelShader() [preferred
-    //  solution] 2) use code to detect any version of the DLL and grab a pointer
-    //  to D3DCompile from the DLL.
+    // By using D3DCompile() from <d3dcompiler.h> / d3dcompiler.lib, we introduce a dependency to a given version of
+    // d3dcompiler_XX.dll (see D3DCOMPILER_DLL_A) If you would like to use this DX11 sample code but remove this
+    // dependency you can:
+    //  1) compile once, save the compiled shader blobs into a file or source code and pass them to
+    //  CreateVertexShader()/CreatePixelShader() [preferred solution] 2) use code to detect any version of the DLL and
+    //  grab a pointer to D3DCompile from the DLL.
     // See https://github.com/ocornut/imgui/pull/638 for sources and details.
 
     // Create the vertex shader
@@ -506,10 +479,8 @@ bool ImGui_ImplDX11_CreateDeviceObjects()
         ID3DBlob *vertexShaderBlob;
         if (FAILED(D3DCompile(vertexShader, strlen(vertexShader), nullptr, nullptr, nullptr, "main", "vs_4_0", 0, 0,
                               &vertexShaderBlob, nullptr)))
-            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get
-                          // error showing in (const
-                          // char*)pErrorBlob->GetBufferPointer(). Make sure to
-                          // Release() the blob!
+            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get error showing in (const
+                          // char*)pErrorBlob->GetBufferPointer(). Make sure to Release() the blob!
         if (bd->pd3dDevice->CreateVertexShader(vertexShaderBlob->GetBufferPointer(), vertexShaderBlob->GetBufferSize(),
                                                nullptr, &bd->pVertexShader) != S_OK)
         {
@@ -566,10 +537,8 @@ bool ImGui_ImplDX11_CreateDeviceObjects()
         ID3DBlob *pixelShaderBlob;
         if (FAILED(D3DCompile(pixelShader, strlen(pixelShader), nullptr, nullptr, nullptr, "main", "ps_4_0", 0, 0,
                               &pixelShaderBlob, nullptr)))
-            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get
-                          // error showing in (const
-                          // char*)pErrorBlob->GetBufferPointer(). Make sure to
-                          // Release() the blob!
+            return false; // NB: Pass ID3DBlob* pErrorBlob to D3DCompile() to get error showing in (const
+                          // char*)pErrorBlob->GetBufferPointer(). Make sure to Release() the blob!
         if (bd->pd3dDevice->CreatePixelShader(pixelShaderBlob->GetBufferPointer(), pixelShaderBlob->GetBufferSize(),
                                               nullptr, &bd->pPixelShader) != S_OK)
         {
@@ -622,9 +591,8 @@ bool ImGui_ImplDX11_CreateDeviceObjects()
     }
 
     // Create texture sampler
-    // (Bilinear sampling is required by default. Set 'io.Fonts->Flags |=
-    // ImFontAtlasFlags_NoBakedLines' or 'style.AntiAliasedLinesUseTex = false' to
-    // allow point/nearest sampling)
+    // (Bilinear sampling is required by default. Set 'io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines' or
+    // 'style.AntiAliasedLinesUseTex = false' to allow point/nearest sampling)
     {
         D3D11_SAMPLER_DESC desc;
         ZeroMemory(&desc, sizeof(desc));
@@ -714,9 +682,8 @@ bool ImGui_ImplDX11_Init(ID3D11Device *device, ID3D11DeviceContext *device_conte
     ImGui_ImplDX11_Data *bd = IM_NEW(ImGui_ImplDX11_Data)();
     io.BackendRendererUserData = (void *)bd;
     io.BackendRendererName = "imgui_impl_dx11";
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset; // We can honor the
-                                                               // ImDrawCmd::VtxOffset field,
-                                                               // allowing for large meshes.
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset; // We can honor the ImDrawCmd::VtxOffset field, allowing
+                                                               // for large meshes.
 
     // Get factory from device
     IDXGIDevice *pDXGIDevice = nullptr;
@@ -769,8 +736,7 @@ void ImGui_ImplDX11_Shutdown()
 void ImGui_ImplDX11_NewFrame()
 {
     ImGui_ImplDX11_Data *bd = ImGui_ImplDX11_GetBackendData();
-    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call "
-                               "ImGui_ImplDX11_Init()?");
+    IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplDX11_Init()?");
 
     if (!bd->pFontSampler)
         ImGui_ImplDX11_CreateDeviceObjects();

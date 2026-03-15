@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -250,12 +247,10 @@ void MaterialDocManager::AddMaterial(const char *name, const char *filename, con
 
 /**
  * Used to redo an add material and undo a delete material.
- * The undo for adding a material deletes the material. Instead of adding a
- * completely new material RedoAddMaterial finds the one that was just deleted
- * and uses that.
+ * The undo for adding a material deletes the material. Instead of adding a completely
+ * new material RedoAddMaterial finds the one that was just deleted and uses that.
  * @param name The name of the material that was added/deleted.
- * @param clearData Should the material definition be reset to the default
- * definition.
+ * @param clearData Should the material definition be reset to the default definition.
  */
 void MaterialDocManager::RedoAddMaterial(const char *name, bool clearData)
 {
@@ -292,8 +287,7 @@ void MaterialDocManager::DeleteMaterial(MaterialDoc *material, bool addUndo)
 
     assert(material);
 
-    // This will just flag for delete. The actual delete will happen during the
-    // save
+    // This will just flag for delete. The actual delete will happen during the save
     material->Delete();
 
     if (addUndo)
@@ -415,10 +409,9 @@ void MaterialDocManager::ReloadFile(const char *filename)
 }
 
 /**
- * Creates a MaterialDoc object for the specified material name. If a
- * MaterialDoc object already exists then it is used.
- * @param materialName The name of the material for which to create a
- * MaterialDoc object.
+ * Creates a MaterialDoc object for the specified material name. If a MaterialDoc
+ * object already exists then it is used.
+ * @param materialName The name of the material for which to create a MaterialDoc object.
  */
 MaterialDoc *MaterialDocManager::CreateMaterialDoc(const char *materialName)
 {
@@ -742,8 +735,7 @@ void MaterialDocManager::AddMaterialRedoModifier(MaterialModifier *mod)
  * Searches for a material that matches the specified search data.
  * @param name The name of the material to search.
  * @param searchData The search parameters.
- * @param checkName If true then the name of the material will be checked along
- * with the material text.
+ * @param checkName If true then the name of the material will be checked along with the material text.
  */
 bool MaterialDocManager::FindMaterial(const char *name, MaterialSearchData_t *searchData, bool checkName)
 {
@@ -791,8 +783,7 @@ bool MaterialDocManager::FindMaterial(const char *name, MaterialSearchData_t *se
 }
 
 /**
- * Returns a unique material name given a base name. This is used to resolve
- * materials with the same name.
+ * Returns a unique material name given a base name. This is used to resolve materials with the same name.
  * @param name The base name of the material.
  */
 idStr MaterialDocManager::GetUniqueMaterialName(idStr name)
@@ -946,8 +937,7 @@ void MaterialDocManager::MaterialSaved(MaterialDoc *materialDoc)
 }
 
 /**
- * Called when a material name has been changed and notifies all views of the
- * change.
+ * Called when a material name has been changed and notifies all views of the change.
  * @param materialDoc The material that has changed.
  */
 void MaterialDocManager::MaterialNameChanged(const char *oldName, MaterialDoc *materialDoc)
@@ -998,8 +988,7 @@ void MaterialDocManager::StageMoved(MaterialDoc *materialDoc, int from, int to)
 }
 
 /**
- * Called when a material attribute has been edited and notifies all views of
- * the change.
+ * Called when a material attribute has been edited and notifies all views of the change.
  * @param materialDoc The material that has changed.
  * @param stage The stage that contains the changed attribute.
  * @param attribName The name of the attribute that changed.

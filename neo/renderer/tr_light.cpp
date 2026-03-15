@@ -19,24 +19,21 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Game.h"
-#include "idlib/math/Interpolate.h"
-#include "renderer/RenderWorld_local.h"
-#include "renderer/VertexCache.h"
 #include "sys/platform.h"
+#include "idlib/math/Interpolate.h"
+#include "framework/Game.h"
+#include "renderer/VertexCache.h"
+#include "renderer/RenderWorld_local.h"
 #include "ui/Window.h"
 
 #include "renderer/tr_local.h"
@@ -66,8 +63,7 @@ bool R_CreateAmbientCache(srfTriangles_t *tri, bool needsLighting)
     {
         return true;
     }
-    // we are going to use it for drawing, so make sure we have the tangents and
-    // normals
+    // we are going to use it for drawing, so make sure we have the tangents and normals
     if (needsLighting && !tri->tangentsCalculated)
     {
         R_DeriveTangents(tri);
@@ -85,8 +81,7 @@ bool R_CreateAmbientCache(srfTriangles_t *tri, bool needsLighting)
 ==================
 R_CreateLightingCache
 
-Returns false if the cache couldn't be allocated, in which case the surface
-should be skipped.
+Returns false if the cache couldn't be allocated, in which case the surface should be skipped.
 ==================
 */
 bool R_CreateLightingCache(const idRenderEntityLocal *ent, const idRenderLightLocal *light, srfTriangles_t *tri)
@@ -186,8 +181,7 @@ void R_CreateVertexProgramShadowCache(srfTriangles_t *tri)
         return;
     }
 
-    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with
-    // big models
+    // DG: use Mem_MallocA() instead of _alloca16() to avoid stack overflows with big models
     bool tempOnStack;
     shadowCache_t *temp = (shadowCache_t *)Mem_MallocA(tri->numVerts * 2 * sizeof(shadowCache_t), tempOnStack);
 
@@ -428,8 +422,7 @@ viewEntity_t *R_SetEntityDefViewEntity(idRenderEntityLocal *def)
     vModel = (viewEntity_t *)R_ClearedFrameAlloc(sizeof(*vModel));
     vModel->entityDef = def;
 
-    // the scissorRect will be expanded as the model bounds is accepted into
-    // visible portal chains
+    // the scissorRect will be expanded as the model bounds is accepted into visible portal chains
     vModel->scissorRect.Clear();
 
     // copy the model and weapon depth hack for back-end use
@@ -438,8 +431,7 @@ viewEntity_t *R_SetEntityDefViewEntity(idRenderEntityLocal *def)
 
     R_AxisToModelMatrix(def->parms.axis, def->parms.origin, vModel->modelMatrix);
 
-    // we may not have a viewDef if we are just creating shadows at entity
-    // creation time
+    // we may not have a viewDef if we are just creating shadows at entity creation time
     if (tr.viewDef)
     {
         myGlMultMatrix(vModel->modelMatrix, tr.viewDef->worldSpace.modelViewMatrix, vModel->modelViewMatrix);
@@ -459,8 +451,7 @@ R_TestPointInViewLight
 ====================
 */
 static const float INSIDE_LIGHT_FRUSTUM_SLOP = 32;
-// this needs to be greater than the dist from origin to corner of near clip
-// plane
+// this needs to be greater than the dist from origin to corner of near clip plane
 static bool R_TestPointInViewLight(const idVec3 &org, const idRenderLightLocal *light)
 {
     int i;
@@ -520,8 +511,7 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
     vLight = (viewLight_t *)R_ClearedFrameAlloc(sizeof(*vLight));
     vLight->lightDef = light;
 
-    // the scissorRect will be expanded as the light bounds is accepted into
-    // visible portal chains
+    // the scissorRect will be expanded as the light bounds is accepted into visible portal chains
     vLight->scissorRect.Clear();
 
     // calculate the shadow cap optimization states
@@ -544,8 +534,7 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
         vLight->viewSeesShadowPlaneBits = 63;
     }
 
-    // see if the light center is in view, which will allow us to cull invisible
-    // shadows
+    // see if the light center is in view, which will allow us to cull invisible shadows
     vLight->viewSeesGlobalLightOrigin = R_PointInFrustum(light->globalLightOrigin, tr.viewDef->frustum, 4);
 
     // copy data used by backend
@@ -573,33 +562,29 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
 =================
 idRenderWorldLocal::CreateLightDefInteractions
 
-When a lightDef is determined to effect the view (contact the frustum and non-0
-light), it will check to make sure that it has interactions for all the
-entityDefs that it might possibly contact.
+When a lightDef is determined to effect the view (contact the frustum and non-0 light), it will check to
+make sure that it has interactions for all the entityDefs that it might possibly contact.
 
-This does not guarantee that all possible interactions for this light are
-generated, only that the ones that may effect the current view are generated. so
-it does need to be called every view.
+This does not guarantee that all possible interactions for this light are generated, only that
+the ones that may effect the current view are generated. so it does need to be called every view.
 
-This does not cause entityDefs to create dynamic models, all work is done on the
-referenceBounds.
+This does not cause entityDefs to create dynamic models, all work is done on the referenceBounds.
 
 All entities that have non-empty interactions with viewLights will
 have viewEntities made for them and be put on the viewEntity list,
 even if their surfaces aren't visible, because they may need to cast shadows.
 
-Interactions are usually removed when a entityDef or lightDef is modified,
-unless the change is known to not effect them, so there is no danger of getting
-a stale interaction, we just need to check that needed ones are created.
+Interactions are usually removed when a entityDef or lightDef is modified, unless the change
+is known to not effect them, so there is no danger of getting a stale interaction, we just need to
+check that needed ones are created.
 
 An interaction can be at several levels:
 
 Don't interact (but share an area) (numSurfaces = 0)
-Entity reference bounds touches light frustum, but surfaces haven't been
-generated (numSurfaces = -1) Shadow surfaces have been generated, but light
-surfaces have not.  The shadow surface may still be empty due to bounds being
-conservative. Both shadow and light surfaces have been generated.  Either or
-both surfaces may still be empty due to conservative bounds.
+Entity reference bounds touches light frustum, but surfaces haven't been generated (numSurfaces = -1)
+Shadow surfaces have been generated, but light surfaces have not.  The shadow surface may still be empty due to bounds
+being conservative. Both shadow and light surfaces have been generated.  Either or both surfaces may still be empty due
+to conservative bounds.
 
 =================
 */
@@ -620,9 +605,9 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
         {
             edef = eref->entity;
 
-            // if the entity doesn't have any light-interacting surfaces, we could
-            // skip this, but we don't want to instantiate dynamic models yet, so we
-            // can't check that on most things
+            // if the entity doesn't have any light-interacting surfaces, we could skip this,
+            // but we don't want to instantiate dynamic models yet, so we can't check that on
+            // most things
 
             // if the entity isn't viewed
             if (tr.viewDef && edef->viewCount != tr.viewCount)
@@ -648,9 +633,8 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
                 }
             }
 
-            // some big outdoor meshes are flagged to not create any dynamic
-            // interactions when the level designer knows that nearby moving lights
-            // shouldn't actually hit them
+            // some big outdoor meshes are flagged to not create any dynamic interactions
+            // when the level designer knows that nearby moving lights shouldn't actually hit them
             if (edef->parms.noDynamicInteractions && edef->world->generateAllInteractionsCalled)
             {
                 continue;
@@ -660,15 +644,14 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
             // need to consider it.
             if (r_useInteractionTable.GetBool() && this->interactionTable)
             {
-                // allocating these tables may take several megs on big maps, but it
-                // saves 3% to 5% of the CPU time.  The table is updated at
-                // interaction::AllocAndLink() and interaction::UnlinkAndFree()
+                // allocating these tables may take several megs on big maps, but it saves 3% to 5% of
+                // the CPU time.  The table is updated at interaction::AllocAndLink() and interaction::UnlinkAndFree()
                 int index = ldef->index * this->interactionTableWidth + edef->index;
                 inter = this->interactionTable[index];
                 if (inter)
                 {
-                    // if this entity wasn't in view already, the scissor rect will be
-                    // empty, so it will only be used for shadow casting
+                    // if this entity wasn't in view already, the scissor rect will be empty,
+                    // so it will only be used for shadow casting
                     if (!inter->IsEmpty())
                     {
                         R_SetEntityDefViewEntity(edef);
@@ -682,8 +665,7 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
 
                 // we could check either model refs or light refs for matches, but it is
                 // assumed that there will be less lights in an area than models
-                // so the entity chains should be somewhat shorter (they tend to be
-                // fairly close).
+                // so the entity chains should be somewhat shorter (they tend to be fairly close).
                 for (inter = edef->firstInteraction; inter != NULL; inter = inter->entityNext)
                 {
                     if (inter->lightDef == ldef)
@@ -695,8 +677,8 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
                 // if we already have an interaction, we don't need to do anything
                 if (inter != NULL)
                 {
-                    // if this entity wasn't in view already, the scissor rect will be
-                    // empty, so it will only be used for shadow casting
+                    // if this entity wasn't in view already, the scissor rect will be empty,
+                    // so it will only be used for shadow casting
                     if (!inter->IsEmpty())
                     {
                         R_SetEntityDefViewEntity(edef);
@@ -706,8 +688,7 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
             }
 
             //
-            // create a new interaction, but don't do any work other than bbox to
-            // frustum culling
+            // create a new interaction, but don't do any work other than bbox to frustum culling
             //
             idInteraction *inter = idInteraction::AllocAndLink(edef, ldef);
 
@@ -732,8 +713,7 @@ void idRenderWorldLocal::CreateLightDefInteractions(idRenderLightLocal *ldef)
                 continue;
             }
 
-            // we will do a more precise per-surface check when we are checking the
-            // entity
+            // we will do a more precise per-surface check when we are checking the entity
 
             // if this entity wasn't in view already, the scissor rect will be empty,
             // so it will only be used for shadow casting
@@ -801,8 +781,7 @@ void R_LinkLightSurf(const drawSurf_t **link, const srfTriangles_t *tri, const v
         if (!tr.backEndRendererHasVertexPrograms && !r_skipSpecular.GetBool())
         {
             R_SpecularTexGen(drawSurf, light->globalLightOrigin, tr.viewDef->renderView.vieworg);
-            // if we failed to allocate space for the specular calculations, drop the
-            // surface
+            // if we failed to allocate space for the specular calculations, drop the surface
             if (!drawSurf->dynamicTexCoords)
             {
                 return;
@@ -999,8 +978,7 @@ idScreenRect R_CalcLightScissorRectangle(viewLight_t *vLight)
 R_AddLightSurfaces
 
 Calc the light shader values, removing any light from the viewLight list
-if it is determined to not have any visible effect due to being flashed off or
-turned off.
+if it is determined to not have any visible effect due to being flashed off or turned off.
 
 Adds entities to the viewEntity list if they are needed for shadow casting.
 
@@ -1055,8 +1033,8 @@ void R_AddLightSurfaces(void)
         vLight->shaderRegisters = lightRegs;
         lightShader->EvaluateRegisters(lightRegs, light->parms.shaderParms, tr.viewDef, light->parms.referenceSound);
 
-        // if this is a purely additive light and no stage in the light shader
-        // evaluates to a positive light value, we can completely skip the light
+        // if this is a purely additive light and no stage in the light shader evaluates
+        // to a positive light value, we can completely skip the light
         if (!lightShader->IsFogLight() && !lightShader->IsBlendLight())
         {
             int lightStageNum;
@@ -1072,8 +1050,7 @@ void R_AddLightSurfaces(void)
 
                 const int *registers = lightStage->color.registers;
 
-                // snap tiny values to zero to avoid lights showing up with the wrong
-                // color
+                // snap tiny values to zero to avoid lights showing up with the wrong color
                 if (lightRegs[registers[0]] < 0.001f)
                 {
                     lightRegs[registers[0]] = 0.0f;
@@ -1087,8 +1064,8 @@ void R_AddLightSurfaces(void)
                     lightRegs[registers[2]] = 0.0f;
                 }
 
-                // FIXME:	when using the following values the light shows up
-                // bright red when using nvidia drivers/hardware
+                // FIXME:	when using the following values the light shows up bright red when using nvidia
+                // drivers/hardware
                 //			this seems to have been fixed ?
                 // lightRegs[ registers[0] ] = 1.5143074e-005f;
                 // lightRegs[ registers[1] ] = 1.5483369e-005f;
@@ -1102,9 +1079,9 @@ void R_AddLightSurfaces(void)
             if (lightStageNum == lightShader->GetNumStages())
             {
                 // we went through all the stages and didn't find one that adds anything
-                // remove the light from the viewLights list, and change its frame
-                // marker so interaction generation doesn't think the light is visible
-                // and create a shadow for it
+                // remove the light from the viewLights list, and change its frame marker
+                // so interaction generation doesn't think the light is visible and
+                // create a shadow for it
                 *ptr = vLight->next;
                 light->viewCount = -1;
                 continue;
@@ -1148,14 +1125,14 @@ void R_AddLightSurfaces(void)
             }
         }
 
-        // create interactions with all entities the light may touch, and add
-        // viewEntities that may cast shadows, even if they aren't directly visible.
-        // Any real work will be deferred until we walk through the viewEntities
+        // create interactions with all entities the light may touch, and add viewEntities
+        // that may cast shadows, even if they aren't directly visible.  Any real work
+        // will be deferred until we walk through the viewEntities
         tr.viewDef->renderWorld->CreateLightDefInteractions(light);
         tr.pc.c_viewLights++;
 
-        // fog lights will need to draw the light frustum triangles, so make sure
-        // they are in the vertex cache
+        // fog lights will need to draw the light frustum triangles, so make sure they
+        // are in the vertex cache
         if (lightShader->IsFogLight())
         {
             if (!light->frustumTris->ambientCache)
@@ -1311,8 +1288,7 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
         return model;
     }
 
-    // continously animating models (particle systems, etc) will have their
-    // snapshot updated every single view
+    // continously animating models (particle systems, etc) will have their snapshot updated every single view
     if (callbackUpdate || (model->IsDynamicModel() == DM_CONTINUOUS && def->dynamicModelFrameCount != tr.frameCount))
     {
         R_ClearEntityDefDynamicModel(def);
@@ -1322,8 +1298,7 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
     if (!def->dynamicModel)
     {
 
-        // instantiate the snapshot of the dynamic model, possibly reusing memory
-        // from the cached snapshot
+        // instantiate the snapshot of the dynamic model, possibly reusing memory from the cached snapshot
         def->cachedDynamicModel = model->InstantiateDynamicModel(&def->parms, tr.viewDef, def->cachedDynamicModel);
 
         if (def->cachedDynamicModel)
@@ -1369,9 +1344,8 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
         def->parms.modelDepthHack = model->DepthHack() * (1.0f - ndc.z);
     }
 
-    // FIXME: if any of the surfaces have deforms, create a frame-temporary model
-    // with references to the undeformed surfaces.  This would allow deforms to be
-    // light interacting.
+    // FIXME: if any of the surfaces have deforms, create a frame-temporary model with references to the
+    // undeformed surfaces.  This would allow deforms to be light interacting.
 
     return def->dynamicModel;
 }
@@ -1386,8 +1360,7 @@ void R_AddDrawSurf(const srfTriangles_t *tri, const viewEntity_t *space, const r
 {
     drawSurf_t *drawSurf;
     const float *shaderParms;
-    static float refRegs[MAX_EXPRESSION_REGISTERS]; // don't put on stack, or VC++
-                                                    // will do a page touch
+    static float refRegs[MAX_EXPRESSION_REGISTERS]; // don't put on stack, or VC++ will do a page touch
     float generatedShaderParms[MAX_ENTITY_SHADER_PARMS];
 
     drawSurf = (drawSurf_t *)R_FrameAlloc(sizeof(*drawSurf));
@@ -1408,8 +1381,8 @@ void R_AddDrawSurf(const srfTriangles_t *tri, const viewEntity_t *space, const r
         drawSurf->particle_radius = 0.0f;
     }
 
-    // bumping this offset each time causes surfaces with equal sort orders to
-    // still deterministically draw in the order they are added
+    // bumping this offset each time causes surfaces with equal sort orders to still
+    // deterministically draw in the order they are added
     tr.sortOffset += 0.000001f;
 
     // if it doesn't fit, resize the list
@@ -1448,10 +1421,10 @@ void R_AddDrawSurf(const srfTriangles_t *tri, const viewEntity_t *space, const r
         float *regs = (float *)R_FrameAlloc(shader->GetNumRegisters() * sizeof(float));
         drawSurf->shaderRegisters = regs;
 
-        // a reference shader will take the calculated stage color value from
-        // another shader and use that for the parm0-parm3 of the current shader,
-        // which allows a stage of a light model and light flares to pick up
-        // different flashing tables from different light shaders
+        // a reference shader will take the calculated stage color value from another shader
+        // and use that for the parm0-parm3 of the current shader, which allows a stage of
+        // a light model and light flares to pick up different flashing tables from
+        // different light shaders
         if (renderEntity->referenceShader)
         {
             // evaluate the reference shader to find our shader parms
@@ -1545,10 +1518,8 @@ void R_AddDrawSurf(const srfTriangles_t *tri, const viewEntity_t *space, const r
 
         if (!R_PreciseCullSurface(drawSurf, ndcBounds))
         {
-            // did we ever use this to forward an entity color to a gui that didn't
-            // set color?
-            //			memcpy( tr.guiShaderParms, shaderParms, sizeof(
-            // tr.guiShaderParms ) );
+            // did we ever use this to forward an entity color to a gui that didn't set color?
+            //			memcpy( tr.guiShaderParms, shaderParms, sizeof( tr.guiShaderParms ) );
             R_RenderGuiSurf(gui, drawSurf);
         }
 
@@ -1660,8 +1631,7 @@ static void R_AddAmbientDrawsurfs(viewEntity_t *vEntity)
             // make sure we have an ambient cache
             if (!R_CreateAmbientCache(tri, shader->ReceivesLighting()))
             {
-                // don't add anything if the vertex cache was too full to give us an
-                // ambient cache
+                // don't add anything if the vertex cache was too full to give us an ambient cache
                 return;
             }
             // touch it so it won't get purged
@@ -1677,11 +1647,10 @@ static void R_AddAmbientDrawsurfs(viewEntity_t *vEntity)
             }
 
             // Soft Particles -- SteveL #3878
-            float particle_radius = -1.0f; // Default = disallow softening, but allow
-                                           // modelDepthHack if specified in the decl.
+            float particle_radius =
+                -1.0f; // Default = disallow softening, but allow modelDepthHack if specified in the decl.
             if (r_useSoftParticles.GetBool() && r_enableDepthCapture.GetInteger() != 0 &&
-                !shader->ReceivesLighting()            // don't soften surfaces that are meant to
-                                                       // be solid
+                !shader->ReceivesLighting()            // don't soften surfaces that are meant to be solid
                 && tr.viewDef->renderView.viewID >= 0) // Skip during "invisible" rendering passes (e.g. lightgem)
             {
                 const idRenderModelPrt *prt = dynamic_cast<const idRenderModelPrt *>(def->parms.hModel); // yuck.
@@ -1794,8 +1763,8 @@ void R_AddModelSurfaces(void)
             continue;
         }
 
-        // Don't let particle entities re-instantiate their dynamic model during
-        // non-visible views (in TDM, the light gem render) -- SteveL #3970
+        // Don't let particle entities re-instantiate their dynamic model during non-visible
+        // views (in TDM, the light gem render) -- SteveL #3970
         if (tr.viewDef->renderView.viewID < 0 &&
             dynamic_cast<const idRenderModelPrt *>(vEntity->entityDef->parms.hModel) != NULL) // yuck.
         {
@@ -1825,8 +1794,7 @@ void R_AddModelSurfaces(void)
         }
 
         //
-        // for all the entity / light interactions on this entity, add them to the
-        // view
+        // for all the entity / light interactions on this entity, add them to the view
         //
         if (tr.viewDef->isXraySubview)
         {
@@ -1853,8 +1821,7 @@ void R_AddModelSurfaces(void)
 
                 // skip any lights that aren't currently visible
                 // this is run after any lights that are turned off have already
-                // been removed from the viewLights list, and had their viewCount
-                // cleared
+                // been removed from the viewLights list, and had their viewCount cleared
                 if (inter->lightDef->viewCount != tr.viewCount)
                 {
                     continue;
@@ -1895,10 +1862,9 @@ void R_RemoveUnecessaryViewLights(void)
 
     if (r_useShadowSurfaceScissor.GetBool())
     {
-        // shrink the light scissor rect to only intersect the surfaces that will
-        // actually be drawn. This doesn't seem to actually help, perhaps because
-        // the surface scissor rects aren't actually the surface, but only the
-        // portal clippings.
+        // shrink the light scissor rect to only intersect the surfaces that will actually be drawn.
+        // This doesn't seem to actually help, perhaps because the surface scissor
+        // rects aren't actually the surface, but only the portal clippings.
         for (vLight = tr.viewDef->viewLights; vLight; vLight = vLight->next)
         {
             const drawSurf_t *surf;

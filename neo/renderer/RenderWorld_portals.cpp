@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/DemoFile.h"
 #include "framework/Session.h"
 #include "renderer/RenderWorld_local.h"
-#include "sys/platform.h"
 
 #include "renderer/tr_local.h"
 
@@ -308,10 +305,10 @@ void idRenderWorldLocal::FloodViewThroughArea_r(const idVec3 origin, int areaNum
 =======================
 FlowViewThroughPortals
 
-Finds viewLights and viewEntities by flowing from an origin through the visible
-portals. origin point can see into.  The planes array defines a volume (positive
-sides facing in) that should contain the origin, such as a view frustum or a
-point light box. Zero planes assumes an unbounded volume.
+Finds viewLights and viewEntities by flowing from an origin through the visible portals.
+origin point can see into.  The planes array defines a volume (positive
+sides facing in) that should contain the origin, such as a view frustum or a point light box.
+Zero planes assumes an unbounded volume.
 =======================
 */
 void idRenderWorldLocal::FlowViewThroughPortals(const idVec3 origin, int numPlanes, const idPlane *planes)
@@ -492,8 +489,7 @@ FlowLightThroughPortals
 
 Adds an arearef in each area that the light center flows into.
 This can only be used for shadow casting lights that have a generated
-prelight, because shadows are cast from back side which may not be in visible
-areas.
+prelight, because shadows are cast from back side which may not be in visible areas.
 =======================
 */
 void idRenderWorldLocal::FlowLightThroughPortals(idRenderLightLocal *light)
@@ -592,8 +588,8 @@ areaNumRef_t *idRenderWorldLocal::FloodFrustumAreas_r(const idFrustum &frustum, 
 ===================
 idRenderWorldLocal::FloodFrustumAreas
 
-  Retrieves all the portal areas the frustum floods into where the frustum
-starts in the given areas. All portals are assumed to be open.
+  Retrieves all the portal areas the frustum floods into where the frustum starts in the given areas.
+  All portals are assumed to be open.
 ===================
 */
 areaNumRef_t *idRenderWorldLocal::FloodFrustumAreas(const idFrustum &frustum, areaNumRef_t *areas)
@@ -625,8 +621,7 @@ R_FindViewLightsAndEntities
 ================
 CullEntityByPortals
 
-Return true if the entity reference bounds do not intersect the current portal
-chain.
+Return true if the entity reference bounds do not intersect the current portal chain.
 ================
 */
 bool idRenderWorldLocal::CullEntityByPortals(const idRenderEntityLocal *entity, const portalStack_t *ps)
@@ -831,8 +826,7 @@ void idRenderWorldLocal::AddAreaLightRefs(int areaNum, const portalStack_t *ps)
         }
 
         // check for being closed off behind a door
-        // a light that doesn't cast shadows will still light even if it is behind a
-        // door
+        // a light that doesn't cast shadows will still light even if it is behind a door
         if (r_useLightCulling.GetInteger() >= 3 && !light->parms.noShadows && light->lightShader->LightCastsShadows() &&
             light->areaNum != -1 && !tr.viewDef->connectedAreas[light->areaNum])
         {
@@ -1127,8 +1121,7 @@ void idRenderWorldLocal::SetPortalState(qhandle_t portal, int blockTypes)
     doublePortals[portal - 1].blockingBits = blockTypes;
 
     // leave the connectedAreaGroup the same on one side,
-    // then flood fill from the other side with a new number for each changed
-    // attribute
+    // then flood fill from the other side with a new number for each changed attribute
     for (int i = 0; i < NUM_PORTAL_ATTRIBUTES; i++)
     {
         if ((old ^ blockTypes) & (1 << i))

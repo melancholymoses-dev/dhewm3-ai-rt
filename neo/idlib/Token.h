@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,7 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        idToken is a token read from a file or memory with idLexer or idParser
+    idToken is a token read from a file or memory with idLexer or idParser
 
 ===============================================================================
 */
@@ -109,8 +106,7 @@ class idToken : public idStr
   private:
     unsigned int intvalue;         // integer value
     double floatvalue;             // floating point value
-    const char *whiteSpaceStart_p; // start of white space before token, only used
-                                   // by idLexer
+    const char *whiteSpaceStart_p; // start of white space before token, only used by idLexer
     const char *whiteSpaceEnd_p;   // end of white space before token, only used by idLexer
     idToken *next;                 // next token in chain, only used by idParser
 

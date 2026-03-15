@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,9 +34,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "../../sys/win32/rc/AFEditor_resource.h"
 
 #include "DialogAF.h"
+#include "DialogAFProperties.h"
 #include "DialogAFBody.h"
 #include "DialogAFConstraint.h"
-#include "DialogAFProperties.h"
 
 // DialogAFProperties dialog
 
@@ -56,14 +53,10 @@ toolTip_t DialogAFProperties::toolTips[] = {
     {IDC_EDIT_CONTENTS, "content of bodies"},
     {IDC_EDIT_CLIPMASK, "collide with these content types"},
     {IDC_EDIT_TOTALMASS, "scale the mass of each body to get this total mass"},
-    {IDC_EDIT_LINEARVELOCITY, "do not suspend simulation if the linear "
-                              "velocity is higher than this value"},
-    {IDC_EDIT_ANGULARVELOCITY, "do not suspend simulation if the angular "
-                               "velocity is higher than this value"},
-    {IDC_EDIT_LINEARACCELERATION, "do not suspend simulation if the linear "
-                                  "acceleration is higher than this value"},
-    {IDC_EDIT_ANGULARACCELERATION, "do not suspend simulation if the angular "
-                                   "acceleration is higher than this value"},
+    {IDC_EDIT_LINEARVELOCITY, "do not suspend simulation if the linear velocity is higher than this value"},
+    {IDC_EDIT_ANGULARVELOCITY, "do not suspend simulation if the angular velocity is higher than this value"},
+    {IDC_EDIT_LINEARACCELERATION, "do not suspend simulation if the linear acceleration is higher than this value"},
+    {IDC_EDIT_ANGULARACCELERATION, "do not suspend simulation if the angular acceleration is higher than this value"},
     {IDC_EDIT_NO_MOVE_TIME, "suspend simulation if hardly any movement for this many seconds"},
     {IDC_EDIT_MAXIMUM_MOVE_TIME, "always suspend simulation after running for this many seconds"},
     {IDC_EDIT_LINEAR_TOLERANCE, "maximum translation considered no movement"},

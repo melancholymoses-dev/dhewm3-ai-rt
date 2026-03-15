@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +32,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_AFENTITY_H__
 #define __GAME_AFENTITY_H__
 
-#include "AF.h"
-#include "Entity.h"
-#include "physics/Force_Constant.h"
 #include "physics/Physics_AF.h"
+#include "physics/Force_Constant.h"
+#include "Entity.h"
+#include "AF.h"
 
 /*
 ===============================================================================
@@ -50,8 +47,7 @@ articulated figure. Only used for debugging!
 
 ===============================================================================
 */
-const int GIB_DELAY = 200; // only gib this often to keep performace hits when
-                           // blowing up several mobs
+const int GIB_DELAY = 200; // only gib this often to keep performace hits when blowing up several mobs
 
 class idMultiModelAF : public idEntity
 {
@@ -278,7 +274,7 @@ class idAFEntity_Gibbable : public idAFEntity_Base
 /*
 ===============================================================================
 
-        idAFEntity_Generic
+    idAFEntity_Generic
 
 ===============================================================================
 */
@@ -560,9 +556,9 @@ class idAFEntity_ClawFourFingers : public idAFEntity_Base
 #ifdef _D3XP
 
 /**
- * idHarvestable contains all of the code required to turn an entity into a
- * harvestable entity. The entity must create an instance of this class and call
- * the appropriate interface methods at the correct time.
+ * idHarvestable contains all of the code required to turn an entity into a harvestable
+ * entity. The entity must create an instance of this class and call the appropriate
+ * interface methods at the correct time.
  */
 class idHarvestable : public idEntity
 {

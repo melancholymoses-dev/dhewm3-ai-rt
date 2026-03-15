@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Common.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "renderer/VertexCache.h"
 
@@ -114,8 +111,7 @@ void idVertexCache::ActuallyFree(vertCache_t *block)
     block->next = freeStaticHeaders.next;
     block->prev = &freeStaticHeaders;
 #else
-    // stick it on the back of the free list so it won't be reused soon (just for
-    // debugging)
+    // stick it on the back of the free list so it won't be reused soon (just for debugging)
     block->next = &freeStaticHeaders;
     block->prev = freeStaticHeaders.prev;
 #endif
@@ -199,13 +195,11 @@ void idVertexCache::Init()
 #ifdef DHEWM3_VULKAN
     if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
     {
-        // Vulkan manages GPU buffers separately (VK_VertexCache_Alloc); use
-        // CPU-side virtual memory here so that GL function pointers are never
-        // called.
+        // Vulkan manages GPU buffers separately (VK_VertexCache_Alloc); use CPU-side
+        // virtual memory here so that GL function pointers are never called.
         virtualMemory = true;
         r_useIndexBuffers.SetBool(false);
-        common->Printf("Vulkan: vertex cache using CPU-side virtual memory (GPU "
-                       "buffers managed separately)\n");
+        common->Printf("Vulkan: vertex cache using CPU-side virtual memory (GPU buffers managed separately)\n");
     }
     else
 #endif
@@ -379,8 +373,7 @@ void idVertexCache::Alloc(void *data, int size, vertCache_t **buffer, bool index
     }
 
 #ifdef DHEWM3_VULKAN
-    // For static (non-temp) allocations in the Vulkan path, also create a
-    // device-local VkBuffer.
+    // For static (non-temp) allocations in the Vulkan path, also create a device-local VkBuffer.
     block->vkBuffer = 0;
     block->vkMemory = 0;
     if (!allocatingTempBuffer && data)
@@ -561,11 +554,9 @@ void idVertexCache::EndFrame()
 
         const char *frameOverflow = tempOverflow ? "(OVERFLOW)" : "";
 
-        common->Printf("vertex dynamic:%i=%ik%s, static alloc:%i=%ik used:%i=%ik "
-                       "total:%i=%ik\n",
-                       dynamicCountThisFrame, dynamicAllocThisFrame / 1024, frameOverflow, staticCountThisFrame,
-                       staticAllocThisFrame / 1024, staticUseCount, staticUseSize / 1024, staticCountTotal,
-                       staticAllocTotal / 1024);
+        common->Printf("vertex dynamic:%i=%ik%s, static alloc:%i=%ik used:%i=%ik total:%i=%ik\n", dynamicCountThisFrame,
+                       dynamicAllocThisFrame / 1024, frameOverflow, staticCountThisFrame, staticAllocThisFrame / 1024,
+                       staticUseCount, staticUseSize / 1024, staticCountTotal, staticAllocTotal / 1024);
     }
 
 #if 0

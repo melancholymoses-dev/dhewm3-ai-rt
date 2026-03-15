@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -100,25 +97,23 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 // the positive side of the frustum is inside
 d = tri->verts[i].xyz * frustum[j].Normal() + frustum[j][3];
 if ( d < LIGHT_CLIP_EPSILON ) {
-        pointCull[i] |= ( 1 << j );
+    pointCull[i] |= ( 1 << j );
 }
 if ( d > -LIGHT_CLIP_EPSILON ) {
-        pointCull[i] |= ( 1 << (6+j) );
+    pointCull[i] |= ( 1 << (6+j) );
 }
 
 If a low order bit is set, the point is on or outside the plane
 If a high order bit is set, the point is on or inside the plane
 If a low order bit is clear, the point is inside the plane (definately positive)
-If a high order bit is clear, the point is outside the plane (definately
-negative)
+If a high order bit is clear, the point is outside the plane (definately negative)
 
 
 */
 
 #define TRIANGLE_CULLED(p1, p2, p3) (pointCull[p1] & pointCull[p2] & pointCull[p3] & 0x3f)
 
-// #define TRIANGLE_CLIPPED(p1,p2,p3) ( ( pointCull[p1] | pointCull[p2] |
-// pointCull[p3] ) & 0xfc0 )
+// #define TRIANGLE_CLIPPED(p1,p2,p3) ( ( pointCull[p1] | pointCull[p2] | pointCull[p3] ) & 0xfc0 )
 #define TRIANGLE_CLIPPED(p1, p2, p3) (((pointCull[p1] & pointCull[p2] & pointCull[p3]) & 0xfc0) != 0xfc0)
 
 // an edge that is on the plane is NOT culled
@@ -220,8 +215,7 @@ typedef struct
     int end;
 } indexRef_t;
 static indexRef_t indexRef[6];
-static int indexFrustumNumber; // which shadow generating side of a light the
-                               // indexRef is for
+static int indexFrustumNumber; // which shadow generating side of a light the indexRef is for
 
 /*
 ===============
@@ -604,8 +598,7 @@ static bool R_ClipLineToLight(const idVec3 &a, const idVec3 &b, const idPlane fr
             continue;
         }
 
-        // if one is behind and the other isn't clearly in front, the edge is
-        // clipped off
+        // if one is behind and the other isn't clearly in front, the edge is clipped off
         if (d1 <= -LIGHT_CLIP_EPSILON && d2 < LIGHT_CLIP_EPSILON)
         {
             return false;
@@ -773,9 +766,9 @@ static void R_AddSilEdges(const srfTriangles_t *tri, unsigned short *pointCull, 
         }
 
         // we need to choose the correct way of triangulating the silhouette quad
-        // consistantly between any two points, no matter which order they are
-        // specified. If this wasn't done, slight rasterization cracks would show in
-        // the shadow volume when two sil edges were exactly coincident
+        // consistantly between any two points, no matter which order they are specified.
+        // If this wasn't done, slight rasterization cracks would show in the shadow
+        // volume when two sil edges were exactly coincident
         if (faceCastsShadow[sil->p2])
         {
             if (PointsOrdered(shadowVerts[v1].ToVec3(), shadowVerts[v2].ToVec3()))
@@ -988,8 +981,7 @@ static void R_CreateShadowVolumeInFrustum(const idRenderEntityLocal *ent, const 
         }
         else
         {
-            // instead of overflowing or drawing a streamer shadow, don't draw a
-            // shadow at all
+            // instead of overflowing or drawing a streamer shadow, don't draw a shadow at all
             if (numShadowIndexes + 3 > MAX_SHADOW_INDEXES)
             {
                 overflowed = true;
@@ -1019,16 +1011,15 @@ static void R_CreateShadowVolumeInFrustum(const idRenderEntityLocal *ent, const 
 
     //--------------- off-line processing ------------------
 
-    // if we are running from dmap, perform the (very) expensive shadow
-    // optimizations to remove internal sil edges and optimize the caps
+    // if we are running from dmap, perform the (very) expensive shadow optimizations
+    // to remove internal sil edges and optimize the caps
     if (callOptimizer)
     {
         optimizedShadow_t opt;
 
         // project all of the vertexes to the shadow plane, generating
         // an equal number of back vertexes
-        //		R_ProjectPointsToFarPlane( ent, light, farPlane,
-        // firstShadowVert, numShadowVerts );
+        //		R_ProjectPointsToFarPlane( ent, light, farPlane, firstShadowVert, numShadowVerts );
 
         opt =
             SuperOptimizeOccluders(shadowVerts, shadowIndexes + firstShadowIndex, numCapIndexes, farPlane, lightOrigin);
@@ -1068,8 +1059,7 @@ static void R_CreateShadowVolumeInFrustum(const idRenderEntityLocal *ent, const 
         numShadowVerts += opt.numVerts;
         numShadowIndexes += opt.totalIndexes;
 
-        // note the index distribution so we can sort all the caps after all the
-        // sils
+        // note the index distribution so we can sort all the caps after all the sils
         indexRef[indexFrustumNumber].frontCapStart = firstShadowIndex;
         indexRef[indexFrustumNumber].rearCapStart = firstShadowIndex + opt.numFrontCapIndexes;
         indexRef[indexFrustumNumber].silStart = firstShadowIndex + opt.numFrontCapIndexes + opt.numRearCapIndexes;
@@ -1088,8 +1078,8 @@ static void R_CreateShadowVolumeInFrustum(const idRenderEntityLocal *ent, const 
     // it's dangling sil edge trigger a sil plane
     faceCastsShadow[numTris] = 0;
 
-    // instead of overflowing or drawing a streamer shadow, don't draw a shadow at
-    // all if we ran out of space
+    // instead of overflowing or drawing a streamer shadow, don't draw a shadow at all
+    // if we ran out of space
     if (numShadowIndexes + numCapIndexes > MAX_SHADOW_INDEXES)
     {
         overflowed = true;
@@ -1253,8 +1243,7 @@ void R_MakeShadowFrustums(idRenderLightLocal *light)
             frust->planes[5] = backPlane;
             frust->planes[4] = backPlane; // we don't really need the extra plane
 
-            // make planes with positive side facing inwards in light local
-            // coordinates
+            // make planes with positive side facing inwards in light local coordinates
             for (int edge = 0; edge < 4; edge++)
             {
                 idVec3 &p1 = corners[faceCorners[side][edge]];
@@ -1423,12 +1412,11 @@ srfTriangles_t *R_CreateShadowVolume(const idRenderEntityLocal *ent, const srfTr
         ALIGN16(idPlane frustum[6]);
 
         // transform the planes into entity space
-        // we could share and reverse some of the planes between frustums for a
-        // minor speed increase
+        // we could share and reverse some of the planes between frustums for a minor
+        // speed increase
 
-        // the cull test is redundant for a single shadow frustum projected light,
-        // because the surface has already been checked against the main light
-        // frustums
+        // the cull test is redundant for a single shadow frustum projected light, because
+        // the surface has already been checked against the main light frustums
 
         for (j = 0; j < frust->numPlanes; j++)
         {
@@ -1461,8 +1449,7 @@ srfTriangles_t *R_CreateShadowVolume(const idRenderEntityLocal *ent, const srfTr
         {
             // note that we have caps projected against this frustum,
             // which may allow us to skip drawing the caps if all projected
-            // planes face away from the viewer and the viewer is outside the light
-            // volume
+            // planes face away from the viewer and the viewer is outside the light volume
             capPlaneBits |= 1 << frustumNum;
         }
     }
@@ -1474,8 +1461,8 @@ srfTriangles_t *R_CreateShadowVolume(const idRenderEntityLocal *ent, const srfTr
         return NULL;
     }
 
-    // this should have been prevented by the overflowed flag, so if it ever
-    // happens, it is a code error
+    // this should have been prevented by the overflowed flag, so if it ever happens,
+    // it is a code error
     if (numShadowVerts > MAX_SHADOW_VERTS || numShadowIndexes > MAX_SHADOW_INDEXES)
     {
         common->FatalError("Shadow volume exceeded allocation");

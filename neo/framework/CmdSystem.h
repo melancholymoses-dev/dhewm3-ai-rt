@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,14 +37,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Console command execution and command text buffering.
+    Console command execution and command text buffering.
 
-        Any number of commands can be added in a frame from several different
-        sources. Most commands come from either key bindings or console line
-input, but entire text files can be execed.
+    Any number of commands can be added in a frame from several different
+    sources. Most commands come from either key bindings or console line input,
+    but entire text files can be execed.
 
-        Command execution takes a null terminated string, breaks it into tokens,
-        then searches for a command or variable that matches the first token.
+    Command execution takes a null terminated string, breaks it into tokens,
+    then searches for a command or variable that matches the first token.
 
 ===============================================================================
 */
@@ -113,12 +110,10 @@ class idCmdSystem
     // Base for decl name auto-completion.
     virtual void ArgCompletion_DeclName(const idCmdArgs &args, void (*callback)(const char *s), int type) = 0;
 
-    // Adds to the command buffer in tokenized form ( CMD_EXEC_NOW or
-    // CMD_EXEC_APPEND only )
+    // Adds to the command buffer in tokenized form ( CMD_EXEC_NOW or CMD_EXEC_APPEND only )
     virtual void BufferCommandArgs(cmdExecution_t exec, const idCmdArgs &args) = 0;
 
-    // Setup a reloadEngine to happen on next command run, and give a command to
-    // execute after reload
+    // Setup a reloadEngine to happen on next command run, and give a command to execute after reload
     virtual void SetupReloadEngine(const idCmdArgs &args) = 0;
     virtual bool PostReloadEngine(void) = 0;
 

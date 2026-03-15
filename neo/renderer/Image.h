@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,8 +32,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __IMAGE_H__
 #define __IMAGE_H__
 
-#include "framework/FileSystem.h"
 #include "idlib/containers/List.h"
+#include "framework/FileSystem.h"
 #include "renderer/GL/qgl.h"
 #include "renderer/Material.h"
 
@@ -140,16 +137,14 @@ typedef struct
 {
     // https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format
     unsigned int dxgiFormat; // we only support DXGI_FORMAT_BC7_UNORM = 98;
-    // we *could* probably support DXGI_FORMAT_BC1_UNORM = 71,
-    // DXGI_FORMAT_BC2_UNORM = 74, DXGI_FORMAT_BC3_UNORM = 77 and map that to the
-    // old S3TC stuff, but I hope that tools writing those formats stick to just
-    // DX9-style ddsFileHeader_t to be more compatible?
+    // we *could* probably support DXGI_FORMAT_BC1_UNORM = 71, DXGI_FORMAT_BC2_UNORM = 74, DXGI_FORMAT_BC3_UNORM = 77
+    // and map that to the old S3TC stuff, but I hope that tools writing those formats
+    // stick to just DX9-style ddsFileHeader_t to be more compatible?
 
     unsigned int resourceDimension; // 0: unknown, 2: Texture1D, 3: Texture2D, 4: Texture3D
     unsigned int miscFlag;          // 4 if 2D texture is cubemap, else 0
     unsigned int arraySize;         // number of elements in texture array
-    unsigned int miscFlags2;        // must be 0 for DX10, for DX11 has info about alpha
-                                    // channel (in lower 3 bits)
+    unsigned int miscFlags2;        // must be 0 for DX10, for DX11 has info about alpha channel (in lower 3 bits)
 } ddsDXT10addHeader_t;
 
 // increasing numeric values imply more information is stored
@@ -175,8 +170,7 @@ typedef enum
 {
     CF_2D,     // not a cube map
     CF_NATIVE, // _px, _nx, _py, etc, directly sent to GL
-    CF_CAMERA  // _forward, _back, etc, rotated and flipped as needed before
-               // sending to GL
+    CF_CAMERA  // _forward, _back, etc, rotated and flipped as needed before sending to GL
 } cubeFiles_t;
 
 #define MAX_IMAGE_NAME 256
@@ -199,10 +193,9 @@ class idImage
     void PurgeImage();
 
     // used by callback functions to specify the actual data
-    // data goes from the bottom to the top line of the image, as OpenGL expects
-    // it These perform an implicit Bind() on the current texture unit
-    // FIXME: should we implement cinematics this way, instead of with explicit
-    // calls?
+    // data goes from the bottom to the top line of the image, as OpenGL expects it
+    // These perform an implicit Bind() on the current texture unit
+    // FIXME: should we implement cinematics this way, instead of with explicit calls?
     void GenerateImage(const byte *pic, int width, int height, textureFilter_t filter, bool allowDownSize,
                        textureRepeat_t repeat, textureDepth_t depth);
     void Generate3DImage(const byte *pic, int width, int height, int depth, textureFilter_t filter, bool allowDownSize,
@@ -261,51 +254,43 @@ class idImage
     // background loading information
     idImage *partialImage;         // shrunken, space-saving version
     bool isPartialImage;           // true if this is pointed to by another image
-    bool backgroundLoadInProgress; // true if another thread is reading the
-                                   // complete d3t file
+    bool backgroundLoadInProgress; // true if another thread is reading the complete d3t file
     backgroundDownload_t bgl;
     idImage *bglNext; // linked from tr.backgroundImageLoads
 
     // parameters that define this image
-    idStr imgName;                             // game path, including extension (except for cube maps), may
-                                               // be an image program
+    idStr imgName; // game path, including extension (except for cube maps), may be an image program
     void (*generatorFunction)(idImage *image); // NULL for files
     bool allowDownSize;                        // this also doubles as a don't-partially-load flag
     textureFilter_t filter;
     textureRepeat_t repeat;
     textureDepth_t depth;
-    cubeFiles_t cubeFiles; // determines the naming and flipping conventions for
-                           // the six images
+    cubeFiles_t cubeFiles; // determines the naming and flipping conventions for the six images
 
     bool referencedOutsideLevelLoad;
     bool levelLoadReferenced; // for determining if it needs to be purged
     bool precompressedFile;   // true when it was loaded from a .d3t file
-    bool defaulted;           // true if the default image was generated because a file
-                              // couldn't be loaded
-    ID_TIME_T timestamp;      // the most recent of all images used in creation, for
-                              // reloadImages command
+    bool defaulted;           // true if the default image was generated because a file couldn't be loaded
+    ID_TIME_T timestamp;      // the most recent of all images used in creation, for reloadImages command
 
     int imageHash; // for identical-image checking
 
     int classification; // just for resource profiling
 
     // data for listImages
-    int uploadWidth, uploadHeight,
-        uploadDepth; // after power of two, downsample, and MAX_TEXTURE_SIZE
+    int uploadWidth, uploadHeight, uploadDepth; // after power of two, downsample, and MAX_TEXTURE_SIZE
     int internalFormat;
 
-    idImage *cacheUsagePrev,
-        *cacheUsageNext; // for dynamic cache purging of old images
+    idImage *cacheUsagePrev, *cacheUsageNext; // for dynamic cache purging of old images
 
     idImage *hashNext; // for hash chains to speed lookup
 
     int refCount; // overall ref count
 
 #ifdef DHEWM3_VULKAN
-    // Opaque handle to Vulkan image resources (vkImageData_t, defined in
-    // vk_image.cpp). Populated by VK_Image_Upload(), freed by VK_Image_Purge().
-    // Using an opaque pointer avoids pulling <vulkan/vulkan.h> into every
-    // translation unit.
+    // Opaque handle to Vulkan image resources (vkImageData_t, defined in vk_image.cpp).
+    // Populated by VK_Image_Upload(), freed by VK_Image_Purge().
+    // Using an opaque pointer avoids pulling <vulkan/vulkan.h> into every translation unit.
     struct vkImageData_t *vkData;
 #endif
 };
@@ -358,22 +343,21 @@ class idImageManager
     void Init();
     void Shutdown();
 
-    // If the exact combination of parameters has been asked for already, an
-    // existing image will be returned, otherwise a new image will be created. Be
-    // careful not to use the same image file with different filter / repeat / etc
-    // parameters if possible, because it will cause a second copy to be loaded.
-    // If the load fails for any reason, the image will be filled in with the
-    // default grid pattern. Will automatically resample non-power-of-two images
-    // and execute image programs if needed.
+    // If the exact combination of parameters has been asked for already, an existing
+    // image will be returned, otherwise a new image will be created.
+    // Be careful not to use the same image file with different filter / repeat / etc parameters
+    // if possible, because it will cause a second copy to be loaded.
+    // If the load fails for any reason, the image will be filled in with the default
+    // grid pattern.
+    // Will automatically resample non-power-of-two images and execute image programs if needed.
     idImage *ImageFromFile(const char *name, textureFilter_t filter, bool allowDownSize, textureRepeat_t repeat,
                            textureDepth_t depth, cubeFiles_t cubeMap = CF_2D);
 
     // look for a loaded image, whatever the parameters
     idImage *GetImage(const char *name) const;
 
-    // The callback will be issued immediately, and later if images are reloaded
-    // or vid_restart The callback function should call one of the
-    // idImage::Generate* functions to fill in the data
+    // The callback will be issued immediately, and later if images are reloaded or vid_restart
+    // The callback function should call one of the idImage::Generate* functions to fill in the data
     idImage *ImageFromFunction(const char *name, void (*generatorFunction)(idImage *image));
 
     // called once a frame to allow any background loads that have been completed
@@ -416,43 +400,37 @@ class idImageManager
     void PrintMemInfo(MemInfo_t *mi);
 
     // cvars
-    static idCVar image_roundDown;                  // round bad sizes down to nearest power of two
-    static idCVar image_colorMipLevels;             // development aid to see texture mip usage
-    static idCVar image_downSize;                   // controls texture downsampling
-    static idCVar image_useCompression;             // 0 = force everything to high quality 1
-                                                    // = compress with S3TC (DXT) 2 = compress
-                                                    // with BPTC if possible
-    static idCVar image_filter;                     // changes texture filtering on mipmapped images
-    static idCVar image_anisotropy;                 // set the maximum texture anisotropy if available
-    static idCVar image_lodbias;                    // change lod bias on mipmapped images
-    static idCVar image_useAllFormats;              // allow alpha/intensity/luminance/luminance+alpha
+    static idCVar image_roundDown;      // round bad sizes down to nearest power of two
+    static idCVar image_colorMipLevels; // development aid to see texture mip usage
+    static idCVar image_downSize;       // controls texture downsampling
+    static idCVar image_useCompression; // 0 = force everything to high quality 1 = compress with S3TC (DXT) 2 =
+                                        // compress with BPTC if possible
+    static idCVar image_filter;         // changes texture filtering on mipmapped images
+    static idCVar image_anisotropy;     // set the maximum texture anisotropy if available
+    static idCVar image_lodbias;        // change lod bias on mipmapped images
+    static idCVar image_useAllFormats;  // allow alpha/intensity/luminance/luminance+alpha
     static idCVar image_usePrecompressedTextures;   // use .dds files if present
     static idCVar image_writePrecompressedTextures; // write .dds files if necessary
-    static idCVar image_writeNormalTGA;             // debug tool to write out .tgas of the
-                                                    // final normal maps
-    static idCVar image_writeNormalTGAPalletized;   // debug tool to write out palletized
-                                                    // versions of the final normal maps
-    static idCVar image_writeTGA;                   // debug tool to write out .tgas of the non normal maps
-    static idCVar image_useNormalCompression;       // 1 = use 256 color compression for normal
-                                                    // maps if available, 2 = use rxgb compression
-    static idCVar image_useOffLineCompression;      // will write a batch file with commands for
-                                                    // the offline compression
-    static idCVar image_preload;                    // if 0, dynamically load all images
-    static idCVar image_cacheMinK;                  // maximum K of precompressed files to read at
-                                                    // specification time, the remainder will be
-                                                    // dynamically cached
-    static idCVar image_cacheMegs;                  // maximum bytes set aside for temporary
-                                                    // loading of full-sized precompressed images
-    static idCVar image_useCache;                   // 1 = do background load image caching
-    static idCVar image_showBackgroundLoads;        // 1 = print number of outstanding
-                                                    // background loads
-    static idCVar image_forceDownSize;              // allows the ability to force a downsize
-    static idCVar image_downSizeSpecular;           // downsize specular
-    static idCVar image_downSizeSpecularLimit;      // downsize specular limit
-    static idCVar image_downSizeBump;               // downsize bump maps
-    static idCVar image_downSizeBumpLimit;          // downsize bump limit
-    static idCVar image_ignoreHighQuality;          // ignore high quality on materials
-    static idCVar image_downSizeLimit;              // downsize diffuse limit
+    static idCVar image_writeNormalTGA;             // debug tool to write out .tgas of the final normal maps
+    static idCVar
+        image_writeNormalTGAPalletized;        // debug tool to write out palletized versions of the final normal maps
+    static idCVar image_writeTGA;              // debug tool to write out .tgas of the non normal maps
+    static idCVar image_useNormalCompression;  // 1 = use 256 color compression for normal maps if available, 2 = use
+                                               // rxgb compression
+    static idCVar image_useOffLineCompression; // will write a batch file with commands for the offline compression
+    static idCVar image_preload;               // if 0, dynamically load all images
+    static idCVar image_cacheMinK;             // maximum K of precompressed files to read at specification time,
+                                               // the remainder will be dynamically cached
+    static idCVar image_cacheMegs; // maximum bytes set aside for temporary loading of full-sized precompressed images
+    static idCVar image_useCache;  // 1 = do background load image caching
+    static idCVar image_showBackgroundLoads;   // 1 = print number of outstanding background loads
+    static idCVar image_forceDownSize;         // allows the ability to force a downsize
+    static idCVar image_downSizeSpecular;      // downsize specular
+    static idCVar image_downSizeSpecularLimit; // downsize specular limit
+    static idCVar image_downSizeBump;          // downsize bump maps
+    static idCVar image_downSizeBumpLimit;     // downsize bump limit
+    static idCVar image_ignoreHighQuality;     // ignore high quality on materials
+    static idCVar image_downSizeLimit;         // downsize diffuse limit
 
     // built-in images
     idImage *defaultImage;
@@ -460,8 +438,7 @@ class idImageManager
     idImage *ambientNormalMap;   // tr.ambientLightVector encoded in all pixels
     idImage *rampImage;          // 0-255 in RGBA in S
     idImage *alphaRampImage;     // 0-255 in alpha, 255 in RGB
-    idImage *alphaNotchImage;    // 2x1 texture with just 1110 and 1111 with point
-                                 // sampling
+    idImage *alphaNotchImage;    // 2x1 texture with just 1110 and 1111 with point sampling
     idImage *whiteImage;         // full of 0xff
     idImage *blackImage;         // full of 0x00
     idImage *normalCubeMapImage; // cube map to normalize STR into RGB
@@ -475,8 +452,7 @@ class idImageManager
     idImage *currentRenderImage; // for SS_POST_PROCESS shaders
     idImage *scratchCubeMapImage;
     idImage *specularTableImage;   // 1D intensity texture with our specular function
-    idImage *specular2DTableImage; // 2D intensity texture with our specular
-                                   // function with variable specularity
+    idImage *specular2DTableImage; // 2D intensity texture with our specular function with variable specularity
     idImage *borderClampImage;     // white inside, black outside
 
     idImage *currentDepthImage; // #3877. Allow shaders to access scene depth
@@ -504,8 +480,7 @@ class idImageManager
 
     idImage *imageHashTable[FILE_HASH_SIZE];
 
-    idImage *backgroundImageLoads; // chain of images that have background file
-                                   // loads active
+    idImage *backgroundImageLoads; // chain of images that have background file loads active
     idImage cacheLRU;              // head/tail of doubly linked list
     int totalCachedImageSize;      // for determining when something should be purged
 

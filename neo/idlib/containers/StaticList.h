@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,8 +35,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Static list template
-        A non-growing, memset-able list using no memory allocation.
+    Static list template
+    A non-growing, memset-able list using no memory allocation.
 
 ===============================================================================
 */
@@ -57,30 +54,27 @@ template <class type, int size> class idStaticList
     void SetNum(int newnum); // set number of elements in list
 
     size_t Allocated(void) const;  // returns total size of allocated memory
-    size_t Size(void) const;       // returns total size of allocated memory including
-                                   // size of list type
+    size_t Size(void) const;       // returns total size of allocated memory including size of list type
     size_t MemoryUsed(void) const; // returns size of the used elements in the list
 
     const type &operator[](int index) const;
     type &operator[](int index);
 
-    type *Ptr(void);                                   // returns a pointer to the list
-    const type *Ptr(void) const;                       // returns a pointer to the list
-    type *Alloc(void);                                 // returns reference to a new data element at the end of
-                                                       // the list.  returns NULL when full.
+    type *Ptr(void);             // returns a pointer to the list
+    const type *Ptr(void) const; // returns a pointer to the list
+    type *Alloc(void); // returns reference to a new data element at the end of the list.  returns NULL when full.
     int Append(const type &obj);                       // append element
     int Append(const idStaticList<type, size> &other); // append list
     int AddUnique(const type &obj);                    // add unique element
-    int Insert(const type &obj,
-               int index);                      // insert the element at the given index
-    int FindIndex(const type &obj) const;       // find the index for the given element
-    type *Find(type const &obj) const;          // find pointer to the given element
-    int FindNull(void) const;                   // find the index for the first NULL pointer in the list
-    int IndexOf(const type *obj) const;         // returns the index for the pointer to an element in the list
-    bool RemoveIndex(int index);                // remove the element at the given index
-    bool Remove(const type &obj);               // remove the element
-    void Swap(idStaticList<type, size> &other); // swap the contents of the lists
-    void DeleteContents(bool clear);            // delete the contents of the list
+    int Insert(const type &obj, int index);            // insert the element at the given index
+    int FindIndex(const type &obj) const;              // find the index for the given element
+    type *Find(type const &obj) const;                 // find pointer to the given element
+    int FindNull(void) const;                          // find the index for the first NULL pointer in the list
+    int IndexOf(const type *obj) const;                // returns the index for the pointer to an element in the list
+    bool RemoveIndex(int index);                       // remove the element at the given index
+    bool Remove(const type &obj);                      // remove the element
+    void Swap(idStaticList<type, size> &other);        // swap the contents of the lists
+    void DeleteContents(bool clear);                   // delete the contents of the list
 
   private:
     int num;
@@ -120,8 +114,7 @@ template <class type, int size> ID_INLINE idStaticList<type, size>::~idStaticLis
 ================
 idStaticList<type,size>::Clear
 
-Sets the number of elements in the list to 0.  Assumes that type automatically
-handles freeing up memory.
+Sets the number of elements in the list to 0.  Assumes that type automatically handles freeing up memory.
 ================
 */
 template <class type, int size> ID_INLINE void idStaticList<type, size>::Clear(void)
@@ -133,13 +126,12 @@ template <class type, int size> ID_INLINE void idStaticList<type, size>::Clear(v
 ================
 idStaticList<type,size>::DeleteContents
 
-Calls the destructor of all elements in the list.  Conditionally frees up memory
-used by the list. Note that this only works on lists containing pointers to
-objects and will cause a compiler error if called with non-pointers.  Since the
-list was not responsible for allocating the object, it has no information on
-whether the object still exists or not, so care must be taken to ensure that the
-pointers are still valid when this function is called.  Function will set all
-pointers in the list to NULL.
+Calls the destructor of all elements in the list.  Conditionally frees up memory used by the list.
+Note that this only works on lists containing pointers to objects and will cause a compiler error
+if called with non-pointers.  Since the list was not responsible for allocating the object, it has
+no information on whether the object still exists or not, so care must be taken to ensure that
+the pointers are still valid when this function is called.  Function will set all pointers in the
+list to NULL.
 ================
 */
 template <class type, int size> ID_INLINE void idStaticList<type, size>::DeleteContents(bool clear)
@@ -234,8 +226,8 @@ template <class type, int size> ID_INLINE void idStaticList<type, size>::SetNum(
 ================
 idStaticList<type,size>::operator[] const
 
-Access operator.  Index must be within range or an assert will be issued in
-debug builds. Release builds do no range checking.
+Access operator.  Index must be within range or an assert will be issued in debug builds.
+Release builds do no range checking.
 ================
 */
 template <class type, int size> ID_INLINE const type &idStaticList<type, size>::operator[](int index) const
@@ -250,8 +242,8 @@ template <class type, int size> ID_INLINE const type &idStaticList<type, size>::
 ================
 idStaticList<type,size>::operator[]
 
-Access operator.  Index must be within range or an assert will be issued in
-debug builds. Release builds do no range checking.
+Access operator.  Index must be within range or an assert will be issued in debug builds.
+Release builds do no range checking.
 ================
 */
 template <class type, int size> ID_INLINE type &idStaticList<type, size>::operator[](int index)
@@ -266,8 +258,7 @@ template <class type, int size> ID_INLINE type &idStaticList<type, size>::operat
 ================
 idStaticList<type,size>::Ptr
 
-Returns a pointer to the begining of the array.  Useful for iterating through
-the list in loops.
+Returns a pointer to the begining of the array.  Useful for iterating through the list in loops.
 
 Note: may return NULL if the list is empty.
 
@@ -283,8 +274,7 @@ template <class type, int size> ID_INLINE type *idStaticList<type, size>::Ptr(vo
 ================
 idStaticList<type,size>::Ptr
 
-Returns a pointer to the begining of the array.  Useful for iterating through
-the list in loops.
+Returns a pointer to the begining of the array.  Useful for iterating through the list in loops.
 
 Note: may return NULL if the list is empty.
 
@@ -317,8 +307,7 @@ template <class type, int size> ID_INLINE type *idStaticList<type, size>::Alloc(
 ================
 idStaticList<type,size>::Append
 
-Increases the size of the list by one element and copies the supplied data into
-it.
+Increases the size of the list by one element and copies the supplied data into it.
 
 Returns the index of the new element, or -1 when list is full.
 ================
@@ -406,8 +395,7 @@ template <class type, int size> ID_INLINE int idStaticList<type, size>::Append(c
 ================
 idStaticList<type,size>::AddUnique
 
-Adds the data to the list if it doesn't already exist.  Returns the index of the
-data in the list.
+Adds the data to the list if it doesn't already exist.  Returns the index of the data in the list.
 ================
 */
 template <class type, int size> ID_INLINE int idStaticList<type, size>::AddUnique(type const &obj)
@@ -427,8 +415,7 @@ template <class type, int size> ID_INLINE int idStaticList<type, size>::AddUniqu
 ================
 idStaticList<type,size>::FindIndex
 
-Searches for the specified data in the list and returns it's index.  Returns -1
-if the data is not found.
+Searches for the specified data in the list and returns it's index.  Returns -1 if the data is not found.
 ================
 */
 template <class type, int size> ID_INLINE int idStaticList<type, size>::FindIndex(type const &obj) const
@@ -451,8 +438,7 @@ template <class type, int size> ID_INLINE int idStaticList<type, size>::FindInde
 ================
 idStaticList<type,size>::Find
 
-Searches for the specified data in the list and returns it's address. Returns
-NULL if the data is not found.
+Searches for the specified data in the list and returns it's address. Returns NULL if the data is not found.
 ================
 */
 template <class type, int size> ID_INLINE type *idStaticList<type, size>::Find(type const &obj) const
@@ -500,8 +486,8 @@ idStaticList<type,size>::IndexOf
 
 Takes a pointer to an element in the list and returns the index of the element.
 This is NOT a guarantee that the object is really in the list.
-Function will assert in debug builds if pointer is outside the bounds of the
-list, but remains silent in release builds.
+Function will assert in debug builds if pointer is outside the bounds of the list,
+but remains silent in release builds.
 ================
 */
 template <class type, int size> ID_INLINE int idStaticList<type, size>::IndexOf(type const *objptr) const
@@ -520,11 +506,9 @@ template <class type, int size> ID_INLINE int idStaticList<type, size>::IndexOf(
 ================
 idStaticList<type,size>::RemoveIndex
 
-Removes the element at the specified index and moves all data following the
-element down to fill in the gap. The number of elements in the list is reduced
-by one.  Returns false if the index is outside the bounds of the list. Note that
-the element is not destroyed, so any memory used by it may not be freed until
-the destruction of the list.
+Removes the element at the specified index and moves all data following the element down to fill in the gap.
+The number of elements in the list is reduced by one.  Returns false if the index is outside the bounds of the list.
+Note that the element is not destroyed, so any memory used by it may not be freed until the destruction of the list.
 ================
 */
 template <class type, int size> ID_INLINE bool idStaticList<type, size>::RemoveIndex(int index)
@@ -552,11 +536,9 @@ template <class type, int size> ID_INLINE bool idStaticList<type, size>::RemoveI
 ================
 idStaticList<type,size>::Remove
 
-Removes the element if it is found within the list and moves all data following
-the element down to fill in the gap. The number of elements in the list is
-reduced by one.  Returns false if the data is not found in the list.  Note that
-the element is not destroyed, so any memory used by it may not be freed until
-the destruction of the list.
+Removes the element if it is found within the list and moves all data following the element down to fill in the gap.
+The number of elements in the list is reduced by one.  Returns false if the data is not found in the list.  Note that
+the element is not destroyed, so any memory used by it may not be freed until the destruction of the list.
 ================
 */
 template <class type, int size> ID_INLINE bool idStaticList<type, size>::Remove(type const &obj)

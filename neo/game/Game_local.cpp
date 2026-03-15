@@ -19,39 +19,36 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/LangDict.h"
+#include "idlib/Timer.h"
+#include "framework/async/NetworkSystem.h"
 #include "framework/BuildVersion.h"
 #include "framework/DeclEntityDef.h"
 #include "framework/FileSystem.h"
-#include "framework/async/NetworkSystem.h"
-#include "idlib/LangDict.h"
-#include "idlib/Timer.h"
 #include "renderer/ModelManager.h"
-#include "sys/platform.h"
 
-#include "Camera.h"
-#include "Misc.h"
-#include "Player.h"
-#include "SmokeParticles.h"
-#include "Trigger.h"
-#include "WorldSpawn.h"
+#include "gamesys/SysCvar.h"
+#include "gamesys/SysCmds.h"
+#include "script/Script_Thread.h"
 #include "ai/AI.h"
 #include "anim/Anim_Testmodel.h"
-#include "gamesys/SysCmds.h"
-#include "gamesys/SysCvar.h"
-#include "script/Script_Thread.h"
+#include "Camera.h"
+#include "SmokeParticles.h"
+#include "Player.h"
+#include "WorldSpawn.h"
+#include "Misc.h"
+#include "Trigger.h"
 
 #include "framework/Licensee.h" // DG: for ID__DATE__
 
@@ -97,8 +94,7 @@ static gameExport_t gameExport;
 // global animation lib
 idAnimManager animationLib;
 
-// the rest of the engine will only reference the "game" variable, while all
-// local aspects stay hidden
+// the rest of the engine will only reference the "game" variable, while all local aspects stay hidden
 idGameLocal gameLocal;
 idGame *game = &gameLocal; // statically pointed at an idGameLocal
 
@@ -276,8 +272,7 @@ void idGameLocal::Clear(void)
 // DG: hack to support the Demo version of Doom3
 // NOTE: I couldn't just make this a global bool variable that's initialized
 //       in idGameLocal::Init(), because we decide whether it's the demo
-//       after loading and initializing the game DLL (when loading the main
-//       menu)
+//       after loading and initializing the game DLL (when loading the main menu)
 static bool (*isDemoFnPtr)(void) = NULL;
 bool IsDoom3DemoVersion()
 {
@@ -864,8 +859,7 @@ const idDict *idGameLocal::SetUserInfo(int clientNum, const idDict &userInfo, bo
         if (canModify)
         {
 
-            // don't let numeric nicknames, it can be exploited to go around kick and
-            // ban commands from the server
+            // don't let numeric nicknames, it can be exploited to go around kick and ban commands from the server
             if (idStr::IsNumeric(this->userInfo[clientNum].GetString("ui_name")))
             {
                 idGameLocal::userInfo[clientNum].Set("ui_name",
@@ -1108,9 +1102,8 @@ void idGameLocal::LocalMapRestart()
         gameSoundWorld->ClearAllSoundEmitters();
     }
 
-    // the spawnCount is reset to zero temporarily to spawn the map entities with
-    // the same spawnId if we don't do that, network clients are confused and
-    // don't show any map entities
+    // the spawnCount is reset to zero temporarily to spawn the map entities with the same spawnId
+    // if we don't do that, network clients are confused and don't show any map entities
     latchSpawnCount = spawnCount;
     spawnCount = INITIAL_SPAWN_COUNT;
 
@@ -1122,9 +1115,8 @@ void idGameLocal::LocalMapRestart()
 
     MapPopulate();
 
-    // once the map is populated, set the spawnCount back to where it was so we
-    // don't risk any collision (note that if there are no players in the game, we
-    // could just leave it at it's current value)
+    // once the map is populated, set the spawnCount back to where it was so we don't risk any collision
+    // (note that if there are no players in the game, we could just leave it at it's current value)
     spawnCount = latchSpawnCount;
 
     // setup the client entities again
@@ -1284,8 +1276,7 @@ void idGameLocal::NextMap_f(const idCmdArgs &args)
     }
 
     gameLocal.NextMap();
-    // next map was either voted for or triggered by a server command - always
-    // restart
+    // next map was either voted for or triggered by a server command - always restart
     gameLocal.MapRestart();
 }
 
@@ -1310,9 +1301,8 @@ void idGameLocal::MapPopulate(void)
     // prepare the list of randomized initial spawn spots
     RandomizeInitialSpawns();
 
-    // spawnCount - 1 is the number of entities spawned into the map, their
-    // indexes started at MAX_CLIENTS (included) mapSpawnCount is used as the max
-    // index of map entities, it's the first index of non-map entities
+    // spawnCount - 1 is the number of entities spawned into the map, their indexes started at MAX_CLIENTS (included)
+    // mapSpawnCount is used as the max index of map entities, it's the first index of non-map entities
     mapSpawnCount = MAX_CLIENTS + spawnCount - 1;
 
     // execute pending events before the very first game frame
@@ -1399,8 +1389,8 @@ bool idGameLocal::InitFromSaveGame(const char *mapName, idRenderWorld *renderWor
         savegame.ReadInternalSavegameVersion();
         if (savegame.GetInternalSavegameVersion() > INTERNAL_SAVEGAME_VERSION)
         {
-            Warning("Savegame from newer dhewm3 version, don't know how to load! "
-                    "(its version is %d, only up to %d supported)",
+            Warning("Savegame from newer dhewm3 version, don't know how to load! (its version is %d, only up to %d "
+                    "supported)",
                     savegame.GetInternalSavegameVersion(), INTERNAL_SAVEGAME_VERSION);
             return false;
         }
@@ -1409,19 +1399,15 @@ bool idGameLocal::InitFromSaveGame(const char *mapName, idRenderWorld *renderWor
         idStr engineVersion;
         short ptrSize = 0;
         short byteorder = 0;
-        savegame.ReadString(osType);        // operating system the savegame was crated on
-                                            // (written from D3_OSTYPE)
-        savegame.ReadString(cpuArch);       // written from D3_ARCH (which is set in
-                                            // CMake), like "x86" or "x86_64"
+        savegame.ReadString(osType);        // operating system the savegame was crated on (written from D3_OSTYPE)
+        savegame.ReadString(cpuArch);       // written from D3_ARCH (which is set in CMake), like "x86" or "x86_64"
         savegame.ReadString(engineVersion); // written from ENGINE_VERSION
-        savegame.ReadShort(ptrSize);        // sizeof(void*) of system that created the savegame, 4 on
-                                            // 32bit systems, 8 on 64bit systems
-        savegame.ReadShort(byteorder);      // SDL_LIL_ENDIAN or SDL_BIG_ENDIAN
+        savegame.ReadShort(
+            ptrSize); // sizeof(void*) of system that created the savegame, 4 on 32bit systems, 8 on 64bit systems
+        savegame.ReadShort(byteorder); // SDL_LIL_ENDIAN or SDL_BIG_ENDIAN
 
-        Printf("Savegame was created by %s on %s %s. BuildNumber was %d, "
-               "savegameversion %d\n",
-               engineVersion.c_str(), osType.c_str(), cpuArch.c_str(), savegame.GetBuildNumber(),
-               savegame.GetInternalSavegameVersion());
+        Printf("Savegame was created by %s on %s %s. BuildNumber was %d, savegameversion %d\n", engineVersion.c_str(),
+               osType.c_str(), cpuArch.c_str(), savegame.GetBuildNumber(), savegame.GetInternalSavegameVersion());
 
         // right now I have no further use for this information, but in the future
         // it can be used for quirks for (then-) old savegames
@@ -1431,13 +1417,12 @@ bool idGameLocal::InitFromSaveGame(const char *mapName, idRenderWorld *renderWor
     // Create the list of all objects in the game
     savegame.CreateObjects();
 
-    // Load the idProgram, also checking to make sure scripting hasn't changed
-    // since the savegame
+    // Load the idProgram, also checking to make sure scripting hasn't changed since the savegame
     if (program.Restore(&savegame) == false)
     {
 
-        // Abort the load process, and let the session know so that it can restart
-        // the level with the player persistent data.
+        // Abort the load process, and let the session know so that it can restart the level
+        // with the player persistent data.
         savegame.DeleteObjects();
         program.Restart();
 
@@ -1582,8 +1567,7 @@ bool idGameLocal::InitFromSaveGame(const char *mapName, idRenderWorld *renderWor
     {
         if (num != gameRenderWorld->NumAreas())
         {
-            savegame.Error("idGameLocal::InitFromSaveGame: number of areas in map "
-                           "differs from save game.");
+            savegame.Error("idGameLocal::InitFromSaveGame: number of areas in map differs from save game.");
         }
 
         locationEntities = new idLocationEntity *[num];
@@ -1986,8 +1970,8 @@ void idGameLocal::CacheDictionaryMedia(const idDict *dict)
         kv = dict->MatchPrefix("inv_icon", kv);
     }
 
-    // handles teleport fx.. this is not ideal but the actual decision on which fx
-    // to use is handled by script code based on the teleport number
+    // handles teleport fx.. this is not ideal but the actual decision on which fx to use
+    // is handled by script code based on the teleport number
     kv = dict->MatchPrefix("teleport", NULL);
     if (kv && kv->GetValue().Length())
     {
@@ -2124,8 +2108,7 @@ void idGameLocal::SpawnPlayer(int clientNum)
     // make sure it's a compatible class
     if (!ent->IsType(idPlayer::Type))
     {
-        Error("'%s' spawned the player as a '%s'.  Player spawnclass must be a "
-              "subclass of idPlayer.",
+        Error("'%s' spawned the player as a '%s'.  Player spawnclass must be a subclass of idPlayer.",
               args.GetString("classname"), ent->GetClassname());
     }
 
@@ -2433,8 +2416,7 @@ void idGameLocal::SortActiveEntityList(void)
 {
     idEntity *ent, *next_ent, *master, *part;
 
-    // if the active entity list needs to be reordered to place physics team
-    // masters at the front
+    // if the active entity list needs to be reordered to place physics team masters at the front
     if (sortTeamMasters)
     {
         for (ent = activeEntities.Next(); ent != NULL; ent = next_ent)
@@ -2449,8 +2431,7 @@ void idGameLocal::SortActiveEntityList(void)
         }
     }
 
-    // if the active entity list needs to be reordered to place pushers at the
-    // front
+    // if the active entity list needs to be reordered to place pushers at the front
     if (sortPushers)
     {
 
@@ -2565,8 +2546,7 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t *clientCmds)
 
             if (player)
             {
-                // update the renderview so that any gui videos play from the right
-                // frame
+                // update the renderview so that any gui videos play from the right frame
                 view = player->GetRenderView();
                 if (view)
                 {
@@ -2727,8 +2707,7 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t *clientCmds)
             // make sure we don't loop forever when skipping a cinematic
             if (skipCinematic && (time > cinematicMaxSkipTime))
             {
-                Warning("Exceeded maximum cinematic skip length.  Cinematic may be "
-                        "looping infinitely.");
+                Warning("Exceeded maximum cinematic skip length.  Cinematic may be looping infinitely.");
                 skipCinematic = false;
                 break;
             }
@@ -2760,8 +2739,7 @@ gameReturn_t idGameLocal::RunFrame(const usercmd_t *clientCmds)
 ====================
 idGameLocal::CalcFov
 
-Calculates the horizontal and vertical field of view based on a horizontal field
-of view and custom aspect ratio
+Calculates the horizontal and vertical field of view based on a horizontal field of view and custom aspect ratio
 ====================
 */
 void idGameLocal::CalcFov(float base_fov, float &fov_x, float &fov_y) const
@@ -2787,15 +2765,13 @@ void idGameLocal::CalcFov(float base_fov, float &fov_x, float &fov_y) const
     {
     default:
     case -1:
-        // auto mode => use aspect ratio from resolution, assuming screen's pixels
-        // are squares
+        // auto mode => use aspect ratio from resolution, assuming screen's pixels are squares
         ratio_x = renderSystem->GetScreenWidth();
         ratio_y = renderSystem->GetScreenHeight();
         if (ratio_x <= 0.0f || ratio_y <= 0.0f)
         {
-            // for some reason (maybe this is a dedicated server?)
-            // GetScreenWidth()/Height() returned 0. Assume default 4:3 to avoid
-            // assert()/Error() below.
+            // for some reason (maybe this is a dedicated server?) GetScreenWidth()/Height()
+            // returned 0. Assume default 4:3 to avoid assert()/Error() below.
             fov_x = base_fov;
             return;
         }
@@ -3720,8 +3696,7 @@ void idGameLocal::SetSkill(int value)
 ==============
 idGameLocal::GameState
 
-Used to allow entities to know if they're being spawned during the initial
-spawn.
+Used to allow entities to know if they're being spawned during the initial spawn.
 ==============
 */
 gameState_t idGameLocal::GameState(void) const
@@ -3869,8 +3844,7 @@ int idGameLocal::GetTargets(const idDict &args, idList<idEntityPtr<idEntity>> &l
 =============
 idGameLocal::GetTraceEntity
 
-returns the master entity of a trace.  for example, if the trace entity is the
-player's head, it will return the player.
+returns the master entity of a trace.  for example, if the trace entity is the player's head, it will return the player.
 =============
 */
 idEntity *idGameLocal::GetTraceEntity(const trace_t &trace) const
@@ -4031,10 +4005,9 @@ int idGameLocal::EntitiesWithinRadius(const idVec3 org, float radius, idEntity *
 =================
 idGameLocal::KillBox
 
-Kills all entities that would touch the proposed new positioning of ent. The ent
-itself will not being killed. Checks if player entities are in the teleporter,
-and marks them to die at teleport exit instead of immediately. If
-catch_teleport, this only marks teleport players for death on exit
+Kills all entities that would touch the proposed new positioning of ent. The ent itself will not being killed.
+Checks if player entities are in the teleporter, and marks them to die at teleport exit instead of immediately.
+If catch_teleport, this only marks teleport players for death on exit
 =================
 */
 void idGameLocal::KillBox(idEntity *ent, bool catch_teleport)
@@ -4317,8 +4290,7 @@ void idGameLocal::RadiusPush(const idVec3 &origin, const float radius, const flo
         ignore = static_cast<const idAFAttachment *>(ignore)->GetBody();
     }
 
-    // apply impact to all the clip models through their associated physics
-    // objects
+    // apply impact to all the clip models through their associated physics objects
     for (i = 0; i < numListedClipModels; i++)
     {
 
@@ -4556,8 +4528,7 @@ void idGameLocal::SetCamera(idCamera *cam)
             cinematicSkipTime = time + CINEMATIC_SKIP_DELAY;
         }
 
-        // set r_znear so that transitioning into/out of the player's head doesn't
-        // clip through the view
+        // set r_znear so that transitioning into/out of the player's head doesn't clip through the view
         cvarSystem->SetCVarFloat("r_znear", 1.0f);
 
         // hide all the player models
@@ -4577,8 +4548,7 @@ void idGameLocal::SetCamera(idCamera *cam)
             {
                 if (ent->cinematic || ent->fl.isDormant)
                 {
-                    // only kill entities that aren't needed for cinematics and aren't
-                    // dormant
+                    // only kill entities that aren't needed for cinematics and aren't dormant
                     continue;
                 }
 
@@ -4708,8 +4678,7 @@ void idGameLocal::SpreadLocations()
         }
         if (areaNum >= numAreas)
         {
-            Error("idGameLocal::SpreadLocations: areaNum >= "
-                  "gameRenderWorld->NumAreas()");
+            Error("idGameLocal::SpreadLocations: areaNum >= gameRenderWorld->NumAreas()");
         }
         if (locationEntities[areaNum])
         {
@@ -4757,8 +4726,7 @@ idLocationEntity *idGameLocal::LocationForPoint(const idVec3 &point)
     }
     if (areaNum >= gameRenderWorld->NumAreas())
     {
-        Error("idGameLocal::LocationForPoint: areaNum >= "
-              "gameRenderWorld->NumAreas()");
+        Error("idGameLocal::LocationForPoint: areaNum >= gameRenderWorld->NumAreas()");
     }
 
     return locationEntities[areaNum];
@@ -4847,8 +4815,7 @@ void idGameLocal::RandomizeInitialSpawns(void)
         return;
     }
     common->Printf("%d spawns (%d initials)\n", spawnSpots.Num(), initialSpots.Num());
-    // if there are no initial spots in the map, consider they can all be used as
-    // initial
+    // if there are no initial spots in the map, consider they can all be used as initial
     if (!initialSpots.Num())
     {
         common->Warning("no info_player_deathmatch entities marked initial in map");
@@ -4872,10 +4839,9 @@ void idGameLocal::RandomizeInitialSpawns(void)
 ===========
 idGameLocal::SelectInitialSpawnPoint
 spectators are spawned randomly anywhere
-in-game clients are spawned based on distance to active players (randomized on
-the first half) upon map restart, initial spawns are used (randomized ordered
-list of spawns flagged "initial") if there are more players than initial spots,
-overflow to regular spawning
+in-game clients are spawned based on distance to active players (randomized on the first half)
+upon map restart, initial spawns are used (randomized ordered list of spawns flagged "initial")
+  if there are more players than initial spots, overflow to regular spawning
 ============
 */
 idEntity *idGameLocal::SelectInitialSpawnPoint(idPlayer *player)

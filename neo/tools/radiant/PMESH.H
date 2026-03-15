@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -41,8 +38,7 @@ void Patch_ReadFile(char *name);
 void Patch_WriteFile(char *name);
 void Patch_BuildPoints(brush_t *b);
 void Patch_Move(patchMesh_t *p, const idVec3 vMove, bool bRebuild = false);
-//++timo had to add a default value for bSnap (see Patch_ApplyMatrix call from
-// Select_ApplyMatrix in select.cpp)
+//++timo had to add a default value for bSnap (see Patch_ApplyMatrix call from Select_ApplyMatrix in select.cpp)
 void Patch_ApplyMatrix(patchMesh_t *p, const idVec3 vOrigin, const idMat3 matrix, bool bSnap = false);
 void Patch_EditPatch();
 void Patch_Deselect();

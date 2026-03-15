@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,7 +39,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        idActor
+    idActor
 
 ===============================================================================
 */
@@ -71,8 +68,7 @@ class idAnimState
     bool idleAnim;
     idStr state;
     int animBlendFrames;
-    int lastAnimBlendFrames; // allows override anims to blend based on the last
-                             // transition time
+    int lastAnimBlendFrames; // allows override anims to blend based on the last transition time
 
   public:
     idAnimState();
@@ -127,10 +123,8 @@ class idActor : public idAFEntity_Gibbable
     int rank;        // monsters don't fight back if the attacker's rank is higher
     idMat3 viewAxis; // view axis of the actor
 
-    idLinkList<idActor> enemyNode; // node linked into an entity's enemy list for
-                                   // quick lookups of who is attacking him
-    idLinkList<idActor> enemyList; // list of characters that have targeted the
-                                   // player as their enemy
+    idLinkList<idActor> enemyNode; // node linked into an entity's enemy list for quick lookups of who is attacking him
+    idLinkList<idActor> enemyList; // list of characters that have targeted the player as their enemy
 
   public:
     idActor(void);
@@ -234,8 +228,7 @@ class idActor : public idAFEntity_Gibbable
 
     int pain_debounce_time; // next time the actor can show pain
     int pain_delay;         // time between playing pain sound
-    int pain_threshold;     // how much damage monster can take at any one time before
-                            // playing pain animation
+    int pain_threshold;     // how much damage monster can take at any one time before playing pain animation
 
     idStrList damageGroups;    // body damage groups
     idList<float> damageScale; // damage scale per damage gruop

@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/RenderSystem.h"
 #include "sys/platform.h"
+#include "renderer/RenderSystem.h"
 
-#include "Fx.h"
-#include "Player.h"
-#include "SmokeParticles.h"
 #include "gamesys/SysCvar.h"
+#include "Player.h"
+#include "Fx.h"
+#include "SmokeParticles.h"
 
 #include "Item.h"
 
@@ -855,9 +852,9 @@ void idItemTeam::Spawn(void)
 
     // Select a shader based on the team
     if ( team == 0 )
-            itemGlow.shader = declManager->FindMaterial( "lights/redflag" );
+        itemGlow.shader = declManager->FindMaterial( "lights/redflag" );
     else
-            itemGlow.shader = declManager->FindMaterial( "lights/blueflag" );
+        itemGlow.shader = declManager->FindMaterial( "lights/blueflag" );
     */
 
     idMoveableItem::Spawn();
@@ -905,9 +902,9 @@ void idItemTeam::Think(void)
     /*idVec3 offset( 0.0f, 0.0f, 20.0f );
     itemGlow.origin = GetPhysics()->GetOrigin() + offset;
     if ( itemGlowHandle == -1 ) {
-            itemGlowHandle = gameRenderWorld->AddLightDef( &itemGlow );
+        itemGlowHandle = gameRenderWorld->AddLightDef( &itemGlow );
     } else {
-            gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );
+        gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );
     }*/
 
 #if 1
@@ -1102,7 +1099,7 @@ void idItemTeam::PrivateReturn(void)
     itemGlow.shaderParms[ SHADERPARM_ALPHA ] = 0.0f;
 
     if ( itemGlowHandle != -1 )
-            gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );*/
+        gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );*/
 
     GetPhysics()->SetLinearVelocity(idVec3(0, 0, 0));
     GetPhysics()->SetAngularVelocity(idVec3(0, 0, 0));
@@ -1149,7 +1146,7 @@ void idItemTeam::Event_TakeFlag(idPlayer *player)
     itemGlow.shaderParms[ SHADERPARM_ALPHA ] = 1.0f;
 
     if ( itemGlowHandle != -1 )
-            gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );*/
+        gameRenderWorld->UpdateLightDef( itemGlowHandle, &itemGlow );*/
 
     if (scriptTaken)
     {
@@ -1216,9 +1213,8 @@ void idItemTeam::Event_DropFlag(bool death)
 
     GetPhysics()->SetAngularVelocity(idVec3(0, 0, 0));
 
-    //	GetPhysics()->SetLinearVelocity( ( GetPhysics()->GetLinearVelocity() *
-    // GetBindMaster()->GetPhysics()->GetAxis() ) +
-    // GetBindMaster()->GetPhysics()->GetLinearVelocity() );
+    //	GetPhysics()->SetLinearVelocity( ( GetPhysics()->GetLinearVelocity() * GetBindMaster()->GetPhysics()->GetAxis()
+    //) + GetBindMaster()->GetPhysics()->GetLinearVelocity() );
 
     if (GetBindMaster())
     {
@@ -1578,8 +1574,7 @@ void idObjective::Event_CamShot()
             fullView.height = SCREEN_HEIGHT;
 
 #ifdef _D3XP
-            // HACK : always draw sky-portal view if there is one in the map, this
-            // isn't real-time
+            // HACK : always draw sky-portal view if there is one in the map, this isn't real-time
             if (gameLocal.portalSkyEnt.GetEntity() && g_enablePortalSky.GetBool())
             {
                 renderView_t portalView = fullView;
@@ -1657,8 +1652,7 @@ void idObjective::Event_Trigger(idEntity *activator)
                 player->GiveObjective(spawnArgs.GetString("objectivetitle"), spawnArgs.GetString("objectivetext"),
                                       shotName);
 
-                // a tad slow but keeps from having to update all objectives in all maps
-                // with a name ptr
+                // a tad slow but keeps from having to update all objectives in all maps with a name ptr
                 for (int i = 0; i < gameLocal.num_entities; i++)
                 {
                     if (gameLocal.entities[i] && gameLocal.entities[i]->IsType(idObjectiveComplete::Type))
@@ -1995,9 +1989,8 @@ bool idMoveableItem::Collide(const trace_t &collision, const idVec3 &velocity)
         f = v > 200 ? 1.0f : idMath::Sqrt(v - 80) * 0.091f;
         if (StartSound("snd_bounce", SND_CHANNEL_ANY, 0, false, NULL))
         {
-            // don't set the volume unless there is a bounce sound as it overrides the
-            // entire channel which causes footsteps on ai's to not honor their shader
-            // parms
+            // don't set the volume unless there is a bounce sound as it overrides the entire channel
+            // which causes footsteps on ai's to not honor their shader parms
             SetSoundVolume(f);
         }
         nextSoundTime = gameLocal.time + 500;
@@ -2036,8 +2029,7 @@ idEntity *idMoveableItem::DropItem(const char *classname, const idVec3 &origin, 
     args.Set("classname", classname);
     args.Set("dropped", "1");
 
-    // we sometimes drop idMoveables here, so set 'nodrop' to 1 so that it doesn't
-    // get put on the floor
+    // we sometimes drop idMoveables here, so set 'nodrop' to 1 so that it doesn't get put on the floor
     args.Set("nodrop", "1");
 
     if (activateDelay)
@@ -2061,8 +2053,7 @@ idEntity *idMoveableItem::DropItem(const char *classname, const idVec3 &origin, 
         {
             removeDelay = 5 * 60 * 1000;
         }
-        // always remove a dropped item after 5 minutes in case it dropped to an
-        // unreachable location
+        // always remove a dropped item after 5 minutes in case it dropped to an unreachable location
         item->PostEventMS(&EV_Remove, removeDelay);
     }
     return item;
@@ -2073,16 +2064,16 @@ idEntity *idMoveableItem::DropItem(const char *classname, const idVec3 &origin, 
 idMoveableItem::DropItems
 
   The entity should have the following key/value pairs set:
-        "def_drop<type>Item"			"item def"
-        "drop<type>ItemJoint"			"joint name"
-        "drop<type>ItemRotation"		"pitch yaw roll"
-        "drop<type>ItemOffset"			"x y z"
-        "skin_drop<type>"				"skin name"
+    "def_drop<type>Item"			"item def"
+    "drop<type>ItemJoint"			"joint name"
+    "drop<type>ItemRotation"		"pitch yaw roll"
+    "drop<type>ItemOffset"			"x y z"
+    "skin_drop<type>"				"skin name"
   To drop multiple items the following key/value pairs can be used:
-        "def_drop<type>Item<X>"			"item def"
-        "drop<type>Item<X>Joint"		"joint name"
-        "drop<type>Item<X>Rotation"		"pitch yaw roll"
-        "drop<type>Item<X>Offset"		"x y z"
+    "def_drop<type>Item<X>"			"item def"
+    "drop<type>Item<X>Joint"		"joint name"
+    "drop<type>Item<X>Rotation"		"pitch yaw roll"
+    "drop<type>Item<X>Offset"		"x y z"
   where <X> is an aribtrary string.
 ================
 */

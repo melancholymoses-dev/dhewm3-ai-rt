@@ -19,27 +19,24 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/Timer.h"
-#include "idlib/math/Quat.h"
 #include "sys/platform.h"
+#include "idlib/math/Quat.h"
+#include "idlib/Timer.h"
 
+#include "gamesys/SysCvar.h"
 #include "Entity.h"
 #include "Player.h"
 #include "WorldSpawn.h"
-#include "gamesys/SysCvar.h"
 
 #include "physics/Physics_AF.h"
 
@@ -3470,8 +3467,7 @@ void idAFConstraint_Contact::ApplyFriction(float invTimeStep)
         return;
     }
 
-    // separate friction per contact is silly but it's fast and often looks close
-    // enough
+    // separate friction per contact is silly but it's fast and often looks close enough
     if (af_useImpulseFriction.GetBool())
     {
 
@@ -3505,8 +3501,7 @@ void idAFConstraint_Contact::ApplyFriction(float invTimeStep)
         {
             fc = new idAFConstraint_ContactFriction;
         }
-        // call setup each frame because contact constraints are re-used for
-        // different bodies
+        // call setup each frame because contact constraints are re-used for different bodies
         fc->Setup(this);
         fc->Add(physics, invTimeStep);
     }
@@ -3889,8 +3884,7 @@ bool idAFConstraint_ConeLimit::Add(idPhysics_AF *phys, float invTimeStep)
         return false;
     }
 
-    // calculate the inward cone normal for the position the body1 axis went
-    // outside the cone
+    // calculate the inward cone normal for the position the body1 axis went outside the cone
     normal = body1ax.Cross(ax);
     normal.Normalize();
     q.x = normal.x * sinHalfAngle;
@@ -4176,8 +4170,7 @@ bool idAFConstraint_PyramidLimit::Add(idPhysics_AF *phys, float invTimeStep)
         return false;
     }
 
-    // calculate the inward pyramid normal for the position the body1 axis went
-    // outside the pyramid
+    // calculate the inward pyramid normal for the position the body1 axis went outside the pyramid
     pyramidVector = worldBase[2];
     for (i = 0; i < 2; i++)
     {
@@ -4749,8 +4742,7 @@ void idAFBody::SetFriction(float linear, float angular, float contact)
 {
     if (linear < 0.0f || linear > 1.0f || angular < 0.0f || angular > 1.0f || contact < 0.0f)
     {
-        gameLocal.Warning("idAFBody::SetFriction: friction out of range, linear = "
-                          "%.1f, angular = %.1f, contact = %.1f",
+        gameLocal.Warning("idAFBody::SetFriction: friction out of range, linear = %.1f, angular = %.1f, contact = %.1f",
                           linear, angular, contact);
         return;
     }
@@ -5022,8 +5014,7 @@ void idAFTree::Factor(void) const
 
                 child = body->children[j]->primaryConstraint;
 
-                // child->I = - child->body1->J.Transpose() * child->body1->I *
-                // child->body1->J;
+                // child->I = - child->body1->J.Transpose() * child->body1->I * child->body1->J;
                 childI.SetSize(child->J1.GetNumRows(), child->J1.GetNumRows());
                 child->body1->J.TransposeMultiply(child->body1->I).Multiply(childI, child->body1->J);
                 childI.Negate();
@@ -5031,8 +5022,7 @@ void idAFTree::Factor(void) const
                 child->invI = childI;
                 if (!child->invI.InverseFastSelf())
                 {
-                    gameLocal.Warning("idAFTree::Factor: couldn't invert %dx%d matrix "
-                                      "for constraint '%s'",
+                    gameLocal.Warning("idAFTree::Factor: couldn't invert %dx%d matrix for constraint '%s'",
                                       child->invI.GetNumRows(), child->invI.GetNumColumns(), child->GetName().c_str());
                 }
                 child->J = child->invI * child->J;
@@ -5153,8 +5143,7 @@ void idAFTree::Response(const idAFConstraint *constraint, int row, int auxiliary
     idAFConstraint *child, *primaryConstraint;
     idVecX v;
 
-    // if a single body don't waste time because there aren't any primary
-    // constraints
+    // if a single body don't waste time because there aren't any primary constraints
     if (sortedBodies.Num() == 1)
     {
         body = constraint->body1;
@@ -5285,8 +5274,7 @@ void idAFTree::CalculateForces(float timeStep) const
         body->totalForce.SubVec6(0) = body->current->externalForce + body->auxForce.SubVec6(0);
     }
 
-    // if a single body don't waste time because there aren't any primary
-    // constraints
+    // if a single body don't waste time because there aren't any primary constraints
     if (sortedBodies.Num() == 1)
     {
         return;
@@ -5450,8 +5438,7 @@ void idPhysics_AF::EvaluateConstraints(float timeStep)
 
     invTimeStep = 1.0f / timeStep;
 
-    // setup the constraint equations for the current position and orientation of
-    // the bodies
+    // setup the constraint equations for the current position and orientation of the bodies
     for (i = 0; i < primaryConstraints.Num(); i++)
     {
         c = primaryConstraints[i];
@@ -5702,8 +5689,7 @@ void idPhysics_AF::AuxiliaryForces(float timeStep)
         index += numAuxConstraints;
     }
 
-    // set on each body the largest index of an auxiliary constraint constraining
-    // the body
+    // set on each body the largest index of an auxiliary constraint constraining the body
     if (af_useSymmetry.GetBool())
     {
         for (k = 0, i = 0; i < auxiliaryConstraints.Num(); i++)
@@ -5727,8 +5713,7 @@ void idPhysics_AF::AuxiliaryForces(float timeStep)
         }
     }
 
-    // calculate forces of primary constraints in response to the auxiliary
-    // constraint forces
+    // calculate forces of primary constraints in response to the auxiliary constraint forces
     for (k = 0, i = 0; i < auxiliaryConstraints.Num(); i++)
     {
         constraint = auxiliaryConstraints[i];
@@ -5741,8 +5726,7 @@ void idPhysics_AF::AuxiliaryForces(float timeStep)
             // if there is a second body which is part of a different tree
             if (constraint->body2 && constraint->body2->tree != constraint->body1->tree)
             {
-                // calculate body forces in the second tree in response to the
-                // constraint force
+                // calculate body forces in the second tree in response to the constraint force
                 constraint->body2->tree->Response(constraint, j, k);
             }
         }
@@ -5753,8 +5737,7 @@ void idPhysics_AF::AuxiliaryForces(float timeStep)
                 MATX_ALLOCA(numAuxConstraints * ((numAuxConstraints + 3) & ~3)));
     tmp.SetData(6, VECX_ALLOCA(6));
 
-    // create constraint matrix for auxiliary constraints using a mass matrix
-    // adjusted for the primary constraints
+    // create constraint matrix for auxiliary constraints using a mass matrix adjusted for the primary constraints
     for (k = 0, i = 0; i < auxiliaryConstraints.Num(); i++)
     {
         constraint = auxiliaryConstraints[i];
@@ -5837,8 +5820,7 @@ void idPhysics_AF::AuxiliaryForces(float timeStep)
         k += auxiliaryConstraints[i]->J1.GetNumRows();
     }
 
-    // initialize right hand side and low and high bounds for auxiliary
-    // constraints
+    // initialize right hand side and low and high bounds for auxiliary constraints
     for (k = 0, i = 0; i < auxiliaryConstraints.Num(); i++)
     {
         constraint = auxiliaryConstraints[i];
@@ -5928,8 +5910,7 @@ void idPhysics_AF::AuxiliaryForces(float timeStep)
         }
     }
 
-    // recalculate primary constraint forces in response to auxiliary constraint
-    // forces
+    // recalculate primary constraint forces in response to auxiliary constraint forces
     PrimaryForces(timeStep);
 
     // clear pointers pointing to stack space so tools don't get confused
@@ -6254,9 +6235,8 @@ idEntity *idPhysics_AF::SetupCollisionForBody(idAFBody *body) const
 idPhysics_AF::CheckForCollisions
 
   check for collisions between the current and next state
-  if there is a collision the next state is set to the state at the moment of
-impact assumes all bodies are linked for collision detection and relinks all
-bodies after moving them
+  if there is a collision the next state is set to the state at the moment of impact
+  assumes all bodies are linked for collision detection and relinks all bodies after moving them
 ================
 */
 void idPhysics_AF::CheckForCollisions(float timeStep)
@@ -6381,8 +6361,7 @@ bool idPhysics_AF::EvaluateContacts(void)
 
 #if 1
         // merge nearby contacts between the same bodies
-        // and assure there are at most three planar contacts between any pair of
-        // bodies
+        // and assure there are at most three planar contacts between any pair of bodies
         for (j = 0; j < numContacts; j++)
         {
 
@@ -6696,15 +6675,13 @@ bool idPhysics_AF::TestIfAtRest(float timeStep)
 
     current.activateTime += timeStep;
 
-    // if the simulation should never be suspended before a certaint amount of
-    // time passed
+    // if the simulation should never be suspended before a certaint amount of time passed
     if (minMoveTime > 0.0f && current.activateTime < minMoveTime)
     {
         return false;
     }
 
-    // if the simulation should always be suspended after a certain amount time
-    // passed
+    // if the simulation should always be suspended after a certain amount time passed
     if (maxMoveTime > 0.0f && current.activateTime > maxMoveTime)
     {
         return true;
@@ -6744,8 +6721,7 @@ bool idPhysics_AF::TestIfAtRest(float timeStep)
 
         if (maxTranslationSqr < Square(noMoveTranslation) && maxRotation < noMoveRotation)
         {
-            // hardly moved over a period of time so the articulated figure may come
-            // to rest
+            // hardly moved over a period of time so the articulated figure may come to rest
             return true;
         }
     }
@@ -6754,8 +6730,7 @@ bool idPhysics_AF::TestIfAtRest(float timeStep)
         current.noMoveTime += timeStep;
     }
 
-    // test if the velocity or acceleration of any body is still too large to come
-    // to rest
+    // test if the velocity or acceleration of any body is still too large to come to rest
     for (i = 0; i < bodies.Num(); i++)
     {
         body = bodies[i];
@@ -6813,8 +6788,7 @@ void idPhysics_AF::Activate(void)
     if (current.atRest >= 0)
     {
         // normally gravity is added at the end of a simulation frame
-        // if the figure was at rest add gravity here so it is applied this
-        // simulation frame
+        // if the figure was at rest add gravity here so it is applied this simulation frame
         AddGravity();
         // reset the active time for the max move time
         current.activateTime = 0.0f;
@@ -7193,8 +7167,7 @@ bool idPhysics_AF::Evaluate(int timeStepMSec, int endTimeMSec)
     // swap the current and next state
     SwapStates();
 
-    // make sure all clip models are disabled in case they were enabled for self
-    // collision
+    // make sure all clip models are disabled in case they were enabled for self collision
     if (selfCollision && !af_skipSelfCollision.GetBool())
     {
         DisableClip();
@@ -7226,8 +7199,7 @@ bool idPhysics_AF::Evaluate(int timeStepMSec, int endTimeMSec)
 
     if (IsOutsideWorld())
     {
-        gameLocal.Warning("articulated figure moved outside world bounds for "
-                          "entity '%s' type '%s' at (%s)",
+        gameLocal.Warning("articulated figure moved outside world bounds for entity '%s' type '%s' at (%s)",
                           self->name.c_str(), self->GetType()->classname, bodies[0]->current->worldOrigin.ToString(0));
         Rest();
     }
@@ -7383,8 +7355,7 @@ void idPhysics_AF::DebugDraw(void)
             }
             collisionModelManager->DrawModel(body->clipModel->Handle(), body->clipModel->GetOrigin(),
                                              body->clipModel->GetAxis(), vec3_origin, 0.0f);
-            // DrawTraceModelSilhouette( gameLocal.GetLocalPlayer()->GetEyePosition(),
-            // body->clipModel );
+            // DrawTraceModelSilhouette( gameLocal.GetLocalPlayer()->GetEyePosition(), body->clipModel );
         }
     }
 
@@ -7897,8 +7868,7 @@ void idPhysics_AF::BuildTrees(void)
 
         if (trees.Num() > 1)
         {
-            gameLocal.Warning("Articulated figure has multiple separate tree "
-                              "structures for entity '%s' type '%s'.",
+            gameLocal.Warning("Articulated figure has multiple separate tree structures for entity '%s' type '%s'.",
                               self->name.c_str(), self->GetType()->classname);
         }
 
@@ -8002,8 +7972,7 @@ void idPhysics_AF::AddConstraint(idAFConstraint *constraint)
     }
     if (GetConstraint(constraint->name))
     {
-        gameLocal.Error("idPhysics_AF::AddConstraint: a constraint with the name "
-                        "'%s' already exists.",
+        gameLocal.Error("idPhysics_AF::AddConstraint: a constraint with the name '%s' already exists.",
                         constraint->name.c_str());
     }
     if (!constraint->body1)
@@ -8012,20 +7981,17 @@ void idPhysics_AF::AddConstraint(idAFConstraint *constraint)
     }
     if (!bodies.Find(constraint->body1))
     {
-        gameLocal.Error("idPhysics_AF::AddConstraint: body1 of constraint '%s' is "
-                        "not part of the articulated figure.",
+        gameLocal.Error("idPhysics_AF::AddConstraint: body1 of constraint '%s' is not part of the articulated figure.",
                         constraint->name.c_str());
     }
     if (constraint->body2 && !bodies.Find(constraint->body2))
     {
-        gameLocal.Error("idPhysics_AF::AddConstraint: body2 of constraint '%s' is "
-                        "not part of the articulated figure.",
+        gameLocal.Error("idPhysics_AF::AddConstraint: body2 of constraint '%s' is not part of the articulated figure.",
                         constraint->name.c_str());
     }
     if (constraint->body1 == constraint->body2)
     {
-        gameLocal.Error("idPhysics_AF::AddConstraint: body1 and body2 of "
-                        "constraint '%s' are the same.",
+        gameLocal.Error("idPhysics_AF::AddConstraint: body1 and body2 of constraint '%s' are the same.",
                         constraint->name.c_str());
     }
 
@@ -8102,9 +8068,7 @@ int idPhysics_AF::GetBodyId(const char *bodyName) const
             return i;
         }
     }
-    gameLocal.Error("GetBodyId: no body with the name '%s' is not part of the "
-                    "articulated figure.\n",
-                    bodyName);
+    gameLocal.Error("GetBodyId: no body with the name '%s' is not part of the articulated figure.\n", bodyName);
     return 0;
 }
 
@@ -8120,8 +8084,7 @@ int idPhysics_AF::GetConstraintId(idAFConstraint *constraint) const
     id = constraints.FindIndex(constraint);
     if (id == -1 && constraint)
     {
-        gameLocal.Error("GetConstraintId: constraint '%s' is not part of the "
-                        "articulated figure.\n",
+        gameLocal.Error("GetConstraintId: constraint '%s' is not part of the articulated figure.\n",
                         constraint->name.c_str());
     }
     return id;
@@ -8143,8 +8106,7 @@ int idPhysics_AF::GetConstraintId(const char *constraintName) const
             return i;
         }
     }
-    gameLocal.Error("GetConstraintId: no constraint with the name '%s' is not "
-                    "part of the articulated figure.\n",
+    gameLocal.Error("GetConstraintId: no constraint with the name '%s' is not part of the articulated figure.\n",
                     constraintName);
     return 0;
 }
@@ -8259,9 +8221,9 @@ void idPhysics_AF::DeleteBody(const char *bodyName)
 
     if (i >= bodies.Num())
     {
-        gameLocal.Warning("DeleteBody: no body found in the articulated figure "
-                          "with the name '%s' for entity '%s' type '%s'.",
-                          bodyName, self->name.c_str(), self->GetType()->classname);
+        gameLocal.Warning(
+            "DeleteBody: no body found in the articulated figure with the name '%s' for entity '%s' type '%s'.",
+            bodyName, self->name.c_str(), self->GetType()->classname);
         return;
     }
 
@@ -8327,8 +8289,8 @@ void idPhysics_AF::DeleteConstraint(const char *constraintName)
 
     if (i >= constraints.Num())
     {
-        gameLocal.Warning("DeleteConstraint: no constriant found in the articulated figure with "
-                          "the name '%s' for entity '%s' type '%s'.",
+        gameLocal.Warning("DeleteConstraint: no constriant found in the articulated figure with the name '%s' for "
+                          "entity '%s' type '%s'.",
                           constraintName, self->name.c_str(), self->GetType()->classname);
         return;
     }
@@ -8978,8 +8940,7 @@ void idPhysics_AF::SetMaster(idEntity *master, const bool orientated)
         if (!masterBody)
         {
             masterBody = new idAFBody();
-            // translate and rotate all the constraints with body2 == NULL from world
-            // space to master space
+            // translate and rotate all the constraints with body2 == NULL from world space to master space
             rotation = masterAxis.Transpose().ToRotation();
             for (i = 0; i < constraints.Num(); i++)
             {
@@ -8998,8 +8959,7 @@ void idPhysics_AF::SetMaster(idEntity *master, const bool orientated)
     {
         if (masterBody)
         {
-            // translate and rotate all the constraints with body2 == NULL from master
-            // space to world space
+            // translate and rotate all the constraints with body2 == NULL from master space to world space
             rotation = masterBody->current->worldAxis.ToRotation();
             for (i = 0; i < constraints.Num(); i++)
             {
@@ -9022,10 +8982,8 @@ const int AF_VELOCITY_EXPONENT_BITS = idMath::BitsForInteger(idMath::BitsForFloa
 const int AF_VELOCITY_MANTISSA_BITS = AF_VELOCITY_TOTAL_BITS - 1 - AF_VELOCITY_EXPONENT_BITS;
 // const float	AF_FORCE_MAX				= 1e20f;
 // const int	AF_FORCE_TOTAL_BITS			= 16;
-// const int	AF_FORCE_EXPONENT_BITS		= idMath::BitsForInteger(
-// idMath::BitsForFloat( AF_FORCE_MAX ) ) + 1; const int
-// AF_FORCE_MANTISSA_BITS		= AF_FORCE_TOTAL_BITS - 1 -
-// AF_FORCE_EXPONENT_BITS;
+// const int	AF_FORCE_EXPONENT_BITS		= idMath::BitsForInteger( idMath::BitsForFloat( AF_FORCE_MAX ) ) + 1;
+// const int	AF_FORCE_MANTISSA_BITS		= AF_FORCE_TOTAL_BITS - 1 - AF_FORCE_EXPONENT_BITS;
 
 /*
 ================
@@ -9066,17 +9024,12 @@ void idPhysics_AF::WriteToSnapshot(idBitMsgDelta &msg) const
         msg.WriteDeltaFloat(0.0f, state->spatialVelocity[3], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS);
         msg.WriteDeltaFloat(0.0f, state->spatialVelocity[4], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS);
         msg.WriteDeltaFloat(0.0f, state->spatialVelocity[5], AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS);
-        /*		msg.WriteDeltaFloat( 0.0f, state->externalForce[0],
-           AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS ); msg.WriteDeltaFloat(
-           0.0f, state->externalForce[1], AF_FORCE_EXPONENT_BITS,
-           AF_FORCE_MANTISSA_BITS ); msg.WriteDeltaFloat( 0.0f,
-           state->externalForce[2], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS
-           ); msg.WriteDeltaFloat( 0.0f, state->externalForce[3],
-           AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS ); msg.WriteDeltaFloat(
-           0.0f, state->externalForce[4], AF_FORCE_EXPONENT_BITS,
-           AF_FORCE_MANTISSA_BITS ); msg.WriteDeltaFloat( 0.0f,
-           state->externalForce[5], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS
-           );
+        /*		msg.WriteDeltaFloat( 0.0f, state->externalForce[0], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                msg.WriteDeltaFloat( 0.0f, state->externalForce[1], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                msg.WriteDeltaFloat( 0.0f, state->externalForce[2], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                msg.WriteDeltaFloat( 0.0f, state->externalForce[3], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                msg.WriteDeltaFloat( 0.0f, state->externalForce[4], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                msg.WriteDeltaFloat( 0.0f, state->externalForce[5], AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
         */
     }
 }
@@ -9120,16 +9073,12 @@ void idPhysics_AF::ReadFromSnapshot(const idBitMsgDelta &msg)
         state->spatialVelocity[3] = msg.ReadDeltaFloat(0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS);
         state->spatialVelocity[4] = msg.ReadDeltaFloat(0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS);
         state->spatialVelocity[5] = msg.ReadDeltaFloat(0.0f, AF_VELOCITY_EXPONENT_BITS, AF_VELOCITY_MANTISSA_BITS);
-        /*		state->externalForce[0] = msg.ReadDeltaFloat( 0.0f,
-           AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS ); state->externalForce[1]
-           = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS,
-           AF_FORCE_MANTISSA_BITS ); state->externalForce[2] = msg.ReadDeltaFloat(
-           0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
-                        state->externalForce[3] = msg.ReadDeltaFloat( 0.0f,
-           AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS ); state->externalForce[4]
-           = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS,
-           AF_FORCE_MANTISSA_BITS ); state->externalForce[5] = msg.ReadDeltaFloat(
-           0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+        /*		state->externalForce[0] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                state->externalForce[1] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                state->externalForce[2] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                state->externalForce[3] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                state->externalForce[4] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
+                state->externalForce[5] = msg.ReadDeltaFloat( 0.0f, AF_FORCE_EXPONENT_BITS, AF_FORCE_MANTISSA_BITS );
         */
         state->worldAxis = quat.ToMat3();
     }

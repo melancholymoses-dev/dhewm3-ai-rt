@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,13 +32,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_AF_H__
 #define __GAME_AF_H__
 
-#include "framework/DeclAF.h"
 #include "idlib/Parser.h"
+#include "framework/DeclAF.h"
 #include "renderer/Model.h"
 
+#include "physics/Physics_AF.h"
 #include "Entity.h"
 #include "anim/Anim.h"
-#include "physics/Physics_AF.h"
 
 /*
 ===============================================================================
@@ -133,16 +130,13 @@ class idAF
     int modifiedAnim;                    // anim to modify
     idVec3 baseOrigin;                   // offset of base body relative to skeletal model origin
     idMat3 baseAxis;                     // axis of base body relative to skeletal model origin
-    idList<jointConversion_t> jointMods; // list with transforms from skeletal model joints to
-                                         // articulated figure bodies
-    idList<int> jointBody;               // table to find the nearest articulated figure body
-                                         // for a joint of the skeletal model
-    int poseTime;                        // last time the articulated figure was transformed to reflect
-                                         // the current animation pose
-    int restStartTime;                   // time the articulated figure came to rest
-    bool isLoaded;                       // true when the articulated figure is properly loaded
-    bool isActive;                       // true if the articulated figure physics is active
-    bool hasBindConstraints;             // true if the bind constraints have been added
+    idList<jointConversion_t> jointMods; // list with transforms from skeletal model joints to articulated figure bodies
+    idList<int> jointBody;   // table to find the nearest articulated figure body for a joint of the skeletal model
+    int poseTime;            // last time the articulated figure was transformed to reflect the current animation pose
+    int restStartTime;       // time the articulated figure came to rest
+    bool isLoaded;           // true when the articulated figure is properly loaded
+    bool isActive;           // true if the articulated figure physics is active
+    bool hasBindConstraints; // true if the bind constraints have been added
 
   protected:
     void SetBase(idAFBody *body, const idJointMat *joints);

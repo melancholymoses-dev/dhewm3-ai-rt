@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,18 +32,18 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __DECLPARTICLE_H__
 #define __DECLPARTICLE_H__
 
-#include "framework/DeclManager.h"
-#include "framework/DeclTable.h"
-#include "idlib/bv/Bounds.h"
 #include "idlib/containers/List.h"
+#include "idlib/math/Vector.h"
 #include "idlib/math/Matrix.h"
 #include "idlib/math/Random.h"
-#include "idlib/math/Vector.h"
+#include "idlib/bv/Bounds.h"
+#include "framework/DeclManager.h"
+#include "framework/DeclTable.h"
 
 /*
 ===============================================================================
 
-        idDeclParticle
+    idDeclParticle
 
 ===============================================================================
 */
@@ -73,15 +70,14 @@ typedef enum
     PDIST_RECT,     // ( sizeX sizeY sizeZ )
     PDIST_CYLINDER, // ( sizeX sizeY sizeZ )
     PDIST_SPHERE    // ( sizeX sizeY sizeZ ringFraction )
-                    // a ringFraction of zero allows the entire sphere, 0.9 would
-                    // only allow the outer 10% of the sphere
+                    // a ringFraction of zero allows the entire sphere, 0.9 would only
+                    // allow the outer 10% of the sphere
 } prtDistribution_t;
 
 typedef enum
 {
     PDIR_CONE,   // parm0 is the solid cone angle
-    PDIR_OUTWARD // direction is relative to offset from origin, parm0 is an
-                 // upward bias
+    PDIR_OUTWARD // direction is relative to offset from origin, parm0 is an upward bias
 } prtDirection_t;
 
 typedef enum
@@ -116,10 +112,8 @@ typedef struct
     idMat3 axis;
 
     float age;                // in seconds, calculated as fraction * stage->particleLife
-    idRandom originalRandom;  // needed so aimed particles can reset the random for
-                              // another origin calculation
-    float animationFrameFrac; // set by ParticleTexCoords, used to make the cross
-                              // faded version
+    idRandom originalRandom;  // needed so aimed particles can reset the random for another origin calculation
+    float animationFrameFrac; // set by ParticleTexCoords, used to make the cross faded version
 } particleGen_t;
 
 //
@@ -135,8 +129,7 @@ class idParticleStage
 
     void Default();
     virtual int NumQuadsPerParticle() const; // includes trails and cross faded animations
-    // returns the number of verts created, which will range from 0 to
-    // 4*NumQuadsPerParticle()
+    // returns the number of verts created, which will range from 0 to 4*NumQuadsPerParticle()
     virtual int CreateParticle(particleGen_t *g, idDrawVert *verts) const;
 
     void ParticleOrigin(particleGen_t *g, idVec3 &origin) const;
@@ -154,18 +147,15 @@ class idParticleStage
 
     const idMaterial *material;
 
-    int totalParticles; // total number of particles, although some may be
-                        // invisible at a given time
-    float cycles;       // allows things to oneShot ( 1 cycle ) or run for a set number
-                        // of cycles on a per stage basis
+    int totalParticles; // total number of particles, although some may be invisible at a given time
+    float cycles;       // allows things to oneShot ( 1 cycle ) or run for a set number of cycles
+                        // on a per stage basis
 
     int cycleMsec; // ( particleLife + deadTime ) in msec
 
-    float spawnBunching; // 0.0 = all come out at first instant, 1.0 = evenly
-                         // spaced over cycle time
+    float spawnBunching; // 0.0 = all come out at first instant, 1.0 = evenly spaced over cycle time
     float particleLife;  // total seconds of life for each particle
-    float timeOffset;    // time offset from system start for the first particle to
-                         // spawn
+    float timeOffset;    // time offset from system start for the first particle to spawn
     float deadTime;      // time after particleLife before respawning
 
     //-------------------------------	// standard path parms
@@ -179,24 +169,19 @@ class idParticleStage
     idParticleParm speed;
     float gravity;           // can be negative to float up
     bool worldGravity;       // apply gravity in world space
-    bool randomDistribution; // randomly orient the quad on emission ( defaults to
-                             // true )
-    bool entityColor;        // force color from render entity ( fadeColor is still valid
-                             // )
+    bool randomDistribution; // randomly orient the quad on emission ( defaults to true )
+    bool entityColor;        // force color from render entity ( fadeColor is still valid )
 
-    //------------------------------	// custom path will completely replace
-    // the standard path calculations
+    //------------------------------	// custom path will completely replace the standard path calculations
 
     prtCustomPth_t customPathType; // use custom C code routines for determining the origin
     float customPathParms[8];
 
     //--------------------------------
 
-    idVec3 offset; // offset from origin to spawn all particles, also applies to
-                   // customPath
+    idVec3 offset; // offset from origin to spawn all particles, also applies to customPath
 
-    int animationFrames; // if > 1, subdivide the texture S axis into frames and
-                         // crossfade
+    int animationFrames; // if > 1, subdivide the texture S axis into frames and crossfade
     float animationRate; // frames per second
 
     float initialAngle;           // in degrees, random angle is used if zero ( default )
@@ -209,12 +194,10 @@ class idParticleStage
     idParticleParm aspect; // greater than 1 makes the T axis longer
 
     idVec4 color;
-    idVec4 fadeColor;        // either 0 0 0 0 for additive, or 1 1 1 0 for blended
-                             // materials
+    idVec4 fadeColor;        // either 0 0 0 0 for additive, or 1 1 1 0 for blended materials
     float fadeInFraction;    // in 0.0 to 1.0 range
     float fadeOutFraction;   // in 0.0 to 1.0 range
-    float fadeIndexFraction; // in 0.0 to 1.0 range, causes later index smokes to
-                             // be more faded
+    float fadeIndexFraction; // in 0.0 to 1.0 range, causes later index smokes to be more faded
 
     bool hidden; // for editor use
     //-----------------------------------
@@ -225,15 +208,13 @@ class idParticleStage
 
     /* Soft particles -- SteveL #3878
     -2.0 is the value at initialization, meaning no user specification: "auto".
-    -1.0 means no change to old system: suppress soft particles, but allow
-    modelDepthhack if specified. 0   means disable all softening for this stage,
-    including modelDepthHack. +ve value means apply soft particle effect, allowing
-    overdraw up to the specified depth. This is more flexible even when not using
-    soft particles, as modelDepthHack can be turned off for specific stages to
-    stop them poking through walls.
+    -1.0 means no change to old system: suppress soft particles, but allow modelDepthhack if specified.
+     0   means disable all softening for this stage, including modelDepthHack.
+     +ve value means apply soft particle effect, allowing overdraw up to the specified depth.
+    This is more flexible even when not using soft particles, as modelDepthHack
+    can be turned off for specific stages to stop them poking through walls.
     */
-    // DG: disable this for now because it breaks the game DLL's ABI (re-enable in
-    // dhewm3 1.6.0 or 2.0.0)
+    // DG: disable this for now because it breaks the game DLL's ABI (re-enable in dhewm3 1.6.0 or 2.0.0)
     //     (this header is part of the SDK)
     // float					softeningRadius;
 };

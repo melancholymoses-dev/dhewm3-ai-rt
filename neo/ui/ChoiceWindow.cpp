@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/KeyInput.h"
-#include "idlib/LangDict.h"
 #include "sys/platform.h"
+#include "idlib/LangDict.h"
+#include "framework/KeyInput.h"
 #include "ui/DeviceContext.h"
-#include "ui/UserInterfaceLocal.h"
 #include "ui/Window.h"
+#include "ui/UserInterfaceLocal.h"
 
 #include "ui/ChoiceWindow.h"
 
@@ -54,8 +51,7 @@ void idChoiceWindow::InitVars()
         if (!cvar)
         {
             if (strcmp(cvarStr.c_str(), "s_driver") && strcmp(cvarStr.c_str(), "net_serverAllowServerMod"))
-                common->Warning("idChoiceWindow::InitVars: gui '%s' window '%s' "
-                                "references undefined cvar '%s'",
+                common->Warning("idChoiceWindow::InitVars: gui '%s' window '%s' references undefined cvar '%s'",
                                 gui->GetSourceFile(), name.c_str(), cvarStr.c_str());
             return;
         }
@@ -280,8 +276,7 @@ void idChoiceWindow::UpdateChoice()
     if (choiceType == 0)
     {
         // ChoiceType 0 stores current as an integer in either cvar or gui
-        // If both cvar and gui are defined then cvar wins, but they are both
-        // updated
+        // If both cvar and gui are defined then cvar wins, but they are both updated
         if (updateStr[0]->NeedsUpdate())
         {
             currentChoice = atoi(updateStr[0]->c_str());
@@ -437,8 +432,7 @@ void idChoiceWindow::UpdateChoicesAndVals(void)
         }
         if (choices.Num() != values.Num())
         {
-            common->Warning("idChoiceWindow:: gui '%s' window '%s' has value count "
-                            "unequal to choices count",
+            common->Warning("idChoiceWindow:: gui '%s' window '%s' has value count unequal to choices count",
                             gui->GetSourceFile(), name.c_str());
         }
         latchedVals = choiceVals.c_str();
@@ -459,14 +453,14 @@ void idChoiceWindow::PostParse()
 
     /*
      * Mods that have their own video settings menu can tell dhewm3 to replace the
-     * "choices" and "values" entries in their choiceDef with the resolutions
-     * supported by dhewm3 (and corresponding modes). So if we add new video modes
-     * to dhewm3, they'll automatically appear in the menu without changing the
-     * .gui To enable this, the mod authors only need to add an "injectResolutions
-     * 1" entry to their resolution choiceDef. By default, the first entry will be
-     * "r_custom*" for r_mode -1, which means "custom resolution, use
-     * r_customWidth and r_customHeight". If that entry shoud be disabled for the
-     * mod, just add another entry: "injectCustomResolutionMode 0"
+     * "choices" and "values" entries in their choiceDef with the resolutions supported by
+     * dhewm3 (and corresponding modes). So if we add new video modes to dhewm3,
+     * they'll automatically appear in the menu without changing the .gui
+     * To enable this, the mod authors only need to add an "injectResolutions 1" entry
+     * to their resolution choiceDef. By default, the first entry will be "r_custom*"
+     * for r_mode -1, which means "custom resolution, use r_customWidth and r_customHeight".
+     * If that entry shoud be disabled for the mod, just add another entry:
+     * "injectCustomResolutionMode 0"
      */
     idWinVar *wv = GetWinVarByName("injectResolutions");
     if (wv != NULL)
@@ -517,8 +511,8 @@ void idChoiceWindow::Draw(int time, float x, float y)
     UpdateChoicesAndVals();
     UpdateChoice();
 
-    // FIXME: It'd be really cool if textAlign worked, but a lot of the guis have
-    // it set wrong because it used to not work
+    // FIXME: It'd be really cool if textAlign worked, but a lot of the guis have it set wrong because it used to not
+    // work
     textAlign = 0;
 
     if (textShadow)

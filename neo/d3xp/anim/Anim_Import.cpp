@@ -19,31 +19,28 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "MayaImport/maya_main.h"
-#include "framework/Licensee.h"
 #include "sys/platform.h"
+#include "framework/Licensee.h"
+#include "MayaImport/maya_main.h"
 
-#include "Game_local.h"
 #include "gamesys/SysCvar.h"
+#include "Game_local.h"
 
 #include "anim/Anim.h"
 
 /***********************************************************************
 
-        Maya conversion functions
+    Maya conversion functions
 
 ***********************************************************************/
 
@@ -125,8 +122,8 @@ bool idModelExport::CheckMayaInstall(void)
     HKEY hKey;
     long lres;
 
-    // only check the non-version specific key so that we only have to update the
-    // maya dll when new versions are released
+    // only check the non-version specific key so that we only have to update the maya dll when new versions are
+    // released
     lres = RegOpenKey(HKEY_LOCAL_MACHINE, "SOFTWARE\\Alias|Wavefront\\Maya", &hKey);
     RegCloseKey(hKey);
 
@@ -192,8 +189,8 @@ void idModelExport::LoadMayaDll(void)
 =====================
 idModelExport::ConvertMayaToMD5
 
-Checks if a Maya model should be converted to an MD5, and converts if if the
-time/date or version number has changed.
+Checks if a Maya model should be converted to an MD5, and converts if if the time/date or
+version number has changed.
 =====================
 */
 bool idModelExport::ConvertMayaToMD5(void)
@@ -251,8 +248,7 @@ bool idModelExport::ConvertMayaToMD5(void)
         }
     }
 
-    // if this is the first time we've been run, check if Maya is installed and
-    // load our DLL
+    // if this is the first time we've been run, check if Maya is installed and load our DLL
     if (!initialized)
     {
         initialized = true;
@@ -273,8 +269,8 @@ bool idModelExport::ConvertMayaToMD5(void)
         }
     }
 
-    // we need to make sure we have a full path, so convert the filename to an OS
-    // path _D3XP :: we work out of the cdpath, at least until we get Alienbrain
+    // we need to make sure we have a full path, so convert the filename to an OS path
+    // _D3XP :: we work out of the cdpath, at least until we get Alienbrain
     src = fileSystem->RelativePathToOSPath(src, "fs_cdpath");
     dest = fileSystem->RelativePathToOSPath(dest, "fs_cdpath");
 

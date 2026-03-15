@@ -19,27 +19,24 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Console.h"
-#include "framework/EventLoop.h"
-#include "framework/Game.h"
-#include "framework/async/AsyncNetwork.h"
-#include "idlib/LangDict.h"
-#include "idlib/hashing/CRC32.h"
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "idlib/hashing/CRC32.h"
+#include "idlib/LangDict.h"
+#include "framework/async/AsyncNetwork.h"
+#include "framework/Console.h"
+#include "framework/Game.h"
+#include "framework/EventLoop.h"
+#include "renderer/ModelManager.h"
 
 #include "framework/Session_local.h"
 
@@ -122,10 +119,8 @@ static void Session_Map_f(const idCmdArgs &args)
     map = args.Argv(1);
     if (!map.Length())
     {
-        // DG: if the map command is called without any arguments, print the current
-        // map
-        // TODO: could check whether we're currently in a game, otherwise the last
-        // loaded
+        // DG: if the map command is called without any arguments, print the current map
+        // TODO: could check whether we're currently in a game, otherwise the last loaded
         //       map is printed.. but OTOH, who cares
         const char *curmap = sessLocal.mapSpawnData.serverInfo.GetString("si_map");
         if (curmap[0] != '\0')
@@ -289,8 +284,7 @@ static void Session_PromptKey_f(const idCmdArgs &args)
 
     do
     {
-        // in case we're already waiting for an auth to come back to us ( may happen
-        // exceptionally )
+        // in case we're already waiting for an auth to come back to us ( may happen exceptionally )
         if (sessLocal.MaybeWaitOnCDKey())
         {
             if (sessLocal.CDKeysAreValid(true))
@@ -299,8 +293,7 @@ static void Session_PromptKey_f(const idCmdArgs &args)
                 return;
             }
         }
-        // the auth server may have replied and set an error message, otherwise use
-        // a default
+        // the auth server may have replied and set an error message, otherwise use a default
         const char *prompt_msg = sessLocal.GetAuthMsg();
         if (prompt_msg[0] == '\0')
         {
@@ -312,17 +305,16 @@ static void Session_PromptKey_f(const idCmdArgs &args)
         {
             if (sessLocal.CheckKey(retkey, false, valid))
             {
-                // if all went right, then we may have sent an auth request to the
-                // master ( unless the prompt is used during a net connect )
+                // if all went right, then we may have sent an auth request to the master ( unless the prompt is used
+                // during a net connect )
                 bool canExit = true;
                 if (sessLocal.MaybeWaitOnCDKey())
                 {
                     // wait on auth reply, and got denied, prompt again
                     if (!sessLocal.CDKeysAreValid(true))
                     {
-                        // server says key is invalid - MaybeWaitOnCDKey was interrupted by
-                        // a CDKeysAuthReply call, which has set the right error message the
-                        // invalid keys have also been cleared in the process
+                        // server says key is invalid - MaybeWaitOnCDKey was interrupted by a CDKeysAuthReply call,
+                        // which has set the right error message the invalid keys have also been cleared in the process
                         sessLocal.MessageBox(MSG_OK, sessLocal.GetAuthMsg(),
                                              common->GetLanguageDict()->GetString("#str_04310"), true, NULL, NULL,
                                              true);
@@ -341,9 +333,8 @@ static void Session_PromptKey_f(const idCmdArgs &args)
             else
             {
                 // offline check sees key invalid
-                // build a message about keys being wrong. do not attempt to change the
-                // current key state though ( the keys may be valid, but user would have
-                // clicked on the dialog anyway, that kind of thing )
+                // build a message about keys being wrong. do not attempt to change the current key state though
+                // ( the keys may be valid, but user would have clicked on the dialog anyway, that kind of thing )
                 idStr msg;
                 idAsyncNetwork::BuildInvalidKeyMsg(msg, valid);
                 sessLocal.MessageBox(MSG_OK, msg, common->GetLanguageDict()->GetString("#str_04310"), true, NULL, NULL,
@@ -614,11 +605,9 @@ void idSessionLocal::ShowLoadingGui()
     }
     console->Close();
 
-    // introduced in D3XP code. don't think it actually fixes anything, but
-    // doesn't hurt either
+    // introduced in D3XP code. don't think it actually fixes anything, but doesn't hurt either
 #if 1
-    // Try and prevent the while loop from being skipped over (long hitch on the
-    // main thread?)
+    // Try and prevent the while loop from being skipped over (long hitch on the main thread?)
     int stop = Sys_Milliseconds() + 1000;
     int force = 10;
     while (Sys_Milliseconds() < stop || force-- > 0)
@@ -754,8 +743,7 @@ static void Session_CompressDemo_f(const idCmdArgs &args)
     }
     else
     {
-        common->Printf("use: CompressDemo <file> [scheme]\nscheme is the same as "
-                       "com_compressDemo, defaults to 2");
+        common->Printf("use: CompressDemo <file> [scheme]\nscheme is the same as com_compressDemo, defaults to 2");
     }
 }
 
@@ -1408,14 +1396,12 @@ void idSessionLocal::MoveToNewMap(const char *mapName)
 
     if (!com_disableAutoSaves.GetBool() && !mapSpawnData.serverInfo.GetBool("devmap"))
     {
-        // Autosave at the beginning of the level - DG: unless disabled with
-        // "com_disableAutoSaves 1"
+        // Autosave at the beginning of the level - DG: unless disabled with "com_disableAutoSaves 1"
 
         // DG: set an explicit savename to avoid problems with autosave names
         //     (they were translated which caused problems like all alpha labs parts
-        //      getting the same filename in spanish, probably because the strings
-        //      contained dots and everything behind them was cut off as "file
-        //      extension".. see #305)
+        //      getting the same filename in spanish, probably because the strings contained
+        //      dots and everything behind them was cut off as "file extension".. see #305)
         idStr saveFileName = "Autosave_";
         saveFileName += mapName;
         SaveGame(GetAutoSaveName(mapName), true, saveFileName);
@@ -1735,9 +1721,10 @@ void idSessionLocal::SetBytesNeededForMapLoad(const char *mapName, int bytesNeed
 ===============
 idSessionLocal::ExecuteMapChange
 
-Performs the initialization of a game based on mapSpawnData, used for both
-single player and multiplayer, but not for renderDemos, which don't create a
-game at all. Exits with mapSpawned = true
+Performs the initialization of a game based on mapSpawnData, used for both single
+player and multiplayer, but not for renderDemos, which don't
+create a game at all.
+Exits with mapSpawned = true
 ===============
 */
 void idSessionLocal::ExecuteMapChange(bool noFadeWipe)
@@ -1817,9 +1804,8 @@ void idSessionLocal::ExecuteMapChange(bool noFadeWipe)
     // and draw the loading gui instead of game draws
     insideExecuteMapChange = true;
 
-    // if this works out we will probably want all the sizes in a def file
-    // although this solution will work for new maps etc. after the first load. we
-    // can also drop the sizes into the default.cfg
+    // if this works out we will probably want all the sizes in a def file although this solution will
+    // work for new maps etc. after the first load. we can also drop the sizes into the default.cfg
     fileSystem->ResetReadCount();
     if (!reloadingSameMap)
     {
@@ -1881,8 +1867,7 @@ void idSessionLocal::ExecuteMapChange(bool noFadeWipe)
             fileSystem->CloseFile(savegameFile);
             savegameFile = NULL;
 
-            common->Warning("WARNING: Loading savegame failed, will restart the map "
-                            "with the player persistent data!");
+            common->Warning("WARNING: Loading savegame failed, will restart the map with the player persistent data!");
 
             game->SetServerInfo(mapSpawnData.serverInfo);
             game->InitFromNewMap(fullMapName + ".map", rw, sw, idAsyncNetwork::server.IsActive(),
@@ -2182,8 +2167,7 @@ bool idSessionLocal::SaveGame(const char *saveName, bool autosave, const char *s
 #else
     int i;
     idStr previewFile, descriptionFile, mapName;
-    // DG: support setting an explicit savename to avoid problems with autosave
-    // names
+    // DG: support setting an explicit savename to avoid problems with autosave names
     idStr gameFile = (saveFileName != NULL) ? saveFileName : saveName;
 
     if (!mapSpawned)
@@ -2367,8 +2351,7 @@ bool idSessionLocal::LoadGame(const char *saveName)
     in += loadFile;
 
     // Open savegame file
-    // only allow loads from the game directory because we don't want a base game
-    // to load
+    // only allow loads from the game directory because we don't want a base game to load
     idStr game = cvarSystem->GetCVarString("fs_game");
     savegameFile = fileSystem->OpenFileRead(in, true, game.Length() ? game : NULL);
 
@@ -2414,8 +2397,7 @@ bool idSessionLocal::LoadGame(const char *saveName)
     // so that the player doesn't lose too much progress.
     if (savegameVersion < 16 || savegameVersion > SAVEGAME_VERSION)
     { // dhewm3 supports savegames with v16 - v18
-        common->Warning("Savegame Version mismatch: aborting loadgame and starting "
-                        "level with persistent data");
+        common->Warning("Savegame Version mismatch: aborting loadgame and starting level with persistent data");
         loadingSaveGame = false;
         fileSystem->CloseFile(savegameFile);
         savegameFile = NULL;
@@ -2498,8 +2480,7 @@ bool idSessionLocal::QuickSave()
             assert(ts != 0);
             if (ts < oldestTime || oldestTime == 0)
             {
-                // this is the oldest quicksave we found so far => a candidate to be
-                // overwritten
+                // this is the oldest quicksave we found so far => a candidate to be overwritten
                 indexToUse = i;
                 oldestTime = ts;
             }
@@ -2744,8 +2725,7 @@ void idSessionLocal::AdvanceRenderDemo(bool singleFrameOnly)
         {
             readDemo->ReadInt(renderdemoVersion);
             common->Printf("reading a v%d render demo\n", renderdemoVersion);
-            // set the savegameVersion to current for render demo paths that share the
-            // savegame paths
+            // set the savegameVersion to current for render demo paths that share the savegame paths
             savegameVersion = SAVEGAME_VERSION;
             continue;
         }
@@ -2856,8 +2836,7 @@ void idSessionLocal::Draw()
     {
         // if testing a gui, clear the screen and draw it
         // clear the background, in case the tested gui is transparent
-        // NOTE that you can't use this for aviGame recording, it will tick at real
-        // com_frameTime between screenshots..
+        // NOTE that you can't use this for aviGame recording, it will tick at real com_frameTime between screenshots..
         renderSystem->SetColor(colorBlack);
         renderSystem->DrawStretchPic(0, 0, 640, 480, 0, 0, 1, 1, declManager->FindMaterial("_white"));
         guiTest->Redraw(com_frameTime);
@@ -2920,8 +2899,7 @@ void idSessionLocal::Draw()
             emptyDrawCount++;
             if (emptyDrawCount > 5)
             {
-                // it's best if you can avoid triggering the watchgod by doing the right
-                // thing somewhere else
+                // it's best if you can avoid triggering the watchgod by doing the right thing somewhere else
                 assert(false);
                 common->Warning("idSession: triggering mainmenu watchdog");
                 emptyDrawCount = 0;
@@ -2932,8 +2910,7 @@ void idSessionLocal::Draw()
                                          declManager->FindMaterial("_white"));
         }
 #else
-        // draw the console full screen - this should only ever happen in developer
-        // builds
+        // draw the console full screen - this should only ever happen in developer builds
         console->Draw(true);
 #endif
         fullConsole = true;
@@ -2983,8 +2960,7 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
     if (insideUpdateScreen)
     {
         return;
-        //		common->FatalError( "idSessionLocal::UpdateScreen: recursively
-        // called" );
+        //		common->FatalError( "idSessionLocal::UpdateScreen: recursively called" );
     }
 
     insideUpdateScreen = true;
@@ -3028,10 +3004,8 @@ void idSessionLocal::Frame()
         soundSystem->AsyncUpdateWrite(Sys_Milliseconds());
     }
 
-    // DG: periodically check if sound device is still there and try to reset it
-    // if not
-    //     (calling this from idSoundSystem::AsyncUpdate(), which runs in a
-    //     separate thread
+    // DG: periodically check if sound device is still there and try to reset it if not
+    //     (calling this from idSoundSystem::AsyncUpdate(), which runs in a separate thread
     //      by default, causes a deadlock when calling idCommon->Warning())
     CheckOpenALDeviceAndRecoverIfNeeded();
 
@@ -3042,8 +3016,8 @@ void idSessionLocal::Frame()
     }
 
 #if 0 // handled via Sys_GenerateEvents() -> handleMouseGrab()
-      // if the console is down, we don't need to hold
-      // the mouse cursor
+	// if the console is down, we don't need to hold
+	// the mouse cursor
 	if ( console->Active() || com_editorActive ) {
 		Sys_GrabMouseCursor( false );
 	} else {
@@ -3175,8 +3149,7 @@ void idSessionLocal::Frame()
     {
         if (!com_asyncInput.GetBool())
         {
-            // early exit, won't do RunGameTic .. but still need to update mouse
-            // position for GUIs
+            // early exit, won't do RunGameTic .. but still need to update mouse position for GUIs
             usercmdGen->GetDirectUsercmd();
         }
     }
@@ -3192,8 +3165,8 @@ void idSessionLocal::Frame()
         return;
     }
 
-    // in message box / GUIFrame, idSessionLocal::Frame is used for GUI
-    // interactivity but we early exit to avoid running game frames
+    // in message box / GUIFrame, idSessionLocal::Frame is used for GUI interactivity
+    // but we early exit to avoid running game frames
     if (idAsyncNetwork::IsActive())
     {
         return;
@@ -3249,10 +3222,9 @@ void idSessionLocal::Frame()
         lastGameTic = latchedTicNumber - com_aviDemoTics.GetInteger();
     }
 
-    // force only one game frame update this frame.  the game code requests this
-    // after skipping cinematics so we come back immediately after the cinematic
-    // is done instead of a few frames later which can cause sounds played right
-    // after the cinematic to not play.
+    // force only one game frame update this frame.  the game code requests this after skipping cinematics
+    // so we come back immediately after the cinematic is done instead of a few frames later which can
+    // cause sounds played right after the cinematic to not play.
     if (syncNextGameFrame)
     {
         lastGameTic = latchedTicNumber - 1;
@@ -3278,8 +3250,7 @@ void idSessionLocal::Frame()
         }
         if (syncNextGameFrame)
         {
-            // long game frame, so break out and continue executing as if there was no
-            // hitch
+            // long game frame, so break out and continue executing as if there was no hitch
             break;
         }
     }
@@ -3565,8 +3536,8 @@ void idSessionLocal::SetPlayingSoundWorld()
 ===============
 idSessionLocal::TimeHitch
 
-this is used by the sound system when an OnDemand sound is loaded, so the game
-action doesn't advance and get things out of sync
+this is used by the sound system when an OnDemand sound is loaded, so the game action
+doesn't advance and get things out of sync
 ===============
 */
 void idSessionLocal::TimeHitch(int msec)
@@ -3642,9 +3613,8 @@ void idSessionLocal::WriteCDKey(void)
     const char *OSPath;
 
     filename = CDKEY_FILEPATH;
-    // OpenFileWrite advertises creating directories to the path if needed, but
-    // that won't work with a '..' in the path occasionally on windows, but mostly
-    // on Linux and OSX, the fs_configpath/base may not exist in full
+    // OpenFileWrite advertises creating directories to the path if needed, but that won't work with a '..' in the path
+    // occasionally on windows, but mostly on Linux and OSX, the fs_configpath/base may not exist in full
     OSPath = fileSystem->BuildOSPath(cvarSystem->GetCVarString("fs_configpath"), BASE_GAMEDIR, CDKEY_FILE);
     fileSystem->CreateOSPath(OSPath);
     f = fileSystem->OpenFileWrite(filename, "fs_configpath");
@@ -3681,8 +3651,7 @@ void idSessionLocal::ClearCDKey(bool valid[2])
     }
     else if (cdkey_state == CDKEY_CHECKING)
     {
-        // if a key was in checking and not explicitely asked for clearing, put it
-        // back to ok
+        // if a key was in checking and not explicitely asked for clearing, put it back to ok
         cdkey_state = CDKEY_OK;
     }
     if (!valid[1])
@@ -3721,8 +3690,7 @@ const char *idSessionLocal::GetCDKey(bool xp)
 /*
 ===============
 idSessionLocal::EmitGameAuth
-we toggled some key state to CDKEY_CHECKING. send a standalone auth packet to
-validate
+we toggled some key state to CDKEY_CHECKING. send a standalone auth packet to validate
 ===============
 */
 void idSessionLocal::EmitGameAuth(void)
@@ -3753,9 +3721,8 @@ void idSessionLocal::EmitGameAuth(void)
 /*
 ================
 idSessionLocal::CheckKey
-the function will only modify keys to _OK or _CHECKING if the offline checks are
-passed if the function returns false, the offline checks failed, and
-offline_valid holds which keys are bad
+the function will only modify keys to _OK or _CHECKING if the offline checks are passed
+if the function returns false, the offline checks failed, and offline_valid holds which keys are bad
 ================
 */
 bool idSessionLocal::CheckKey(const char *key, bool netConnect, bool offline_valid[2])
@@ -3823,9 +3790,8 @@ bool idSessionLocal::CheckKey(const char *key, bool netConnect, bool offline_val
         return false;
     }
 
-    // offline checks passed, we'll return true and optionally emit key check
-    // requests the function should only modify the key states if the offline
-    // checks passed successfully
+    // offline checks passed, we'll return true and optionally emit key check requests
+    // the function should only modify the key states if the offline checks passed successfully
 
     // set the keys, don't send a game auth if we are net connecting
     idStr::Copynz(cdkey, lkey[0], CDKEY_BUF_LEN);

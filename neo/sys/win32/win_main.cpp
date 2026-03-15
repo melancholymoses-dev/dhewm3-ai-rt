@@ -19,48 +19,44 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/CmdArgs.h"
+#include "framework/async/AsyncNetwork.h"
 #include "framework/Licensee.h"
 #include "framework/UsercmdGen.h"
-#include "framework/async/AsyncNetwork.h"
-#include "idlib/CmdArgs.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
-#include "sys/sys_local.h"
 #include "sys/win32/rc/CreateResourceIDs.h"
+#include "sys/sys_local.h"
 
 #include "sys/win32/win_local.h"
 
-#include <conio.h>
-#include <direct.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <float.h>
+#include <fcntl.h>
+#include <direct.h>
 #include <io.h>
+#include <conio.h>
 #include <shellapi.h>
 #include <shlobj.h>
 
 #ifndef __MRC__
-#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #endif
 
 #include "tools/edit_public.h"
 
-#undef strcmp // get rid of "#define strcmp idStr::Cmp", it conflicts with SDL
-              // headers
+#undef strcmp // get rid of "#define strcmp idStr::Cmp", it conflicts with SDL headers
 
 #include "sys/sys_sdl.h"
 
@@ -142,8 +138,7 @@ void Sys_Error(const char *error, ...)
 
     if (!Sys_IsMainThread())
     {
-        // to avoid deadlocks we mustn't call Conbuf_AppendText() etc if not in main
-        // thread!
+        // to avoid deadlocks we mustn't call Conbuf_AppendText() etc if not in main thread!
         va_start(argptr, error);
         vsprintf(errorText, error, argptr);
         va_end(argptr);
@@ -161,8 +156,7 @@ void Sys_Error(const char *error, ...)
 
     if (!hadError)
     {
-        // if we had an error in another thread, printf() and OutputDebugString()
-        // has already been called for this
+        // if we had an error in another thread, printf() and OutputDebugString() has already been called for this
         printf("%s", text);
         OutputDebugString(text);
     }
@@ -387,8 +381,7 @@ static int WPath2A(char *dst, size_t size, const WCHAR *src)
         if (len == 0)
             return 0;
 
-        /* Since the DOS path contains no UTF-16 characters, convert it to the
-         * system's default code page */
+        /* Since the DOS path contains no UTF-16 characters, convert it to the system's default code page */
         len = WideCharToMultiByte(CP_ACP, 0, w, len, dst, size - 1, NULL, NULL);
     }
 
@@ -413,9 +406,9 @@ static int WPath2A(char *dst, size_t size, const WCHAR *src)
 
 /*
 ==============
-Returns "My Documents"/My Games/dhewm3 directory (or equivalent -
-"CSIDL_PERSONAL"). To be used with Sys_GetPath(PATH_SAVE), so savegames,
-screenshots etc will be saved to the users files instead of systemwide.
+Returns "My Documents"/My Games/dhewm3 directory (or equivalent - "CSIDL_PERSONAL").
+To be used with Sys_GetPath(PATH_SAVE), so savegames, screenshots etc will be
+saved to the users files instead of systemwide.
 
 Based on (with kind permission) Yamagi Quake II's Sys_GetHomeDir()
 
@@ -696,8 +689,7 @@ uintptr_t Sys_DLL_Load(const char *dllName)
     libHandle = LoadLibrary(dllName);
     if (libHandle)
     {
-        // since we can't have LoadLibrary load only from the specified path, check
-        // it did the right thing
+        // since we can't have LoadLibrary load only from the specified path, check it did the right thing
         char loadedPath[MAX_OSPATH];
         GetModuleFileName(libHandle, loadedPath, sizeof(loadedPath) - 1);
         if (idStr::IcmpPath(dllName, loadedPath))
@@ -723,10 +715,10 @@ uintptr_t Sys_DLL_Load(const char *dllName)
         {
             // "[193 (0xC1)] is not a valid Win32 application"
             // probably going to be common. Lets try to be less cryptic.
-            common->Warning("LoadLibrary( \"%s\" ) Failed ! [%i (0x%X)]\tprobably the DLL is of "
-                            "the wrong architecture, "
-                            "like x64 instead of x86 (this build of dhewm3 expects %s)",
-                            dllName, e, e, D3_ARCH);
+            common->Warning(
+                "LoadLibrary( \"%s\" ) Failed ! [%i (0x%X)]\tprobably the DLL is of the wrong architecture, "
+                "like x64 instead of x86 (this build of dhewm3 expects %s)",
+                dllName, e, e, D3_ARCH);
             return 0;
         }
 
@@ -896,8 +888,7 @@ void Win_Frame(void)
 
     if (curNumBufferedPrintfLines > 0)
     {
-        // if Sys_Printf() had been called in another thread, add those lines to the
-        // windows console now
+        // if Sys_Printf() had been called in another thread, add those lines to the windows console now
         EnterCriticalSection(&printfCritSect);
         int n = Min(curNumBufferedPrintfLines, (int)MAXNUMBUFFEREDLINES);
         for (int i = 0; i < n; ++i)
@@ -954,8 +945,7 @@ float Win_GetWindowScalingFactor(HWND window)
     }
 
     // on older versions of windows, DPI was system-wide (not per monitor)
-    // and changing DPI required logging out and in again (AFAIK), so we only need
-    // to get it once
+    // and changing DPI required logging out and in again (AFAIK), so we only need to get it once
     static float scaling_factor = -1.0f;
     if (scaling_factor == -1.0f)
     {
@@ -964,8 +954,8 @@ float Win_GetWindowScalingFactor(HWND window)
         {
             return 1.0f;
         }
-        // "Number of pixels per logical inch along the screen width. In a system
-        // with multiple display monitors, this value is the same for all monitors."
+        // "Number of pixels per logical inch along the screen width. In a system with multiple display monitors, this
+        // value is the same for all monitors."
         int ppi = GetDeviceCaps(hdc, LOGPIXELSX);
         scaling_factor = static_cast<float>(ppi) / 96.0f;
     }
@@ -1016,8 +1006,7 @@ static void setHighDPIMode(void)
         SetProcessDPIAware();
     }
 
-#ifdef ID_ALLOW_TOOLS // also init function pointers for
-                      // Win_GetWindowScalingFactor() here
+#ifdef ID_ALLOW_TOOLS // also init function pointers for Win_GetWindowScalingFactor() here
     if (userDLL)
     {
         D3_GetDpiForWindow = (UINT(WINAPI *)(HWND))GetProcAddress(userDLL, "GetDpiForWindow");
@@ -1074,8 +1063,7 @@ static void loadWGLpointers()
     qwglSwapBuffers = SwapBuffers;
 }
 
-// calls wglChoosePixelFormatARB() or ChoosePixelFormat() matching the main
-// window from SDL
+// calls wglChoosePixelFormatARB() or ChoosePixelFormat() matching the main window from SDL
 int Win_ChoosePixelFormat(HDC hdc)
 {
     if (win32.wglChoosePixelFormatARB != NULL && win32.piAttribIList != NULL)
@@ -1089,8 +1077,7 @@ int Win_ChoosePixelFormat(HDC hdc)
         static bool haveWarned = false;
         if (!haveWarned)
         {
-            common->Warning("wglChoosePixelFormatARB() failed, falling back to "
-                            "ChoosePixelFormat()!\n");
+            common->Warning("wglChoosePixelFormatARB() failed, falling back to ChoosePixelFormat()!\n");
             haveWarned = true;
         }
     }
@@ -1168,8 +1155,7 @@ static void redirect_output(void)
 
     if (_stat(path, &st) == -1)
     {
-        /* oops, "My Documents/My Games/dhewm3" doesn't exist - does My Games/ at
-         * least exist? */
+        /* oops, "My Documents/My Games/dhewm3" doesn't exist - does My Games/ at least exist? */
         char myGamesPath[MAX_PATH];
         char *lastslash;
         memcpy(myGamesPath, path, MAX_PATH);
@@ -1185,9 +1171,8 @@ static void redirect_output(void)
             {
                 char msg[2048];
                 D3_snprintfC99(msg, sizeof(msg),
-                               "Failed to create '%s',\n error number is %d "
-                               "(%s).\nPermission problem?",
-                               myGamesPath, errno, strerror(errno));
+                               "Failed to create '%s',\n error number is %d (%s).\nPermission problem?", myGamesPath,
+                               errno, strerror(errno));
                 MessageBox(NULL, msg, "Can't create 'My Games' directory!", MB_OK | MB_ICONERROR);
                 exit(1);
             }
@@ -1197,8 +1182,8 @@ static void redirect_output(void)
         {
             char msg[2048];
             D3_snprintfC99(msg, sizeof(msg),
-                           "Failed to create '%s'\n(for savegames, configs and logs),\n error "
-                           "number is %d (%s)\nIs Documents/My Games/ write protected?",
+                           "Failed to create '%s'\n(for savegames, configs and logs),\n error number is %d (%s)\nIs "
+                           "Documents/My Games/ write protected?",
                            path, errno, strerror(errno));
             MessageBox(NULL, msg, "Can't create 'My Games/dhewm3' directory!", MB_OK | MB_ICONERROR);
             exit(1);
@@ -1243,8 +1228,8 @@ static void redirect_output(void)
         {
             char msg[2048];
             D3_snprintfC99(msg, sizeof(msg),
-                           "Failed to create '%s',\n error number is %d (%s)\nIs Documents/My "
-                           "Games/dhewm3/\n or dhewm3log.txt write protected?",
+                           "Failed to create '%s',\n error number is %d (%s)\nIs Documents/My Games/dhewm3/\n or "
+                           "dhewm3log.txt write protected?",
                            stdoutPath, errno, strerror(errno));
             MessageBox(NULL, msg, "Can't create dhewm3log.txt!", MB_OK | MB_ICONERROR);
             exit(1);
@@ -1269,10 +1254,10 @@ static void redirect_output(void)
         else
         {
             char msg[2048];
-            D3_snprintfC99(msg, sizeof(msg),
-                           "Failed to create '%s',\n error number is %d (%s)\nIs "
-                           "Documents/My Games/dhewm3/ write protected?",
-                           stderrPath, errno, strerror(errno));
+            D3_snprintfC99(
+                msg, sizeof(msg),
+                "Failed to create '%s',\n error number is %d (%s)\nIs Documents/My Games/dhewm3/ write protected?",
+                stderrPath, errno, strerror(errno));
             MessageBox(NULL, msg, "Can't create stderr.txt!", MB_OK | MB_ICONERROR);
             exit(1);
         }
@@ -1288,15 +1273,14 @@ static void redirect_output(void)
 
 /*
 ==================
-The pseudo-main function called from real main (either in SDL_win32_main.c or
-WinMain() below) NOTE: Currently argv[] are ANSI strings, not UTF-8 strings as
-usual in SDL2 and SDL3!
+The pseudo-main function called from real main (either in SDL_win32_main.c or WinMain() below)
+NOTE: Currently argv[] are ANSI strings, not UTF-8 strings as usual in SDL2 and SDL3!
 ==================
 */
 int SDL_main(int argc, char *argv[])
 {
-    // as the very first thing, redirect stdout to dhewm3log.txt (and stderr to
-    // stderr.txt) so we can log
+    // as the very first thing, redirect stdout to dhewm3log.txt (and stderr to stderr.txt)
+    // so we can log
     redirect_output();
     atexit(cleanup_output);
 
@@ -1315,8 +1299,7 @@ int SDL_main(int argc, char *argv[])
 #ifdef ID_DEDICATED
     MSG msg;
 #else
-    // tell windows we're high dpi aware, otherwise display scaling screws up the
-    // game
+    // tell windows we're high dpi aware, otherwise display scaling screws up the game
     setHighDPIMode();
 #endif
 
@@ -1373,8 +1356,7 @@ int SDL_main(int argc, char *argv[])
         return 0;
     }
 
-    // ::SetFocus( win32.hWnd ); // DG: let SDL handle focus, otherwise input is
-    // fucked up! (#100)
+    // ::SetFocus( win32.hWnd ); // DG: let SDL handle focus, otherwise input is fucked up! (#100)
 
     // main game loop
     while (1)
@@ -1526,9 +1508,9 @@ void idSysLocal::StartProcess(const char *exePath, bool doexit)
     }
 }
 
-// the actual WinMain(), based on SDL2_main and SDL3's SDL_main_impl.h +
-// SDL_RunApp() but modified to pass ANSI strings to SDL_main() instead of
-// UTF-8, because dhewm3 doesn't use Unicode internally (except for Dear ImGui,
+// the actual WinMain(), based on SDL2_main and SDL3's SDL_main_impl.h + SDL_RunApp()
+// but modified to pass ANSI strings to SDL_main() instead of UTF-8,
+// because dhewm3 doesn't use Unicode internally (except for Dear ImGui,
 // which doesn't use commandline arguments)
 // for SDL1.2, SDL_win32_main.c is still used instead
 #if SDL_VERSION_ATLEAST(2, 0, 0)
@@ -1570,10 +1552,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR szCmdLine, int sw)
     }
     for (i = 0; i < argc; ++i)
     {
-        // NOTE: SDL2+ uses CP_UTF8 instead of CP_ACP here (and in the other call
-        // below)
-        //       but Doom3 needs ANSI strings on Windows (so paths work with the
-        //       Windows ANSI APIs)
+        // NOTE: SDL2+ uses CP_UTF8 instead of CP_ACP here (and in the other call below)
+        //       but Doom3 needs ANSI strings on Windows (so paths work with the Windows ANSI APIs)
         const int ansiSize = WideCharToMultiByte(CP_ACP, 0, argvw[i], -1, NULL, 0, NULL, NULL);
         if (!ansiSize)
         { // uhoh?

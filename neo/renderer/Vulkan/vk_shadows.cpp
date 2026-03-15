@@ -20,10 +20,10 @@ the Free Software Foundation, either version 3 of the License, or
 
 #ifdef DHEWM3_RAYTRACING
 
+#include "sys/platform.h"
+#include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
-#include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include <string.h>
 
@@ -110,8 +110,7 @@ static void VK_RT_InitShadowPipeline(void)
 
     if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rahitModule == VK_NULL_HANDLE)
     {
-        common->Warning("VK RT: failed to load shadow ray shader modules — RT "
-                        "shadows disabled");
+        common->Warning("VK RT: failed to load shadow ray shader modules — RT shadows disabled");
         if (rgenModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, rgenModule, NULL);
         if (rmissModule != VK_NULL_HANDLE)
@@ -260,8 +259,7 @@ static void VK_RT_InitShadowPipeline(void)
     dsAlloc.pSetLayouts = layouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.shadowDescSets));
 
-    // --- Shadow mask sampler (used by the lighting pass to read the shadow mask)
-    // ---
+    // --- Shadow mask sampler (used by the lighting pass to read the shadow mask) ---
     {
         VkSamplerCreateInfo si = {};
         si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -434,8 +432,7 @@ void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
         vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, sm.width,
                           sm.height, 1);
 
-        // Barrier: shadow mask write must complete before sampling in the lighting
-        // pass
+        // Barrier: shadow mask write must complete before sampling in the lighting pass
         VkImageMemoryBarrier imgBarrier = {};
         imgBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         imgBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -448,9 +445,8 @@ void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
                              0, 0, NULL, 0, NULL, 1, &imgBarrier);
 
         // Clean up per-dispatch temporary resources
-        // (sampler and UBO buffer freed after queue submission via deferred cleanup
-        // in production; for correctness here we wait idle — a ring buffer approach
-        // is preferred long term)
+        // (sampler and UBO buffer freed after queue submission via deferred cleanup in production;
+        // for correctness here we wait idle — a ring buffer approach is preferred long term)
         vkQueueWaitIdle(vk.graphicsQueue);
         vkDestroySampler(vk.device, depthSampler, NULL);
         vkDestroyBuffer(vk.device, uboBuf, NULL);
@@ -475,8 +471,8 @@ void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // creates shadow mask images at the current swapchain resolution.
 // ---------------------------------------------------------------------------
 
-// Forward declared in vk_raytracing.h; the actual RT state init is in
-// vk_accelstruct.cpp. This is the shadow-specific second stage init.
+// Forward declared in vk_raytracing.h; the actual RT state init is in vk_accelstruct.cpp.
+// This is the shadow-specific second stage init.
 void VK_RT_InitShadows(void)
 {
     VK_RT_InitShadowPipeline();

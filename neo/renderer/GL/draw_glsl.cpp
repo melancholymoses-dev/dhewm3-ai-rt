@@ -20,18 +20,17 @@ the Free Software Foundation, either version 3 of the License, or
 
 GLSL INTERACTION RENDERING
 
-Drop-in replacement for draw_arb2.cpp, using modern GLSL (OpenGL 2.0+) instead
-of ARB assembly vertex/fragment programs. Activated by r_useGLSL 1.
+Drop-in replacement for draw_arb2.cpp, using modern GLSL (OpenGL 2.0+) instead of
+ARB assembly vertex/fragment programs. Activated by r_useGLSL 1.
 
-All uniform names and the rendering logic match the ARB backend for visual
-parity.
+All uniform names and the rendering logic match the ARB backend for visual parity.
 
 =========================================================================================
 */
 
+#include "sys/platform.h"
 #include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 // ---------------------------------------------------------------------------
 // GL 2.0+ function pointer declarations
@@ -157,53 +156,52 @@ static const char *interactionVertSrc = "#version 330 core\n"
                                         "}\n";
 
 // --- Interaction fragment shader ---
-static const char *interactionFragSrc = "#version 330 core\n"
-                                        "in vec4 vary_TexCoord_Bump;\n"
-                                        "in vec4 vary_TexCoord_Diffuse;\n"
-                                        "in vec4 vary_TexCoord_Specular;\n"
-                                        "in vec4 vary_LightProjection;\n"
-                                        "in vec2 vary_LightFalloff;\n"
-                                        "in vec3 vary_LightDir;\n"
-                                        "in vec3 vary_ViewDir;\n"
-                                        "in vec4 vary_Color;\n"
-                                        "uniform sampler2D u_BumpMap;\n"
-                                        "uniform sampler2D u_LightFalloff;\n"
-                                        "uniform sampler2D u_LightProjection;\n"
-                                        "uniform sampler2D u_DiffuseMap;\n"
-                                        "uniform sampler2D u_SpecularMap;\n"
-                                        "uniform sampler2D u_SpecularTable;\n"
-                                        "uniform vec4 u_DiffuseColor;\n"
-                                        "uniform vec4 u_SpecularColor;\n"
-                                        "uniform vec4 u_GammaBrightness;\n"
-                                        "uniform bool u_ApplyGamma;\n"
-                                        "out vec4 fragColor;\n"
-                                        "void main() {\n"
-                                        "    vec3 N = texture(u_BumpMap, vary_TexCoord_Bump.xy).rgb * 2.0 - 1.0;\n"
-                                        "    N = normalize(N);\n"
-                                        "    vec3 L = normalize(vary_LightDir);\n"
-                                        "    vec3 V = normalize(vary_ViewDir);\n"
-                                        "    vec3 H = normalize(L + V);\n"
-                                        "    vec2 lightProjTC = vary_LightProjection.xy / vary_LightProjection.w;\n"
-                                        "    vec3 lightColor  = texture(u_LightProjection, lightProjTC).rgb;\n"
-                                        "    float falloff    = texture(u_LightFalloff, vary_LightFalloff).r;\n"
-                                        "    vec3 attenuation = lightColor * falloff;\n"
-                                        "    float NdotL = max(dot(N, L), 0.0);\n"
-                                        "    vec3 diffuse = texture(u_DiffuseMap, vary_TexCoord_Diffuse.xy).rgb;\n"
-                                        "    diffuse *= u_DiffuseColor.rgb * NdotL;\n"
-                                        "    float NdotH = clamp(dot(N, H), 0.0, 1.0);\n"
-                                        "    vec3 specLookup = texture(u_SpecularTable, vec2(NdotH, 0.5)).rgb;\n"
-                                        "    vec3 specular = texture(u_SpecularMap, "
-                                        "vary_TexCoord_Specular.xy).rgb;\n"
-                                        "    specular *= u_SpecularColor.rgb * specLookup;\n"
-                                        "    vec3 color = (diffuse + specular) * attenuation * vary_Color.rgb;\n"
-                                        "    vec4 result = vec4(color, vary_Color.a);\n"
-                                        "    if (u_ApplyGamma) {\n"
-                                        "        vec3 brightened = clamp(result.rgb * u_GammaBrightness.rgb, 0.0, "
-                                        "1.0);\n"
-                                        "        result.rgb = pow(brightened, vec3(u_GammaBrightness.w));\n"
-                                        "    }\n"
-                                        "    fragColor = result;\n"
-                                        "}\n";
+static const char *interactionFragSrc =
+    "#version 330 core\n"
+    "in vec4 vary_TexCoord_Bump;\n"
+    "in vec4 vary_TexCoord_Diffuse;\n"
+    "in vec4 vary_TexCoord_Specular;\n"
+    "in vec4 vary_LightProjection;\n"
+    "in vec2 vary_LightFalloff;\n"
+    "in vec3 vary_LightDir;\n"
+    "in vec3 vary_ViewDir;\n"
+    "in vec4 vary_Color;\n"
+    "uniform sampler2D u_BumpMap;\n"
+    "uniform sampler2D u_LightFalloff;\n"
+    "uniform sampler2D u_LightProjection;\n"
+    "uniform sampler2D u_DiffuseMap;\n"
+    "uniform sampler2D u_SpecularMap;\n"
+    "uniform sampler2D u_SpecularTable;\n"
+    "uniform vec4 u_DiffuseColor;\n"
+    "uniform vec4 u_SpecularColor;\n"
+    "uniform vec4 u_GammaBrightness;\n"
+    "uniform bool u_ApplyGamma;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "    vec3 N = texture(u_BumpMap, vary_TexCoord_Bump.xy).rgb * 2.0 - 1.0;\n"
+    "    N = normalize(N);\n"
+    "    vec3 L = normalize(vary_LightDir);\n"
+    "    vec3 V = normalize(vary_ViewDir);\n"
+    "    vec3 H = normalize(L + V);\n"
+    "    vec2 lightProjTC = vary_LightProjection.xy / vary_LightProjection.w;\n"
+    "    vec3 lightColor  = texture(u_LightProjection, lightProjTC).rgb;\n"
+    "    float falloff    = texture(u_LightFalloff, vary_LightFalloff).r;\n"
+    "    vec3 attenuation = lightColor * falloff;\n"
+    "    float NdotL = max(dot(N, L), 0.0);\n"
+    "    vec3 diffuse = texture(u_DiffuseMap, vary_TexCoord_Diffuse.xy).rgb;\n"
+    "    diffuse *= u_DiffuseColor.rgb * NdotL;\n"
+    "    float NdotH = clamp(dot(N, H), 0.0, 1.0);\n"
+    "    vec3 specLookup = texture(u_SpecularTable, vec2(NdotH, 0.5)).rgb;\n"
+    "    vec3 specular = texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb;\n"
+    "    specular *= u_SpecularColor.rgb * specLookup;\n"
+    "    vec3 color = (diffuse + specular) * attenuation * vary_Color.rgb;\n"
+    "    vec4 result = vec4(color, vary_Color.a);\n"
+    "    if (u_ApplyGamma) {\n"
+    "        vec3 brightened = clamp(result.rgb * u_GammaBrightness.rgb, 0.0, 1.0);\n"
+    "        result.rgb = pow(brightened, vec3(u_GammaBrightness.w));\n"
+    "    }\n"
+    "    fragColor = result;\n"
+    "}\n";
 
 // --- Shadow volume vertex shader ---
 static const char *shadowVertSrc = "#version 330 core\n"
@@ -215,8 +213,7 @@ static const char *shadowVertSrc = "#version 330 core\n"
                                    "        vec3 dir = in_Position.xyz - u_LightOrigin.xyz;\n"
                                    "        gl_Position = u_ModelViewProjection * vec4(dir, 0.0);\n"
                                    "    } else {\n"
-                                   "        gl_Position = u_ModelViewProjection * vec4(in_Position.xyz, "
-                                   "1.0);\n"
+                                   "        gl_Position = u_ModelViewProjection * vec4(in_Position.xyz, 1.0);\n"
                                    "    }\n"
                                    "}\n";
 
@@ -657,8 +654,7 @@ static void RB_GLSL_CreateDrawInteractions(const drawSurf_t *surf)
     qglEnableVertexAttribArray(11); // normal
     qglEnableVertexAttribArray(3);  // color
 
-    // Texture unit 0: cube map for normalization (keep binding for ambient
-    // lights)
+    // Texture unit 0: cube map for normalization (keep binding for ambient lights)
     qglActiveTextureARB(GL_TEXTURE0_ARB);
     if (backEnd.vLight->lightShader->IsAmbientLight())
     {

@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "mru.h"
 #include "qe3.h"
+#include "mru.h"
 
 extern CEdit *g_pEdit;
 
@@ -269,7 +266,7 @@ int WINAPI QEW_SetupPixelFormat(HDC hDC, bool zbuffer)
 
 /*
  =======================================================================================================================
-        Error For abnormal program terminations
+    Error For abnormal program terminations
  =======================================================================================================================
  */
 void Error(char *error, ...)
@@ -288,8 +285,8 @@ void Error(char *error, ...)
     va_end(argptr);
 
     sprintf(text2,
-            "%s\nGetLastError() = %i - %i\nAn unrecoverable error has occured. "
-            "Would you like to edit Preferences before exiting Q3Radiant?",
+            "%s\nGetLastError() = %i - %i\nAn unrecoverable error has occured. Would you like to edit Preferences "
+            "before exiting Q3Radiant?",
             text, err, i);
 
     if (g_pParentWnd->MessageBox(text2, "Error", MB_YESNO) == IDYES)
@@ -319,7 +316,7 @@ void Warning(char *error, ...)
 
 /*
  =======================================================================================================================
-        FILE DIALOGS
+    FILE DIALOGS
  =======================================================================================================================
  */
 bool ConfirmModified(void)

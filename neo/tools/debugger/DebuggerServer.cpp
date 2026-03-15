@@ -21,23 +21,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #if defined(ID_ALLOW_TOOLS)
+#include "tools/edit_gui_common.h"
 #include "DebuggerServer.h"
 #include "DebuggerApp.h"
-#include "tools/edit_gui_common.h"
 #else
 #include "DebuggerServer.h"
 #include "debugger_common.h"
@@ -103,9 +100,8 @@ bool rvDebuggerServer::Initialize(void)
         return false;
     }
 
-    // we're using a condition variable to pause the game thread in
-    // rbDebuggerServer::Break() until rvDebuggerServer::Resume() is called (from
-    // another thread)
+    // we're using a condition variable to pause the game thread in rbDebuggerServer::Break()
+    // until rvDebuggerServer::Resume() is called (from another thread)
     mGameThreadBreakCond = SDL_CreateCond();
     mGameThreadBreakLock = SDL_CreateMutex();
 
@@ -117,8 +113,8 @@ bool rvDebuggerServer::Initialize(void)
     Sys_StringToNetAdr(com_dbgClientAdr.GetString(), &mClientAdr, true);
     mClientAdr.port = 27981;
 
-    // Attempt to let the server know we are here.  The server may not be running
-    // so this message will just get ignored.
+    // Attempt to let the server know we are here.  The server may not be running so this
+    // message will just get ignored.
     SendMessage(DBMSG_CONNECT);
 
     return true;
@@ -348,9 +344,9 @@ void rvDebuggerServer::HandleAddBreakpoint(idBitMsg *msg)
 ================
 rvDebuggerServer::HandleRemoveBreakpoint
 
-Handle the DBMSG_REMOVEBREAKPOINT message being sent by the debugger client.
-This message is handled by removing the breakpoint that matches the given id
-from the list.
+Handle the DBMSG_REMOVEBREAKPOINT message being sent by the debugger client.  This
+message is handled by removing the breakpoint that matches the given id from the
+list.
 ================
 */
 void rvDebuggerServer::HandleRemoveBreakpoint(idBitMsg *msg)
@@ -420,8 +416,7 @@ void rvDebuggerServer::HandleInspectCallstack(idBitMsg *msg)
 ================
 rvDebuggerServer::HandleInspectThreads
 
-Send the list of the current threads in the interpreter back to the debugger
-client
+Send the list of the current threads in the interpreter back to the debugger client
 ================
 */
 void rvDebuggerServer::HandleInspectThreads(idBitMsg *msg)
@@ -439,8 +434,7 @@ void rvDebuggerServer::HandleInspectThreads(idBitMsg *msg)
     // Write the number of threads to the message
     msgOut.WriteShort((short)((idGameEditExt *)gameEdit)->GetTotalScriptThreads());
 
-    // Loop through all of the threads and write their name and number to the
-    // message
+    // Loop through all of the threads and write their name and number to the message
     for (i = 0; i < ((idGameEditExt *)gameEdit)->GetTotalScriptThreads(); i++)
     {
         ((idGameEditExt *)gameEdit)
@@ -455,8 +449,7 @@ void rvDebuggerServer::HandleInspectThreads(idBitMsg *msg)
 ================
 rvDebuggerServer::HandleExecCommand
 
-Send the list of the current loaded scripts in the interpreter back to the
-debugger client
+Send the list of the current loaded scripts in the interpreter back to the debugger client
 ================
 */
 void rvDebuggerServer::HandleExecCommand(idBitMsg *msg)
@@ -472,8 +465,7 @@ void rvDebuggerServer::HandleExecCommand(idBitMsg *msg)
 ================
 rvDebuggerServer::HandleInspectScripts
 
-Send the list of the current loaded scripts in the interpreter back to the
-debugger client
+Send the list of the current loaded scripts in the interpreter back to the debugger client
 ================
 */
 void rvDebuggerServer::HandleInspectScripts(idBitMsg *msg)
@@ -495,8 +487,7 @@ void rvDebuggerServer::HandleInspectScripts(idBitMsg *msg)
 ================
 rvDebuggerServer::HandleInspectVariable
 
-Respondes to a request from the debugger client to inspect the value of a given
-variable
+Respondes to a request from the debugger client to inspect the value of a given variable
 ================
 */
 void rvDebuggerServer::HandleInspectVariable(idBitMsg *msg)
@@ -629,9 +620,8 @@ void rvDebuggerServer::CheckBreakpoints(idInterpreter *interpreter, idProgram *p
         // DG: onceOnly support
         if (bp->GetOnceOnly())
         {
-            // we'll do the one Break() a few lines below; remove it here while
-            // mBreakpoints is unmodified (it can be modifed from the client while in
-            // Break() below)
+            // we'll do the one Break() a few lines below; remove it here while mBreakpoints is unmodified
+            // (it can be modifed from the client while in Break() below)
             mBreakpoints.RemoveIndex(i);
             delete bp;
 
@@ -708,13 +698,11 @@ void rvDebuggerServer::Break(idInterpreter *interpreter, idProgram *program, int
 
     SendPacket(msg.GetData(), msg.GetSize());
 
-    // Suspend the game thread.  Since this will be called from within the main
-    // game thread execution wont return until after the thread is resumed DG: the
-    // original code used Win32 SuspendThread() here, but as there is no
-    // equivalent
-    //     function in SDL and as this is only called within the main game thread
-    //     anyway, just use a condition variable to put this thread to sleep until
-    //     Resume() has set mBreak
+    // Suspend the game thread.  Since this will be called from within the main game thread
+    // execution wont return until after the thread is resumed
+    // DG: the original code used Win32 SuspendThread() here, but as there is no equivalent
+    //     function in SDL and as this is only called within the main game thread anyway,
+    //     just use a condition variable to put this thread to sleep until Resume() has set mBreak
     SDL_LockMutex(mGameThreadBreakLock);
     while (mBreak)
     {
@@ -726,8 +714,7 @@ void rvDebuggerServer::Break(idInterpreter *interpreter, idProgram *program, int
     SendMessage(DBMSG_RESUMED);
 
     // this should be platform specific
-    // TODO: maybe replace with SDL code? or does it not matter if debugger client
-    // runs on another machine?
+    // TODO: maybe replace with SDL code? or does it not matter if debugger client runs on another machine?
 #if defined(ID_ALLOW_TOOLS)
     // This is to give some time between the keypress that
     // told us to resume and the setforeground window.  Otherwise the quake window
@@ -745,9 +732,8 @@ void rvDebuggerServer::Break(idInterpreter *interpreter, idProgram *program, int
     // HVG_Note : there be dragons here. somewhere.
     Sys_GrabMouseCursor(true);
 
-    // Clear all commands that were generated before we went into suspended mode.
-    // This is to ensure we dont have mouse downs with no ups because the context
-    // was changed.
+    // Clear all commands that were generated before we went into suspended mode.  This is
+    // to ensure we dont have mouse downs with no ups because the context was changed.
     idKeyInput::ClearStates();
 }
 

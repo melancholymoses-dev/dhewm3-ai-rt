@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,13 +37,12 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define SDL_GL_DeleteContext SDL_GL_DestroyContext
 typedef SDL_WindowFlags My_SDL_WindowFlags;
 #else // SDL1.2 or SDL2
-// for compat with SDL3 - unfortunately SDL2 also has a SDL_WindowFlags type,
-// but it's an enum
+// for compat with SDL3 - unfortunately SDL2 also has a SDL_WindowFlags type, but it's an enum
 typedef Uint32 My_SDL_WindowFlags;
 #endif
 
-#include "framework/Licensee.h"
 #include "sys/platform.h"
+#include "framework/Licensee.h"
 
 #include "renderer/tr_local.h"
 
@@ -150,9 +146,8 @@ static void SetSDLIcon()
 {
     Uint32 rmask, gmask, bmask, amask;
 
-    // ok, the following is pretty stupid.. SDL_CreateRGBSurfaceFrom() pretends to
-    // use a void* for the data, but it's really treated as endian-specific
-    // Uint32* ...
+    // ok, the following is pretty stupid.. SDL_CreateRGBSurfaceFrom() pretends to use a void* for the data,
+    // but it's really treated as endian-specific Uint32* ...
 #if SDL_BYTEORDER == SDL_BIG_ENDIAN
     rmask = 0xff000000;
     gmask = 0x00ff0000;
@@ -204,10 +199,9 @@ bool GLimp_Init(glimpParms_t parms)
     if (parms.fullScreen == 1)
     {
 #if SDL_VERSION_ATLEAST(3, 0, 0)
-        // in SDL3 windows with SDL_WINDOW_FULLSCREEN set are fullscreen-desktop by
-        // default and for exclusive fullscreen SDL_SetWindowFullscreenMode() must
-        // be called after creating the window, so only set the flag if we want
-        // fullscreen-desktop mode
+        // in SDL3 windows with SDL_WINDOW_FULLSCREEN set are fullscreen-desktop by default
+        // and for exclusive fullscreen SDL_SetWindowFullscreenMode() must be called
+        // after creating the window, so only set the flag if we want fullscreen-desktop mode
         if (parms.fullScreen && parms.fullScreenDesktop)
         {
             flags |= SDL_WINDOW_FULLSCREEN;
@@ -228,35 +222,32 @@ bool GLimp_Init(glimpParms_t parms)
         flags |= SDL_WINDOW_RESIZABLE;
     }
 
-    /* Doom3 has the nasty habit of modifying the default framebuffer's alpha
-     * channel and then relying on those modifications in blending operations
-     * (using GL_DST_(ONE_MINUS_)ALPHA). So far that hasn't been much of a
-     * problem, because Windows, macOS, X11 etc just ignore the alpha chan (unless
-     * maybe you explicitly tell a window it should be transparent).
-     * Unfortunately, Wayland by default *does* use the alpha channel, which often
-     * leads to rendering bugs (the window is partly transparent or very white in
-     * areas with low alpha). Mesa introduced an EGL extension that's supposed to
-     * fix that (EGL_EXT_present_opaque) and newer SDL2 versions use it by default
-     * (in the Wayland backend). Unfortunately, the implementation of that
-     * extension was broken (at least in Mesa before 24.1), seems like they just
-     * give you a visual without any alpha chan - which doesn't work for Doom3, as
-     * it needs a functioning alpha chan for blending operations, see above. See
-     * also: https://gitlab.freedesktop.org/mesa/mesa/-/issues/5886
+    /* Doom3 has the nasty habit of modifying the default framebuffer's alpha channel and then
+     * relying on those modifications in blending operations (using GL_DST_(ONE_MINUS_)ALPHA).
+     * So far that hasn't been much of a problem, because Windows, macOS, X11 etc
+     * just ignore the alpha chan (unless maybe you explicitly tell a window it should be transparent).
+     * Unfortunately, Wayland by default *does* use the alpha channel, which often leads to
+     * rendering bugs (the window is partly transparent or very white in areas with low alpha).
+     * Mesa introduced an EGL extension that's supposed to fix that (EGL_EXT_present_opaque)
+     * and newer SDL2 versions use it by default (in the Wayland backend).
+     * Unfortunately, the implementation of that extension was broken (at least in Mesa before 24.1),
+     * seems like they just give you a visual without any alpha chan - which doesn't
+     * work for Doom3, as it needs a functioning alpha chan for blending operations, see above.
+     * See also: https://gitlab.freedesktop.org/mesa/mesa/-/issues/5886
      *
-     * So to make sure dhewm3 (finally) works as expected on Wayland, we tell SDL2
-     * to allow transparency and then fill the alpha-chan ourselves in
-     * RB_SwapBuffers() (unless the user disables that with r_fillWindowAlphaChan
-     * 0)
+     * So to make sure dhewm3 (finally) works as expected on Wayland, we tell SDL2 to
+     * allow transparency and then fill the alpha-chan ourselves in RB_SwapBuffers()
+     * (unless the user disables that with r_fillWindowAlphaChan 0)
      *
-     * NOTE: This bug is fixed in Mesa 24.1 and newer, and doesn't seem to occur
-     * with recent NVIDIA drivers either, so for SDL3 (which should be mostly used
-     * with current drivers/mesa) I don't enable this hack by default. If
-     * r_fillWindowAlphaChan == 1, it's enabled when creating the window, though.
+     * NOTE: This bug is fixed in Mesa 24.1 and newer, and doesn't seem to occur with recent
+     *       NVIDIA drivers either, so for SDL3 (which should be mostly used with current drivers/mesa)
+     *       I don't enable this hack by default. If r_fillWindowAlphaChan == 1, it's enabled
+     *       when creating the window, though.
      */
 #ifdef SDL_HINT_VIDEO_EGL_ALLOW_TRANSPARENCY
     SDL_SetHint(SDL_HINT_VIDEO_EGL_ALLOW_TRANSPARENCY, "1");
-#elif SDL_MAJOR_VERSION == 2 // little hack so this works if the SDL2 version used for building is
-                             // older than runtime version
+#elif SDL_MAJOR_VERSION ==                                                                                             \
+    2 // little hack so this works if the SDL2 version used for building is older than runtime version
     SDL_SetHint("SDL_VIDEO_EGL_ALLOW_TRANSPARENCY", "1");
 #endif
 #endif
@@ -359,8 +350,7 @@ bool GLimp_Init(glimpParms_t parms)
 
         if (parms.fullScreen && parms.fullScreenDesktop)
         {
-            common->Printf("Will create a pseudo-fullscreen window at the current "
-                           "desktop resolution\n");
+            common->Printf("Will create a pseudo-fullscreen window at the current desktop resolution\n");
         }
         else
         {
@@ -444,11 +434,10 @@ bool GLimp_Init(glimpParms_t parms)
         SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, flags);
 
         // See above for the big comment about Wayland and alpha channels.
-        // When using SDL3 I assume that people usually won't be affected by this
-        // bug, because it's fixed in recent Mesa versions (and also works with the
-        // NVIDIA driver). However, with `r_fillWindowAlphaChan 1` its usage can
-        // still be enforced on Unix-like platforms (I don't think there's a point
-        // in this on Windows or Mac)
+        // When using SDL3 I assume that people usually won't be affected by this bug,
+        // because it's fixed in recent Mesa versions (and also works with the NVIDIA driver).
+        // However, with `r_fillWindowAlphaChan 1` its usage can still be enforced
+        // on Unix-like platforms (I don't think there's a point in this on Windows or Mac)
 #if defined(__unix__) && !defined(__APPLE__)
         if (cvarSystem->GetCVarInteger("r_fillWindowAlphaChan") == 1)
         {
@@ -463,8 +452,7 @@ bool GLimp_Init(glimpParms_t parms)
             common->Warning("Couldn't set GL mode %d/%d/%d with %dx MSAA: %s", channelcolorbits, tdepthbits,
                             tstencilbits, parms.multiSamples, SDL_GetError());
 
-            // before trying to reduce color channel size or whatever, first try
-            // reducing MSAA, if possible
+            // before trying to reduce color channel size or whatever, first try reducing MSAA, if possible
             if (multisamples > 1)
             {
                 multisamples = (multisamples <= 2) ? 0 : (multisamples / 2);
@@ -478,8 +466,7 @@ bool GLimp_Init(glimpParms_t parms)
         }
         else
         {
-            // creating the window succeeded, so adjust r_multiSamples to the value
-            // that was actually used
+            // creating the window succeeded, so adjust r_multiSamples to the value that was actually used
             parms.multiSamples = multisamples;
             r_multiSamples.SetInteger(multisamples);
         }
@@ -498,8 +485,7 @@ bool GLimp_Init(glimpParms_t parms)
                     common->Warning("Can't set window fullscreen mode: %s\n", SDL_GetError());
                     SDL_DestroyWindow(window);
                     window = NULL;
-                    return false; // trying other color depth etc is unlikely to help with
-                                  // this issue
+                    return false; // trying other color depth etc is unlikely to help with this issue
                 }
 
                 if (!SDL_SetWindowFullscreen(window, true))
@@ -507,8 +493,7 @@ bool GLimp_Init(glimpParms_t parms)
                     common->Warning("Can't switch window to fullscreen mode: %s\n", SDL_GetError());
                     SDL_DestroyWindow(window);
                     window = NULL;
-                    return false; // trying other color depth etc is unlikely to help with
-                                  // this issue
+                    return false; // trying other color depth etc is unlikely to help with this issue
                 }
             }
             else
@@ -516,8 +501,7 @@ bool GLimp_Init(glimpParms_t parms)
                 common->Warning("Can't get display mode: %s\n", SDL_GetError());
                 SDL_DestroyWindow(window);
                 window = NULL;
-                return false; // trying other color depth etc is unlikely to help with
-                              // this issue
+                return false; // trying other color depth etc is unlikely to help with this issue
             }
         }
 
@@ -526,8 +510,7 @@ bool GLimp_Init(glimpParms_t parms)
             common->Warning("SDL_SyncWindow() failed: %s\n", SDL_GetError());
             SDL_DestroyWindow(window);
             window = NULL;
-            return false; // trying other color depth etc is unlikely to help with
-                          // this issue
+            return false; // trying other color depth etc is unlikely to help with this issue
         }
 
 #else  // SDL2
@@ -539,8 +522,7 @@ bool GLimp_Init(glimpParms_t parms)
             common->Warning("Couldn't set GL mode %d/%d/%d with %dx MSAA: %s", channelcolorbits, tdepthbits,
                             tstencilbits, parms.multiSamples, SDL_GetError());
 
-            // before trying to reduce color channel size or whatever, first try
-            // reducing MSAA, if possible
+            // before trying to reduce color channel size or whatever, first try reducing MSAA, if possible
             if (multisamples > 1)
             {
                 multisamples = (multisamples <= 2) ? 0 : (multisamples / 2);
@@ -554,8 +536,7 @@ bool GLimp_Init(glimpParms_t parms)
         }
         else
         {
-            // creating the window succeeded, so adjust r_multiSamples to the value
-            // that was actually used
+            // creating the window succeeded, so adjust r_multiSamples to the value that was actually used
             parms.multiSamples = multisamples;
             r_multiSamples.SetInteger(multisamples);
         }
@@ -572,8 +553,7 @@ bool GLimp_Init(glimpParms_t parms)
                 SDL_DestroyWindow(window);
                 window = NULL;
                 common->Warning("Can't get display mode: %s\n", SDL_GetError());
-                return false; // trying other color depth etc is unlikely to help with
-                              // this issue
+                return false; // trying other color depth etc is unlikely to help with this issue
             }
             if ((real_mode.w != parms.width) || (real_mode.h != parms.height))
             {
@@ -598,8 +578,7 @@ bool GLimp_Init(glimpParms_t parms)
 
                     common->Warning("Can't force resolution to %ix%i: %s\n", parms.width, parms.height, SDL_GetError());
 
-                    return false; // trying other color depth etc is unlikely to help with
-                                  // this issue
+                    return false; // trying other color depth etc is unlikely to help with this issue
                 }
 
                 /* The SDL doku says, that SDL_SetWindowSize() shouldn't be
@@ -615,8 +594,7 @@ bool GLimp_Init(glimpParms_t parms)
 
                     common->Warning("Can't get display mode: %s\n", SDL_GetError());
 
-                    return false; // trying other color depth etc is unlikely to help with
-                                  // this issue
+                    return false; // trying other color depth etc is unlikely to help with this issue
                 }
 
                 if ((real_mode.w != parms.width) || (real_mode.h != parms.height))
@@ -627,8 +605,7 @@ bool GLimp_Init(glimpParms_t parms)
                     common->Warning("Still in wrong display mode: %ix%i instead of %ix%i\n", real_mode.w, real_mode.h,
                                     parms.width, parms.height);
 
-                    return false; // trying other color depth etc is unlikely to help with
-                                  // this issue
+                    return false; // trying other color depth etc is unlikely to help with this issue
                 }
                 common->Warning("Now we have the requested resolution (%d x %d)\n", parms.width, parms.height);
             }
@@ -637,8 +614,7 @@ bool GLimp_Init(glimpParms_t parms)
 
         if (usingVulkan)
         {
-            // Vulkan windows cannot have an OpenGL context — surface is created later
-            // by VKimp_Init.
+            // Vulkan windows cannot have an OpenGL context — surface is created later by VKimp_Init.
             context = NULL;
             common->Printf("VK: SDL Vulkan window created (%dx%d)\n", glConfig.vidWidth, glConfig.vidHeight);
         }
@@ -660,8 +636,7 @@ bool GLimp_Init(glimpParms_t parms)
         const char *fsStr = glConfig.isFullscreen ? "fullscreen " : "";
         if ((int)glConfig.winWidth != glConfig.vidWidth)
         {
-            common->Printf("Got a HighDPI %swindow with physical resolution %d x %d "
-                           "and virtual resolution %g x %g\n",
+            common->Printf("Got a HighDPI %swindow with physical resolution %d x %d and virtual resolution %g x %g\n",
                            fsStr, glConfig.vidWidth, glConfig.vidHeight, glConfig.winWidth, glConfig.winHeight);
         }
         else
@@ -689,8 +664,7 @@ bool GLimp_Init(glimpParms_t parms)
             common->DPrintf("Couldn't set GL mode %d/%d/%d: %s", channelcolorbits, tdepthbits, tstencilbits,
                             SDL_GetError());
 
-            // before trying to reduce color channel size or whatever, first try
-            // reducing MSAA, if possible
+            // before trying to reduce color channel size or whatever, first try reducing MSAA, if possible
             if (multisamples > 1)
             {
                 multisamples = (multisamples <= 2) ? 0 : (multisamples / 2);
@@ -704,8 +678,7 @@ bool GLimp_Init(glimpParms_t parms)
         }
         else
         {
-            // creating the window succeeded, so adjust r_multiSamples to the value
-            // that was actually used
+            // creating the window succeeded, so adjust r_multiSamples to the value that was actually used
             parms.multiSamples = multisamples;
             r_multiSamples.SetInteger(multisamples);
         }
@@ -796,8 +769,7 @@ bool GLimp_Init(glimpParms_t parms)
             if (win32.wglGetPixelFormatAttribivARB != NULL && win32.wglChoosePixelFormatARB != NULL)
             {
                 const int queryAttributes[] = {
-                    // equivalents of all the SDL_GL_* attributes we set above (and ones
-                    // set implicitly)
+                    // equivalents of all the SDL_GL_* attributes we set above (and ones set implicitly)
                     WGL_DRAW_TO_WINDOW_ARB,
                     WGL_RED_BITS_ARB,
                     WGL_GREEN_BITS_ARB,
@@ -945,13 +917,11 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
 #endif
         )
         {
-            common->Warning("GLimp_SetScreenParms(): Couldn't switch to windowed "
-                            "mode, SDL error: %s\n",
+            common->Warning("GLimp_SetScreenParms(): Couldn't switch to windowed mode, SDL error: %s\n",
                             SDL_GetError());
             return false;
         }
-        SDL_RestoreWindow(window); // make sure we're not maximized, then setting
-                                   // the size wouldn't work
+        SDL_RestoreWindow(window); // make sure we're not maximized, then setting the size wouldn't work
         SDL_SetWindowSize(window, parms.width, parms.height);
 #if SDL_VERSION_ATLEAST(3, 0, 0)
         SDL_SyncWindow(window);
@@ -1034,8 +1004,7 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
         {
             if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
             {
-                common->Warning("GLimp_SetScreenParms(): Couldn't switch to fullscreen "
-                                "desktop mode, SDL error: %s\n",
+                common->Warning("GLimp_SetScreenParms(): Couldn't switch to fullscreen desktop mode, SDL error: %s\n",
                                 SDL_GetError());
                 return false;
             }
@@ -1047,14 +1016,12 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
             wanted_mode.w = parms.width;
             wanted_mode.h = parms.height;
 
-            // TODO: refresh rate? parms.displayHz should probably try to get most
-            // similar mode before trying to set it?
+            // TODO: refresh rate? parms.displayHz should probably try to get most similar mode before trying to set it?
 
             if (SDL_SetWindowDisplayMode(window, &wanted_mode) != 0)
             {
-                common->Warning("GLimp_SetScreenParms(): Can't set fullscreen "
-                                "resolution to %ix%i: %s\n",
-                                wanted_mode.w, wanted_mode.h, SDL_GetError());
+                common->Warning("GLimp_SetScreenParms(): Can't set fullscreen resolution to %ix%i: %s\n", wanted_mode.w,
+                                wanted_mode.h, SDL_GetError());
                 return false;
             }
 
@@ -1070,14 +1037,12 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
             if (SDL_GetWindowDisplayMode(window, &real_mode) != 0)
             {
                 common->Warning("GLimp_SetScreenParms(): Can't get display mode: %s\n", SDL_GetError());
-                return false; // trying other color depth etc is unlikely to help with
-                              // this issue
+                return false; // trying other color depth etc is unlikely to help with this issue
             }
 
             if ((real_mode.w != wanted_mode.w) || (real_mode.h != wanted_mode.h))
             {
-                common->Warning("GLimp_SetScreenParms(): Still in wrong display mode: "
-                                "%ix%i instead of %ix%i\n",
+                common->Warning("GLimp_SetScreenParms(): Still in wrong display mode: %ix%i instead of %ix%i\n",
                                 real_mode.w, real_mode.h, wanted_mode.w, wanted_mode.h);
 
                 return false;
@@ -1090,15 +1055,13 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
 
     return true;
 
-#else // SDL1.2 - I don't feel like implementing this for old SDL, just do a
-      // full vid_restart, like before
+#else // SDL1.2 - I don't feel like implementing this for old SDL, just do a full vid_restart, like before
     return false;
 #endif
 }
 
 // sets a glimpParms_t based on the current true state (according to SDL)
-// Note: here, ret.fullScreenDesktop is only true if currently in fullscreen
-// desktop mode
+// Note: here, ret.fullScreenDesktop is only true if currently in fullscreen desktop mode
 //       (and ret.fullScreen is true as well)
 glimpParms_t GLimp_GetCurState()
 {
@@ -1133,8 +1096,7 @@ glimpParms_t GLimp_GetCurState()
         }
         else
         {
-            // SDL_WINDOW_FULLSCREEN is set, but SDL_GetWindowFullscreenMode() returns
-            // NULL
+            // SDL_WINDOW_FULLSCREEN is set, but SDL_GetWindowFullscreenMode() returns NULL
             // => fullscreen desktop mode
             ret.fullScreenDesktop = true;
         }
@@ -1154,8 +1116,7 @@ glimpParms_t GLimp_GetCurState()
 
     ret.fullScreenDesktop = (winFlags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP;
     if (ret.fullScreen && !ret.fullScreenDesktop)
-    { // I think SDL_GetWindowDisplayMode() is only
-      // for "real" fullscreen?
+    { // I think SDL_GetWindowDisplayMode() is only for "real" fullscreen?
         SDL_DisplayMode real_mode = {};
         if (SDL_GetWindowDisplayMode(window, &real_mode) == 0)
         {
@@ -1173,8 +1134,7 @@ glimpParms_t GLimp_GetCurState()
     ret.multiSamples = curMultiSamples;
 
     if (ret.width == 0 && ret.height == 0)
-    { // windowed mode, fullscreen-desktop mode or
-      // SDL_GetWindowDisplayMode() failed
+    { // windowed mode, fullscreen-desktop mode or SDL_GetWindowDisplayMode() failed
         SDL_GetWindowSize(window, &ret.width, &ret.height);
     }
 
@@ -1248,8 +1208,7 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 #if SDL_VERSION_ATLEAST(3, 0, 0)
     if (!r_gammaInShader.GetBool())
     {
-        common->Warning("This build of dhewm3 uses SDL3, which does not support "
-                        "hardware gamma.");
+        common->Warning("This build of dhewm3 uses SDL3, which does not support hardware gamma.");
         common->Warning("If you want to adjust gamma or brightness, enable r_gammaInShader");
     }
 #else // SDL2 and SDL1.2
@@ -1352,10 +1311,8 @@ void GLimp_ResetGamma()
 #if !SDL_VERSION_ATLEAST(3, 0, 0) // only for SDL2 and SDL1.2
     if (gammaOrigError)
     {
-        common->Warning("Can't reset hardware gamma because getting the Gamma Ramp "
-                        "at startup failed!\n");
-        common->Warning("You might have to restart the game for gamma/brightness "
-                        "in shaders to work properly.\n");
+        common->Warning("Can't reset hardware gamma because getting the Gamma Ramp at startup failed!\n");
+        common->Warning("You might have to restart the game for gamma/brightness in shaders to work properly.\n");
         return;
     }
 
@@ -1451,8 +1408,8 @@ void GLimp_GrabInput(int flags)
     }
 #else
     SDL_ShowCursor((flags & GRAB_HIDECURSOR) ? SDL_DISABLE : SDL_ENABLE);
-    // ignore GRAB_GRABMOUSE, SDL1.2 doesn't support grabbing without relative
-    // mode so only grab if we want relative mode
+    // ignore GRAB_GRABMOUSE, SDL1.2 doesn't support grabbing without relative mode
+    // so only grab if we want relative mode
     SDL_WM_GrabInput((flags & GRAB_RELATIVEMOUSE) ? SDL_GRAB_ON : SDL_GRAB_OFF);
 #endif
 }
@@ -1486,8 +1443,7 @@ bool GLimp_SetWindowResizable(bool enableResizable)
     SDL_SetWindowResizable(window, (SDL_bool)enableResizable);
     return true;
 #else
-    common->Warning("dhewm3 must be built with SDL 2.0.5 or newer to change "
-                    "resizability of existing windows!");
+    common->Warning("dhewm3 must be built with SDL 2.0.5 or newer to change resizability of existing windows!");
     return false;
 #endif
 }
@@ -1511,13 +1467,11 @@ void GLimp_UpdateWindowSize()
     if ((winFlags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN)
     {
         // real fullscreen mode => must use SDL_GetWindowDisplayMode()
-        // TODO: well, theoretically SDL_GetWindowSize() should work for fullscreen
-        // mode as well,
+        // TODO: well, theoretically SDL_GetWindowSize() should work for fullscreen mode as well,
         //       but not in all SDL versions, I think?
-        //  And in fact it seems like with "real" fullscreen windows on XWayland
-        //  SDL_GetWindowSize() returns the correct values and
-        //  SDL_GetWindowDisplayMode() doesn't, when the fullscreen resolution is
-        //  lower than the desktop resolution.. it's kind of messy.
+        //  And in fact it seems like with "real" fullscreen windows on XWayland SDL_GetWindowSize()
+        //  returns the correct values and SDL_GetWindowDisplayMode() doesn't, when the fullscreen
+        //  resolution is lower than the desktop resolution.. it's kind of messy.
         SDL_DisplayMode dm = {};
         if (SDL_GetWindowDisplayMode(window, &dm) == 0)
         {

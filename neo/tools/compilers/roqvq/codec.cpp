@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/FileSystem.h"
 #include "framework/Session.h"
-#include "sys/platform.h"
 
 #include "tools/compilers/roqvq/codec.h"
 
@@ -100,9 +97,8 @@ codec::~codec()
 
 void codec::Sort(float *list, int *intIndex, int numElements)
 {
-#define STRIDE_FACTOR                                                                                                  \
-    3 // good value for stride factor is not well-understood
-      // 3 is a fairly good choice (Sedgewick)
+#define STRIDE_FACTOR 3 // good value for stride factor is not well-understood
+                        // 3 is a fairly good choice (Sedgewick)
     int c, d, stride;
     bool found;
 
@@ -647,8 +643,8 @@ void codec::MakePreviousImage(quadcel *pquad)
                     dx = pquad[i].xat - ((pquad[i].domain >> 8) - 128) * 2;
                     dy = pquad[i].yat - ((pquad[i].domain & 0xff) - 128) * 2;
                 }
-                //				if (pquad[i].yat == 0)
-                // common->Printf("dx = %d, dy = %d, xat = %d\n", dx, dy, pquad[i].xat);
+                //				if (pquad[i].yat == 0) common->Printf("dx = %d, dy = %d, xat = %d\n", dx, dy,
+                //pquad[i].xat);
 
                 ind = (dy * pWide + dx) * 4;
                 for (dy = 0; dy < size; dy++)
@@ -672,8 +668,8 @@ void codec::MakePreviousImage(quadcel *pquad)
                     }
                     ind += (pWide - size) * 4;
                 }
-                //				if (diff == false && whichFrame)
-                // common->Printf("drawImage: FCC just changed the same thing\n");
+                //				if (diff == false && whichFrame) common->Printf("drawImage: FCC just changed the same
+                //thing\n");
                 break;
             case MOT:
                 break;
@@ -1166,10 +1162,10 @@ void codec::LowestQuad(quadcel *qtemp, int *status, float *snr, int bweigh)
     quickadd[FCC] = 1;
     quickadd[PAT] = 1;
     /*
-            if (slop > theRoQ->NormalFrameSize()) {
-                    quickadd[CCC] = 0.5f;
-                    quickadd[PAT] = 1.0f;
-            }
+        if (slop > theRoQ->NormalFrameSize()) {
+            quickadd[CCC] = 0.5f;
+            quickadd[PAT] = 1.0f;
+        }
     */
     wtemp = 99999;
 
@@ -1458,11 +1454,11 @@ void codec::SparseEncode(void)
     temp = dxMean = dyMean = 0;
     /*
     for( i=0; i<numQuadCels; i++ ) {
-            if (qStatus[i].size && qStatus[i].status == FCC) {
-                    dxMean += (qStatus[i].domain >> 8  ) - 128;
-                    dyMean += (qStatus[i].domain & 0xff) - 128;
-                    temp++;
-            }
+        if (qStatus[i].size && qStatus[i].status == FCC) {
+            dxMean += (qStatus[i].domain >> 8  ) - 128;
+            dyMean += (qStatus[i].domain & 0xff) - 128;
+            temp++;
+        }
     }
     if (temp) { dxMean /= temp; dyMean /= temp; }
     */
@@ -1494,8 +1490,7 @@ void codec::SparseEncode(void)
                     if ((dx < 0 || dx > 15 || dy < 0 || dy > 15) && qStatus[i].snr[FCC] != 9999 &&
                         qStatus[i].status == FCC)
                     {
-                        common->Printf("sparseEncode: something is wrong here, dx/dy is "
-                                       "%d,%d after being clamped\n",
+                        common->Printf("sparseEncode: something is wrong here, dx/dy is %d,%d after being clamped\n",
                                        dx, dy);
                         common->Printf("xat:    %d\n", qStatus[i].xat);
                         common->Printf("yat:    %d\n", qStatus[i].yat);
@@ -1512,16 +1507,16 @@ void codec::SparseEncode(void)
             theRoQ->MarkQuadx(qStatus[i].xat, qStatus[i].yat, qStatus[i].size, qStatus[i].rsnr, qStatus[i].status);
             /*
             if (qStatus[i].status==FCC && qStatus[i].snr[FCC]>qStatus[i].snr[SLD]) {
-                                    common->Printf("sparseEncode: something is wrong
-            here\n"); common->Printf("xat:    %d\n", qStatus[i].xat);
-                                    common->Printf("yat:    %d\n", qStatus[i].yat);
-                                    common->Printf("size    %d\n", qStatus[i].size);
-                                    common->Printf("type:   %d\n", qStatus[i].status);
-                                    common->Printf("mot:    %04x\n",
-            qStatus[i].domain); common->Printf("motsnr: %0f\n", qStatus[i].snr[FCC]);
-                                    common->Printf("sldsnr: %0f\n",
-            qStatus[i].snr[SLD]); common->Printf("rmse:   %0f\n", qStatus[i].rsnr);
-                                    //common->Error("need to go away now\n");
+                        common->Printf("sparseEncode: something is wrong here\n");
+                        common->Printf("xat:    %d\n", qStatus[i].xat);
+                        common->Printf("yat:    %d\n", qStatus[i].yat);
+                        common->Printf("size    %d\n", qStatus[i].size);
+                        common->Printf("type:   %d\n", qStatus[i].status);
+                        common->Printf("mot:    %04x\n", qStatus[i].domain);
+                        common->Printf("motsnr: %0f\n", qStatus[i].snr[FCC]);
+                        common->Printf("sldsnr: %0f\n", qStatus[i].snr[SLD]);
+                        common->Printf("rmse:   %0f\n", qStatus[i].rsnr);
+                        //common->Error("need to go away now\n");
             }
             */
         }
@@ -1633,9 +1628,8 @@ void codec::SparseEncode(void)
                 j++;
             }
         }
-        common->Printf("sparseEncode: for 08x08 CCC = %d, FCC = %d, MOT = %d, SLD "
-                       "= %d, PAT = %d\n",
-                       num[CCC], num[FCC], num[MOT], num[SLD], num[PAT]);
+        common->Printf("sparseEncode: for 08x08 CCC = %d, FCC = %d, MOT = %d, SLD = %d, PAT = %d\n", num[CCC], num[FCC],
+                       num[MOT], num[SLD], num[PAT]);
 
         for (i = 0; i < DEAD; i++)
             num[i] = 0;
@@ -1648,12 +1642,10 @@ void codec::SparseEncode(void)
                 j++;
             }
         }
-        common->Printf("sparseEncode: for 04x04 CCC = %d, FCC = %d, MOT = %d, SLD "
-                       "= %d, PAT = %d\n",
-                       num[CCC], num[FCC], num[MOT], num[SLD], num[PAT]);
+        common->Printf("sparseEncode: for 04x04 CCC = %d, FCC = %d, MOT = %d, SLD = %d, PAT = %d\n", num[CCC], num[FCC],
+                       num[MOT], num[SLD], num[PAT]);
 
-        common->Printf("sparseEncode: average RMSE = %f, numActiveQuadCels = %d, "
-                       "estSize = %d, slop = %d \n",
+        common->Printf("sparseEncode: average RMSE = %f, numActiveQuadCels = %d, estSize = %d, slop = %d \n",
                        GetCurrentRMSE(qStatus), j, GetCurrentQuadOutputSize(qStatus), slop);
     }
 
@@ -1774,9 +1766,8 @@ void codec::EncodeNothing(void)
                 j++;
             }
         }
-        common->Printf("sparseEncode: for 08x08 CCC = %d, FCC = %d, MOT = %d, SLD "
-                       "= %d, PAT = %d\n",
-                       num[CCC], num[FCC], num[MOT], num[SLD], num[PAT]);
+        common->Printf("sparseEncode: for 08x08 CCC = %d, FCC = %d, MOT = %d, SLD = %d, PAT = %d\n", num[CCC], num[FCC],
+                       num[MOT], num[SLD], num[PAT]);
 
         for (i = 0; i < DEAD; i++)
             num[i] = 0;
@@ -1789,12 +1780,10 @@ void codec::EncodeNothing(void)
                 j++;
             }
         }
-        common->Printf("sparseEncode: for 04x04 CCC = %d, FCC = %d, MOT = %d, SLD "
-                       "= %d, PAT = %d\n",
-                       num[CCC], num[FCC], num[MOT], num[SLD], num[PAT]);
+        common->Printf("sparseEncode: for 04x04 CCC = %d, FCC = %d, MOT = %d, SLD = %d, PAT = %d\n", num[CCC], num[FCC],
+                       num[MOT], num[SLD], num[PAT]);
 
-        common->Printf("sparseEncode: average RMSE = %f, numActiveQuadCels = %d, "
-                       "estSize = %d \n",
+        common->Printf("sparseEncode: average RMSE = %f, numActiveQuadCels = %d, estSize = %d \n",
                        GetCurrentRMSE(qStatus), j, GetCurrentQuadOutputSize(qStatus));
     }
 

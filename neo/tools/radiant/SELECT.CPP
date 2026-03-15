@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../renderer/model_local.h" // for idRenderModelPrt
 #include "qe3.h"
+#include "../../renderer/model_local.h" // for idRenderModelPrt
 
 // externs
 CPtrArray g_SelectedFaces;
@@ -80,8 +77,7 @@ qertrace_t Test_Ray(const idVec3 &origin, const idVec3 &dir, int flags)
         // go through active brushes and accumulate all "hit" brushes
         for (brush = active_brushes.next; brush != &active_brushes; brush = brush->next)
         {
-            // if ( (flags & SF_ENTITIES_FIRST) && brush->owner == world_entity)
-            // continue;
+            // if ( (flags & SF_ENTITIES_FIRST) && brush->owner == world_entity) continue;
             if (FilterBrush(brush))
             {
                 continue;
@@ -242,7 +238,7 @@ extern idVec3 Brush_TransformedPoint(brush_t *b, const idVec3 &in);
 
 /*
  =======================================================================================================================
-        Select_Brush
+    Select_Brush
  =======================================================================================================================
  */
 void Select_Brush(brush_t *brush, bool bComplete, bool bStatus)
@@ -352,7 +348,7 @@ void Select_Brush(brush_t *brush, bool bComplete, bool bStatus)
 
 /*
  =======================================================================================================================
-        Select_Ray If the origin is inside a brush, that brush will be ignored.
+    Select_Ray If the origin is inside a brush, that brush will be ignored.
  =======================================================================================================================
  */
 void Select_Ray(idVec3 origin, idVec3 dir, int flags)
@@ -421,8 +417,8 @@ void Select_Ray(idVec3 origin, idVec3 dir, int flags)
         // common->Printf("after\n");
 
         //
-        // Texture_SetTexture requires a brushprimit_texdef fitted to the default
-        // width=2 height=2 texture
+        // Texture_SetTexture requires a brushprimit_texdef fitted to the default width=2
+        // height=2 texture
         //
         brushprimit_texdef_t brushprimit_texdef;
         ConvertTexMatWithQTexture(&t.face->brushprimit_texdef, t.face->d_texture, &brushprimit_texdef, NULL);
@@ -556,7 +552,7 @@ void Select_Deselect(bool bDeselectFaces)
 
 /*
  =======================================================================================================================
-        Select_Move
+    Select_Move
  =======================================================================================================================
  */
 void Select_Move(idVec3 delta, bool bSnap)
@@ -595,8 +591,8 @@ void Select_Move(idVec3 delta, bool bSnap)
 
 /*
  =======================================================================================================================
-        Select_Clone Creates an exact duplicate of the selection in place, then
- moves the selected brushes off of their old positions
+    Select_Clone Creates an exact duplicate of the selection in place, then moves the selected brushes off of their old
+    positions
  =======================================================================================================================
  */
 void Select_Clone(void)
@@ -613,13 +609,11 @@ void Select_Clone(void)
 
 /*
  =======================================================================================================================
-        Select_SetTexture Timo:: bFitScale to compute scale on the plane and
- counteract plane / axial plane snapping Timo:: brush primitive texturing the
- brushprimit_texdef given must be understood as a qtexture_t width=2 height=2 (
- HiRes ) Timo:: texture plugin, added an IPluginTexdef* parameter must be casted
- to an IPluginTexdef! if not NULL, get
-        ->Copy() of it into each face or brush ( and remember to hook ) if NULL,
- means we have no information, ask for a default
+    Select_SetTexture Timo:: bFitScale to compute scale on the plane and counteract plane / axial plane snapping Timo::
+    brush primitive texturing the brushprimit_texdef given must be understood as a qtexture_t width=2 height=2 ( HiRes
+    ) Timo:: texture plugin, added an IPluginTexdef* parameter must be casted to an IPluginTexdef! if not NULL, get
+    ->Copy() of it into each face or brush ( and remember to hook ) if NULL, means we have no information, ask for a
+    default
  =======================================================================================================================
  */
 void WINAPI Select_SetTexture(texdef_t *texdef, brushprimit_texdef_t *brushprimit_texdef, bool bFitScale,
@@ -683,7 +677,7 @@ void WINAPI Select_SetTexture(texdef_t *texdef, brushprimit_texdef_t *brushprimi
 
 /*
  =======================================================================================================================
-        TRANSFORMATIONS
+    TRANSFORMATIONS
  =======================================================================================================================
  */
 void Select_GetBounds(idVec3 &mins, idVec3 &maxs)
@@ -814,7 +808,7 @@ bool OkForRotationKey(brush_t *b)
 =================
 VectorRotate3
 
-        rotation order is roll - pitch - yaw
+    rotation order is roll - pitch - yaw
 =================
 */
 void VectorRotate3(const idVec3 &vIn, const idVec3 &vRotation, idVec3 &out)
@@ -1106,8 +1100,7 @@ void RotateTextures(int nAxis, float fDeg, idVec3 vOrigin)
                 RotateFaceTexture(f, nAxis, fDeg);
             }
 
-            // ++timo removed that call .. works fine .. ??????? Brush_Build(b,
-            // false);
+            // ++timo removed that call .. works fine .. ??????? Brush_Build(b, false);
         }
 
         Brush_Build(b, false);
@@ -1416,11 +1409,11 @@ void Select_FlipAxis(int axis)
         else
         {
             //
-            // there's never been flip locking for non BP mode, this would be tricky
-            // to write and there's not much interest for it with the coming of BP
-            // format what could be done is converting regular to BP, locking, then
-            // back to regular :) Sys_FPrintf(SYS_WRN, "WARNING: regular texturing
-            // doesn't have texture lock on flipping operations\n");
+            // there's never been flip locking for non BP mode, this would be tricky to write
+            // and there's not much interest for it with the coming of BP format what could be
+            // done is converting regular to BP, locking, then back to regular :)
+            // Sys_FPrintf(SYS_WRN, "WARNING: regular texturing doesn't have texture lock on
+            // flipping operations\n");
             //
         }
     }
@@ -1449,20 +1442,20 @@ void Select_Scale(float x, float y, float z)
                 f->planepts[i][0] *= x;
 
                 //
-                // f->planepts[i][0] = floor(f->planepts[i][0] / g_qeglobals.d_gridsize
-                // + 0.5) * g_qeglobals.d_gridsize;
+                // f->planepts[i][0] = floor(f->planepts[i][0] / g_qeglobals.d_gridsize + 0.5) *
+                // g_qeglobals.d_gridsize;
                 //
                 f->planepts[i][1] *= y;
 
                 //
-                // f->planepts[i][1] = floor(f->planepts[i][1] / g_qeglobals.d_gridsize
-                // + 0.5) * g_qeglobals.d_gridsize;
+                // f->planepts[i][1] = floor(f->planepts[i][1] / g_qeglobals.d_gridsize + 0.5) *
+                // g_qeglobals.d_gridsize;
                 //
                 f->planepts[i][2] *= z;
 
                 //
-                // f->planepts[i][2] = floor(f->planepts[i][2] / g_qeglobals.d_gridsize
-                // + 0.5) * g_qeglobals.d_gridsize;
+                // f->planepts[i][2] = floor(f->planepts[i][2] / g_qeglobals.d_gridsize + 0.5) *
+                // g_qeglobals.d_gridsize;
                 //
                 f->planepts[i][0] += select_origin[0];
                 f->planepts[i][1] += select_origin[1];
@@ -1486,7 +1479,7 @@ void Select_Scale(float x, float y, float z)
 
 /*
  =======================================================================================================================
-        GROUP SELECTIONS
+    GROUP SELECTIONS
  =======================================================================================================================
  */
 void Select_CompleteTall(void)
@@ -1698,8 +1691,7 @@ void Select_Inside(void)
 
 /*
  =======================================================================================================================
-        Select_Ungroup Turn the currently selected entity back into normal
- brushes
+    Select_Ungroup Turn the currently selected entity back into normal brushes
  =======================================================================================================================
  */
 void Select_Ungroup()
@@ -1792,9 +1784,8 @@ void Select_ShiftTexture(float x, float y, bool autoAdjust)
             if (g_qeglobals.m_bBrushPrimitMode)
             {
                 //
-                // use face normal to compute a true translation
-                // Select_ShiftTexture_BrushPrimit( selected_face, x, y ); use camera
-                // view to compute texture shift
+                // use face normal to compute a true translation Select_ShiftTexture_BrushPrimit(
+                // selected_face, x, y ); use camera view to compute texture shift
                 //
                 Select_ShiftTexture_BrushPrimit(selFace, x, y, autoAdjust);
             }
@@ -1947,8 +1938,7 @@ void Select_RotateTexture(float amt, bool absolute)
             {
                 idVec3 org;
                 org.Zero();
-                // Face_RotateTexture_BrushPrimit(selFace, amt,
-                // selBrush->owner->origin);
+                // Face_RotateTexture_BrushPrimit(selFace, amt, selBrush->owner->origin);
                 Face_RotateTexture_BrushPrimit(selFace, amt, org);
             }
             else
@@ -2250,7 +2240,7 @@ void Select_ShowAllHidden()
 
 /*
  =======================================================================================================================
-        Select_Invert
+    Select_Invert
  =======================================================================================================================
  */
 void Select_Invert(void)
@@ -2294,7 +2284,7 @@ void Select_Invert(void)
 
 /*
  =======================================================================================================================
-        Select_Name
+    Select_Name
  =======================================================================================================================
  */
 void Select_Name(const char *pName)
@@ -2482,8 +2472,8 @@ void Select_FlipTexture(bool y)
 
 /*
  =======================================================================================================================
-        Select_SetKeyVal
-        sets values on non-world entities
+    Select_SetKeyVal
+    sets values on non-world entities
  =======================================================================================================================
  */
 void Select_SetKeyVal(const char *key, const char *val)
@@ -2499,7 +2489,7 @@ void Select_SetKeyVal(const char *key, const char *val)
 
 /*
  =======================================================================================================================
-        Select_CopyPatchTextureCoords( patchMesh_t *p )
+    Select_CopyPatchTextureCoords( patchMesh_t *p )
  =======================================================================================================================
  */
 void Select_CopyPatchTextureCoords(patchMesh_t *p)
@@ -2524,7 +2514,7 @@ void Select_CopyPatchTextureCoords(patchMesh_t *p)
 
 /*
  =======================================================================================================================
-        Select_SetProjectFaceOntoPatch
+    Select_SetProjectFaceOntoPatch
  =======================================================================================================================
  */
 void Select_ProjectFaceOntoPatch(face_t *face)
@@ -2541,7 +2531,7 @@ void Select_ProjectFaceOntoPatch(face_t *face)
 
 /*
  =======================================================================================================================
-        Select_SetPatchFit
+    Select_SetPatchFit
  =======================================================================================================================
  */
 extern float Patch_Width(patchMesh_t *p);

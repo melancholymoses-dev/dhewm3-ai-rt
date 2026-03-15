@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/File.h"
 #include "framework/FileSystem.h"
-#include "sys/platform.h"
 
 #include "idlib/MapFile.h"
 
@@ -69,8 +66,8 @@ ID_INLINE unsigned int StringCRC(const char *str)
 =================
 ComputeAxisBase
 
-WARNING : special case behaviour of atan2(y,x) <-> atan(y/x) might not be the
-same everywhere when x == 0 rotation by (0,RotY,RotZ) assigns X to normal
+WARNING : special case behaviour of atan2(y,x) <-> atan(y/x) might not be the same everywhere when x == 0
+rotation by (0,RotY,RotZ) assigns X to normal
 =================
 */
 static void ComputeAxisBase(const idVec3 &normal, idVec3 &texS, idVec3 &texT)
@@ -414,8 +411,7 @@ idMapBrush *idMapBrush::Parse(idLexer &src, const idVec3 &origin, bool newFormat
         }
 
         // read the texture matrix
-        // this is odd, because the texmat is 2D relative to default planar texture
-        // axis
+        // this is odd, because the texmat is 2D relative to default planar texture axis
         if (!src.Parse2DMatrix(2, 3, side->texMat[0].ToFloatPtr()))
         {
             src.Error("idMapBrush::Parse: unable to read brush side texture matrix");
@@ -889,8 +885,7 @@ bool idMapFile::Parse(const char *filename, bool ignoreRegion, bool osPath)
     if (entities.Num())
     {
 
-        // "removeEntities" "classname" can be set in the worldspawn to remove all
-        // entities with the given classname
+        // "removeEntities" "classname" can be set in the worldspawn to remove all entities with the given classname
         const idKeyValue *removeEntities = entities[0]->epairs.MatchPrefix("removeEntities", NULL);
         while (removeEntities)
         {
@@ -898,8 +893,7 @@ bool idMapFile::Parse(const char *filename, bool ignoreRegion, bool osPath)
             removeEntities = entities[0]->epairs.MatchPrefix("removeEntities", removeEntities);
         }
 
-        // "overrideMaterial" "material" can be set in the worldspawn to reset all
-        // materials
+        // "overrideMaterial" "material" can be set in the worldspawn to reset all materials
         idStr material;
         if (entities[0]->epairs.GetString("overrideMaterial", "", material))
         {

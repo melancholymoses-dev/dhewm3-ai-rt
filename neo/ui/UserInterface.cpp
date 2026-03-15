@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/DemoFile.h"
-#include "framework/FileSystem.h"
-#include "framework/KeyInput.h"
 #include "sys/platform.h"
-#include "ui/DeviceContext.h"
+#include "framework/FileSystem.h"
+#include "framework/DemoFile.h"
+#include "framework/KeyInput.h"
 #include "ui/ListGUILocal.h"
+#include "ui/DeviceContext.h"
 #include "ui/Window.h"
 
 #include "ui/UserInterfaceLocal.h"
@@ -53,7 +50,7 @@ idUserInterfaceManager *uiManager = &uiManagerLocal;
 /*
 ===============================================================================
 
-        idUserInterfaceManagerLocal
+    idUserInterfaceManagerLocal
 
 ===============================================================================
 */
@@ -193,9 +190,8 @@ void idUserInterfaceManagerLocal::ListGuis() const
                        isUnique ? "unique" : "copy", guis[i]->GetSourceFile(), guis[i]->desktop->NumTransitions());
         total += sz;
     }
-    common->Printf("===========\n  %i total Guis ( %i copies, %i unique ), %.2f "
-                   "total Mbytes",
-                   c, copies, unique, total / (1024.0f * 1024.0f));
+    common->Printf("===========\n  %i total Guis ( %i copies, %i unique ), %.2f total Mbytes", c, copies, unique,
+                   total / (1024.0f * 1024.0f));
 }
 
 bool idUserInterfaceManagerLocal::CheckGui(const char *qpath) const
@@ -291,7 +287,7 @@ void idUserInterfaceManagerLocal::FreeListGUI(idListGUI *listgui)
 /*
 ===============================================================================
 
-        idUserInterfaceLocal
+    idUserInterfaceLocal
 
 ===============================================================================
 */
@@ -433,17 +429,15 @@ bool idUserInterface::IsUserInterfaceScaledTo43(const idUserInterface *ui_)
     int winFlags = win->GetFlags();
     if ((winFlags & WIN_MENUGUI) == 0 || !r_scaleMenusTo43.GetBool())
     {
-        // if the window is no fullscreen menu (but an ingame menu or noninteractive
-        // like the HUD) or scaling menus to 4:3 by default (r_scaleMenusTo43) is
-        // disabled, they only get scaled if they explicitly requested it with
-        // "scaleto43 1"
+        // if the window is no fullscreen menu (but an ingame menu or noninteractive like the HUD)
+        // or scaling menus to 4:3 by default (r_scaleMenusTo43) is disabled,
+        // they only get scaled if they explicitly requested it with "scaleto43 1"
         return (winFlags & WIN_SCALETO43) != 0;
     }
     else
     {
         // if it's a fullscreen menu and r_scaleMenusTo43 is enabled,
-        // they get scaled to 4:3 unless they explicitly disable it with "scaleto43
-        // 0"
+        // they get scaled to 4:3 unless they explicitly disable it with "scaleto43 0"
         return (winFlags & WIN_NO_SCALETO43) == 0;
     }
 }
@@ -460,8 +454,7 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
         return ret;
     }
 
-    // DG: used to translate gamepad input into events the UI system is familiar
-    // with
+    // DG: used to translate gamepad input into events the UI system is familiar with
     sysEvent_t fakedEvent = {};
 
     if (event->evType == SE_MOUSE || event->evType == SE_MOUSE_ABS)
@@ -485,9 +478,8 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
             {
                 // in case we're scaling menus to 4:3, we need to take that into account
                 // when scaling the mouse events.
-                // no, we can't just call uiManagerLocal.dc.GetFixScaleForMenu() or sth
-                // like that, because when we're here dc.SetMenuScaleFix(true) is not
-                // active and it'd just return (1, 1)!
+                // no, we can't just call uiManagerLocal.dc.GetFixScaleForMenu() or sth like that,
+                // because when we're here dc.SetMenuScaleFix(true) is not active and it'd just return (1, 1)!
                 float aspectRatio = w / h;
                 static const float virtualAspectRatio = float(VIRTUAL_WIDTH) / float(VIRTUAL_HEIGHT); // 4:3
                 if (aspectRatio > 1.4f)
@@ -517,8 +509,7 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
                 float xOffset = (realW - w) * 0.5f;
                 float yOffset = (realH - h) * 0.5f;
                 // offset the mouse coordinates into 4:3 area and scale down to 640x480
-                // yes, result could be negative, doesn't matter, code below checks that
-                // anyway
+                // yes, result could be negative, doesn't matter, code below checks that anyway
                 cursorX = (event->evValue - xOffset) * (float(VIRTUAL_WIDTH) / w);
                 cursorY = (event->evValue2 - yOffset) * (float(VIRTUAL_HEIGHT) / h);
             }
@@ -545,8 +536,7 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
         // evValue2: percent (-100 to 100)
 
         // currently uses both sticks for cursor movement
-        // TODO could use one stick for scrolling (maybe by generating
-        // K_UPARROW/DOWNARROW events?)
+        // TODO could use one stick for scrolling (maybe by generating K_UPARROW/DOWNARROW events?)
         float addVal = expf(fabsf(event->evValue2 * 0.03f)) * 0.5f;
         if (event->evValue2 < 0)
             addVal = -addVal;
@@ -578,13 +568,11 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
     }
     else if (event->evType == SE_KEY && event->evValue >= K_FIRST_JOY && event->evValue <= K_LAST_JOY)
     {
-        // map some gamepad buttons to SE_KEY events that the UI already knows how
-        // to use
+        // map some gamepad buttons to SE_KEY events that the UI already knows how to use
         int key = 0;
         if (idKeyInput::GetUsercmdAction(event->evValue) == 20 /* UB_ATTACK*/)
         {
-            // if this button is bound to _attack (fire), treat it as left mouse
-            // button
+            // if this button is bound to _attack (fire), treat it as left mouse button
             key = K_MOUSE1;
         }
         else
@@ -598,8 +586,7 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
             case K_JOY_BTN_EAST: // B on xbox controller
                 key = K_MOUSE2;
                 break;
-            // emulate cursor keys (sometimes used for scrolling or selecting in a
-            // list)
+            // emulate cursor keys (sometimes used for scrolling or selecting in a list)
             case K_JOY_DPAD_UP:
                 key = K_UPARROW;
                 break;
@@ -613,9 +600,8 @@ const char *idUserInterfaceLocal::HandleEvent(const sysEvent_t *event, int _time
                 key = K_RIGHTARROW;
                 break;
             // enter is useful after selecting something with cursor keys (or dpad)
-            // in a list, like selecting a savegame - I guess left trigger is suitable
-            // for that? (right trigger is often used for shooting, which we use as
-            // K_MOUSE1 here)
+            // in a list, like selecting a savegame - I guess left trigger is suitable for that?
+            // (right trigger is often used for shooting, which we use as K_MOUSE1 here)
             case K_JOY_TRIGGER1:
                 key = K_ENTER;
                 break;
@@ -656,10 +642,10 @@ void idUserInterfaceLocal::Redraw(int _time)
             // "gui::cst*" window register variables accordingly
             if (MaybeSetCstWinRegs())
             {
-                // tell the GUI script about it in case it wants to handle the size
-                // change in some way (though usually it's enough to use sth like `rect
-                // 0, 200, "gui::cstHorPad", 100"` and `cstAnchor  CST_ANCHOR_LEFT` for
-                // a windowDef that should fill part of the left side)
+                // tell the GUI script about it in case it wants to handle the size change in
+                // some way (though usually it's enough to use sth like
+                // `rect 0, 200, "gui::cstHorPad", 100"` and `cstAnchor  CST_ANCHOR_LEFT`
+                // for a windowDef that should fill part of the left side)
                 HandleNamedEvent("CstScreenSizeChange");
             }
         }
@@ -742,9 +728,8 @@ void idUserInterfaceLocal::StateChanged(int _time, bool redraw)
         //     ui->SetStateBool("scaleto43", true);
         //     ui->StateChanged(gameLocal.time);
         //     so we can force cursors.gui (crosshair) to be scaled, for example.
-        //     Not sure if/where that's needed, but ui->SetStateBool("scaleto43",
-        //     false); is now also supported to explicitly disable scaling from the
-        //     code
+        //     Not sure if/where that's needed, but ui->SetStateBool("scaleto43", false);
+        //     is now also supported to explicitly disable scaling from the code
         int scaleTo43 = 0;
         if (state.GetInt("scaleto43", "-1", scaleTo43))
         {
@@ -788,9 +773,8 @@ const char *idUserInterfaceLocal::Activate(bool activate, int _time)
     if (desktop)
     {
         // DG: added this hack for gamepad input - Note that it can happen that
-        //     a UI has been made non-interactive before Activate(false, ..) is
-        //     called and it still needs to be unregistered with
-        //     Sys_SetInteractiveIngameGuiActive()!
+        //     a UI has been made non-interactive before Activate(false, ..) is called
+        //     and it still needs to be unregistered with Sys_SetInteractiveIngameGuiActive()!
         if (interactive || !activate)
         {
             Sys_SetInteractiveIngameGuiActive(activate, this);

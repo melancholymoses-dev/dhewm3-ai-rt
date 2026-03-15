@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/Heap.h"
 #include "framework/Common.h"
 #include "framework/FileSystem.h"
-#include "idlib/Heap.h"
-#include "sys/platform.h"
 
 #include "idlib/Lexer.h"
 
@@ -165,8 +162,7 @@ void idLexer::CreatePunctuationTable(const punctuation_t *punctuations)
     {
         newp = &punctuations[i];
         lastp = -1;
-        // sort the punctuations in this table entry on length (longer punctuations
-        // first)
+        // sort the punctuations in this table entry on length (longer punctuations first)
         for (n = idLexer::punctuationtable[(unsigned int)newp->p[0]]; n >= 0; n = idLexer::nextpunctuation[n])
         {
             p = &punctuations[n];
@@ -791,8 +787,7 @@ int idLexer::ReadNumber(idToken *token)
                     c = *(++idLexer::script_p);
                 }
             }
-            // check for floating point exception infinite 1.#INF or indefinite 1.#IND
-            // or NaN
+            // check for floating point exception infinite 1.#INF or indefinite 1.#IND or NaN
             else if (c == '#')
             {
                 c2 = 4;
@@ -1657,8 +1652,7 @@ The next token should be an open brace.
 Parses until a matching close brace is found.
 Maintains exact characters between braces.
 
-  FIXME: this should use ReadToken and replace the token white space with
-correct indents and newlines
+  FIXME: this should use ReadToken and replace the token white space with correct indents and newlines
 =================
 */
 const char *idLexer::ParseBracedSectionExact(idStr &out, int tabs)

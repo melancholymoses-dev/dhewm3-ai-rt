@@ -19,30 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/containers/BinSearch.h"
 #include "idlib/geometry/JointTransform.h"
 #include "idlib/math/Quat.h"
 #include "renderer/ModelManager.h"
-#include "sys/platform.h"
 
+#include "gamesys/SysCvar.h"
+#include "ai/AI.h"
 #include "Entity.h"
 #include "Fx.h"
 #include "Game_local.h"
-#include "ai/AI.h"
-#include "gamesys/SysCvar.h"
 
 #include "anim/Anim.h"
 
@@ -50,7 +47,7 @@ static const char *channelNames[ANIM_NumAnimChannels] = {"all", "torso", "legs",
 
 /***********************************************************************
 
-        idAnim
+    idAnim
 
 ***********************************************************************/
 
@@ -844,8 +841,7 @@ const char *idAnim::AddFrameCommand(const idDeclModelDef *modelDef, int framenum
     // calculate the index of the new command
     index = frameLookup[framenum].firstCommand + frameLookup[framenum].num;
 
-    // move all commands from our index onward up one to give us space for our new
-    // command
+    // move all commands from our index onward up one to give us space for our new command
     for (i = frameCommands.Num() - 1; i > index; i--)
     {
         frameCommands[i] = frameCommands[i - 1];
@@ -915,9 +911,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_ANY, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound' on entity '%s', anim '%s', "
-                                          "frame %d: Could not find sound '%s'",
-                                          ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                        gameLocal.Warning(
+                            "Framecommand 'sound' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
+                            ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
                 else
@@ -931,9 +927,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_VOICE, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_voice' on entity '%s', anim "
-                                          "'%s', frame %d: Could not find sound '%s'",
-                                          ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                        gameLocal.Warning(
+                            "Framecommand 'sound_voice' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
+                            ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
                 else
@@ -947,8 +943,8 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_VOICE2, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_voice2' on entity '%s', "
-                                          "anim '%s', frame %d: Could not find sound '%s'",
+                        gameLocal.Warning("Framecommand 'sound_voice2' on entity '%s', anim '%s', frame %d: Could not "
+                                          "find sound '%s'",
                                           ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
@@ -963,9 +959,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_BODY, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_body' on entity '%s', anim "
-                                          "'%s', frame %d: Could not find sound '%s'",
-                                          ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                        gameLocal.Warning(
+                            "Framecommand 'sound_body' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
+                            ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
                 else
@@ -979,9 +975,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_BODY2, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_body2' on entity '%s', anim "
-                                          "'%s', frame %d: Could not find sound '%s'",
-                                          ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                        gameLocal.Warning(
+                            "Framecommand 'sound_body2' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
+                            ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
                 else
@@ -995,9 +991,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_BODY3, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_body3' on entity '%s', anim "
-                                          "'%s', frame %d: Could not find sound '%s'",
-                                          ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                        gameLocal.Warning(
+                            "Framecommand 'sound_body3' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
+                            ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
                 else
@@ -1011,8 +1007,8 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_WEAPON, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_weapon' on entity '%s', "
-                                          "anim '%s', frame %d: Could not find sound '%s'",
+                        gameLocal.Warning("Framecommand 'sound_weapon' on entity '%s', anim '%s', frame %d: Could not "
+                                          "find sound '%s'",
                                           ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
@@ -1027,8 +1023,8 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_ANY, SSF_GLOBAL, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_global' on entity '%s', "
-                                          "anim '%s', frame %d: Could not find sound '%s'",
+                        gameLocal.Warning("Framecommand 'sound_global' on entity '%s', anim '%s', frame %d: Could not "
+                                          "find sound '%s'",
                                           ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
@@ -1043,9 +1039,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 {
                     if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_ITEM, 0, false, NULL))
                     {
-                        gameLocal.Warning("Framecommand 'sound_item' on entity '%s', anim "
-                                          "'%s', frame %d: Could not find sound '%s'",
-                                          ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                        gameLocal.Warning(
+                            "Framecommand 'sound_item' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
+                            ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
                 }
                 else
@@ -1061,8 +1057,8 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                     {
                         if (!ent->StartSound(command.string->c_str(), SND_CHANNEL_VOICE, 0, false, NULL))
                         {
-                            gameLocal.Warning("Framecommand 'sound_chatter' on entity '%s', anim '%s', "
-                                              "frame %d: Could not find sound '%s'",
+                            gameLocal.Warning("Framecommand 'sound_chatter' on entity '%s', anim '%s', frame %d: Could "
+                                              "not find sound '%s'",
                                               ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                         }
                     }
@@ -1093,9 +1089,9 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                 }
                 else
                 {
-                    gameLocal.Warning("Framecommand 'trigger' on entity '%s', anim '%s', "
-                                      "frame %d: Could not find entity '%s'",
-                                      ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                    gameLocal.Warning(
+                        "Framecommand 'trigger' on entity '%s', anim '%s', frame %d: Could not find entity '%s'",
+                        ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                 }
                 break;
             }
@@ -1297,7 +1293,7 @@ const animFlags_t &idAnim::GetAnimFlags(void) const
 
 /***********************************************************************
 
-        idAnimBlend
+    idAnimBlend
 
 ***********************************************************************/
 
@@ -1656,8 +1652,7 @@ void idAnimBlend::CycleAnim(const idDeclModelDef *modelDef, int _animNum, int cu
     cycle = -1;
     if (_anim->GetAnimFlags().random_cycle_start)
     {
-        // start the animation at a random time so that characters don't walk in
-        // sync
+        // start the animation at a random time so that characters don't walk in sync
         starttime = currentTime - gameLocal.random.RandomFloat() * _anim->Length();
     }
     else
@@ -1774,8 +1769,7 @@ bool idAnimBlend::FrameHasChanged(int currentTime) const
         return true;
     }
 
-    // if we're a single frame anim and this isn't the frame we started on, we
-    // don't need to update
+    // if we're a single frame anim and this isn't the frame we started on, we don't need to update
     if ((frame || (NumFrames() == 1)) && (currentTime != starttime))
     {
         return false;
@@ -1820,8 +1814,7 @@ void idAnimBlend::SetCycleCount(int count)
         {
             cycle = 1;
 
-            // most of the time we're running at the original frame rate, so avoid the
-            // int-to-float-to-int conversion
+            // most of the time we're running at the original frame rate, so avoid the int-to-float-to-int conversion
             if (rate == 1.0f)
             {
                 endtime = starttime - timeOffset + anim->Length();
@@ -1837,8 +1830,7 @@ void idAnimBlend::SetCycleCount(int count)
         }
         else
         {
-            // most of the time we're running at the original frame rate, so avoid the
-            // int-to-float-to-int conversion
+            // most of the time we're running at the original frame rate, so avoid the int-to-float-to-int conversion
             if (rate == 1.0f)
             {
                 endtime = starttime - timeOffset + anim->Length() * cycle;
@@ -2022,8 +2014,7 @@ int idAnimBlend::AnimTime(int currentTime) const
             return FRAME2MS(frame - 1);
         }
 
-        // most of the time we're running at the original frame rate, so avoid the
-        // int-to-float-to-int conversion
+        // most of the time we're running at the original frame rate, so avoid the int-to-float-to-int conversion
         if (rate == 1.0f)
         {
             time = currentTime - starttime + timeOffset;
@@ -2033,16 +2024,15 @@ int idAnimBlend::AnimTime(int currentTime) const
             time = static_cast<int>((currentTime - starttime) * rate) + timeOffset;
         }
 
-        // given enough time, we can easily wrap time around in our frame
-        // calculations, so keep cycling animations' time within the length of the
-        // anim.
+        // given enough time, we can easily wrap time around in our frame calculations, so
+        // keep cycling animations' time within the length of the anim.
         length = anim->Length();
         if ((cycle < 0) && (length > 0))
         {
             time %= length;
 
-            // time will wrap after 24 days (oh no!), resulting in negative results
-            // for the %. adding the length gives us the proper result.
+            // time will wrap after 24 days (oh no!), resulting in negative results for the %.
+            // adding the length gives us the proper result.
             if (time < 0)
             {
                 time += length;
@@ -2182,8 +2172,7 @@ bool idAnimBlend::BlendAnim(int currentTime, int channel, int numJoints, idJoint
 
     if ((channel == ANIMCHANNEL_ALL) && !blendWeight)
     {
-        // we don't need a temporary buffer, so just store it directly in the blend
-        // frame
+        // we don't need a temporary buffer, so just store it directly in the blend frame
         jointFrame = blendFrame;
     }
     else
@@ -2579,7 +2568,7 @@ bool idAnimBlend::AddBounds(int currentTime, idBounds &bounds, bool removeOrigin
 
 /***********************************************************************
 
-        idDeclModelDef
+    idDeclModelDef
 
 ***********************************************************************/
 
@@ -3089,8 +3078,8 @@ bool idDeclModelDef::ParseAnim(idLexer &src, int numDefaultAnims)
                 int framenum;
                 const char *err;
 
-                // make sure we don't have any line breaks while reading the frame
-                // command so the error line # will be correct
+                // make sure we don't have any line breaks while reading the frame command so the error line # will be
+                // correct
                 if (!src.ReadTokenOnLine(&token))
                 {
                     src.Warning("Missing frame # after 'frame'");
@@ -3295,8 +3284,7 @@ bool idDeclModelDef::Parse(const char *text, const int textLength)
                     anims.RemoveIndex(i);
                     if (i >= numDefaultAnims)
                     {
-                        src.Warning("Anim '%s' was not inherited.  Anim should be removed "
-                                    "from the model def.",
+                        src.Warning("Anim '%s' was not inherited.  Anim should be removed from the model def.",
                                     token2.c_str());
                         MakeDefault();
                         return false;
@@ -3659,8 +3647,7 @@ const int *idDeclModelDef::GetChannelJoints(int channel) const
     if ((channel < 0) || (channel >= ANIM_NumAnimChannels))
     {
         gameLocal.Error("idDeclModelDef::GetChannelJoints : channel out of range");
-        return NULL; // unreachable, (Error() doesn't return) just to shut up
-                     // compiler
+        return NULL; // unreachable, (Error() doesn't return) just to shut up compiler
     }
     return channelJoints[channel].Ptr();
 }
@@ -3677,7 +3664,7 @@ const idVec3 &idDeclModelDef::GetVisualOffset(void) const
 
 /***********************************************************************
 
-        idAnimator
+    idAnimator
 
 ***********************************************************************/
 
@@ -4316,8 +4303,7 @@ void idAnimator::SyncAnimChannels(int channelNum, int fromChannelNum, int curren
     }
     toBlend.SetWeight(weight, currentTime - 1, blendTime);
 
-    // disable framecommands on the current channel so that commands aren't called
-    // twice
+    // disable framecommands on the current channel so that commands aren't called twice
     toBlend.AllowFrameCommands(false);
 
     if (entity)
@@ -4958,8 +4944,7 @@ void idAnimator::ServiceAnims(int fromtime, int totime)
         {
             entity->BecomeInactive(TH_ANIMATE);
 
-            // present one more time with stopped animations so the renderer can
-            // properly recreate interactions
+            // present one more time with stopped animations so the renderer can properly recreate interactions
             entity->BecomeActive(TH_UPDATEVISUALS);
         }
     }
@@ -5103,8 +5088,8 @@ bool idAnimator::CreateFrame(int currentTime, bool force)
     // init the joint buffer
     if (AFPoseJoints.Num())
     {
-        // initialize with AF pose anim for the case where there are no other
-        // animations and no AF pose joint modifications
+        // initialize with AF pose anim for the case where there are no other animations and no AF pose joint
+        // modifications
         defaultPose = AFPoseJointFrame.Ptr();
     }
     else
@@ -5114,8 +5099,7 @@ bool idAnimator::CreateFrame(int currentTime, bool force)
 
     if (!defaultPose)
     {
-        // gameLocal.Warning( "idAnimator::CreateFrame: no defaultPose on '%s'",
-        // modelDef->Name() );
+        // gameLocal.Warning( "idAnimator::CreateFrame: no defaultPose on '%s'", modelDef->Name() );
         return false;
     }
 
@@ -5357,8 +5341,7 @@ void idAnimator::ClearForceUpdate(void)
 
 /*
 =====================
-idAnimator::GetJointTransform>	gamex86.dll!idAnimator::ForceUpdate()  Line 4268
-C++
+idAnimator::GetJointTransform>	gamex86.dll!idAnimator::ForceUpdate()  Line 4268	C++
 
 =====================
 */
@@ -5647,7 +5630,7 @@ const idVec3 &idAnimator::TotalMovementDelta(int animNum) const
 
 /***********************************************************************
 
-        Util functions
+    Util functions
 
 ***********************************************************************/
 
@@ -5906,8 +5889,7 @@ void idGameEdit::ANIM_CreateAnimFrame(const idRenderModel *model, const idMD5Ani
 
     if (numJoints != model->NumJoints())
     {
-        gameLocal.Error("ANIM_CreateAnimFrame: different # of joints in "
-                        "renderEntity_t than in model (%s)",
+        gameLocal.Error("ANIM_CreateAnimFrame: different # of joints in renderEntity_t than in model (%s)",
                         model->Name());
     }
 

@@ -19,32 +19,29 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Common.h"
 #include "framework/FileSystem.h"
-#include "sys/platform.h"
 
 #include "renderer/Model_ase.h"
 
 /*
 ======================================================================
 
-        Parses 3D Studio Max ASCII export files.
-        The goal is to parse the information into memory exactly as it is
-        represented in the file.  Users of the data will then move it
-        into a form that is more convenient for them.
+    Parses 3D Studio Max ASCII export files.
+    The goal is to parse the information into memory exactly as it is
+    represented in the file.  Users of the data will then move it
+    into a form that is more convenient for them.
 
 ======================================================================
 */
@@ -362,15 +359,15 @@ static void ASE_KeyMESH_FACE_LIST(const char *token)
 
         // we could parse material id and smoothing groups here
         /*
-                        if ( ( p = strstr( ase.token, "*MESH_MTLID" ) ) != 0 )
-                        {
-                                p += strlen( "*MESH_MTLID" ) + 1;
-                                mtlID = atoi( p );
-                        }
-                        else
-                        {
-                                common->Error( "No *MESH_MTLID found for face!" );
-                        }
+                if ( ( p = strstr( ase.token, "*MESH_MTLID" ) ) != 0 )
+                {
+                    p += strlen( "*MESH_MTLID" ) + 1;
+                    mtlID = atoi( p );
+                }
+                else
+                {
+                    common->Error( "No *MESH_MTLID found for face!" );
+                }
         */
 
         ase.currentFace++;

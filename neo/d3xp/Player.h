@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,13 +34,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include "idlib/math/Interpolate.h"
 
-#include "Actor.h"
-#include "GameEdit.h"
-#include "Item.h"
-#include "PlayerIcon.h"
-#include "Projectile.h"
-#include "Weapon.h"
 #include "physics/Physics_Player.h"
+#include "Item.h"
+#include "Actor.h"
+#include "Weapon.h"
+#include "Projectile.h"
+#include "PlayerIcon.h"
+#include "GameEdit.h"
 
 class idAI;
 class idFuncMountedObject;
@@ -51,7 +48,7 @@ class idFuncMountedObject;
 /*
 ===============================================================================
 
-        Player entity.
+    Player entity.
 
 ===============================================================================
 */
@@ -232,13 +229,11 @@ class idInventory
     int WeaponIndexForAmmoClass(const idDict &spawnArgs, const char *ammo_classname) const;
     ammo_t AmmoIndexForWeaponClass(const char *weapon_classname, int *ammoRequired);
     const char *AmmoPickupNameForIndex(ammo_t ammonum) const;
-    void AddPickupName(const char *name, const char *icon,
-                       idPlayer *owner); //_D3XP
+    void AddPickupName(const char *name, const char *icon, idPlayer *owner); //_D3XP
 
     int HasAmmo(ammo_t type, int amount);
     bool UseAmmo(ammo_t type, int amount);
-    int HasAmmo(const char *weapon_classname, bool includeClip = false,
-                idPlayer *owner = NULL); // _D3XP
+    int HasAmmo(const char *weapon_classname, bool includeClip = false, idPlayer *owner = NULL); // _D3XP
 
 #ifdef _D3XP
     bool HasEmptyClipCannotRefill(const char *weapon_classname, idPlayer *owner);
@@ -383,11 +378,9 @@ class idPlayer : public idActor
     bool forcedReady;
     bool wantSpectate;     // from userInfo
     bool weaponGone;       // force stop firing
-    bool useInitialSpawns; // toggled by a map restart to be active for the first
-                           // game spawn
+    bool useInitialSpawns; // toggled by a map restart to be active for the first game spawn
     int latchedTeam;       // need to track when team gets changed
-    int tourneyRank;       // for tourney cycling - the higher, the more likely to play
-                           // next - server
+    int tourneyRank;       // for tourney cycling - the higher, the more likely to play next - server
     int tourneyLine;       // client side - our spot in the wait line. 0 means no info.
     int spawnedTime;       // when client first enters the game
 
@@ -395,22 +388,16 @@ class idPlayer : public idActor
     bool carryingFlag; // is the player carrying the flag?
 #endif
 
-    idEntityPtr<idEntity> teleportEntity; // while being teleported, this is set
-                                          // to the entity we'll use for exit
-    int teleportKiller;                   // entity number of an entity killing us at teleporter
-                                          // exit
+    idEntityPtr<idEntity> teleportEntity; // while being teleported, this is set to the entity we'll use for exit
+    int teleportKiller;                   // entity number of an entity killing us at teleporter exit
     bool lastManOver;                     // can't respawn in last man anymore (srv only)
-    bool lastManPlayAgain;                // play again when end game delay is cancelled out
-                                          // before expiring (srv only)
-    bool lastManPresent;                  // true when player was in when game started (spectators
-                                          // can't join a running LMS)
-    bool isLagged;                        // replicated from server, true if packets haven't been
-                                          // received from client.
-    bool isChatting;                      // replicated from server, true if the player is chatting.
+    bool lastManPlayAgain;                // play again when end game delay is cancelled out before expiring (srv only)
+    bool lastManPresent; // true when player was in when game started (spectators can't join a running LMS)
+    bool isLagged;       // replicated from server, true if packets haven't been received from client.
+    bool isChatting;     // replicated from server, true if the player is chatting.
 
     // timers
-    int minRespawnTime; // can respawn when time > this, force after
-                        // g_forcerespawn
+    int minRespawnTime; // can respawn when time > this, force after g_forcerespawn
     int maxRespawnTime; // force respawn after this time
 
     // the first person view values are always calculated, even
@@ -492,8 +479,7 @@ class idPlayer : public idActor
     virtual void Damage(idEntity *inflictor, idEntity *attacker, const idVec3 &dir, const char *damageDefName,
                         const float damageScale, const int location);
 
-    // use exitEntityNum to specify a teleport with private camera view and
-    // delayed exit
+    // use exitEntityNum to specify a teleport with private camera view and delayed exit
     virtual void Teleport(const idVec3 &origin, const idAngles &angles, idEntity *destination);
 
     void Kill(bool delayRespawn, bool nodamage);
@@ -639,8 +625,7 @@ class idPlayer : public idActor
         return influenceRadius;
     };
 
-    // server side work for in/out of spectate. takes care of spawning it into the
-    // world as well
+    // server side work for in/out of spectate. takes care of spawning it into the world as well
     void ServerSpectate(bool spectate);
     // for very specific usage. != GetPhysics()
     idPhysics *GetPlayerPhysics(void);
@@ -730,8 +715,7 @@ class idPlayer : public idActor
     bool fxFov;
 
     float influenceFov;
-    int influenceActive; // level of influence.. 1 == no gun or hud .. 2 == 1 + no
-                         // movement
+    int influenceActive; // level of influence.. 1 == no gun or hud .. 2 == 1 + no movement
     idEntity *influenceEntity;
     const idMaterial *influenceMaterial;
     float influenceRadius;
@@ -742,17 +726,15 @@ class idPlayer : public idActor
     static const int NUM_LOGGED_VIEW_ANGLES = 64;      // for weapon turning angle offsets
     idAngles loggedViewAngles[NUM_LOGGED_VIEW_ANGLES]; // [gameLocal.framenum&(LOGGED_VIEW_ANGLES-1)]
     static const int NUM_LOGGED_ACCELS = 16;           // for weapon turning angle offsets
-    loggedAccel_t loggedAccel[NUM_LOGGED_ACCELS];      // [currentLoggedAccel &
-                                                       // (NUM_LOGGED_ACCELS-1)]
+    loggedAccel_t loggedAccel[NUM_LOGGED_ACCELS];      // [currentLoggedAccel & (NUM_LOGGED_ACCELS-1)]
     int currentLoggedAccel;
 
-    // if there is a focusGUIent, the attack button will be changed into mouse
-    // clicks
+    // if there is a focusGUIent, the attack button will be changed into mouse clicks
     idEntity *focusGUIent;
     idUserInterface *focusUI; // focusGUIent->renderEntity.gui, gui2, or gui3
     idAI *focusCharacter;
-    int talkCursor; // show the state of the focusCharacter (0 == can't talk/dead,
-                    // 1 == ready to talk, 2 == busy talking)
+    int talkCursor; // show the state of the focusCharacter (0 == can't talk/dead, 1 == ready to talk, 2 == busy
+                    // talking)
     int focusTime;
     idAFEntity_Vehicle *focusVehicle;
     idUserInterface *cursor;
@@ -812,8 +794,7 @@ class idPlayer : public idActor
     void Weapon_GUI(void);
     void UpdateWeapon(void);
     void UpdateSpectating(void);
-    void SpectateFreeFly(bool force); // ignore the timeout to force when followed
-                                      // spec is no longer valid
+    void SpectateFreeFly(bool force); // ignore the timeout to force when followed spec is no longer valid
     void SpectateCycle(void);
     idAngles GunTurningOffset(void);
     idVec3 GunAcceleratingOffset(void);

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,8 +39,8 @@ class idUserInterface;
 /*
 ===============================================================================
 
-        feed data to a listDef
-        each item has an id and a display string
+    feed data to a listDef
+    each item has an id and a display string
 
 ===============================================================================
 */
@@ -66,8 +63,7 @@ class idListGUI
     virtual void SetSelection(int sel) = 0;
     virtual int GetNumSelections() = 0;
     virtual bool IsConfigured(void) const = 0;
-    // by default, any modification to the list will trigger a full GUI refresh
-    // immediately
+    // by default, any modification to the list will trigger a full GUI refresh immediately
     virtual void SetStateChanges(bool enable) = 0;
     virtual void Shutdown(void) = 0;
 };

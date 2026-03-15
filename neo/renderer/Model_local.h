@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -41,7 +38,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Static model
+    Static model
 
 ===============================================================================
 */
@@ -141,7 +138,7 @@ class idRenderModelStatic : public idRenderModel
 /*
 ===============================================================================
 
-        MD5 animated model
+    MD5 animated model
 
 ===============================================================================
 */
@@ -166,12 +163,10 @@ class idMD5Mesh
     idList<idVec2> texCoords;        // texture coordinates
     int numWeights;                  // number of weights
     idVec4 *scaledWeights;           // joint weights
-    int *weightIndex;                // pairs of: joint offset + bool true if next weight is for
-                                     // next vertex
+    int *weightIndex;                // pairs of: joint offset + bool true if next weight is for next vertex
     const idMaterial *shader;        // material applied to mesh
     int numTris;                     // number of triangles
-    struct deformInfo_s *deformInfo; // used to create srfTriangles_t from base
-                                     // frames and new vertexes
+    struct deformInfo_s *deformInfo; // used to create srfTriangles_t from base frames and new vertexes
     int surfaceNum;                  // number of the static surface created for this mesh
 
     void TransformVerts(idDrawVert *verts, const idJointMat *joints);
@@ -213,7 +208,7 @@ class idRenderModelMD5 : public idRenderModelStatic
 /*
 ===============================================================================
 
-        MD3 animated model
+    MD3 animated model
 
 ===============================================================================
 */
@@ -246,7 +241,7 @@ class idRenderModelMD3 : public idRenderModelStatic
 /*
 ===============================================================================
 
-        Liquid model
+    Liquid model
 
 ===============================================================================
 */
@@ -282,8 +277,8 @@ class idRenderModelLiquid : public idRenderModelStatic
     idRandom random;
 
     const idMaterial *shader;
-    struct deformInfo_s *deformInfo; // used to create srfTriangles_t from base
-                                     // frames and new vertexes
+    struct deformInfo_s *deformInfo; // used to create srfTriangles_t from base frames
+                                     // and new vertexes
 
     float density;
     float drop_height;
@@ -302,7 +297,7 @@ class idRenderModelLiquid : public idRenderModelStatic
 /*
 ===============================================================================
 
-        PRT model
+    PRT model
 
 ===============================================================================
 */
@@ -333,7 +328,7 @@ class idRenderModelPrt : public idRenderModelStatic
 /*
 ===============================================================================
 
-        Beam model
+    Beam model
 
 ===============================================================================
 */
@@ -351,7 +346,7 @@ class idRenderModelBeam : public idRenderModelStatic
 /*
 ===============================================================================
 
-        Beam model
+    Beam model
 
 ===============================================================================
 */
@@ -389,7 +384,7 @@ class idRenderModelTrail : public idRenderModelStatic
 /*
 ===============================================================================
 
-        Lightning model
+    Lightning model
 
 ===============================================================================
 */
@@ -407,7 +402,7 @@ class idRenderModelLightning : public idRenderModelStatic
 /*
 ================================================================================
 
-        idRenderModelSprite
+    idRenderModelSprite
 
 ================================================================================
 */

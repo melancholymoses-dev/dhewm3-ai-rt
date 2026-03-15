@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -54,14 +51,12 @@ bool rvGEWorkspace::SaveFile(const char *filename)
 
     mFilename = filename;
 
-    // Since quake can only write to its path we will write a temp file then copy
-    // it over
+    // Since quake can only write to its path we will write a temp file then copy it over
     idStr tempfile;
     idStr ospath;
 
     tempfile = "guis/temp.guied";
-    // ospath = fileSystem->RelativePathToOSPath ( tempfile, "fs_basepath" ); DG:
-    // change from SteelStorm2
+    // ospath = fileSystem->RelativePathToOSPath ( tempfile, "fs_basepath" ); DG: change from SteelStorm2
     ospath = fileSystem->RelativePathToOSPath(tempfile, "fs_savepath");
 
     // Open the output file for write
@@ -258,8 +253,8 @@ bool rvGEWorkspace::NewFile(void)
 
     // Make a temporary file with nothing in it so we can just use
     // load to do all the work
-    // ospath = fileSystem->RelativePathToOSPath ( "guis/Untitled.guiednew",
-    // "fs_basepath" ); DG: change from SteelStorm2
+    // ospath = fileSystem->RelativePathToOSPath ( "guis/Untitled.guiednew", "fs_basepath" ); DG: change from
+    // SteelStorm2
     ospath = fileSystem->RelativePathToOSPath("guis/Untitled.guiednew", "fs_savepath");
     DeleteFile(ospath);
 
@@ -311,8 +306,7 @@ bool rvGEWorkspace::LoadFile(const char *filename, idStr *error)
     bool result;
 
     tempfile = "guis/temp.guied";
-    // ospath = fileSystem->RelativePathToOSPath ( tempfile, "fs_basepath" ); DG:
-    // change from SteelStorm2
+    // ospath = fileSystem->RelativePathToOSPath ( tempfile, "fs_basepath" ); DG: change from SteelStorm2
     ospath = fileSystem->RelativePathToOSPath(tempfile, "fs_savepath");
 
     // Make sure the gui directory exists

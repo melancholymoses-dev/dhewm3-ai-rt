@@ -14,11 +14,11 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#include "renderer/Model.h"
-#include "renderer/VertexCache.h"
-#include "renderer/Vulkan/vk_common.h"
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
+#include "renderer/VertexCache.h"
+#include "renderer/Model.h"
+#include "renderer/Vulkan/vk_common.h"
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -128,8 +128,7 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
     VK_CreateBuffer((VkDeviceSize)size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &buf, &mem);
     VK_UploadBuffer(buf, data, (VkDeviceSize)size);
 
-    // Store as uint64_t — matches VkBuffer / VkDeviceMemory underlying type on
-    // all platforms
+    // Store as uint64_t — matches VkBuffer / VkDeviceMemory underlying type on all platforms
     block->vkBuffer = (uint64_t)buf;
     block->vkMemory = (uint64_t)mem;
 }

@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/hashing/MD4.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "renderer/Image.h"
 
@@ -79,8 +76,7 @@ int idImage::BitsForInternalFormat(int internalFormat) const
     case GL_LUMINANCE8_ALPHA8:
         return 16;
     case 3:
-        return 32; // on some future hardware, this may actually be 24, but be
-                   // conservative
+        return 32; // on some future hardware, this may actually be 24, but be conservative
     case 4:
         return 32;
     case GL_LUMINANCE8:
@@ -90,8 +86,7 @@ int idImage::BitsForInternalFormat(int internalFormat) const
     case GL_RGBA8:
         return 32;
     case GL_RGB8:
-        return 32; // on some future hardware, this may actually be 24, but be
-                   // conservative
+        return 32; // on some future hardware, this may actually be 24, but be conservative
     case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
         return 4;
     case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
@@ -277,13 +272,11 @@ GLenum idImage::SelectInternalFormat(const byte **dataPtrs, int numDataPtrs, int
     // catch normal maps first
     if (minimumDepth == TD_BUMP)
     {
-        // DG: put the glConfig.sharedTexturePaletteAvailable check first because
-        // nowadays it's usually false
+        // DG: put the glConfig.sharedTexturePaletteAvailable check first because nowadays it's usually false
         if (glConfig.sharedTexturePaletteAvailable && globalImages->image_useCompression.GetBool() &&
             globalImages->image_useNormalCompression.GetInteger() == 1)
         {
-            // image_useNormalCompression should only be set to 1 on nv_10 and nv_20
-            // paths
+            // image_useNormalCompression should only be set to 1 on nv_10 and nv_20 paths
             return GL_COLOR_INDEX8_EXT;
         }
         else if (globalImages->image_useCompression.GetBool() &&
@@ -295,8 +288,8 @@ GLenum idImage::SelectInternalFormat(const byte **dataPtrs, int numDataPtrs, int
             }
             else
             {
-                // image_useNormalCompression == 2 uses rxgb format which produces
-                // really good quality for medium settings
+                // image_useNormalCompression == 2 uses rxgb format which produces really good quality for medium
+                // settings
                 return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
             }
         }
@@ -839,8 +832,7 @@ void idImage::ImageProgramStringToCompressedFileName(const char *imageProg, char
     int depth = 0;
 
     // convert all illegal characters to underscores
-    // this could conceivably produce a duplicated mapping, but we aren't going to
-    // worry about it
+    // this could conceivably produce a duplicated mapping, but we aren't going to worry about it
     for (s = imageProg; *s; s++)
     {
         if (*s == '/' || *s == '\\' || *s == '(')
@@ -932,16 +924,16 @@ void idImage::WritePrecompressedImage()
         return;
     }
 
-    // glGetTexImage only supports a small subset of all the available internal
-    // formats We have to use BGRA because DDS is a windows based format
+    // glGetTexImage only supports a small subset of all the available internal formats
+    // We have to use BGRA because DDS is a windows based format
     int altInternalFormat = 0;
     int bitSize = 0;
     switch (internalFormat)
     {
     case GL_COLOR_INDEX8_EXT:
     case GL_COLOR_INDEX:
-        // this will not work with dds viewers but we need it in this format to save
-        // disk load speed ( i.e. size )
+        // this will not work with dds viewers but we need it in this format to save disk
+        // load speed ( i.e. size )
         altInternalFormat = GL_COLOR_INDEX;
         bitSize = 24;
         break;
@@ -1004,8 +996,7 @@ void idImage::WritePrecompressedImage()
                 break;
             }
         }
-        globalImages->AddDDSCommand(va("z:/d3xp/compressonator/thecompressonator "
-                                       "-convert \"%s\" \"%s\" %s -mipmaps\n",
+        globalImages->AddDDSCommand(va("z:/d3xp/compressonator/thecompressonator -convert \"%s\" \"%s\" %s -mipmaps\n",
                                        inFile.c_str(), outFile.c_str(), format.c_str()));
         return;
     }
@@ -1106,8 +1097,7 @@ void idImage::WritePrecompressedImage()
     // bind to the image so we can read back the contents
     Bind();
 
-    qglPixelStorei(GL_PACK_ALIGNMENT,
-                   1); // otherwise small rows get padded to 32 bits
+    qglPixelStorei(GL_PACK_ALIGNMENT, 1); // otherwise small rows get padded to 32 bits
 
     int uw = uploadWidth;
     int uh = uploadHeight;
@@ -1247,9 +1237,8 @@ bool idImage::CheckPrecompressedImage(bool fullLoad)
         return false;
     }
 
-#if 1 // ( _D3XP had disabled ) - Allow grabbing of DDS's from original Doom pak
-      // files if we are doing a copyFiles, make sure the original images are
-      // referenced
+#if 1 // ( _D3XP had disabled ) - Allow grabbing of DDS's from original Doom pak files
+    // if we are doing a copyFiles, make sure the original images are referenced
     if (fileSystem->PerformingCopyFiles())
     {
         return false;
@@ -1306,12 +1295,11 @@ bool idImage::CheckPrecompressedImage(bool fullLoad)
         return false;
     }
 
-#if 0 // DG: no idea what this was exactly meant to achieve, but it's definitely
-      // a bad idea:
-      //     we might try to load the lower mipmap levels of the image, but we'd
-      //     still have to load the whole .dds file first. What's even weirder:
-      //     idImage::ShouldImageBePartiallyCached() returns false if the file
-      //     size is LESS THAN image_cacheMinK * 1024...
+#if 0 // DG: no idea what this was exactly meant to achieve, but it's definitely a bad idea:
+	//     we might try to load the lower mipmap levels of the image, but we'd still have
+	//     to load the whole .dds file first.
+	//     What's even weirder: idImage::ShouldImageBePartiallyCached() returns false
+	//     if the file size is LESS THAN image_cacheMinK * 1024...
 	if ( !fullLoad && len > globalImages->image_cacheMinK.GetInteger() * 1024 ) {
 		len = globalImages->image_cacheMinK.GetInteger() * 1024;
 	}
@@ -1356,9 +1344,9 @@ bool idImage::CheckPrecompressedImage(bool fullLoad)
         }
         else
         {
-            common->Warning("Image file '%s' has unsupported dxgiFormat %d - dhewm3 "
-                            "only supports DXGI_FORMAT_BC7_UNORM (98)!",
-                            filename, dxgiFormat);
+            common->Warning(
+                "Image file '%s' has unsupported dxgiFormat %d - dhewm3 only supports DXGI_FORMAT_BC7_UNORM (98)!",
+                filename, dxgiFormat);
             R_StaticFree(data);
             return false;
         }
@@ -1458,16 +1446,13 @@ void idImage::UploadPrecompressedImage(byte *data, int len)
         case DDS_MAKEFOURCC('R', 'X', 'G', 'B'):
             internalFormat = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
             break;
-        case DDS_MAKEFOURCC('B', 'C', '7',
-                            '0'): // BC7 aka BPTC - inofficial FourCCs
+        case DDS_MAKEFOURCC('B', 'C', '7', '0'): // BC7 aka BPTC - inofficial FourCCs
         case DDS_MAKEFOURCC('B', 'C', '7', 'L'):
             internalFormat = GL_COMPRESSED_RGBA_BPTC_UNORM;
             break;
-        case DDS_MAKEFOURCC('D', 'X', '1',
-                            '0'): // BC7 aka BPTC - the official dxgi way
+        case DDS_MAKEFOURCC('D', 'X', '1', '0'): // BC7 aka BPTC - the official dxgi way
             additionalHeaderOffset = 20;
-            // Note: this is a bit hacky, but in CheckPrecompressedImage() we made
-            // sure
+            // Note: this is a bit hacky, but in CheckPrecompressedImage() we made sure
             //       that only BC7 UNORM is accepted if the FourCC is 'DX10'
             internalFormat = GL_COMPRESSED_RGBA_BPTC_UNORM;
             break;
@@ -1510,8 +1495,7 @@ void idImage::UploadPrecompressedImage(byte *data, int len)
         return;
     }
 
-    type = TT_2D; // FIXME: we may want to support pre-compressed cube maps in the
-                  // future
+    type = TT_2D; // FIXME: we may want to support pre-compressed cube maps in the future
 
     Bind();
 
@@ -1575,8 +1559,7 @@ void idImage::UploadPrecompressedImage(byte *data, int len)
         }
     }
     // in case the mipmap chain is incomplete (doesn't go down to 1x1 pixel)
-    // the texture may be shown as black unless GL_TEXTURE_MAX_LEVEL is set
-    // accordingly
+    // the texture may be shown as black unless GL_TEXTURE_MAX_LEVEL is set accordingly
     if (lastUW > 1 || lastUH > 1)
     {
         numMipmaps -= skipMip;
@@ -1680,23 +1663,21 @@ void idImage::ActuallyLoadImage(bool checkForPrecompressed, bool fromBackEnd)
             return;
         }
         /*
-                        // swap the red and alpha for rxgb support
-                        // do this even on tga normal maps so we only have to use
-                        // one fragment program
-                        // if the image is precompressed ( either in palletized mode
-           or true rxgb mode )
-                        // then it is loaded above and the swap never happens here
-                        if ( depth == TD_BUMP &&
-           globalImages->image_useNormalCompression.GetInteger() != 1 ) { for ( int
-           i = 0; i < width * height * 4; i += 4 ) { pic[ i + 3 ] = pic[ i ]; pic[ i
-           ] = 0;
-                                }
-                        }
+                // swap the red and alpha for rxgb support
+                // do this even on tga normal maps so we only have to use
+                // one fragment program
+                // if the image is precompressed ( either in palletized mode or true rxgb mode )
+                // then it is loaded above and the swap never happens here
+                if ( depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 1 ) {
+                    for ( int i = 0; i < width * height * 4; i += 4 ) {
+                        pic[ i + 3 ] = pic[ i ];
+                        pic[ i ] = 0;
+                    }
+                }
         */
         // build a hash for checking duplicate image files
         // NOTE: takes about 10% of image load times (SD)
-        // may not be strictly necessary, but some code uses it, so let's leave it
-        // in
+        // may not be strictly necessary, but some code uses it, so let's leave it in
         imageHash = MD4_BlockChecksum(pic, width * height * 4);
 
         GenerateImage(pic, width, height, filter, allowDownSize, repeat, depth);
@@ -1721,8 +1702,7 @@ Automatically enables 2D mapping, cube mapping, or 3D texturing if needed
 */
 void idImage::Bind()
 {
-    // if this is an image that we are caching, move it to the front of the LRU
-    // chain
+    // if this is an image that we are caching, move it to the front of the LRU chain
     if (partialImage)
     {
         if (cacheUsageNext)
@@ -1747,8 +1727,7 @@ void idImage::Bind()
             // if we have a partial image, go ahead and use that
             this->partialImage->Bind();
 
-            // start a background load of the full thing if it isn't already in the
-            // queue
+            // start a background load of the full thing if it isn't already in the queue
             if (!backgroundLoadInProgress)
             {
                 StartBackgroundImageLoad();
@@ -1757,8 +1736,7 @@ void idImage::Bind()
         }
 
         // load the image on demand here, which isn't our normal game operating mode
-        ActuallyLoadImage(true,
-                          true); // check for precompressed, load is from back end
+        ActuallyLoadImage(true, true); // check for precompressed, load is from back end
     }
 
     // bump our statistic counters
@@ -1835,14 +1813,13 @@ void idImage::Bind()
 ==============
 BindFragment
 
-Fragment programs explicitly say which type of map they want, so we don't need
-to do any enable / disable changes
+Fragment programs explicitly say which type of map they want, so we don't need to
+do any enable / disable changes
 ==============
 */
 void idImage::BindFragment()
 {
-    // if this is an image that we are caching, move it to the front of the LRU
-    // chain
+    // if this is an image that we are caching, move it to the front of the LRU chain
     if (partialImage)
     {
         if (cacheUsageNext)
@@ -1867,8 +1844,7 @@ void idImage::BindFragment()
             // if we have a partial image, go ahead and use that
             this->partialImage->BindFragment();
 
-            // start a background load of the full thing if it isn't already in the
-            // queue
+            // start a background load of the full thing if it isn't already in the queue
             if (!backgroundLoadInProgress)
             {
                 StartBackgroundImageLoad();
@@ -1877,8 +1853,7 @@ void idImage::BindFragment()
         }
 
         // load the image on demand here, which isn't our normal game operating mode
-        ActuallyLoadImage(true,
-                          true); // check for precompressed, load is from back end
+        ActuallyLoadImage(true, true); // check for precompressed, load is from back end
     }
 
     // bump our statistic counters
@@ -1949,8 +1924,7 @@ void idImage::CopyFramebuffer(int x, int y, int imageWidth, int imageHeight, boo
             // this might be a 16+ meg allocation, which could fail on _alloca
             junk = (byte *)Mem_Alloc(potWidth * potHeight * 4);
             memset(junk, 0, potWidth * potHeight * 4); //!@#
-#if 0 // Disabling because it's unnecessary and introduces a green strip on edge
-      // of _currentRender
+#if 0 // Disabling because it's unnecessary and introduces a green strip on edge of _currentRender
 			for ( int i = 0 ; i < potWidth * potHeight * 4 ; i+=4 ) {
 				junk[i+1] = 255;
 			}
@@ -1963,14 +1937,12 @@ void idImage::CopyFramebuffer(int x, int y, int imageWidth, int imageHeight, boo
     }
     else
     {
-        // otherwise, just subimage upload it so that drivers can tell we are going
-        // to be changing it and don't try and do a texture compression or some
-        // other silliness
+        // otherwise, just subimage upload it so that drivers can tell we are going to be changing
+        // it and don't try and do a texture compression or some other silliness
         qglCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, imageWidth, imageHeight);
     }
 
-    // if the image isn't a full power of two, duplicate an extra row and/or
-    // column to fix bilerps
+    // if the image isn't a full power of two, duplicate an extra row and/or column to fix bilerps
     if (imageWidth != potWidth)
     {
         qglCopyTexSubImage2D(GL_TEXTURE_2D, 0, imageWidth, 0, x + imageWidth - 1, y, 1, imageHeight);
@@ -1993,8 +1965,7 @@ void idImage::CopyFramebuffer(int x, int y, int imageWidth, int imageHeight, boo
 ====================
 CopyDepthbuffer
 
-This should just be part of copyFramebuffer once we have a proper image type
-field
+This should just be part of copyFramebuffer once we have a proper image type field
 ====================
 */
 void idImage::CopyDepthbuffer(int x, int y, int imageWidth, int imageHeight, bool useOversizedBuffer)
@@ -2016,19 +1987,17 @@ void idImage::CopyDepthbuffer(int x, int y, int imageWidth, int imageHeight, boo
     {
         uploadWidth = potWidth;
         uploadHeight = potHeight;
-        // This bit runs once only at map start, because it tests whether the image
-        // is too small to hold the screen. It resizes the texture to a power of two
-        // that can hold the screen, and then subsequent captures to the texture put
-        // the depth component into the RGB channels
+        // This bit runs once only at map start, because it tests whether the image is too small to hold the screen.
+        // It resizes the texture to a power of two that can hold the screen,
+        // and then subsequent captures to the texture put the depth component into the RGB channels
         qglTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24_ARB, potWidth, potHeight, 0, GL_DEPTH_COMPONENT,
                       GL_UNSIGNED_BYTE, NULL);
         qglCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, imageWidth, imageHeight);
     }
     else
     {
-        // otherwise, just subimage upload it so that drivers can tell we are going
-        // to be changing it and don't try and do a texture compression or some
-        // other silliness
+        // otherwise, just subimage upload it so that drivers can tell we are going to be changing
+        // it and don't try and do a texture compression or some other silliness
         qglCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, x, y, imageWidth, imageHeight);
     }
 
@@ -2062,8 +2031,7 @@ void idImage::UploadScratch(const byte *data, int cols, int rows)
         Bind();
 
         rows /= 6;
-        // if the scratchImage isn't in the format we want, specify it as a new
-        // texture
+        // if the scratchImage isn't in the format we want, specify it as a new texture
         if (cols != uploadWidth || rows != uploadHeight)
         {
             uploadWidth = cols;
@@ -2078,8 +2046,8 @@ void idImage::UploadScratch(const byte *data, int cols, int rows)
         }
         else
         {
-            // otherwise, just subimage upload it so that drivers can tell we are
-            // going to be changing it and don't try and do a texture compression
+            // otherwise, just subimage upload it so that drivers can tell we are going to be changing
+            // it and don't try and do a texture compression
             for (i = 0; i < 6; i++)
             {
                 qglTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X_EXT + i, 0, 0, 0, cols, rows, GL_RGBA, GL_UNSIGNED_BYTE,
@@ -2103,8 +2071,7 @@ void idImage::UploadScratch(const byte *data, int cols, int rows)
 
         Bind();
 
-        // if the scratchImage isn't in the format we want, specify it as a new
-        // texture
+        // if the scratchImage isn't in the format we want, specify it as a new texture
         if (cols != uploadWidth || rows != uploadHeight)
         {
             uploadWidth = cols;
@@ -2113,8 +2080,8 @@ void idImage::UploadScratch(const byte *data, int cols, int rows)
         }
         else
         {
-            // otherwise, just subimage upload it so that drivers can tell we are
-            // going to be changing it and don't try and do a texture compression
+            // otherwise, just subimage upload it so that drivers can tell we are going to be changing
+            // it and don't try and do a texture compression
             qglTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, cols, rows, GL_RGBA, GL_UNSIGNED_BYTE, data);
         }
         qglTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

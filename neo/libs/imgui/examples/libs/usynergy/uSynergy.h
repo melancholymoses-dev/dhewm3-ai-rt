@@ -68,8 +68,8 @@ extern "C"
     /**
     @brief User context type
 
-    The uSynergyCookie type is an opaque type that is used by uSynergy to
-    communicate to the client. It is passed along to callback functions as context.
+    The uSynergyCookie type is an opaque type that is used by uSynergy to communicate to the client. It is passed along
+    to callback functions as context.
     **/
     typedef struct
     {
@@ -121,14 +121,12 @@ extern "C"
     /**
     @brief Connect function
 
-    This function is called when uSynergy needs to connect to the host. It doesn't
-    imply a network implementation or destination address, that must all be handled
-    on the user side. The function should return USYNERGY_TRUE if a connection was
-    established or USYNERGY_FALSE if it could not connect.
+    This function is called when uSynergy needs to connect to the host. It doesn't imply a network implementation or
+    destination address, that must all be handled on the user side. The function should return USYNERGY_TRUE if a
+    connection was established or USYNERGY_FALSE if it could not connect.
 
-    When network errors occur (e.g. uSynergySend or uSynergyReceive fail) then the
-    connect call will be called again so the implementation of the function must
-    close any old connections and clean up resources before retrying.
+    When network errors occur (e.g. uSynergySend or uSynergyReceive fail) then the connect call will be called again
+    so the implementation of the function must close any old connections and clean up resources before retrying.
 
     @param cookie		Cookie supplied in the Synergy context
     **/
@@ -137,10 +135,9 @@ extern "C"
     /**
     @brief Send function
 
-    This function is called when uSynergy needs to send something over the default
-    connection. It should return USYNERGY_TRUE if sending succeeded and
-    USYNERGY_FALSE otherwise. This function should block until the send operation is
-    completed.
+    This function is called when uSynergy needs to send something over the default connection. It should return
+    USYNERGY_TRUE if sending succeeded and USYNERGY_FALSE otherwise. This function should block until the send
+    operation is completed.
 
     @param cookie		Cookie supplied in the Synergy context
     @param buffer		Address of buffer to send
@@ -151,28 +148,24 @@ extern "C"
     /**
     @brief Receive function
 
-    This function is called when uSynergy needs to receive data from the default
-    connection. It should return USYNERGY_TRUE if receiving data succeeded and
-    USYNERGY_FALSE otherwise. This function should block until data has been
-    received and wait for data to become available. If @a outLength is set to 0 upon
-    completion it is assumed that the connection is alive, but still in a connecting
-    state and needs time to settle.
+    This function is called when uSynergy needs to receive data from the default connection. It should return
+    USYNERGY_TRUE if receiving data succeeded and USYNERGY_FALSE otherwise. This function should block until data
+    has been received and wait for data to become available. If @a outLength is set to 0 upon completion it is
+    assumed that the connection is alive, but still in a connecting state and needs time to settle.
 
     @param cookie		Cookie supplied in the Synergy context
     @param buffer		Address of buffer to receive data into
     @param maxLength	Maximum amount of bytes to write into the receive buffer
-    @param outLength	Address of integer that receives the actual amount of
-    bytes written into @a buffer
+    @param outLength	Address of integer that receives the actual amount of bytes written into @a buffer
     **/
     typedef uSynergyBool (*uSynergyReceiveFunc)(uSynergyCookie cookie, uint8_t *buffer, int maxLength, int *outLength);
 
     /**
     @brief Thread sleep function
 
-    This function is called when uSynergy wants to suspend operation for a while
-    before retrying an operation. It is mostly used when a socket times out or
-    disconnect occurs to prevent uSynergy from continuously hammering a network
-    connection in case the network is down.
+    This function is called when uSynergy wants to suspend operation for a while before retrying an operation. It
+    is mostly used when a socket times out or disconnect occurs to prevent uSynergy from continuously hammering a
+    network connection in case the network is down.
 
     @param cookie		Cookie supplied in the Synergy context
     @param timeMs		Time to sleep the current thread (in milliseconds)
@@ -182,9 +175,8 @@ extern "C"
     /**
     @brief Get time function
 
-    This function is called when uSynergy needs to know the current time. This is
-    used to determine when timeouts have occurred. The time base should be a cyclic
-    millisecond time value.
+    This function is called when uSynergy needs to know the current time. This is used to determine when timeouts
+    have occurred. The time base should be a cyclic millisecond time value.
 
     @returns			Time value in milliseconds
     **/
@@ -193,10 +185,9 @@ extern "C"
     /**
     @brief Trace function
 
-    This function is called when uSynergy wants to trace something. It is optional
-    to show these messages, but they are often useful when debugging. uSynergy only
-    traces major events like connecting and disconnecting. Usually only a single
-    trace is shown when the connection is established and no more trace are called.
+    This function is called when uSynergy wants to trace something. It is optional to show these messages, but they
+    are often useful when debugging. uSynergy only traces major events like connecting and disconnecting. Usually
+    only a single trace is shown when the connection is established and no more trace are called.
 
     @param cookie		Cookie supplied in the Synergy context
     @param text			Text to be traced
@@ -210,8 +201,7 @@ extern "C"
     callback is usually sent when the mouse enters or leaves the screen.
 
     @param cookie		Cookie supplied in the Synergy context
-    @param active		Activation flag, 1 if the screen has become active, 0 if
-    the screen has become inactive
+    @param active		Activation flag, 1 if the screen has become active, 0 if the screen has become inactive
     **/
     typedef void (*uSynergyScreenActiveCallback)(uSynergyCookie cookie, uSynergyBool active);
 
@@ -227,12 +217,9 @@ extern "C"
     @param y			Mouse Y position
     @param wheelX		Mouse wheel X position
     @param wheelY		Mouse wheel Y position
-    @param buttonLeft	Left button pressed status, 0 for released, 1 for
-    pressed
-    @param buttonMiddle	Middle button pressed status, 0 for released, 1 for
-    pressed
-    @param buttonRight	Right button pressed status, 0 for released, 1 for
-    pressed
+    @param buttonLeft	Left button pressed status, 0 for released, 1 for pressed
+    @param buttonMiddle	Middle button pressed status, 0 for released, 1 for pressed
+    @param buttonRight	Right button pressed status, 0 for released, 1 for pressed
     **/
     typedef void (*uSynergyMouseCallback)(uSynergyCookie cookie, uint16_t x, uint16_t y, int16_t wheelX, int16_t wheelY,
                                           uSynergyBool buttonLeft, uSynergyBool buttonRight, uSynergyBool buttonMiddle);
@@ -245,10 +232,9 @@ extern "C"
     @param cookie		Cookie supplied in the Synergy context
     @param key			Key code of key that was pressed or released
     @param modifiers	Status of modifier keys (alt, shift, etc.)
-    @param down			Down or up status, 1 is key is pressed down, 0
-    if key is released (up)
-    @param repeat		Repeat flag, 1 if the key is down because the key is
-    repeating, 0 if the key is initially pressed by the user
+    @param down			Down or up status, 1 is key is pressed down, 0 if key is released (up)
+    @param repeat		Repeat flag, 1 if the key is down because the key is repeating, 0 if the key is initially
+    pressed by the user
     **/
     typedef void (*uSynergyKeyboardCallback)(uSynergyCookie cookie, uint16_t key, uint16_t modifiers, uSynergyBool down,
                                              uSynergyBool repeat);
@@ -256,15 +242,13 @@ extern "C"
     /**
     @brief Joystick event callback
 
-    This callback is called when a joystick stick or button changes. It is possible
-    that multiple callbacks are fired when different sticks or buttons change as
-    these are individual messages in the packet stream. Each callback will contain
-    all the valid state for the different axes and buttons. The last callback
-    received will represent the most current joystick state.
+    This callback is called when a joystick stick or button changes. It is possible that multiple callbacks are
+    fired when different sticks or buttons change as these are individual messages in the packet stream. Each
+    callback will contain all the valid state for the different axes and buttons. The last callback received will
+    represent the most current joystick state.
 
     @param cookie		Cookie supplied in the Synergy context
-    @param joyNum		Joystick number, always in the range [0 ...
-    USYNERGY_NUM_JOYSTICKS>
+    @param joyNum		Joystick number, always in the range [0 ... USYNERGY_NUM_JOYSTICKS>
     @param buttons		Button pressed mask
     @param leftStickX	Left stick X position, in range [-127 ... 127]
     @param leftStickY	Left stick Y position, in range [-127 ... 127]
@@ -277,9 +261,9 @@ extern "C"
     /**
     @brief Clipboard event callback
 
-    This callback is called when something is placed on the clipboard. Multiple
-    callbacks may be fired for multiple clipboard formats if they are supported. The
-    data provided is read-only and may not be modified by the application.
+    This callback is called when something is placed on the clipboard. Multiple callbacks may be fired for
+    multiple clipboard formats if they are supported. The data provided is read-only and may not be modified
+    by the application.
 
     @param cookie		Cookie supplied in the Synergy context
     @param format		Clipboard format
@@ -318,12 +302,11 @@ extern "C"
         uSynergyClipboardCallback m_clipboardCallback;       /* Callback for clipboard events */
 
         /* State data, used internall by client, initialized by uSynergyInit() */
-        uSynergyBool m_connected;                              /* Is our socket connected? */
-        uSynergyBool m_hasReceivedHello;                       /* Have we received a 'Hello' from the server? */
-        uSynergyBool m_isCaptured;                             /* Is Synergy active (i.e. this client is receiving
-                                                                  input messages?) */
-        uint32_t m_lastMessageTime;                            /* Time at which last message was received */
-        uint32_t m_sequenceNumber;                             /* Packet sequence number */
+        uSynergyBool m_connected;        /* Is our socket connected? */
+        uSynergyBool m_hasReceivedHello; /* Have we received a 'Hello' from the server? */
+        uSynergyBool m_isCaptured;       /* Is Synergy active (i.e. this client is receiving input messages?) */
+        uint32_t m_lastMessageTime;      /* Time at which last message was received */
+        uint32_t m_sequenceNumber;       /* Packet sequence number */
         uint8_t m_receiveBuffer[USYNERGY_RECEIVE_BUFFER_SIZE]; /* Receive buffer */
         int m_receiveOfs;                                      /* Receive buffer offset */
         uint8_t m_replyBuffer[USYNERGY_REPLY_BUFFER_SIZE];     /* Reply buffer */
@@ -347,8 +330,8 @@ extern "C"
     @brief Initialize uSynergy context
 
     This function initializes @a context for use. Call this function directly after
-    creating the context, before filling in any configuration data in it. Not
-    calling this function will cause undefined behavior.
+    creating the context, before filling in any configuration data in it. Not calling
+    this function will cause undefined behavior.
 
     @param context	Context to be initialized
     **/
@@ -357,17 +340,16 @@ extern "C"
     /**
     @brief Update uSynergy
 
-    This function updates uSynergy and does the bulk of the work. It does connection
-    management, receiving data, reconnecting after errors or timeouts and so on. It
-    assumes that networking operations are blocking and it can suspend the current
-    thread if it needs to wait. It is best practice to call uSynergyUpdate from a
-    background thread so it is responsive.
+    This function updates uSynergy and does the bulk of the work. It does connection management,
+    receiving data, reconnecting after errors or timeouts and so on. It assumes that networking
+    operations are blocking and it can suspend the current thread if it needs to wait. It is
+    best practice to call uSynergyUpdate from a background thread so it is responsive.
 
-    Because uSynergy relies mostly on blocking calls it will mostly stay in thread
-    sleep state waiting for system mutexes and won't eat much memory.
+    Because uSynergy relies mostly on blocking calls it will mostly stay in thread sleep state
+    waiting for system mutexes and won't eat much memory.
 
-    uSynergyUpdate doesn't do any memory allocations or have any side effects beyond
-    those of the callbacks it calls.
+    uSynergyUpdate doesn't do any memory allocations or have any side effects beyond those of
+    the callbacks it calls.
 
     @param context	Context to be updated
     **/
@@ -376,9 +358,9 @@ extern "C"
     /**
     @brief Send clipboard data
 
-    This function sets new clipboard data and sends it to the server. Use this
-    function if your client cuts or copies data onto the clipboard that it needs to
-    share with the server.
+    This function sets new clipboard data and sends it to the server. Use this function if
+    your client cuts or copies data onto the clipboard that it needs to share with the
+    server.
 
     Currently there is only support for plaintext, but HTML and image data could be
     supported with some effort.

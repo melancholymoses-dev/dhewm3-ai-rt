@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,10 +35,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        RoQ cinematic
+    RoQ cinematic
 
-        Multiple idCinematics can run simultaniously.
-        A single idCinematic can be reused for multiple files if desired.
+    Multiple idCinematics can run simultaniously.
+    A single idCinematic can be reused for multiple files if desired.
 
 ===============================================================================
 */
@@ -58,8 +55,7 @@ typedef enum
     FMV_ID_WAIT
 } cinStatus_t;
 
-// a cinematic stream generates an image buffer, which the caller will upload to
-// a texture
+// a cinematic stream generates an image buffer, which the caller will upload to a texture
 typedef struct
 {
     int imageWidth, imageHeight; // will be a power of 2
@@ -89,8 +85,7 @@ class idCinematic
     // returns the length of the animation in milliseconds
     virtual int AnimationLength();
 
-    // the pointers in cinData_t will remain valid until the next UpdateForTime()
-    // call
+    // the pointers in cinData_t will remain valid until the next UpdateForTime() call
     virtual cinData_t ImageForTime(int milliseconds);
 
     // closes the file and frees all allocated memory
@@ -103,7 +98,7 @@ class idCinematic
 /*
 ===============================================
 
-        Sound meter.
+    Sound meter.
 
 ===============================================
 */

@@ -13,8 +13,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 #ifndef _PROPTREEITEMSTATIC_H
 #define _PROPTREEITEMSTATIC_H

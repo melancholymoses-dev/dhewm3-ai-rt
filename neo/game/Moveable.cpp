@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
 #include "Fx.h"
 
@@ -309,9 +306,8 @@ bool idMoveable::Collide(const trace_t &collision, const idVec3 &velocity)
                       (1.0f / idMath::Sqrt(BOUNCE_SOUND_MAX_VELOCITY - BOUNCE_SOUND_MIN_VELOCITY));
         if (StartSound("snd_bounce", SND_CHANNEL_ANY, 0, false, NULL))
         {
-            // don't set the volume unless there is a bounce sound as it overrides the
-            // entire channel which causes footsteps on ai's to not honor their shader
-            // parms
+            // don't set the volume unless there is a bounce sound as it overrides the entire channel
+            // which causes footsteps on ai's to not honor their shader parms
             SetSoundVolume(f);
         }
         nextSoundTime = gameLocal.time + 500;
@@ -690,8 +686,7 @@ void idBarrel::BarrelThink(void)
     // run physics
     RunPhysics();
 
-    // only need to give the visual model an additional rotation if the physics
-    // were run
+    // only need to give the visual model an additional rotation if the physics were run
     if (!wasAtRest)
     {
 
@@ -709,8 +704,7 @@ void idBarrel::BarrelThink(void)
             dir -= gravityNormal * dir * gravityNormal;
             movedDistance = dir.LengthSqr();
 
-            // if the barrel moved and the barrel is not aligned with the gravity
-            // direction
+            // if the barrel moved and the barrel is not aligned with the gravity direction
             if (movedDistance > 0.0f && idMath::Fabs(gravityNormal * curAxis[barrelAxis]) < 0.7f)
             {
 
@@ -913,8 +907,7 @@ void idExplodingBarrel::Restore(idRestoreGame *savefile)
     savefile->ReadInt(lightTime);
     savefile->ReadFloat(time);
 
-    // DG: enforce getting fresh handle, else this may be tied to an unrelated
-    // light!
+    // DG: enforce getting fresh handle, else this may be tied to an unrelated light!
     if (lightDefHandle != -1)
     {
         lightDefHandle = gameRenderWorld->AddLightDef(&light);
@@ -1142,8 +1135,7 @@ void idExplodingBarrel::Killed(idEntity *inflictor, idEntity *attacker, int dama
         }
     }
 
-    // do this before applying radius damage so the ent can trace to any damagable
-    // ents nearby
+    // do this before applying radius damage so the ent can trace to any damagable ents nearby
     Hide();
     physicsObj.SetContents(0);
 

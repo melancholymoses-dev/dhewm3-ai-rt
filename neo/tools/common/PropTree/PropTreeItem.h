@@ -13,8 +13,8 @@
 //  provided the above notices are retained, and a notice that the code was
 //  modified is included with the above copyright notice.
 //
-//	If you use this code, drop me an email.  I'd like to know if you find
-// the code 	useful.
+//	If you use this code, drop me an email.  I'd like to know if you find the code
+//	useful.
 
 #ifndef _PROPTREEITEM_H
 #define _PROPTREEITEM_H
@@ -60,8 +60,7 @@ class PROPTREE_API CPropTreeItem
         return false;
     }
 
-    // Returns TRUE if the item is on the root level. Root level items don't have
-    // attribute areas
+    // Returns TRUE if the item is on the root level. Root level items don't have attribute areas
     BOOL IsRootLevel();
 
     // Returns the total height of the item and all its children

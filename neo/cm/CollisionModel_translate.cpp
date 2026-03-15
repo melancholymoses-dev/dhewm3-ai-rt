@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Trace model vs. polygonal model collision detection.
+    Trace model vs. polygonal model collision detection.
 
 ===============================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Session.h"
 #include "renderer/RenderWorld.h"
-#include "sys/platform.h"
 
 #include "cm/CollisionModel_local.h"
 
@@ -86,31 +83,27 @@ ID_INLINE int idCollisionModelManagerLocal::TranslateEdgeThroughEdge(idVec3 &cro
     v[4] = (a[2]+t*dir[2]) - (b[2]+t*dir[2]);
     v[5] = (b[1]+t*dir[1]) - (a[1]+t*dir[1]);
 
-    l2[0] * v[4] + l2[1] * v[5] + l2[2] * v[3] + l2[4] * v[0] + l2[5] * v[1] +
-    l2[3] * v[2] = 0;
+    l2[0] * v[4] + l2[1] * v[5] + l2[2] * v[3] + l2[4] * v[0] + l2[5] * v[1] + l2[3] * v[2] = 0;
 
     solve t
 
     v[0] = (a[0]+t*dir[0]) * (b[1]+t*dir[1]) - (b[0]+t*dir[0]) * (a[1]+t*dir[1]);
     v[0] = (a[0]*b[1]) + a[0]*t*dir[1] + b[1]*t*dir[0] + (t*t*dir[0]*dir[1]) -
-                    ((b[0]*a[1]) + b[0]*t*dir[1] + a[1]*t*dir[0] +
-    (t*t*dir[0]*dir[1])); v[0] = a[0]*b[1] + a[0]*t*dir[1] + b[1]*t*dir[0] -
-    b[0]*a[1] - b[0]*t*dir[1] - a[1]*t*dir[0];
+            ((b[0]*a[1]) + b[0]*t*dir[1] + a[1]*t*dir[0] + (t*t*dir[0]*dir[1]));
+    v[0] = a[0]*b[1] + a[0]*t*dir[1] + b[1]*t*dir[0] - b[0]*a[1] - b[0]*t*dir[1] - a[1]*t*dir[0];
 
     v[1] = (a[0]+t*dir[0]) * (b[2]+t*dir[2]) - (b[0]+t*dir[0]) * (a[2]+t*dir[2]);
     v[1] = (a[0]*b[2]) + a[0]*t*dir[2] + b[2]*t*dir[0] + (t*t*dir[0]*dir[2]) -
-                    ((b[0]*a[2]) + b[0]*t*dir[2] + a[2]*t*dir[0] +
-    (t*t*dir[0]*dir[2])); v[1] = a[0]*b[2] + a[0]*t*dir[2] + b[2]*t*dir[0] -
-    b[0]*a[2] - b[0]*t*dir[2] - a[2]*t*dir[0];
+            ((b[0]*a[2]) + b[0]*t*dir[2] + a[2]*t*dir[0] + (t*t*dir[0]*dir[2]));
+    v[1] = a[0]*b[2] + a[0]*t*dir[2] + b[2]*t*dir[0] - b[0]*a[2] - b[0]*t*dir[2] - a[2]*t*dir[0];
 
     v[2] = (a[0]+t*dir[0]) - (b[0]+t*dir[0]);
     v[2] = a[0] - b[0];
 
     v[3] = (a[1]+t*dir[1]) * (b[2]+t*dir[2]) - (b[1]+t*dir[1]) * (a[2]+t*dir[2]);
     v[3] = (a[1]*b[2]) + a[1]*t*dir[2] + b[2]*t*dir[1] + (t*t*dir[1]*dir[2]) -
-                    ((b[1]*a[2]) + b[1]*t*dir[2] + a[2]*t*dir[1] +
-    (t*t*dir[1]*dir[2])); v[3] = a[1]*b[2] + a[1]*t*dir[2] + b[2]*t*dir[1] -
-    b[1]*a[2] - b[1]*t*dir[2] - a[2]*t*dir[1];
+            ((b[1]*a[2]) + b[1]*t*dir[2] + a[2]*t*dir[1] + (t*t*dir[1]*dir[2]));
+    v[3] = a[1]*b[2] + a[1]*t*dir[2] + b[2]*t*dir[1] - b[1]*a[2] - b[1]*t*dir[2] - a[2]*t*dir[1];
 
     v[4] = (a[2]+t*dir[2]) - (b[2]+t*dir[2]);
     v[4] = a[2] - b[2];
@@ -119,57 +112,55 @@ ID_INLINE int idCollisionModelManagerLocal::TranslateEdgeThroughEdge(idVec3 &cro
     v[5] = b[1] - a[1];
 
 
-    v[0] = a[0]*b[1] + a[0]*t*dir[1] + b[1]*t*dir[0] - b[0]*a[1] - b[0]*t*dir[1] -
-    a[1]*t*dir[0]; v[1] = a[0]*b[2] + a[0]*t*dir[2] + b[2]*t*dir[0] - b[0]*a[2] -
-    b[0]*t*dir[2] - a[2]*t*dir[0]; v[2] = a[0] - b[0]; v[3] = a[1]*b[2] +
-    a[1]*t*dir[2] + b[2]*t*dir[1] - b[1]*a[2] - b[1]*t*dir[2] - a[2]*t*dir[1];
+    v[0] = a[0]*b[1] + a[0]*t*dir[1] + b[1]*t*dir[0] - b[0]*a[1] - b[0]*t*dir[1] - a[1]*t*dir[0];
+    v[1] = a[0]*b[2] + a[0]*t*dir[2] + b[2]*t*dir[0] - b[0]*a[2] - b[0]*t*dir[2] - a[2]*t*dir[0];
+    v[2] = a[0] - b[0];
+    v[3] = a[1]*b[2] + a[1]*t*dir[2] + b[2]*t*dir[1] - b[1]*a[2] - b[1]*t*dir[2] - a[2]*t*dir[1];
     v[4] = a[2] - b[2];
     v[5] = b[1] - a[1];
 
-    v[0] = (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] - a[1]*dir[0]) * t + a[0]*b[1]
-    - b[0]*a[1]; v[1] = (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) *
-    t + a[0]*b[2] - b[0]*a[2]; v[2] = a[0] - b[0]; v[3] = (a[1]*dir[2] +
-    b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]) * t + a[1]*b[2] - b[1]*a[2]; v[4] =
-    a[2] - b[2]; v[5] = b[1] - a[1];
+    v[0] = (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] - a[1]*dir[0]) * t + a[0]*b[1] - b[0]*a[1];
+    v[1] = (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) * t + a[0]*b[2] - b[0]*a[2];
+    v[2] = a[0] - b[0];
+    v[3] = (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]) * t + a[1]*b[2] - b[1]*a[2];
+    v[4] = a[2] - b[2];
+    v[5] = b[1] - a[1];
 
-    l2[4] * (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] - a[1]*dir[0]) * t + l2[4] *
-    (a[0]*b[1] - b[0]*a[1])
-            + l2[5] * (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) * t
-    + l2[5] * (a[0]*b[2] - b[0]*a[2])
-            + l2[3] * (a[0] - b[0])
-            + l2[2] * (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]) * t
-    + l2[2] * (a[1]*b[2] - b[1]*a[2])
-            + l2[0] * (a[2] - b[2])
-            + l2[1] * (b[1] - a[1]) = 0
+    l2[4] * (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] - a[1]*dir[0]) * t + l2[4] * (a[0]*b[1] - b[0]*a[1])
+        + l2[5] * (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) * t + l2[5] * (a[0]*b[2] - b[0]*a[2])
+        + l2[3] * (a[0] - b[0])
+        + l2[2] * (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]) * t + l2[2] * (a[1]*b[2] - b[1]*a[2])
+        + l2[0] * (a[2] - b[2])
+        + l2[1] * (b[1] - a[1]) = 0
 
     t = (- l2[4] * (a[0]*b[1] - b[0]*a[1]) -
-                    l2[5] * (a[0]*b[2] - b[0]*a[2]) -
-                    l2[3] * (a[0] - b[0]) -
-                    l2[2] * (a[1]*b[2] - b[1]*a[2]) -
-                    l2[0] * (a[2] - b[2]) -
-                    l2[1] * (b[1] - a[1])) /
-                            (l2[4] * (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] -
-    a[1]*dir[0]) + l2[5] * (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0])
-    + l2[2] * (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]));
+            l2[5] * (a[0]*b[2] - b[0]*a[2]) -
+            l2[3] * (a[0] - b[0]) -
+            l2[2] * (a[1]*b[2] - b[1]*a[2]) -
+            l2[0] * (a[2] - b[2]) -
+            l2[1] * (b[1] - a[1])) /
+                (l2[4] * (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] - a[1]*dir[0]) +
+                l2[5] * (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) +
+                l2[2] * (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]));
 
     d = l2[4] * (a[0]*dir[1] + b[1]*dir[0] - b[0]*dir[1] - a[1]*dir[0]) +
-            l2[5] * (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) +
-            l2[2] * (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]);
+        l2[5] * (a[0]*dir[2] + b[2]*dir[0] - b[0]*dir[2] - a[2]*dir[0]) +
+        l2[2] * (a[1]*dir[2] + b[2]*dir[1] - b[1]*dir[2] - a[2]*dir[1]);
 
     t = - ( l2[4] * (a[0]*b[1] - b[0]*a[1]) +
-                    l2[5] * (a[0]*b[2] - b[0]*a[2]) +
-                    l2[3] * (a[0] - b[0]) +
-                    l2[2] * (a[1]*b[2] - b[1]*a[2]) +
-                    l2[0] * (a[2] - b[2]) +
-                    l2[1] * (b[1] - a[1]));
+            l2[5] * (a[0]*b[2] - b[0]*a[2]) +
+            l2[3] * (a[0] - b[0]) +
+            l2[2] * (a[1]*b[2] - b[1]*a[2]) +
+            l2[0] * (a[2] - b[2]) +
+            l2[1] * (b[1] - a[1]));
     t /= d;
 
     MrE pats Pluecker on the head.. good monkey
 
     edgeDir = a - b;
     d = l2[4] * (edgeDir[0]*dir[1] - edgeDir[1]*dir[0]) +
-            l2[5] * (edgeDir[0]*dir[2] - edgeDir[2]*dir[0]) +
-            l2[2] * (edgeDir[1]*dir[2] - edgeDir[2]*dir[1]);
+        l2[5] * (edgeDir[0]*dir[2] - edgeDir[2]*dir[0]) +
+        l2[2] * (edgeDir[1]*dir[2] - edgeDir[2]*dir[1]);
     */
 
     d = l2[4] * cross[0] + l2[5] * cross[1] + l2[2] * cross[2];
@@ -216,8 +207,7 @@ ID_INLINE void CM_AddContact(cm_traceWork_t *tw)
 ================
 CM_SetVertexSidedness
 
-  stores for the given model vertex at which side of one of the trm edges it
-passes
+  stores for the given model vertex at which side of one of the trm edges it passes
 ================
 */
 ID_INLINE void CM_SetVertexSidedness(cm_vertex_t *v, const idPluecker &vpl, const idPluecker &epl, const int bitNum)
@@ -283,8 +273,7 @@ void idCollisionModelManagerLocal::TranslateTrmEdgeThroughPolygon(cm_traceWork_t
         // get the sides at which the trm edge vertices pass the polygon edge
         CM_SetEdgeSidedness(edge, *pl, tw->vertices[trmEdge->vertexNum[0]].pl, trmEdge->vertexNum[0]);
         CM_SetEdgeSidedness(edge, *pl, tw->vertices[trmEdge->vertexNum[1]].pl, trmEdge->vertexNum[1]);
-        // if the trm edge start and end vertex do not pass the polygon edge at
-        // different sides
+        // if the trm edge start and end vertex do not pass the polygon edge at different sides
         if (!(((edge->side >> trmEdge->vertexNum[0]) ^ (edge->side >> trmEdge->vertexNum[1])) & 1))
         {
             continue;
@@ -294,14 +283,12 @@ void idCollisionModelManagerLocal::TranslateTrmEdgeThroughPolygon(cm_traceWork_t
         CM_SetVertexSidedness(v1, tw->polygonVertexPlueckerCache[i], trmEdge->pl, trmEdge->bitNum);
         v2 = tw->model->vertices + edge->vertexNum[INTSIGNBITNOTSET(edgeNum)];
         CM_SetVertexSidedness(v2, tw->polygonVertexPlueckerCache[i + 1], trmEdge->pl, trmEdge->bitNum);
-        // if the polygon edge start and end vertex do not pass the trm edge at
-        // different sides
+        // if the polygon edge start and end vertex do not pass the trm edge at different sides
         if (!((v1->side ^ v2->side) & (1 << trmEdge->bitNum)))
         {
             continue;
         }
-        // if there is no possible collision between the trm edge and the polygon
-        // edge
+        // if there is no possible collision between the trm edge and the polygon edge
         if (!idCollisionModelManagerLocal::TranslateEdgeThroughEdge(trmEdge->cross, trmEdge->pl, *pl, &f1))
         {
             continue;
@@ -334,8 +321,7 @@ void idCollisionModelManagerLocal::TranslateTrmEdgeThroughPolygon(cm_traceWork_t
         if (f2 < tw->trace.fraction)
         {
             tw->trace.fraction = f2;
-            // create plane with normal vector orthogonal to both the polygon edge and
-            // the trm edge
+            // create plane with normal vector orthogonal to both the polygon edge and the trm edge
             start = tw->model->vertices[edge->vertexNum[0]].p;
             end = tw->model->vertices[edge->vertexNum[1]].p;
             tw->trace.c.normal = (end - start).Cross(trmEdge->end - trmEdge->start);
@@ -411,8 +397,8 @@ float CM_TranslationPlaneFraction(idPlane &plane, idVec3 &start, idVec3 &end)
     float d1, d2, d2eps;
 
     d2 = plane.Distance(end);
-    // if the end point is closer to the plane than an epsilon we still take it
-    // for a collision if ( d2 >= CM_CLIP_EPSILON ) {
+    // if the end point is closer to the plane than an epsilon we still take it for a collision
+    // if ( d2 >= CM_CLIP_EPSILON ) {
     d2eps = d2 - CM_CLIP_EPSILON;
     if (FLOATSIGNBITNOTSET(d2eps))
     {
@@ -686,8 +672,7 @@ bool idCollisionModelManagerLocal::TranslateTrmThroughPolygon(cm_traceWork_t *tw
         {
             edgeNum = p->edges[i];
             e = tw->model->edges + abs(edgeNum);
-            // reset sidedness cache if this is the first time we encounter this edge
-            // during this trace
+            // reset sidedness cache if this is the first time we encounter this edge during this trace
             if (e->checkcount != idCollisionModelManagerLocal::checkCount)
             {
                 e->sideSet = 0;
@@ -697,8 +682,7 @@ bool idCollisionModelManagerLocal::TranslateTrmThroughPolygon(cm_traceWork_t *tw
                                                      tw->model->vertices[e->vertexNum[1]].p);
 
             v = &tw->model->vertices[e->vertexNum[INTSIGNBITSET(edgeNum)]];
-            // reset sidedness cache if this is the first time we encounter this
-            // vertex during this trace
+            // reset sidedness cache if this is the first time we encounter this vertex during this trace
             if (v->checkcount != idCollisionModelManagerLocal::checkCount)
             {
                 v->sideSet = 0;
@@ -782,8 +766,7 @@ bool idCollisionModelManagerLocal::TranslateTrmThroughPolygon(cm_traceWork_t *tw
         }
     }
 
-    // if there was a collision with this polygon and we are not retrieving
-    // contacts
+    // if there was a collision with this polygon and we are not retrieving contacts
     if (tw->trace.fraction < fraction && !tw->getContacts)
     {
         fraction = tw->trace.fraction;
@@ -999,8 +982,7 @@ void idCollisionModelManagerLocal::Translation(trace_t *results, const idVec3 &s
         return;
     }
 
-    // the trace fraction is too inaccurate to describe translations over huge
-    // distances
+    // the trace fraction is too inaccurate to describe translations over huge distances
     if (tw.dir.LengthSqr() > Square(CM_MAX_TRACE_DIST))
     {
         results->fraction = 0.0f;
@@ -1013,9 +995,9 @@ void idCollisionModelManagerLocal::Translation(trace_t *results, const idVec3 &s
         {
             session->rw->DebugArrow(colorRed, start, end, 1);
         }
-        common->Printf("idCollisionModelManagerLocal::Translation: huge "
-                       "translation from (%.2f %.2f %.2f) to (%.2f %.2f %.2f)\n",
-                       start.x, start.y, start.z, end.x, end.y, end.z);
+        common->Printf(
+            "idCollisionModelManagerLocal::Translation: huge translation from (%.2f %.2f %.2f) to (%.2f %.2f %.2f)\n",
+            start.x, start.y, start.z, end.x, end.y, end.z);
         return;
     }
 

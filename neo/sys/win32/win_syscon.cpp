@@ -19,36 +19,33 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
-#include "framework/EditField.h"
-#include "framework/KeyInput.h"
-#include "framework/Licensee.h"
 #include "sys/platform.h"
+#include "framework/Licensee.h"
+#include "framework/Common.h"
+#include "framework/KeyInput.h"
+#include "framework/EditField.h"
 #include "sys/win32/rc/AFEditor_resource.h"
 #include "sys/win32/rc/doom_resource.h"
 
 #include "sys/win32/win_local.h"
 
-#include <conio.h>
-#include <direct.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <float.h>
-#include <io.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <direct.h>
+#include <io.h>
+#include <conio.h>
 
 #define COPY_ID 1
 #define QUIT_ID 2
@@ -199,23 +196,24 @@ static LRESULT CALLBACK ConWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
         SetTimer(hWnd, 1, 1000, NULL);
         break;
         /*
-                        case WM_ERASEBKGND:
-                                HGDIOBJ oldObject;
-                                HDC hdcScaled;
-                                hdcScaled = CreateCompatibleDC( ( HDC ) wParam );
-                                assert( hdcScaled != 0 );
-                                if ( hdcScaled ) {
-                                        oldObject = SelectObject( ( HDC ) hdcScaled,
-           s_wcd.hbmLogo ); assert( oldObject != 0 ); if ( oldObject )
-                                        {
-                                                StretchBlt( ( HDC ) wParam, 0, 0,
-           s_wcd.windowWidth, s_wcd.windowHeight, hdcScaled, 0, 0, 512, 384, SRCCOPY
-           );
-                                        }
-                                        DeleteDC( hdcScaled );
-                                        hdcScaled = 0;
-                                }
-                                return 1;
+                case WM_ERASEBKGND:
+                    HGDIOBJ oldObject;
+                    HDC hdcScaled;
+                    hdcScaled = CreateCompatibleDC( ( HDC ) wParam );
+                    assert( hdcScaled != 0 );
+                    if ( hdcScaled ) {
+                        oldObject = SelectObject( ( HDC ) hdcScaled, s_wcd.hbmLogo );
+                        assert( oldObject != 0 );
+                        if ( oldObject )
+                        {
+                            StretchBlt( ( HDC ) wParam, 0, 0, s_wcd.windowWidth, s_wcd.windowHeight,
+                                hdcScaled, 0, 0, 512, 384,
+                                SRCCOPY );
+                        }
+                        DeleteDC( hdcScaled );
+                        hdcScaled = 0;
+                    }
+                    return 1;
         */
     case WM_TIMER:
         if (wParam == 1)
@@ -310,8 +308,7 @@ LONG WINAPI InputLineWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             s_wcd.consoleField.AutoComplete();
 
             SetWindowText(s_wcd.hwndInputLine, s_wcd.consoleField.GetBuffer());
-            // s_wcd.consoleField.SetWidthInChars( strlen(
-            // s_wcd.consoleField.GetBuffer() ) );
+            // s_wcd.consoleField.SetWidthInChars( strlen( s_wcd.consoleField.GetBuffer() ) );
             SendMessage(s_wcd.hwndInputLine, EM_SETSEL, s_wcd.consoleField.GetCursor(), s_wcd.consoleField.GetCursor());
 
             return 0;
@@ -375,8 +372,7 @@ void Sys_CreateConsole(void)
     s_wcd.windowWidth = rect.right - rect.left + 1;
     s_wcd.windowHeight = rect.bottom - rect.top + 1;
 
-    // s_wcd.hbmLogo = LoadBitmap( win32.hInstance, MAKEINTRESOURCE(
-    // IDB_BITMAP_LOGO) );
+    // s_wcd.hbmLogo = LoadBitmap( win32.hInstance, MAKEINTRESOURCE( IDB_BITMAP_LOGO) );
 
     s_wcd.hWnd =
         CreateWindowEx(0, DEDCLASS, GAME_NAME, DEDSTYLE, (swidth - 600) / 2, (sheight - 450) / 2,

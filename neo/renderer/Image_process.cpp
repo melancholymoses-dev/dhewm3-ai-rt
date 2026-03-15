@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
 
 #include "renderer/Image.h"
 
@@ -263,9 +260,9 @@ void R_SetBorderTexels3D(byte *inBase, int width, int height, int depth, const b
 ================
 R_SetAlphaNormalDivergence
 
-If any of the angles inside the cone would directly reflect to the light, there
-will be a specular highlight.  The intensity of the highlight is inversely
-proportional to the area of the spread.
+If any of the angles inside the cone would directly reflect to the light, there will be
+a specular highlight.  The intensity of the highlight is inversely proportional to the
+area of the spread.
 
 Light source area is important for the base size.
 
@@ -273,9 +270,10 @@ area subtended in light is the divergence times the distance
 
 Shininess value is subtracted from the divergence
 
-Sets the alpha channel to the greatest divergence dot product of the surrounding
-texels. 1.0 = flat, 0.0 = turns a 90 degree angle Lower values give less shiny
-specular With mip maps, the lowest samnpled value will be retained
+Sets the alpha channel to the greatest divergence dot product of the surrounding texels.
+1.0 = flat, 0.0 = turns a 90 degree angle
+Lower values give less shiny specular
+With mip maps, the lowest samnpled value will be retained
 
 Should we rewrite the normal as the centered average?
 ================
@@ -286,8 +284,7 @@ void R_SetAlphaNormalDivergence(byte *in, int width, int height)
     {
         for (int x = 0; x < width; x++)
         {
-            // the divergence is the smallest dot product of any of the eight
-            // surrounding texels
+            // the divergence is the smallest dot product of any of the eight surrounding texels
             byte *pic_p = in + (y * width + x) * 4;
             idVec3 center;
             center[0] = (pic_p[0] - 128) / 127;
@@ -297,8 +294,7 @@ void R_SetAlphaNormalDivergence(byte *in, int width, int height)
 
             float maxDiverge = 1.0;
 
-            // FIXME: this assumes wrap mode, but should handle clamp modes and border
-            // colors
+            // FIXME: this assumes wrap mode, but should handle clamp modes and border colors
             for (int yy = -1; yy <= 1; yy++)
             {
                 for (int xx = -1; xx <= 1; xx++)
@@ -337,8 +333,7 @@ void R_SetAlphaNormalDivergence(byte *in, int width, int height)
 R_MipMapWithAlphaSpecularity
 
 Returns a new copy of the texture, quartered in size and filtered.
-The alpha channel is taken to be the minimum of the dots of all surrounding
-normals.
+The alpha channel is taken to be the minimum of the dots of all surrounding normals.
 ================
 */
 #define MIP_MIN(a, b) (a < b ? a : b)

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,8 +34,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "../../sys/win32/rc/Common_resource.h"
 #include "../../sys/win32/rc/DeclEditor_resource.h"
 
-#include "../comafx/CPathTreeCtrl.h"
 #include "../comafx/DialogGoToLine.h"
+#include "../comafx/CPathTreeCtrl.h"
 #include "DialogDeclBrowser.h"
 #include "DialogDeclEditor.h"
 
@@ -485,14 +482,14 @@ DialogDeclEditor::OnSizing
 void DialogDeclEditor::OnSizing(UINT nSide, LPRECT lpRect)
 {
     /*
-            1 = left
-            2 = right
-            3 = top
-            4 = left - top
-            5 = right - top
-            6 = bottom
-            7 = left - bottom
-            8 = right - bottom
+        1 = left
+        2 = right
+        3 = top
+        4 = left - top
+        5 = right - top
+        6 = bottom
+        7 = left - bottom
+        8 = right - bottom
     */
 
     CDialog::OnSizing(nSide, lpRect);
@@ -764,10 +761,10 @@ void DialogDeclEditor::OnBnClickedOk()
 
         if (decl->SourceFileChanged())
         {
-            if (MessageBox(va("Declaration file %s has been modified outside of the "
-                              "editor.\r\nReload declarations and save?",
-                              decl->GetFileName()),
-                           va("Warning saving: %s", decl->GetFileName()), MB_OKCANCEL | MB_ICONERROR) != IDOK)
+            if (MessageBox(
+                    va("Declaration file %s has been modified outside of the editor.\r\nReload declarations and save?",
+                       decl->GetFileName()),
+                    va("Warning saving: %s", decl->GetFileName()), MB_OKCANCEL | MB_ICONERROR) != IDOK)
             {
                 return;
             }
@@ -778,10 +775,9 @@ void DialogDeclEditor::OnBnClickedOk()
         decl->SetText(declText);
         if (!decl->ReplaceSourceFileText())
         {
-            MessageBox(va("Couldn't save: %s.\r\nMake sure the declaration file is "
-                          "not read-only.",
-                          decl->GetFileName()),
-                       va("Error saving: %s", decl->GetFileName()), MB_OK | MB_ICONERROR);
+            MessageBox(
+                va("Couldn't save: %s.\r\nMake sure the declaration file is not read-only.", decl->GetFileName()),
+                va("Error saving: %s", decl->GetFileName()), MB_OK | MB_ICONERROR);
             return;
         }
         decl->Invalidate();

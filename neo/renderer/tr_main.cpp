@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,9 +36,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include <xmmintrin.h>
 #endif
 
+#include "sys/platform.h"
 #include "framework/Session.h"
 #include "renderer/RenderWorld_local.h"
-#include "sys/platform.h"
 
 #include "renderer/tr_local.h"
 
@@ -657,8 +654,7 @@ void R_TransformEyeZToWin(float src_z, const float *projectionMatrix, float &dst
 R_RadiusCullLocalBox
 
 A fast, conservative center-to-corner culling test
-Returns true if the box is outside the given global frustum, (positive sides are
-out)
+Returns true if the box is outside the given global frustum, (positive sides are out)
 =================
 */
 bool R_RadiusCullLocalBox(const idBounds &bounds, const float modelMatrix[16], int numPlanes, const idPlane *planes)
@@ -700,8 +696,7 @@ R_CornerCullLocalBox
 
 Tests all corners against the frustum.
 Can still generate a few false positives when the box is outside a corner.
-Returns true if the box is outside the given global frustum, (positive sides are
-out)
+Returns true if the box is outside the given global frustum, (positive sides are out)
 =================
 */
 bool R_CornerCullLocalBox(const idBounds &bounds, const float modelMatrix[16], int numPlanes, const idPlane *planes)
@@ -758,8 +753,7 @@ bool R_CornerCullLocalBox(const idBounds &bounds, const float modelMatrix[16], i
 R_CullLocalBox
 
 Performs quick test before expensive test
-Returns true if the box is outside the given global frustum, (positive sides are
-out)
+Returns true if the box is outside the given global frustum, (positive sides are out)
 =================
 */
 bool R_CullLocalBox(const idBounds &bounds, const float modelMatrix[16], int numPlanes, const idPlane *planes)
@@ -1132,8 +1126,7 @@ static void R_ConstrainViewFrustum(void)
 {
     idBounds bounds;
 
-    // constrain the view frustum to the total bounds of all visible lights and
-    // visible entities
+    // constrain the view frustum to the total bounds of all visible lights and visible entities
     bounds.Clear();
     for (viewLight_t *vLight = tr.viewDef->viewLights; vLight; vLight = vLight->next)
     {
@@ -1249,12 +1242,11 @@ void R_RenderView(viewDef_t *parms)
     // add any pre-generated light shadows, and calculate the light shader values
     R_AddLightSurfaces();
 
-    // adds ambient surfaces and create any necessary interaction surfaces to add
-    // to the light lists
+    // adds ambient surfaces and create any necessary interaction surfaces to add to the light
+    // lists
     R_AddModelSurfaces();
 
-    // any viewLight that didn't have visible surfaces can have it's shadows
-    // removed
+    // any viewLight that didn't have visible surfaces can have it's shadows removed
     R_RemoveUnecessaryViewLights();
 
     // sort all the ambient surfaces for translucency ordering

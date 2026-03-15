@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Session.h"
-#include "idlib/LangDict.h"
-#include "sound/sound.h"
 #include "sys/platform.h"
-#include "ui/UserInterfaceLocal.h"
+#include "idlib/LangDict.h"
+#include "framework/Session.h"
+#include "sound/sound.h"
 #include "ui/Window.h"
 #include "ui/Winvar.h"
+#include "ui/UserInterfaceLocal.h"
 
 #include "ui/GuiScript.h"
 
@@ -77,8 +74,7 @@ void Script_Set(idWindow *window, idList<idGSWinVar> *src)
             return;
         }
 
-        // DG: allow debugprinting to the console with `set "print" "this windowDefs
-        // rect:" "$rect"`
+        // DG: allow debugprinting to the console with `set "print" "this windowDefs rect:" "$rect"`
         if (idStr::Icmp(*dest, "print") == 0)
         {
             idStr msg;
@@ -556,9 +552,8 @@ void idGuiScript::FixupParms(idWindow *win)
             {
 
                 //  always use a string here, no point using a float if it is one
-                //  FIXME: This creates duplicate variables, while not technically a
-                //  problem since they are all bound to the same guiDict, it does
-                //  consume extra memory and is generally a bad thing
+                //  FIXME: This creates duplicate variables, while not technically a problem since they
+                //  are all bound to the same guiDict, it does consume extra memory and is generally a bad thing
                 idWinStr *defvar = new idWinStr();
                 defvar->Init(*str, win);
                 win->AddDefinedVar(defvar);
@@ -639,8 +634,7 @@ void idGuiScript::FixupParms(idWindow *win)
         }
         else
         {
-            common->Warning("Window %s in gui %s: a transition does not have a valid "
-                            "destination var %s",
+            common->Warning("Window %s in gui %s: a transition does not have a valid destination var %s",
                             win->GetName(), win->GetGui()->GetSourceFile(), str->c_str());
         }
 

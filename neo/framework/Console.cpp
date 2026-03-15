@@ -19,30 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/math/Vector.h"
+#include "framework/async/AsyncNetwork.h"
 #include "framework/BuildVersion.h"
 #include "framework/CVarSystem.h"
-#include "framework/EditField.h"
-#include "framework/EventLoop.h"
-#include "framework/KeyInput.h"
 #include "framework/Session.h"
-#include "framework/async/AsyncNetwork.h"
-#include "idlib/math/Vector.h"
+#include "framework/EditField.h"
+#include "framework/KeyInput.h"
+#include "framework/EventLoop.h"
 #include "renderer/RenderSystem.h"
 #include "sound/sound.h"
-#include "sys/platform.h"
 
 #include "framework/Console.h"
 
@@ -158,7 +155,7 @@ idCVar idConsoleLocal::con_noPrint("con_noPrint", "1", CVAR_BOOL | CVAR_SYSTEM |
 /*
 =============================================================================
 
-        Misc stats
+    Misc stats
 
 =============================================================================
 */
@@ -294,10 +291,8 @@ float SCR_DrawAsyncStats(float y)
 
             if (outgoingRate != -1 && incomingRate != -1)
             {
-                SCR_DrawTextRightAlign(y,
-                                       "client %d: out rate = %d B/s (% -2.1f%%), in "
-                                       "rate = %d B/s (% -2.1f%%)",
-                                       i, outgoingRate, outgoingCompression, incomingRate, incomingCompression);
+                SCR_DrawTextRightAlign(y, "client %d: out rate = %d B/s (% -2.1f%%), in rate = %d B/s (% -2.1f%%)", i,
+                                       outgoingRate, outgoingCompression, incomingRate, incomingCompression);
             }
         }
 
@@ -699,8 +694,7 @@ void idConsoleLocal::KeyDownEvent(int key)
 
         common->Printf("]%s\n", consoleField.GetBuffer());
 
-        cmdSystem->BufferCommandText(CMD_EXEC_APPEND,
-                                     consoleField.GetBuffer()); // valid command
+        cmdSystem->BufferCommandText(CMD_EXEC_APPEND, consoleField.GetBuffer()); // valid command
         cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "\n");
 
         // copy line to history buffer, if it isn't the same as the last command
@@ -712,8 +706,7 @@ void idConsoleLocal::KeyDownEvent(int key)
         }
 
         historyLine = nextHistoryLine;
-        // clear the next line from old garbage, else the oldest history entry turns
-        // up when pressing DOWN
+        // clear the next line from old garbage, else the oldest history entry turns up when pressing DOWN
         historyEditLines[nextHistoryLine % COMMAND_HISTORY].Clear();
 
         consoleField.Clear();
@@ -899,8 +892,7 @@ bool idConsoleLocal::ProcessEvent(const sysEvent_t *event, bool forceAccept)
     }
 
 #if ID_CONSOLE_LOCK
-    // If the console's not already down, and we have it turned off, check for
-    // ctrl+alt
+    // If the console's not already down, and we have it turned off, check for ctrl+alt
     if (!keyCatching && !com_allowConsole.GetBool())
     {
         if (!idKeyInput::IsDown(K_CTRL) || !idKeyInput::IsDown(K_ALT))

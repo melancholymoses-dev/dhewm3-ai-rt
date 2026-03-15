@@ -4,11 +4,11 @@
 #ifndef __EFXLIBH
 #define __EFXLIBH
 
-#include "framework/Common.h"
-#include "idlib/Heap.h"
-#include "idlib/Lexer.h"
-#include "idlib/Str.h"
 #include "idlib/containers/List.h"
+#include "idlib/Str.h"
+#include "idlib/Lexer.h"
+#include "idlib/Heap.h"
+#include "framework/Common.h"
 #include "sound/sound.h"
 
 #define EFX_VERBOSE 0

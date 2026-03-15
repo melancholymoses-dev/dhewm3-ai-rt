@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -41,12 +38,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Memory Management
+    Memory Management
 
-        This is a replacement for the compiler heap code (i.e. "C" malloc() and
-        free() calls). On average 2.5-3.0 times faster than MSVC
-malloc()/free(). Worst case performance is 1.65 times faster and best case > 70
-times.
+    This is a replacement for the compiler heap code (i.e. "C" malloc() and
+    free() calls). On average 2.5-3.0 times faster than MSVC malloc()/free().
+    Worst case performance is 1.65 times faster and best case > 70 times.
 
 ===============================================================================
 */
@@ -158,12 +154,12 @@ __inline void operator delete[](void *p)
 
 #endif /* ID_DEBUG_MEMORY */
 
-// allocate SIZE bytes, aligned to 16 bytes - possibly on the stack (like
-// _alloca16()) if it's too big (> ID_MAX_ALLOCA_SIZE, 1MB), it gets allocated
-// on the Heap instead. ON_STACK should be a bool and will be set to true if it
-// was allocated on the stack and false if it was allocated on the heap. if
-// ON_STACK is false, you must free this with Mem_FreeA() or Mem_Free16()! (just
-// pass your ON_STACK bool to Mem_FreeA() and it will do the right thing)
+// allocate SIZE bytes, aligned to 16 bytes - possibly on the stack (like _alloca16())
+// if it's too big (> ID_MAX_ALLOCA_SIZE, 1MB), it gets allocated on the Heap instead.
+// ON_STACK should be a bool and will be set to true if it was allocated on the stack
+// and false if it was allocated on the heap.
+// if ON_STACK is false, you must free this with Mem_FreeA() or Mem_Free16()!
+// (just pass your ON_STACK bool to Mem_FreeA() and it will do the right thing)
 #define Mem_MallocA(SIZE, ON_STACK)                                                                                    \
     ((SIZE) < ID_MAX_ALLOCA_SIZE ? (ON_STACK = true, _alloca16(SIZE)) : (ON_STACK = false, Mem_Alloc16(SIZE)))
 
@@ -179,10 +175,10 @@ ID_INLINE void Mem_FreeA(void *ptr, bool onStack)
 /*
 ===============================================================================
 
-        Block based allocator for fixed size objects.
+    Block based allocator for fixed size objects.
 
-        All objects of the 'type' are properly constructed.
-        However, the constructor is not called for re-used objects.
+    All objects of the 'type' are properly constructed.
+    However, the constructor is not called for re-used objects.
 
 ===============================================================================
 */
@@ -286,11 +282,11 @@ template <class type, int blockSize> void idBlockAlloc<type, blockSize>::Shutdow
 /*
 ==============================================================================
 
-        Dynamic allocator, simple wrapper for normal allocations which can
-        be interchanged with idDynamicBlockAlloc.
+    Dynamic allocator, simple wrapper for normal allocations which can
+    be interchanged with idDynamicBlockAlloc.
 
-        No constructor is called for the 'type'.
-        Allocated blocks are always 16 byte aligned.
+    No constructor is called for the 'type'.
+    Allocated blocks are always 16 byte aligned.
 
 ==============================================================================
 */
@@ -445,10 +441,10 @@ void idDynamicAlloc<type, baseBlockSize, minBlockSize>::Clear(void)
 /*
 ==============================================================================
 
-        Fast dynamic block allocator.
+    Fast dynamic block allocator.
 
-        No constructor is called for the 'type'.
-        Allocated blocks are always 16 byte aligned.
+    No constructor is called for the 'type'.
+    Allocated blocks are always 16 byte aligned.
 
 ==============================================================================
 */
@@ -834,15 +830,17 @@ const char *idDynamicBlockAlloc<type, baseBlockSize, minBlockSize>::CheckMemory(
     }
 #endif
 
-    /* base blocks can be larger than baseBlockSize which can cause this code to
-    fail idDynamicBlock<type> *base; for ( base = firstBlock; base != NULL; base =
-    base->next ) { if ( base->IsBaseBlock() ) { if ( ((int)block) >= ((int)base)
-    && ((int)block) < ((int)base) + baseBlockSize ) { break;
-                    }
+    /* base blocks can be larger than baseBlockSize which can cause this code to fail
+    idDynamicBlock<type> *base;
+    for ( base = firstBlock; base != NULL; base = base->next ) {
+        if ( base->IsBaseBlock() ) {
+            if ( ((int)block) >= ((int)base) && ((int)block) < ((int)base) + baseBlockSize ) {
+                break;
             }
+        }
     }
     if ( base == NULL ) {
-            return "no base block found for memory";
+        return "no base block found for memory";
     }
     */
 
@@ -965,8 +963,7 @@ idDynamicBlock<type> *idDynamicBlockAlloc<type, baseBlockSize, minBlockSize>::Re
         }
     }
 
-    // if the unused space at the end of this block is large enough to hold a
-    // block with at least one element
+    // if the unused space at the end of this block is large enough to hold a block with at least one element
     if (block->GetSize() - alignedBytes - (int)sizeof(idDynamicBlock<type>) < Max(minBlockSize, (int)sizeof(type)))
     {
         return block;

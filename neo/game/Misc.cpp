@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,17 +34,17 @@ Various utility objects and functions.
 
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
-#include "Camera.h"
-#include "Moveable.h"
-#include "Player.h"
-#include "SmokeParticles.h"
-#include "WorldSpawn.h"
-#include "ai/AI.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
+#include "ai/AI.h"
+#include "Player.h"
+#include "Camera.h"
+#include "WorldSpawn.h"
+#include "Moveable.h"
+#include "SmokeParticles.h"
 
 #include "Misc.h"
 
@@ -79,7 +76,7 @@ void idSpawnableEntity::Spawn()
 /*
 ===============================================================================
 
-        idPlayerStart
+    idPlayerStart
 
 ===============================================================================
 */
@@ -162,8 +159,7 @@ bool idPlayerStart::ClientReceiveEvent(int event, int time, const idBitMsg &msg)
 ===============
 idPlayerStart::Event_TeleportStage
 
-FIXME: add functionality to fx system ( could be done with player scripting too
-)
+FIXME: add functionality to fx system ( could be done with player scripting too )
 ================
 */
 void idPlayerStart::Event_TeleportStage(idEntity *_player)
@@ -219,8 +215,7 @@ void idPlayerStart::TeleportPlayer(idPlayer *player)
     if (f && ent)
     {
         // place in private camera view for some time
-        // the entity needs to teleport to where the camera view is to have the PVS
-        // right
+        // the entity needs to teleport to where the camera view is to have the PVS right
         player->Teleport(ent->GetPhysics()->GetOrigin(), ang_zero, this);
         player->StartSound("snd_teleport_enter", SND_CHANNEL_ANY, 0, false, NULL);
         player->SetPrivateCameraView(static_cast<idCamera *>(ent));
@@ -290,7 +285,7 @@ void idPlayerStart::Event_TeleportPlayer(idEntity *activator)
 /*
 ===============================================================================
 
-        idActivator
+    idActivator
 
 ===============================================================================
 */
@@ -700,8 +695,7 @@ void idExplodable::Event_Explode(idEntity *activator)
 
     StartSound("snd_explode", SND_CHANNEL_ANY, 0, false, NULL);
 
-    // Show() calls UpdateVisuals, so we don't need to call it ourselves after
-    // setting the shaderParms
+    // Show() calls UpdateVisuals, so we don't need to call it ourselves after setting the shaderParms
     renderEntity.shaderParms[SHADERPARM_RED] = 1.0f;
     renderEntity.shaderParms[SHADERPARM_GREEN] = 1.0f;
     renderEntity.shaderParms[SHADERPARM_BLUE] = 1.0f;
@@ -1002,7 +996,7 @@ void idForceField::Event_FindTargets(void)
 /*
 ===============================================================================
 
-        idAnimated
+    idAnimated
 
 ===============================================================================
 */
@@ -1449,9 +1443,8 @@ void idAnimated::Event_LaunchMissilesUpdate(int launchjoint, int targetjoint, in
     projectileDef = gameLocal.FindEntityDefDict(projectilename, false);
     if (!projectileDef)
     {
-        gameLocal.Warning("idAnimated '%s' at (%s): 'launchMissiles' called with "
-                          "unknown projectile '%s'",
-                          name.c_str(), GetPhysics()->GetOrigin().ToString(0), projectilename);
+        gameLocal.Warning("idAnimated '%s' at (%s): 'launchMissiles' called with unknown projectile '%s'", name.c_str(),
+                          GetPhysics()->GetOrigin().ToString(0), projectilename);
         return;
     }
 
@@ -1469,9 +1462,8 @@ void idAnimated::Event_LaunchMissilesUpdate(int launchjoint, int targetjoint, in
     gameLocal.SpawnEntityDef(*projectileDef, &ent, false);
     if (!ent || !ent->IsType(idProjectile::Type))
     {
-        gameLocal.Error("idAnimated '%s' at (%s): in 'launchMissiles' call '%s' is "
-                        "not an idProjectile",
-                        name.c_str(), GetPhysics()->GetOrigin().ToString(0), projectilename);
+        gameLocal.Error("idAnimated '%s' at (%s): in 'launchMissiles' call '%s' is not an idProjectile", name.c_str(),
+                        GetPhysics()->GetOrigin().ToString(0), projectilename);
     }
     projectile = (idProjectile *)ent;
     projectile->Create(this, launchPos, dir);
@@ -1528,9 +1520,9 @@ void idAnimated::Event_LaunchMissiles(const char *projectilename, const char *so
 /*
 ===============================================================================
 
-        idStaticEntity
+    idStaticEntity
 
-        Some static entities may be optimized into inline geometry by dmap
+    Some static entities may be optimized into inline geometry by dmap
 
 ===============================================================================
 */
@@ -2124,7 +2116,7 @@ void idFuncSmoke::Think(void)
 /*
 ===============================================================================
 
-        idTextEntity
+    idTextEntity
 
 ===============================================================================
 */
@@ -2201,9 +2193,9 @@ void idTextEntity::Think(void)
 /*
 ===============================================================================
 
-        idVacuumSeperatorEntity
+    idVacuumSeperatorEntity
 
-        Can be triggered to let vacuum through a portal (blown out window)
+    Can be triggered to let vacuum through a portal (blown out window)
 
 ===============================================================================
 */
@@ -2313,9 +2305,9 @@ void idLocationSeparatorEntity::Spawn()
 /*
 ===============================================================================
 
-        idVacuumEntity
+    idVacuumEntity
 
-        Levels should only have a single vacuum entity.
+    Levels should only have a single vacuum entity.
 
 ===============================================================================
 */
@@ -2383,7 +2375,7 @@ const char *idLocationEntity::GetLocation(void) const
 /*
 ===============================================================================
 
-        idBeam
+    idBeam
 
 ===============================================================================
 */
@@ -2612,7 +2604,7 @@ void idBeam::ReadFromSnapshot(const idBitMsgDelta &msg)
 /*
 ===============================================================================
 
-        idLiquid
+    idLiquid
 
 ===============================================================================
 */
@@ -2650,13 +2642,12 @@ idLiquid::Spawn
 void idLiquid::Spawn()
 {
     /*
-            model = dynamic_cast<idRenderModelLiquid *>( renderEntity.hModel );
-            if ( !model ) {
-                    gameLocal.Error( "Entity '%s' must have liquid model",
-       name.c_str() );
-            }
-            model->Reset();
-            GetPhysics()->SetContents( CONTENTS_TRIGGER );
+        model = dynamic_cast<idRenderModelLiquid *>( renderEntity.hModel );
+        if ( !model ) {
+            gameLocal.Error( "Entity '%s' must have liquid model", name.c_str() );
+        }
+        model->Reset();
+        GetPhysics()->SetContents( CONTENTS_TRIGGER );
     */
 }
 
@@ -2669,18 +2660,17 @@ void idLiquid::Event_Touch(idEntity *other, trace_t *trace)
 {
     // FIXME: for QuakeCon
     /*
-            idVec3 pos;
+        idVec3 pos;
 
-            pos = other->GetPhysics()->GetOrigin() - GetPhysics()->GetOrigin();
-            model->IntersectBounds( other->GetPhysics()->GetBounds().Translate(
-       pos ), -10.0f );
+        pos = other->GetPhysics()->GetOrigin() - GetPhysics()->GetOrigin();
+        model->IntersectBounds( other->GetPhysics()->GetBounds().Translate( pos ), -10.0f );
     */
 }
 
 /*
 ===============================================================================
 
-        idShaking
+    idShaking
 
 ===============================================================================
 */
@@ -2784,7 +2774,7 @@ void idShaking::Event_Activate(idEntity *activator)
 /*
 ===============================================================================
 
-        idEarthQuake
+    idEarthQuake
 
 ===============================================================================
 */
@@ -2975,7 +2965,7 @@ void idEarthQuake::Think(void)
 /*
 ===============================================================================
 
-        idFuncPortal
+    idFuncPortal
 
 ===============================================================================
 */
@@ -3050,7 +3040,7 @@ void idFuncPortal::Event_Activate(idEntity *activator)
 /*
 ===============================================================================
 
-        idFuncAASPortal
+    idFuncAASPortal
 
 ===============================================================================
 */
@@ -3115,7 +3105,7 @@ void idFuncAASPortal::Event_Activate(idEntity *activator)
 /*
 ===============================================================================
 
-        idFuncAASObstacle
+    idFuncAASObstacle
 
 ===============================================================================
 */
@@ -3283,7 +3273,7 @@ void idFuncRadioChatter::Event_ResetRadioHud(idEntity *activator)
 /*
 ===============================================================================
 
-        idPhantomObjects
+    idPhantomObjects
 
 ===============================================================================
 */
@@ -3568,8 +3558,7 @@ void idPhantomObjects::Think(void)
         }
         else
         {
-            // this is not the right way to set the angular velocity, but the effect
-            // is nice, so I'm keeping it. :)
+            // this is not the right way to set the angular velocity, but the effect is nice, so I'm keeping it. :)
             ang.Set(gameLocal.random.CRandomFloat() * shake_ang.x, gameLocal.random.CRandomFloat() * shake_ang.y,
                     gameLocal.random.CRandomFloat() * shake_ang.z);
             ang *= (1.0f - time / shake_time);

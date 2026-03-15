@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
-#include "idlib/math/Pluecker.h"
 #include "sys/platform.h"
+#include "idlib/math/Pluecker.h"
+#include "framework/Common.h"
 
 #include "idlib/geometry/Winding.h"
 
@@ -298,8 +295,7 @@ idWinding *idWinding::Clip(const idPlane &plane, const float epsilon, const bool
 
     assert(this && numPoints > 0);
 
-    // DG: this shouldn't happen, probably, but if it does we'd use uninitialized
-    // memory below
+    // DG: this shouldn't happen, probably, but if it does we'd use uninitialized memory below
     if (numPoints == 0)
     {
         delete this;
@@ -943,8 +939,7 @@ void idWinding::RemoveColinearPoints(const idVec3 &normal, const float epsilon)
 idWinding::AddToConvexHull
 
   Adds the given winding to the convex hull.
-  Assumes the current winding already is a convex hull with three or more
-points.
+  Assumes the current winding already is a convex hull with three or more points.
 =============
 */
 void idWinding::AddToConvexHull(const idWinding *winding, const idVec3 &normal, const float epsilon)
@@ -1052,8 +1047,7 @@ void idWinding::AddToConvexHull(const idWinding *winding, const idVec3 &normal, 
 idWinding::AddToConvexHull
 
   Add a point to the convex hull.
-  The current winding must be convex but may be degenerate and can have less
-than three points.
+  The current winding must be convex but may be degenerate and can have less than three points.
 =============
 */
 void idWinding::AddToConvexHull(const idVec3 &point, const idVec3 &normal, const float epsilon)
@@ -1089,8 +1083,7 @@ void idWinding::AddToConvexHull(const idVec3 &point, const idVec3 &normal, const
         {
             return;
         }
-        // if only two points make sure we have the right ordering according to the
-        // normal
+        // if only two points make sure we have the right ordering according to the normal
         dir = point - p[0].ToVec3();
         dir = dir.Cross(p[1].ToVec3() - p[0].ToVec3());
         if (dir[0] == 0.0f && dir[1] == 0.0f && dir[2] == 0.0f)
@@ -1590,8 +1583,7 @@ bool idWinding::PlanesConcave(const idWinding &w2, const idVec3 &normal1, const 
 {
     int i;
 
-    // check if one of the points of winding 1 is at the back of the plane of
-    // winding 2
+    // check if one of the points of winding 1 is at the back of the plane of winding 2
     for (i = 0; i < numPoints; i++)
     {
         if (normal2 * p[i].ToVec3() - dist2 > WCONVEX_EPSILON)
@@ -1599,8 +1591,7 @@ bool idWinding::PlanesConcave(const idWinding &w2, const idVec3 &normal1, const 
             return true;
         }
     }
-    // check if one of the points of winding 2 is at the back of the plane of
-    // winding 1
+    // check if one of the points of winding 2 is at the back of the plane of winding 1
     for (i = 0; i < w2.numPoints; i++)
     {
         if (normal1 * w2.p[i].ToVec3() - dist1 > WCONVEX_EPSILON)

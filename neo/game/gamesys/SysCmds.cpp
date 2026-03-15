@@ -19,34 +19,31 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
-#include "framework/async/NetworkSystem.h"
-#include "idlib/LangDict.h"
 #include "sys/platform.h"
+#include "idlib/LangDict.h"
+#include "framework/async/NetworkSystem.h"
+#include "framework/FileSystem.h"
 
-#include "Entity.h"
-#include "Fx.h"
-#include "Misc.h"
-#include "Moveable.h"
-#include "WorldSpawn.h"
+#include "gamesys/TypeInfo.h"
+#include "gamesys/SysCvar.h"
+#include "script/Script_Thread.h"
 #include "ai/AI.h"
 #include "anim/Anim_Testmodel.h"
-#include "gamesys/SysCvar.h"
-#include "gamesys/TypeInfo.h"
-#include "script/Script_Thread.h"
+#include "Entity.h"
+#include "Moveable.h"
+#include "WorldSpawn.h"
+#include "Fx.h"
+#include "Misc.h"
 
 #include "SysCmds.h"
 
@@ -210,8 +207,8 @@ void Cmd_Script_f(const idCmdArgs &args)
         func = gameLocal.program.FindFunction(funcname);
         if (func)
         {
-            // set all the entity names in case the user named one in the script that
-            // wasn't referenced in the default script
+            // set all the entity names in case the user named one in the script that wasn't referenced in the default
+            // script
             for (ent = gameLocal.spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next())
             {
                 gameLocal.program.SetEntity(ent->name, ent);
@@ -279,8 +276,7 @@ void Cmd_KillMonsters_f(const idCmdArgs &args)
 {
     KillEntities(args, idAI::Type);
 
-    // kill any projectiles as well since they have pointers to the monster that
-    // created them
+    // kill any projectiles as well since they have pointers to the monster that created them
     KillEntities(args, idProjectile::Type);
 }
 
@@ -678,8 +674,8 @@ static void Cmd_Say(bool team, const idCmdArgs &args)
 
     idPlayer *player;
 
-    // here we need to special case a listen server to use the real client name
-    // instead of "server" "server" will only appear on a dedicated server
+    // here we need to special case a listen server to use the real client name instead of "server"
+    // "server" will only appear on a dedicated server
     if (gameLocal.isClient || cvarSystem->GetCVarInteger("net_serverDedicated") == 0)
     {
         player = gameLocal.localClientNum >= 0 ? static_cast<idPlayer *>(gameLocal.entities[gameLocal.localClientNum])
@@ -1071,8 +1067,7 @@ void Cmd_TestLight_f(const idCmdArgs &args)
 
     for (i = 0; i < MAX_GENTITIES; i++)
     {
-        name = va("spawned_light_%d",
-                  i); // not just light_, or it might pick up a prelight shadow
+        name = va("spawned_light_%d", i); // not just light_, or it might pick up a prelight shadow
         if (!gameLocal.FindEntity(name))
         {
             break;
@@ -1868,8 +1863,7 @@ static void Cmd_SaveSelected_f(const idCmdArgs &args)
     s = player->dragEntity.GetSelected();
     if (!s)
     {
-        gameLocal.Printf("no entity selected, set g_dragShowSelection 1 to show "
-                         "the current selection\n");
+        gameLocal.Printf("no entity selected, set g_dragShowSelection 1 to show the current selection\n");
         return;
     }
 
@@ -2799,8 +2793,7 @@ void idGameLocal::InitConsoleCommands(void)
     cmdSystem->AddCommand("recordViewNotes", Cmd_RecordViewNotes_f, CMD_FL_GAME | CMD_FL_CHEAT,
                           "record the current view position with notes");
     cmdSystem->AddCommand("showViewNotes", Cmd_ShowViewNotes_f, CMD_FL_GAME | CMD_FL_CHEAT,
-                          "show any view notes for the current map, successive "
-                          "calls will cycle to the next note");
+                          "show any view notes for the current map, successive calls will cycle to the next note");
     cmdSystem->AddCommand("closeViewNotes", Cmd_CloseViewNotes_f, CMD_FL_GAME | CMD_FL_CHEAT,
                           "close the view showing any notes for this map");
     cmdSystem->AddCommand("exportmodels", Cmd_ExportModels_f, CMD_FL_GAME | CMD_FL_CHEAT, "exports models",
@@ -2811,11 +2804,9 @@ void idGameLocal::InitConsoleCommands(void)
     cmdSystem->AddCommand("clientMessageMode", idMultiplayerGame::MessageMode_f, CMD_FL_GAME,
                           "ingame gui message mode");
     // FIXME: implement
-    //	cmdSystem->AddCommand( "clientVote",
-    // idMultiplayerGame::Vote_f,	CMD_FL_GAME,				"cast
-    // your vote: clientVote yes | no" ); 	cmdSystem->AddCommand( "clientCallVote",
-    // idMultiplayerGame::CallVote_f,	CMD_FL_GAME,			"call a
-    // vote: clientCallVote si_.. proposed_value" );
+    //	cmdSystem->AddCommand( "clientVote",			idMultiplayerGame::Vote_f,	CMD_FL_GAME,				"cast
+    //your vote: clientVote yes | no" ); 	cmdSystem->AddCommand( "clientCallVote",		idMultiplayerGame::CallVote_f,
+    //CMD_FL_GAME,			"call a vote: clientCallVote si_.. proposed_value" );
     cmdSystem->AddCommand("clientVoiceChat", idMultiplayerGame::VoiceChat_f, CMD_FL_GAME,
                           "voice chats: clientVoiceChat <sound shader>");
     cmdSystem->AddCommand("clientVoiceChatTeam", idMultiplayerGame::VoiceChatTeam_f, CMD_FL_GAME,

@@ -19,44 +19,41 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../renderer/tr_local.h"
 #include "../../sys/win32/rc/guied_resource.h"
+#include "../../renderer/tr_local.h"
 #include "../../sys/win32/win_local.h"
-#include "../../ui/BindWindow.h"
-#include "../../ui/ChoiceWindow.h"
 #include "../../ui/DeviceContext.h"
 #include "../../ui/EditWindow.h"
 #include "../../ui/ListWindow.h"
+#include "../../ui/BindWindow.h"
 #include "../../ui/RenderWindow.h"
+#include "../../ui/ChoiceWindow.h"
 
 #include "GEApp.h"
 #include "GEItemPropsDlg.h"
 #include "GEItemScriptsDlg.h"
 
 // Modifiers
-#include "GEDeleteModifier.h"
-#include "GEHideModifier.h"
-#include "GEInsertModifier.h"
 #include "GEModifierGroup.h"
 #include "GEMoveModifier.h"
 #include "GESizeModifier.h"
 #include "GEStateModifier.h"
 #include "GEZOrderModifier.h"
+#include "GEInsertModifier.h"
+#include "GEHideModifier.h"
+#include "GEDeleteModifier.h"
 
 static float g_ZoomScales[rvGEWorkspace::ZOOM_MAX] = {0, 0.25f, 0.33f, 0.50f, 0.66f, 1.0f, 1.5f, 2.0f, 3.0f};
 
@@ -364,8 +361,7 @@ void rvGEWorkspace::Render(HDC hdc)
 ================
 rvGEWorkspace::UpdateTitle
 
-Updates the window title with the name of the file and the zoom level and
-weither its open or not
+Updates the window title with the name of the file and the zoom level and weither its open or not
 ================
 */
 void rvGEWorkspace::UpdateTitle(void)
@@ -393,8 +389,7 @@ void rvGEWorkspace::UpdateRectangle(bool useScroll)
 
     scale = g_ZoomScales[mZoom];
 
-    // Grab the current client rectangle of the window and cache off the width and
-    // height
+    // Grab the current client rectangle of the window and cache off the width and height
     GetClientRect(mWnd, &rcClient);
     mWindowWidth = rcClient.right - rcClient.left;
     mWindowHeight = rcClient.bottom - rcClient.top;
@@ -405,8 +400,7 @@ void rvGEWorkspace::UpdateRectangle(bool useScroll)
     mRect.w = (SCREEN_WIDTH * scale);
     mRect.h = (SCREEN_HEIGHT * scale);
 
-    // When using the scroll position offset the rectangle based on the scrollbar
-    // positions
+    // When using the scroll position offset the rectangle based on the scrollbar positions
     if (useScroll)
     {
         // Adjust the start of the rectangle for the scroll positiond
@@ -576,8 +570,7 @@ void rvGEWorkspace::UpdateScrollbars(void)
         ShowScrollBar(mWnd, SB_HORZ, mScrollHorz);
     }
 
-    // Need to update the rectangle again to take the scrollbar changes into
-    // account
+    // Need to update the rectangle again to take the scrollbar changes into account
     UpdateRectangle(true);
 }
 
@@ -785,8 +778,7 @@ void rvGEWorkspace::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam)
 rvGEWorkspace::HandleCommand
 
 Handles command messages destined for the workspace window.  This is for
-special workspace commands, any unhandled commands are forwarded to the main
-window
+special workspace commands, any unhandled commands are forwarded to the main window
 ================
 */
 int rvGEWorkspace::HandleCommand(WPARAM wParam, LPARAM lParam)
@@ -929,8 +921,7 @@ int rvGEWorkspace::HandleLButtonDown(WPARAM wParam, LPARAM lParam)
     idVec2 point(LOWORD(lParam), HIWORD(lParam));
     WindowToWorkspace(point);
 
-    // Make sure whatever modifications get generated cant be merged into whats
-    // already there
+    // Make sure whatever modifications get generated cant be merged into whats already there
     mModifiers.BlockNextMerge();
 
     mDragPoint.Set(LOWORD(lParam), HIWORD(lParam));
@@ -1076,8 +1067,7 @@ int rvGEWorkspace::HandleMouseMove(WPARAM wParam, LPARAM lParam)
         return 0;
     }
 
-    // Dont allow a drag move start until the button has been down for 100 ms or
-    // so
+    // Dont allow a drag move start until the button has been down for 100 ms or so
     if (mDragType == rvGESelectionMgr::HT_MOVE && Sys_Milliseconds() - mDragTime <= 50)
     {
         return 0;
@@ -1325,9 +1315,8 @@ rvGEWorkspace::EZoomLevel rvGEWorkspace::ZoomOut(void)
 ================
 rvGEWorkspace::CreateModifier
 
-Creates a new modifier of the given type for the given window.  This function is
-called specifically from the add modifiers function with the variable args list
-forwarded.
+Creates a new modifier of the given type for the given window.  This function is called
+specifically from the add modifiers function with the variable args list forwarded.
 ================
 */
 rvGEModifier *rvGEWorkspace::CreateModifier(EModifierType type, idWindow *window, va_list args)
@@ -1823,8 +1812,7 @@ void rvGEWorkspace::AddModifierMove(const char *modName, float x, float y, bool 
             continue;
         }
 
-        // IF the parent window is being moved around as well then dont move this
-        // one.
+        // IF the parent window is being moved around as well then dont move this one.
         if (rvGEWindowWrapper::GetWrapper(mSelections[i]->GetParent())->IsSelected())
         {
             // We still need the modifier there so the selection can be restored and
@@ -1903,10 +1891,9 @@ void rvGEWorkspace::AddModifierSize(const char *modName, float l, float t, float
         r = (sizeRect.w / scaleRect.w * newRect.w) - sizeRect.w + l;
         b = (sizeRect.h / scaleRect.h * newRect.h) - sizeRect.h + t;
 
-        // This is sorta crufty but needs to be done.  When a parent is being sized
-        // at the same time as a child you will get double movement because the
-        // child is relative to the parent.  Therefore we need to subtract out the
-        // closest parents sizing.
+        // This is sorta crufty but needs to be done.  When a parent is being sized at the same
+        // time as a child you will get double movement because the child is relative to the parent.  Therefore
+        // we need to subtract out the closest parents sizing.
         idWindow *parent = mSelections[i];
         while (NULL != (parent = parent->GetParent()))
         {

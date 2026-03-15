@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -235,7 +232,7 @@ bool Entity_NameIsUnique(const char *name)
 
 /*
  =======================================================================================================================
-        Map_Free
+    Map_Free
  =======================================================================================================================
  */
 void Map_Free(void)
@@ -482,7 +479,7 @@ entity_t *EntityFromMapEntity(idMapEntity *mapent, CWaitDlg *dlg)
 extern entity_t *Entity_PostParse(entity_t *ent, brush_t *pList);
 /*
 =======================================================================================================================
-       Map_LoadFile
+   Map_LoadFile
 =======================================================================================================================
 */
 void Map_LoadFile(const char *filename)
@@ -752,7 +749,7 @@ idMapEntity *EntityToMapEntity(entity_t *e, bool use_region, CWaitDlg *dlg)
 
 /*
  =======================================================================================================================
-        Map_SaveFile
+    Map_SaveFile
  =======================================================================================================================
  */
 bool Map_SaveFile(const char *filename, bool use_region, bool autosave)
@@ -811,16 +808,16 @@ bool Map_SaveFile(const char *filename, bool use_region, bool autosave)
         backup.StripFileExtension();
         backup.SetFileExtension(".bak");
         if (_unlink(backup) != 0 && errno != 2)
-        { // errno 2 means the file doesn't exist, which we don't
-          // care about
+        { // errno 2 means the file doesn't exist, which we don't care about
             g_pParentWnd->MessageBox(va("Unable to delete %s: %s", backup.c_str(), strerror(errno)), "File Error");
         }
         // DG: from SteelStorm2:
-        // Removed this check.  On the first save, it is valid that the map file
-        // does not exist because it has not been written to disk yet. KJA
+        // Removed this check.  On the first save, it is valid that the map file does not exist because
+        // it has not been written to disk yet.
+        // KJA
         //		if ( rename(filename, backup) != 0 ) {
-        //			g_pParentWnd->MessageBox( va("Unable to rename %s to %s:
-        //%s", filename, backup.c_str(), strerror(errno) ), "File Error" );
+        //			g_pParentWnd->MessageBox( va("Unable to rename %s to %s: %s", filename, backup.c_str(),
+        //strerror(errno) ), "File Error" );
         //		}
     }
 
@@ -851,9 +848,7 @@ bool Map_SaveFile(const char *filename, bool use_region, bool autosave)
     if (use_region)
     {
         idStr buf;
-        sprintf(buf,
-                "{\n\"classname\"    \"info_player_start\"\n\"origin\"\t \"%i %i "
-                "%i\"\n\"angle\"\t \"%i\"\n}\n",
+        sprintf(buf, "{\n\"classname\"    \"info_player_start\"\n\"origin\"\t \"%i %i %i\"\n\"angle\"\t \"%i\"\n}\n",
                 (int)g_pParentWnd->GetCamera()->Camera().origin[0], (int)g_pParentWnd->GetCamera()->Camera().origin[1],
                 (int)g_pParentWnd->GetCamera()->Camera().origin[2],
                 (int)g_pParentWnd->GetCamera()->Camera().angles[YAW]);
@@ -936,7 +931,7 @@ bool Map_SaveFile(const char *filename, bool use_region, bool autosave)
 
 /*
  =======================================================================================================================
-        Map_New
+    Map_New
  =======================================================================================================================
  */
 void Map_New(void)
@@ -977,8 +972,7 @@ brush_t *region_sides[6];
 
 /*
  =======================================================================================================================
-        AddRegionBrushes a regioned map will have temp walls put up at the
- region boundary
+    AddRegionBrushes a regioned map will have temp walls put up at the region boundary
  =======================================================================================================================
  */
 void AddRegionBrushes(void)
@@ -1090,7 +1084,7 @@ bool Map_IsBrushFiltered(brush_t *b)
 
 /*
  =======================================================================================================================
-        Map_RegionOff Other filtering options may still be on
+    Map_RegionOff Other filtering options may still be on
  =======================================================================================================================
  */
 void Map_RegionOff(void)
@@ -1152,7 +1146,7 @@ void Map_ApplyRegion(void)
 
 /*
  =======================================================================================================================
-        Map_RegionSelectedBrushes
+    Map_RegionSelectedBrushes
  =======================================================================================================================
  */
 void Map_RegionSelectedBrushes(void)
@@ -1189,7 +1183,7 @@ void Map_RegionSelectedBrushes(void)
 
 /*
  =======================================================================================================================
-        Map_RegionXY
+    Map_RegionXY
  =======================================================================================================================
  */
 void Map_RegionXY(void)
@@ -1211,7 +1205,7 @@ void Map_RegionXY(void)
 
 /*
  =======================================================================================================================
-        Map_RegionTallBrush
+    Map_RegionTallBrush
  =======================================================================================================================
  */
 void Map_RegionTallBrush(void)
@@ -1238,7 +1232,7 @@ void Map_RegionTallBrush(void)
 
 /*
  =======================================================================================================================
-        Map_RegionBrush
+    Map_RegionBrush
  =======================================================================================================================
  */
 void Map_RegionBrush(void)
@@ -1299,9 +1293,8 @@ void UniqueTargetName(idStr &rStr)
 
 //
 // =======================================================================================================================
-//    Map_ImportFile Timo 09/01/99:: called by CXYWnd::Paste & Map_ImportFile if
-//    Map_ImportFile ( prefab ), the buffer may contain brushes in old format (
-//    conversion needed )
+//    Map_ImportFile Timo 09/01/99:: called by CXYWnd::Paste & Map_ImportFile if Map_ImportFile ( prefab ), the buffer
+//    may contain brushes in old format ( conversion needed )
 // =======================================================================================================================
 //
 void Map_ImportBuffer(char *buf, bool renameEntities)
@@ -1344,8 +1337,7 @@ void Map_ImportBuffer(char *buf, bool renameEntities)
             }
         }
 
-        idDict RemappedNames; // since I can't use "map <string, string>"... sigh.
-                              // So much for STL...
+        idDict RemappedNames; // since I can't use "map <string, string>"... sigh. So much for STL...
 
         while (1)
         {
@@ -1383,8 +1375,7 @@ void Map_ImportBuffer(char *buf, bool renameEntities)
             }
             else
             {
-                // the following bit remaps conflicting target/targetname key/value
-                // pairs
+                // the following bit remaps conflicting target/targetname key/value pairs
                 CString str = ValueForKey(ent, "target");
                 CString strKey;
                 CString strTarget("");
@@ -1407,9 +1398,9 @@ void Map_ImportBuffer(char *buf, bool renameEntities)
 
                 /*
                  * str = ValueForKey(ent, "name"); if (str.GetLength() > 0) { if
-                 * (FindEntity("name", str.GetBuffer(0))) { if (!mapStr.Lookup(str,
-                 * strKey)) { UniqueTargetName(strKey); mapStr.SetAt(str, strKey); }
-                 * Entity_SetName(ent, strKey.GetBuffer(0)); } }
+                 * (FindEntity("name", str.GetBuffer(0))) { if (!mapStr.Lookup(str, strKey)) {
+                 * UniqueTargetName(strKey); mapStr.SetAt(str, strKey); } Entity_SetName(ent,
+                 * strKey.GetBuffer(0)); } }
                  */
                 CString cstrNameOld = ValueForKey(ent, "name");
                 Entity_Name(ent, renameEntities);
@@ -1436,11 +1427,9 @@ void Map_ImportBuffer(char *buf, bool renameEntities)
             }
         }
 
-        // now iterate through the remapped names, and see if there are any
-        // target-connections that need remaking...
+        // now iterate through the remapped names, and see if there are any target-connections that need remaking...
         //
-        // (I could probably write this in half the size with STL, but WTF, work
-        // with what we have...)
+        // (I could probably write this in half the size with STL, but WTF, work with what we have...)
         //
         int iNumKeyVals = RemappedNames.GetNumKeyVals();
         for (int iKeyVal = 0; iKeyVal < iNumKeyVals; iKeyVal++)
@@ -1458,8 +1447,7 @@ void Map_ImportBuffer(char *buf, bool renameEntities)
                 CString cstrTargetNameOld = ValueForKey(pEntOld, "target");
                 if (!cstrTargetNameOld.IsEmpty())
                 {
-                    // ok, this ent was targeted at another ent, so it's clone needs
-                    // updating to point to
+                    // ok, this ent was targeted at another ent, so it's clone needs updating to point to
                     //	the clone of that target, so...
                     //
                     entity_t *pEntOldTarget = FindEntity("name", cstrTargetNameOld);
@@ -1532,8 +1520,7 @@ void Map_ImportFile(char *fileName)
 
 //
 // =======================================================================================================================
-//    Map_SaveSelected Saves selected world brushes and whole entities with
-//    partial/full selections
+//    Map_SaveSelected Saves selected world brushes and whole entities with partial/full selections
 // =======================================================================================================================
 //
 void Map_SaveSelected(char *fileName)
@@ -1576,8 +1563,7 @@ void Map_SaveSelected(char *fileName)
 
 //
 // =======================================================================================================================
-//    Map_SaveSelected Saves selected world brushes and whole entities with
-//    partial/full selections
+//    Map_SaveSelected Saves selected world brushes and whole entities with partial/full selections
 // =======================================================================================================================
 //
 void Map_SaveSelected(CMemFile *pMemFile, CMemFile *pPatchFile)

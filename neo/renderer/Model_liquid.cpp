@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/tr_local.h"
 #include "sys/platform.h"
+#include "renderer/tr_local.h"
 
 #include "renderer/Model_local.h"
 
@@ -117,11 +114,10 @@ modelSurface_t idRenderModelLiquid::GenerateSurface(float lerp)
 
     R_BoundTriSurf(tri);
 
-    // If a surface is going to be have a lighting interaction generated, it will
-    // also have to call R_DeriveTangents() to get normals, tangents, and face
-    // planes.  If it only needs shadows generated, it will only have to generate
-    // face planes.  If it only has ambient drawing, or is culled, no additional
-    // work will be necessary
+    // If a surface is going to be have a lighting interaction generated, it will also have to call
+    // R_DeriveTangents() to get normals, tangents, and face planes.  If it only
+    // needs shadows generated, it will only have to generate face planes.  If it only
+    // has ambient drawing, or is culled, no additional work will be necessary
     if (!r_useDeferredTangents.GetBool())
     {
         // set face planes, vertex normals, tangents
@@ -460,8 +456,7 @@ void idRenderModelLiquid::InitFromFile(const char *fileName)
             rate = parser.ParseFloat();
             if ((rate <= 0.0f) || (rate > 60.0f))
             {
-                parser.Warning("Invalid update_rate.  Must be between 0 and 60.  Using "
-                               "default model.");
+                parser.Warning("Invalid update_rate.  Must be between 0 and 60.  Using default model.");
                 MakeDefaultModel();
                 return;
             }

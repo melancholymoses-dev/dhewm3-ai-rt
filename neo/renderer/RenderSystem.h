@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -41,8 +38,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        idRenderSystem is responsible for managing the screen, which can have
-        multiple idRenderWorld and 2D drawing done on it.
+    idRenderSystem is responsible for managing the screen, which can have
+    multiple idRenderWorld and 2D drawing done on it.
 
 ===============================================================================
 */
@@ -68,8 +65,7 @@ typedef struct glconfig_s
 
     bool multitextureAvailable;
     bool textureCompressionAvailable;
-    bool bptcTextureCompressionAvailable; // DG: for
-                                          // GL_ARB_texture_compression_bptc (BC7)
+    bool bptcTextureCompressionAvailable; // DG: for GL_ARB_texture_compression_bptc (BC7)
     bool anisotropicAvailable;
     bool textureLODBiasAvailable;
     bool textureEnvAddAvailable;
@@ -97,35 +93,31 @@ typedef struct glconfig_s
     bool allowARB2Path;
 
     bool isInitialized;
-    bool isVulkan; // true when using the Vulkan backend; GL image/texture
-                   // functions must be skipped
+    bool isVulkan; // true when using the Vulkan backend; GL image/texture functions must be skipped
 
     // DG: current video backend is known to need opaque default framebuffer
     //     used if r_fillWindowAlphaChan == -1
     bool shouldFillWindowAlpha;
-    bool isWayland; // DG: for other wayland-specific hacks.. (does *not* detect
-                    // XWayland!)
+    bool isWayland; // DG: for other wayland-specific hacks.. (does *not* detect XWayland!)
 
     bool haveDebugContext;
 
-    // For some reason people decided that we need displays with ultra small
-    // pixels, so everything rendered on them must be scaled up to be legible.
-    // unfortunately, this bullshit feature was "improved" upon by deciding that
-    // the best way to implement "High DPI" was to pretend that windows have fewer
-    // pixels than they actually do, so the window size you get and mouse
-    // coordinates in them etc are in e.g. 1024x768, while the physical window
-    // size is e.g. 1536x1152 pixels (when the scaling factor is 1.5), and ideally
-    // the GL framebuffer has the physical window size so things still look crisp.
-    // Of course the reasonable solution would be to go back and time and nuke
-    // Cupertino, where this nonsense scheme was invented, but as I lack the
-    // necessary funds, I reluctantly add winWidth and winHeight and adjust the
-    // code that deals with window coordinates, as far as that's possible.. (Isn't
-    // it fun that you have a 2256x1504 display, tell SDL to create a 1920x1080
-    // window
+    // For some reason people decided that we need displays with ultra small pixels,
+    // so everything rendered on them must be scaled up to be legible.
+    // unfortunately, this bullshit feature was "improved" upon by deciding that the best
+    // way to implement "High DPI" was to pretend that windows have fewer pixels than they
+    // actually do, so the window size you get and mouse coordinates in them etc
+    // are in e.g. 1024x768, while the physical window size is e.g. 1536x1152 pixels
+    // (when the scaling factor is 1.5), and ideally the GL framebuffer has the physical
+    // window size so things still look crisp.
+    // Of course the reasonable solution would be to go back and time and nuke Cupertino,
+    // where this nonsense scheme was invented, but as I lack the necessary funds,
+    // I reluctantly add winWidth and winHeight and adjust the code that deals with window
+    // coordinates, as far as that's possible..
+    // (Isn't it fun that you have a 2256x1504 display, tell SDL to create a 1920x1080 window
     //  and you get one that's much bigger and doesn't fit on the screen?)
 
-    float winWidth, winHeight; // logical window size (different to
-                               // vidWidth/height in HighDPI cases)
+    float winWidth, winHeight; // logical window size (different to vidWidth/height in HighDPI cases)
 } glconfig_t;
 
 // font support
@@ -208,15 +200,11 @@ class idRenderSystem
     virtual bool IsOpenGLRunning(void) const = 0;
 
     virtual bool IsFullScreen(void) const = 0;
-    // NOTE: this is the physical width of the GL drawable (framebuffer) in
-    // pixels,
-    //      *not* the logical window size (in case of HighDPI that's not the
-    //      same!)
+    // NOTE: this is the physical width of the GL drawable (framebuffer) in pixels,
+    //      *not* the logical window size (in case of HighDPI that's not the same!)
     virtual int GetScreenWidth(void) const = 0;
-    // NOTE: this is the physical height of the GL drawable (framebuffer) in
-    // pixels,
-    //      *not* the logical window size (in case of HighDPI that's not the
-    //      same!)
+    // NOTE: this is the physical height of the GL drawable (framebuffer) in pixels,
+    //      *not* the logical window size (in case of HighDPI that's not the same!)
     virtual int GetScreenHeight(void) const = 0;
 
     // allocate a renderWorld to be used for drawing
@@ -233,8 +221,7 @@ class idRenderSystem
     // font support
     virtual bool RegisterFont(const char *fontName, fontInfoEx_t &font) = 0;
 
-    // GUI drawing just involves shader parameter setting and axial image
-    // subsections
+    // GUI drawing just involves shader parameter setting and axial image subsections
     virtual void SetColor(const idVec4 &rgba) = 0;
     virtual void SetColor4(float r, float g, float b, float a) = 0;
 
@@ -285,24 +272,21 @@ class idRenderSystem
     // for save-game reviews and split-screen multiplayer.  Users of the renderer
     // will not know the actual pixel size of the area they are rendering to
 
-    // the x,y,width,height values are in virtual SCREEN_WIDTH / SCREEN_HEIGHT
-    // coordinates
+    // the x,y,width,height values are in virtual SCREEN_WIDTH / SCREEN_HEIGHT coordinates
 
     // to render to a texture, first set the crop size with makePowerOfTwo = true,
     // then perform all desired rendering, then capture to an image
-    // if the specified physical dimensions are larger than the current cropped
-    // region, they will be cut down to fit
+    // if the specified physical dimensions are larger than the current cropped region, they will be cut down to fit
     virtual void CropRenderSize(int width, int height, bool makePowerOfTwo = false, bool forceDimensions = false) = 0;
     virtual void CaptureRenderToImage(const char *imageName) = 0;
-    // fixAlpha will set all the alpha channel values to 0xff, which allows screen
-    // captures to use the default tga loading code without having dimmed down
-    // areas in many places
+    // fixAlpha will set all the alpha channel values to 0xff, which allows screen captures
+    // to use the default tga loading code without having dimmed down areas in many places
     virtual void CaptureRenderToFile(const char *fileName, bool fixAlpha = false) = 0;
     virtual void UnCrop() = 0;
 
-    // the image has to be already loaded ( most straightforward way would be
-    // through a FindMaterial ) texture filter / mipmapping / repeat won't be
-    // modified by the upload returns false if the image wasn't found
+    // the image has to be already loaded ( most straightforward way would be through a FindMaterial )
+    // texture filter / mipmapping / repeat won't be modified by the upload
+    // returns false if the image wasn't found
     virtual bool UploadImage(const char *imageName, const byte *data, int width, int height) = 0;
 };
 
@@ -315,8 +299,7 @@ extern idRenderSystem *renderSystem;
 // returns the frustum planes in world space
 void R_RenderLightFrustum(const struct renderLight_s &renderLight, idPlane lightFrustum[6]);
 
-// for use by dmap to do the carving-on-light-boundaries and for the editor for
-// display
+// for use by dmap to do the carving-on-light-boundaries and for the editor for display
 void R_LightProjectionMatrix(const idVec3 &origin, const idPlane &rearPlane, idVec4 mat[4]);
 
 // used by the view shot taker

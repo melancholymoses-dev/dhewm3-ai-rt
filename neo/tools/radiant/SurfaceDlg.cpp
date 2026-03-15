@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
+#include "qe3.h"
 #include "Radiant.h"
 #include "SurfaceDlg.h"
 #include "mainfrm.h"
-#include "qe3.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -479,8 +476,7 @@ void CSurfaceDlg::OnBtnCancel()
         //++timo if !g_qeglobals.m_bBrushPrimitMode send a NULL brushprimit_texdef
         if (!g_qeglobals.m_bBrushPrimitMode)
         {
-            common->Printf("Warning : non brush primitive mode call to "
-                           "CSurfaceDlg::GetTexMods broken\n");
+            common->Printf("Warning : non brush primitive mode call to CSurfaceDlg::GetTexMods broken\n");
             common->Printf("          ( Select_SetTexture not called )\n");
         }
         //		Select_SetTexture(&g_qeglobals.d_texturewin.texdef);
@@ -559,15 +555,15 @@ void CSurfaceDlg::OnBtnFacefit()
 {
     UpdateData(TRUE);
     /*
-            brush_t *b;
-            for (b=selected_brushes.next ; b != &selected_brushes ; b=b->next) {
-                    if (!b->patchBrush) {
-                            for (face_t* pFace = b->brush_faces; pFace; pFace =
-       pFace->next) { g_ptrSelectedFaces.Add(pFace);
-                                    g_ptrSelectedFaceBrushes.Add(b);
-                            }
-                    }
+        brush_t *b;
+        for (b=selected_brushes.next ; b != &selected_brushes ; b=b->next) {
+            if (!b->patchBrush) {
+                for (face_t* pFace = b->brush_faces; pFace; pFace = pFace->next) {
+                    g_ptrSelectedFaces.Add(pFace);
+                    g_ptrSelectedFaceBrushes.Add(b);
+                }
             }
+        }
     */
     Select_FitTexture(m_fHeight, m_fWidth);
     g_pParentWnd->GetCamera()->MarkWorldDirty();

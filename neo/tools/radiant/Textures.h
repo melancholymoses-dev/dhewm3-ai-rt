@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -45,12 +42,10 @@ void Texture_ShowAll();
 void Texture_HideAll();
 void Texture_Cleanup(CStringList *pList = NULL);
 
-// TTimo: added bNoAlpha flag to ignore alpha channel when parsing a .TGA file,
-// transparency is usually achieved through qer_trans keyword in shaders in some
-// cases loading an empty alpha channel causes display bugs (brushes not seen)
-// qtexture_t *Texture_ForName (const char *name, bool bReplace = false, bool
-// bShader = false, bool bNoAlpha = false, bool bReload = false, bool makeShader
-// = true);
+// TTimo: added bNoAlpha flag to ignore alpha channel when parsing a .TGA file, transparency is usually achieved through
+// qer_trans keyword in shaders in some cases loading an empty alpha channel causes display bugs (brushes not seen)
+// qtexture_t *Texture_ForName (const char *name, bool bReplace = false, bool bShader = false, bool bNoAlpha = false,
+// bool bReload = false, bool makeShader = true);
 
 const idMaterial *Texture_ForName(const char *name);
 

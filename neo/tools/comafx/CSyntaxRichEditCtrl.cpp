@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,10 +39,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define DEBUG_NEW new
 #endif
 
-// NOTE:	known bug, if you directly jump to a not yet highligted page
-// with the first line starting
-//			inside a multi-line comment then the multi-line comment
-// is not picked up and highlighted
+// NOTE:	known bug, if you directly jump to a not yet highligted page with the first line starting
+//			inside a multi-line comment then the multi-line comment is not picked up and highlighted
 
 const int AUTOCOMPLETE_WIDTH = 200;
 const int AUTOCOMPLETE_HEIGHT = 180;
@@ -1042,8 +1037,7 @@ void CSyntaxRichEditCtrl::GetText(idStr &text, int startCharIndex, int endCharIn
     range->get_Text(&bstr);
     text = W2A(bstr);
     range->Release();
-    text.StripTrailingOnce("\r"); // remove last carriage return which is always
-                                  // added to a tom::ITextRange
+    text.StripTrailingOnce("\r"); // remove last carriage return which is always added to a tom::ITextRange
 }
 
 /*
@@ -1603,12 +1597,10 @@ BOOL CSyntaxRichEditCtrl::OnToolTipNotify(UINT id, NMHDR *pNMHDR, LRESULT *pResu
 
         AFX_MODULE_THREAD_STATE *state = AfxGetModuleThreadState();
 
-        // set max tool tip width to enable multi-line tool tips using "\r\n" for
-        // line breaks
+        // set max tool tip width to enable multi-line tool tips using "\r\n" for line breaks
         state->m_pToolTip->SetMaxTipWidth(500);
 
-        // set the number of milliseconds after which the tool tip automatically
-        // disappears
+        // set the number of milliseconds after which the tool tip automatically disappears
         state->m_pToolTip->SetDelayTime(TTDT_AUTOPOP, 5000 + toolTip.GetLength() * 50);
 
 #ifndef _UNICODE
@@ -1730,8 +1722,7 @@ void CSyntaxRichEditCtrl::OnKeyDown(UINT nKey, UINT nRepCnt, UINT nFlags)
 
         GetSel(selStart, selEnd);
 
-        // if multiple lines are selected add tabs to, or remove tabs from all of
-        // them
+        // if multiple lines are selected add tabs to, or remove tabs from all of them
         if (selEnd > selStart)
         {
             CString text;

@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/MapFile.h"
 #include "framework/Common.h"
 #include "framework/FileSystem.h"
-#include "idlib/MapFile.h"
-#include "sys/platform.h"
 
 #include "tools/compilers/aas/Brush.h"
 
@@ -640,8 +637,7 @@ bool idBrush::TryMerge(const idBrush *brush, const idPlaneSet &planeList)
 
             plane = &brushes[i]->GetSide(k)->GetPlane();
 
-            // all the non seperating brush sides of the other brush should be at the
-            // back or on the plane
+            // all the non seperating brush sides of the other brush should be at the back or on the plane
             for (l = 0; l < brushes[j]->GetNumSides(); l++)
             {
 
@@ -685,8 +681,7 @@ bool idBrush::TryMerge(const idBrush *brush, const idPlaneSet &planeList)
         sides.Append(brush->GetSide(i)->Copy());
     }
 
-    // remove any side from this brush that is the opposite of a side of the other
-    // brush
+    // remove any side from this brush that is the opposite of a side of the other brush
     for (i = 0; i < GetNumSides(); i++)
     {
         for (j = 0; j < brush->GetNumSides(); j++)
@@ -1153,12 +1148,12 @@ void idBrush::ExpandForAxialBox(const idBounds &bounds)
     /*
     // after expansion at least all non bevel sides should have a winding
     for ( i = 0; i < sides.Num(); i++ ) {
-            side = sides[i];
-            if ( !side->winding ) {
-                    if ( !( side->flags & SFL_BEVEL ) ) {
-                            int shit = 1;
-                    }
+        side = sides[i];
+        if ( !side->winding ) {
+            if ( !( side->flags & SFL_BEVEL ) ) {
+                int shit = 1;
             }
+        }
     }
     */
 }

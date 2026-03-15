@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +32,10 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __RENDERWORLD_H__
 #define __RENDERWORLD_H__
 
-#include "framework/DeclParticle.h"
+#include "idlib/geometry/Winding.h"
 #include "idlib/bv/Box.h"
 #include "idlib/bv/Frustum.h"
-#include "idlib/geometry/Winding.h"
+#include "framework/DeclParticle.h"
 #include "renderer/Material.h"
 
 class idDemoFile;
@@ -47,7 +44,7 @@ class idRenderModel;
 /*
 ===============================================================================
 
-        Render World
+    Render World
 
 ===============================================================================
 */
@@ -99,27 +96,27 @@ typedef struct renderEntity_s
 
     // Entities that are expensive to generate, like skeletal models, can be
     // deferred until their bounds are found to be in view, in the frustum
-    // of a shadowing light that is in view, or contacted by a trace / overlay
-    // test. This is also used to do visual cueing on items in the view The
-    // renderView may be NULL if the callback is being issued for a non-view
-    // related source. The callback function should clear renderEntity->callback
-    // if it doesn't want to be called again next time the entity is referenced
-    // (ie, if the callback has now made the entity valid until the next
-    // updateEntity)
+    // of a shadowing light that is in view, or contacted by a trace / overlay test.
+    // This is also used to do visual cueing on items in the view
+    // The renderView may be NULL if the callback is being issued for a non-view related
+    // source.
+    // The callback function should clear renderEntity->callback if it doesn't
+    // want to be called again next time the entity is referenced (ie, if the
+    // callback has now made the entity valid until the next updateEntity)
     idBounds bounds; // only needs to be set for deferred models and md5s
     deferredEntityCallback_t callback;
 
     void *callbackData; // used for whatever the callback wants
 
-    // player bodies and possibly player shadows should be suppressed in views
-    // from that player's eyes, but will show up in mirrors and other subviews
-    // security cameras could suppress their model in their subviews if we add a
-    // way of specifying a view number for a remoteRenderMap view
+    // player bodies and possibly player shadows should be suppressed in views from
+    // that player's eyes, but will show up in mirrors and other subviews
+    // security cameras could suppress their model in their subviews if we add a way
+    // of specifying a view number for a remoteRenderMap view
     int suppressSurfaceInViewID;
     int suppressShadowInViewID;
 
-    // world models for the player and weapons will not cast shadows from view
-    // weapon muzzle flashes
+    // world models for the player and weapons will not cast shadows from view weapon
+    // muzzle flashes
     int suppressShadowInLightID;
 
     // if non-zero, the surface and shadow (if it casts one)
@@ -137,10 +134,8 @@ typedef struct renderEntity_s
     const idMaterial *customShader;             // if non-0, all surfaces will use this
     const idMaterial *referenceShader;          // used so flares can reference the proper light shader
     const idDeclSkin *customSkin;               // 0 for no remappings
-    class idSoundEmitter *referenceSound;       // for shader sound tables, allowing
-                                                // effects to vary with sounds
-    float shaderParms[MAX_ENTITY_SHADER_PARMS]; // can be used in any way by
-                                                // shader or model generation
+    class idSoundEmitter *referenceSound;       // for shader sound tables, allowing effects to vary with sounds
+    float shaderParms[MAX_ENTITY_SHADER_PARMS]; // can be used in any way by shader or model generation
 
     // networking: see WriteGUIToSnapshot / ReadGUIFromSnapshot
     class idUserInterface *gui[MAX_RENDERENTITY_GUI];
@@ -151,24 +146,20 @@ typedef struct renderEntity_s
     idJointMat *joints; // array of joints that will modify vertices.
                         // NULL if non-deformable model.  NOT freed by renderer
 
-    float modelDepthHack; // squash depth range so particle effects don't clip
-                          // into walls
+    float modelDepthHack; // squash depth range so particle effects don't clip into walls
 
-    // options to override surface shader flags (replace with material
-    // parameters?)
+    // options to override surface shader flags (replace with material parameters?)
     bool noSelfShadow; // cast shadows onto other objects,but not self
     bool noShadow;     // no shadow at all
 
-    bool noDynamicInteractions; // don't create any light / shadow interactions
-                                // after the level load is completed.  This is a
-                                // performance hack for the gigantic outdoor
-                                // meshes in the monorail map, so all the lights
-                                // in the moving monorail don't touch the meshes
+    bool noDynamicInteractions; // don't create any light / shadow interactions after
+                                // the level load is completed.  This is a performance hack
+                                // for the gigantic outdoor meshes in the monorail map, so
+                                // all the lights in the moving monorail don't touch the meshes
 
-    bool weaponDepthHack; // squash depth range so view weapons don't poke into
-                          // walls this automatically implies noShadow
-    int forceUpdate;      // force an update (NOTE: not a bool to keep this struct a
-                          // multiple of 4 bytes)
+    bool weaponDepthHack; // squash depth range so view weapons don't poke into walls
+                          // this automatically implies noShadow
+    int forceUpdate;      // force an update (NOTE: not a bool to keep this struct a multiple of 4 bytes)
     int timeGroup;
     int xrayIndex;
 } renderEntity_t;
@@ -188,16 +179,14 @@ typedef struct renderLight_s
     int allowLightInViewID;
 
     // I am sticking the four bools together so there are no unused gaps in
-    // the padded structure, which could confuse the memcmp that checks for
-    // redundant updates
-    bool noShadows;  // (should we replace this with material parameters on the
-                     // shader?)
-    bool noSpecular; // (should we replace this with material parameters on the
-                     // shader?)
+    // the padded structure, which could confuse the memcmp that checks for redundant
+    // updates
+    bool noShadows;  // (should we replace this with material parameters on the shader?)
+    bool noSpecular; // (should we replace this with material parameters on the shader?)
 
-    bool pointLight;    // otherwise a projection light (should probably invert the
-                        // sense of this, because points are way more common)
-    bool parallel;      // lightCenter gives the direction to the light at infinity
+    bool pointLight; // otherwise a projection light (should probably invert the sense of this, because points are way
+                     // more common)
+    bool parallel;   // lightCenter gives the direction to the light at infinity
     idVec3 lightRadius; // xyz radius for point lights
     idVec3 lightCenter; // offset the lighting direction for shading and
                         // shadows, relative to origin
@@ -216,15 +205,12 @@ typedef struct renderLight_s
     // ignore this value if the light has been moved after initial creation
     idRenderModel *prelightModel;
 
-    // muzzle flash lights will not cast shadows from player and weapon world
-    // models
+    // muzzle flash lights will not cast shadows from player and weapon world models
     int lightId;
 
-    const idMaterial *shader;                   // NULL = either lights/defaultPointLight or
-                                                // lights/defaultProjectedLight
+    const idMaterial *shader; // NULL = either lights/defaultPointLight or lights/defaultProjectedLight
     float shaderParms[MAX_ENTITY_SHADER_PARMS]; // can be used in any way by shader
-    idSoundEmitter *referenceSound;             // for shader sound tables, allowing effects
-                                                // to vary with sounds
+    idSoundEmitter *referenceSound;             // for shader sound tables, allowing effects to vary with sounds
 } renderLight_t;
 
 typedef struct renderView_s
@@ -233,8 +219,7 @@ typedef struct renderView_s
     // subviews (mirrors, cameras, etc) will always clear it to zero
     int viewID;
 
-    // sized from 0 to SCREEN_WIDTH / SCREEN_HEIGHT (640/480), not actual
-    // resolution
+    // sized from 0 to SCREEN_WIDTH / SCREEN_HEIGHT (640/480), not actual resolution
     int x, y, width, height;
 
     float fov_x, fov_y;
@@ -244,8 +229,7 @@ typedef struct renderView_s
     bool cramZNear;   // for cinematics, we want to set ZNear much lower
     bool forceUpdate; // for an update
 
-    // time in milliseconds for shader effects and other time dependent rendering
-    // issues
+    // time in milliseconds for shader effects and other time dependent rendering issues
     int time;
     float shaderParms[MAX_GLOBAL_SHADER_PARMS]; // can be used in any way by shader
     const idMaterial *globalMaterial;           // used to override everything draw
@@ -315,8 +299,8 @@ class idRenderWorld
     virtual void FreeLightDef(qhandle_t lightHandle) = 0;
     virtual const renderLight_t *GetRenderLight(qhandle_t lightHandle) const = 0;
 
-    // Force the generation of all light / surface interactions at the start of a
-    // level If this isn't called, they will all be dynamically generated
+    // Force the generation of all light / surface interactions at the start of a level
+    // If this isn't called, they will all be dynamically generated
     virtual void GenerateAllInteractions() = 0;
 
     // returns true if this area model needs portal sky to draw
@@ -326,10 +310,9 @@ class idRenderWorld
 
     // Creates decals on all world surfaces that the winding projects onto.
     // The projection origin should be infront of the winding plane.
-    // The decals are projected onto world geometry between the winding plane and
-    // the projection origin. The decals are depth faded from the winding plane to
-    // a certain distance infront of the winding plane and the same distance from
-    // the projection origin towards the winding.
+    // The decals are projected onto world geometry between the winding plane and the projection origin.
+    // The decals are depth faded from the winding plane to a certain distance infront of the
+    // winding plane and the same distance from the projection origin towards the winding.
     virtual void ProjectDecalOntoWorld(const idFixedWinding &winding, const idVec3 &projectionOrigin,
                                        const bool parallel, const float fadeDepth, const idMaterial *material,
                                        const int startTime) = 0;
@@ -348,15 +331,13 @@ class idRenderWorld
 
     //-------------- Scene Rendering -----------------
 
-    // some calls to material functions use the current renderview time when
-    // servicing cinematics.  this function ensures that any parms accessed (such
-    // as time) are properly set.
+    // some calls to material functions use the current renderview time when servicing cinematics.  this function
+    // ensures that any parms accessed (such as time) are properly set.
     virtual void SetRenderView(const renderView_t *renderView) = 0;
 
-    // rendering a scene may actually render multiple subviews for mirrors and
-    // portals, and may render composite textures for gui console screens and
-    // light projections It would also be acceptable to render a scene multiple
-    // times, for "rear view mirrors", etc
+    // rendering a scene may actually render multiple subviews for mirrors and portals, and
+    // may render composite textures for gui console screens and light projections
+    // It would also be acceptable to render a scene multiple times, for "rear view mirrors", etc
     virtual void RenderScene(const renderView_t *renderView) = 0;
 
     //-------------- Portal Area Information -----------------
@@ -371,17 +352,16 @@ class idRenderWorld
     virtual qhandle_t FindPortal(const idBounds &b) const = 0;
 
     // doors explicitly close off portals when shut
-    // multiple bits can be set to block multiple things, ie: ( PS_VIEW |
-    // PS_LOCATION | PS_AIR )
+    // multiple bits can be set to block multiple things, ie: ( PS_VIEW | PS_LOCATION | PS_AIR )
     virtual void SetPortalState(qhandle_t portal, int blockingBits) = 0;
     virtual int GetPortalState(qhandle_t portal) = 0;
 
-    // returns true only if a chain of portals without the given connection bits
-    // set exists between the two areas (a door doesn't separate them, etc)
+    // returns true only if a chain of portals without the given connection bits set
+    // exists between the two areas (a door doesn't separate them, etc)
     virtual bool AreasAreConnected(int areaNum1, int areaNum2, portalConnection_t connection) = 0;
 
-    // returns the number of portal areas in a map, so game code can build
-    // information tables for the different areas
+    // returns the number of portal areas in a map, so game code can build information
+    // tables for the different areas
     virtual int NumAreas(void) const = 0;
 
     // Will return -1 if the point is not in an area, otherwise
@@ -406,13 +386,11 @@ class idRenderWorld
     // start / end are in global world coordinates.
     virtual guiPoint_t GuiTrace(qhandle_t entityHandle, const idVec3 start, const idVec3 end) const = 0;
 
-    // Traces vs the render model, possibly instantiating a dynamic version, and
-    // returns true if something was hit
+    // Traces vs the render model, possibly instantiating a dynamic version, and returns true if something was hit
     virtual bool ModelTrace(modelTrace_t &trace, qhandle_t entityHandle, const idVec3 &start, const idVec3 &end,
                             const float radius) const = 0;
 
-    // Traces vs the whole rendered world. FIXME: we need some kind of material
-    // flags.
+    // Traces vs the whole rendered world. FIXME: we need some kind of material flags.
     virtual bool Trace(modelTrace_t &trace, const idVec3 &start, const idVec3 &end, const float radius,
                        bool skipDynamic = true, bool skipPlayer = false) const = 0;
 
@@ -434,8 +412,8 @@ class idRenderWorld
     // the next renderScene
     virtual bool ProcessDemoCommand(idDemoFile *readDemo, renderView_t *demoRenderView, int *demoTimeOffset) = 0;
 
-    // this is used to regenerate all interactions ( which is currently only done
-    // during influences ), there may be a less expensive way to do it
+    // this is used to regenerate all interactions ( which is currently only done during influences ), there may be a
+    // less expensive way to do it
     virtual void RegenerateWorld() = 0;
 
     //-------------- Debug Visualization  -----------------

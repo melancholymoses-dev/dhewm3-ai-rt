@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,43 +34,39 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 #include <limits.h>
 
-#include "framework/File.h"
 #include "idlib/containers/StrList.h"
+#include "framework/File.h"
 
 /*
 ===============================================================================
 
-        File System
+    File System
 
-        No stdio calls should be used by any part of the game, because of all
-sorts of directory and separator char issues. Throughout the game a forward
-slash should be used as a separator. The file system takes care of the
-conversion to an OS specific separator. The file system treats all file and
-directory names as case insensitive.
+    No stdio calls should be used by any part of the game, because of all sorts
+    of directory and separator char issues. Throughout the game a forward slash
+    should be used as a separator. The file system takes care of the conversion
+    to an OS specific separator. The file system treats all file and directory
+    names as case insensitive.
 
-        The following cvars store paths used by the file system:
+    The following cvars store paths used by the file system:
 
-        "fs_basepath"		path to local install, read-only
-        "fs_savepath"		path to config, save game, etc. files, read &
-write "fs_cdpath"			path to cd, read-only "fs_devpath"
-path to files created during development, read & write
+    "fs_basepath"		path to local install, read-only
+    "fs_savepath"		path to config, save game, etc. files, read & write
+    "fs_cdpath"			path to cd, read-only
+    "fs_devpath"		path to files created during development, read & write
 
-        The base path for file saving can be set to "fs_savepath" or
-"fs_devpath".
+    The base path for file saving can be set to "fs_savepath" or "fs_devpath".
 
 ===============================================================================
 */
 
-// FIXME: DG: this assumes 32bit time_t, but it's 64bit now, at least on some
-// platforms incl. Win32 in modern VS
+// FIXME: DG: this assumes 32bit time_t, but it's 64bit now, at least on some platforms incl. Win32 in modern VS
 //            => change it (to -1?) or does that break anything?
 static const ID_TIME_T FILE_NOT_FOUND_TIMESTAMP = 0xFFFFFFFF;
 static const int MAX_PURE_PAKS = 128;
-// DG: https://www.gnu.org/software/libc/manual/html_node/Limits-for-Files.html
-// says
-//     that FILENAME_MAX can be *really* big on some systems and thus is not
-//     suitable for buffer lengths. So limit it to prevent stack overflow/out of
-//     memory issues
+// DG: https://www.gnu.org/software/libc/manual/html_node/Limits-for-Files.html says
+//     that FILENAME_MAX can be *really* big on some systems and thus is not suitable
+//     for buffer lengths. So limit it to prevent stack overflow/out of memory issues
 static const int MAX_OSPATH = (FILENAME_MAX < 32000) ? FILENAME_MAX : 32000;
 
 // modes for OpenFileByMode. used as bit mask internally
@@ -102,8 +95,8 @@ typedef enum
     DL_WAIT,       // waiting in the list for beginning of the download
     DL_INPROGRESS, // in progress
     DL_DONE,       // download completed, success
-    DL_ABORTING,   // this one can be set during a download, it will force the next
-                   // progress callback to abort - then will go to DL_FAILED
+    DL_ABORTING, // this one can be set during a download, it will force the next progress callback to abort - then will
+                 // go to DL_FAILED
     DL_FAILED
 } dlStatus_t;
 
@@ -223,16 +216,15 @@ class idFileSystem
     virtual void FreeModList(idModList *modList) = 0;
     // Lists files with the given extension in the given directory.
     // Directory should not have either a leading or trailing '/'
-    // The returned files will not include any directories or '/' unless
-    // fullRelativePath is set. The extension must include a leading dot and may
-    // not contain wildcards. If extension is "/", only subdirectories will be
-    // returned.
+    // The returned files will not include any directories or '/' unless fullRelativePath is set.
+    // The extension must include a leading dot and may not contain wildcards.
+    // If extension is "/", only subdirectories will be returned.
     virtual idFileList *ListFiles(const char *relativePath, const char *extension, bool sort = false,
                                   bool fullRelativePath = false, const char *gamedir = NULL) = 0;
-    // Lists files in the given directory and all subdirectories with the given
-    // extension. Directory should not have either a leading or trailing '/' The
-    // returned files include a full relative path. The extension must include a
-    // leading dot and may not contain wildcards.
+    // Lists files in the given directory and all subdirectories with the given extension.
+    // Directory should not have either a leading or trailing '/'
+    // The returned files include a full relative path.
+    // The extension must include a leading dot and may not contain wildcards.
     virtual idFileList *ListFilesTree(const char *relativePath, const char *extension, bool sort = false,
                                       const char *gamedir = NULL) = 0;
     // Frees the given file list.
@@ -247,25 +239,23 @@ class idFileSystem
     virtual void CreateOSPath(const char *OSPath) = 0;
     // Returns true if a file is in a pak file.
     virtual bool FileIsInPAK(const char *relativePath) = 0;
-    // Returns a space separated string containing the checksums of all referenced
-    // pak files. will call SetPureServerChecksums internally to restrict itself
+    // Returns a space separated string containing the checksums of all referenced pak files.
+    // will call SetPureServerChecksums internally to restrict itself
     virtual void UpdatePureServerChecksums(void) = 0;
     // 0-terminated list of pak checksums
     // if pureChecksums[ 0 ] == 0, all data sources will be allowed
-    // otherwise, only pak files that match one of the checksums will be checked
-    // for files with the sole exception of .cfg files. the function tries to
-    // configure pure mode from the paks already referenced and this new list it
-    // returns wether the switch was successfull, and sets the missing checksums
+    // otherwise, only pak files that match one of the checksums will be checked for files
+    // with the sole exception of .cfg files.
+    // the function tries to configure pure mode from the paks already referenced and this new list
+    // it returns wether the switch was successfull, and sets the missing checksums
     // the process is verbosive when fs_debug 1
     virtual fsPureReply_t SetPureServerChecksums(const int pureChecksums[MAX_PURE_PAKS],
                                                  int missingChecksums[MAX_PURE_PAKS]) = 0;
     // fills a 0-terminated list of pak checksums for a client
-    // if OS is -1, give the current game pak checksum. if >= 0, lookup the game
-    // pak table (server only)
+    // if OS is -1, give the current game pak checksum. if >= 0, lookup the game pak table (server only)
     virtual void GetPureServerChecksums(int checksums[MAX_PURE_PAKS]) = 0;
     // before doing a restart, force the pure list and the search order
-    // if the given checksum list can't be completely processed and set, will
-    // error out
+    // if the given checksum list can't be completely processed and set, will error out
     virtual void SetRestartChecksums(const int pureChecksums[MAX_PURE_PAKS]) = 0;
     // equivalent to calling SetPureServerChecksums with an empty list
     virtual void ClearPureChecksums(void) = 0;
@@ -275,8 +265,7 @@ class idFileSystem
     // A null timestamp will be ignored.
     // As a quick check for existance. -1 length == not present.
     // A 0 byte will always be appended at the end, so string ops are safe.
-    // The buffer should be considered read-only, because it may be cached for
-    // other uses.
+    // The buffer should be considered read-only, because it may be cached for other uses.
     virtual int ReadFile(const char *relativePath, void **buffer, ID_TIME_T *timestamp = NULL) = 0;
     // Frees the memory allocated by ReadFile.
     virtual void FreeFile(void *buffer) = 0;
@@ -292,8 +281,7 @@ class idFileSystem
     virtual idFile *OpenFileWrite(const char *relativePath, const char *basePath = "fs_savepath") = 0;
     // Opens a file for writing at the end.
     virtual idFile *OpenFileAppend(const char *filename, bool sync = false, const char *basePath = "fs_basepath") = 0;
-    // Opens a file for reading, writing, or appending depending on the value of
-    // mode.
+    // Opens a file for reading, writing, or appending depending on the value of mode.
     virtual idFile *OpenFileByMode(const char *relativePath, fsMode_t mode) = 0;
     // Opens a file for reading from a full OS path.
     virtual idFile *OpenExplicitFileRead(const char *OSPath) = 0;
@@ -318,8 +306,7 @@ class idFileSystem
 
     // is D3XP installed? even if not running it atm
     virtual bool HasD3XP(void) = 0;
-    // are we using D3XP content ( through a real d3xp run or through a double mod
-    // )
+    // are we using D3XP content ( through a real d3xp run or through a double mod )
     virtual bool RunningD3XP(void) = 0;
 
     // don't use for large copies - allocates a single memory block for the copy
@@ -334,12 +321,11 @@ class idFileSystem
     virtual int AddZipFile(const char *path) = 0;
 
     // look for a file in the loaded paks or the addon paks
-    // if the file is found in addons, FS's internal structures are ready for a
-    // reloadEngine
+    // if the file is found in addons, FS's internal structures are ready for a reloadEngine
     virtual findFile_t FindFile(const char *path, bool scheduleAddons = false) = 0;
 
-    // get map/addon decls and take into account addon paks that are not on the
-    // search list the decl 'name' is in the "path" entry of the dict
+    // get map/addon decls and take into account addon paks that are not on the search list
+    // the decl 'name' is in the "path" entry of the dict
     virtual int GetNumMaps() = 0;
     virtual const idDict *GetMapDecl(int i) = 0;
     virtual void FindMapScreenshot(const char *path, char *buf, int len) = 0;

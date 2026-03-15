@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Game.h"
 #include "sys/platform.h"
+#include "framework/Game.h"
 
 #include "tools/compilers/dmap/dmap.h"
 
@@ -48,7 +45,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
   references are
   Brushes will have
 
-        brushes, each of which has a side definition.
+    brushes, each of which has a side definition.
 
 */
 
@@ -389,8 +386,7 @@ static void ParseSurface(const idMapPatch *patch, const idSurface *surface, cons
     }
 
     // set merge groups if needed, to prevent multiple sides from being
-    // merged into a single surface in the case of gui shaders, mirrors, and
-    // autosprites
+    // merged into a single surface in the case of gui shaders, mirrors, and autosprites
     if (material->IsDiscrete())
     {
         for (tri = prim->tris; tri; tri = tri->next)

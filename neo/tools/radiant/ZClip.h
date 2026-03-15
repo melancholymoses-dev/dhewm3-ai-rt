@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,10 +32,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef ZCLIP_H
 #define ZCLIP_H
 
-// I don't like doing macros without braces and with whitespace, but the
-// compiler moans if I do these differently,
-//	and since they're only for use within glColor3f() calls anyway then this
-// is ok...  (that's my excuse anyway)
+// I don't like doing macros without braces and with whitespace, but the compiler moans if I do these differently,
+//	and since they're only for use within glColor3f() calls anyway then this is ok...  (that's my excuse anyway)
 //
 #define ZCLIP_COLOUR 1.0f, 0.0f, 1.0f
 #define ZCLIP_COLOUR_DIM 0.8f, 0.0f, 0.8f

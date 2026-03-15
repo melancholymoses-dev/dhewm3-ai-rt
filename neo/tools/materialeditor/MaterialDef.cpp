@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -74,8 +71,8 @@ void MaterialDef::SetViewData(const char *viewName, DWORD value)
 MaterialDefList MaterialDefManager::materialDefs[MaterialDefManager::MATERIAL_DEF_NUM];
 
 /**
- * Loads the material definition file instatiates MaterialDef objects for each
- * definition and groups the definitions.
+ * Loads the material definition file instatiates MaterialDef objects for each definition
+ * and groups the definitions.
  */
 void MaterialDefManager::InitializeMaterialDefLists()
 {
@@ -104,12 +101,10 @@ void MaterialDefManager::InitializeMaterialDefLists()
 }
 
 /**
- * Loads a single type of material attributes and adds them to the supplied
- * MaterialDefList object.
+ * Loads a single type of material attributes and adds them to the supplied MaterialDefList object.
  * @param src The idLexer object that contains the file.
  * @param typeName The name of the attribute grouping to search for in the file.
- * @param list The MaterialDefList object to append the MaterialDef instances
- * to.
+ * @param list The MaterialDefList object to append the MaterialDef instances to.
  */
 void MaterialDefManager::InitializeMaterialDefList(idLexer *src, const char *typeName, MaterialDefList *list)
 {
@@ -201,8 +196,7 @@ void MaterialDefManager::InitializeMaterialDefList(idLexer *src, const char *typ
 }
 
 /**
- * Destroys all MaterialDef instances and clears the material attribute grouping
- * lists.
+ * Destroys all MaterialDef instances and clears the material attribute grouping lists.
  */
 void MaterialDefManager::DestroyMaterialDefLists()
 {

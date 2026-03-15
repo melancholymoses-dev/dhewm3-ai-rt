@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,17 +35,16 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        idLib contains stateless support classes and concrete types. Some
-classes do have static variables, but such variables are initialized once and
-        read-only after initialization (they do not maintain a modifiable
-state).
+    idLib contains stateless support classes and concrete types. Some classes
+    do have static variables, but such variables are initialized once and
+    read-only after initialization (they do not maintain a modifiable state).
 
-        The interface pointers idSys, idCommon, idCVarSystem and idFileSystem
-        should be set before using idLib. The pointers stored here should not
-        be used by any part of the engine except for idLib.
+    The interface pointers idSys, idCommon, idCVarSystem and idFileSystem
+    should be set before using idLib. The pointers stored here should not
+    be used by any part of the engine except for idLib.
 
-        The frameNumber should be continuously set to the number of the current
-        frame if frame base memory logging is required.
+    The frameNumber should be continuously set to the number of the current
+    frame if frame base memory logging is required.
 
 ===============================================================================
 */
@@ -78,7 +74,7 @@ class idLib
 /*
 ===============================================================================
 
-        Types and defines used throughout the engine.
+    Types and defines used throughout the engine.
 
 ===============================================================================
 */
@@ -131,8 +127,7 @@ int IntForSixtets(byte *in);
 #ifdef _DEBUG
 void AssertFailed(const char *file, int line, const char *expression);
 #undef assert
-// DG: change assert to use ?: so I can use it in _alloca()/_alloca16() (MSVC
-// didn't like if() in there)
+// DG: change assert to use ?: so I can use it in _alloca()/_alloca16() (MSVC didn't like if() in there)
 #define assert(X) (X) ? 1 : (AssertFailed(__FILE__, __LINE__, #X), 0)
 #endif
 

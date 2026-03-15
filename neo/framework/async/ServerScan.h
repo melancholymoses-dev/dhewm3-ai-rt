@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,10 +37,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Scan for servers, on the LAN or from a list
-        Update a listDef GUI through usage of idListGUI class
-        When updating large lists of servers, sends out getInfo in small batches
-to avoid congestion
+    Scan for servers, on the LAN or from a list
+    Update a listDef GUI through usage of idListGUI class
+    When updating large lists of servers, sends out getInfo in small batches to avoid congestion
 
 ===============================================================================
 */
@@ -56,8 +52,7 @@ typedef struct
     int time;
 } inServer_t;
 
-// the menu gui uses a hard-coded control type to display a list of network
-// games
+// the menu gui uses a hard-coded control type to display a list of network games
 typedef struct
 {
     netadr_t adr;
@@ -92,21 +87,18 @@ class idServerScan : public idList<networkServer_t>
     void AddServer(int id, const char *srv);
 
     // we are going to feed server entries to be pinged
-    // if timeout is true, use a timeout once we start AddServer to trigger
-    // EndServers and decide the scan is done
+    // if timeout is true, use a timeout once we start AddServer to trigger EndServers and decide the scan is done
     void StartServers(bool timeout);
     // we are done filling up the list of server entries
     void EndServers();
 
-    // scan the current list of servers - used for refreshes and while receiving a
-    // fresh list
+    // scan the current list of servers - used for refreshes and while receiving a fresh list
     void NetScan();
 
     // clear
     void Clear();
 
-    // called each game frame. Updates the scanner state, takes care of ongoing
-    // scans
+    // called each game frame. Updates the scanner state, takes care of ongoing scans
     void RunFrame();
 
     typedef enum
@@ -125,8 +117,7 @@ class idServerScan : public idList<networkServer_t>
 
     bool GetBestPing(networkServer_t &serv);
 
-    // prepare for a LAN scan. idAsyncClient does the network job (UDP broadcast),
-    // we do the storage
+    // prepare for a LAN scan. idAsyncClient does the network job (UDP broadcast), we do the storage
     void SetupLANScan();
 
     void GUIConfig(idUserInterface *pGUI, const char *name);
@@ -143,11 +134,11 @@ class idServerScan : public idList<networkServer_t>
     int GetChallenge();
 
   private:
-    static const int MAX_PINGREQUESTS = 32;   // how many servers to query at once
-    static const int REPLY_TIMEOUT = 999;     // how long should we wait for a reply from a game server
-    static const int INCOMING_TIMEOUT = 1500; // when we got an incoming server list, how long till we decide the
-                                              // list is done
-    static const int REFRESH_START = 10000;   // how long to wait when sending the initial refresh request
+    static const int MAX_PINGREQUESTS = 32; // how many servers to query at once
+    static const int REPLY_TIMEOUT = 999;   // how long should we wait for a reply from a game server
+    static const int INCOMING_TIMEOUT =
+        1500; // when we got an incoming server list, how long till we decide the list is done
+    static const int REFRESH_START = 10000; // how long to wait when sending the initial refresh request
 
     scan_state_t scan_state;
 
@@ -164,8 +155,7 @@ class idServerScan : public idList<networkServer_t>
 
     idList<inServer_t> net_servers;
     // where we are in net_servers list for getInfo emissions ( NET_SCAN only )
-    // we may either be waiting on MAX_PINGREQUESTS, or for net_servers to grow
-    // some more ( through AddServer )
+    // we may either be waiting on MAX_PINGREQUESTS, or for net_servers to grow some more ( through AddServer )
     int cur_info;
 
     idUserInterface *m_pGUI;

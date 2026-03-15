@@ -19,28 +19,25 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "../../renderer/model_local.h" // for idRenderModelLiquid
-#include "../../renderer/tr_local.h"
-#include "DialogInfo.h"
+#include "qe3.h"
 #include "Radiant.h"
 #include "XYWnd.h"
-#include "qe3.h"
+#include "DialogInfo.h"
 #include "splines.h"
+#include "../../renderer/tr_local.h"
+#include "../../renderer/model_local.h" // for idRenderModelLiquid
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -321,10 +318,9 @@ void VectorToAngles(idVec3 vec, idVec3 angles)
 
 /*
  =======================================================================================================================
-        RotateLight target is relative to the light origin up and right are
- relative to the target up and right are perpendicular and are on a plane
- through the target with the target vector as normal delta is the movement of
- the target relative to the light
+    RotateLight target is relative to the light origin up and right are relative to the target up and right are
+    perpendicular and are on a plane through the target with the target vector as normal delta is the movement of the
+    target relative to the light
  =======================================================================================================================
 */
 void VectorSnapGrid(idVec3 &v)
@@ -381,8 +377,8 @@ static void RotateLight(idVec3 &target, idVec3 &up, idVec3 &right, const idVec3 
     }
 
     //
-    // project the up and right vectors onto a plane that goes through the target
-    // and has normal vector target.Normalize()
+    // project the up and right vectors onto a plane that goes through the target and
+    // has normal vector target.Normalize()
     //
     normal = target;
     normal.Normalize();
@@ -395,9 +391,9 @@ static void RotateLight(idVec3 &target, idVec3 &up, idVec3 &right, const idVec3 
     right -= d * normal;
 
     //
-    // FIXME: maybe calculate the right vector with a cross product between the
-    // target and up vector, just to make sure the up and right vectors are
-    // perpendicular get the up and right vectors relative to the target
+    // FIXME: maybe calculate the right vector with a cross product between the target
+    // and up vector, just to make sure the up and right vectors are perpendicular
+    // get the up and right vectors relative to the target
     //
     up -= target;
     right -= target;
@@ -679,7 +675,7 @@ static unsigned s_stipple[32] = {
 
 /*
  =======================================================================================================================
-        WXY_WndProc
+    WXY_WndProc
  =======================================================================================================================
  */
 LONG WINAPI XYWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -1395,9 +1391,9 @@ void CXYWnd::OnMouseMove(UINT nFlags, CPoint point)
         g_pParentWnd->SetStatusText(1, g_strStatus);
 
         //
-        // i need to generalize the point code.. having 3 flavors pretty much
-        // sucks.. once the new curve stuff looks like it is going to stick i will
-        // rationalize this down to a single interface..
+        // i need to generalize the point code.. having 3 flavors pretty much sucks.. once
+        // the new curve stuff looks like it is going to stick i will rationalize this
+        // down to a single interface..
         //
         if (PointMode())
         {
@@ -1519,8 +1515,7 @@ void CXYWnd::OnMouseMove(UINT nFlags, CPoint point)
         SetCursor(::LoadCursor(NULL, IDC_ARROW));
     }
 
-    /// If precision crosshair is active, force redraw of the 2d view on mouse
-    /// move
+    /// If precision crosshair is active, force redraw of the 2d view on mouse move
     if (m_precisionCrosshairMode != PRECISION_CROSSHAIR_NONE)
     {
         /// Force 2d view redraw (so that the precision cursor moves with the mouse)
@@ -1820,8 +1815,7 @@ void CXYWnd::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 
 //
 // =======================================================================================================================
-//    FIXME: the brush_t *pBrush is never used. ( Entity_Create uses
-//    selected_brushes )
+//    FIXME: the brush_t *pBrush is never used. ( Entity_Create uses selected_brushes )
 // =======================================================================================================================
 //
 void CreateEntityFromName(char *pName, brush_t *pBrush, bool forceFixed, idVec3 min, idVec3 max, idVec3 org)
@@ -2033,10 +2027,9 @@ void CreateSmartEntity(CXYWnd *pWnd, int x, int y, const char *pName)
     g_strSmartEntity = pName;
     if (g_strSmartEntity.Find("Smart_Train") >= 0)
     {
-        ShowInfoDialog("Select the path of the train by left clicking in XY, YZ and/or XZ "
-                       "views. You can move an already dropped point by grabbing and moving "
-                       "it. When you are finished, press ENTER to accept and create the "
-                       "entity and path(s), press ESC to abandon the creation");
+        ShowInfoDialog("Select the path of the train by left clicking in XY, YZ and/or XZ views. You can move an "
+                       "already dropped point by grabbing and moving it. When you are finished, press ENTER to accept "
+                       "and create the entity and path(s), press ESC to abandon the creation");
         g_bPathMode = true;
         g_nPathLimit = 0;
         g_nPathCount = 0;
@@ -2139,8 +2132,7 @@ void CXYWnd::KillPathMode()
 
 //
 // =======================================================================================================================
-//    gets called for drop down menu messages TIP: it's not always about
-//    EntityCreate
+//    gets called for drop down menu messages TIP: it's not always about EntityCreate
 // =======================================================================================================================
 //
 void CXYWnd::OnEntityCreate(unsigned int nID)
@@ -2153,8 +2145,8 @@ void CXYWnd::OnEntityCreate(unsigned int nID)
         if (strItem.CompareNoCase("Add to...") == 0)
         {
             //
-            // ++timo TODO: fill the menu with current groups? this one is for adding
-            // to existing groups only
+            // ++timo TODO: fill the menu with current groups? this one is for adding to
+            // existing groups only
             //
             common->Printf("TODO: Add to... in CXYWnd::OnEntityCreate\n");
         }
@@ -2186,8 +2178,7 @@ void CXYWnd::OnEntityCreate(unsigned int nID)
 
         Sys_UpdateWindows(W_ALL);
 
-        // OnLButtonDown((MK_LBUTTON | MK_SHIFT), CPoint(m_ptDown.x+2,
-        // m_ptDown.y+2));
+        // OnLButtonDown((MK_LBUTTON | MK_SHIFT), CPoint(m_ptDown.x+2, m_ptDown.y+2));
     }
 }
 
@@ -2483,8 +2474,8 @@ void CXYWnd::XY_ToPoint(int x, int y, idVec3 &point)
     else if (m_nViewType == YZ)
     {
         //
-        // //point[0] = 0; point[1] = m_vOrigin[0] + (fx - fw / 2) / m_fScale;
-        // point[2] = m_vOrigin[1] + (fy - fh / 2 ) / m_fScale;
+        // //point[0] = 0; point[1] = m_vOrigin[0] + (fx - fw / 2) / m_fScale; point[2] =
+        // m_vOrigin[1] + (fy - fh / 2 ) / m_fScale;
         //
         point[1] = m_vOrigin[1] + (fx - fw / 2) / m_fScale;
         point[2] = m_vOrigin[2] + (fy - fh / 2) / m_fScale;
@@ -2492,8 +2483,8 @@ void CXYWnd::XY_ToPoint(int x, int y, idVec3 &point)
     else
     {
         //
-        // point[0] = m_vOrigin[0] + (fx - fw / 2) / m_fScale; /point[1] = 0;
-        // point[2] = m_vOrigin[1] + (fy - fh / 2) / m_fScale;
+        // point[0] = m_vOrigin[0] + (fx - fw / 2) / m_fScale; /point[1] = 0; point[2] =
+        // m_vOrigin[1] + (fy - fh / 2) / m_fScale;
         //
         point[0] = m_vOrigin[0] + (fx - fw / 2) / m_fScale;
 
@@ -2520,8 +2511,8 @@ void CXYWnd::XY_ToGridPoint(int x, int y, idVec3 &point)
     else if (m_nViewType == YZ)
     {
         //
-        // point[0] = 0; point[1] = m_vOrigin[0] + (x - m_nWidth / 2) / m_fScale;
-        // point[2] = m_vOrigin[1] + (y - m_nHeight / 2) / m_fScale;
+        // point[0] = 0; point[1] = m_vOrigin[0] + (x - m_nWidth / 2) / m_fScale; point[2]
+        // = m_vOrigin[1] + (y - m_nHeight / 2) / m_fScale;
         //
         point[1] = m_vOrigin[1] + (x - m_nWidth / 2) / m_fScale;
         point[2] = m_vOrigin[2] + (y - m_nHeight / 2) / m_fScale;
@@ -2531,8 +2522,8 @@ void CXYWnd::XY_ToGridPoint(int x, int y, idVec3 &point)
     else
     {
         //
-        // point[1] = 0; point[0] = m_vOrigin[0] + (x - m_nWidth / 2) / m_fScale;
-        // point[2] = m_vOrigin[1] + (y - m_nHeight / 2) / m_fScale;
+        // point[1] = 0; point[0] = m_vOrigin[0] + (x - m_nWidth / 2) / m_fScale; point[2]
+        // = m_vOrigin[1] + (y - m_nHeight / 2) / m_fScale;
         //
         point[0] = m_vOrigin[0] + (x - m_nWidth / 2) / m_fScale;
         point[2] = m_vOrigin[2] + (y - m_nHeight / 2) / m_fScale;
@@ -2762,7 +2753,7 @@ bool CXYWnd::DragDelta(int x, int y, idVec3 &move)
 
 /*
  =======================================================================================================================
-        NewBrushDrag
+    NewBrushDrag
  =======================================================================================================================
  */
 void CXYWnd::NewBrushDrag(int x, int y)
@@ -2838,7 +2829,7 @@ void CXYWnd::NewBrushDrag(int x, int y)
 
 /*
  =======================================================================================================================
-        XY_MouseMoved
+    XY_MouseMoved
  =======================================================================================================================
  */
 bool CXYWnd::XY_MouseMoved(int x, int y, int buttons)
@@ -2858,8 +2849,8 @@ bool CXYWnd::XY_MouseMoved(int x, int y, int buttons)
     }
 
     //
-    // lbutton without selection = drag new brush if (m_nButtonstate == MK_LBUTTON
-    // && !m_bPress_selection && g_qeglobals.d_select_mode != sel_curvepoint &&
+    // lbutton without selection = drag new brush if (m_nButtonstate == MK_LBUTTON &&
+    // !m_bPress_selection && g_qeglobals.d_select_mode != sel_curvepoint &&
     // g_qeglobals.d_select_mode != sel_splineedit)
     //
     if (m_nButtonstate == MK_LBUTTON && !m_bPress_selection && g_qeglobals.d_select_mode == sel_brush)
@@ -2868,8 +2859,7 @@ bool CXYWnd::XY_MouseMoved(int x, int y, int buttons)
         return false;
     }
 
-    // lbutton (possibly with control and or shift) with selection = drag
-    // selection
+    // lbutton (possibly with control and or shift) with selection = drag selection
     if (m_nButtonstate & MK_LBUTTON)
     {
         Drag_MouseMoved(x, y, buttons);
@@ -3010,8 +3000,8 @@ bool CXYWnd::XY_MouseMoved(int x, int y, int buttons)
 
 /*
  =======================================================================================================================
-        DRAWING £
-        XY_DrawGrid
+    DRAWING £
+    XY_DrawGrid
  =======================================================================================================================
  */
 void CXYWnd::XY_DrawGrid()
@@ -3135,8 +3125,7 @@ void CXYWnd::XY_DrawGrid()
     //
     if (m_nViewType == XZ || m_nViewType == YZ)
     {
-        if (g_pParentWnd->GetZWnd()->m_pZClip) // should always be the case at this
-                                               // point I think, but this is safer
+        if (g_pParentWnd->GetZWnd()->m_pZClip) // should always be the case at this point I think, but this is safer
         {
             if (g_pParentWnd->GetZWnd()->m_pZClip->IsEnabled())
             {
@@ -3208,7 +3197,7 @@ void CXYWnd::XY_DrawGrid()
 
 /*
  =======================================================================================================================
-        XY_DrawBlockGrid
+    XY_DrawBlockGrid
  =======================================================================================================================
  */
 void CXYWnd::XY_DrawBlockGrid()
@@ -3477,7 +3466,7 @@ void CXYWnd::DrawZIcon(void)
 
 /*
  =======================================================================================================================
-        FilterBrush
+    FilterBrush
  =======================================================================================================================
  */
 bool FilterBrush(brush_t *pb)
@@ -3516,10 +3505,9 @@ bool FilterBrush(brush_t *pb)
     if (g_qeglobals.d_savedinfo.exclude & (EXCLUDE_CAULK | EXCLUDE_VISPORTALS))
     {
         //
-        // filter out the brush only if all faces are caulk if not don't hide the
-        // whole brush, proceed on a per-face basis (Cam_Draw) ++timo TODO: set this
-        // as a preference .. show caulk: hide any brush with caulk // don't draw
-        // caulk faces
+        // filter out the brush only if all faces are caulk if not don't hide the whole
+        // brush, proceed on a per-face basis (Cam_Draw) ++timo TODO: set this as a
+        // preference .. show caulk: hide any brush with caulk // don't draw caulk faces
         //
         face_t *f;
         f = pb->brush_faces;
@@ -3658,10 +3646,9 @@ bool FilterBrush(brush_t *pb)
 
 /*
  =======================================================================================================================
-        PATH LINES £
-        DrawPathLines Draws connections between entities. Needs to consider all
- entities, not just ones on screen, because the lines can be visible when
- neither end is. Called for both camera view and xy view.
+    PATH LINES £
+    DrawPathLines Draws connections between entities. Needs to consider all entities, not just ones on screen, because
+    the lines can be visible when neither end is. Called for both camera view and xy view.
  =======================================================================================================================
  */
 void DrawPathLines(void)
@@ -3776,8 +3763,7 @@ void DrawPathLines(void)
 
 //
 // =======================================================================================================================
-//    can be greatly simplified but per usual i am in a hurry which is not an
-//    excuse, just a fact
+//    can be greatly simplified but per usual i am in a hurry which is not an excuse, just a fact
 // =======================================================================================================================
 //
 void CXYWnd::PaintSizeInfo(int nDim1, int nDim2, idVec3 vMinBounds, idVec3 vMaxBounds)
@@ -4610,8 +4596,7 @@ void CXYWnd::Copy()
 
     if (!bClipped)
     {
-        common->Printf("Unable to register Windows clipboard formats, copy/paste "
-                       "between editors will not be possible");
+        common->Printf("Unable to register Windows clipboard formats, copy/paste between editors will not be possible");
     }
 
     /*
@@ -4660,13 +4645,13 @@ void CXYWnd::Copy()
 void CXYWnd::Undo()
 {
     /*
-     * if (g_brUndo.next != &g_brUndo) { g_bScreenUpdates = false;
-     * Select_Delete(); for (brush_t* pBrush = g_brUndo.next ; pBrush != NULL &&
-     * pBrush != &g_brUndo ; pBrush=pBrush->next) { brush_t* pClone =
-     * Brush_Clone(pBrush); Brush_AddToList (pClone, &active_brushes);
-     * Entity_LinkBrush (pBrush->pUndoOwner, pClone); Brush_Build(pClone);
-     * Select_Brush(pClone); } CleanList(&g_brUndo); g_bScreenUpdates = true;
-     * Sys_UpdateWindows(W_ALL); } else common->Printf("Nothing to undo.../n");
+     * if (g_brUndo.next != &g_brUndo) { g_bScreenUpdates = false; Select_Delete();
+     * for (brush_t* pBrush = g_brUndo.next ; pBrush != NULL && pBrush != &g_brUndo ;
+     * pBrush=pBrush->next) { brush_t* pClone = Brush_Clone(pBrush); Brush_AddToList
+     * (pClone, &active_brushes); Entity_LinkBrush (pBrush->pUndoOwner, pClone);
+     * Brush_Build(pClone); Select_Brush(pClone); } CleanList(&g_brUndo);
+     * g_bScreenUpdates = true; Sys_UpdateWindows(W_ALL); } else common->Printf("Nothing
+     * to undo.../n");
      */
 }
 
@@ -4675,7 +4660,8 @@ void CXYWnd::Undo()
  =======================================================================================================================
  */
 void CXYWnd::UndoClear()
-{ /* CleanList(&g_brUndo); */
+{
+    /* CleanList(&g_brUndo); */
 }
 
 /*
@@ -4685,10 +4671,10 @@ void CXYWnd::UndoClear()
 void CXYWnd::UndoCopy()
 {
     /*
-     * CleanList(&g_brUndo); for (brush_t* pBrush = selected_brushes.next ; pBrush
-     * != NULL && pBrush != &selected_brushes ; pBrush=pBrush->next) { brush_t*
-     * pClone = Brush_Clone(pBrush); pClone->pUndoOwner = pBrush->owner;
-     * Brush_AddToList (pClone, &g_brUndo); }
+     * CleanList(&g_brUndo); for (brush_t* pBrush = selected_brushes.next ; pBrush !=
+     * NULL && pBrush != &selected_brushes ; pBrush=pBrush->next) { brush_t* pClone =
+     * Brush_Clone(pBrush); pClone->pUndoOwner = pBrush->owner; Brush_AddToList
+     * (pClone, &g_brUndo); }
      */
 }
 
@@ -4836,8 +4822,8 @@ void CXYWnd::OnTimer(UINT_PTR nIDEvent)
         XY_MouseMoved(m_ptDrag.x, m_nHeight - 1 - m_ptDrag.y, m_nScrollFlags);
 
         //
-        // m_vOrigin[nDim1] -= m_ptDrag.x / m_fScale; m_vOrigin[nDim1] -= m_ptDrag.x
-        // / m_fScale;
+        // m_vOrigin[nDim1] -= m_ptDrag.x / m_fScale; m_vOrigin[nDim1] -= m_ptDrag.x /
+        // m_fScale;
         //
     }
 }
@@ -4961,10 +4947,9 @@ void CXYWnd::CyclePrecisionCrosshairMode(void)
 // Draws a precision crosshair beneath the cursor in the 2d (XY) view,
 //  depending on one of the following values for m_precisionCrosshairMode:
 //
-// PRECISION_CROSSHAIR_NONE		No crosshair is drawn.  Do not force
-// refresh of XY view. PRECISION_CROSSHAIR_SNAP		Crosshair snaps to grid
-// size.  Force refresh of XY view. PRECISION_CROSSHAIR_FREE
-// Crosshair does not snap to grid.  Force refresh of XY view.
+// PRECISION_CROSSHAIR_NONE		No crosshair is drawn.  Do not force refresh of XY view.
+// PRECISION_CROSSHAIR_SNAP		Crosshair snaps to grid size.  Force refresh of XY view.
+// PRECISION_CROSSHAIR_FREE		Crosshair does not snap to grid.  Force refresh of XY view.
 //---------------------------------------------------------------------------
 void CXYWnd::DrawPrecisionCrosshair(void)
 {

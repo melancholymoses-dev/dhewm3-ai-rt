@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/containers/BinSearch.h"
 #include "renderer/VertexCache.h"
-#include "sys/platform.h"
 
 #include "renderer/tr_local.h"
 
@@ -169,10 +166,10 @@ R_TubeDeform
 
 will pivot a rectangular quad along the center of its long axis
 
-Note that a geometric tube with even quite a few sides tube will almost
-certainly render much faster than this, so this should only be for faked
-volumetric tubes. Make sure this is used with twosided translucent shaders,
-because the exact side order may not be correct.
+Note that a geometric tube with even quite a few sides tube will almost certainly render much faster
+than this, so this should only be for faked volumetric tubes.
+Make sure this is used with twosided translucent shaders, because the exact side
+order may not be correct.
 =====================
 */
 static void R_TubeDeform(drawSurf_t *surf)
@@ -411,143 +408,141 @@ R_FlareDeform
 */
 /*
 static void R_FlareDeform( drawSurf_t *surf ) {
-        const srfTriangles_t *tri;
-        srfTriangles_t		*newTri;
-        idPlane	plane;
-        float	dot;
-        idVec3	localViewer;
-        int		j;
+    const srfTriangles_t *tri;
+    srfTriangles_t		*newTri;
+    idPlane	plane;
+    float	dot;
+    idVec3	localViewer;
+    int		j;
 
-        tri = surf->geo;
+    tri = surf->geo;
 
-        if ( tri->numVerts != 4 || tri->numIndexes != 6 ) {
-                //FIXME: temp hack for flares on tripleted models
-                common->Warning( "R_FlareDeform: not a single quad" );
-                return;
-        }
+    if ( tri->numVerts != 4 || tri->numIndexes != 6 ) {
+        //FIXME: temp hack for flares on tripleted models
+        common->Warning( "R_FlareDeform: not a single quad" );
+        return;
+    }
 
-        // this srfTriangles_t and all its indexes and caches are in frame
-        // memory, and will be automatically disposed of
-        newTri = (srfTriangles_t *)R_ClearedFrameAlloc( sizeof( *newTri ) );
-        newTri->numVerts = 4;
-        newTri->numIndexes = 2*3;
-        newTri->indexes = (glIndex_t *)R_FrameAlloc( newTri->numIndexes *
-sizeof( newTri->indexes[0] ) );
+    // this srfTriangles_t and all its indexes and caches are in frame
+    // memory, and will be automatically disposed of
+    newTri = (srfTriangles_t *)R_ClearedFrameAlloc( sizeof( *newTri ) );
+    newTri->numVerts = 4;
+    newTri->numIndexes = 2*3;
+    newTri->indexes = (glIndex_t *)R_FrameAlloc( newTri->numIndexes * sizeof( newTri->indexes[0] ) );
 
-        idDrawVert *ac = (idDrawVert *)_alloca16( newTri->numVerts * sizeof(
-idDrawVert ) );
+    idDrawVert *ac = (idDrawVert *)_alloca16( newTri->numVerts * sizeof( idDrawVert ) );
 
-        // find the plane
-        plane.FromPoints( tri->verts[tri->indexes[0]].xyz,
-tri->verts[tri->indexes[1]].xyz, tri->verts[tri->indexes[2]].xyz );
+    // find the plane
+    plane.FromPoints( tri->verts[tri->indexes[0]].xyz, tri->verts[tri->indexes[1]].xyz, tri->verts[tri->indexes[2]].xyz
+);
 
-        // if viewer is behind the plane, draw nothing
-        R_GlobalPointToLocal( surf->space->modelMatrix,
-tr.viewDef->renderView.vieworg, localViewer ); float distFromPlane = localViewer
-* plane.Normal() + plane[3]; if ( distFromPlane <= 0 ) { newTri->numIndexes = 0;
-                surf->geo = newTri;
-                return;
-        }
+    // if viewer is behind the plane, draw nothing
+    R_GlobalPointToLocal( surf->space->modelMatrix, tr.viewDef->renderView.vieworg, localViewer );
+    float distFromPlane = localViewer * plane.Normal() + plane[3];
+    if ( distFromPlane <= 0 ) {
+        newTri->numIndexes = 0;
+        surf->geo = newTri;
+        return;
+    }
 
-        idVec3	center;
-        center = tri->verts[0].xyz;
-        for ( j = 1 ; j < tri->numVerts ; j++ ) {
-                center += tri->verts[j].xyz;
-        }
-        center *= 1.0/tri->numVerts;
+    idVec3	center;
+    center = tri->verts[0].xyz;
+    for ( j = 1 ; j < tri->numVerts ; j++ ) {
+        center += tri->verts[j].xyz;
+    }
+    center *= 1.0/tri->numVerts;
 
-        idVec3	dir = localViewer - center;
-        dir.Normalize();
+    idVec3	dir = localViewer - center;
+    dir.Normalize();
 
-        dot = dir * plane.Normal();
+    dot = dir * plane.Normal();
 
-        // set vertex colors based on plane angle
-        int	color = (int)(dot * 8 * 256);
-        if ( color > 255 ) {
-                color = 255;
-        }
-        for ( j = 0 ; j < newTri->numVerts ; j++ ) {
-                ac[j].color[0] =
-                ac[j].color[1] =
-                ac[j].color[2] = color;
-                ac[j].color[3] = 255;
-        }
+    // set vertex colors based on plane angle
+    int	color = (int)(dot * 8 * 256);
+    if ( color > 255 ) {
+        color = 255;
+    }
+    for ( j = 0 ; j < newTri->numVerts ; j++ ) {
+        ac[j].color[0] =
+        ac[j].color[1] =
+        ac[j].color[2] = color;
+        ac[j].color[3] = 255;
+    }
 
-        float	spread = surf->shaderRegisters[
-surf->material->GetDeformRegister(0) ] * r_flareSize.GetFloat(); idVec3
-edgeDir[4][3]; glIndex_t		indexes[MAX_TRI_WINDING_INDEXES]; int
-numIndexes = R_WindingFromTriangles( tri, indexes );
+    float	spread = surf->shaderRegisters[ surf->material->GetDeformRegister(0) ] * r_flareSize.GetFloat();
+    idVec3	edgeDir[4][3];
+    glIndex_t		indexes[MAX_TRI_WINDING_INDEXES];
+    int		numIndexes = R_WindingFromTriangles( tri, indexes );
 
-        surf->material = declManager->FindMaterial(
-"textures/smf/anamorphicFlare" );
+    surf->material = declManager->FindMaterial( "textures/smf/anamorphicFlare" );
 
-        // only deal with quads
-        if ( numIndexes != 4 ) {
-                return;
-        }
+    // only deal with quads
+    if ( numIndexes != 4 ) {
+        return;
+    }
 
-        // compute centroid
-        idVec3 centroid, toeye, forward, up, left;
-        centroid.Set( 0, 0, 0 );
-        for ( int i = 0; i < 4; i++ ) {
-                centroid += tri->verts[ indexes[i] ].xyz;
-        }
-        centroid /= 4;
+    // compute centroid
+    idVec3 centroid, toeye, forward, up, left;
+    centroid.Set( 0, 0, 0 );
+    for ( int i = 0; i < 4; i++ ) {
+        centroid += tri->verts[ indexes[i] ].xyz;
+    }
+    centroid /= 4;
 
-        // compute basis vectors
-        up.Set( 0, 0, 1 );
+    // compute basis vectors
+    up.Set( 0, 0, 1 );
 
-        toeye = centroid - localViewer;
-        toeye.Normalize();
-        left = toeye.Cross( up );
-        up = left.Cross( toeye );
+    toeye = centroid - localViewer;
+    toeye.Normalize();
+    left = toeye.Cross( up );
+    up = left.Cross( toeye );
 
-        left = left * 40 * 6;
-        up = up * 40;
+    left = left * 40 * 6;
+    up = up * 40;
 
-        // compute flares
-        struct flare_t {
-                float	angle;
-                float	length;
-        };
+    // compute flares
+    struct flare_t {
+        float	angle;
+        float	length;
+    };
 
-        static flare_t flares[] = {
-                { 0, 100 },
-                { 90, 100 }
-        };
+    static flare_t flares[] = {
+        { 0, 100 },
+        { 90, 100 }
+    };
 
-        for ( int i = 0; i < 4; i++ ) {
-                memset( ac + i, 0, sizeof( ac[i] ) );
-        }
+    for ( int i = 0; i < 4; i++ ) {
+        memset( ac + i, 0, sizeof( ac[i] ) );
+    }
 
-        ac[0].xyz = centroid - left;
-        ac[0].st[0] = 0; ac[0].st[1] = 0;
+    ac[0].xyz = centroid - left;
+    ac[0].st[0] = 0; ac[0].st[1] = 0;
 
-        ac[1].xyz = centroid + up;
-        ac[1].st[0] = 1; ac[1].st[1] = 0;
+    ac[1].xyz = centroid + up;
+    ac[1].st[0] = 1; ac[1].st[1] = 0;
 
-        ac[2].xyz = centroid + left;
-        ac[2].st[0] = 1; ac[2].st[1] = 1;
+    ac[2].xyz = centroid + left;
+    ac[2].st[0] = 1; ac[2].st[1] = 1;
 
-        ac[3].xyz = centroid - up;
-        ac[3].st[0] = 0; ac[3].st[1] = 1;
+    ac[3].xyz = centroid - up;
+    ac[3].st[0] = 0; ac[3].st[1] = 1;
 
-        // setup colors
-        for ( j = 0 ; j < newTri->numVerts ; j++ ) {
-                ac[j].color[0] =
-                ac[j].color[1] =
-                ac[j].color[2] = 255;
-                ac[j].color[3] = 255;
-        }
+    // setup colors
+    for ( j = 0 ; j < newTri->numVerts ; j++ ) {
+        ac[j].color[0] =
+        ac[j].color[1] =
+        ac[j].color[2] = 255;
+        ac[j].color[3] = 255;
+    }
 
-        // setup indexes
-        static glIndex_t	triIndexes[2*3] = {
-                0,1,2,  0,2,3
-        };
+    // setup indexes
+    static glIndex_t	triIndexes[2*3] = {
+        0,1,2,  0,2,3
+    };
 
-        memcpy( newTri->indexes, triIndexes, sizeof( triIndexes ) );
+    memcpy( newTri->indexes, triIndexes, sizeof( triIndexes ) );
 
-        R_FinishDeform( surf, newTri, ac );
+    R_FinishDeform( surf, newTri, ac );
 }
 */
 
@@ -916,9 +911,8 @@ static void AddTriangleToIsland_r(const srfTriangles_t *tri, int triangleNum, bo
 =====================
 R_EyeballDeform
 
-Each eyeball surface should have an separate upright triangle behind it, long
-end pointing out the eye, and another single triangle in front of the eye for
-the focus point.
+Each eyeball surface should have an separate upright triangle behind it, long end
+pointing out the eye, and another single triangle in front of the eye for the focus point.
 =====================
 */
 static void R_EyeballDeform(drawSurf_t *surf)
@@ -1182,8 +1176,7 @@ static void R_ParticleDeform(drawSurf_t *surf, bool useArea)
                 g.renderView->time + renderEntity->shaderParms[SHADERPARM_TIMEOFFSET] * 1000 - stage->timeOffset * 1000;
             int stageCycle = stageAge / stage->cycleMsec;
 
-            // some particles will be in this cycle, some will be in the previous
-            // cycle
+            // some particles will be in this cycle, some will be in the previous cycle
             steppingRandom.SetSeed(((stageCycle << 10) & idRandom::MAX_RAND) ^
                                    (int)(renderEntity->shaderParms[SHADERPARM_DIVERSITY] * idRandom::MAX_RAND));
             steppingRandom2.SetSeed((((stageCycle - 1) << 10) & idRandom::MAX_RAND) ^
@@ -1279,14 +1272,13 @@ static void R_ParticleDeform(drawSurf_t *surf, bool useArea)
 
                 //-----------------------
 
-                // this is needed so aimed particles can calculate origins at different
-                // times
+                // this is needed so aimed particles can calculate origins at different times
                 g.originalRandom = g.random;
 
                 g.age = g.frac * stage->particleLife;
 
-                // if the particle doesn't get drawn because it is faded out or beyond a
-                // kill region, don't increment the verts
+                // if the particle doesn't get drawn because it is faded out or beyond a kill region,
+                // don't increment the verts
                 tri->numVerts += stage->CreateParticle(&g, tri->verts + tri->numVerts);
             }
 

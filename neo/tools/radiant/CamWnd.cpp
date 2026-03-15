@@ -19,30 +19,27 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "CamWnd.h"
+#include "qe3.h"
 #include "Radiant.h"
 #include "XYWnd.h"
-#include "qe3.h"
+#include "CamWnd.h"
 #include "splines.h"
 #include <GL/glu.h>
 
-#include "../../renderer/model_local.h" // for idRenderModelMD5
 #include "../../renderer/tr_local.h"
+#include "../../renderer/model_local.h" // for idRenderModelMD5
 
 // TODO: DG: could merge SteelStorm2 "new 3D view navigation" improvements
 
@@ -419,18 +416,15 @@ int CCamWnd::OnCreate(LPCREATESTRUCT lpCreateStruct)
     {
         common->Warning("wglUseFontBitmaps failed (%d).  Trying again.", GetLastError());
 
-        // FIXME: This is really wacky, sometimes the first call fails, but calling
-        // it again makes it work
-        //		This probably indicates there's something wrong somewhere else
-        // in the code, but I'm not sure what
+        // FIXME: This is really wacky, sometimes the first call fails, but calling it again makes it work
+        //		This probably indicates there's something wrong somewhere else in the code, but I'm not sure what
         if (!qwglUseFontBitmaps(hDC, 0, 255, g_qeglobals.d_font_list))
         {
             common->Warning("wglUseFontBitmaps failed again (%d).  Trying outlines.", GetLastError());
 
             if (!qwglUseFontOutlines(hDC, 0, 255, g_qeglobals.d_font_list, 0.0f, 0.1f, WGL_FONT_LINES, NULL))
             {
-                common->Warning("wglUseFontOutlines also failed (%d), no coordinate "
-                                "text will be visible.",
+                common->Warning("wglUseFontOutlines also failed (%d), no coordinate text will be visible.",
                                 GetLastError());
             }
         }
@@ -998,7 +992,7 @@ void DrawAxial(face_t *selFace)
 
 /*
  =======================================================================================================================
-        Cam_Draw
+    Cam_Draw
  =======================================================================================================================
  */
 void CCamWnd::SetProjectionMatrix()
@@ -1318,52 +1312,50 @@ void CCamWnd::OnKeyUp(UINT nChar, UINT nRepCnt, UINT nFlags)
 
 //
 // =======================================================================================================================
-//    Timo brush primitive texture shifting, using camera view to select
-//    translations::
+//    Timo brush primitive texture shifting, using camera view to select translations::
 // =======================================================================================================================
 //
 void CCamWnd::ShiftTexture_BrushPrimit(face_t *f, int x, int y)
 {
     /*
-            idVec3	texS, texT;
-            idVec3	viewX, viewY;
-            int		XS, XT, YS, YT;
-            int		outS, outT;
+        idVec3	texS, texT;
+        idVec3	viewX, viewY;
+        int		XS, XT, YS, YT;
+        int		outS, outT;
     #ifdef _DEBUG
-            if (!g_qeglobals.m_bBrushPrimitMode) {
-                    common->Printf("Warning : unexpected call to
-    CCamWnd::ShiftTexture_BrushPrimit with brush primitive mode disbaled\n");
-                    return;
-            }
+        if (!g_qeglobals.m_bBrushPrimitMode) {
+            common->Printf("Warning : unexpected call to CCamWnd::ShiftTexture_BrushPrimit with brush primitive mode
+    disbaled\n"); return;
+        }
     #endif
-            // compute face axis base
-            //ComputeAxisBase(f->plane.Normal(), texS, texT);
+        // compute face axis base
+        //ComputeAxisBase(f->plane.Normal(), texS, texT);
 
-            // compute camera view vectors
-            VectorCopy(m_Camera.vup, viewY);
-            VectorCopy(m_Camera.vright, viewX);
+        // compute camera view vectors
+        VectorCopy(m_Camera.vup, viewY);
+        VectorCopy(m_Camera.vright, viewX);
 
-            // compute best vectors
-            //ComputeBest2DVector(viewX, texS, texT, XS, XT);
-            //ComputeBest2DVector(viewY, texS, texT, YS, YT);
+        // compute best vectors
+        //ComputeBest2DVector(viewX, texS, texT, XS, XT);
+        //ComputeBest2DVector(viewY, texS, texT, YS, YT);
 
-            // check this is not a degenerate case
-            if ((XS == YS) && (XT == YT))
-            {
+        // check this is not a degenerate case
+        if ((XS == YS) && (XT == YT))
+        {
     #ifdef _DEBUG
-                    common->Printf("Warning : degenerate best vectors axis base in
-    CCamWnd::ShiftTexture_BrushPrimit\n"); #endif
-                    // forget it
-                    Select_ShiftTexture_BrushPrimit(f, x, y, false);
-                    return;
-            }
+            common->Printf("Warning : degenerate best vectors axis base in CCamWnd::ShiftTexture_BrushPrimit\n");
+    #endif
+            // forget it
+            Select_ShiftTexture_BrushPrimit(f, x, y, false);
+            return;
+        }
 
-            // compute best fitted translation in face axis base
-            outS = XS * x + YS * y;
-            outT = XT * x + YT * y;
+        // compute best fitted translation in face axis base
+        outS = XS * x + YS * y;
+        outT = XT * x + YT * y;
 
-            // call actual texture shifting code
-            Select_ShiftTexture_BrushPrimit(f, outS, outT, false);
+        // call actual texture shifting code
+        Select_ShiftTexture_BrushPrimit(f, outS, outT, false);
     */
 }
 
@@ -1626,8 +1618,8 @@ void Tris_ToOBJ(const char *outFile, idTriList *tris, idMatList *mats)
             for (k = 0; k < matNames.Num(); k++)
             {
                 // This presumes the diffuse tga name matches the material name
-                f->Printf("newmtl %s\n\tNs 0\n\td 1\n\tillum 2\n\tKd 0 0 0 \n\tKs 0.22 "
-                          "0.22 0.22 \n\tKa 0 0 0 \n\tmap_Kd %s/base/%s.tga\n\n\n",
+                f->Printf("newmtl %s\n\tNs 0\n\td 1\n\tillum 2\n\tKd 0 0 0 \n\tKs 0.22 0.22 0.22 \n\tKa 0 0 0 "
+                          "\n\tmap_Kd %s/base/%s.tga\n\n\n",
                           matNames[k]->c_str(), "z:/d3xp", matNames[k]->c_str());
             }
             fileSystem->CloseFile(f);
@@ -1957,8 +1949,7 @@ void CCamWnd::BuildRendererState()
     int numBrushes = 0;
     int numSurfaces = 0;
 
-    // the renderModel for the world holds all the geometry that isn't in an
-    // entity
+    // the renderModel for the world holds all the geometry that isn't in an entity
     worldModel = renderModelManager->AllocModel();
     worldModel->InitEmpty("EditorWorldModel");
 
@@ -2123,8 +2114,7 @@ void CCamWnd::FreeRendererState()
 ========================
 CCamWnd::UpdateCaption
 
-  updates the caption based on rendermode and whether the render mode needs
-updated
+  updates the caption based on rendermode and whether the render mode needs updated
 ========================
 */
 void CCamWnd::UpdateCaption()
@@ -2153,7 +2143,7 @@ void CCamWnd::UpdateCaption()
 ===========================
 CCamWnd::ToggleRenderMode
 
-        Toggles the render mode
+    Toggles the render mode
 ===========================
 */
 void CCamWnd::ToggleRenderMode()
@@ -2166,7 +2156,7 @@ void CCamWnd::ToggleRenderMode()
 ===========================
 CCamWnd::ToggleRebuildMode
 
-        Toggles the rebuild mode
+    Toggles the rebuild mode
 ===========================
 */
 void CCamWnd::ToggleRebuildMode()
@@ -2179,7 +2169,7 @@ void CCamWnd::ToggleRebuildMode()
 ===========================
 CCamWnd::ToggleEntityMode
 
-        Toggles the entity mode
+    Toggles the entity mode
 ===========================
 */
 void CCamWnd::ToggleEntityMode()
@@ -2192,7 +2182,7 @@ void CCamWnd::ToggleEntityMode()
 ===========================
 CCamWnd::ToggleRenderMode
 
-        Toggles the render mode
+    Toggles the render mode
 ===========================
 */
 void CCamWnd::ToggleAnimationMode()
@@ -2213,7 +2203,7 @@ void CCamWnd::ToggleAnimationMode()
 ===========================
 CCamWnd::ToggleSoundMode
 
-        Toggles the sound mode
+    Toggles the sound mode
 ===========================
 */
 void CCamWnd::ToggleSoundMode()
@@ -2232,7 +2222,7 @@ void CCamWnd::ToggleSoundMode()
 ===========================
 CCamWnd::ToggleRenderMode
 
-        Toggles the render mode
+    Toggles the render mode
 ===========================
 */
 void CCamWnd::ToggleSelectMode()
@@ -2325,9 +2315,9 @@ void CCamWnd::DrawEntityData()
 
 /*
  =======================================================================================================================
-        Cam_Render
+    Cam_Render
 
-        This used the renderSystem to draw a fully lit view of the world
+    This used the renderSystem to draw a fully lit view of the world
  =======================================================================================================================
  */
 void CCamWnd::Cam_Render()
@@ -2342,12 +2332,11 @@ void CCamWnd::Cam_Render()
     }
 
     // DG: from SteelStorm2
-    // Jmarshal23 recommended to disable this to fix lighting render in the Cam
-    // window
+    // Jmarshal23 recommended to disable this to fix lighting render in the Cam window
     /* if (!qwglMakeCurrent(dc.m_hDC, win32.hGLRC)) {
-            common->Printf("ERROR: wglMakeCurrent failed..\n ");
-            common->Printf("Please restart " EDITOR_WINDOWTEXT " if the camera
-    view is not working\n"); return;
+        common->Printf("ERROR: wglMakeCurrent failed..\n ");
+        common->Printf("Please restart " EDITOR_WINDOWTEXT " if the camera view is not working\n");
+        return;
     } */
 
     // save the editor state

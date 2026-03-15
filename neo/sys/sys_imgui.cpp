@@ -47,9 +47,7 @@ static idCVar imgui_scale("imgui_scale", "-1.0", CVAR_SYSTEM | CVAR_FLOAT | CVAR
                           "factor to scale ImGUI menus by (-1: auto)"); // TODO: limit values?
 
 idCVar imgui_style("imgui_style", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
-                   "Which ImGui style to use. 0: Dhewm3 theme, 1: Default "
-                   "ImGui theme, 2: User theme",
-                   0.0f, 2.0f);
+                   "Which ImGui style to use. 0: Dhewm3 theme, 1: Default ImGui theme, 2: User theme", 0.0f, 2.0f);
 
 extern idCVar r_scaleMenusTo43;
 
@@ -70,8 +68,7 @@ extern bool ReadImGuiStyle(ImGuiStyle &style, const char *filename);
 
 // generate C++ code that replicates the given style into a text buffer
 // (that you can write to a file or set the clipboard from or whatever)
-// if refStyle is set, only differences in style compared to refStyle are
-// written
+// if refStyle is set, only differences in style compared to refStyle are written
 extern ImGuiTextBuffer WriteImGuiStyleToCode(const ImGuiStyle &style, const ImGuiStyle *refStyle = nullptr);
 } // namespace DG
 
@@ -83,8 +80,7 @@ namespace ImGuiHooks
 #ifdef _MSC_VER
 // Visual C++ (at least up to some 2019 version) doesn't support string literals
 // with more than 65535 bytes, so the base85-encoded version won't work here..
-// this alternative doesn't work with Big Endian, but that's not overly relevant
-// for Windows.
+// this alternative doesn't work with Big Endian, but that's not overly relevant for Windows.
 #include "proggyvector_font.h"
 #else // proper compilers that support longer string literals
 #include "proggyvector_font_base85.h"
@@ -121,8 +117,7 @@ static void UpdateWarningOverlay()
         return;
     }
 
-    // also hide if a key was pressed or maybe even if the mouse was moved (too
-    // much)
+    // also hide if a key was pressed or maybe even if the mouse was moved (too much)
     ImVec2 mdv = ImGui::GetMousePos() - warningOverlayStartPos; // Mouse Delta Vector
     float mouseDelta = sqrtf(mdv.x * mdv.x + mdv.y * mdv.y);
     const float fontSize = ImGui::GetFontSize();
@@ -187,8 +182,7 @@ static float GetDefaultScale()
 {
     if (glConfig.winWidth != glConfig.vidWidth)
     {
-        // in HighDPI mode, the font sizes are already scaled (to window
-        // coordinates), apparently
+        // in HighDPI mode, the font sizes are already scaled (to window coordinates), apparently
         return 1.0f;
     }
 
@@ -198,8 +192,7 @@ static float GetDefaultScale()
     float dpi = 0.0f;
     int winIdx = SDL_GetWindowDisplayIndex(sdlWindow);
     SDL_GetDisplayDPI((winIdx >= 0) ? winIdx : 0, NULL, &dpi, NULL);
-    // TODO: different reference DPI on mac? also, doesn't work that well on my
-    // laptop..
+    // TODO: different reference DPI on mac? also, doesn't work that well on my laptop..
     float ret = dpi / 96.0f;
 #endif
     if (ret <= 0.0f)
@@ -227,8 +220,7 @@ void SetScale(float scale)
 
 static bool imgui_initialized = false;
 
-// using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL
-// headers into sys_imgui.h
+// using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL headers into sys_imgui.h
 bool Init(void *_sdlWindow, void *sdlGlContext)
 {
     common->Printf("Initializing ImGui\n");
@@ -253,8 +245,7 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
     io.IniFilename = iniPath.c_str();
 
     SetImGuiStyle(Style::Dhewm3);
-    userStyle = ImGui::GetStyle(); // set dhewm3 style as default, in case the
-                                   // user style is missing values
+    userStyle = ImGui::GetStyle(); // set dhewm3 style as default, in case the user style is missing values
     if (DG::ReadImGuiStyle(userStyle, GetUserStyleFilename()) && imgui_style.GetInteger() == 2)
     {
         ImGui::GetStyle() = userStyle;
@@ -286,30 +277,24 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
     }
 
     // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can
-    // also load multiple fonts and use ImGui::PushFont()/PopFont() to select
-    // them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you
-    // need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return a nullptr. Please
-    // handle those errors in your application (e.g. use an assertion, or display
-    // an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored
-    // into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which
-    // ImGui_ImplXXXX_NewFrame below will call.
-    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype
-    // for higher quality font rendering.
+    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use
+    // ImGui::PushFont()/PopFont() to select them.
+    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
+    // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your
+    // application (e.g. use an assertion, or display an error and quit).
+    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling
+    // ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
+    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
     // - Read 'docs/FONTS.md' for more instructions and details.
-    // - Remember that in C/C++ if you want to include a backslash \ in a string
-    // literal you need to write a double backslash \\ !
+    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double
+    // backslash \\ !
     // io.Fonts->AddFontDefault();
     // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
     // io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
     // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
     // io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-    // ImFont* font =
-    // io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f,
-    // nullptr, io.Fonts->GetGlyphRangesJapanese()); IM_ASSERT(font != nullptr);
+    // ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr,
+    // io.Fonts->GetGlyphRangesJapanese()); IM_ASSERT(font != nullptr);
 
     const char *f10bind = idKeyInput::GetBinding(K_F10);
     if (f10bind && f10bind[0] != '\0')
@@ -317,8 +302,8 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
         if (idStr::Icmp(f10bind, "dhewm3Settings") != 0)
         {
             // if F10 is already bound, but not to dhewm3Settings, show a message
-            common->Printf("... the F10 key is already bound to '%s', otherwise it "
-                           "could be used to open the dhewm3 Settings Menu\n",
+            common->Printf("... the F10 key is already bound to '%s', otherwise it could be used to open the dhewm3 "
+                           "Settings Menu\n",
                            f10bind);
         }
     }
@@ -349,9 +334,9 @@ void Shutdown()
 // => ProcessEvent() has already been called (probably multiple times)
 void NewFrame()
 {
-    // it can happen that NewFrame() is called without EndFrame() having been
-    // called after the last NewFrame() call, for example when D3Radiant is active
-    // and in idSessionLocal::UpdateScreen() Sys_IsWindowVisible() returns false.
+    // it can happen that NewFrame() is called without EndFrame() having been called
+    // after the last NewFrame() call, for example when D3Radiant is active and in
+    // idSessionLocal::UpdateScreen() Sys_IsWindowVisible() returns false.
     // In that case, end the previous frame here so it's ended at all.
     if (haveNewFrame)
     {
@@ -385,10 +370,9 @@ void NewFrame()
         float fontSize = 18.0f * GetScale();
         float fontSizeInt = roundf(fontSize); // font sizes are supposed to be rounded to integers
 #ifdef _MSC_VER
-        // because Visual C++ (at least up to 2019) doesn't support the long string
-        // literal of the base85-encoded font, use the alternative compression
-        // instead (this is incompatible with Big Endian, so keep on using Base85
-        // for other platforms)
+        // because Visual C++ (at least up to 2019) doesn't support the long string literal
+        // of the base85-encoded font, use the alternative compression instead
+        // (this is incompatible with Big Endian, so keep on using Base85 for other platforms)
         io.Fonts->AddFontFromMemoryCompressedTTF(ProggyVector_compressed_data, ProggyVector_compressed_size,
                                                  fontSizeInt, nullptr);
 #else // better compilers
@@ -427,8 +411,7 @@ void NewFrame()
 bool keybindModeEnabled = false;
 
 // called with every SDL event by Sys_GetEvent()
-// returns true if ImGui has handled the event (so it shouldn't be handled by
-// D3)
+// returns true if ImGui has handled the event (so it shouldn't be handled by D3)
 bool ProcessEvent(const void *sdlEvent)
 {
     if (openImguiWindows == 0)
@@ -436,21 +419,19 @@ bool ProcessEvent(const void *sdlEvent)
 
     const SDL_Event *ev = (const SDL_Event *)sdlEvent;
     // ImGui_ImplSDL2_ProcessEvent() doc says:
-    //   You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to
-    //   tell if dear imgui wants to use your inputs.
-    //   - When io.WantCaptureMouse is true, do not dispatch mouse input data to
-    //   your main application, or clear/overwrite your copy of the mouse data.
-    //   - When io.WantCaptureKeyboard is true, do not dispatch keyboard input
-    //   data to your main application, or clear/overwrite your copy of the
-    //   keyboard data. Generally you may always pass all inputs to dear imgui,
-    //   and hide them from your application based on those two flags.
+    //   You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your
+    //   inputs.
+    //   - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or
+    //   clear/overwrite your copy of the mouse data.
+    //   - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or
+    //   clear/overwrite your copy of the keyboard data. Generally you may always pass all inputs to dear imgui, and
+    //   hide them from your application based on those two flags.
 
     bool imguiUsedEvent = ImGui_ImplSDLx_ProcessEvent(ev);
     if (keybindModeEnabled)
     {
-        // in keybind mode, all input events are passed to Doom3 so it can translate
-        // them to internal events and we can access and use them to create a new
-        // binding
+        // in keybind mode, all input events are passed to Doom3 so it can translate them
+        // to internal events and we can access and use them to create a new binding
         return false;
     }
 
@@ -484,10 +465,8 @@ bool ProcessEvent(const void *sdlEvent)
             case SDL_MOUSEWHEEL:
             case SDL_MOUSEBUTTONDOWN:
 
-                // Note: still pass button up events to the engine, so if they were
-                // pressed down
-                //   before an imgui window got focus they don't remain pressed
-                //   indefinitely
+                // Note: still pass button up events to the engine, so if they were pressed down
+                //   before an imgui window got focus they don't remain pressed indefinitely
                 // case SDL_MOUSEBUTTONUP:
                 return true;
             }
@@ -500,8 +479,7 @@ bool ProcessEvent(const void *sdlEvent)
             case SDL_TEXTINPUT:
                 return true;
             case SDL_KEYDOWN:
-                // case SDL_KEYUP: NOTE: see above why key up events are passed to the
-                // engine
+                // case SDL_KEYUP: NOTE: see above why key up events are passed to the engine
 #if SDL_VERSION_ATLEAST(3, 0, 0)
                 if (ev->key.key < SDLK_F1 || ev->key.key > SDLK_F12)
                 {
@@ -524,8 +502,7 @@ bool ProcessEvent(const void *sdlEvent)
 void SetKeyBindMode(bool enable)
 {
     keybindModeEnabled = enable;
-    // make sure no keys are registered as down, neither when entering nor when
-    // exiting keybind mode
+    // make sure no keys are registered as down, neither when entering nor when exiting keybind mode
     idKeyInput::ClearStates();
 }
 
@@ -533,16 +510,15 @@ bool ShouldShowCursor()
 {
     if (sessLocal.GetActiveMenu() == nullptr)
     {
-        // when ingame, render the ImGui/SDL/system cursor if an ImGui window is
-        // open because dhewm3 does *not* render its own cursor outside ImGui
-        // windows. additionally, only show it if an ImGui window has focus - this
-        // allows you to click outside the ImGui window to give Doom3 focus and look
-        // around. You can get focus on the ImGui window again by clicking while the
-        // invisible
+        // when ingame, render the ImGui/SDL/system cursor if an ImGui window is open
+        // because dhewm3 does *not* render its own cursor outside ImGui windows.
+        // additionally, only show it if an ImGui window has focus - this allows you
+        // to click outside the ImGui window to give Doom3 focus and look around.
+        // You can get focus on the ImGui window again by clicking while the invisible
         //  cursor is over the window (things in it still get highlighted), or by
-        // opening the main (Esc) or by opening the Dhewm3 Settings window (F10,
-        // usually), which will either open it focused or give an ImGui window focus
-        // if it was open but unfocused.
+        // opening the main (Esc) or by opening the Dhewm3 Settings window (F10, usually),
+        // which will either open it focused or give an ImGui window focus if it
+        // was open but unfocused.
         // TODO: Might be nice to have a keyboard shortcut to give focus to any open
         //       ImGui window, maybe Pause?
         return openImguiWindows != 0 && ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow);
@@ -550,8 +526,8 @@ bool ShouldShowCursor()
     else
     {
         // if we're in a menu (probably main menu), dhewm3 renders a cursor for it,
-        // so only show the ImGui cursor when the mouse cursor is over an ImGui
-        // window or in one of the black bars where Doom3's cursor isn't rendered in
+        // so only show the ImGui cursor when the mouse cursor is over an ImGui window
+        // or in one of the black bars where Doom3's cursor isn't rendered in
         // non 4:3 resolutions
         if (openImguiWindows == 0)
         {
@@ -603,8 +579,7 @@ void EndFrame()
     if (openImguiWindows == 0 && !haveNewFrame)
         return;
 
-    // I think this can happen if we're not coming from idCommon::Frame() but
-    // screenshot or sth
+    // I think this can happen if we're not coming from idCommon::Frame() but screenshot or sth
     if (!haveNewFrame)
     {
         NewFrame();
@@ -613,15 +588,14 @@ void EndFrame()
     ImGui::Render();
 
     // Doom3 uses the OpenGL ARB shader extensions, for most things it renders.
-    // disable those shaders, the OpenGL classic integration of ImGui doesn't use
-    // shaders
+    // disable those shaders, the OpenGL classic integration of ImGui doesn't use shaders
     qglDisable(GL_VERTEX_PROGRAM_ARB);
     qglDisable(GL_FRAGMENT_PROGRAM_ARB);
 
-    // Doom3 uses OpenGL's ARB_vertex_buffer_object extension to use VBOs on the
-    // GPU as buffers for glDrawElements() (instead of passing userspace buffers
-    // to that function) ImGui however uses userspace buffers, so remember the
-    // currently bound VBO and unbind it (after drawing, bind it again)
+    // Doom3 uses OpenGL's ARB_vertex_buffer_object extension to use VBOs on the GPU
+    // as buffers for glDrawElements() (instead of passing userspace buffers to that function)
+    // ImGui however uses userspace buffers, so remember the currently bound VBO
+    // and unbind it (after drawing, bind it again)
     GLint curArrayBuffer = 0;
     if (glConfig.ARBVertexBufferObjectAvailable)
     {
@@ -629,8 +603,8 @@ void EndFrame()
         qglBindBufferARB(GL_ARRAY_BUFFER_ARB, 0);
     }
 
-    // disable all texture units, ImGui_ImplOpenGL2_RenderDrawData() will enable
-    // texture 0 and bind its own textures to it as needed
+    // disable all texture units, ImGui_ImplOpenGL2_RenderDrawData() will enable texture 0
+    // and bind its own textures to it as needed
     for (int i = glConfig.maxTextureUnits - 1; i >= 0; i--)
     {
         GL_SelectTexture(i);

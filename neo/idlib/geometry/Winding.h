@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,13 +32,13 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __WINDING_H__
 #define __WINDING_H__
 
-#include "idlib/bv/Bounds.h"
 #include "idlib/math/Vector.h"
+#include "idlib/bv/Bounds.h"
 
 /*
 ===============================================================================
 
-        A winding is an arbitrary convex polygon defined by an array of points.
+    A winding is an arbitrary convex polygon defined by an array of points.
 
 ===============================================================================
 */
@@ -51,11 +48,10 @@ class idWinding
 
   public:
     idWinding(void);
-    explicit idWinding(const int n);                      // allocate for n points
-    explicit idWinding(const idVec3 *verts, const int n); // winding from points
-    explicit idWinding(const idVec3 &normal,
-                       const float dist);     // base winding for plane
-    explicit idWinding(const idPlane &plane); // base winding for plane
+    explicit idWinding(const int n);                            // allocate for n points
+    explicit idWinding(const idVec3 *verts, const int n);       // winding from points
+    explicit idWinding(const idVec3 &normal, const float dist); // base winding for plane
+    explicit idWinding(const idPlane &plane);                   // base winding for plane
     explicit idWinding(const idWinding &winding);
     virtual ~idWinding(void);
 
@@ -74,21 +70,18 @@ class idWinding
     void SetNumPoints(int n);
     virtual void Clear(void);
 
-    // huge winding for plane, the points go counter clockwise when facing the
-    // front of the plane
+    // huge winding for plane, the points go counter clockwise when facing the front of the plane
     void BaseForPlane(const idVec3 &normal, const float dist);
     void BaseForPlane(const idPlane &plane);
 
-    // splits the winding into a front and back winding, the winding itself stays
-    // unchanged returns a SIDE_?
+    // splits the winding into a front and back winding, the winding itself stays unchanged
+    // returns a SIDE_?
     int Split(const idPlane &plane, const float epsilon, idWinding **front, idWinding **back) const;
     // returns the winding fragment at the front of the clipping plane,
-    // if there is nothing at the front the winding itself is destroyed and NULL
-    // is returned
+    // if there is nothing at the front the winding itself is destroyed and NULL is returned
     idWinding *Clip(const idPlane &plane, const float epsilon = ON_EPSILON, const bool keepOn = false);
-    // cuts off the part at the back side of the plane, returns true if some part
-    // was at the front if there is nothing at the front the number of points is
-    // set to zero
+    // cuts off the part at the back side of the plane, returns true if some part was at the front
+    // if there is nothing at the front the number of points is set to zero
     bool ClipInPlace(const idPlane &plane, const float epsilon = ON_EPSILON, const bool keepOn = false);
 
     // returns a copy of the winding
@@ -104,9 +97,8 @@ class idWinding
     void AddToConvexHull(const idWinding *winding, const idVec3 &normal, const float epsilon = ON_EPSILON);
     // add a point to the convex hull
     void AddToConvexHull(const idVec3 &point, const idVec3 &normal, const float epsilon = ON_EPSILON);
-    // tries to merge 'this' with the given winding, returns NULL if merge fails,
-    // both 'this' and 'w' stay intact 'keep' tells if the contacting points
-    // should stay even if they create colinear edges
+    // tries to merge 'this' with the given winding, returns NULL if merge fails, both 'this' and 'w' stay intact
+    // 'keep' tells if the contacting points should stay even if they create colinear edges
     idWinding *TryMerge(const idWinding &w, const idVec3 &normal, int keep = false) const;
     // check whether the winding is valid or not
     bool Check(bool print = true) const;
@@ -313,11 +305,11 @@ ID_INLINE bool idWinding::EnsureAlloced(int n, bool keep)
 /*
 ===============================================================================
 
-        idFixedWinding is a fixed buffer size winding not using
-        memory allocations.
+    idFixedWinding is a fixed buffer size winding not using
+    memory allocations.
 
-        When an operation would overflow the fixed buffer a warning
-        is printed and the operation is safely cancelled.
+    When an operation would overflow the fixed buffer a warning
+    is printed and the operation is safely cancelled.
 
 ===============================================================================
 */

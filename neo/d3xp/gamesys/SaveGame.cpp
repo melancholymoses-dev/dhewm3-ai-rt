@@ -19,62 +19,52 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/BuildVersion.h"
 #include "framework/DeclSkin.h"
 #include "renderer/ModelManager.h"
-#include "sys/platform.h"
 
+#include "physics/Clip.h"
 #include "Entity.h"
 #include "Game_local.h"
-#include "physics/Clip.h"
 
 #include "SaveGame.h"
 
 /*
 Save game related helper classes.
 
-Save games are implemented in two classes, idSaveGame and idRestoreGame, that
-implement write/read functions for common types.  They're passed in to each
-entity and object for them to archive themselves.  Each class implements
-save/restore functions for it's own data.  When restoring, all the objects are
-instantiated, then the restore function is called on each, superclass first,
-then subclasses.
+Save games are implemented in two classes, idSaveGame and idRestoreGame, that implement write/read functions for
+common types.  They're passed in to each entity and object for them to archive themselves.  Each class
+implements save/restore functions for it's own data.  When restoring, all the objects are instantiated,
+then the restore function is called on each, superclass first, then subclasses.
 
-Pointers are restored by saving out an object index for each unique object
-pointer and adding them to a list of objects that are to be saved.  Restore
-instantiates all the objects in the list before calling the Restore function on
-each object so that the pointers returned are valid.  No object's restore
-function should rely on any other objects being fully instantiated until after
-the restore process is complete.  Post restore fixup should be done by posting
+Pointers are restored by saving out an object index for each unique object pointer and adding them to a list of
+objects that are to be saved.  Restore instantiates all the objects in the list before calling the Restore function
+on each object so that the pointers returned are valid.  No object's restore function should rely on any other objects
+being fully instantiated until after the restore process is complete.  Post restore fixup should be done by posting
 events with 0 delay.
 
-The savegame header will have the Game Name, Version, Map Name, and Player
-Persistent Info.
+The savegame header will have the Game Name, Version, Map Name, and Player Persistent Info.
 
-Changes in version make savegames incompatible, and the game will start from the
-beginning of the level with the player's persistent info.
+Changes in version make savegames incompatible, and the game will start from the beginning of the level with
+the player's persistent info.
 
-Changes to classes that don't need to break compatibilty can use the build
-number as the savegame version. Later versions are responsible for restoring
-from previous versions by ignoring any unused data and initializing variables
-that weren't in previous versions with safe information.
+Changes to classes that don't need to break compatibilty can use the build number as the savegame version.
+Later versions are responsible for restoring from previous versions by ignoring any unused data and initializing
+variables that weren't in previous versions with safe information.
 
-At the head of the save game is enough information to restore the player to the
-beginning of the level should the file be unloadable in some way (for example,
-due to script changes).
+At the head of the save game is enough information to restore the player to the beginning of the level should the
+file be unloadable in some way (for example, due to script changes).
 */
 
 /*
@@ -161,8 +151,7 @@ void idSaveGame::CallSave_r(const idTypeInfo *cls, const idClass *obj)
         CallSave_r(cls->super, obj);
         if (cls->super->Save == cls->Save)
         {
-            // don't call save on this inheritance level since the function was called
-            // in the super class
+            // don't call save on this inheritance level since the function was called in the super class
             return;
         }
     }
@@ -667,8 +656,8 @@ void idSaveGame::WriteRenderLight(const renderLight_t &renderLight)
     WriteVec3(renderLight.start);
     WriteVec3(renderLight.end);
 
-    // only idLight has a prelightModel and it's always based on the entityname,
-    // so we'll restore it there WriteModel( renderLight.prelightModel );
+    // only idLight has a prelightModel and it's always based on the entityname, so we'll restore it there
+    // WriteModel( renderLight.prelightModel );
 
     WriteInt(renderLight.lightId);
 
@@ -887,7 +876,7 @@ void idSaveGame::WriteBuildNumber(const int value)
 
 /***********************************************************************
 
-        idRestoreGame
+    idRestoreGame
 
 ***********************************************************************/
 
@@ -1029,8 +1018,7 @@ void idRestoreGame::CallRestore_r(const idTypeInfo *cls, idClass *obj)
         CallRestore_r(cls->super, obj);
         if (cls->super->Restore == cls->Restore)
         {
-            // don't call save on this inheritance level since the function was called
-            // in the super class
+            // don't call save on this inheritance level since the function was called in the super class
             return;
         }
     }
@@ -1502,8 +1490,7 @@ void idRestoreGame::ReadRenderEntity(renderEntity_t &renderEntity)
         ReadUserInterface(renderEntity.gui[i]);
     }
 
-    // idEntity will restore "cameraTarget", which will be used in
-    // idEntity::Present to restore the remoteRenderView
+    // idEntity will restore "cameraTarget", which will be used in idEntity::Present to restore the remoteRenderView
     renderEntity.remoteRenderView = NULL;
 
     renderEntity.joints = NULL;
@@ -1553,8 +1540,8 @@ void idRestoreGame::ReadRenderLight(renderLight_t &renderLight)
     ReadVec3(renderLight.start);
     ReadVec3(renderLight.end);
 
-    // only idLight has a prelightModel and it's always based on the entityname,
-    // so we'll restore it there ReadModel( renderLight.prelightModel );
+    // only idLight has a prelightModel and it's always based on the entityname, so we'll restore it there
+    // ReadModel( renderLight.prelightModel );
     renderLight.prelightModel = NULL;
 
     ReadInt(renderLight.lightId);

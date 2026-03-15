@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/math/Vector.h"
+#include "idlib/Lib.h"
 #include "framework/CVarSystem.h"
 #include "framework/KeyInput.h"
 #include "framework/async/AsyncNetwork.h"
-#include "idlib/Lib.h"
-#include "idlib/math/Vector.h"
-#include "sys/platform.h"
 
 #include "framework/UsercmdGen.h"
 
@@ -93,8 +90,7 @@ typedef enum
     UB_BUTTON6,
     UB_BUTTON7,
 
-    UB_ATTACK, // NOTE: this value (20) is hardcoded in
-               // idUserInterfaceLocal::HandleEvent() !
+    UB_ATTACK, // NOTE: this value (20) is hardcoded in idUserInterfaceLocal::HandleEvent() !
     UB_SPEED,
     UB_ZOOM,
     UB_SHOWSCORES,
@@ -376,11 +372,9 @@ class idUsercmdGenLocal : public idUsercmdGen
 
     void Key(int keyNum, bool down);
 
-    // DG: if in_allowAlwaysRunInSP is set, you can use always run or toggle run
-    // even in SP.
-    //     Why not, we're all adults here, if you run out of stamina it's your
-    //     problem (though I'll probably add another CVar to disable stamina in
-    //     SP)
+    // DG: if in_allowAlwaysRunInSP is set, you can use always run or toggle run even in SP.
+    //     Why not, we're all adults here, if you run out of stamina it's your problem
+    //     (though I'll probably add another CVar to disable stamina in SP)
     inline bool AlwaysRunAllowed() const
     {
         return in_allowAlwaysRunInSP.GetBool() || idAsyncNetwork::IsActive();
@@ -405,9 +399,8 @@ class idUsercmdGenLocal : public idUsercmdGen
     usercmd_t cmd; // the current cmd being built
     usercmd_t buffered[MAX_BUFFERED_USERCMD];
 
-    int continuousMouseX,
-        continuousMouseY; // for gui event generatioin, never zerod
-    int mouseButton;      // for gui event generatioin
+    int continuousMouseX, continuousMouseY; // for gui event generatioin, never zerod
+    int mouseButton;                        // for gui event generatioin
     bool mouseDown;
 
     int mouseDx, mouseDy;                  // added to by mouse events
@@ -449,14 +442,13 @@ idCVar idUsercmdGenLocal::in_freeLook("in_freeLook", "1", CVAR_SYSTEM | CVAR_ARC
                                       "look around with mouse (reverse _mlook button)");
 idCVar idUsercmdGenLocal::in_allowAlwaysRunInSP(
     "in_allowAlwaysRunInSP", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
-    "Allow always run and toggle run in Single Player as well - keep in mind "
-    "you may run out of stamina!");
-idCVar idUsercmdGenLocal::in_alwaysRun("in_alwaysRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
-                                       "always run (reverse _speed button) - only in MP, unless "
-                                       "in_allowAlwaysRunInSP is set");
-idCVar idUsercmdGenLocal::in_toggleRun("in_toggleRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
-                                       "pressing _speed button toggles run on/off - only in MP, unless "
-                                       "in_allowAlwaysRunInSP is set");
+    "Allow always run and toggle run in Single Player as well - keep in mind you may run out of stamina!");
+idCVar idUsercmdGenLocal::in_alwaysRun(
+    "in_alwaysRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
+    "always run (reverse _speed button) - only in MP, unless in_allowAlwaysRunInSP is set");
+idCVar idUsercmdGenLocal::in_toggleRun(
+    "in_toggleRun", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
+    "pressing _speed button toggles run on/off - only in MP, unless in_allowAlwaysRunInSP is set");
 idCVar idUsercmdGenLocal::in_toggleCrouch("in_toggleCrouch", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
                                           "pressing _movedown button toggles player crouching/standing");
 idCVar idUsercmdGenLocal::in_toggleZoom("in_toggleZoom", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
@@ -474,14 +466,13 @@ idCVar idUsercmdGenLocal::m_strafeSmooth("m_strafeSmooth", "4", CVAR_SYSTEM | CV
                                          "number of samples blended for mouse moving", 1, 8,
                                          idCmdSystem::ArgCompletion_Integer<1, 8>);
 idCVar idUsercmdGenLocal::m_showMouseRate("m_showMouseRate", "0", CVAR_SYSTEM | CVAR_BOOL, "shows mouse movement");
-idCVar idUsercmdGenLocal::m_invertLook("m_invertLook", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER,
-                                       "invert mouse look 0: don't invert, 1: invert up/down (flight controls), "
-                                       "2: invert left/right, 3: invert both",
-                                       0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+idCVar idUsercmdGenLocal::m_invertLook(
+    "m_invertLook", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_INTEGER,
+    "invert mouse look 0: don't invert, 1: invert up/down (flight controls), 2: invert left/right, 3: invert both", 0,
+    3, idCmdSystem::ArgCompletion_Integer<0, 3>);
 
 idCVar joy_triggerThreshold("joy_triggerThreshold", "0.05", CVAR_FLOAT | CVAR_ARCHIVE,
-                            "how far the joystick triggers have to be pressed "
-                            "before they register as down");
+                            "how far the joystick triggers have to be pressed before they register as down");
 idCVar joy_deadZone("joy_deadZone", "0.25", CVAR_FLOAT | CVAR_ARCHIVE,
                     "specifies how large the dead-zone is on the joystick");
 idCVar joy_gammaLook("joy_gammaLook", "1", CVAR_INTEGER | CVAR_ARCHIVE,
@@ -491,9 +482,9 @@ idCVar joy_pitchSpeed("joy_pitchSpeed", "130", CVAR_ARCHIVE | CVAR_FLOAT,
                       "pitch speed when pressing up or down on the joystick", 60, 600);
 idCVar joy_yawSpeed("joy_yawSpeed", "240", CVAR_ARCHIVE | CVAR_FLOAT,
                     "pitch speed when pressing left or right on the joystick", 60, 600);
-idCVar joy_invertLook("joy_invertLook", "0", CVAR_ARCHIVE | CVAR_BOOL,
-                      "inverts the look controls so the forward looks up "
-                      "(flight controls) - the proper way to play games!");
+idCVar joy_invertLook(
+    "joy_invertLook", "0", CVAR_ARCHIVE | CVAR_BOOL,
+    "inverts the look controls so the forward looks up (flight controls) - the proper way to play games!");
 
 // these were a bad idea!
 idCVar joy_dampenLook("joy_dampenLook", "1", CVAR_BOOL | CVAR_ARCHIVE, "Do not allow full acceleration on look");
@@ -502,9 +493,8 @@ idCVar joy_deltaPerMSLook("joy_deltaPerMSLook", "0.003", CVAR_FLOAT | CVAR_ARCHI
 
 idCVar in_useGamepad("in_useGamepad", "1", CVAR_ARCHIVE | CVAR_BOOL, "enables/disables the gamepad for PC use");
 
-// TODO idCVar in_mouseInvertLook( "in_mouseInvertLook", "0", CVAR_ARCHIVE |
-// CVAR_BOOL, "inverts the look controls so the forward looks up (flight
-// controls) - the proper way to play games!" );
+// TODO idCVar in_mouseInvertLook( "in_mouseInvertLook", "0", CVAR_ARCHIVE | CVAR_BOOL, "inverts the look controls so
+// the forward looks up (flight controls) - the proper way to play games!" );
 
 static idUsercmdGenLocal localUsercmdGen;
 idUsercmdGen *usercmdGen = &localUsercmdGen;
@@ -755,18 +745,16 @@ void idUsercmdGenLocal::MouseMove(void)
 
     if (idMath::Fabs(mx) > 1000 || idMath::Fabs(my) > 1000)
     {
-        // DG: This caused problems with High-DPI mice - there those values can
-        // legitimately happen.
-        //     If it turns out that spurious big values happen for other reasons,
-        //     we'll need a smarter check. Leaving the Sys_DebugPrintf() here to
-        //     make detecting those cases easier, but added a static bool so High
-        //     DPI mice don't spam the log.
+        // DG: This caused problems with High-DPI mice - there those values can legitimately happen.
+        //     If it turns out that spurious big values happen for other reasons, we'll
+        //     need a smarter check. Leaving the Sys_DebugPrintf() here to make detecting
+        //     those cases easier, but added a static bool so High DPI mice don't spam the log.
         static bool warningShown = false;
         if (!warningShown)
         {
             warningShown = true;
-            Sys_DebugPrintf("idUsercmdGenLocal::MouseMove: Detected ridiculous mouse "
-                            "delta (expected with High DPI mice, though!).\n");
+            Sys_DebugPrintf("idUsercmdGenLocal::MouseMove: Detected ridiculous mouse delta (expected with High DPI "
+                            "mice, though!).\n");
         }
 
         // mx = my = 0;
@@ -871,8 +859,7 @@ void idUsercmdGenLocal::CircleToSquare(float &axis_x, float &axis_y) const
     // thales
     float axis_y_us = axis_y / axis_x;
 
-    // use a power curve to shift the correction to happen closer to the unit
-    // circle
+    // use a power curve to shift the correction to happen closer to the unit circle
     float correctionRatio = Square(len);
     axis_x += correctionRatio * (len - axis_x);
     axis_y += correctionRatio * (axis_y_us - axis_y);
@@ -1026,8 +1013,8 @@ static float joyAxisToMouseDelta(float axis, float deadzone)
         // and then to 0..1
         val = val * (1.0f / (1.0f - deadzone));
 
-        // make it exponential curve - exp(val*3) should return sth between 1 and
-        // 20; then turning that into 0.5 .. 10
+        // make it exponential curve - exp(val*3) should return sth between 1 and 20;
+        // then turning that into 0.5 .. 10
         ret = expf(val * 3.0f) * 0.5f;
         if (axis < 0.0f) // restore sign
             ret = -ret;
@@ -1325,10 +1312,9 @@ usercmd_t idUsercmdGenLocal::TicCmd(int ticNumber)
 
     if (ticNumber <= com_ticNumber - MAX_BUFFERED_USERCMD)
     {
-        // this can happen when something in the game code hitches badly, allowing
-        // the async code to overflow the buffers
-        // common->Printf( "warning: idUsercmdGenLocal::TicCmd ticNumber <=
-        // com_ticNumber - MAX_BUFFERED_USERCMD\n" );
+        // this can happen when something in the game code hitches badly, allowing the
+        // async code to overflow the buffers
+        // common->Printf( "warning: idUsercmdGenLocal::TicCmd ticNumber <= com_ticNumber - MAX_BUFFERED_USERCMD\n" );
     }
 
     return buffered[ticNumber & (MAX_BUFFERED_USERCMD - 1)];

@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Game.h"
-#include "framework/Licensee.h"
-#include "framework/Session_local.h"
-#include "framework/async/AsyncNetwork.h"
-#include "idlib/LangDict.h"
-#include "sound/sound.h"
 #include "sys/platform.h"
+#include "idlib/LangDict.h"
+#include "framework/async/AsyncNetwork.h"
+#include "framework/Licensee.h"
+#include "framework/Game.h"
+#include "framework/Session_local.h"
+#include "sound/sound.h"
 
 #include "framework/async/AsyncClient.h"
 
@@ -224,8 +221,7 @@ void idAsyncClient::ConnectToServer(const netadr_t adr)
     // clear the client state
     Clear();
 
-    // get a pseudo random client id, but don't use the id which is reserved for
-    // connectionless packets
+    // get a pseudo random client id, but don't use the id which is reserved for connectionless packets
     clientId = Sys_Milliseconds() & CONNECTIONLESS_MESSAGE_ID_MASK;
 
     // calculate a checksum on some of the essential data used
@@ -377,9 +373,8 @@ void idAsyncClient::GetServerInfo(const char *address)
     }
     else if (idAsyncNetwork::server.IsActive())
     {
-        // used to be a Sys_StringToNetAdr( "localhost", &adr, true ); and send a
-        // packet over loopback but this breaks with net_ip ( typically, for
-        // multi-homed servers )
+        // used to be a Sys_StringToNetAdr( "localhost", &adr, true ); and send a packet over loopback
+        // but this breaks with net_ip ( typically, for multi-homed servers )
         idAsyncNetwork::server.PrintLocalServerInfo();
         return;
     }
@@ -663,8 +658,7 @@ void idAsyncClient::DuplicateUsercmds(int frame, int time)
     previousIndex = (frame - 1) & (MAX_USERCMD_BACKUP - 1);
     currentIndex = frame & (MAX_USERCMD_BACKUP - 1);
 
-    // duplicate previous user commands if no new commands are available for a
-    // client
+    // duplicate previous user commands if no new commands are available for a client
     for (i = 0; i < MAX_ASYNC_CLIENTS; i++)
     {
         idAsyncNetwork::DuplicateUsercmd(userCmds[previousIndex][i], userCmds[currentIndex][i], frame, time);
@@ -786,9 +780,8 @@ void idAsyncClient::SendUsercmdsToServer(void)
 
     if (idAsyncNetwork::verbose.GetInteger() == 2)
     {
-        common->Printf("sending usercmd to server: gameInitId = %d, gameFrame = "
-                       "%d, gameTime = %d\n",
-                       gameInitId, gameFrame, gameTime);
+        common->Printf("sending usercmd to server: gameInitId = %d, gameFrame = %d, gameTime = %d\n", gameInitId,
+                       gameFrame, gameTime);
     }
 
     // generate user command for this client
@@ -971,9 +964,8 @@ void idAsyncClient::ProcessUnreliableServerMessage(const idBitMsg &msg)
             assert(!sessLocal.GetActiveMenu());
             if (idAsyncNetwork::verbose.GetInteger())
             {
-                common->Printf("received first snapshot, gameInitId = %d, gameFrame %d "
-                               "gameTime %d\n",
-                               gameInitId, snapshotGameFrame, snapshotGameTime);
+                common->Printf("received first snapshot, gameInitId = %d, gameFrame %d gameTime %d\n", gameInitId,
+                               snapshotGameFrame, snapshotGameTime);
             }
         }
 
@@ -1055,8 +1047,7 @@ void idAsyncClient::ProcessReliableMessagePure(const idBitMsg &msg)
     // it is now ok to load the next map with updated pure checksums
     sessLocal.ExecuteMapChange(true);
 
-    // upon receiving our pure list, the server will send us SCS_INGAME and we'll
-    // start getting snapshots
+    // upon receiving our pure list, the server will send us SCS_INGAME and we'll start getting snapshots
     fileSystem->GetPureServerChecksums(inChecksums);
     outMsg.Init(msgBuf, sizeof(msgBuf));
     outMsg.WriteByte(CLIENT_RELIABLE_MESSAGE_PURE);
@@ -1084,8 +1075,7 @@ idAsyncClient::ReadLocalizedServerString
 void idAsyncClient::ReadLocalizedServerString(const idBitMsg &msg, char *out, int maxLen)
 {
     msg.ReadString(out, maxLen);
-    // look up localized string. if the message is not an #str_ format, we'll just
-    // get it back unchanged
+    // look up localized string. if the message is not an #str_ format, we'll just get it back unchanged
     idStr::snPrintf(out, maxLen - 1, "%s", common->GetLanguageDict()->GetString(out));
 }
 
@@ -1119,16 +1109,15 @@ void idAsyncClient::ProcessReliableServerMessages(void)
             int srv_checksum = msg.ReadInt();
             if (checksum != srv_checksum)
             {
-                common->DPrintf("SERVER_RELIABLE_MESSAGE_CLIENTINFO %d (haveBase: %s): "
-                                "!= checksums srv: 0x%x local: 0x%x\n",
-                                clientNum, haveBase ? "true" : "false", checksum, srv_checksum);
+                common->DPrintf(
+                    "SERVER_RELIABLE_MESSAGE_CLIENTINFO %d (haveBase: %s): != checksums srv: 0x%x local: 0x%x\n",
+                    clientNum, haveBase ? "true" : "false", checksum, srv_checksum);
                 info.Print();
             }
             else
             {
-                common->DPrintf("SERVER_RELIABLE_MESSAGE_CLIENTINFO %d (haveBase: %s): "
-                                "checksums ok 0x%x\n",
-                                clientNum, haveBase ? "true" : "false", checksum);
+                common->DPrintf("SERVER_RELIABLE_MESSAGE_CLIENTINFO %d (haveBase: %s): checksums ok 0x%x\n", clientNum,
+                                haveBase ? "true" : "false", checksum);
             }
 #endif
 
@@ -1207,8 +1196,8 @@ void idAsyncClient::ProcessReliableServerMessages(void)
             {
                 common->Printf("got MESSAGE_RELOAD from server\n");
             }
-            // simply reconnect, so that if the server restarts in pure mode we can
-            // get the right list and avoid spurious reloads
+            // simply reconnect, so that if the server restarts in pure mode we can get the right list and avoid
+            // spurious reloads
             cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "reconnect\n");
             break;
         }
@@ -1247,21 +1236,18 @@ void idAsyncClient::ProcessChallengeResponseMessage(const netadr_t from, const i
     msg.ReadString(serverGameBase, MAX_STRING_CHARS);
     msg.ReadString(serverGame, MAX_STRING_CHARS);
 
-    // the server is running a different game... we need to reload in the correct
-    // fs_game even pure pak checks would fail if we didn't, as there are files we
-    // may not even see atm NOTE: we could read the pure list from the server at
-    // the same time and set it up for the restart ( if the client can restart
-    // directly with the right pak order, then we avoid an extra reloadEngine
-    // later.. )
+    // the server is running a different game... we need to reload in the correct fs_game
+    // even pure pak checks would fail if we didn't, as there are files we may not even see atm
+    // NOTE: we could read the pure list from the server at the same time and set it up for the restart
+    // ( if the client can restart directly with the right pak order, then we avoid an extra reloadEngine later.. )
     if (idStr::Icmp(cvarSystem->GetCVarString("fs_game_base"), serverGameBase) ||
         idStr::Icmp(cvarSystem->GetCVarString("fs_game"), serverGame))
     {
-        // bug #189 - if the server is running ROE and ROE is not locally installed,
-        // refuse to connect or we might crash
+        // bug #189 - if the server is running ROE and ROE is not locally installed, refuse to connect or we might crash
         if (!fileSystem->HasD3XP() && (!idStr::Icmp(serverGameBase, "d3xp") || !idStr::Icmp(serverGame, "d3xp")))
         {
-            common->Printf("The server is running Doom3: Resurrection of Evil expansion pack. "
-                           "RoE is not installed on this client. Aborting the connection..\n");
+            common->Printf("The server is running Doom3: Resurrection of Evil expansion pack. RoE is not installed on "
+                           "this client. Aborting the connection..\n");
             cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "disconnect\n");
             return;
         }
@@ -1499,8 +1485,7 @@ void idAsyncClient::ProcessAuthKeyMessage(const netadr_t from, const idBitMsg &m
 
     if (clientState != CS_CONNECTING && !session->WaitingForGameAuth())
     {
-        common->Printf("clientState != CS_CONNECTING, not waiting for game auth, "
-                       "authKey ignored\n");
+        common->Printf("clientState != CS_CONNECTING, not waiting for game auth, authKey ignored\n");
         return;
     }
 
@@ -1543,8 +1528,7 @@ void idAsyncClient::ProcessAuthKeyMessage(const netadr_t from, const idBitMsg &m
         // keys to be cleared. applies to both net connect and game auth
         session->ClearCDKey(valid);
 
-        // get rid of the bad key - at least that's gonna annoy people who stole a
-        // fake key
+        // get rid of the bad key - at least that's gonna annoy people who stole a fake key
         if (clientState == CS_CONNECTING)
         {
             while (1)
@@ -1639,9 +1623,7 @@ bool idAsyncClient::ValidatePureServerChecksums(const netadr_t from, const idBit
         // just to make sure a broken message doesn't crash us
         if (numChecksums >= MAX_PURE_PAKS)
         {
-            common->Warning("MAX_PURE_PAKS ( %d ) exceeded in "
-                            "idAsyncClient::ProcessPureMessage\n",
-                            MAX_PURE_PAKS);
+            common->Warning("MAX_PURE_PAKS ( %d ) exceeded in idAsyncClient::ProcessPureMessage\n", MAX_PURE_PAKS);
             return false;
         }
     } while (i);
@@ -1688,8 +1670,7 @@ bool idAsyncClient::ValidatePureServerChecksums(const netadr_t from, const idBit
         {
             if (clientState >= CS_CONNECTED)
             {
-                // we are already connected, reconnect to negociate the paks in
-                // connectionless mode
+                // we are already connected, reconnect to negociate the paks in connectionless mode
                 cmdSystem->BufferCommandText(CMD_EXEC_NOW, "reconnect");
                 return false;
             }
@@ -1706,8 +1687,8 @@ bool idAsyncClient::ValidatePureServerChecksums(const netadr_t from, const idBit
             dlmsg.WriteShort(clientId);
             // used to make sure the server replies to the same download request
             dlmsg.WriteInt(dlRequest);
-            // special case the code pak - if we have a 0 checksum then we don't need
-            // to download it 0-terminated list of missing paks
+            // special case the code pak - if we have a 0 checksum then we don't need to download it
+            // 0-terminated list of missing paks
             i = 0;
             while (missingChecksums[i])
             {
@@ -1857,12 +1838,10 @@ void idAsyncClient::ConnectionlessMessage(const netadr_t from, const idBitMsg &m
 
     if (idStr::Icmp(string, "authrequired") == 0)
     {
-        // server telling us that he's expecting an auth mode connect, just in case
-        // we're trying to connect in LAN mode
+        // server telling us that he's expecting an auth mode connect, just in case we're trying to connect in LAN mode
         if (idAsyncNetwork::LANServer.GetBool())
         {
-            common->Warning("server %s requests master authorization for this "
-                            "client. Turning off LAN mode\n",
+            common->Warning("server %s requests master authorization for this client. Turning off LAN mode\n",
                             Sys_NetAdrToString(from));
             idAsyncNetwork::LANServer.SetBool(false);
         }
@@ -1972,8 +1951,7 @@ void idAsyncClient::SetupConnection(void)
             msg.WriteString("clAuth");
             msg.WriteInt(ASYNC_PROTOCOL_VERSION);
             msg.WriteNetadr(serverAddress);
-            // if we don't have a com_guid, this will request a direct reply from auth
-            // with it
+            // if we don't have a com_guid, this will request a direct reply from auth with it
             msg.WriteByte(cvarSystem->GetCVarString("com_guid")[0] ? 1 : 0);
             // send the main key, and flag an extra byte to add XP key
             msg.WriteString(session->GetCDKey(false));
@@ -1988,8 +1966,8 @@ void idAsyncClient::SetupConnection(void)
 #else
         if (!Sys_IsLANAddress(serverAddress))
         {
-            common->Printf("Build Does not have CD Key Enforcement enabled. The Server ( %s ) "
-                           "is not within the lan addresses. Attemting to connect.\n",
+            common->Printf("Build Does not have CD Key Enforcement enabled. The Server ( %s ) is not within the lan "
+                           "addresses. Attemting to connect.\n",
                            Sys_NetAdrToString(serverAddress));
         }
         common->Printf("Not Testing key.\n");
@@ -2081,8 +2059,7 @@ void idAsyncClient::RunFrame(void)
 
     gameTimeResidual += msec;
 
-    // spin in place processing incoming packets until enough time lapsed to run a
-    // new game frame
+    // spin in place processing incoming packets until enough time lapsed to run a new game frame
     do
     {
 
@@ -2143,8 +2120,7 @@ void idAsyncClient::RunFrame(void)
         return;
     }
 
-    // if not yet in the game send empty messages to keep data flowing through the
-    // channel
+    // if not yet in the game send empty messages to keep data flowing through the channel
     if (clientState < CS_INGAME)
     {
         Idle();
@@ -2254,9 +2230,9 @@ void idAsyncClient::SendVersionCheck(bool fromMenu)
 ==================
 idAsyncClient::SendVersionDLUpdate
 
-sending those packets is not strictly necessary. just a way to tell the update
-server about what is going on. allows the update server to have a more precise
-view of the overall network load for the updates
+sending those packets is not strictly necessary. just a way to tell the update server
+about what is going on. allows the update server to have a more precise view of the overall
+network load for the updates
 ==================
 */
 void idAsyncClient::SendVersionDLUpdate(int state)
@@ -2447,8 +2423,7 @@ void idAsyncClient::HandleDownloads(void)
                     idStr finalPath = cvarSystem->GetCVarString("fs_savepath");
                     finalPath.AppendPath(dlList[0].filename);
                     fileSystem->CreateOSPath(finalPath);
-                    // do the final copy ourselves so we do by small chunks in case the
-                    // file is big
+                    // do the final copy ourselves so we do by small chunks in case the file is big
                     saveas = fileSystem->OpenExplicitFileWrite(finalPath);
                     buf = (byte *)Mem_Alloc(CHUNK_SIZE);
                     f->Seek(0, FS_SEEK_END);
@@ -2588,9 +2563,8 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
     {
         msg.ReadString(buf, MAX_STRING_CHARS);
         cmdSystem->BufferCommandText(CMD_EXEC_NOW, "disconnect");
-        // "You are missing required pak files to connect to this server.\nThe
-        // server gave a web page though:\n%s\nDo you want to go there now?"
-        // "Missing required files"
+        // "You are missing required pak files to connect to this server.\nThe server gave a web page though:\n%s\nDo
+        // you want to go there now?" "Missing required files"
         if (session->MessageBox(MSG_YESNO, va(common->GetLanguageDict()->GetString("#str_07217"), buf),
                                 common->GetLanguageDict()->GetString("#str_07218"), true, "yes")[0])
         {
@@ -2602,8 +2576,7 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
         cmdSystem->BufferCommandText(CMD_EXEC_NOW, "disconnect");
         if (dlList.Num())
         {
-            common->Warning("tried to process a download list while already busy "
-                            "downloading things");
+            common->Warning("tried to process a download list while already busy downloading things");
             return;
         }
         // read the URLs, check against what we requested, prompt for download
@@ -2624,8 +2597,7 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
                 msg.ReadString(buf, MAX_STRING_CHARS);
                 entry.url = buf;
                 entry.size = msg.ReadInt();
-                // checksums are not transmitted, we read them from the dl request we
-                // sent
+                // checksums are not transmitted, we read them from the dl request we sent
                 entry.checksum = dlChecksums[pakIndex];
                 totalDlSize += entry.size;
                 dlList.Append(entry);
@@ -2674,9 +2646,8 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
         if (gotGame)
         {
             asked = true;
-            // "You need to download game code to connect to this server. Are you
-            // sure? You should only answer yes if you trust the server
-            // administrators." "Missing game binaries"
+            // "You need to download game code to connect to this server. Are you sure? You should only answer yes if
+            // you trust the server administrators." "Missing game binaries"
             if (!session->MessageBox(MSG_YESNO, common->GetLanguageDict()->GetString("#str_07220"),
                                      common->GetLanguageDict()->GetString("#str_07221"), true, "yes")[0])
             {
@@ -2687,8 +2658,8 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
         if (!gotAllFiles)
         {
             asked = true;
-            // "The server only offers to download some of the files required to
-            // connect ( %s ). Download anyway?" "Missing required files"
+            // "The server only offers to download some of the files required to connect ( %s ). Download anyway?"
+            // "Missing required files"
             if (!session->MessageBox(MSG_YESNO, va(common->GetLanguageDict()->GetString("#str_07222"), sizeStr.c_str()),
                                      common->GetLanguageDict()->GetString("#str_07218"), true, "yes")[0])
             {
@@ -2698,8 +2669,8 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
         }
         if (!asked && idAsyncNetwork::clientDownload.GetInteger() == 1)
         {
-            // "You need to download some files to connect to this server ( %s ),
-            // proceed?" "Missing required files"
+            // "You need to download some files to connect to this server ( %s ), proceed?"
+            // "Missing required files"
             if (!session->MessageBox(MSG_YESNO, va(common->GetLanguageDict()->GetString("#str_07224"), sizeStr.c_str()),
                                      common->GetLanguageDict()->GetString("#str_07218"), true, "yes")[0])
             {
@@ -2711,8 +2682,8 @@ void idAsyncClient::ProcessDownloadInfoMessage(const netadr_t from, const idBitM
     else
     {
         cmdSystem->BufferCommandText(CMD_EXEC_NOW, "disconnect");
-        // "You are missing some files to connect to this server, and the server
-        // doesn't provide downloads." "Missing required files"
+        // "You are missing some files to connect to this server, and the server doesn't provide downloads."
+        // "Missing required files"
         session->MessageBox(MSG_OK, common->GetLanguageDict()->GetString("#str_07223"),
                             common->GetLanguageDict()->GetString("#str_07218"), true);
     }
@@ -2737,7 +2708,6 @@ int idAsyncClient::GetDownloadRequest(const int checksums[MAX_PURE_PAKS], int co
         dlCount = count;
         return dlRequest;
     }
-    // this is the same dlRequest, we haven't heard from the server. keep the same
-    // id
+    // this is the same dlRequest, we haven't heard from the server. keep the same id
     return dlRequest;
 }

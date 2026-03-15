@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,19 +36,19 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 idBox box_zero(vec3_zero, vec3_zero, mat3_identity);
 
 /*
-                        4---{4}---5
+            4---{4}---5
  +         /|        /|
  Z      {7} {8}   {5} |
  -     /    |    /    {9}
-          7--{6}----6     |
-          |     |   |     |
-        {11}    0---|-{0}-1
-          |    /    |    /       -
-          | {3}  {10} {1}       Y
-          |/        |/         +
-          3---{2}---2
+      7--{6}----6     |
+      |     |   |     |
+    {11}    0---|-{0}-1
+      |    /    |    /       -
+      | {3}  {10} {1}       Y
+      |/        |/         +
+      3---{2}---2
 
-                - X +
+        - X +
 
   plane bits:
   0 = min x
@@ -65,63 +62,63 @@ idBox box_zero(vec3_zero, vec3_zero, mat3_identity);
 
 /*
 static int boxVertPlanes[8] = {
-        ( (1<<0) | (1<<2) | (1<<4) ),
-        ( (1<<1) | (1<<2) | (1<<4) ),
-        ( (1<<1) | (1<<3) | (1<<4) ),
-        ( (1<<0) | (1<<3) | (1<<4) ),
-        ( (1<<0) | (1<<2) | (1<<5) ),
-        ( (1<<1) | (1<<2) | (1<<5) ),
-        ( (1<<1) | (1<<3) | (1<<5) ),
-        ( (1<<0) | (1<<3) | (1<<5) )
+    ( (1<<0) | (1<<2) | (1<<4) ),
+    ( (1<<1) | (1<<2) | (1<<4) ),
+    ( (1<<1) | (1<<3) | (1<<4) ),
+    ( (1<<0) | (1<<3) | (1<<4) ),
+    ( (1<<0) | (1<<2) | (1<<5) ),
+    ( (1<<1) | (1<<2) | (1<<5) ),
+    ( (1<<1) | (1<<3) | (1<<5) ),
+    ( (1<<0) | (1<<3) | (1<<5) )
 };
 
 static int boxVertEdges[8][3] = {
-        // bottom
-        { 3, 0, 8 },
-        { 0, 1, 9 },
-        { 1, 2, 10 },
-        { 2, 3, 11 },
-        // top
-        { 7, 4, 8 },
-        { 4, 5, 9 },
-        { 5, 6, 10 },
-        { 6, 7, 11 }
+    // bottom
+    { 3, 0, 8 },
+    { 0, 1, 9 },
+    { 1, 2, 10 },
+    { 2, 3, 11 },
+    // top
+    { 7, 4, 8 },
+    { 4, 5, 9 },
+    { 5, 6, 10 },
+    { 6, 7, 11 }
 };
 
 static int boxEdgePlanes[12][2] = {
-        // bottom
-        { 4, 2 },
-        { 4, 1 },
-        { 4, 3 },
-        { 4, 0 },
-        // top
-        { 5, 2 },
-        { 5, 1 },
-        { 5, 3 },
-        { 5, 0 },
-        // sides
-        { 0, 2 },
-        { 2, 1 },
-        { 1, 3 },
-        { 3, 0 }
+    // bottom
+    { 4, 2 },
+    { 4, 1 },
+    { 4, 3 },
+    { 4, 0 },
+    // top
+    { 5, 2 },
+    { 5, 1 },
+    { 5, 3 },
+    { 5, 0 },
+    // sides
+    { 0, 2 },
+    { 2, 1 },
+    { 1, 3 },
+    { 3, 0 }
 };
 
 static int boxEdgeVerts[12][2] = {
-        // bottom
-        { 0, 1 },
-        { 1, 2 },
-        { 2, 3 },
-        { 3, 0 },
-        // top
-        { 4, 5 },
-        { 5, 6 },
-        { 6, 7 },
-        { 7, 4 },
-        // sides
-        { 0, 4 },
-        { 1, 5 },
-        { 2, 6 },
-        { 3, 7 }
+    // bottom
+    { 0, 1 },
+    { 1, 2 },
+    { 2, 3 },
+    { 3, 0 },
+    // top
+    { 4, 5 },
+    { 5, 6 },
+    { 6, 7 },
+    { 7, 4 },
+    // sides
+    { 0, 4 },
+    { 1, 5 },
+    { 2, 6 },
+    { 3, 7 }
 };
 */
 
@@ -305,8 +302,7 @@ bool idBox::AddBox(const idBox &a)
         return true;
     }
 
-    // test axes aligned with the vector between the box centers and one of the
-    // box axis
+    // test axes aligned with the vector between the box centers and one of the box axis
     dir = a.center - center;
     dir.Normalize();
     for (i = 2; i < 4; i++)
@@ -762,8 +758,7 @@ void idBox::FromPoints(const idVec3 *points, const int numPoints)
     extents[1] = eigenValues[0];
     extents[2] = eigenValues[0];
 
-    // refine by calculating the bounds of the points projected onto the axis and
-    // adjusting the center and extents
+    // refine by calculating the bounds of the points projected onto the axis and adjusting the center and extents
     bounds.Clear();
     for (i = 0; i < numPoints; i++)
     {

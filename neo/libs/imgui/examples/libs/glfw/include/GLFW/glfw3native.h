@@ -102,10 +102,10 @@ typedef void *id;
 #endif
 
 #if defined(GLFW_EXPOSE_NATIVE_WGL)
-/* WGL is declared by windows.h */
+    /* WGL is declared by windows.h */
 #endif
 #if defined(GLFW_EXPOSE_NATIVE_NSGL)
-/* NSGL is declared by Cocoa.h */
+    /* NSGL is declared by Cocoa.h */
 #endif
 #if defined(GLFW_EXPOSE_NATIVE_GLX)
 #include <GL/glx.h>

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,7 +39,7 @@ class idFile;
 /*
 ===============================================================================
 
-        Key Input
+    Key Input
 
 ===============================================================================
 */
@@ -56,8 +53,7 @@ class idFile;
 typedef enum
 {
 
-    // DG: please don't change any existing constants for keyboard keys below (or
-    // recreate the tables in win_input.cpp)!
+    // DG: please don't change any existing constants for keyboard keys below (or recreate the tables in win_input.cpp)!
 
     K_TAB = 9,
     K_ENTER = 13,
@@ -130,8 +126,7 @@ typedef enum
     K_KP_STAR,
     K_KP_EQUALS,
 
-    // DG: please don't change any existing constants above this one (or recreate
-    // the tables in win_input.cpp)!
+    // DG: please don't change any existing constants above this one (or recreate the tables in win_input.cpp)!
 
     K_MASCULINE_ORDINATOR = 186,
     // K_MOUSE enums must be contiguous (no char codes in the middle)
@@ -148,8 +143,7 @@ typedef enum
     K_MWHEELUP,
 
     //------------------------
-    // K_JOY codes must be contiguous, too, and K_JOY_BTN_* should be kept in sync
-    // with J_BTN_* of sys_jEvents
+    // K_JOY codes must be contiguous, too, and K_JOY_BTN_* should be kept in sync with J_BTN_* of sys_jEvents
     //------------------------
 
     K_FIRST_JOY = 197,
@@ -171,17 +165,12 @@ typedef enum
     K_JOY_DPAD_LEFT,
     K_JOY_DPAD_RIGHT,
 
-    K_JOY_BTN_MISC1,    // Additional button (e.g. Xbox Series X share button, PS5
-                        // microphone button, Nintendo Switch Pro capture button,
-                        // Amazon Luna microphone button)
-    K_JOY_BTN_RPADDLE1, // Upper or primary paddle, under your right hand (e.g.
-                        // Xbox Elite paddle P1)
-    K_JOY_BTN_LPADDLE1, // Upper or primary paddle, under your left hand (e.g.
-                        // Xbox Elite paddle P3)
-    K_JOY_BTN_RPADDLE2, // Lower or secondary paddle, under your right hand (e.g.
-                        // Xbox Elite paddle P2)
-    K_JOY_BTN_LPADDLE2, //  Lower or secondary paddle, under your left hand (e.g.
-                        //  Xbox Elite paddle P4)
+    K_JOY_BTN_MISC1, // Additional button (e.g. Xbox Series X share button, PS5 microphone button, Nintendo Switch Pro
+                     // capture button, Amazon Luna microphone button)
+    K_JOY_BTN_RPADDLE1, // Upper or primary paddle, under your right hand (e.g. Xbox Elite paddle P1)
+    K_JOY_BTN_LPADDLE1, // Upper or primary paddle, under your left hand (e.g. Xbox Elite paddle P3)
+    K_JOY_BTN_RPADDLE2, // Lower or secondary paddle, under your right hand (e.g. Xbox Elite paddle P2)
+    K_JOY_BTN_LPADDLE2, //  Lower or secondary paddle, under your left hand (e.g. Xbox Elite paddle P4)
 
     K_JOY_STICK1_UP,
     K_JOY_STICK1_DOWN,
@@ -198,8 +187,7 @@ typedef enum
 
     K_LAST_JOY = K_JOY_TRIGGER2,
 
-    K_GRAVE_A = 229, // lowercase a with grave accent FIXME: used to be 224; this
-                     // probably isn't used anyway
+    K_GRAVE_A = 229, // lowercase a with grave accent FIXME: used to be 224; this probably isn't used anyway
 
     K_AUX1 = 230,
     K_CEDILLA_C = 231, // lowercase c with Cedilla
@@ -231,8 +219,7 @@ typedef enum
     K_RIGHT_CTRL = 254,
     K_RIGHT_SHIFT = 255,
 
-    // DG: map all relevant scancodes from SDL to K_SC_* (taken from Yamagi Quake
-    // II)
+    // DG: map all relevant scancodes from SDL to K_SC_* (taken from Yamagi Quake II)
     // (relevant are ones that are likely to be keyboardlayout-dependent,
     //  i.e. printable characters of sorts, *not* Ctrl, Alt, F1, Del, ...)
     K_FIRST_SCANCODE = 256,
@@ -279,8 +266,7 @@ typedef enum
     K_SC_COMMA,
     K_SC_PERIOD,
     K_SC_SLASH,
-    // leaving out lots of keys incl. from keypad, we already handle them as
-    // normal keys
+    // leaving out lots of keys incl. from keypad, we already handle them as normal keys
     K_SC_NONUSBACKSLASH,
     K_SC_INTERNATIONAL1, /**< used on Asian keyboards, see footnotes in USB doc */
     K_SC_INTERNATIONAL2,
@@ -298,13 +284,11 @@ typedef enum
 
     K_LAST_SCANCODE = K_SC_CURRENCYSUBUNIT, // TODO: keep up to date!
 
-    K_CONSOLE, // special keycode used for the "console key" and only to
-               // open/close the console (not bindable)
+    K_CONSOLE, // special keycode used for the "console key" and only to open/close the console (not bindable)
 
     // FIXME: maybe move everything joystick related here
 
-    K_LAST_KEY // DG: this said "this better be < 256!"; I hope I fixed all places
-               // in code assuming this..
+    K_LAST_KEY // DG: this said "this better be < 256!"; I hope I fixed all places in code assuming this..
 } keyNum_t;
 
 enum

@@ -4,8 +4,7 @@
 #define NEO_SYS_SYS_SDL_H_
 
 #ifdef D3_SDL3
-// HACK: I don't want SDL.h to drag in SDL_oldnames.h to avoid all the warnings
-// about redefined definitions
+// HACK: I don't want SDL.h to drag in SDL_oldnames.h to avoid all the warnings about redefined definitions
 #define SDL_oldnames_h_
 #include <SDL3/SDL.h>
 #else // SDL1.2 or SDL2

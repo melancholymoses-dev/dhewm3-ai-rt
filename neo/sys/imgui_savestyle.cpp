@@ -6,10 +6,9 @@
  *
  * Written for/tested with Dear ImGui v1.91.4 (incl. Docking Branch)
  *
- * If anything changes in struct ImGuiStyle or enum ImGuiCol_, this code should
- * detect it during compilation and give (hopefully) helpful errors with
- * static_assert() (always check and fix the first error that occurs first, the
- * remaining ones might be caused by the first).
+ * If anything changes in struct ImGuiStyle or enum ImGuiCol_, this code should detect it
+ * during compilation and give (hopefully) helpful errors with static_assert() (always check and
+ * fix the first error that occurs first, the remaining ones might be caused by the first).
  *
  * Released under the same license as Dear ImGui:
  *
@@ -17,30 +16,29 @@
  *
  *   Copyright (c) 2024 Daniel Gibson
  *
- *   Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"), to
- * deal in the Software without restriction, including without limitation the
- * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
- * sell copies of the Software, and to permit persons to whom the Software is
+ *   Permission is hereby granted, free of charge, to any person obtaining a copy
+ *   of this software and associated documentation files (the "Software"), to deal
+ *   in the Software without restriction, including without limitation the rights
+ *   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *   copies of the Software, and to permit persons to whom the Software is
  *   furnished to do so, subject to the following conditions:
  *
- *   The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
+ *   The above copyright notice and this permission notice shall be included in all
+ *   copies or substantial portions of the Software.
  *
  *   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  *   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  *   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
  *   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ *   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ *   SOFTWARE.
  */
 
 #include "imgui.h"
 #include <stdio.h>
 
-#if 0 // this is basically the header, just copy it to wherever you want to use
-      // these functions
+#if 0 // this is basically the header, just copy it to wherever you want to use these functions
 namespace DG {
 	// writes the given ImGuiStyle to the given filename (opened with fopen())
 	// returns true on success, false if opening the file failed
@@ -62,8 +60,7 @@ namespace DG {
 #endif
 
 // if you want to use another namespace than DG, modify this #define
-// (either here or through a compiler argumenet like
-// -DDG_IMSAVESTYLE_NAMESPACE=horst)
+// (either here or through a compiler argumenet like -DDG_IMSAVESTYLE_NAMESPACE=horst)
 #ifndef DG_IMSAVESTYLE_NAMESPACE
 #define DG_IMSAVESTYLE_NAMESPACE DG
 #endif
@@ -79,8 +76,7 @@ namespace DG {
 #define warnPrintf(...) fprintf(stderr, "Warning: " __VA_ARGS__)
 
 #ifdef IMGUI_HAS_DOCK
-// some members of struct ImGuiStyle and enum ImGuiCol_ only exist in the
-// Docking branch..
+// some members of struct ImGuiStyle and enum ImGuiCol_ only exist in the Docking branch..
 #define DGIMST_ENABLE_IF_DOCKING(x) x
 #else
 // .. so disable them in the regular branch
@@ -88,14 +84,12 @@ namespace DG {
 #endif
 
 // Note: The trick I'm using with these #defines below is called "X Macro"
-//       see https://en.wikipedia.org/wiki/X_macro (except I'm not calling the
-//       "entries" X, and have more then one kind of entry per table)
-// If you're wondering about the D3_ prefix on the macros, I originally wrote
-// this for dhewm3.
+//       see https://en.wikipedia.org/wiki/X_macro (except I'm not calling the "entries" X,
+//       and have more then one kind of entry per table)
+// If you're wondering about the D3_ prefix on the macros, I originally wrote this for dhewm3.
 
-// this table contains all members of struct ImGuiStyle that come before the
-// Colors array when updating Dear ImGui, this might have to be adjusted for
-// members that have been added/removed/renamed
+// this table contains all members of struct ImGuiStyle that come before the Colors array
+// when updating Dear ImGui, this might have to be adjusted for members that have been added/removed/renamed
 #define D3_IMSTYLE_ATTRS                                                                                               \
     D3_IMATTR_FLOAT(Alpha)                                                                                             \
     D3_IMATTR_FLOAT(DisabledAlpha)                                                                                     \
@@ -146,9 +140,8 @@ namespace DG {
     D3_IMATTR_FLOAT(CurveTessellationTol)                                                                              \
     D3_IMATTR_FLOAT(CircleTessellationMaxError)
 
-// this table contains the members of struct ImGuiStyle that come after the
-// Colors array when updating Dear ImGui, this might have to be adjusted for
-// members that have been added/removed/renamed
+// this table contains the members of struct ImGuiStyle that come after the Colors array
+// when updating Dear ImGui, this might have to be adjusted for members that have been added/removed/renamed
 #define D3_IMSTYLE_BEHAVIORS                                                                                           \
     D3_IMATTR_FLOAT(HoverStationaryDelay)                                                                              \
     D3_IMATTR_FLOAT(HoverDelayShort)                                                                                   \
@@ -156,11 +149,10 @@ namespace DG {
     D3_IMATTR_INT(HoverFlagsForTooltipMouse)                                                                           \
     D3_IMATTR_INT(HoverFlagsForTooltipNav)
 
-// this table contains one entry for every value of enum ImGuiCol_ (except for
-// ImGuiCol_COUNT) as you can see, the "ImGuiCol_" prefix is left out in this
-// table, it's added programatically when needed when updating Dear ImGui, this
-// might have to be adjusted for enum members that have been
-// added/removed/renamed
+// this table contains one entry for every value of enum ImGuiCol_ (except for ImGuiCol_COUNT)
+// as you can see, the "ImGuiCol_" prefix is left out in this table,
+// it's added programatically when needed
+// when updating Dear ImGui, this might have to be adjusted for enum members that have been added/removed/renamed
 #define D3_IMSTYLE_COLORS                                                                                              \
     D3_IMSTYLE_COLOR(Text)                                                                                             \
     D3_IMSTYLE_COLOR(TextDisabled)                                                                                     \
@@ -287,8 +279,8 @@ static void parseStyleLine(ImGuiStyle &s, const char *line)
 
     D3_IMSTYLE_ATTRS
 
-    // NOTE: if a member is renamed, for backwards-compatibility you could add
-    // code here like if ( sscanf( line, "OldName = %f", %f1 ) == 1 ) {
+    // NOTE: if a member is renamed, for backwards-compatibility you could add code here like
+    // if ( sscanf( line, "OldName = %f", %f1 ) == 1 ) {
     //     s.NewName = f;
     //     return;
     // }
@@ -304,8 +296,7 @@ static void parseBehaviorLine(ImGuiStyle &s, const char *line)
 
     D3_IMSTYLE_BEHAVIORS
 
-    // NOTE: same thing for backwards-compatbility as in parseStyleLine applies
-    // here
+    // NOTE: same thing for backwards-compatbility as in parseStyleLine applies here
 
     warnPrintf("Invalid line in ImGui style under [behaviors] section: '%s'\n", line);
 }
@@ -372,10 +363,8 @@ bool ReadImGuiStyle(ImGuiStyle &s, const char *filename)
     FILE *f = DG_IMSAVESTYLE_FOPEN(filename, "r"); // TODO: "rt" on Windows?
     if (f == nullptr)
     {
-        // Note: Turns out that printing warning here is annoying, there's nothing
-        // wrong with the
-        //  user not having saved a style yet.. just return false, the caller can
-        //  log if appropriate
+        // Note: Turns out that printing warning here is annoying, there's nothing wrong with the
+        //  user not having saved a style yet.. just return false, the caller can log if appropriate
         return false;
     }
 
@@ -458,8 +447,7 @@ bool WriteImGuiStyle(const ImGuiStyle &s, const char *filename)
     // expands the D3_IMSTYLE_ATTRS table to
     //  fprintf( f, "Alpha = %g\n", s . Alpha );
     //  fprintf( f, "DisabledAlpha = %g\n", s . DisabledAlpha );
-    //  fprintf( f, "WindowPadding = %g %g\n", s . WindowPadding . x, s .
-    //  WindowPadding . y );
+    //  fprintf( f, "WindowPadding = %g %g\n", s . WindowPadding . x, s . WindowPadding . y );
     // etc
     D3_IMSTYLE_ATTRS
 
@@ -483,10 +471,9 @@ bool WriteImGuiStyle(const ImGuiStyle &s, const char *filename)
     }
 
     // this turns into
-    //  { const ImVec4& c = s.Colors[ ImGuiCol_Text ]; fprintf( f, "Text = %g %g
-    //  %g %g\n", c.x, c.y, c.z, c.w ); } { const ImVec4& c = s.Colors[
-    //  ImGuiCol_TextDisabled ]; fprintf( f, "TextDisabled = %g %g %g %g\n", c.x,
-    //  c.y, c.z, c.w ); }
+    //  { const ImVec4& c = s.Colors[ ImGuiCol_Text ]; fprintf( f, "Text = %g %g %g %g\n", c.x, c.y, c.z, c.w ); }
+    //  { const ImVec4& c = s.Colors[ ImGuiCol_TextDisabled ]; fprintf( f, "TextDisabled = %g %g %g %g\n", c.x, c.y,
+    //  c.z, c.w ); }
     // etc
     D3_IMSTYLE_COLORS
 
@@ -575,13 +562,13 @@ ImGuiTextBuffer WriteImGuiStyleToCode(const ImGuiStyle &s, const ImGuiStyle *ref
 
 } // namespace DG_IMSAVESTYLE_NAMESPACE
 
-// check correctness of the X macro tables above (detect when something is
-// added/removed/renamed in struct ImGuiStyle or enum ImGuiCol_)
+// check correctness of the X macro tables above (detect when something is added/removed/renamed in struct ImGuiStyle or
+// enum ImGuiCol_)
 namespace
 {
 
-// recreate enum ImGuiCol_ from the D3_IMSTYLE_COLORS table to compare its
-// members so we can easily detect when (and where) one is added
+// recreate enum ImGuiCol_ from the D3_IMSTYLE_COLORS table to compare its members
+// so we can easily detect when (and where) one is added
 enum D3CHECK_ImguiCol_
 {
 
@@ -595,19 +582,18 @@ enum D3CHECK_ImguiCol_
 };
 
 #define D3_IMSTYLE_COLOR(NAME)                                                                                         \
-    static_assert((int)D3CHECK_ImGuiCol_##NAME == (int)ImGuiCol_##NAME,                                                \
-                  "Wrong value for ImGuiCol_" #NAME " - probably something was added to enum ImGuiCol_ before "        \
-                  "it? => => adjust D3_IMSTYLE_COLORS table above");
+    static_assert(                                                                                                     \
+        (int)D3CHECK_ImGuiCol_##NAME == (int)ImGuiCol_##NAME,                                                          \
+        "Wrong value for ImGuiCol_" #NAME                                                                              \
+        " - probably something was added to enum ImGuiCol_ before it? => => adjust D3_IMSTYLE_COLORS table above");
 
 D3_IMSTYLE_COLORS
 
 #undef D3_IMSTYLE_COLOR
 
-// if the following is the only failing static_assert, the new color was
-// probably added to the end
+// if the following is the only failing static_assert, the new color was probably added to the end
 static_assert((int)D3CHECK_ImGuiCol_COUNT == (int)ImGuiCol_COUNT,
-              "something was added or removed in enum ImGuiCol_ => adjust "
-              "D3_IMSTYLE_COLORS table above");
+              "something was added or removed in enum ImGuiCol_ => adjust D3_IMSTYLE_COLORS table above");
 
 // recreate struct ImGuiStyle from the tables above and see if they're identical
 // (this struct is only used for the static assertions below)
@@ -621,8 +607,7 @@ struct D3_ImGuiStyle_Check
 #define D3_IMATTR_BOOL(NAME) bool NAME;
 
     // this expands to all the ImGuiStyle members, up to (excluding) Colors
-    // exactly like in ImGuiStyle (except the pseudo-enums like ImGuiDir are plain
-    // ints here)
+    // exactly like in ImGuiStyle (except the pseudo-enums like ImGuiDir are plain ints here)
     D3_IMSTYLE_ATTRS
 
     ImVec4 Colors[ImGuiCol_COUNT];
@@ -648,42 +633,46 @@ template <class T> struct is_same<T, T>
 };
 
 #define D3_IMATTR_FLOAT(NAME)                                                                                          \
-    static_assert(offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                   \
-                  "member " #NAME " not at expected offset - is the member before it "                                 \
-                  "missing from the list, or moved to another position?");                                             \
+    static_assert(                                                                                                     \
+        offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                             \
+        "member " #NAME                                                                                                \
+        " not at expected offset - is the member before it missing from the list, or moved to another position?");     \
     static_assert(is_same<decltype(ImGuiStyle ::NAME), float>::value,                                                  \
                   "expected member " #NAME "to be a float - adjust the list!");
 
 #define D3_IMATTR_VEC2(NAME)                                                                                           \
-    static_assert(offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                   \
-                  "member " #NAME " not at expected offset - is the member before it "                                 \
-                  "missing from the list, or moved to another position?");                                             \
+    static_assert(                                                                                                     \
+        offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                             \
+        "member " #NAME                                                                                                \
+        " not at expected offset - is the member before it missing from the list, or moved to another position?");     \
     static_assert(is_same<decltype(ImGuiStyle ::NAME), ImVec2>::value,                                                 \
                   "expected member " #NAME " to be an ImVec2 - adjust the list!");
 
 #define D3_IMATTR_INT(NAME)                                                                                            \
-    static_assert(offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                   \
-                  "member " #NAME " not at expected offset - is the member before it "                                 \
-                  "missing from the list, or moved to another position?");                                             \
+    static_assert(                                                                                                     \
+        offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                             \
+        "member " #NAME                                                                                                \
+        " not at expected offset - is the member before it missing from the list, or moved to another position?");     \
     static_assert(is_same<decltype(ImGuiStyle ::NAME), int>::value,                                                    \
                   "expected member " #NAME " to be an int - adjust the list!");
 
 #define D3_IMATTR_DIR(NAME)                                                                                            \
-    static_assert(offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                   \
-                  "member " #NAME " not at expected offset - is the member before it "                                 \
-                  "missing from the list, or moved to another position?");                                             \
+    static_assert(                                                                                                     \
+        offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                             \
+        "member " #NAME                                                                                                \
+        " not at expected offset - is the member before it missing from the list, or moved to another position?");     \
     static_assert(is_same<decltype(ImGuiStyle ::NAME), ImGuiDir>::value,                                               \
                   "expected member " #NAME " to be an ImGuiDir - adjust the list!");
 
 #define D3_IMATTR_BOOL(NAME)                                                                                           \
-    static_assert(offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                   \
-                  "member " #NAME " not at expected offset - is the member before it "                                 \
-                  "missing from the list, or moved to another position?");                                             \
+    static_assert(                                                                                                     \
+        offsetof(ImGuiStyle, NAME) == offsetof(D3_ImGuiStyle_Check, NAME),                                             \
+        "member " #NAME                                                                                                \
+        " not at expected offset - is the member before it missing from the list, or moved to another position?");     \
     static_assert(is_same<decltype(ImGuiStyle ::NAME), bool>::value,                                                   \
                   "expected member " #NAME " to be a bool - adjust the list!");
 
-// expanding those static assertions for offset and type for all attributes and
-// behaviors
+// expanding those static assertions for offset and type for all attributes and behaviors
 
 D3_IMSTYLE_ATTRS
 
@@ -697,10 +686,9 @@ D3_IMSTYLE_BEHAVIORS
 static_assert(offsetof(ImGuiStyle, Colors) == offsetof(D3_ImGuiStyle_Check, Colors),
               "member Colors not at expected offset");
 
-// if all other static assertions passed and the following failed, probably a
-// member was added at the end of the ImGuiStyle struct
+// if all other static assertions passed and the following failed, probably a member was added at the end of the
+// ImGuiStyle struct
 static_assert(sizeof(D3_ImGuiStyle_Check) == sizeof(ImGuiStyle),
-              "something seems to be missing or wrong type in D3_IMSTYLE_ATTRS "
-              "or D3_IMSTYLE_BEHAVIORS");
+              "something seems to be missing or wrong type in D3_IMSTYLE_ATTRS or D3_IMSTYLE_BEHAVIORS");
 
 } // namespace

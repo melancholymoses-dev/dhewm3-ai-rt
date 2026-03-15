@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "Player.h"
-#include "script/Script_Thread.h"
 #include "sys/platform.h"
+#include "script/Script_Thread.h"
+#include "Player.h"
 
 #include "Trigger.h"
 
@@ -159,8 +156,7 @@ idTrigger::Disable
 */
 void idTrigger::Disable(void)
 {
-    // we may be relinked if we're bound to another object, so clear the contents
-    // as well
+    // we may be relinked if we're bound to another object, so clear the contents as well
     GetPhysics()->SetContents(0);
     GetPhysics()->DisableClip();
 }
@@ -476,9 +472,8 @@ void idTrigger_Multi::TriggerAction(idEntity *activator)
         // we can't just remove (this) here, because this is a touch function
         // called while looping through area links...
 #ifdef _D3XP
-        // If the player spawned inside the trigger, the player Spawn function
-        // called Think directly, allowing for multiple triggers on a trigger_once.
-        // Increasing the nextTriggerTime prevents it.
+        // If the player spawned inside the trigger, the player Spawn function called Think directly,
+        // allowing for multiple triggers on a trigger_once.  Increasing the nextTriggerTime prevents it.
         nextTriggerTime = gameLocal.time + 99999;
 #else
         nextTriggerTime = gameLocal.time + 1;
@@ -502,9 +497,9 @@ void idTrigger_Multi::Event_TriggerAction(idEntity *activator)
 idTrigger_Multi::Event_Trigger
 
 the trigger was just activated
-activated should be the entity that originated the activation sequence (ie. the
-original target) activator should be set to the activator so it can be held
-through a delay so wait for the delay time before firing
+activated should be the entity that originated the activation sequence (ie. the original target)
+activator should be set to the activator so it can be held through a delay
+so wait for the delay time before firing
 ================
 */
 void idTrigger_Multi::Event_Trigger(idEntity *activator)
@@ -703,9 +698,8 @@ void idTrigger_EntityName::Spawn(void)
     entityName = spawnArgs.GetString("entityname");
     if (!entityName.Length())
     {
-        gameLocal.Error("idTrigger_EntityName '%s' at (%s) doesn't have "
-                        "'entityname' key specified",
-                        name.c_str(), GetPhysics()->GetOrigin().ToString(0));
+        gameLocal.Error("idTrigger_EntityName '%s' at (%s) doesn't have 'entityname' key specified", name.c_str(),
+                        GetPhysics()->GetOrigin().ToString(0));
     }
 
     nextTriggerTime = 0;
@@ -754,9 +748,9 @@ void idTrigger_EntityName::Event_TriggerAction(idEntity *activator)
 idTrigger_EntityName::Event_Trigger
 
 the trigger was just activated
-activated should be the entity that originated the activation sequence (ie. the
-original target) activator should be set to the activator so it can be held
-through a delay so wait for the delay time before firing
+activated should be the entity that originated the activation sequence (ie. the original target)
+activator should be set to the activator so it can be held through a delay
+so wait for the delay time before firing
 ================
 */
 void idTrigger_EntityName::Event_Trigger(idEntity *activator)
@@ -1147,8 +1141,8 @@ void idTrigger_Hurt::Restore(idRestoreGame *savefile)
 ================
 idTrigger_Hurt::Spawn
 
-        Damages activator
-        Can be turned on or off by using.
+    Damages activator
+    Can be turned on or off by using.
 ================
 */
 void idTrigger_Hurt::Spawn(void)
@@ -1433,8 +1427,8 @@ void idTrigger_Flag::Spawn(void)
     idStr funcname = spawnArgs.GetString("eventflag", "");
     if (funcname.Length())
     {
-        eventFlag = idEventDef::FindEvent(funcname); // gameLocal.program.FindFunction(
-                                                     // funcname );//, &idItemTeam::Type );
+        eventFlag =
+            idEventDef::FindEvent(funcname); // gameLocal.program.FindFunction( funcname );//, &idItemTeam::Type );
         if (eventFlag == NULL)
         {
             gameLocal.Warning("trigger '%s' at (%s) event unknown '%s'", name.c_str(),
@@ -1515,15 +1509,14 @@ void idTrigger_Flag::Event_Touch(idEntity *other, trace_t *trace)
         }
 
         /*
-                        ServerSendEvent( eventFlag->GetEventNum(), NULL, true, false
-           );
+                ServerSendEvent( eventFlag->GetEventNum(), NULL, true, false );
 
-                        idThread *thread;
-                        if ( scriptFlag ) {
-                                thread = new idThread();
-                                thread->CallFunction( flag, scriptFlag, false );
-                                thread->DelayedStart( 0 );
-                        }
+                idThread *thread;
+                if ( scriptFlag ) {
+                    thread = new idThread();
+                    thread->CallFunction( flag, scriptFlag, false );
+                    thread->DelayedStart( 0 );
+                }
         */
         idTrigger_Multi::Event_Touch(other, trace);
     }

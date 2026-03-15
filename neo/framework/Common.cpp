@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -39,26 +36,26 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define SDL_setenv SDL_setenv_unsafe
 #endif
 
-#include "cm/CollisionModel.h"
-#include "framework/BuildVersion.h"
-#include "framework/Console.h"
-#include "framework/EventLoop.h"
-#include "framework/Game.h"
-#include "framework/KeyInput.h"
-#include "framework/Licensee.h"
-#include "framework/Session.h"
-#include "framework/async/AsyncNetwork.h"
-#include "framework/async/NetworkSystem.h"
+#include "sys/platform.h"
+#include "idlib/containers/HashTable.h"
 #include "idlib/LangDict.h"
 #include "idlib/MapFile.h"
-#include "idlib/containers/HashTable.h"
+#include "cm/CollisionModel.h"
+#include "framework/async/AsyncNetwork.h"
+#include "framework/async/NetworkSystem.h"
+#include "framework/BuildVersion.h"
+#include "framework/Licensee.h"
+#include "framework/Console.h"
+#include "framework/Session.h"
+#include "framework/Game.h"
+#include "framework/KeyInput.h"
+#include "framework/EventLoop.h"
 #include "renderer/Image.h"
 #include "renderer/Model.h"
 #include "renderer/ModelManager.h"
 #include "renderer/RenderSystem.h"
-#include "sys/platform.h"
-#include "tools/compilers/aas/AASFileManager.h"
 #include "tools/compilers/compiler_public.h"
+#include "tools/compilers/aas/AASFileManager.h"
 #include "tools/edit_public.h"
 
 #include "sys/sys_imgui.h"
@@ -71,8 +68,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define MAX_PRINT_MSG_SIZE 4096
 #define MAX_WARNING_LIST 256
 
-// DG: implemented in Dhewm3SettingsMenu.cpp (the only Com_*_f() function not
-// implemented in this file)
+// DG: implemented in Dhewm3SettingsMenu.cpp (the only Com_*_f() function not implemented in this file)
 extern void Com_Dhewm3Settings_f(const idCmdArgs &args);
 
 typedef enum
@@ -102,8 +98,8 @@ struct version_s
 idCVar com_version("si_version", version.string, CVAR_SYSTEM | CVAR_ROM | CVAR_SERVERINFO, "engine version");
 idCVar com_skipRenderer("com_skipRenderer", "0", CVAR_BOOL | CVAR_SYSTEM, "skip the renderer completely");
 idCVar com_machineSpec("com_machineSpec", "-1", CVAR_INTEGER | CVAR_ARCHIVE | CVAR_SYSTEM,
-                       "hardware classification, -1 = not detected, 0 = low quality, 1 = medium "
-                       "quality, 2 = high quality, 3 = ultra quality");
+                       "hardware classification, -1 = not detected, 0 = low quality, 1 = medium quality, 2 = high "
+                       "quality, 3 = ultra quality");
 idCVar com_purgeAll("com_purgeAll", "0", CVAR_BOOL | CVAR_ARCHIVE | CVAR_SYSTEM,
                     "purge everything between level loads");
 idCVar com_memoryMarker("com_memoryMarker", "-1", CVAR_INTEGER | CVAR_SYSTEM | CVAR_INIT,
@@ -111,8 +107,7 @@ idCVar com_memoryMarker("com_memoryMarker", "-1", CVAR_INTEGER | CVAR_SYSTEM | C
 idCVar com_preciseTic("com_preciseTic", "1", CVAR_BOOL | CVAR_SYSTEM, "run one game tick every async thread update");
 idCVar com_asyncInput("com_asyncInput", "0", CVAR_BOOL | CVAR_SYSTEM, "sample input from the async thread");
 #define ASYNCSOUND_INFO                                                                                                \
-    "0: mix sound inline, 1 or 3: async update every 16ms 2: async update "                                            \
-    "about every 100ms (original behavior)"
+    "0: mix sound inline, 1 or 3: async update every 16ms 2: async update about every 100ms (original behavior)"
 idCVar com_asyncSound("com_asyncSound", "1", CVAR_INTEGER | CVAR_SYSTEM, ASYNCSOUND_INFO, 0, 3);
 idCVar com_forceGenericSIMD("com_forceGenericSIMD", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT,
                             "force generic platform independent SIMD");
@@ -156,8 +151,7 @@ volatile int com_ticNumber; // 60 hz tics
 int com_editors;            // currently opened editor(s)
 bool com_editorActive;      //  true if an editor has focus
 
-bool com_debuggerSupported; // only set to true when the updateDebugger function
-                            // is set. see GetAdditionalFunction()
+bool com_debuggerSupported; // only set to true when the updateDebugger function is set. see GetAdditionalFunction()
 
 #ifdef _WIN32
 HWND com_hwndMsg = NULL;
@@ -210,22 +204,19 @@ class idCommonLocal : public idCommon
     virtual int ButtonState(int key);
     virtual int KeyState(int key);
 
-    // DG: hack to allow adding callbacks and exporting additional functions
-    // without breaking the game ABI
+    // DG: hack to allow adding callbacks and exporting additional functions without breaking the game ABI
     //     see Common.h for longer explanation...
 
     // returns true if setting the callback was successful, else false
-    // When a game DLL is unloaded the callbacks are automatically removed from
-    // the Engine so you usually don't have to worry about that; but you can call
-    // this with cb = NULL and userArg = NULL to remove a callback manually (e.g.
-    // if userArg refers to an object you deleted)
+    // When a game DLL is unloaded the callbacks are automatically removed from the Engine
+    // so you usually don't have to worry about that; but you can call this with cb = NULL
+    // and userArg = NULL to remove a callback manually (e.g. if userArg refers to an object you deleted)
     virtual bool SetCallback(idCommon::CallbackType cbt, idCommon::FunctionPointer cb, void *userArg);
 
     // returns true if that function is available in this version of dhewm3
     // *out_fnptr will be the function (you'll have to cast it probably)
-    // *out_userArg will be an argument you have to pass to the function, if
-    // appropriate (else NULL) NOTE: this doesn't do anything yet, but allows to
-    // add ugly mod-specific hacks without breaking the Game interface
+    // *out_userArg will be an argument you have to pass to the function, if appropriate (else NULL)
+    // NOTE: this doesn't do anything yet, but allows to add ugly mod-specific hacks without breaking the Game interface
     virtual bool GetAdditionalFunction(idCommon::FunctionType ft, idCommon::FunctionPointer *out_fnptr,
                                        void **out_userArg);
 
@@ -460,9 +451,8 @@ void idCommonLocal::VPrintf(const char *fmt, va_list args)
         if (com_editors & EDITOR_DEBUGGER)
             DebuggerServerPrint(msg);
         else
-            // only echo to dedicated console and early console when debugger is not
-            // running so no deadlocks occur if engine functions called from the
-            // debuggerthread trace stuff..
+            // only echo to dedicated console and early console when debugger is not running so no
+            // deadlocks occur if engine functions called from the debuggerthread trace stuff..
             Sys_Printf("%s", msg);
     }
     else
@@ -520,8 +510,7 @@ void idCommonLocal::VPrintf(const char *fmt, va_list args)
 ==================
 idCommonLocal::Printf
 
-Both client and server can use this, and it will output to the appropriate
-place.
+Both client and server can use this, and it will output to the appropriate place.
 
 A raw string should NEVER be passed as fmt, because of "%f" type crashers.
 ==================
@@ -569,8 +558,7 @@ void idCommonLocal::DPrintf(const char *fmt, ...)
 ==================
 idCommonLocal::DWarning
 
-prints warning message in yellow that only shows up if the "developer" cvar is
-set
+prints warning message in yellow that only shows up if the "developer" cvar is set
 ==================
 */
 void idCommonLocal::DWarning(const char *fmt, ...)
@@ -802,8 +790,7 @@ void idCommonLocal::Error(const char *fmt, ...)
     {
         com_errorEntered = 0;
         throw idException(errorMessage);
-        // The gui editor doesnt want thing to com_error so it handles exceptions
-        // instead
+        // The gui editor doesnt want thing to com_error so it handles exceptions instead
     }
     else if (com_editors & (EDITOR_GUI | EDITOR_DEBUGGER))
     {
@@ -1610,15 +1597,12 @@ bool OSX_GetCPUIdentification(int &cpuId, bool &oldArchitecture);
 #endif
 void Com_ExecMachineSpec_f(const idCmdArgs &args)
 {
-    // DG: add an optional "nores" argument for "don't change the resolution"
-    // (r_mode)
+    // DG: add an optional "nores" argument for "don't change the resolution" (r_mode)
     bool nores = args.Argc() > 1 && idStr::Icmp(args.Argv(1), "nores") == 0;
-    cvarSystem->SetCVarInteger("r_useSoftParticles", 0,
-                               CVAR_ARCHIVE); // DG: disable soft particles for all but ultra
+    cvarSystem->SetCVarInteger("r_useSoftParticles", 0, CVAR_ARCHIVE); // DG: disable soft particles for all but ultra
     if (com_machineSpec.GetInteger() == 3)
     { // ultra
-        // cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE ); DG:
-        // redundant, set again below
+        // cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE ); DG: redundant, set again below
         cvarSystem->SetCVarInteger("image_lodbias", 0, CVAR_ARCHIVE);
         cvarSystem->SetCVarInteger("image_forceDownSize", 0, CVAR_ARCHIVE);
         cvarSystem->SetCVarInteger("image_roundDown", 1, CVAR_ARCHIVE);
@@ -1639,14 +1623,12 @@ void Com_ExecMachineSpec_f(const idCmdArgs &args)
             cvarSystem->SetCVarInteger("r_mode", 5, CVAR_ARCHIVE);
         cvarSystem->SetCVarInteger("image_useNormalCompression", 0, CVAR_ARCHIVE);
         cvarSystem->SetCVarInteger("r_multiSamples", 0, CVAR_ARCHIVE);
-        cvarSystem->SetCVarInteger("r_useSoftParticles", 1,
-                                   CVAR_ARCHIVE); // DG: enable soft particles for ultra preset
+        cvarSystem->SetCVarInteger("r_useSoftParticles", 1, CVAR_ARCHIVE); // DG: enable soft particles for ultra preset
     }
     else if (com_machineSpec.GetInteger() == 2)
     { // high
         cvarSystem->SetCVarString("image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE);
-        // cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE ); DG:
-        // redundant, set again below
+        // cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE ); DG: redundant, set again below
         cvarSystem->SetCVarInteger("image_lodbias", 0, CVAR_ARCHIVE);
         cvarSystem->SetCVarInteger("image_forceDownSize", 0, CVAR_ARCHIVE);
         cvarSystem->SetCVarInteger("image_roundDown", 1, CVAR_ARCHIVE);
@@ -1721,8 +1703,7 @@ void Com_ExecMachineSpec_f(const idCmdArgs &args)
     cvarSystem->SetCVarBool("g_muzzleFlash", true, CVAR_ARCHIVE);
 
 #if MACOS_X
-    // On low settings, G4 systems & 64MB FX5200/NV34 Systems should default
-    // shadows off
+    // On low settings, G4 systems & 64MB FX5200/NV34 Systems should default shadows off
     bool oldArch;
     int vendorId, deviceId, cpuId;
     OSX_GetVideoCard(vendorId, deviceId);
@@ -1832,8 +1813,7 @@ void idCommonLocal::InitLanguageDict(void)
     idStrList langList = langFiles->GetList();
 
     StartupVariable("sys_lang",
-                    false); // let it be set on the command line - this is needed
-                            // because this init happens very early
+                    false); // let it be set on the command line - this is needed because this init happens very early
     idStr langName = cvarSystem->GetCVarString("sys_lang");
 
     // Loop through the list and filter
@@ -1997,9 +1977,8 @@ void idCommonLocal::LocalizeGui(const char *fileName, idLangDict &langDict)
                 {
                     if (src.ReadToken(&token))
                     {
-                        // see if already exists, if so save that id to this position in
-                        // this file otherwise add this to the list and save the id to this
-                        // position in this file
+                        // see if already exists, if so save that id to this position in this file
+                        // otherwise add this to the list and save the id to this position in this file
                         src.GetLastWhiteSpace(ws);
                         out += ws;
                         token = langDict.AddString(token);
@@ -2030,9 +2009,8 @@ void idCommonLocal::LocalizeGui(const char *fileName, idLangDict &langDict)
                     if (src.ReadToken(&token))
                     {
                         // need to write these out by hand to preserve any \n's
-                        // see if already exists, if so save that id to this position in
-                        // this file otherwise add this to the list and save the id to this
-                        // position in this file
+                        // see if already exists, if so save that id to this position in this file
+                        // otherwise add this to the list and save the id to this position in this file
                         src.GetLastWhiteSpace(ws);
                         out += ws;
                         out += "\"";
@@ -2542,15 +2520,13 @@ void Com_LocalizeMapsTest_f(const idCmdArgs &args)
 
                     // Temp code to get a list of all entity key value pairs
                     /*idStr classname = ent->epairs.GetString("classname");
-                    if(classname == "worldspawn" || classname == "func_static" ||
-                    classname == "light" || classname == "speaker" || classname.Left(8) ==
-                    "trigger_") { continue;
+                    if(classname == "worldspawn" || classname == "func_static" || classname == "light" || classname ==
+                    "speaker" || classname.Left(8) == "trigger_") { continue;
                     }
                     for( int i = 0; i < ent->epairs.GetNumKeyVals(); i++) {
-                            const idKeyValue* kv = ent->epairs.GetKeyVal(i);
-                            idStr out = va("%s,%s,%s,%s\r\n", classname.c_str(),
-                    kv->GetKey().c_str(), kv->GetValue().c_str(), file.c_str());
-                            localizeFile->Write( out.c_str(), out.Length() );
+                        const idKeyValue* kv = ent->epairs.GetKeyVal(i);
+                        idStr out = va("%s,%s,%s,%s\r\n", classname.c_str(), kv->GetKey().c_str(),
+                    kv->GetValue().c_str(), file.c_str()); localizeFile->Write( out.c_str(), out.Length() );
                     }*/
 
                     idStr classname = ent->epairs.GetString("classname");
@@ -2652,8 +2628,7 @@ void Com_Help_f(const idCmdArgs &args)
     common->Printf("\nCommonly used variables:\n");
     common->Printf("  si_name          - server name (change requires a restart to see)\n");
     common->Printf("  si_gametype      - type of game.\n");
-    common->Printf("  si_fragLimit     - max kills to win (or lives in Last Man "
-                   "Standing).\n");
+    common->Printf("  si_fragLimit     - max kills to win (or lives in Last Man Standing).\n");
     common->Printf("  si_timeLimit     - maximum time a game will last.\n");
     common->Printf("  si_warmup        - do pre-game warmup.\n");
     common->Printf("  si_pure          - pure server.\n");
@@ -2678,11 +2653,9 @@ void idCommonLocal::InitCommands(void)
     cmdSystem->AddCommand("reloadEngine", Com_ReloadEngine_f, CMD_FL_SYSTEM,
                           "reloads the engine down to including the file system");
     cmdSystem->AddCommand("setMachineSpec", Com_SetMachineSpec_f, CMD_FL_SYSTEM,
-                          "detects system capabilities and sets com_machineSpec "
-                          "to appropriate value");
+                          "detects system capabilities and sets com_machineSpec to appropriate value");
     cmdSystem->AddCommand("execMachineSpec", Com_ExecMachineSpec_f, CMD_FL_SYSTEM,
-                          "execs the appropriate config files and sets cvars "
-                          "based on com_machineSpec");
+                          "execs the appropriate config files and sets cvars based on com_machineSpec");
 
     cmdSystem->AddCommand("dhewm3Settings", Com_Dhewm3Settings_f, CMD_FL_SYSTEM,
                           "Toggles (opens/closes) the (advanced) dhewm3 settings menu");
@@ -2841,8 +2814,7 @@ void idCommonLocal::Frame(void)
 
         eventLoop->RunEventLoop();
 
-        // DG: prepare new ImGui frame - I guess this is a good place, as all new
-        // events should be available?
+        // DG: prepare new ImGui frame - I guess this is a good place, as all new events should be available?
         D3::ImGuiHooks::NewFrame();
 
         com_frameTime = com_ticNumber * USERCMD_MSEC;
@@ -2961,13 +2933,11 @@ void idCommonLocal::SingleAsyncTic(void)
     {
     case 1:
     case 3:
-        // DG: these are now used for the new default behavior of "update every
-        // async tic (every 16ms)"
+        // DG: these are now used for the new default behavior of "update every async tic (every 16ms)"
         soundSystem->AsyncUpdateWrite(stat->milliseconds);
         break;
     case 2:
-        // DG: use 2 for the old "update only 10x/second" behavior in case anyone
-        // likes that..
+        // DG: use 2 for the old "update only 10x/second" behavior in case anyone likes that..
         soundSystem->AsyncUpdate(stat->milliseconds);
         break;
     }
@@ -3043,9 +3013,8 @@ void idCommonLocal::LoadGameDLLbyName(const char *dll, idStr &s)
     // try next to the binary first (build tree)
     if (Sys_GetPath(PATH_EXE, s))
     {
-        // "s = " seems superfluous, but works around g++ 4.7 bug else
-        // StripFilename() (and possibly even CapLength()) seems to be "optimized"
-        // away and the string contains garbage
+        // "s = " seems superfluous, but works around g++ 4.7 bug else StripFilename()
+        // (and possibly even CapLength()) seems to be "optimized" away and the string contains garbage
         s = s.StripFilename();
         s.AppendPath(dll);
         gameDLL = sys->DLL_Load(s);
@@ -3120,16 +3089,13 @@ void idCommonLocal::LoadGameDLL(void)
         const char *fs_base = cvarSystem->GetCVarString("fs_game_base");
         if (fs_base && fs_base[0])
         {
-            common->Warning("couldn't load mod-specific %s, defaulting to library of "
-                            "fs_game_base (%s)!\n",
-                            dll, fs_base);
+            common->Warning("couldn't load mod-specific %s, defaulting to library of fs_game_base (%s)!\n", dll,
+                            fs_base);
             sys->DLL_GetFileName(fs_base, dll, sizeof(dll));
             LoadGameDLLbyName(dll, s);
             if (!gameDLL)
             {
-                common->Warning("couldn't load fs_game_base lib %s either, defaulting "
-                                "to base game's library!\n",
-                                dll);
+                common->Warning("couldn't load fs_game_base lib %s either, defaulting to base game's library!\n", dll);
             }
         }
         else
@@ -3225,8 +3191,7 @@ void idCommonLocal::UnloadGameDLL(void)
 #endif
 
     com_debuggerSupported = false; // HvG: Reset debugger availability.
-    gameCallbacks.Reset();         // DG: these callbacks are invalid now because DLL has
-                                   // been unloaded
+    gameCallbacks.Reset();         // DG: these callbacks are invalid now because DLL has been unloaded
 }
 
 /*
@@ -3284,11 +3249,9 @@ static unsigned int AsyncTimer(unsigned int interval, void *)
     // calculate the next interval to get as close to 60fps as possible
     unsigned int now = SDL_GetTicks();
     unsigned int tick = com_ticNumber * USERCMD_MSEC;
-    // FIXME: this is pretty broken and basically always returns 1 because now now
-    // is much bigger than tic
-    //        (probably com_tickNumber only starts incrementing a second after
-    //        engine starts?) only reason this works is common->Async() checking
-    //        again before calling SingleAsyncTic()
+    // FIXME: this is pretty broken and basically always returns 1 because now now is much bigger than tic
+    //        (probably com_tickNumber only starts incrementing a second after engine starts?)
+    //        only reason this works is common->Async() checking again before calling SingleAsyncTic()
 
     if (now >= tick)
         return 1;
@@ -3329,22 +3292,18 @@ static bool checkForHelp(int argc, char **argv)
                 WriteString("+map <map>\n");
                 WriteString("  directly loads the given level, e.g. +map game/hell1\n");
                 WriteString("+exec <config>\n");
-                WriteString("  execute the given config (mainly relevant for dedicated "
-                            "servers)\n");
+                WriteString("  execute the given config (mainly relevant for dedicated servers)\n");
                 WriteString("+disconnect\n");
-                WriteString("  starts the game, goes directly into main menu without "
-                            "showing\n  logo video\n");
+                WriteString("  starts the game, goes directly into main menu without showing\n  logo video\n");
                 WriteString("+connect <host>[:port]\n");
                 WriteString("  directly connect to multiplayer server at given host/port\n");
                 WriteString("  e.g. +connect d3.example.com\n");
                 WriteString("  e.g. +connect d3.example.com:27667\n");
                 WriteString("  e.g. +connect 192.168.0.42:27666\n");
                 WriteString("+set <cvarname> <value>\n");
-                WriteString("  Set the given cvar to the given value, e.g. +set "
-                            "r_fullscreen 0\n");
+                WriteString("  Set the given cvar to the given value, e.g. +set r_fullscreen 0\n");
                 WriteString("+seta <cvarname> <value>\n");
-                WriteString("  like +set, but also makes sure the changed cvar is "
-                            "saved (\"archived\")\n  in a cfg\n");
+                WriteString("  like +set, but also makes sure the changed cvar is saved (\"archived\")\n  in a cfg\n");
 
                 WriteString("\nSome interesting cvars:\n");
                 WriteString("+set fs_basepath <gamedata path>\n");
@@ -3353,8 +3312,7 @@ static bool checkForHelp(int argc, char **argv)
                 WriteString("  start the given addon/mod, e.g. +set fs_game d3xp\n");
                 WriteString("+set fs_game_base <base-modname>\n");
                 WriteString("  some mods are based on other mods, usually d3xp.\n");
-                WriteString("  This specifies the base mod e.g. +set fs_game d3le +set "
-                            "fs_game_base d3xp\n");
+                WriteString("  This specifies the base mod e.g. +set fs_game d3le +set fs_game_base d3xp\n");
 #ifndef ID_DEDICATED
                 WriteString("+set r_fullscreen <0 or 1>\n");
                 WriteString("  start game in windowed (0) or fullscreen (1) mode\n");
@@ -3366,10 +3324,8 @@ static bool checkForHelp(int argc, char **argv)
                 WriteString("  if r_mode is set to -1, these cvars allow you to specify the\n");
                 WriteString("  width/height of your custom resolution\n");
 #endif // !ID_DEDICATED
-                WriteString("\nSee https://modwiki.dhewm3.org/CVars_%28Doom_3%29 for "
-                            "more cvars\n");
-                WriteString("See https://modwiki.dhewm3.org/Commands_%28Doom_3%29 for "
-                            "more commands\n");
+                WriteString("\nSee https://modwiki.dhewm3.org/CVars_%28Doom_3%29 for more cvars\n");
+                WriteString("See https://modwiki.dhewm3.org/Commands_%28Doom_3%29 for more commands\n");
 
 #undef WriteString
 
@@ -3391,9 +3347,8 @@ static bool checkForHelp(int argc, char **argv)
 #error "CMake assumes that we're building for a 64bit architecture, but UINTPTR_MAX doesn't match!"
 #endif
 #else
-// Hello future person with a 128bit(?) CPU, I hope the future doesn't suck too
-// much and that you don't still use CMake. Also, please adapt this check and
-// send a pull request (or whatever way we have to send patches in the future)
+// Hello future person with a 128bit(?) CPU, I hope the future doesn't suck too much and that you don't still use CMake.
+// Also, please adapt this check and send a pull request (or whatever way we have to send patches in the future)
 #error "D3_SIZEOFPTR should really be 4 (for 32bit targets) or 8 (for 64bit targets), what kind of machine is this?!"
 #endif
 
@@ -3410,15 +3365,14 @@ void idCommonLocal::Init(int argc, char **argv)
     // in case UINTPTR_MAX isn't defined (or wrong), do a runtime check at startup
     if (D3_SIZEOFPTR != sizeof(void *))
     {
-        Sys_Error("Something went wrong in your build: CMake assumed that "
-                  "sizeof(void*) == %d but in reality it's %d!\n",
-                  (int)D3_SIZEOFPTR, (int)sizeof(void *));
+        Sys_Error(
+            "Something went wrong in your build: CMake assumed that sizeof(void*) == %d but in reality it's %d!\n",
+            (int)D3_SIZEOFPTR, (int)sizeof(void *));
     }
 
     if (checkForHelp(argc, argv))
     {
-        // game has been started with --help (or similar), usage message has been
-        // shown => quit
+        // game has been started with --help (or similar), usage message has been shown => quit
 #ifdef _WIN32
         // this enforces that the console window is shown until the user closes it
         // => checkForHelp() writes to the console window on Windows
@@ -3454,8 +3408,7 @@ void idCommonLocal::Init(int argc, char **argv)
     {
         if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_VIDEO) == 0)
         { // retry without joystick/gamecontroller if it failed
-            Sys_Printf("WARNING: Couldn't get SDL gamecontroller support! Gamepads "
-                       "won't work!\n");
+            Sys_Printf("WARNING: Couldn't get SDL gamecontroller support! Gamepads won't work!\n");
         }
         else
 #else // SDL1.2
@@ -3735,8 +3688,7 @@ void idCommonLocal::InitGame(void)
     // re-override anything from the config files with command line args
     StartupVariable(NULL, false);
 
-    // if any archived cvars are modified after this, we will trigger a writing of
-    // the config file
+    // if any archived cvars are modified after this, we will trigger a writing of the config file
     cvarSystem->ClearModifiedFlags(CVAR_ARCHIVE);
 
     // init the user command input code
@@ -3763,8 +3715,7 @@ void idCommonLocal::InitGame(void)
     }
     else
     {
-        // init OpenGL, which will open a window and connect sound and input
-        // hardware
+        // init OpenGL, which will open a window and connect sound and input hardware
         PrintLoadingMessage(common->GetLanguageDict()->GetString("#str_04348"));
         InitRenderSystem();
     }
@@ -3798,10 +3749,9 @@ void idCommonLocal::InitGame(void)
     Sleep(10);
     session->Init();
 
-    // have to do this twice.. first one sets the correct r_mode for the renderer
-    // init this time around the backend is all setup correct.. a bit fugly but do
-    // not want to mess with all the gl init at this point.. an old vid card will
-    // never qualify for
+    // have to do this twice.. first one sets the correct r_mode for the renderer init
+    // this time around the backend is all setup correct.. a bit fugly but do not want
+    // to mess with all the gl init at this point.. an old vid card will never qualify for
     if (sysDetect)
     {
         SetMachineSpec();
@@ -3869,15 +3819,13 @@ void idCommonLocal::ShutdownGame(bool reloading)
     fileSystem->Shutdown(reloading);
 }
 
-// DG: below here are hacks to allow adding callbacks and exporting additional
-// functions to the
+// DG: below here are hacks to allow adding callbacks and exporting additional functions to the
 //     Game DLL without breaking the ABI. See Common.h for longer explanation...
 
 // returns true if setting the callback was successful, else false
-// When a game DLL is unloaded the callbacks are automatically removed from the
-// Engine so you usually don't have to worry about that; but you can call this
-// with cb = NULL and userArg = NULL to remove a callback manually (e.g. if
-// userArg refers to an object you deleted)
+// When a game DLL is unloaded the callbacks are automatically removed from the Engine
+// so you usually don't have to worry about that; but you can call this with cb = NULL
+// and userArg = NULL to remove a callback manually (e.g. if userArg refers to an object you deleted)
 bool idCommonLocal::SetCallback(idCommon::CallbackType cbt, idCommon::FunctionPointer cb, void *userArg)
 {
     switch (cbt)
@@ -3910,8 +3858,7 @@ static bool updateDebugger(idInterpreter *interpreter, idProgram *program, int i
 
 // returns true if that function is available in this version of dhewm3
 // *out_fnptr will be the function (you'll have to cast it probably)
-// *out_userArg will be an argument you have to pass to the function, if
-// appropriate (else NULL)
+// *out_userArg will be an argument you have to pass to the function, if appropriate (else NULL)
 bool idCommonLocal::GetAdditionalFunction(idCommon::FunctionType ft, idCommon::FunctionPointer *out_fnptr,
                                           void **out_userArg)
 {

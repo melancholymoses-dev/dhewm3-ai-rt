@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -152,8 +149,7 @@ int idBounds::PlaneSide(const idPlane &plane, const float epsilon) const
 ============
 idBounds::LineIntersection
 
-  Returns true if the line intersects the bounds between the start and end
-point.
+  Returns true if the line intersects the bounds between the start and end point.
 ============
 */
 bool idBounds::LineIntersection(const idVec3 &start, const idVec3 &end) const
@@ -382,8 +378,7 @@ idBounds BoundsForPointRotation(const idVec3 &start, const idRotation &rotation)
 
     for (i = 0; i < 3; i++)
     {
-        // if the derivative changes sign along this axis during the rotation from
-        // start to end
+        // if the derivative changes sign along this axis during the rotation from start to end
         if ((v1[i] > 0.0f && v2[i] < 0.0f) || (v1[i] < 0.0f && v2[i] > 0.0f))
         {
             if ((0.5f * (start[i] + end[i]) - origin[i]) > 0.0f)

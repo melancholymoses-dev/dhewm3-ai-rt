@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,14 +32,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "sys/sys_sdl.h"
 
 #if 0 // TODO: was there a reason not to include full SDL.h?
+#include <SDL_version.h>
 #include <SDL_mutex.h>
 #include <SDL_thread.h>
 #include <SDL_timer.h>
-#include <SDL_version.h>
 #endif
 
-#include "framework/Common.h"
 #include "sys/platform.h"
+#include "framework/Common.h"
 
 #include "sys/sys_public.h"
 
@@ -62,9 +59,8 @@ typedef Uint32 SDL_threadID;
 #endif
 
 #if __cplusplus >= 201103
-// xthreadinfo::threadId doesn't use SDL_threadID directly so we don't drag SDL
-// headers into sys_public.h but we should still make sure that the type fits
-// (in SDL1.2 it's Uint32, in SDL2 it's unsigned long)
+// xthreadinfo::threadId doesn't use SDL_threadID directly so we don't drag SDL headers into sys_public.h
+// but we should still make sure that the type fits (in SDL1.2 it's Uint32, in SDL2 it's unsigned long)
 static_assert(sizeof(SDL_threadID) <= sizeof(xthreadInfo::threadId), "xthreadInfo::threadId has unsuitable type!");
 #endif
 
@@ -221,13 +217,12 @@ void Sys_LeaveCriticalSection(int index)
 wait and trigger events
 we use a single lock to manipulate the conditions, CRITICAL_SECTION_SYS
 
-the semantics match the win32 version. signals raised while no one is waiting
-stay raised until a wait happens (which then does a simple pass-through)
+the semantics match the win32 version. signals raised while no one is waiting stay raised until a wait happens (which
+then does a simple pass-through)
 
-NOTE: we use the same mutex for all the events. I don't think this would become
-much of a problem cond_wait unlocks atomically with setting the wait condition,
-and locks it back before exiting the function the potential for time wasting
-lock waits is very low
+NOTE: we use the same mutex for all the events. I don't think this would become much of a problem
+cond_wait unlocks atomically with setting the wait condition, and locks it back before exiting the function
+the potential for time wasting lock waits is very low
 ======================================================
 */
 
@@ -242,22 +237,18 @@ void Sys_WaitForEvent(int index)
 
     Sys_EnterCriticalSection(CRITICAL_SECTION_SYS);
 
-    assert(!waiting[index]); // WaitForEvent from multiple threads? that wouldn't
-                             // be good
+    assert(!waiting[index]); // WaitForEvent from multiple threads? that wouldn't be good
     if (signaled[index])
     {
-        // emulate windows behaviour: signal has been raised already. clear and keep
-        // going
+        // emulate windows behaviour: signal has been raised already. clear and keep going
         signaled[index] = false;
     }
     else
     {
         waiting[index] = true;
 #if SDL_VERSION_ATLEAST(3, 0, 0)
-        SDL_CondWait(cond[index],
-                     mutex[CRITICAL_SECTION_SYS]); // in SDL3, this returns void and
-                                                   // can't fail
-#else                                              // SDL2 and SDL1.2
+        SDL_CondWait(cond[index], mutex[CRITICAL_SECTION_SYS]); // in SDL3, this returns void and can't fail
+#else                                                           // SDL2 and SDL1.2
         if (SDL_CondWait(cond[index], mutex[CRITICAL_SECTION_SYS]) != 0)
             common->Error("ERROR: SDL_CondWait failed\n");
 #endif
@@ -289,8 +280,7 @@ void Sys_TriggerEvent(int index)
     }
     else
     {
-        // emulate windows behaviour: if no thread is waiting, leave the signal on
-        // so next wait keeps going
+        // emulate windows behaviour: if no thread is waiting, leave the signal on so next wait keeps going
         signaled[index] = true;
     }
 

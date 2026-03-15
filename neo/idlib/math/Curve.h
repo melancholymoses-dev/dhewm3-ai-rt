@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,7 +39,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Curve base template.
+    Curve base template.
 
 ===============================================================================
 */
@@ -553,8 +550,8 @@ template <class type> ID_INLINE float idCurve<type>::TimeForIndex(const int inde
 /*
 ===============================================================================
 
-        Bezier Curve template.
-        The degree of the polynomial equals the number of knots minus one.
+    Bezier Curve template.
+    The degree of the polynomial equals the number of knots minus one.
 
 ===============================================================================
 */
@@ -751,8 +748,8 @@ ID_INLINE void idCurve_Bezier<type>::BasisSecondDerivative(const int order, cons
 /*
 ===============================================================================
 
-        Quadratic Bezier Curve template.
-        Should always have exactly three knots.
+    Quadratic Bezier Curve template.
+    Should always have exactly three knots.
 
 ===============================================================================
 */
@@ -879,8 +876,8 @@ ID_INLINE void idCurve_QuadraticBezier<type>::BasisSecondDerivative(const float 
 /*
 ===============================================================================
 
-        Cubic Bezier Curve template.
-        Should always have exactly four knots.
+    Cubic Bezier Curve template.
+    Should always have exactly four knots.
 
 ===============================================================================
 */
@@ -1016,7 +1013,7 @@ template <class type> ID_INLINE void idCurve_CubicBezier<type>::BasisSecondDeriv
 /*
 ===============================================================================
 
-        Spline base template.
+    Spline base template.
 
 ===============================================================================
 */
@@ -1185,8 +1182,8 @@ template <class type> ID_INLINE bool idCurve_Spline<type>::IsDone(const float ti
 /*
 ===============================================================================
 
-        Cubic Interpolating Spline template.
-        The curve goes through all the knots.
+    Cubic Interpolating Spline template.
+    The curve goes through all the knots.
 
 ===============================================================================
 */
@@ -1521,8 +1518,8 @@ template <class type> ID_INLINE void idCurve_NaturalCubicSpline<type>::SetupClos
 /*
 ===============================================================================
 
-        Uniform Cubic Interpolating Spline template.
-        The curve goes through all the knots.
+    Uniform Cubic Interpolating Spline template.
+    The curve goes through all the knots.
 
 ===============================================================================
 */
@@ -1698,10 +1695,10 @@ ID_INLINE void idCurve_CatmullRomSpline<type>::BasisSecondDerivative(const int i
 /*
 ===============================================================================
 
-        Cubic Interpolating Spline template.
-        The curve goes through all the knots.
-        The curve becomes the Catmull-Rom spline if the tension,
-        continuity and bias are all set to zero.
+    Cubic Interpolating Spline template.
+    The curve goes through all the knots.
+    The curve becomes the Catmull-Rom spline if the tension,
+    continuity and bias are all set to zero.
 
 ===============================================================================
 */
@@ -1988,8 +1985,8 @@ ID_INLINE void idCurve_KochanekBartelsSpline<type>::BasisSecondDerivative(const 
 /*
 ===============================================================================
 
-        B-Spline base template. Uses recursive definition and is slow.
-        Use idCurve_UniformCubicBSpline or idCurve_NonUniformBSpline instead.
+    B-Spline base template. Uses recursive definition and is slow.
+    Use idCurve_UniformCubicBSpline or idCurve_NonUniformBSpline instead.
 
 ===============================================================================
 */
@@ -2189,7 +2186,7 @@ ID_INLINE float idCurve_BSpline<type>::BasisSecondDerivative(const int index, co
 /*
 ===============================================================================
 
-        Uniform Non-Rational Cubic B-Spline template.
+    Uniform Non-Rational Cubic B-Spline template.
 
 ===============================================================================
 */
@@ -2370,7 +2367,7 @@ ID_INLINE void idCurve_UniformCubicBSpline<type>::BasisSecondDerivative(const in
 /*
 ===============================================================================
 
-        Non-Uniform Non-Rational B-Spline (NUBS) template.
+    Non-Uniform Non-Rational B-Spline (NUBS) template.
 
 ===============================================================================
 */
@@ -2575,7 +2572,7 @@ ID_INLINE void idCurve_NonUniformBSpline<type>::BasisSecondDerivative(const int 
 /*
 ===============================================================================
 
-        Non-Uniform Rational B-Spline (NURBS) template.
+    Non-Uniform Rational B-Spline (NURBS) template.
 
 ===============================================================================
 */

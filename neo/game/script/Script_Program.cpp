@@ -19,29 +19,26 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
-#include "idlib/hashing/MD4.h"
 #include "sys/platform.h"
+#include "idlib/hashing/MD4.h"
+#include "framework/FileSystem.h"
 
-#include "Entity.h"
-#include "Game_local.h"
 #include "gamesys/Event.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Compiler.h"
 #include "script/Script_Thread.h"
+#include "Entity.h"
+#include "Game_local.h"
 
 #include "script/Script_Program.h"
 
@@ -52,14 +49,12 @@ idTypeDef type_namespace(ev_namespace, &def_namespace, "namespace", sizeof(intpt
 idTypeDef type_string(ev_string, &def_string, "string", MAX_STRING_LEN, NULL);
 idTypeDef type_float(ev_float, &def_float, "float", sizeof(intptr_t), NULL);
 idTypeDef type_vector(ev_vector, &def_vector, "vector", E_EVENT_SIZEOF_VEC, NULL);
-idTypeDef type_entity(ev_entity, &def_entity, "entity", sizeof(intptr_t),
-                      NULL); // stored as entity number pointer
+idTypeDef type_entity(ev_entity, &def_entity, "entity", sizeof(intptr_t), NULL); // stored as entity number pointer
 idTypeDef type_field(ev_field, &def_field, "field", sizeof(intptr_t), NULL);
 idTypeDef type_function(ev_function, &def_function, "function", sizeof(intptr_t), &type_void);
 idTypeDef type_virtualfunction(ev_virtualfunction, &def_virtualfunction, "virtual function", sizeof(intptr_t), NULL);
 idTypeDef type_pointer(ev_pointer, &def_pointer, "pointer", sizeof(intptr_t), NULL);
-idTypeDef type_object(ev_object, &def_object, "object", sizeof(intptr_t),
-                      NULL); // stored as entity number pointer
+idTypeDef type_object(ev_object, &def_object, "object", sizeof(intptr_t), NULL); // stored as entity number pointer
 idTypeDef type_jumpoffset(ev_jumpoffset, &def_jumpoffset, "<jump>", sizeof(intptr_t),
                           NULL); // only used for jump opcodes
 idTypeDef type_argsize(ev_argsize, &def_argsize, "<argsize>", sizeof(intptr_t),
@@ -341,8 +336,7 @@ void idTypeDef::AddFunctionParm(idTypeDef *parmtype, const char *name)
 {
     if (type != ev_function)
     {
-        throw idCompileError("idTypeDef::AddFunctionParm : tried to add parameter "
-                             "on non-function type");
+        throw idCompileError("idTypeDef::AddFunctionParm : tried to add parameter on non-function type");
     }
 
     parmTypes.Append(parmtype);
@@ -463,8 +457,7 @@ void idTypeDef::SetReturnType(idTypeDef *returntype)
 {
     if (type != ev_function)
     {
-        throw idCompileError("idTypeDef::SetReturnType: tried to set return type "
-                             "on non-function type");
+        throw idCompileError("idTypeDef::SetReturnType: tried to set return type on non-function type");
     }
 
     auxType = returntype;
@@ -498,8 +491,7 @@ void idTypeDef::SetFieldType(idTypeDef *fieldtype)
 {
     if (type != ev_field)
     {
-        throw idCompileError("idTypeDef::SetFieldType: tried to set return type on "
-                             "non-function type");
+        throw idCompileError("idTypeDef::SetFieldType: tried to set return type on non-function type");
     }
 
     auxType = fieldtype;
@@ -1079,8 +1071,7 @@ void idScriptObject::Restore(idRestoreGame *savefile)
     savefile->ReadInt(size);
     if (size != type->Size())
     {
-        savefile->Error("idScriptObject::Restore: size of object '%s' doesn't "
-                        "match size in save game.",
+        savefile->Error("idScriptObject::Restore: size of object '%s' doesn't match size in save game.",
                         typeName.c_str());
     }
 
@@ -1114,8 +1105,7 @@ bool idScriptObject::SetType(const char *typeName)
 
         if (!newtype->Inherits(&type_object))
         {
-            gameLocal.Warning("idScriptObject::SetType: Can't create object of type "
-                              "'%s'.  Must be an object type.",
+            gameLocal.Warning("idScriptObject::SetType: Can't create object of type '%s'.  Must be an object type.",
                               newtype->Name());
             return false;
         }
@@ -1352,8 +1342,7 @@ idTypeDef *idProgram::GetType(idTypeDef &type, bool allocate)
 ============
 idProgram::FindType
 
-Returns a preexisting complex type that matches the name, or returns NULL if not
-found
+Returns a preexisting complex type that matches the name, or returns NULL if not found
 ============
 */
 idTypeDef *idProgram::FindType(const char *name)
@@ -1572,8 +1561,7 @@ idVarDef *idProgram::AllocDef(idTypeDef *type, const char *name, idVarDef *scope
 
         if (type->Inherits(&type_object))
         {
-            // objects only have their entity number on the stack, not the entire
-            // object
+            // objects only have their entity number on the stack, not the entire object
             scope->value.functionPtr->locals += type_object.Size();
         }
         else
@@ -1728,8 +1716,8 @@ idVarDef *idProgram::FindFreeResultDef(idTypeDef *type, const char *name, idVarD
 ================
 idProgram::FindFunction
 
-Searches for the specified function in the currently loaded script.  A full
-namespace should be specified if not in the global namespace.
+Searches for the specified function in the currently loaded script.  A full namespace should be
+specified if not in the global namespace.
 
 Returns 0 if function not found.
 Returns >0 if function found.
@@ -1883,8 +1871,7 @@ statement_t *idProgram::AllocStatement(void)
         throw idCompileError(va("Exceeded maximum allowed number of statements (%d)", statements.Max()));
     }
     statement_t *ret = statements.Alloc();
-    ret->flags = 0; // DG: initialize the added flags (that are rarely set/used
-                    // otherwise) to 0
+    ret->flags = 0; // DG: initialize the added flags (that are rarely set/used otherwise) to 0
     return ret;
 }
 
@@ -2074,8 +2061,7 @@ void idProgram::CompileStats(void)
     memallocated = funcMem + memused + sizeof(idProgram);
 
     memused += statements.MemoryUsed();
-    memused += functions.MemoryUsed(); // name and filename of functions are
-                                       // shared, so no need to include them
+    memused += functions.MemoryUsed(); // name and filename of functions are shared, so no need to include them
     memused += sizeof(variables);
 
     gameLocal.Printf("Memory usage:\n");
@@ -2101,8 +2087,7 @@ bool idProgram::CompileText(const char *source, const char *text, bool console)
     idVarDef *def;
     idStr ospath;
 
-    // use a full os path for GetFilenum since it calls OSPathToRelativePath to
-    // convert filenames from the parser
+    // use a full os path for GetFilenum since it calls OSPathToRelativePath to convert filenames from the parser
     ospath = fileSystem->RelativePathToOSPath(source);
     filenum = GetFilenum(ospath);
 
@@ -2226,8 +2211,7 @@ void idProgram::FreeData(void)
     numVariables = 0;
     memset(variables, 0, sizeof(variables));
 
-    // clear all the strings in the functions so that it doesn't look like we're
-    // leaking memory.
+    // clear all the strings in the functions so that it doesn't look like we're leaking memory.
     for (i = 0; i < functions.Num(); i++)
     {
         functions[i].Clear();
@@ -2348,8 +2332,7 @@ bool idProgram::Restore(idRestoreGame *savefile)
 
     if (saved_checksum != checksum)
     {
-        gameLocal.Warning("WARNING: Real Script checksum didn't match the one from "
-                          "the savegame!");
+        gameLocal.Warning("WARNING: Real Script checksum didn't match the one from the savegame!");
         result = false;
     }
 
@@ -2393,8 +2376,7 @@ int idProgram::CalculateChecksum(bool forOldSavegame) const
         }
     }
 
-    // Copy info into new list, using the variable numbers instead of a pointer to
-    // the variable
+    // Copy info into new list, using the variable numbers instead of a pointer to the variable
     for (i = 0; i < statements.Num(); i++)
     {
         statementList[i].op = statements[i].op;
@@ -2418,9 +2400,8 @@ int idProgram::CalculateChecksum(bool forOldSavegame) const
         if (statements[i].c)
         {
             // DG: old savegames wrongly assumed argSize 0 for some statements.
-            //     So for the checksums to match we need to use the corresponding
-            //     vardef num here See idCompiler::EmitFunctionParms() and
-            //     ParseFunctionDef() for more details.
+            //     So for the checksums to match we need to use the corresponding vardef num here
+            //     See idCompiler::EmitFunctionParms() and ParseFunctionDef() for more details.
             if (forOldSavegame && statements[i].op == OP_OBJECTCALL &&
                 statements[i].flags == statement_t::FLAG_OBJECTCALL_IMPL_NOT_PARSED_YET)
             {
@@ -2519,8 +2500,7 @@ int idProgram::GetFilenum(const char *name)
         filenum = fileList.AddUnique(strippedName);
     }
 
-    // save the unstripped name so that we don't have to strip the incoming name
-    // every time we call GetFilenum
+    // save the unstripped name so that we don't have to strip the incoming name every time we call GetFilenum
     filename = name;
 
     return filenum;

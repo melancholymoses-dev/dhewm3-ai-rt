@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
 #include "sys/platform.h"
+#include "framework/FileSystem.h"
 
 #include "sound/snd_local.h"
 
@@ -229,8 +226,7 @@ void idSoundCache::EndLevelLoad()
         }
         if (!sample->levelLoadReferenced)
         {
-            //			common->Printf( "Purging %s\n",
-            // sample->name.c_str() );
+            //			common->Printf( "Purging %s\n", sample->name.c_str() );
             purgeCount += sample->objectMemSize;
             sample->PurgeSoundSample();
         }
@@ -542,9 +538,8 @@ void idSoundSample::Load(void)
 
     if (info.nSamplesPerSec != 44100 && info.nSamplesPerSec != 22050 && info.nSamplesPerSec != 11025)
     {
-        common->Warning("idSoundCache: %s is %dHz, expected 11025, 22050 or 44100 "
-                        "Hz. Using default",
-                        name.c_str(), info.nSamplesPerSec);
+        common->Warning("idSoundCache: %s is %dHz, expected 11025, 22050 or 44100 Hz. Using default", name.c_str(),
+                        info.nSamplesPerSec);
         fh.Close();
         MakeDefault();
         return;
@@ -586,8 +581,7 @@ void idSoundSample::Load(void)
     }
 
     {
-        // OGG decompressed at load time (when smaller than s_decompressionLimit
-        // seconds, 6 seconds by default)
+        // OGG decompressed at load time (when smaller than s_decompressionLimit seconds, 6 seconds by default)
         if (objectInfo.wFormatTag == WAVE_FORMAT_TAG_OGG)
         {
             if ((objectSize < ((int)objectInfo.nSamplesPerSec * idSoundSystemLocal::s_decompressionLimit.GetInteger())))

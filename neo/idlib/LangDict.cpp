@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
-#include "idlib/Lexer.h"
 #include "sys/platform.h"
+#include "idlib/Lexer.h"
+#include "framework/FileSystem.h"
 
 #include "idlib/LangDict.h"
 
@@ -118,8 +115,7 @@ bool idLangDict::Load(const char *fileName, bool clear /* _D3XP */)
             idLangKeyValue kv;
             kv.key = tok;
             kv.value = tok2;
-            // DG: D3LE has #font_ entries in english.lang, maybe from D3BFG? not
-            // supported here, just skip them
+            // DG: D3LE has #font_ entries in english.lang, maybe from D3BFG? not supported here, just skip them
             if (kv.key.Cmpn("#font_", 6) != 0)
             {
                 assert(kv.key.Cmpn(STRTABLE_ID, STRTABLE_ID_LENGTH) == 0);
@@ -360,10 +356,8 @@ idLangDict::GetHashKey
 int idLangDict::GetHashKey(const char *str) const
 {
     int hashKey = 0;
-    // DG: Replace assertion for invalid entries with a warning that's shown only
-    // once
-    //     (for D3LE mod that seems to have lots of entries like
-    //     #str_adil_exis_pda_01_audio_info)
+    // DG: Replace assertion for invalid entries with a warning that's shown only once
+    //     (for D3LE mod that seems to have lots of entries like #str_adil_exis_pda_01_audio_info)
     const char *strbk = str;
     static bool warnedAboutInvalidKey = false;
     for (str += STRTABLE_ID_LENGTH; str[0] != '\0'; str++)
@@ -371,13 +365,12 @@ int idLangDict::GetHashKey(const char *str) const
         // assert( str[0] >= '0' && str[0] <= '9' );
         if (!warnedAboutInvalidKey && (str[0] < '0' || str[0] > '9'))
         {
-            // The "hash" code here very obviously expects numbers, but apparently it
-            // still somehow works, so just warn about it and otherwise accept those
-            // entries, seems to work for D3LE?
-            idLib::common->Warning("We have at least one invalid key in a language dict: %s\n"
-                                   " (might still work, but Doom3 really wants #str_01234, i.e. only a "
-                                   "number after '#str_')\n",
-                                   strbk);
+            // The "hash" code here very obviously expects numbers, but apparently it still somehow works,
+            // so just warn about it and otherwise accept those entries, seems to work for D3LE?
+            idLib::common->Warning(
+                "We have at least one invalid key in a language dict: %s\n"
+                " (might still work, but Doom3 really wants #str_01234, i.e. only a number after '#str_')\n",
+                strbk);
             warnedAboutInvalidKey = true;
         }
         // DG end

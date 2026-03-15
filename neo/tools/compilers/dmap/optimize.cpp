@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,8 +35,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 // #ifdef WIN32 // DG: this caused trouble, especially with SDL2
 #if 0
-#include <GL/gl.h>
 #include <windows.h>
+#include <GL/gl.h>
 #endif
 
 #include "tools/compilers/dmap/dmap.h"
@@ -102,8 +99,7 @@ static void ValidateEdgeCounts(optIsland_t *island)
         if (c != 2 && c != 0)
         {
             // this can still happen at diamond intersections
-            //			common->Printf( "ValidateEdgeCounts: %i
-            // edges\n", c );
+            //			common->Printf( "ValidateEdgeCounts: %i edges\n", c );
         }
     }
 }
@@ -1753,9 +1749,8 @@ void SplitOriginalEdgesAtCrossings(optimizeGroup_t *opt)
 
             if (!newVert)
             {
-                // common->Printf( "lines %i (%i to %i) and %i (%i to %i) are
-                // colinear\n", i, v1 - optVerts, v2 - optVerts, 		   j, v3 - optVerts, v4 -
-                // optVerts );	// !@#
+                // common->Printf( "lines %i (%i to %i) and %i (%i to %i) are colinear\n", i, v1 - optVerts, v2 -
+                // optVerts, 		   j, v3 - optVerts, v4 - optVerts );	// !@#
                 //  colinear, so add both verts of each edge to opposite
                 if (VertexBetween(v3, v1, v2))
                 {
@@ -1867,8 +1862,8 @@ common->Printf( "lines %i (%i to %i) and %i (%i to %i) intersect at old point %i
                 }
                 if (l == numCross)
                 {
-                    // common->Printf( "line %i fragment from point %i to %i\n", i,
-                    // sorted[j] - optVerts, sorted[k] - optVerts );
+                    // common->Printf( "line %i fragment from point %i to %i\n", i, sorted[j] - optVerts, sorted[k] -
+                    // optVerts );
                     AddEdgeIfNotAlready(sorted[j], sorted[k]);
                 }
             }

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -61,8 +58,7 @@ MaterialPropTreeView::~MaterialPropTreeView()
 }
 
 /**
- * Initializes the list of properties based on the type (material, stage,
- * special stage).
+ * Initializes the list of properties based on the type (material, stage, special stage).
  * @param listType The type of list (material, stage, special stage)
  * @param stageNum The stage from which to get the attributes.
  */
@@ -104,8 +100,7 @@ void MaterialPropTreeView::SetPropertyListType(int listType, int stageNum)
         }
         break;
         case MaterialDef::MATERIAL_DEF_TYPE_STRING: {
-            // pCurrentNode = m_Tree.InsertItem(new CPropTreeItemEdit(),
-            // pCurrentGroup);
+            // pCurrentNode = m_Tree.InsertItem(new CPropTreeItemEdit(), pCurrentGroup);
             pCurrentNode = m_Tree.InsertItem(new CPropTreeItemFileEdit(), pCurrentGroup);
         }
         break;
@@ -200,8 +195,7 @@ void MaterialPropTreeView::OnPropertyItemExpanding(NMHDR *nmhdr, LRESULT *lresul
     NMPROPTREE *nmProp = (NMPROPTREE *)nmhdr;
     CPropTreeItem *item = nmProp->pItem;
 
-    // The item isn't toggled till after this returns so use the opposite of the
-    // current state.
+    // The item isn't toggled till after this returns so use the opposite of the current state.
     registry.SetBool(va("Expand%d%s", currentListType, item->GetLabelText()), item->IsExpanded() ? true : false);
     registry.Save();
 
@@ -226,8 +220,7 @@ MaterialDef *MaterialPropTreeView::FindDefForTreeID(UINT treeID)
 }
 
 /**
- * Initializes the property tree with the data from the currently selected
- * material.
+ * Initializes the property tree with the data from the currently selected material.
  */
 void MaterialPropTreeView::RefreshProperties()
 {

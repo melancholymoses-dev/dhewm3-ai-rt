@@ -19,46 +19,40 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/containers/Queue.h"
 #include "idlib/geometry/Winding2D.h"
-#include "sys/platform.h"
 
+#include "gamesys/SysCvar.h"
 #include "Moveable.h"
 #include "WorldSpawn.h"
-#include "gamesys/SysCvar.h"
 
 #include "ai/AI.h"
 
 /*
 ===============================================================================
 
-        Dynamic Obstacle Avoidance
+    Dynamic Obstacle Avoidance
 
-        - assumes the AI lives inside a bounding box aligned with the gravity
-direction
-        - obstacles in proximity of the AI are gathered
-        - if obstacles are found the AAS walls are also considered as obstacles
-        - every obstacle is represented by an oriented bounding box (OBB)
-        - an OBB is projected onto a 2D plane orthogonal to AI's gravity
-direction
-        - the 2D windings of the projections are expanded for the AI bbox
-        - a path tree is build using clockwise and counter clockwise edge walks
-along the winding edges
-        - the path tree is pruned and optimized
-        - the shortest path is chosen for navigation
+    - assumes the AI lives inside a bounding box aligned with the gravity direction
+    - obstacles in proximity of the AI are gathered
+    - if obstacles are found the AAS walls are also considered as obstacles
+    - every obstacle is represented by an oriented bounding box (OBB)
+    - an OBB is projected onto a 2D plane orthogonal to AI's gravity direction
+    - the 2D windings of the projections are expanded for the AI bbox
+    - a path tree is build using clockwise and counter clockwise edge walks along the winding edges
+    - the path tree is pruned and optimized
+    - the shortest path is chosen for navigation
 
 ===============================================================================
 */
@@ -480,15 +474,13 @@ int GetObstacles(const idPhysics *physics, const idAAS *aas, const idEntity *ign
         obstacle.entity = obEnt;
     }
 
-    // if there are no dynamic obstacles the path should be through valid AAS
-    // space
+    // if there are no dynamic obstacles the path should be through valid AAS space
     if (numObstacles == 0)
     {
         return 0;
     }
 
-    // if the current path doesn't intersect any dynamic obstacles the path should
-    // be through valid AAS space
+    // if the current path doesn't intersect any dynamic obstacles the path should be through valid AAS space
     if (PointInsideObstacle(obstacles, numObstacles, startPos.ToVec2()) == -1)
     {
         if (!GetFirstBlockingObstacle(obstacles, numObstacles, -1, startPos.ToVec2(), seekDelta.ToVec2(), blockingScale,
@@ -732,8 +724,7 @@ pathNode_t *BuildPathTree(const obstacle_t *obstacles, int numObstacles, const i
 
         treeQueue.Add(node);
 
-        // if this path has more than twice the number of nodes than the best path
-        // so far
+        // if this path has more than twice the number of nodes than the best path so far
         if (node->numNodes > bestNumNodes * 2)
         {
             continue;
@@ -1110,8 +1101,7 @@ bool FindOptimalPath(const pathNode_t *root, const obstacle_t *obstacles, int nu
 ============
 idAI::FindPathAroundObstacles
 
-  Finds a path around dynamic obstacles using a path tree with clockwise and
-counter clockwise edge walks.
+  Finds a path around dynamic obstacles using a path tree with clockwise and counter clockwise edge walks.
 ============
 */
 bool idAI::FindPathAroundObstacles(const idPhysics *physics, const idAAS *aas, const idEntity *ignore,
@@ -1163,8 +1153,7 @@ bool idAI::FindPathAroundObstacles(const idPhysics *physics, const idAAS *aas, c
         path.seekPosObstacle = obstacles[insideObstacle].entity;
     }
 
-    // if start and destination are pushed to the same point, we don't have a path
-    // around the obstacle
+    // if start and destination are pushed to the same point, we don't have a path around the obstacle
     if ((path.seekPosOutsideObstacles.ToVec2() - path.startPosOutsideObstacles.ToVec2()).LengthSqr() < Square(1.0f))
     {
         if ((seekPos.ToVec2() - startPos.ToVec2()).LengthSqr() > Square(2.0f))
@@ -1209,10 +1198,10 @@ void idAI::FreeObstacleAvoidanceNodes(void)
 /*
 ===============================================================================
 
-        Path Prediction
+    Path Prediction
 
-        Uses the AAS to quickly and accurately predict a path for a certain
-        period of time based on an initial position and velocity.
+    Uses the AAS to quickly and accurately predict a path for a certain
+    period of time based on an initial position and velocity.
 
 ===============================================================================
 */
@@ -1249,8 +1238,7 @@ bool PathTrace(const idEntity *ent, const idAAS *aas, const idVec3 &start, const
         gameLocal.clip.Translation(clipTrace, start, end, ent->GetPhysics()->GetClipModel(),
                                    ent->GetPhysics()->GetClipModel()->GetAxis(), MASK_MONSTERSOLID, ent);
 
-        // NOTE: could do (expensive) ledge detection here for when there is no AAS
-        // file
+        // NOTE: could do (expensive) ledge detection here for when there is no AAS file
 
         trace.fraction = clipTrace.fraction;
         trace.endPos = clipTrace.endpos;
@@ -1339,8 +1327,7 @@ bool PathTrace(const idEntity *ent, const idAAS *aas, const idVec3 &start, const
 ============
 idAI::PredictPath
 
-  Can also be used when there is no AAS file available however ledges are not
-detected.
+  Can also be used when there is no AAS file available however ledges are not detected.
 ============
 */
 bool idAI::PredictPath(const idEntity *ent, const idAAS *aas, const idVec3 &start, const idVec3 &velocity,
@@ -1422,8 +1409,7 @@ bool idAI::PredictPath(const idEntity *ent, const idAAS *aas, const idVec3 &star
                         return true;
                     }
 
-                    // if not moved any further than without stepping up, or if not on a
-                    // floor surface
+                    // if not moved any further than without stepping up, or if not on a floor surface
                     if ((lastEnd - start).LengthSqr() > (trace.endPos - start).LengthSqr() - 0.1f ||
                         (trace.normal * invGravityDir) < minFloorCos)
                     {
@@ -1521,10 +1507,10 @@ bool idAI::PredictPath(const idEntity *ent, const idAAS *aas, const idVec3 &star
 /*
 ===============================================================================
 
-        Trajectory Prediction
+    Trajectory Prediction
 
-        Finds the best collision free trajectory for a clip model based on an
-        initial position, target position and speed.
+    Finds the best collision free trajectory for a clip model based on an
+    initial position, target position and speed.
 
 ===============================================================================
 */

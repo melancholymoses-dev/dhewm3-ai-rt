@@ -1,5 +1,4 @@
-// DG: updated from
-// https://github.com/NBickford-NV/stb/blob/neilbickford/all-fixes/stb_image.h
+// DG: updated from https://github.com/NBickford-NV/stb/blob/neilbickford/all-fixes/stb_image.h
 //     (commit 66e4fb617ad697c62ebe2814804881fe127cb232 from Jan 30, 2024)
 
 /* stb_image - v2.29 - public domain image loader - http://nothings.org/stb
@@ -7,8 +6,7 @@
 
    Do this:
       #define STB_IMAGE_IMPLEMENTATION
-   before you include this file in *one* C or C++ file to create the
-implementation.
+   before you include this file in *one* C or C++ file to create the implementation.
 
    // i.e. it should look like this:
    #include ...
@@ -18,16 +16,15 @@ implementation.
    #include "stb_image.h"
 
    You can #define STBI_ASSERT(x) before the #include to avoid using assert.h.
-   And #define STBI_MALLOC, STBI_REALLOC, and STBI_FREE to avoid using
-malloc,realloc,free
+   And #define STBI_MALLOC, STBI_REALLOC, and STBI_FREE to avoid using malloc,realloc,free
 
 
    QUICK NOTES:
       Primarily of interest to game developers and other people who can
           avoid problematic images and only need the trivial interface
 
-      JPEG baseline & progressive (12 bpc/arithmetic not supported, same as
-stock IJG lib) PNG 1/2/4/8/16-bit-per-channel
+      JPEG baseline & progressive (12 bpc/arithmetic not supported, same as stock IJG lib)
+      PNG 1/2/4/8/16-bit-per-channel
 
       TGA (not sure what subset, if a subset)
       BMP non-1bpp, non-RLE
@@ -56,19 +53,23 @@ RECENT REVISION HISTORY:
 
       2.29  (2023-05-xx) optimizations
       2.28  (2023-01-29) many error fixes, security errors, just tons of stuff
-      2.27  (2021-07-11) document stbi_info better, 16-bit PNM support, bug
-fixes 2.26  (2020-07-13) many minor fixes 2.25  (2020-02-02) fix warnings 2.24
-(2020-02-02) fix warnings; thread-local failure_reason and flip_vertically 2.23
-(2019-08-11) fix clang static analysis warning 2.22  (2019-03-04) gif fixes, fix
-warnings 2.21  (2019-02-25) fix typo in comment 2.20  (2019-02-07) support utf8
-filenames in Windows; fix warnings and platform ifdefs 2.19  (2018-02-11) fix
-warning 2.18  (2018-01-30) fix warnings 2.17  (2018-01-29) bugfix, 1-bit BMP,
-16-bitness query, fix warnings 2.16  (2017-07-23) all functions have 16-bit
-variants; optimizations; bugfixes 2.15  (2017-03-18) fix png-1,2,4; all Imagenet
-JPGs; no runtime SSE detection on GCC 2.14  (2017-03-03) remove deprecated
-STBI_JPEG_OLD; fixes for Imagenet JPGs 2.13  (2016-12-04) experimental 16-bit
-API, only for PNG so far; fixes 2.12  (2016-04-02) fix typo in 2.11 PSD fix that
-caused crashes 2.11  (2016-04-02) 16-bit PNGS; enable SSE2 in non-gcc x64
+      2.27  (2021-07-11) document stbi_info better, 16-bit PNM support, bug fixes
+      2.26  (2020-07-13) many minor fixes
+      2.25  (2020-02-02) fix warnings
+      2.24  (2020-02-02) fix warnings; thread-local failure_reason and flip_vertically
+      2.23  (2019-08-11) fix clang static analysis warning
+      2.22  (2019-03-04) gif fixes, fix warnings
+      2.21  (2019-02-25) fix typo in comment
+      2.20  (2019-02-07) support utf8 filenames in Windows; fix warnings and platform ifdefs
+      2.19  (2018-02-11) fix warning
+      2.18  (2018-01-30) fix warnings
+      2.17  (2018-01-29) bugfix, 1-bit BMP, 16-bitness query, fix warnings
+      2.16  (2017-07-23) all functions have 16-bit variants; optimizations; bugfixes
+      2.15  (2017-03-18) fix png-1,2,4; all Imagenet JPGs; no runtime SSE detection on GCC
+      2.14  (2017-03-03) remove deprecated STBI_JPEG_OLD; fixes for Imagenet JPGs
+      2.13  (2016-12-04) experimental 16-bit API, only for PNG so far; fixes
+      2.12  (2016-04-02) fix typo in 2.11 PSD fix that caused crashes
+      2.11  (2016-04-02) 16-bit PNGS; enable SSE2 in non-gcc x64
                          RGB-format JPEG; remove white matting in PSD;
                          allocate large structures on the stack;
                          correct channel count for PNG & BMP
@@ -91,39 +92,40 @@ caused crashes 2.11  (2016-04-02) 16-bit PNGS; enable SSE2 in non-gcc x64
     github:urraka (animated gif)           Junggon Kim (PNM comments)
     Christopher Forseth (animated gif)     Daniel Gibson (16-bit TGA)
                                            socks-the-fox (16-bit PNG)
-                                           Jeremy Sawicki (handle all ImageNet
-JPGs) Optimizations & bugfixes                  Mikhail Morozov (1-bit BMP)
+                                           Jeremy Sawicki (handle all ImageNet JPGs)
+ Optimizations & bugfixes                  Mikhail Morozov (1-bit BMP)
     Fabian "ryg" Giesen                    Anael Seghezzi (is-16-bit query)
     Arseny Kapoulkine                      Simon Breuss (16-bit PNM)
     John-Mark Allen
     Carmelo J Fdez-Aguera
 
  Bug & warning fixes
-    Marc LeBlanc            David Woo          Guillaume George     Martins
-Mozeiko Christpher Lloyd        Jerry Jansson      Joseph Thomson       Blazej
-Dariusz Roszkowski Phil Jordan                                Dave Moore Roy
-Eltham Hayaki Saito            Nathan Reed        Won Chun Luke Graham Johan
-Duparc       Nick Verigakis       the Horde3D community Thomas Ruf Ronny
-Chevalier                         github:rlyeh Janez Zemva             John
-Bartholomew   Michal Cichon        github:romigrou Jonathan Blow           Ken
-Hamada         Tero Hanninen        github:svdijk Eugene Golushkov Laurent
-Gomila     Cort Stratton        github:snagar Aruelien Pocheville     Sergio
-Gonzalez    Thibault Reuille     github:Zelex Cass Everitt            Ryamond
-Barbiero                        github:grim210 Paul Du Bois            Engin
-Manap        Aldo Culquicondor    github:sammyhw Philipp Wiesemann       Dale
-Weiler        Oriol Ferrer Mesia   github:phprus Josh Tobin              Neil
-Bickford      Matthew Gregan       github:poppolopoppo Julian Raschke Gregory
-Mullen     Christian Floisand   github:darealshinji Baldur Karlsson Kevin
-Schmidt      JR Smith             github:Michaelangel007 Brad Weinberger Matvey
-Cherevko      github:mosra Luca Sas                Alexander Veselov  Zack
-Middleton       [reserved] Ryan C. Gordon          [reserved] [reserved] DO NOT
-ADD YOUR NAME HERE
+    Marc LeBlanc            David Woo          Guillaume George     Martins Mozeiko
+    Christpher Lloyd        Jerry Jansson      Joseph Thomson       Blazej Dariusz Roszkowski
+    Phil Jordan                                Dave Moore           Roy Eltham
+    Hayaki Saito            Nathan Reed        Won Chun
+    Luke Graham             Johan Duparc       Nick Verigakis       the Horde3D community
+    Thomas Ruf              Ronny Chevalier                         github:rlyeh
+    Janez Zemva             John Bartholomew   Michal Cichon        github:romigrou
+    Jonathan Blow           Ken Hamada         Tero Hanninen        github:svdijk
+    Eugene Golushkov        Laurent Gomila     Cort Stratton        github:snagar
+    Aruelien Pocheville     Sergio Gonzalez    Thibault Reuille     github:Zelex
+    Cass Everitt            Ryamond Barbiero                        github:grim210
+    Paul Du Bois            Engin Manap        Aldo Culquicondor    github:sammyhw
+    Philipp Wiesemann       Dale Weiler        Oriol Ferrer Mesia   github:phprus
+    Josh Tobin              Neil Bickford      Matthew Gregan       github:poppolopoppo
+    Julian Raschke          Gregory Mullen     Christian Floisand   github:darealshinji
+    Baldur Karlsson         Kevin Schmidt      JR Smith             github:Michaelangel007
+                            Brad Weinberger    Matvey Cherevko      github:mosra
+    Luca Sas                Alexander Veselov  Zack Middleton       [reserved]
+    Ryan C. Gordon          [reserved]                              [reserved]
+                     DO NOT ADD YOUR NAME HERE
 
                      Jacko Dirks
 
-  To add your name to the credits, pick a random blank space in the middle and
-fill it. 80% of merge conflicts on stb PRs are due to people adding their name
-at the end of the credits.
+  To add your name to the credits, pick a random blank space in the middle and fill it.
+  80% of merge conflicts on stb PRs are due to people adding their name at the end
+  of the credits.
 */
 
 #ifndef STBI_INCLUDE_STB_IMAGE_H
@@ -142,15 +144,14 @@ at the end of the credits.
 //    // ... process data if not NULL ...
 //    // ... x = width, y = height, n = # 8-bit components per pixel ...
 //    // ... replace '0' with '1'..'4' to force that many components per pixel
-//    // ... but 'n' will always be the number that it would have been if you
-//    said 0 stbi_image_free(data);
+//    // ... but 'n' will always be the number that it would have been if you said 0
+//    stbi_image_free(data);
 //
 // Standard parameters:
 //    int *x                 -- outputs image width in pixels
 //    int *y                 -- outputs image height in pixels
 //    int *channels_in_file  -- outputs # of image components in image file
-//    int desired_channels   -- if non-zero, # of image components requested in
-//    result
+//    int desired_channels   -- if non-zero, # of image components requested in result
 //
 // The return value from an image loader is an 'unsigned char *' which points
 // to the pixel data, or NULL on an allocation failure or if the image is
@@ -178,8 +179,8 @@ at the end of the credits.
 // and *x, *y, *channels_in_file will be unchanged. The function
 // stbi_failure_reason() can be queried for an extremely brief, end-user
 // unfriendly explanation of why the load failed. Define STBI_NO_FAILURE_STRINGS
-// to avoid compiling these strings at all, and STBI_FAILURE_USERMSG to get
-// slightly more user-friendly ones.
+// to avoid compiling these strings at all, and STBI_FAILURE_USERMSG to get slightly
+// more user-friendly ones.
 //
 // Paletted PNG, BMP, GIF, and PIC images are automatically depalettized.
 //
@@ -229,12 +230,11 @@ at the end of the credits.
 //    2. easy to maintain
 //    3. good performance
 //
-// Sometimes I let "good performance" creep up in priority over "easy to
-// maintain", and for best performance I may provide less-easy-to-use APIs that
-// give higher performance, in addition to the easy-to-use ones. Nevertheless,
-// it's important to keep in mind that from the standpoint of you, a client of
-// this library, all you care about is #1 and #3, and stb libraries DO NOT
-// emphasize #3 above all.
+// Sometimes I let "good performance" creep up in priority over "easy to maintain",
+// and for best performance I may provide less-easy-to-use APIs that give higher
+// performance, in addition to the easy-to-use ones. Nevertheless, it's important
+// to keep in mind that from the standpoint of you, a client of this library,
+// all you care about is #1 and #3, and stb libraries DO NOT emphasize #3 above all.
 //
 // Some secondary priorities arise directly from the first two, some of which
 // provide more explicit reasons why performance can't be emphasized.
@@ -253,8 +253,7 @@ at the end of the credits.
 // overhead.
 //
 // The three functions you must define are "read" (reads some bytes of data),
-// "skip" (skips some bytes of data), "eof" (reports if the stream is at the
-// end).
+// "skip" (skips some bytes of data), "eof" (reports if the stream is at the end).
 //
 // ===========================================================================
 //
@@ -282,11 +281,10 @@ at the end of the credits.
 // HDR image support   (disable by defining STBI_NO_HDR)
 //
 // stb_image supports loading HDR images in general, and currently the Radiance
-// .HDR file format specifically. You can still load any file through the
-// existing interface; if you attempt to load an HDR file, it will be
-// automatically remapped to LDR, assuming gamma 2.2 and an arbitrary scale
-// factor defaulting to 1; both of these constants can be reconfigured through
-// this interface:
+// .HDR file format specifically. You can still load any file through the existing
+// interface; if you attempt to load an HDR file, it will be automatically remapped
+// to LDR, assuming gamma 2.2 and an arbitrary scale factor defaulting to 1;
+// both of these constants can be reconfigured through this interface:
 //
 //     stbi_hdr_to_ldr_gamma(2.2f);
 //     stbi_hdr_to_ldr_scale(1.0f);
@@ -416,10 +414,8 @@ extern "C"
     typedef struct
     {
         int (*read)(void *user, char *data,
-                    int size);           // fill 'data' with 'size' bytes.  return number of
-                                         // bytes actually read
-        void (*skip)(void *user, int n); // skip the next 'n' bytes, or 'unget' the
-                                         // last -n bytes if negative
+                    int size);           // fill 'data' with 'size' bytes.  return number of bytes actually read
+        void (*skip)(void *user, int n); // skip the next 'n' bytes, or 'unget' the last -n bytes if negative
         int (*eof)(void *user);          // returns nonzero if we are at end of file/data
     } stbi_io_callbacks;
 
@@ -436,8 +432,7 @@ extern "C"
 #ifndef STBI_NO_STDIO
     STBIDEF stbi_uc *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
     STBIDEF stbi_uc *stbi_load_from_file(FILE *f, int *x, int *y, int *channels_in_file, int desired_channels);
-// for stbi_load_from_file, file pointer is left pointing immediately after
-// image
+// for stbi_load_from_file, file pointer is left pointing immediately after image
 #endif
 
 #ifndef STBI_NO_GIF
@@ -527,13 +522,12 @@ extern "C"
     // or just pass them through "as-is"
     STBIDEF void stbi_convert_iphone_png_to_rgb(int flag_true_if_should_convert);
 
-    // flip the image vertically, so the first pixel in the output array is the
-    // bottom left
+    // flip the image vertically, so the first pixel in the output array is the bottom left
     STBIDEF void stbi_set_flip_vertically_on_load(int flag_true_if_should_flip);
 
-    // as above, but only applies to images loaded on the thread that calls the
-    // function this function is only available if your compiler supports
-    // thread-local variables; calling it will fail to link if your compiler doesn't
+    // as above, but only applies to images loaded on the thread that calls the function
+    // this function is only available if your compiler supports thread-local variables;
+    // calling it will fail to link if your compiler doesn't
     STBIDEF void stbi_set_unpremultiply_on_load_thread(int flag_true_if_should_unpremultiply);
     STBIDEF void stbi_convert_iphone_png_to_rgb_thread(int flag_true_if_should_convert);
     STBIDEF void stbi_set_flip_vertically_on_load_thread(int flag_true_if_should_flip);
@@ -596,11 +590,11 @@ extern "C"
 #define STBI_NO_ZLIB
 #endif
 
-#include <limits.h>
 #include <stdarg.h>
 #include <stddef.h> // ptrdiff_t on osx
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR)
 #include <math.h> // ldexp, pow
@@ -718,8 +712,7 @@ typedef unsigned char validate_uint32[sizeof(stbi__uint32) == 4 ? 1 : -1];
 #endif
 
 #if defined(__MINGW32__) && defined(STBI__X86_TARGET) && !defined(STBI_MINGW_ENABLE_SSE2) && !defined(STBI_NO_SIMD)
-// Note that __MINGW32__ doesn't actually mean 32-bit, so we have to avoid
-// STBI__X64_TARGET
+// Note that __MINGW32__ doesn't actually mean 32-bit, so we have to avoid STBI__X64_TARGET
 //
 // 32-bit MinGW wants ESP to be 16-byte aligned, but this is not in the
 // Windows ABI and VC++ as well as Windows DLLs don't maintain that invariant.
@@ -729,8 +722,7 @@ typedef unsigned char validate_uint32[sizeof(stbi__uint32) == 4 ? 1 : -1];
 // See https://github.com/nothings/stb/issues/81 for more information.
 //
 // So default to no SSE2 on 32-bit MinGW. If you've read this far and added
-// -mstackrealign to your build settings, feel free to #define
-// STBI_MINGW_ENABLE_SSE2.
+// -mstackrealign to your build settings, feel free to #define STBI_MINGW_ENABLE_SSE2.
 #define STBI_NO_SIMD
 #endif
 
@@ -899,8 +891,7 @@ static void stbi__rewind(stbi__context *s)
 {
     // conceptually rewind SHOULD rewind to the beginning of the stream,
     // but we just rewind to the beginning of the initial buffer, because
-    // we only use it after doing 'test', which only ever looks at at most 92
-    // bytes
+    // we only use it after doing 'test', which only ever looks at at most 92 bytes
     s->img_buffer = s->img_buffer_original;
     s->img_buffer_end = s->img_buffer_original_end;
 }
@@ -1049,8 +1040,7 @@ static int stbi__mad3sizes_valid(int a, int b, int c, int add)
     return stbi__mul2sizes_valid(a, b) && stbi__mul2sizes_valid(a * b, c) && stbi__addsizes_valid(a * b * c, add);
 }
 
-// returns 1 if "a*b*c*d + add" has no negative terms/factors and doesn't
-// overflow
+// returns 1 if "a*b*c*d + add" has no negative terms/factors and doesn't overflow
 #if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR) || !defined(STBI_NO_PNM)
 static int stbi__mad4sizes_valid(int a, int b, int c, int d, int add)
 {
@@ -1085,15 +1075,13 @@ static void *stbi__malloc_mad4(int a, int b, int c, int d, int add)
 }
 #endif
 
-// returns 1 if the sum of two signed ints is valid (between -2^31 and 2^31-1
-// inclusive), 0 on overflow.
+// returns 1 if the sum of two signed ints is valid (between -2^31 and 2^31-1 inclusive), 0 on overflow.
 static int stbi__addints_valid(int a, int b)
 {
     if ((a >= 0) != (b >= 0))
         return 1; // a and b have different signs, so no overflow
     if (a < 0 && b < 0)
-        return a >= INT_MIN - b; // same as a + b >= INT_MIN; INT_MIN - b cannot
-                                 // overflow since b < 0.
+        return a >= INT_MIN - b; // same as a + b >= INT_MIN; INT_MIN - b cannot overflow since b < 0.
     return a <= INT_MAX - b;
 }
 
@@ -1101,8 +1089,7 @@ static int stbi__addints_valid(int a, int b)
 static int stbi__mul2shorts_valid(int a, int b)
 {
     if (b == 0 || b == -1)
-        return 1; // multiplication by 0 is always 0; check for -1 so SHRT_MIN/b
-                  // doesn't overflow
+        return 1; // multiplication by 0 is always 0; check for -1 so SHRT_MIN/b doesn't overflow
     if ((a >= 0) == (b >= 0))
         return a <= SHRT_MAX / b; // product is positive, so similar to mul2sizes_valid
     if (b < 0)
@@ -1164,8 +1151,7 @@ static void *stbi__load_main(stbi__context *s, int *x, int *y, int *comp, int re
 {
     memset(ri, 0, sizeof(*ri));         // make sure it's initialized if we add new fields
     ri->bits_per_channel = 8;           // default is 8 so most paths don't have to be changed
-    ri->channel_order = STBI_ORDER_RGB; // all current input & output are this, but this is here
-                                        // so we can add BGR order
+    ri->channel_order = STBI_ORDER_RGB; // all current input & output are this, but this is here so we can add BGR order
     ri->num_channels = 0;
 
 // test the formats with a very explicit header first (at least a FOURCC
@@ -1233,8 +1219,8 @@ static stbi_uc *stbi__convert_16_to_8(stbi__uint16 *orig, int w, int h, int chan
         return stbi__errpuc("outofmem", "Out of memory");
 
     for (i = 0; i < img_len; ++i)
-        reduced[i] = (stbi_uc)((orig[i] >> 8) & 0xFF); // top half of each byte is sufficient
-                                                       // approx of 16->8 bit scaling
+        reduced[i] =
+            (stbi_uc)((orig[i] >> 8) & 0xFF); // top half of each byte is sufficient approx of 16->8 bit scaling
 
     STBI_FREE(orig);
     return reduced;
@@ -1251,8 +1237,8 @@ static stbi__uint16 *stbi__convert_8_to_16(stbi_uc *orig, int w, int h, int chan
         return (stbi__uint16 *)stbi__errpuc("outofmem", "Out of memory");
 
     for (i = 0; i < img_len; ++i)
-        enlarged[i] = (stbi__uint16)((orig[i] << 8) + orig[i]); // replicate to high and low byte,
-                                                                // maps 0->0, 255->0xffff
+        enlarged[i] =
+            (stbi__uint16)((orig[i] << 8) + orig[i]); // replicate to high and low byte, maps 0->0, 255->0xffff
 
     STBI_FREE(orig);
     return enlarged;
@@ -1307,8 +1293,7 @@ static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, 
     if (result == NULL)
         return NULL;
 
-    // it is the responsibility of the loaders to make sure we get either 8 or 16
-    // bit.
+    // it is the responsibility of the loaders to make sure we get either 8 or 16 bit.
     STBI_ASSERT(ri.bits_per_channel == 8 || ri.bits_per_channel == 16);
 
     if (ri.bits_per_channel != 8)
@@ -1342,8 +1327,7 @@ static stbi__uint16 *stbi__load_and_postprocess_16bit(stbi__context *s, int *x, 
     if (result == NULL)
         return NULL;
 
-    // it is the responsibility of the loaders to make sure we get either 8 or 16
-    // bit.
+    // it is the responsibility of the loaders to make sure we get either 8 or 16 bit.
     STBI_ASSERT(ri.bits_per_channel == 8 || ri.bits_per_channel == 16);
 
     if (ri.bits_per_channel != 16)
@@ -1359,8 +1343,7 @@ static stbi__uint16 *stbi__load_and_postprocess_16bit(stbi__context *s, int *x, 
     }
 
     // @TODO: move stbi__convert_format16 to here
-    // @TODO: special case RGB-to-Y (and RGBA-to-YA) for 8-bit-to-16-bit case to
-    // keep more precision
+    // @TODO: special case RGB-to-Y (and RGBA-to-YA) for 8-bit-to-16-bit case to keep more precision
 
     if (stbi__vertically_flip_on_load)
     {
@@ -1386,8 +1369,8 @@ static void stbi__float_postprocess(float *result, int *x, int *y, int *comp, in
 
 #if defined(_WIN32) && defined(STBI_WINDOWS_UTF8)
 STBI_EXTERN
-__declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int cp, unsigned long flags, const char *str, int cbmb,
-                                                        wchar_t *widestr, int cchwide);
+    __declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int cp, unsigned long flags, const char *str,
+                                                            int cbmb, wchar_t *widestr, int cchwide);
 STBI_EXTERN __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int cp, unsigned long flags,
                                                                     const wchar_t *widestr, int cchwide, char *str,
                                                                     int cbmb, const char *defchar, int *used_default);
@@ -1899,9 +1882,8 @@ static unsigned char *stbi__convert_format(unsigned char *data, int img_n, int r
 #define STBI__CASE(a, b)                                                                                               \
     case STBI__COMBO(a, b):                                                                                            \
         for (i = x - 1; i >= 0; --i, src += a, dest += b)
-        // convert source image with img_n components to one with req_comp
-        // components; avoid switch per pixel, so use switch per scanline and
-        // massive macros
+        // convert source image with img_n components to one with req_comp components;
+        // avoid switch per pixel, so use switch per scanline and massive macros
         switch (STBI__COMBO(img_n, req_comp))
         {
             STBI__CASE(1, 2)
@@ -2025,9 +2007,8 @@ static stbi__uint16 *stbi__convert_format16(stbi__uint16 *data, int img_n, int r
 #define STBI__CASE(a, b)                                                                                               \
     case STBI__COMBO(a, b):                                                                                            \
         for (i = x - 1; i >= 0; --i, src += a, dest += b)
-        // convert source image with img_n components to one with req_comp
-        // components; avoid switch per pixel, so use switch per scanline and
-        // massive macros
+        // convert source image with img_n components to one with req_comp components;
+        // avoid switch per pixel, so use switch per scanline and massive macros
         switch (STBI__COMBO(img_n, req_comp))
         {
             STBI__CASE(1, 2)
@@ -2469,8 +2450,7 @@ stbi_inline static int stbi__extend_receive(stbi__jpeg *j, int n)
     if (j->code_bits < n)
         return 0; // ran out of bits from stream, return 0s intead of continuing
 
-    sgn = j->code_buffer >> 31; // sign bit always in MSB; 0 if MSB clear
-                                // (positive), 1 if MSB set (negative)
+    sgn = j->code_buffer >> 31; // sign bit always in MSB; 0 if MSB clear (positive), 1 if MSB set (negative)
     k = stbi_lrot(j->code_buffer, n);
     j->code_buffer = k & ~stbi__bmask[n];
     k &= stbi__bmask[n];
@@ -2718,8 +2698,8 @@ static int stbi__jpeg_decode_block_prog_ac(stbi__jpeg *j, short data[64], stbi__
             do
             {
                 int r, s;
-                int rs = stbi__jpeg_huff_decode(j, hac); // @OPTIMIZE see if we can use the fast path here,
-                                                         // advance-by-r is so slow, eh
+                int rs = stbi__jpeg_huff_decode(
+                    j, hac); // @OPTIMIZE see if we can use the fast path here, advance-by-r is so slow, eh
                 if (rs < 0)
                     return stbi__err("bad huffman code", "Corrupt JPEG");
                 s = rs & 15;
@@ -3626,8 +3606,7 @@ static int stbi__process_marker(stbi__jpeg *z, int m)
                 n += sizes[i];
             }
             if (n > 256)
-                return stbi__err("bad DHT header",
-                                 "Corrupt JPEG"); // Loop over i < n would write past end of values!
+                return stbi__err("bad DHT header", "Corrupt JPEG"); // Loop over i < n would write past end of values!
             L -= 17;
             if (tc == 0)
             {
@@ -3790,14 +3769,12 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
         return stbi__err("bad SOF len", "Corrupt JPEG"); // JPEG
     p = stbi__get8(s);
     if (p != 8)
-        return stbi__err("only 8-bit",
-                         "JPEG format not supported: 8-bit only"); // JPEG baseline
+        return stbi__err("only 8-bit", "JPEG format not supported: 8-bit only"); // JPEG baseline
     s->img_y = stbi__get16be(s);
     if (s->img_y == 0)
-        return stbi__err("no header height",
-                         "JPEG format not supported: delayed height"); // Legal, but we don't
-                                                                       // handle it--but neither
-                                                                       // does IJG
+        return stbi__err(
+            "no header height",
+            "JPEG format not supported: delayed height"); // Legal, but we don't handle it--but neither does IJG
     s->img_x = stbi__get16be(s);
     if (s->img_x == 0)
         return stbi__err("0 width", "Corrupt JPEG"); // JPEG requires
@@ -3851,9 +3828,8 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
             v_max = z->img_comp[i].v;
     }
 
-    // check that plane subsampling factors are integer ratios; our resamplers
-    // can't deal with fractional ratios and I've never seen a non-corrupted JPEG
-    // file actually use them
+    // check that plane subsampling factors are integer ratios; our resamplers can't deal with fractional ratios
+    // and I've never seen a non-corrupted JPEG file actually use them
     for (i = 0; i < s->img_n; ++i)
     {
         if (h_max % z->img_comp[i].h != 0)
@@ -3881,8 +3857,8 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
         // big blocks (e.g. a 16x16 iMCU on an image of width 33); we won't
         // discard the extra data until colorspace conversion
         //
-        // img_mcu_x, img_mcu_y: <=17 bits; comp[i].h and .v are <=4 (checked
-        // earlier) so these muls can't overflow with 32-bit ints (which we require)
+        // img_mcu_x, img_mcu_y: <=17 bits; comp[i].h and .v are <=4 (checked earlier)
+        // so these muls can't overflow with 32-bit ints (which we require)
         z->img_comp[i].w2 = z->img_mcu_x * z->img_comp[i].h * 8;
         z->img_comp[i].h2 = z->img_mcu_y * z->img_comp[i].v * 8;
         z->img_comp[i].coeff = 0;
@@ -3998,8 +3974,8 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
             if (j->marker == STBI__MARKER_none)
             {
                 j->marker = stbi__skip_jpeg_junk_at_end(j);
-                // if we reach eof without hitting a marker, stbi__get_marker() below
-                // will fail and we'll eventually return 0
+                // if we reach eof without hitting a marker, stbi__get_marker() below will fail and we'll eventually
+                // return 0
             }
             m = stbi__get_marker(j);
             if (STBI__RESTART(m))
@@ -4989,8 +4965,7 @@ stbi_inline static int stbi__zhuffman_decode(stbi__zbuf *a, stbi__zhuffman *z)
     return stbi__zhuffman_decode_slowpath(a, z);
 }
 
-static int stbi__zexpand(stbi__zbuf *z, char *zout,
-                         int n) // need to make room for n bytes
+static int stbi__zexpand(stbi__zbuf *z, char *zout, int n) // need to make room for n bytes
 {
     char *q;
     unsigned int cur, limit, old_limit;
@@ -5039,8 +5014,7 @@ static int stbi__parse_huffman_block(stbi__zbuf *a)
         if (z < 256)
         {
             if (z < 0)
-                return stbi__err("bad huffman code",
-                                 "Corrupt PNG"); // error in huffman codes
+                return stbi__err("bad huffman code", "Corrupt PNG"); // error in huffman codes
             if (zout >= a->zout_end)
             {
                 if (!stbi__zexpand(a, zout, 1))
@@ -5058,28 +5032,27 @@ static int stbi__parse_huffman_block(stbi__zbuf *a)
                 a->zout = zout;
                 if (a->hit_zeof_once && a->num_bits < 16)
                 {
-                    // The first time we hit zeof, we inserted 16 extra zero bits into our
-                    // bit buffer so the decoder can just do its speculative decoding. But
-                    // if we actually consumed any of those bits (which is the case when
-                    // num_bits < 16), the stream actually read past the end so it is
-                    // malformed.
+                    // The first time we hit zeof, we inserted 16 extra zero bits into our bit
+                    // buffer so the decoder can just do its speculative decoding. But if we
+                    // actually consumed any of those bits (which is the case when num_bits < 16),
+                    // the stream actually read past the end so it is malformed.
                     return stbi__err("unexpected end", "Corrupt PNG");
                 }
                 return 1;
             }
             if (z >= 286)
-                return stbi__err("bad huffman code",
-                                 "Corrupt PNG"); // per DEFLATE, length codes 286 and 287 must not
-                                                 // appear in compressed data
+                return stbi__err(
+                    "bad huffman code",
+                    "Corrupt PNG"); // per DEFLATE, length codes 286 and 287 must not appear in compressed data
             z -= 257;
             len = stbi__zlength_base[z];
             if (stbi__zlength_extra[z])
                 len += stbi__zreceive(a, stbi__zlength_extra[z]);
             z = stbi__zhuffman_decode(a, &a->z_distance);
             if (z < 0 || z >= 30)
-                return stbi__err("bad huffman code",
-                                 "Corrupt PNG"); // per DEFLATE, distance codes 30 and 31 must not
-                                                 // appear in compressed data
+                return stbi__err(
+                    "bad huffman code",
+                    "Corrupt PNG"); // per DEFLATE, distance codes 30 and 31 must not appear in compressed data
             dist = stbi__zdist_base[z];
             if (stbi__zdist_extra[z])
                 dist += stbi__zreceive(a, stbi__zdist_extra[z]);
@@ -5227,11 +5200,9 @@ static int stbi__parse_zlib_header(stbi__zbuf *a)
     if ((cmf * 256 + flg) % 31 != 0)
         return stbi__err("bad zlib header", "Corrupt PNG"); // zlib spec
     if (flg & 32)
-        return stbi__err("no preset dict",
-                         "Corrupt PNG"); // preset dictionary not allowed in png
+        return stbi__err("no preset dict", "Corrupt PNG"); // preset dictionary not allowed in png
     if (cm != 8)
-        return stbi__err("bad compression",
-                         "Corrupt PNG"); // DEFLATE required for png
+        return stbi__err("bad compression", "Corrupt PNG"); // DEFLATE required for png
     // window = 1 << (8 + cinfo)... but who cares, we fully buffer output
     return 1;
 }
@@ -5466,10 +5437,9 @@ static stbi_uc first_row_filter[5] = {
 
 static int stbi__paeth(int a, int b, int c)
 {
-    // This formulation looks very different from the reference in the PNG spec,
-    // but is actually equivalent and has favorable data dependencies and admits
-    // straightforward generation of branch-free code, which helps performance
-    // significantly.
+    // This formulation looks very different from the reference in the PNG spec, but is
+    // actually equivalent and has favorable data dependencies and admits straightforward
+    // generation of branch-free code, which helps performance significantly.
     int thresh = c * 3 - (a + b);
     int lo = a < b ? a : b;
     int hi = a < b ? b : a;
@@ -5539,10 +5509,9 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
         return stbi__err("too large", "Corrupt PNG");
     img_len = (img_width_bytes + 1) * y;
 
-    // we used to check for exact match between raw_len and img_len on
-    // non-interlaced PNGs, but issue #276 reported a PNG in the wild that had
-    // extra data at the end (all zeros), so just check for raw_len < img_len
-    // always.
+    // we used to check for exact match between raw_len and img_len on non-interlaced PNGs,
+    // but issue #276 reported a PNG in the wild that had extra data at the end (all zeros),
+    // so just check for raw_len < img_len always.
     if (raw_len < img_len)
         return stbi__err("not enough pixels", "Corrupt PNG");
 
@@ -5614,8 +5583,7 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
 
         raw += nk;
 
-        // expand decoded bits in cur to dest, also adding an extra alpha channel if
-        // desired
+        // expand decoded bits in cur to dest, also adding an extra alpha channel if desired
         if (depth < 8)
         {
             stbi_uc scale = (color == 0) ? stbi__depth_scale_table[depth] : 1; // scale grayscale values to 0..255 range
@@ -6089,8 +6057,7 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
                 if (c.length != (stbi__uint32)s->img_n * 2)
                     return stbi__err("bad tRNS len", "Corrupt PNG");
                 has_trans = 1;
-                // non-paletted with tRNS = constant alpha. if header-scanning, we can
-                // stop now.
+                // non-paletted with tRNS = constant alpha. if header-scanning, we can stop now.
                 if (scan == STBI__SCAN_header)
                 {
                     ++s->img_n;
@@ -6104,9 +6071,8 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
                 else
                 {
                     for (k = 0; k < s->img_n; ++k)
-                        tc[k] =
-                            (stbi_uc)(stbi__get16be(s) & 255) * stbi__depth_scale_table[z->depth]; // non 8-bit images
-                                                                                                   // will be larger
+                        tc[k] = (stbi_uc)(stbi__get16be(s) & 255) *
+                                stbi__depth_scale_table[z->depth]; // non 8-bit images will be larger
                 }
             }
             break;
@@ -6453,8 +6419,7 @@ static int stbi__bmp_set_mask_defaults(stbi__bmp_data *info, int compress)
             info->mg = 0xffu << 8;
             info->mb = 0xffu << 0;
             info->ma = 0xffu << 24;
-            info->all_a = 0; // if all_a is 0 at end, then we loaded alpha channel but
-                             // it was all 0
+            info->all_a = 0; // if all_a is 0 at end, then we loaded alpha channel but it was all 0
         }
         else
         {
@@ -6504,16 +6469,14 @@ static void *stbi__bmp_parse_header(stbi__context *s, stbi__bmp_data *info)
             return stbi__errpuc("BMP RLE", "BMP type not supported: RLE");
         if (compress >= 4)
             return stbi__errpuc("BMP JPEG/PNG",
-                                "BMP type not supported: unsupported compression"); // this includes
-                                                                                    // PNG/JPEG modes
+                                "BMP type not supported: unsupported compression"); // this includes PNG/JPEG modes
         if (compress == 3 && info->bpp != 16 && info->bpp != 32)
-            return stbi__errpuc("bad BMP",
-                                "bad BMP"); // bitfields requires 16 or 32 bits/pixel
-        stbi__get32le(s);                   // discard sizeof
-        stbi__get32le(s);                   // discard hres
-        stbi__get32le(s);                   // discard vres
-        stbi__get32le(s);                   // discard colorsused
-        stbi__get32le(s);                   // discard max important
+            return stbi__errpuc("bad BMP", "bad BMP"); // bitfields requires 16 or 32 bits/pixel
+        stbi__get32le(s);                              // discard sizeof
+        stbi__get32le(s);                              // discard hres
+        stbi__get32le(s);                              // discard vres
+        stbi__get32le(s);                              // discard colorsused
+        stbi__get32le(s);                              // discard max important
         if (hsz == 40 || hsz == 56)
         {
             if (hsz == 56)
@@ -6613,22 +6576,19 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
     }
     if (psize == 0)
     {
-        // accept some number of extra bytes after the header, but if the offset
-        // points either to before the header ends or implies a large amount of
-        // extra data, reject the file as malformed
+        // accept some number of extra bytes after the header, but if the offset points either to before
+        // the header ends or implies a large amount of extra data, reject the file as malformed
         int bytes_read_so_far = s->callback_already_read + (int)(s->img_buffer - s->img_buffer_original);
         int header_limit = 1024;        // max we actually read is below 256 bytes currently.
-        int extra_data_limit = 256 * 4; // what ordinarily goes here is a palette;
-                                        // 256 entries*4 bytes is its max size.
+        int extra_data_limit = 256 * 4; // what ordinarily goes here is a palette; 256 entries*4 bytes is its max size.
         if (bytes_read_so_far <= 0 || bytes_read_so_far > header_limit)
         {
             return stbi__errpuc("bad header", "Corrupt BMP");
         }
         // we established that bytes_read_so_far is positive and sensible.
-        // the first half of this test rejects offsets that are either too small
-        // positives, or negative, and guarantees that info.offset >=
-        // bytes_read_so_far > 0. this in turn ensures the number computed in the
-        // second half of the test can't overflow.
+        // the first half of this test rejects offsets that are either too small positives, or
+        // negative, and guarantees that info.offset >= bytes_read_so_far > 0. this in turn
+        // ensures the number computed in the second half of the test can't overflow.
         if (info.offset < bytes_read_so_far || info.offset - bytes_read_so_far > extra_data_limit)
         {
             return stbi__errpuc("bad offset", "Corrupt BMP");
@@ -6904,8 +6864,7 @@ static int stbi__tga_info(stbi__context *s, int *x, int *y, int *comp)
             stbi__rewind(s);
             return 0;
         }
-        stbi__skip(s,
-                   4);      // skip index of first colormap entry and number of entries
+        stbi__skip(s, 4);   // skip index of first colormap entry and number of entries
         sz = stbi__get8(s); //   check bits per palette color entry
         if ((sz != 8) && (sz != 15) && (sz != 16) && (sz != 24) && (sz != 32))
         {
@@ -6980,9 +6939,8 @@ static int stbi__tga_test(stbi__context *s)
     if (tga_color_type == 1)
     { // colormapped (paletted) image
         if (sz != 1 && sz != 9)
-            goto errorEnd; // colortype 1 demands image type 1 or 9
-        stbi__skip(s,
-                   4);      // skip index of first colormap entry and number of entries
+            goto errorEnd;  // colortype 1 demands image type 1 or 9
+        stbi__skip(s, 4);   // skip index of first colormap entry and number of entries
         sz = stbi__get8(s); //   check bits per palette color entry
         if ((sz != 8) && (sz != 15) && (sz != 16) && (sz != 24) && (sz != 32))
             goto errorEnd;
@@ -7004,8 +6962,7 @@ static int stbi__tga_test(stbi__context *s)
     if ((sz != 8) && (sz != 15) && (sz != 16) && (sz != 24) && (sz != 32))
         goto errorEnd;
 
-    res = 1; // if we got this far, everything's good and we can return 1 instead
-             // of 0
+    res = 1; // if we got this far, everything's good and we can return 1 instead of 0
 
 errorEnd:
     stbi__rewind(s);
@@ -7021,8 +6978,7 @@ static void stbi__tga_read_rgb16(stbi__context *s, stbi_uc *out)
     int r = (px >> 10) & fiveBitMask;
     int g = (px >> 5) & fiveBitMask;
     int b = px & fiveBitMask;
-    // Note that this saves the data in RGB(A) order, so it doesn't need to be
-    // swapped later
+    // Note that this saves the data in RGB(A) order, so it doesn't need to be swapped later
     out[0] = (stbi_uc)((r * 255) / 31);
     out[1] = (stbi_uc)((g * 255) / 31);
     out[2] = (stbi_uc)((b * 255) / 31);
@@ -7050,8 +7006,7 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
     int tga_bits_per_pixel = stbi__get8(s);
     int tga_comp, tga_rgb16 = 0;
     int tga_inverted = stbi__get8(s);
-    // int tga_alpha_bits = tga_inverted & 15; // the 4 lowest bits - unused
-    // (useless?)
+    // int tga_alpha_bits = tga_inverted & 15; // the 4 lowest bits - unused (useless?)
     //   image data
     unsigned char *tga_data;
     unsigned char *tga_palette = NULL;
@@ -7083,8 +7038,7 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
     else
         tga_comp = stbi__tga_get_comp(tga_bits_per_pixel, (tga_image_type == 3), &tga_rgb16);
 
-    if (!tga_comp) // shouldn't really happen, stbi__tga_test() should have
-                   // ensured basic consistency
+    if (!tga_comp) // shouldn't really happen, stbi__tga_test() should have ensured basic consistency
         return stbi__errpuc("bad format", "Can't find out TGA pixelformat");
 
     //   tga info
@@ -7270,8 +7224,7 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
 #endif
 
 // *************************************************************************************************
-// Photoshop PSD loader -- PD by Thatcher Ulrich, integration by Nicolas Schulz,
-// tweaked by STB
+// Photoshop PSD loader -- PD by Thatcher Ulrich, integration by Nicolas Schulz, tweaked by STB
 
 #ifndef STBI_NO_PSD
 static int stbi__psd_test(stbi__context *s)
@@ -7382,8 +7335,7 @@ static void *stbi__psd_load(stbi__context *s, int *x, int *y, int *comp, int req
     if (stbi__get16be(s) != 3)
         return stbi__errpuc("wrong color format", "PSD is not in RGB color format");
 
-    // Skip the Mode Data.  (It's the palette for indexed color; other info for
-    // other modes.)
+    // Skip the Mode Data.  (It's the palette for indexed color; other info for other modes.)
     stbi__skip(s, stbi__get32be(s));
 
     // Skip the image resources.  (resolution, pen tool paths, etc)
@@ -7427,13 +7379,13 @@ static void *stbi__psd_load(stbi__context *s, int *x, int *y, int *comp, int req
         // RLE as used by .PSD and .TIFF
         // Loop until you get the number of unpacked bytes you are expecting:
         //     Read the next source byte into n.
-        //     If n is between 0 and 127 inclusive, copy the next n+1 bytes
-        //     literally. Else if n is between -127 and -1 inclusive, copy the next
-        //     byte -n+1 times. Else if n is 128, noop.
+        //     If n is between 0 and 127 inclusive, copy the next n+1 bytes literally.
+        //     Else if n is between -127 and -1 inclusive, copy the next byte -n+1 times.
+        //     Else if n is 128, noop.
         // Endloop
 
-        // The RLE-compressed data is preceded by a 2-byte data count for each row
-        // in the data, which we're going to just skip.
+        // The RLE-compressed data is preceded by a 2-byte data count for each row in the data,
+        // which we're going to just skip.
         stbi__skip(s, h * channelCount * 2);
 
         // Read the RLE data by channel.
@@ -7461,9 +7413,8 @@ static void *stbi__psd_load(stbi__context *s, int *x, int *y, int *comp, int req
     }
     else
     {
-        // We're at the raw image data.  It's each channel in order (Red, Green,
-        // Blue, Alpha, ...) where each channel consists of an 8-bit (or 16-bit)
-        // value for each pixel in the image.
+        // We're at the raw image data.  It's each channel in order (Red, Green, Blue, Alpha, ...)
+        // where each channel consists of an 8-bit (or 16-bit) value for each pixel in the image.
 
         // Read the data by channel.
         for (channel = 0; channel < 4; channel++)
@@ -7905,8 +7856,7 @@ static int stbi__gif_header(stbi__context *s, stbi__gif *g, int *comp, int is_in
         return stbi__err("too large", "Very large image (corrupt?)");
 
     if (comp != 0)
-        *comp = 4; // can't actually tell whether it's 3 or 4 until we parse the
-                   // comments
+        *comp = 4; // can't actually tell whether it's 3 or 4 until we parse the comments
 
     if (is_info)
         return 1;
@@ -8081,9 +8031,8 @@ static stbi_uc *stbi__process_gif_raster(stbi__context *s, stbi__gif *g)
     }
 }
 
-// this function is designed to support animated gifs, although stb_image
-// doesn't support it two back is the image from two frames ago, used for a very
-// specific disposal format
+// this function is designed to support animated gifs, although stb_image doesn't support it
+// two back is the image from two frames ago, used for a very specific disposal format
 static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, int req_comp, stbi_uc *two_back)
 {
     int dispose;
@@ -8092,8 +8041,7 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
     int pcount;
     STBI_NOTUSED(req_comp);
 
-    // on first frame, any non-written pixels get the background colour
-    // (non-transparent)
+    // on first frame, any non-written pixels get the background colour (non-transparent)
     first_frame = 0;
     if (g->out == 0)
     {
@@ -8108,15 +8056,12 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
         if (!g->out || !g->background || !g->history)
             return stbi__errpuc("outofmem", "Out of memory");
 
-        // image is treated as "transparent" at the start - ie, nothing overwrites
-        // the current background; background colour is only used for pixels that
-        // are not rendered first frame, after that "background" color refers to the
-        // color that was there the previous frame.
+        // image is treated as "transparent" at the start - ie, nothing overwrites the current background;
+        // background colour is only used for pixels that are not rendered first frame, after that "background"
+        // color refers to the color that was there the previous frame.
         memset(g->out, 0x00, 4 * pcount);
-        memset(g->background, 0x00,
-               4 * pcount); // state of the background (starts transparent)
-        memset(g->history, 0x00,
-               pcount); // pixels that were affected previous frame
+        memset(g->background, 0x00, 4 * pcount); // state of the background (starts transparent)
+        memset(g->history, 0x00, pcount);        // pixels that were affected previous frame
         first_frame = 1;
     }
     else
@@ -8127,8 +8072,7 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
 
         if ((dispose == 3) && (two_back == 0))
         {
-            dispose = 2; // if I don't have an image to revert back to, default to the
-                         // old background
+            dispose = 2; // if I don't have an image to revert back to, default to the old background
         }
 
         if (dispose == 3)
@@ -8165,8 +8109,7 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
     }
 
     // clear my history;
-    memset(g->history, 0x00,
-           g->w * g->h); // pixels that were affected previous frame
+    memset(g->history, 0x00, g->w * g->h); // pixels that were affected previous frame
 
     for (;;)
     {
@@ -8238,8 +8181,8 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
                 {
                     if (g->history[pi] == 0)
                     {
-                        g->pal[g->bgindex][3] = 255; // just in case it was made transparent, undo that; It will
-                                                     // be reset next frame if need be;
+                        g->pal[g->bgindex][3] = 255; // just in case it was made transparent, undo that; It will be
+                                                     // reset next frame if need be;
                         memcpy(&g->out[pi * 4], &g->pal[g->bgindex], 4);
                     }
                 }
@@ -8667,9 +8610,8 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
             len = stbi__get8(s);
             if (c1 != 2 || c2 != 2 || (len & 0x80))
             {
-                // not run-length encoded, so we have to actually use THIS data as a
-                // decoded pixel (note this can't be a valid pixel--one of RGB must be
-                // >= 128)
+                // not run-length encoded, so we have to actually use THIS data as a decoded
+                // pixel (note this can't be a valid pixel--one of RGB must be >= 128)
                 stbi_uc rgbe[4];
                 rgbe[0] = (stbi_uc)c1;
                 rgbe[1] = (stbi_uc)c2;
@@ -9293,9 +9235,10 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
 
 /*
    revision history:
-      2.20  (2019-02-07) support utf8 filenames in Windows; fix warnings and
-   platform ifdefs 2.19  (2018-02-11) fix warning 2.18  (2018-01-30) fix
-   warnings 2.17  (2018-01-29) change sbti__shiftsigned to avoid clang -O2 bug
+      2.20  (2019-02-07) support utf8 filenames in Windows; fix warnings and platform ifdefs
+      2.19  (2018-02-11) fix warning
+      2.18  (2018-01-30) fix warnings
+      2.17  (2018-01-29) change sbti__shiftsigned to avoid clang -O2 bug
                          1-bit BMP
                          *_is_16_bit api
                          avoid warnings
@@ -9310,11 +9253,13 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
                          warning fixes; disable run-time SSE detection on gcc;
                          uniform handling of optional "return" values;
                          thread-safe initialization of zlib tables
-      2.14  (2017-03-03) remove deprecated STBI_JPEG_OLD; fixes for Imagenet
-   JPGs 2.13  (2016-11-29) add 16-bit API, only supported for PNG right now 2.12
-   (2016-04-02) fix typo in 2.11 PSD fix that caused crashes 2.11  (2016-04-02)
-   allocate large structures on the stack remove white matting for transparent
-   PSD fix reported channel count for PNG & BMP re-enable SSE2 in non-gcc 64-bit
+      2.14  (2017-03-03) remove deprecated STBI_JPEG_OLD; fixes for Imagenet JPGs
+      2.13  (2016-11-29) add 16-bit API, only supported for PNG right now
+      2.12  (2016-04-02) fix typo in 2.11 PSD fix that caused crashes
+      2.11  (2016-04-02) allocate large structures on the stack
+                         remove white matting for transparent PSD
+                         fix reported channel count for PNG & BMP
+                         re-enable SSE2 in non-gcc 64-bit
                          support RGB-formatted JPEG
                          read 16-bit PNGs (only as 8-bit)
       2.10  (2016-01-22) avoid warning introduced in 2.09 by STBI_REALLOC_SIZED
@@ -9322,9 +9267,11 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
                          16-bit-per-pixel TGA (not bit-per-component)
                          info() for TGA could break due to .hdr handling
                          info() for BMP to shares code instead of sloppy parse
-                         can use STBI_REALLOC_SIZED if allocator doesn't support
-   realloc code cleanup 2.08  (2015-09-13) fix to 2.07 cleanup, reading RGB PSD
-   as RGBA 2.07  (2015-09-13) fix compiler warnings partial animated GIF support
+                         can use STBI_REALLOC_SIZED if allocator doesn't support realloc
+                         code cleanup
+      2.08  (2015-09-13) fix to 2.07 cleanup, reading RGB PSD as RGBA
+      2.07  (2015-09-13) fix compiler warnings
+                         partial animated GIF support
                          limited 16-bpc PSD support
                          #ifdef unused functions
                          bug with < 92 byte PIC,PNM,HDR,TGA
@@ -9335,18 +9282,23 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
                          stbi_set_flip_vertically_on_load (nguillemot)
                          fix NEON support; fix mingw support
       2.02  (2015-01-19) fix incorrect assert, fix warning
-      2.01  (2015-01-17) fix various warnings; suppress SIMD on gcc 32-bit
-   without -msse2 2.00b (2014-12-25) fix STBI_MALLOC in progressive JPEG 2.00
-   (2014-12-25) optimize JPG, including x86 SSE2 & NEON SIMD (ryg) progressive
-   JPEG (stb) PGM/PPM support (Ken Miller) STBI_MALLOC,STBI_REALLOC,STBI_FREE
+      2.01  (2015-01-17) fix various warnings; suppress SIMD on gcc 32-bit without -msse2
+      2.00b (2014-12-25) fix STBI_MALLOC in progressive JPEG
+      2.00  (2014-12-25) optimize JPG, including x86 SSE2 & NEON SIMD (ryg)
+                         progressive JPEG (stb)
+                         PGM/PPM support (Ken Miller)
+                         STBI_MALLOC,STBI_REALLOC,STBI_FREE
                          GIF bugfix -- seemingly never worked
                          STBI_NO_*, STBI_ONLY_*
       1.48  (2014-12-14) fix incorrectly-named assert()
-      1.47  (2014-12-14) 1/2/4-bit PNG support, both direct and paletted (Omar
-   Cornut & stb) optimize PNG (ryg) fix bug in interlaced PNG with
-   user-specified channel count (stb) 1.46  (2014-08-26) fix broken tRNS chunk
-   (colorkey-style transparency) in non-paletted PNG 1.45  (2014-08-16) fix
-   MSVC-ARM internal compiler error by wrapping malloc 1.44  (2014-08-07)
+      1.47  (2014-12-14) 1/2/4-bit PNG support, both direct and paletted (Omar Cornut & stb)
+                         optimize PNG (ryg)
+                         fix bug in interlaced PNG with user-specified channel count (stb)
+      1.46  (2014-08-26)
+              fix broken tRNS chunk (colorkey-style transparency) in non-paletted PNG
+      1.45  (2014-08-16)
+              fix MSVC-ARM internal compiler error by wrapping malloc
+      1.44  (2014-08-07)
               various warning fixes from Ronny Chevalier
       1.43  (2014-07-15)
               fix MSVC-only compiler problem in code changed in 1.42
@@ -9355,48 +9307,70 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
               fixes to stbi__cleanup_jpeg path
               added STBI_ASSERT to avoid requiring assert.h
       1.41  (2014-06-25)
-              fix search&replace from 1.36 that messed up comments/error
-   messages 1.40  (2014-06-22) fix gcc struct-initialization warning 1.39
-   (2014-06-15) fix to TGA optimization when req_comp != number of components in
-   TGA; fix to GIF loading because BMP wasn't rewinding (whoops, no GIFs in my
-   test suite) add support for BMP version 5 (more ignored fields) 1.38
-   (2014-06-06) suppress MSVC warnings on integer casts truncating values fix
-   accidental rename of 'skip' field of I/O 1.37  (2014-06-04) remove duplicate
-   typedef 1.36  (2014-06-03) convert to header file single-file library if
-   de-iphone isn't set, load iphone images color-swapped instead of returning
-   NULL 1.35  (2014-05-27) various warnings fix broken STBI_SIMD path fix bug
-   where stbi_load_from_file no longer left file pointer in correct place fix
-   broken non-easy path for 32-bit BMP (possibly never used) TGA optimization by
-   Arseny Kapoulkine 1.34  (unknown) use STBI_NOTUSED in
-   stbi__resample_row_generic(), fix one more leak in tga failure case 1.33
-   (2011-07-14) make stbi_is_hdr work in STBI_NO_HDR (as specified), minor
-   compiler-friendly improvements 1.32  (2011-07-13) support for "info" function
-   for all supported filetypes (SpartanJ) 1.31  (2011-06-20) a few more leak
-   fixes, bug in PNG handling (SpartanJ) 1.30  (2011-06-11) added ability to
-   load files via callbacks to accomidate custom input streams (Ben Wenger)
+              fix search&replace from 1.36 that messed up comments/error messages
+      1.40  (2014-06-22)
+              fix gcc struct-initialization warning
+      1.39  (2014-06-15)
+              fix to TGA optimization when req_comp != number of components in TGA;
+              fix to GIF loading because BMP wasn't rewinding (whoops, no GIFs in my test suite)
+              add support for BMP version 5 (more ignored fields)
+      1.38  (2014-06-06)
+              suppress MSVC warnings on integer casts truncating values
+              fix accidental rename of 'skip' field of I/O
+      1.37  (2014-06-04)
+              remove duplicate typedef
+      1.36  (2014-06-03)
+              convert to header file single-file library
+              if de-iphone isn't set, load iphone images color-swapped instead of returning NULL
+      1.35  (2014-05-27)
+              various warnings
+              fix broken STBI_SIMD path
+              fix bug where stbi_load_from_file no longer left file pointer in correct place
+              fix broken non-easy path for 32-bit BMP (possibly never used)
+              TGA optimization by Arseny Kapoulkine
+      1.34  (unknown)
+              use STBI_NOTUSED in stbi__resample_row_generic(), fix one more leak in tga failure case
+      1.33  (2011-07-14)
+              make stbi_is_hdr work in STBI_NO_HDR (as specified), minor compiler-friendly improvements
+      1.32  (2011-07-13)
+              support for "info" function for all supported filetypes (SpartanJ)
+      1.31  (2011-06-20)
+              a few more leak fixes, bug in PNG handling (SpartanJ)
+      1.30  (2011-06-11)
+              added ability to load files via callbacks to accomidate custom input streams (Ben Wenger)
               removed deprecated format-specific test/load functions
-              removed support for installable file formats (stbi_loader) --
-   would have been broken for IO callbacks anyway error cases in bmp and tga
-   give messages and don't leak (Raymond Barbiero, grisha) fix inefficiency in
-   decoding 32-bit BMP (David Woo) 1.29  (2010-08-16) various warning fixes from
-   Aurelien Pocheville 1.28  (2010-08-01) fix bug in GIF palette transparency
-   (SpartanJ) 1.27  (2010-08-01) cast-to-stbi_uc to fix warnings 1.26
-   (2010-07-24) fix bug in file buffering for PNG reported by SpartanJ 1.25
-   (2010-07-17) refix trans_data warning (Won Chun) 1.24  (2010-07-12) perf
-   improvements reading from files on platforms with lock-heavy fgetc() minor
-   perf improvements for jpeg deprecated type-specific functions so we'll get
-   feedback if they're needed attempt to fix trans_data warning (Won Chun) 1.23
-   fixed bug in iPhone support 1.22  (2010-07-10) removed image *writing*
-   support stbi_info support from Jetro Lauha GIF support from Jean-Marc Lienher
+              removed support for installable file formats (stbi_loader) -- would have been broken for IO callbacks
+   anyway error cases in bmp and tga give messages and don't leak (Raymond Barbiero, grisha) fix inefficiency in
+   decoding 32-bit BMP (David Woo) 1.29  (2010-08-16) various warning fixes from Aurelien Pocheville 1.28  (2010-08-01)
+              fix bug in GIF palette transparency (SpartanJ)
+      1.27  (2010-08-01)
+              cast-to-stbi_uc to fix warnings
+      1.26  (2010-07-24)
+              fix bug in file buffering for PNG reported by SpartanJ
+      1.25  (2010-07-17)
+              refix trans_data warning (Won Chun)
+      1.24  (2010-07-12)
+              perf improvements reading from files on platforms with lock-heavy fgetc()
+              minor perf improvements for jpeg
+              deprecated type-specific functions so we'll get feedback if they're needed
+              attempt to fix trans_data warning (Won Chun)
+      1.23    fixed bug in iPhone support
+      1.22  (2010-07-10)
+              removed image *writing* support
+              stbi_info support from Jetro Lauha
+              GIF support from Jean-Marc Lienher
               iPhone PNG-extensions from James Brown
-              warning-fixes from Nicolas Schulz and Janez Zemva (i.stbi__err.
-   Janez (U+017D)emva) 1.21    fix use of 'stbi_uc' in header (reported by jon
-   blow) 1.20    added support for Softimage PIC, by Tom Seddon 1.19    bug in
-   interlaced PNG corruption check (found by ryg) 1.18  (2008-08-02) fix a
-   threading bug (local mutable static) 1.17    support interlaced PNG 1.16
-   major bugfix - stbi__convert_format converted one too many pixels 1.15
-   initialize some fields for thread safety 1.14    fix threadsafe conversion
-   bug header-file-only version (#define STBI_HEADER_FILE_ONLY before including)
+              warning-fixes from Nicolas Schulz and Janez Zemva (i.stbi__err. Janez (U+017D)emva)
+      1.21    fix use of 'stbi_uc' in header (reported by jon blow)
+      1.20    added support for Softimage PIC, by Tom Seddon
+      1.19    bug in interlaced PNG corruption check (found by ryg)
+      1.18  (2008-08-02)
+              fix a threading bug (local mutable static)
+      1.17    support interlaced PNG
+      1.16    major bugfix - stbi__convert_format converted one too many pixels
+      1.15    initialize some fields for thread safety
+      1.14    fix threadsafe conversion bug
+              header-file-only version (#define STBI_HEADER_FILE_ONLY before including)
       1.13    threadsafe
       1.12    const qualifiers in the API
       1.11    Support installable IDCT, colorspace conversion routines
@@ -9406,14 +9380,15 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
       1.08    Thatcher Ulrich's PSD code integrated by Nicolas Schulz
       1.07    attempt to fix C++ warning/errors again
       1.06    attempt to fix C++ warning/errors again
-      1.05    fix TGA loading to return correct *comp and use good luminance
-   calc 1.04    default float alpha is 1, not 255; use 'void *' for
-   stbi_image_free 1.03    bugfixes to STBI_NO_STDIO, STBI_NO_HDR 1.02 support
-   for (subset of) HDR files, float interface for preferred access to them 1.01
-   fix bug: possible bug in handling right-side up bmps... not sure fix bug: the
-   stbi__bmp_load() and stbi__tga_load() functions didn't work at all 1.00
-   interface to zlib that skips zlib header 0.99    correct handling of alpha in
-   palette 0.98    TGA loader by lonesock; dynamically add loaders (untested)
+      1.05    fix TGA loading to return correct *comp and use good luminance calc
+      1.04    default float alpha is 1, not 255; use 'void *' for stbi_image_free
+      1.03    bugfixes to STBI_NO_STDIO, STBI_NO_HDR
+      1.02    support for (subset of) HDR files, float interface for preferred access to them
+      1.01    fix bug: possible bug in handling right-side up bmps... not sure
+              fix bug: the stbi__bmp_load() and stbi__tga_load() functions didn't work at all
+      1.00    interface to zlib that skips zlib header
+      0.99    correct handling of alpha in palette
+      0.98    TGA loader by lonesock; dynamically add loaders (untested)
       0.97    jpeg errors on too large a file; also catch another malloc failure
       0.96    fix detection of invalid v value - particleman@mollyrocket forum
       0.95    during header scan, seek to markers in case of padding
@@ -9426,8 +9401,8 @@ STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user
       0.60    fix compiling as c++
       0.59    fix warnings: merge Dave Moore's -Wall fixes
       0.58    fix bug: zlib uncompressed mode len/nlen was wrong endian
-      0.57    fix bug: jpg last huffman symbol before marker was >9 bits but
-   less than 16 available 0.56    fix bug: zlib uncompressed mode len vs. nlen
+      0.57    fix bug: jpg last huffman symbol before marker was >9 bits but less than 16 available
+      0.56    fix bug: zlib uncompressed mode len vs. nlen
       0.55    fix bug: restart_interval not initialized to 0
       0.54    allow NULL for 'int *comp'
       0.53    fix bug in png 3->4; speedup png decoding

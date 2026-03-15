@@ -19,53 +19,50 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-#include "CamWnd.h"
-#include "CommandsDlg.h"
-#include "DialogTextures.h"
-#include "DialogThick.h"
-#include "EntKeyFindReplace.h"
-#include "EntityListDlg.h"
-#include "FindTextureDlg.h"
-#include "GetString.h"
-#include "InspectorDialog.h"
-#include "LightDlg.h"
-#include "MainFrm.h"
-#include "MapInfo.h"
-#include "NewProjDlg.h"
-#include "NewTexWnd.h"
-#include "PatchDensityDlg.h"
-#include "PatchDialog.h"
+#include "qe3.h"
 #include "Radiant.h"
-#include "RotateDlg.h"
-#include "ScaleDialog.h"
-#include "SurfaceDlg.h"
-#include "Undo.h"
 #include "ZWnd.h"
-#include "autocaulk.h"
+#include "CamWnd.h"
+#include "MapInfo.h"
+#include "MainFrm.h"
+#include "RotateDlg.h"
+#include "EntityListDlg.h"
+#include "NewProjDlg.h"
+#include "CommandsDlg.h"
+#include "ScaleDialog.h"
+#include "FindTextureDlg.h"
+#include "SurfaceDlg.h"
+#include "shlobj.h"
+#include "DialogTextures.h"
+#include "PatchDensityDlg.h"
+#include "DialogThick.h"
+#include "PatchDialog.h"
+#include "Undo.h"
+#include "NewTexWnd.h"
+#include "splines.h"
 #include "dlgcamera.h"
 #include "mmsystem.h"
-#include "qe3.h"
-#include "shlobj.h"
-#include "splines.h"
+#include "LightDlg.h"
+#include "GetString.h"
+#include "EntKeyFindReplace.h"
+#include "InspectorDialog.h"
+#include "autocaulk.h"
 
 #include "../../sys/win32/rc/common_resource.h"
-#include "../comafx/DialogColorPicker.h"
 #include "../comafx/DialogName.h"
+#include "../comafx/DialogColorPicker.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -94,9 +91,9 @@ CString g_strProject; // holds the active project filename
 
 //
 // CMainFrame
-// command mapping stuff m_strCommand is the command string m_nKey is the
-// windows VK_??? equivelant m_nModifiers are key states as follows bit 0 -
-// shift 1 - alt 2 - control 4 - press only
+// command mapping stuff m_strCommand is the command string m_nKey is the windows
+// VK_??? equivelant m_nModifiers are key states as follows bit 0 - shift 1 - alt
+// 2 - control 4 - press only
 //
 #define SPEED_MOVE 32.0f
 #define SPEED_TURN 22.5f
@@ -140,8 +137,7 @@ SCommandInfo g_Commands[] = {
     {"Camera_Down", 'C', 0, ID_CAMERA_DOWN},
     {"Camera_AngleUp", 'A', 0, ID_CAMERA_ANGLEUP},
     {"Camera_AngleDown", 'Z', 0, ID_CAMERA_ANGLEDOWN},
-    // FIXME: DG: SteelStorm2 has bindings for Camera_Left and Camera_StrafeLeft
-    // switched (same for Right)
+    // FIXME: DG: SteelStorm2 has bindings for Camera_Left and Camera_StrafeLeft switched (same for Right)
     {"Camera_StrafeRight", VK_PERIOD, 0, ID_CAMERA_STRAFERIGHT},
     {"Camera_StrafeLeft", VK_COMMA, 0, ID_CAMERA_STRAFELEFT},
     {"Camera_UpFloor", VK_PRIOR, 0, ID_VIEW_UPFLOOR},
@@ -303,7 +299,7 @@ int g_nCommandCount = sizeof(g_Commands) / sizeof(SCommandInfo);
 
 SKeyInfo g_Keys[] = {
     /* To understand the VK_* information, please read the MSDN:
-            http://msdn.microsoft.com/en-us/library/ms927178.aspx
+        http://msdn.microsoft.com/en-us/library/ms927178.aspx
     */
     {"Space", VK_SPACE},
     {"Backspace", VK_BACK},
@@ -1069,8 +1065,7 @@ void MFCCreate(HINSTANCE hInstance)
         g_qeglobals.d_savedinfo.iTexMenu = ID_VIEW_BILINEARMIPMAP;
         g_qeglobals.d_savedinfo.m_nTextureTweak = 1.0;
 
-        // g_qeglobals.d_savedinfo.exclude = INCLUDE_EASY | INCLUDE_NORMAL |
-        // INCLUDE_HARD | INCLUDE_DEATHMATCH;
+        // g_qeglobals.d_savedinfo.exclude = INCLUDE_EASY | INCLUDE_NORMAL | INCLUDE_HARD | INCLUDE_DEATHMATCH;
         g_qeglobals.d_savedinfo.show_coordinates = true;
         g_qeglobals.d_savedinfo.show_names = false;
 
@@ -1202,11 +1197,10 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
         g_PrefsDlg.SavePrefs();
 
         /*
-         * if (MessageBox("Would you like QERadiant to build and load a default
-         * project? If this is the first time you have run QERadiant or you are not
-         * familiar with editing QE4 project files directly, this is HIGHLY
-         * recommended", "Create a default project?", MB_YESNO) == IDYES) {
-         * OnFileNewproject(); }
+         * if (MessageBox("Would you like QERadiant to build and load a default project?
+         * If this is the first time you have run QERadiant or you are not familiar with
+         * editing QE4 project files directly, this is HIGHLY recommended", "Create a
+         * default project?", MB_YESNO) == IDYES) { OnFileNewproject(); }
          */
     }
     else
@@ -1324,8 +1318,7 @@ void CMainFrame::LoadCommandMap()
  */
 BOOL CMainFrame::PreCreateWindow(CREATESTRUCT &cs)
 {
-    // TODO: Modify the Window class or styles here by modifying the CREATESTRUCT
-    // cs
+    // TODO: Modify the Window class or styles here by modifying the CREATESTRUCT cs
     return CFrameWnd::PreCreateWindow(cs);
 }
 
@@ -1359,8 +1352,8 @@ void CMainFrame::Dump(CDumpContext &dc) const
 void CMainFrame::CreateQEChildren()
 {
     //
-    // the project file can be specified on the command line, or implicitly found
-    // in the basedir directory
+    // the project file can be specified on the command line, or implicitly found in
+    // the basedir directory
     //
     bool bProjectLoaded = false;
     if (g_PrefsDlg.m_bLoadLast && g_PrefsDlg.m_strLastProject.GetLength() > 0)
@@ -1384,8 +1377,7 @@ void CMainFrame::CreateQEChildren()
 
     if (!bProjectLoaded)
     {
-        Error("Unable to load project file. It was unavailable in the scripts path "
-              "and the default could not be found");
+        Error("Unable to load project file. It was unavailable in the scripts path and the default could not be found");
     }
 
     QE_Init();
@@ -2983,8 +2975,7 @@ LPCSTR String_ToLower(LPCSTR psString)
     if (strlen(psString) >= iBufferSize)
     {
         assert(0);
-        common->Printf("String_ToLower(): Warning, input string was %d bytes too "
-                       "large, performing strlwr() inline!\n",
+        common->Printf("String_ToLower(): Warning, input string was %d bytes too large, performing strlwr() inline!\n",
                        strlen(psString) - (iBufferSize - 1));
         return strlwr(const_cast<char *>(psString));
     }
@@ -3007,8 +2998,7 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
 
     Select_Deselect(true); // bool bDeSelectToListBack
 
-    // see whether to start search from prev_brush->next by checking if prev_brush
-    // is still in the active list...
+    // see whether to start search from prev_brush->next by checking if prev_brush is still in the active list...
     //
     brush_t *pStartBrush = active_brushes.next;
 
@@ -3035,11 +3025,9 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
     brush_t *pNextBrush;
     for (brush_t *b = pStartBrush; b != &active_brushes; b = pNextBrush)
     {
-        // setup the <nextbrush> ptr before going any further (because selecting a
-        // brush down below moves it to a
-        //	different link list), but we need to ensure that the next brush has a
-        // different ent-owner than the current 	one, or multi-brush ents will confuse
-        // the list process if they get selected (infinite loop badness)...
+        // setup the <nextbrush> ptr before going any further (because selecting a brush down below moves it to a
+        //	different link list), but we need to ensure that the next brush has a different ent-owner than the current
+        //	one, or multi-brush ents will confuse the list process if they get selected (infinite loop badness)...
         //
         // pNextBrush = &active_brushes;	// default to loop-stop condition
         pNextBrush = b->next;
@@ -3050,8 +3038,7 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
 
         iBrushesScanned++;
 
-        // a simple progress bar so they don't think it's locked up on long
-        // searches...
+        // a simple progress bar so they don't think it's locked up on long searches...
         //
         static int iDotBodge = 0;
         if (!(++iDotBodge & 15))
@@ -3074,13 +3061,12 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
 
                 if (strlen(psEntFoundValue) &&
                     (
-                        //							(stricmp(strFindValue,
-                        // psEntFoundValue)==0)	// found this exact key/value
+                        //							(stricmp(strFindValue, psEntFoundValue)==0)	// found this exact
+                        //key/value
                         ((gbWholeStringMatchOnly && stricmp(psEntFoundValue, strFindValue) == 0) ||
-                         (!gbWholeStringMatchOnly && strstr(String_ToLower(psEntFoundValue),
-                                                            String_ToLower(strFindValue)))) || //  or
-                        (strFindValue.IsEmpty()) // any value for this key if blank
-                                                 // value search specified
+                         (!gbWholeStringMatchOnly &&
+                          strstr(String_ToLower(psEntFoundValue), String_ToLower(strFindValue)))) || //  or
+                        (strFindValue.IsEmpty()) // any value for this key if blank value search specified
                         ))
                 {
                     bMatch = true;
@@ -3096,8 +3082,8 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
                     const char *psEntFoundValue = ValueForKey(ent, GetKeyString(ent, i));
                     if (psEntFoundValue)
                     {
-                        if ((strlen(psEntFoundValue) && strFindValue.IsEmpty()) // if blank <value> search specified
-                                                                                // then any found-value is ok
+                        if ((strlen(psEntFoundValue) &&
+                             strFindValue.IsEmpty()) // if blank <value> search specified then any found-value is ok
                             || (gbWholeStringMatchOnly && stricmp(psEntFoundValue, strFindValue) == 0) ||
                             (!gbWholeStringMatchOnly &&
                              strstr(String_ToLower(psEntFoundValue), String_ToLower(strFindValue))))
@@ -3105,14 +3091,11 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
                             if (!gbWholeStringMatchOnly &&
                                 strstr(String_ToLower(psEntFoundValue), String_ToLower(strFindValue)))
                             {
-                                //								OutputDebugString(va("Matching
-                                // because: psEntFoundValue '%s' & strFindValue
-                                //'%s'\n",psEntFoundValue, strFindValue)); Sys_Printf("Matching because: psEntFoundValue
-                                // '%s' & strFindValue
-                                //'%s'\n",psEntFoundValue, strFindValue);
+                                //								OutputDebugString(va("Matching because: psEntFoundValue
+                                //'%s' & strFindValue '%s'\n",psEntFoundValue, strFindValue)); 								Sys_Printf("Matching
+                                //because: psEntFoundValue '%s' & strFindValue '%s'\n",psEntFoundValue, strFindValue);
 
-                                //								if
-                                //(strstr(psEntFoundValue,"killsplat"))
+                                //								if (strstr(psEntFoundValue,"killsplat"))
                                 //								{
                                 //									DebugBreak();
                                 //								}
@@ -3144,9 +3127,8 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
     }
     if (gbSelectAllMatchingEnts)
     {
-        common->Printf("\nBrushes Selected: %d           (Brushes Scanned %d, Ents "
-                       "Scanned %d)\n",
-                       iBrushesSelected, iBrushesScanned, iEntsScanned);
+        common->Printf("\nBrushes Selected: %d           (Brushes Scanned %d, Ents Scanned %d)\n", iBrushesSelected,
+                       iBrushesScanned, iEntsScanned);
     }
 
     if (bFoundSomething)
@@ -3159,8 +3141,7 @@ bool FindNextBrush(brush_t *pPrevFoundBrush) // can be NULL for fresh search
         }
         else
         {
-            // pLastFoundEnt's origin is zero, so use average point of brush mins maxs
-            // instead...
+            // pLastFoundEnt's origin is zero, so use average point of brush mins maxs instead...
             //
             v3Origin[0] = (pLastFoundBrush->mins[0] + pLastFoundBrush->maxs[0]) / 2;
             v3Origin[1] = (pLastFoundBrush->mins[1] + pLastFoundBrush->maxs[1]) / 2;
@@ -3201,8 +3182,7 @@ void CMainFrame::OnMiscFindOrReplaceEntity()
         int iOccurences = 0;
         for (brush_t *b = active_brushes.next; b != &active_brushes; b = next)
         {
-            next = b->next; // important to do this here, in case brush gets linked to
-                            // a different list
+            next = b->next; // important to do this here, in case brush gets linked to a different list
             entity_t *ent = b->owner;
 
             if (ent) // needed!
@@ -3212,9 +3192,9 @@ void CMainFrame::OnMiscFindOrReplaceEntity()
 
                 const char *psEntFoundValue = ValueForKey(ent, strFindKey);
 
-                if (stricmp(strFindValue, psEntFoundValue) == 0 ||      // found this exact key/value
-                    (strlen(psEntFoundValue) && strFindValue.IsEmpty()) // or any value for this key if blank value
-                                                                        // search specified
+                if (stricmp(strFindValue, psEntFoundValue) == 0 || // found this exact key/value
+                    (strlen(psEntFoundValue) &&
+                     strFindValue.IsEmpty()) // or any value for this key if blank value search specified
                 )
                 {
                     // found this search key/value, so delete it...
@@ -3250,8 +3230,7 @@ void CMainFrame::OnMiscFindOrReplaceEntity()
 }
 void CMainFrame::OnMiscFindNextEntity()
 {
-    // try it once, if it fails, try it again from top, and give up if still
-    // failed after that...
+    // try it once, if it fails, try it again from top, and give up if still failed after that...
     //
     if (!FindNextBrush(gpPrevEntBrushFound))
     {
@@ -3272,8 +3251,8 @@ void CMainFrame::OnMiscSetViewPos()
         int iArgsFound = sscanf(psNewCoords, "%f %f %f", &v3Viewpos[0], &v3Viewpos[1], &v3Viewpos[2]);
         if (iArgsFound == 3)
         {
-            // try for an optional 4th (note how this wasn't part of the sscanf()
-            // above, so I can check 1st-3, not just any 3)
+            // try for an optional 4th (note how this wasn't part of the sscanf() above, so I can check 1st-3, not just
+            // any 3)
             iArgsFound = sscanf(psNewCoords, "%f %f %f %f", &v3Viewpos[0], &v3Viewpos[1], &v3Viewpos[2], &fYaw);
             if (iArgsFound != 4)
             {
@@ -4995,8 +4974,8 @@ void CMainFrame::OnEditRedo()
 void CMainFrame::OnUpdateEditUndo(CCmdUI *pCmdUI)
 {
     /*
-     * BOOL bEnable = false; if (ActiveXY()) bEnable =
-     * ActiveXY()->UndoAvailable(); pCmdUI->Enable(bEnable);
+     * BOOL bEnable = false; if (ActiveXY()) bEnable = ActiveXY()->UndoAvailable();
+     * pCmdUI->Enable(bEnable);
      */
     pCmdUI->Enable(Undo_UndoAvailable());
 }
@@ -6308,8 +6287,8 @@ void CMainFrame::OnPatchTab()
     else
     {
         //
-        // check to see if the selected brush is part of a func group if it is,
-        // deselect everything and reselect the next brush in the group
+        // check to see if the selected brush is part of a func group if it is, deselect
+        // everything and reselect the next brush in the group
         //
         brush_t *b = selected_brushes.next;
         entity_t *e;

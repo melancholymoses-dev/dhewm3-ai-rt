@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
 #include "sys/platform.h"
+#include "framework/Common.h"
 
 #include "idlib/Heap.h"
 
@@ -111,8 +108,7 @@ class idHeap
     };
 
     // variables
-    void *smallFirstFree[256 / ALIGN + 1]; // small heap allocator lists (for
-                                           // allocs of 1-255 bytes)
+    void *smallFirstFree[256 / ALIGN + 1]; // small heap allocator lists (for allocs of 1-255 bytes)
     page_s *smallCurPage;                  // current page for small allocations
     dword smallCurPageOffset;              // byte offset in current page
     page_s *smallFirstUsedPage;            // first used page of the small heap manager
@@ -144,8 +140,7 @@ class idHeap
     void SmallFree(void *ptr);        // free memory allocated by small heap manager
 
     void *MediumAllocateFromPage(idHeap::page_s *p, dword sizeNeeded);
-    void *MediumAllocate(dword bytes); // allocate memory (256-32768 bytes) from
-                                       // medium heap manager
+    void *MediumAllocate(dword bytes); // allocate memory (256-32768 bytes) from medium heap manager
     void MediumFree(void *ptr);        // free memory allocated by medium heap manager
 
     void *LargeAllocate(dword bytes); // allocate large block from OS directly
@@ -395,7 +390,7 @@ idHeap::Msize
   returns size of allocated memory block
   p	= pointer to memory block
   Notes:	size may not be the same as the size in the original
-                        allocation request (due to block alignment reasons).
+            allocation request (due to block alignment reasons).
 ================
 */
 dword idHeap::Msize(void *p)
@@ -609,8 +604,7 @@ void *idHeap::SmallAllocate(dword bytes)
         bytes = sizeof(intptr_t);
     }
 
-    // increase the number of bytes if necessary to make sure the next small
-    // allocation is aligned
+    // increase the number of bytes if necessary to make sure the next small allocation is aligned
     bytes = SMALL_ALIGN(bytes);
 
     byte *smallBlock = (byte *)(smallFirstFree[bytes / ALIGN]);
@@ -703,8 +697,7 @@ void *idHeap::MediumAllocateFromPage(idHeap::page_s *p, dword sizeNeeded)
     assert(best->size == p->largestFree);
     assert(best->size >= sizeNeeded);
 
-    // if we can allocate another block from this page after allocating sizeNeeded
-    // bytes
+    // if we can allocate another block from this page after allocating sizeNeeded bytes
     if (best->size >= (dword)(sizeNeeded + MEDIUM_SMALLEST_SIZE))
     {
         nw = (mediumHeapEntry_s *)((byte *)best + best->size - sizeNeeded);
@@ -1704,8 +1697,7 @@ void Mem_DumpCompressed_f(const idCmdArgs &args)
                                   "  -cs3   sort on third function on call stack\n"
                                   "  -f<X>  only report allocations the last X frames\n"
                                   "By default the memory allocations are sorted on location.\n"
-                                  "By default a 'memorydump.txt' is written if no file name is "
-                                  "specified.\n");
+                                  "By default a 'memorydump.txt' is written if no file name is specified.\n");
             return;
         }
         arg = args.Argv(++argNum);
@@ -1741,8 +1733,7 @@ void *Mem_AllocDebugMemory(const int size, const char *fileName, const int lineN
 #ifdef CRASH_ON_STATIC_ALLOCATION
         *((int *)0x0) = 1;
 #endif
-        // NOTE: set a breakpoint here to find memory allocations before mem_heap is
-        // initialized
+        // NOTE: set a breakpoint here to find memory allocations before mem_heap is initialized
         return malloc(size);
     }
 
@@ -1792,8 +1783,7 @@ void Mem_FreeDebugMemory(void *p, const char *fileName, const int lineNumber, co
 #ifdef CRASH_ON_STATIC_ALLOCATION
         *((int *)0x0) = 1;
 #endif
-        // NOTE: set a breakpoint here to find memory being freed before mem_heap is
-        // initialized
+        // NOTE: set a breakpoint here to find memory being freed before mem_heap is initialized
         free(p);
         return;
     }

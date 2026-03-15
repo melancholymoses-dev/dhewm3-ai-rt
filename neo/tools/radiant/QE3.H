@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -43,14 +40,14 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 // this define to use HTREEITEM and MFC stuff in the headers
 #define QERTYPES_USE_MFC
+#include "qertypes.h"
 #include "cmdlib.h"
 #include "parse.h"
-#include "qertypes.h"
 
+#include <commctrl.h>
+#include "afxres.h"
 #include "../../sys/win32/rc/Radiant_resource.h" // main symbols
 #include "../../sys/win32/win_local.h"
-#include "afxres.h"
-#include <commctrl.h>
 
 #include "qedefs.h"
 
@@ -62,23 +59,23 @@ const int MAX_MOVE_PLANES = 2048;
 // assume that all maps fit within this
 const float HUGE_DISTANCE = 100000;
 
+#include "textures.h"
 #include "EditorBrush.h"
 #include "EditorEntity.h"
 #include "EditorMap.h"
 #include "select.h"
 #include "splines.h"
-#include "textures.h"
 
-#include "FindTextureDlg.h"
-#include "InspectorDialog.h"
-#include "MainFrm.h"
-#include "PMESH.H"
-#include "PrefsDlg.h"
-#include "dialogtextures.h"
-#include "mru.h"
-#include "undo.h"
-#include "waitdlg.h"
 #include "z.h"
+#include "mru.h"
+#include "waitdlg.h"
+#include "MainFrm.h"
+#include "PrefsDlg.h"
+#include "FindTextureDlg.h"
+#include "dialogtextures.h"
+#include "InspectorDialog.h"
+#include "undo.h"
+#include "PMESH.H"
 
 // the dec offsetof macro doesn't work very well...
 #define myoffsetof(type, identifier) ((size_t)&((type *)0)->identifier)
@@ -134,8 +131,8 @@ typedef struct
     float d_gridsize;
 
     int rotateAxis;   // 0, 1 or 2
-    int flatRotation; // 0, 1 or 2, 0 == off, 1 == rotate about the rotation
-                      // origin, 1 == rotate about the selection mid point
+    int flatRotation; // 0, 1 or 2, 0 == off, 1 == rotate about the rotation origin, 1 == rotate about the selection mid
+                      // point
 
     int d_num_entities;
 
@@ -182,14 +179,13 @@ typedef struct
     bool show_blocks;
 
     // Timo
-    // tells if we are internally using brush primitive (texture coordinates and
-    // map format) this is a shortcut for IntForKey( g_qeglobals.d_project_entity,
-    // "brush_primit" ) NOTE: must keep the two ones in sync
+    // tells if we are internally using brush primitive (texture coordinates and map format)
+    // this is a shortcut for IntForKey( g_qeglobals.d_project_entity, "brush_primit" )
+    // NOTE: must keep the two ones in sync
     BOOL m_bBrushPrimitMode;
 
     // used while importing brush data from file or memory buffer
-    // tells if conversion between map format and internal preferences (
-    // m_bBrushPrimitMode ) is needed
+    // tells if conversion between map format and internal preferences ( m_bBrushPrimitMode ) is needed
     bool bNeedConvert;
     bool bOldBrushes;
     bool bPrimitBrushes;
@@ -209,8 +205,7 @@ typedef struct
     // tells we are using a BSP frontend plugin
     bool bBSPFrontendPlugin;
 
-    // the editor has its own soundWorld and renderWorld, completely distinct from
-    // the game
+    // the editor has its own soundWorld and renderWorld, completely distinct from the game
     idRenderWorld *rw;
     idSoundWorld *sw;
 } QEGlobals_t;
@@ -349,8 +344,7 @@ extern void Brush_FlipTexture_BrushPrimit(brush_t *b, bool y);
 // void ComputeAxisBase( idVec3 &normal,idVec3 &texS,idVec3 &texT );
 void FaceToBrushPrimitFace(face_t *f);
 void EmitBrushPrimitTextureCoordinates(face_t *, idWinding *, patchMesh_t *patch = NULL);
-// EmitTextureCoordinates, is old code used for brush to brush primitive
-// conversion
+// EmitTextureCoordinates, is old code used for brush to brush primitive conversion
 void EmitTextureCoordinates(idVec5 &xyzst, const idMaterial *q, face_t *f, bool force = false);
 void BrushPrimit_Parse(brush_t *, bool newFormat, const idVec3 origin);
 // compute a fake shift scale rot representation from the texture matrix

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -358,8 +355,7 @@ idEnumTypeInfo *idTypeInfoGen::ParseEnumType(const char *scope, bool isTemplate,
         src.ExpectTokenString(";");
     }
 
-    // common->Printf( "enum %s%s\n", typeInfo->scope.c_str(),
-    // typeInfo->typeName.c_str() );
+    // common->Printf( "enum %s%s\n", typeInfo->scope.c_str(), typeInfo->typeName.c_str() );
 
     return typeInfo;
 }
@@ -469,8 +465,8 @@ idClassTypeInfo *idTypeInfoGen::ParseClassType(const char *scope, const char *te
         src.ExpectTokenString(";");
     }
 
-    // common->Printf( "class %s%s : %s\n", typeInfo->scope.c_str(),
-    // typeInfo->typeName.c_str(), typeInfo->superType.c_str() );
+    // common->Printf( "class %s%s : %s\n", typeInfo->scope.c_str(), typeInfo->typeName.c_str(),
+    // typeInfo->superType.c_str() );
 
     return typeInfo;
 }
@@ -1099,11 +1095,10 @@ void idTypeInfoGen::WriteTypeInfo(const char *fileName) const
                            "#define __%s__\n"
                            "\n"
                            "/*\n"
-                           "========================================================================"
-                           "===========\n"
+                           "===================================================================================\n"
                            "\n"
-                           "\tThis file has been generated with the Type Info Generator "
-                           "v" TYPE_INFO_GEN_VERSION " (c) 2004 id Software\n"
+                           "\tThis file has been generated with the Type Info Generator v" TYPE_INFO_GEN_VERSION
+                           " (c) 2004 id Software\n"
                            "\n"
                            "\t%d constants\n"
                            "\t%d enums\n"
@@ -1111,8 +1106,7 @@ void idTypeInfoGen::WriteTypeInfo(const char *fileName) const
                            "\t%d templates\n"
                            "\t%d max inheritance level for '%s'\n"
                            "\n"
-                           "========================================================================"
-                           "===========\n"
+                           "===================================================================================\n"
                            "*/\n"
                            "\n",
                            define.c_str(), define.c_str(), constants.Num(), enums.Num(), classes.Num(), numTemplates,
@@ -1241,9 +1235,8 @@ void idTypeInfoGen::WriteTypeInfo(const char *fileName) const
             {
                 file->WriteFloatString("//");
             }
-            file->WriteFloatString("\t{ \"%s\", \"%s\", (int)(&((%s *)0)->%s), "
-                                   "sizeof( ((%s *)0)->%s ) },\n",
-                                   varType, varName, typeName.c_str(), varName, typeName.c_str(), varName);
+            file->WriteFloatString("\t{ \"%s\", \"%s\", (int)(&((%s *)0)->%s), sizeof( ((%s *)0)->%s ) },\n", varType,
+                                   varName, typeName.c_str(), varName, typeName.c_str(), varName);
         }
 
         file->WriteFloatString("\t{ NULL, 0 }\n");

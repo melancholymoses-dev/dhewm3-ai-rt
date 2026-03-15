@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
+#include "qe3.h"
+#include "Radiant.h"
 #include "../comafx/DialogColorPicker.h"
 #include "LightDlg.h"
-#include "Radiant.h"
-#include "qe3.h"
 
 #ifdef ID_DEBUG_MEMORY
 #undef new
@@ -831,14 +828,13 @@ void CLightDlg::UpdateDialog(bool updateChecks)
         if (e)
         {
             lightInfo.FromDict(&e->epairs);
-            lightInfoOriginal.FromDict(&e->epairs); // our original copy of the values that we compare
-                                                    // against for apply differences
+            lightInfoOriginal.FromDict(
+                &e->epairs); // our original copy of the values that we compare against for apply differences
             title = "Light Editor";
         }
         else
         {
-            // find the last brush belonging to the last entity selected and use that
-            // as the source
+            // find the last brush belonging to the last entity selected and use that as the source
             e = NULL;
             for (brush_t *b = selected_brushes.next; b != &selected_brushes; b = b->next)
             {
@@ -852,8 +848,8 @@ void CLightDlg::UpdateDialog(bool updateChecks)
             if (e)
             {
                 lightInfo.FromDict(&e->epairs);
-                lightInfoOriginal.FromDict(&e->epairs); // our original copy of the values that we compaer
-                                                        // against for apply differences
+                lightInfoOriginal.FromDict(
+                    &e->epairs); // our original copy of the values that we compaer against for apply differences
                 title = "Light Editor - (Multiple lights selected)";
             }
             else
@@ -958,8 +954,7 @@ void UpdateLightInspector()
 {
     if (g_LightDialog && g_LightDialog->GetSafeHwnd() != NULL)
     {
-        g_LightDialog->UpdateDialog(true); // jhefty - update ALL info about the
-                                           // light, including check boxes
+        g_LightDialog->UpdateDialog(true); // jhefty - update ALL info about the light, including check boxes
     }
 }
 

@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/VertexCache.h"
 #include "sys/platform.h"
+#include "renderer/VertexCache.h"
 
 #include "renderer/tr_local.h"
 
@@ -349,8 +346,7 @@ void RB_FinishStageTexturing(const shaderStage_t *pStage, const drawSurf_t *surf
             qglDisableClientState(GL_NORMAL_ARRAY);
             qglDisable(GL_FRAGMENT_PROGRAM_ARB);
             qglDisable(GL_VERTEX_PROGRAM_ARB);
-            // Fixme: Hack to get around an apparent bug in ATI drivers.  Should
-            // remove as soon as it gets fixed.
+            // Fixme: Hack to get around an apparent bug in ATI drivers.  Should remove as soon as it gets fixed.
             qglBindProgramARB(GL_VERTEX_PROGRAM_ARB, 0); // FIXME ...
         }
         else
@@ -659,13 +655,12 @@ Parameters 0 and 1 are set here to allow conversion of screen coordinates to
 texture coordinates, for use when sampling _currentRender.
 Those same parameters 0 and 1, plus 2 and 3, are given entirely different
 meanings in draw_arb2.cpp while light interactions are being drawn.
-This function is called again before currentRender size is needed by post
-processing effects are done, so there's no clash. Only parameters 0..3 were in
-use before #3877 - and in dhewm3 also 4, for gamma in shader. Now I've used a
-new parameter 22 for the size of _currentDepth. It's needed throughout,
-including by light interactions, and its size might in theory differ from
-_currentRender. Parameters 23 and 24 are used by soft particles #3878. Note
-these can be freely reused by different draw calls.
+This function is called again before currentRender size is needed by post processing
+effects are done, so there's no clash.
+Only parameters 0..3 were in use before #3877 - and in dhewm3 also 4, for gamma in shader.
+Now I've used a new parameter 22 for the size of _currentDepth. It's needed throughout,
+including by light interactions, and its size might in theory differ from _currentRender.
+Parameters 23 and 24 are used by soft particles #3878. Note these can be freely reused by different draw calls.
 ==================
 */
 void RB_SetProgramEnvironment(bool isPostProcess)
@@ -732,30 +727,25 @@ void RB_SetProgramEnvironment(bool isPostProcess)
         if (!isPostProcess)
         {
             parm[0] = parm[1] = parm[2] = r_brightness.GetFloat();
-            parm[3] = 1.0 / r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't
-                                                // have to do this calculation
+            parm[3] = 1.0 / r_gamma.GetFloat(); // 1.0/gamma so the shader doesn't have to do this calculation
         }
         else
         {
-            // don't apply gamma/brightness in postprocess passes to avoid applying
-            // them twice (setting them to 1.0 makes them no-ops)
+            // don't apply gamma/brightness in postprocess passes to avoid applying them twice
+            // (setting them to 1.0 makes them no-ops)
             parm[0] = parm[1] = parm[2] = parm[3] = 1.0f;
         }
         qglProgramEnvParameter4fvARB(GL_FRAGMENT_PROGRAM_ARB, PP_GAMMA_BRIGHTNESS, parm);
     }
 
     // #3877: Allow shaders to access depth buffer.
-    // Two useful ratios are packed into this parm: [0] and [1] hold the x,y
-    // multipliers you need to map a screen coordinate (fragment position) to the
-    // depth image: those are simply the reciprocal of the depth image size, which
-    // has been rounded up to a power of two. Slots [3] and [4] hold the ratio of
-    // the depth image size to the current render image size. These sizes can
-    // differ if the game crops the render viewport temporarily during
-    // post-processing effects. The depth render is smaller during the effect too,
-    // but the depth image doesn't need to be downsized, whereas the current
-    // render image does get downsized when it's captured by the game after the
-    // skybox render pass. The ratio is needed to map between the two render
-    // images.
+    // Two useful ratios are packed into this parm: [0] and [1] hold the x,y multipliers you need to map a screen
+    // coordinate (fragment position) to the depth image: those are simply the reciprocal of the depth
+    // image size, which has been rounded up to a power of two. Slots [3] and [4] hold the ratio of the depth image
+    // size to the current render image size. These sizes can differ if the game crops the render viewport temporarily
+    // during post-processing effects. The depth render is smaller during the effect too, but the depth image doesn't
+    // need to be downsized, whereas the current render image does get downsized when it's captured by the game after
+    // the skybox render pass. The ratio is needed to map between the two render images.
     parm[0] = 1.0f / globalImages->currentDepthImage->uploadWidth;
     parm[1] = 1.0f / globalImages->currentDepthImage->uploadHeight;
     parm[2] = static_cast<float>(globalImages->currentRenderImage->uploadWidth) /
@@ -778,8 +768,7 @@ void RB_SetProgramEnvironment(bool isPostProcess)
 ==================
 RB_SetProgramEnvironmentSpace
 
-Sets variables related to the current space that can be used by all vertex
-programs
+Sets variables related to the current space that can be used by all vertex programs
 ==================
 */
 void RB_SetProgramEnvironmentSpace(void)
@@ -896,9 +885,9 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
         RB_EnterWeaponDepthHack();
     }
 
-    if (surf->space->modelDepthHack != 0.0f && !soft_particle) // #3878 soft particles don't want modelDepthHack, which
-                                                               // is
-    {                                                          // an older way to slightly "soften" particles
+    if (surf->space->modelDepthHack != 0.0f &&
+        !soft_particle) // #3878 soft particles don't want modelDepthHack, which is
+    {                   // an older way to slightly "soften" particles
         RB_EnterModelDepthHack(surf->space->modelDepthHack);
     }
 
@@ -922,8 +911,7 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
             continue;
         }
 
-        // skip if the stage is ( GL_ZERO, GL_ONE ), which is used for some alpha
-        // masks
+        // skip if the stage is ( GL_ZERO, GL_ONE ), which is used for some alpha masks
         if ((pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS)) == (GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE))
         {
             continue;
@@ -1016,8 +1004,7 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
 
             qglDisable(GL_VERTEX_PROGRAM_ARB);
             qglDisable(GL_FRAGMENT_PROGRAM_ARB);
-            // Fixme: Hack to get around an apparent bug in ATI drivers.  Should
-            // remove as soon as it gets fixed.
+            // Fixme: Hack to get around an apparent bug in ATI drivers.  Should remove as soon as it gets fixed.
             qglBindProgramARB(GL_VERTEX_PROGRAM_ARB, 0); // FIXME: ...
 
             qglDisableClientState(GL_COLOR_ARRAY);
@@ -1030,18 +1017,15 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
                  (src_blend == GLS_SRCBLEND_ONE || src_blend == GLS_SRCBLEND_SRC_ALPHA) &&
                  tr.backEndRenderer == BE_ARB2 && !r_skipNewAmbient.GetBool())
         {
-            // SteveL #3878. Particles are automatically softened by the engine,
-            // unless they have shader programs of their own (i.e. are "newstages"
-            // handled above). This section comes after the newstage part so that if a
-            // designer has specified their own shader programs, those will be used
-            // instead of the soft particle program.
+            // SteveL #3878. Particles are automatically softened by the engine, unless they have shader programs of
+            // their own (i.e. are "newstages" handled above). This section comes after the newstage part so that if a
+            // designer has specified their own shader programs, those will be used instead of the soft particle
+            // program.
             if (pStage->vertexColor == SVC_IGNORE)
             {
-                // Ignoring vertexColor is not recommended for particles. The particle
-                // system uses vertexColor for fading. However, there are existing
-                // particle effects that don't use it, in which case we default to using
-                // the rgb color modulation specified in the material like the "old
-                // stages" do below.
+                // Ignoring vertexColor is not recommended for particles. The particle system uses vertexColor for
+                // fading. However, there are existing particle effects that don't use it, in which case we default to
+                // using the rgb color modulation specified in the material like the "old stages" do below.
                 color[0] = regs[pStage->color.registers[0]];
                 color[1] = regs[pStage->color.registers[1]];
                 color[2] = regs[pStage->color.registers[2]];
@@ -1055,15 +1039,14 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
                 qglEnableClientState(GL_COLOR_ARRAY);
             }
 
-#if 0 // debug stuff: render particles opaque so debug colors written in the
-      // shader are properly visible
+#if 0 // debug stuff: render particles opaque so debug colors written in the shader are properly visible
 			int dsbits = pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS;
 			dsbits &= ~(GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
 			//dsbits |= GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO; both values are 0, so this would be a noop
 			GL_State( dsbits );
 #endif
-            GL_State(pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS); // Disable depth clipping. The fragment program
-                                                                    // will handle it to allow overdraw.
+            GL_State(pStage->drawStateBits | GLS_DEPTHFUNC_ALWAYS); // Disable depth clipping. The fragment program will
+                                                                    // handle it to allow overdraw.
 
             qglBindProgramARB(GL_VERTEX_PROGRAM_ARB, VPROG_SOFT_PARTICLE);
             qglEnable(GL_VERTEX_PROGRAM_ARB);
@@ -1118,12 +1101,10 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
 			printf("XX mat: %s, src_blend = %s dest_blend = %s radius = %g\n", shader->GetName(), srcblendstr, dstblend, surf->particle_radius);
 #endif
 
-            // DG: some particle materials (at least the muzzle flash in dentonmod)
-            // set the
-            //     texture matrix (with scroll, translate, scale, centerScale, shear
-            //     or rotate). Support that like in R_SetDrawInteraction() (the soft
-            //     particle shader only uses one texture, so I set the diffuse matrix
-            //     for it)
+            // DG: some particle materials (at least the muzzle flash in dentonmod) set the
+            //     texture matrix (with scroll, translate, scale, centerScale, shear or rotate).
+            //     Support that like in R_SetDrawInteraction() (the soft particle shader only
+            //     uses one texture, so I set the diffuse matrix for it)
             idVec4 texMatrix[2];
             if (pStage->texture.hasMatrix)
             {
@@ -1137,9 +1118,8 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
                 texMatrix[1][2] = 0;
                 texMatrix[1][3] = regs[pStage->texture.matrix[1][2]];
 
-                // we attempt to keep scrolls from generating incredibly large texture
-                // values, but center rotations and center scales can still generate
-                // offsets that need to be > 1
+                // we attempt to keep scrolls from generating incredibly large texture values, but
+                // center rotations and center scales can still generate offsets that need to be > 1
                 if (texMatrix[0][3] < -40 || texMatrix[0][3] > 40)
                 {
                     texMatrix[0][3] -= (int)texMatrix[0][3];
@@ -1157,14 +1137,12 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
             qglProgramEnvParameter4fvARB(GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_S, texMatrix[0].ToFloatPtr());
             qglProgramEnvParameter4fvARB(GL_VERTEX_PROGRAM_ARB, PP_DIFFUSE_MATRIX_T, texMatrix[1].ToFloatPtr());
 
-            // program.env[23] is the particle radius, given as { radius,
-            // 1/(faderange), 1/radius }
+            // program.env[23] is the particle radius, given as { radius, 1/(faderange), 1/radius }
             float fadeRange = 1.0f;
-            // fadeRange is the particle diameter for alpha blends (like smoke), but
-            // the particle radius for additive blends (light glares), because
-            // additive effects work differently. Fog is half as apparent when a wall
-            // is in the middle of it. Light glares lose no visibility when they have
-            // something to reflect off. See The Dark Mod issue #3878 for diagram
+            // fadeRange is the particle diameter for alpha blends (like smoke), but the particle radius for additive
+            // blends (light glares), because additive effects work differently. Fog is half as apparent when a wall
+            // is in the middle of it. Light glares lose no visibility when they have something to reflect off. See
+            // The Dark Mod issue #3878 for diagram
             if (src_blend == GLS_SRCBLEND_SRC_ALPHA) // an alpha blend material
             {
                 fadeRange = surf->particle_radius * 2.0f;
@@ -1177,12 +1155,10 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
             float parm[4] = {surf->particle_radius, 1.0f / (fadeRange), 1.0f / surf->particle_radius, 0.0f};
             qglProgramEnvParameter4fvARB(GL_FRAGMENT_PROGRAM_ARB, PP_PARTICLE_RADIUS, parm);
 
-            // program.env[24] is the color channel mask. It gets added to the fade
-            // multiplier, so adding 1
-            //    to a channel will make sure it doesn't get faded at all. Particles
-            //    with additive blend need their RGB channels modifying to blend them
-            //    out. Particles with an alpha blend need their alpha channel
-            //    modifying.
+            // program.env[24] is the color channel mask. It gets added to the fade multiplier, so adding 1
+            //    to a channel will make sure it doesn't get faded at all. Particles with additive blend
+            //    need their RGB channels modifying to blend them out. Particles with an alpha blend need
+            //    their alpha channel modifying.
             if (src_blend == GLS_SRCBLEND_SRC_ALPHA) // an alpha blend material
             {
                 parm[0] = parm[1] = parm[2] = 1.0f; // Leave the rgb channels at full strength when fading
@@ -1395,8 +1371,7 @@ int RB_STD_DrawShaderPasses(drawSurf_t **drawSurfs, int numDrawSurfs)
             }
         }
 
-        // we need to draw the post process shaders after we have drawn the fog
-        // lights
+        // we need to draw the post process shaders after we have drawn the fog lights
         if (drawSurfs[i]->material->GetSort() >= SS_POST_PROCESS && !backEnd.currentRenderCopied)
         {
             break;
@@ -1430,8 +1405,7 @@ static void RB_T_Shadow(const drawSurf_t *surf)
 {
     const srfTriangles_t *tri;
 
-    // set the light position if we are using a vertex program to project the rear
-    // surfaces
+    // set the light position if we are using a vertex program to project the rear surfaces
     if (tr.backEndRendererHasVertexPrograms && r_useShadowVertexProgram.GetBool() &&
         surf->space != backEnd.currentSpace)
     {
@@ -1451,8 +1425,7 @@ static void RB_T_Shadow(const drawSurf_t *surf)
 
     qglVertexPointer(4, GL_FLOAT, sizeof(shadowCache_t), vertexCache.Position(tri->shadowCache));
 
-    // we always draw the sil planes, but we may not need to draw the front or
-    // rear caps
+    // we always draw the sil planes, but we may not need to draw the front or rear caps
     int numIndexes;
     bool external = false;
 
@@ -1472,12 +1445,12 @@ static void RB_T_Shadow(const drawSurf_t *surf)
     }
     else if (!backEnd.vLight->viewInsideLight && !(surf->geo->shadowCapPlaneBits & SHADOW_CAP_INFINITE))
     {
-        // if we are inside the shadow projection, but outside the light, and
-        // drawing a non-infinite shadow, we can skip some caps
+        // if we are inside the shadow projection, but outside the light, and drawing
+        // a non-infinite shadow, we can skip some caps
         if (backEnd.vLight->viewSeesShadowPlaneBits & surf->geo->shadowCapPlaneBits)
         {
-            // we can see through a rear cap, so we need to draw it, but we can skip
-            // the caps on the actual surface
+            // we can see through a rear cap, so we need to draw it, but we can skip the
+            // caps on the actual surface
             numIndexes = tri->numShadowIndexesNoFrontCaps;
         }
         else
@@ -1555,10 +1528,8 @@ static void RB_T_Shadow(const drawSurf_t *surf)
         return;
     }
 
-    // DG: that bloody patent on depth-fail stencil shadows has finally expired on
-    // 2019-10-13,
-    //     so use them (see https://patents.google.com/patent/US6384822B1/en for
-    //     expiration status)
+    // DG: that bloody patent on depth-fail stencil shadows has finally expired on 2019-10-13,
+    //     so use them (see https://patents.google.com/patent/US6384822B1/en for expiration status)
     bool useStencilOpSeperate = r_useStencilOpSeparate.GetBool() && qglStencilOpSeparate != NULL;
     if (!r_useCarmacksReverse.GetBool())
     {
@@ -1845,8 +1816,7 @@ static void RB_BlendLight(const drawSurf_t *drawSurfs, const drawSurf_t *drawSur
             RB_LoadShaderTextureMatrix(regs, &stage->texture);
         }
 
-        // get the modulate values from the light, including alpha, unlike normal
-        // lights
+        // get the modulate values from the light, including alpha, unlike normal lights
         backEnd.lightColor[0] = regs[stage->color.registers[0]];
         backEnd.lightColor[1] = regs[stage->color.registers[1]];
         backEnd.lightColor[2] = regs[stage->color.registers[2]];
@@ -1897,8 +1867,8 @@ static void RB_T_BasicFog(const drawSurf_t *surf)
         local[3] += 0.5;
         qglTexGenfv(GL_S, GL_OBJECT_PLANE, local.ToFloatPtr());
 
-        //		R_GlobalPlaneToLocal( surf->space->modelMatrix, fogPlanes[1],
-        // local ); 		local[3] += 0.5;
+        //		R_GlobalPlaneToLocal( surf->space->modelMatrix, fogPlanes[1], local );
+        //		local[3] += 0.5;
         local[0] = local[1] = local[2] = 0;
         local[3] = 0.5;
         qglTexGenfv(GL_T, GL_OBJECT_PLANE, local.ToFloatPtr());
@@ -1930,8 +1900,7 @@ static void RB_FogPass(const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2
     const shaderStage_t *stage;
     const float *regs;
 
-    // create a surface for the light frustom triangles, which are oriented drawn
-    // side out
+    // create a surface for the light frustom triangles, which are oriented drawn side out
     frustumTris = backEnd.vLight->frustumTris;
 
     // if we ran out of vertex cache memory, skip it
@@ -1999,8 +1968,7 @@ static void RB_FogPass(const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2
     qglEnable(GL_TEXTURE_GEN_S);
     qglEnable(GL_TEXTURE_GEN_T);
 
-    // T will get a texgen for the fade plane, which is always the "top" plane on
-    // unrotated lights
+    // T will get a texgen for the fade plane, which is always the "top" plane on unrotated lights
     fogPlanes[2][0] = 0.001f * backEnd.vLight->fogPlane[0];
     fogPlanes[2][1] = 0.001f * backEnd.vLight->fogPlane[1];
     fogPlanes[2][2] = 0.001f * backEnd.vLight->fogPlane[2];
@@ -2020,8 +1988,8 @@ static void RB_FogPass(const drawSurf_t *drawSurfs, const drawSurf_t *drawSurfs2
     RB_RenderDrawSurfChainWithFunction(drawSurfs, RB_T_BasicFog);
     RB_RenderDrawSurfChainWithFunction(drawSurfs2, RB_T_BasicFog);
 
-    // the light frustum bounding planes aren't in the depth buffer, so use
-    // depthfunc_less instead of depthfunc_equal
+    // the light frustum bounding planes aren't in the depth buffer, so use depthfunc_less instead
+    // of depthfunc_equal
     GL_State(GLS_DEPTHMASK | GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA | GLS_DEPTHFUNC_LESS);
     GL_Cull(CT_BACK_SIDED);
     RB_RenderDrawSurfChainWithFunction(&ds, RB_T_BasicFog);

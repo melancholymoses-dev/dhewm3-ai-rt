@@ -19,28 +19,25 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/FileSystem.h"
 #include "sys/platform.h"
+#include "framework/FileSystem.h"
 
 #include "renderer/Model_lwo.h"
 
 /*
 ======================================================================
 
-        Converted from lwobject sample prog from LW 6.5 SDK.
+    Converted from lwobject sample prog from LW 6.5 SDK.
 
 ======================================================================
 */
@@ -1507,14 +1504,14 @@ NULL if the file couldn't be loaded.  On failure, failID and failpos
 can be used to diagnose the cause.
 
 1.  If the file isn't an LWO2 or an LWOB, failpos will contain 12 and
-        failID will be unchanged.
+    failID will be unchanged.
 
 2.  If an error occurs while reading, failID will contain the most
-        recently read IFF chunk ID, and failpos will contain the value
-        returned by fp->Tell() at the time of the failure.
+    recently read IFF chunk ID, and failpos will contain the value
+    returned by fp->Tell() at the time of the failure.
 
 3.  If the file couldn't be opened, or an error occurs while reading
-        the first 12 bytes, both failID and failpos will be unchanged.
+    the first 12 bytes, both failID and failpos will be unchanged.
 
 If you don't need this information, failID and failpos can be NULL.
 ====================================================================== */
@@ -2337,14 +2334,14 @@ file couldn't be loaded.  On failure, failID and failpos can be used
 to diagnose the cause.
 
 1.  If the file isn't an LWOB, failpos will contain 12 and failID will
-        be unchanged.
+    be unchanged.
 
 2.  If an error occurs while reading an LWOB, failID will contain the
-        most recently read IFF chunk ID, and failpos will contain the
-        value returned by fp->Tell() at the time of the failure.
+    most recently read IFF chunk ID, and failpos will contain the
+    value returned by fp->Tell() at the time of the failure.
 
 3.  If the file couldn't be opened, or an error occurs while reading
-        the first 12 bytes, both failID and failpos will be unchanged.
+    the first 12 bytes, both failID and failpos will be unchanged.
 
 If you don't need this information, failID and failpos can be NULL.
 ====================================================================== */

@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -38,7 +35,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Balanced Search Tree
+    Balanced Search Tree
 
 ===============================================================================
 */
@@ -67,9 +64,8 @@ template <class objType, class keyType, int maxChildrenPerNode> class idBTree
     void Init(void);
     void Shutdown(void);
 
-    idBTreeNode<objType, keyType> *Add(objType *object,
-                                       keyType key);  // add an object to the tree
-    void Remove(idBTreeNode<objType, keyType> *node); // remove an object node from the tree
+    idBTreeNode<objType, keyType> *Add(objType *object, keyType key); // add an object to the tree
+    void Remove(idBTreeNode<objType, keyType> *node);                 // remove an object node from the tree
 
     objType *Find(keyType key) const; // find an object using the given key
     objType *FindSmallestLargerEqual(
@@ -579,9 +575,8 @@ ID_INLINE void idBTree<objType, keyType, maxChildrenPerNode>::CheckTree_r(idBTre
 
     numNodes++;
 
-    // the root node may have zero children and leaf nodes always have zero
-    // children, all other nodes should have at least 2 and at most
-    // maxChildrenPerNode children
+    // the root node may have zero children and leaf nodes always have zero children, all other nodes should have at
+    // least 2 and at most maxChildrenPerNode children
     assert((node == root) || (node->object != NULL && node->numChildren == 0) ||
            (node->numChildren >= 2 && node->numChildren <= maxChildrenPerNode));
     // the key of a node may never be larger than the key of it's last child

@@ -19,25 +19,22 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/LangDict.h"
 #include "framework/Console.h"
 #include "framework/Game.h"
-#include "idlib/LangDict.h"
 #include "renderer/RenderSystem.h"
 #include "sound/sound.h"
-#include "sys/platform.h"
 
 #include "framework/async/AsyncNetwork.h"
 
@@ -67,12 +64,10 @@ idCVar idAsyncNetwork::serverMaxClientRate("net_serverMaxClientRate", "16000",
 idCVar idAsyncNetwork::clientMaxRate("net_clientMaxRate", "16000",
                                      CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE | CVAR_NOCHEAT,
                                      "maximum rate requested by client from server in bytes/sec");
-idCVar idAsyncNetwork::serverMaxUsercmdRelay("net_serverMaxUsercmdRelay", "5",
-                                             CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT,
-                                             "maximum number of usercmds from other clients the server relays to a "
-                                             "client",
-                                             1, MAX_USERCMD_RELAY,
-                                             idCmdSystem::ArgCompletion_Integer<1, MAX_USERCMD_RELAY>);
+idCVar idAsyncNetwork::serverMaxUsercmdRelay(
+    "net_serverMaxUsercmdRelay", "5", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT,
+    "maximum number of usercmds from other clients the server relays to a client", 1, MAX_USERCMD_RELAY,
+    idCmdSystem::ArgCompletion_Integer<1, MAX_USERCMD_RELAY>);
 idCVar idAsyncNetwork::serverZombieTimeout("net_serverZombieTimeout", "5", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT,
                                            "disconnected client timeout in seconds");
 idCVar idAsyncNetwork::serverClientTimeout("net_serverClientTimeout", "40", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT,
@@ -101,14 +96,14 @@ idCVar idAsyncNetwork::master3("net_master3", "", CVAR_SYSTEM | CVAR_ARCHIVE, "3
 idCVar idAsyncNetwork::master4("net_master4", "", CVAR_SYSTEM | CVAR_ARCHIVE, "4th master server address");
 idCVar idAsyncNetwork::LANServer("net_LANServer", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT,
                                  "config LAN games only - affects clients and servers");
-idCVar idAsyncNetwork::serverReloadEngine("net_serverReloadEngine", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT,
-                                          "perform a full reload on next map restart (including flushing referenced "
-                                          "pak files) - decreased if > 0");
+idCVar idAsyncNetwork::serverReloadEngine(
+    "net_serverReloadEngine", "0", CVAR_SYSTEM | CVAR_INTEGER | CVAR_NOCHEAT,
+    "perform a full reload on next map restart (including flushing referenced pak files) - decreased if > 0");
 idCVar idAsyncNetwork::idleServer("si_idleServer", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_INIT | CVAR_SERVERINFO,
                                   "game clients are idle");
-idCVar idAsyncNetwork::clientDownload("net_clientDownload", "1", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
-                                      "client pk4 downloads policy: 0 - never, 1 - ask, 2 - always (will still "
-                                      "prompt for binary code)");
+idCVar idAsyncNetwork::clientDownload(
+    "net_clientDownload", "1", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
+    "client pk4 downloads policy: 0 - never, 1 - ask, 2 - always (will still prompt for binary code)");
 
 int idAsyncNetwork::realTime;
 master_t idAsyncNetwork::masters[MAX_MASTER_SERVERS];

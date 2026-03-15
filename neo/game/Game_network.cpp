@@ -19,43 +19,39 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/FileSystem.h"
 #include "framework/async/NetworkSystem.h"
 #include "renderer/RenderSystem.h"
-#include "sys/platform.h"
 
+#include "gamesys/SysCmds.h"
 #include "Entity.h"
 #include "Player.h"
-#include "gamesys/SysCmds.h"
 
 #include "Game_local.h"
 
 /*
 ===============================================================================
 
-        Client running game code:
-        - entity events don't work and should not be issued
-        - entities should never be spawned outside
-idGameLocal::ClientReadSnapshot
+    Client running game code:
+    - entity events don't work and should not be issued
+    - entities should never be spawned outside idGameLocal::ClientReadSnapshot
 
 ===============================================================================
 */
 
-// adds tags to the network protocol to detect when things go bad ( internal
-// consistency ) NOTE: this changes the network protocol
+// adds tags to the network protocol to detect when things go bad ( internal consistency )
+// NOTE: this changes the network protocol
 #ifndef ASYNC_WRITE_TAGS
 #define ASYNC_WRITE_TAGS 0
 #endif
@@ -154,16 +150,14 @@ void idGameLocal::InitClientDeclRemap(int clientNum)
         clientDeclRemap[clientNum][type].Clear();
         clientDeclRemap[clientNum][type].AssureSize(num, -1);
 
-        // pre-initialize the remap with non-implicit decls, all non-implicit decls
-        // are always going to be in order and in sync between server and client
-        // because of the decl manager checksum
+        // pre-initialize the remap with non-implicit decls, all non-implicit decls are always going
+        // to be in order and in sync between server and client because of the decl manager checksum
         for (i = 0; i < num; i++)
         {
             const idDecl *decl = declManager->DeclByIndex((declType_t)type, i, false);
             if (decl->IsImplicit())
             {
-                // once the first implicit decl is found all remaining decls are
-                // considered implicit as well
+                // once the first implicit decl is found all remaining decls are considered implicit as well
                 break;
             }
             clientDeclRemap[clientNum][type][i] = i;
@@ -371,8 +365,7 @@ void idGameLocal::ServerClientBegin(int clientNum)
     // initialize the decl remap
     InitClientDeclRemap(clientNum);
 
-    // send message to initialize decl remap at the client (this is always the
-    // very first reliable game message)
+    // send message to initialize decl remap at the client (this is always the very first reliable game message)
     outMsg.Init(msgBuf, sizeof(msgBuf));
     outMsg.BeginWriting();
     outMsg.WriteByte(GAME_RELIABLE_MESSAGE_INIT_DECL_REMAP);
@@ -408,8 +401,7 @@ void idGameLocal::ServerClientDisconnect(int clientNum)
     outMsg.Init(msgBuf, sizeof(msgBuf));
     outMsg.BeginWriting();
     outMsg.WriteByte(GAME_RELIABLE_MESSAGE_DELETE_ENT);
-    outMsg.WriteBits((spawnIds[clientNum] << GENTITYNUM_BITS) | clientNum,
-                     32); // see GetSpawnId
+    outMsg.WriteBits((spawnIds[clientNum] << GENTITYNUM_BITS) | clientNum, 32); // see GetSpawnId
     networkSystem->ServerSendReliableMessage(-1, outMsg);
 
     // free snapshots stored for this client
@@ -438,8 +430,7 @@ void idGameLocal::ServerClientDisconnect(int clientNum)
 ================
 idGameLocal::ServerWriteInitialReliableMessages
 
-  Send reliable messages to initialize the client game up to a certain initial
-state.
+  Send reliable messages to initialize the client game up to a certain initial state.
 ================
 */
 void idGameLocal::ServerWriteInitialReliableMessages(int clientNum)
@@ -684,8 +675,7 @@ void idGameLocal::ServerWriteSnapshot(int clientNum, int sequence, idBitMsg &msg
     memset(snapshot->pvs, 0, sizeof(snapshot->pvs));
 
     // get PVS for this player
-    // don't use PVSAreas for networking - PVSAreas depends on animations (and md5
-    // bounds), which are not synchronized
+    // don't use PVSAreas for networking - PVSAreas depends on animations (and md5 bounds), which are not synchronized
     numSourceAreas = gameRenderWorld->BoundsInAreas(spectated->GetPlayerPhysics()->GetAbsBounds(), sourceAreas,
                                                     idEntity::MAX_PVS_AREAS);
     pvsHandle = gameLocal.pvs.SetupCurrentPVS(sourceAreas, numSourceAreas, PVS_NORMAL);
@@ -715,8 +705,7 @@ void idGameLocal::ServerWriteSnapshot(int clientNum, int sequence, idBitMsg &msg
             continue;
         }
 
-        // save the write state to which we can revert when the entity didn't change
-        // at all
+        // save the write state to which we can revert when the entity didn't change at all
         msg.SaveWriteState(msgSize, msgWriteBit);
 
         // write the entity to the snapshot
@@ -783,8 +772,7 @@ void idGameLocal::ServerWriteSnapshot(int clientNum, int sequence, idBitMsg &msg
     pvs.FreeCurrentPVS(pvsHandle);
 
     // write the game and player state to the snapshot
-    base = clientEntityStates[clientNum][ENTITYNUM_NONE]; // ENTITYNUM_NONE is used for the
-                                                          // game and player state
+    base = clientEntityStates[clientNum][ENTITYNUM_NONE]; // ENTITYNUM_NONE is used for the game and player state
     if (base)
     {
         base->state.BeginReading();
@@ -1214,8 +1202,7 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
 
             if (i < MAX_CLIENTS && ent)
             {
-                // SPAWN_PLAYER should be taking care of spawning the entity with the
-                // right spawnId
+                // SPAWN_PLAYER should be taking care of spawning the entity with the right spawnId
                 common->Warning("ClientReadSnapshot: recycling client entity %d\n", i);
             }
 
@@ -1271,9 +1258,8 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
             if (entityDefNumber >= 0 && entityDefNumber < declManager->GetNumDecls(DECL_ENTITYDEF))
             {
                 classname = declManager->DeclByIndex(DECL_ENTITYDEF, entityDefNumber, false)->GetName();
-                Error("write to and read from snapshot out of sync for classname '%s' "
-                      "of type '%s'",
-                      classname, typeInfo->classname);
+                Error("write to and read from snapshot out of sync for classname '%s' of type '%s'", classname,
+                      typeInfo->classname);
             }
             else
             {
@@ -1302,8 +1288,7 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
     }
 
     // get PVS for this player
-    // don't use PVSAreas for networking - PVSAreas depends on animations (and md5
-    // bounds), which are not synchronized
+    // don't use PVSAreas for networking - PVSAreas depends on animations (and md5 bounds), which are not synchronized
     numSourceAreas = gameRenderWorld->BoundsInAreas(spectated->GetPlayerPhysics()->GetAbsBounds(), sourceAreas,
                                                     idEntity::MAX_PVS_AREAS);
     pvsHandle = gameLocal.pvs.SetupCurrentPVS(sourceAreas, numSourceAreas, PVS_NORMAL);
@@ -1341,8 +1326,7 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
         snapshot->pvs[i] = msg.ReadDeltaInt(clientPVS[clientNum][i]);
     }
 
-    // add entities in the PVS that haven't changed since the last applied
-    // snapshot
+    // add entities in the PVS that haven't changed since the last applied snapshot
     for (ent = spawnedEntities.Next(); ent != NULL; ent = ent->spawnNode.Next())
     {
 
@@ -1361,9 +1345,8 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
                 {
                     // server says it's not in PVS, client says it's in PVS
                     // if that happens on map entities, most likely something is wrong
-                    // I can see that moving pieces along several PVS could be a legit
-                    // situation though this is a band aid, which means something is not
-                    // done right elsewhere
+                    // I can see that moving pieces along several PVS could be a legit situation though
+                    // this is a band aid, which means something is not done right elsewhere
                     common->DWarning("client thinks map entity 0x%x (%s) is stale, sequence 0x%x", ent->entityNumber,
                                      ent->name.c_str(), sequence);
                 }
@@ -1416,8 +1399,7 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
     pvs.FreeCurrentPVS(pvsHandle);
 
     // read the game and player state from the snapshot
-    base = clientEntityStates[clientNum][ENTITYNUM_NONE]; // ENTITYNUM_NONE is used for the
-                                                          // game and player state
+    base = clientEntityStates[clientNum][ENTITYNUM_NONE]; // ENTITYNUM_NONE is used for the game and player state
     if (base)
     {
         base->state.BeginReading();
@@ -1436,8 +1418,7 @@ void idGameLocal::ClientReadSnapshot(int clientNum, int sequence, const int game
         weap = static_cast<idPlayer *>(gameLocal.entities[player->spectator])->weapon.GetEntity();
         if (weap && (weap->GetRenderEntity()->bounds[0] == weap->GetRenderEntity()->bounds[1]))
         {
-            // update the weapon's viewmodel bounds so that the model doesn't flicker
-            // in the spectator's view
+            // update the weapon's viewmodel bounds so that the model doesn't flicker in the spectator's view
             weap->GetAnimator()->GetBounds(gameLocal.time, weap->GetRenderEntity()->bounds);
             weap->UpdateVisuals();
         }
@@ -1564,8 +1545,7 @@ void idGameLocal::ClientProcessReliableMessage(int clientNum, const idBitMsg &ms
             entities[client]->FreeModelDef();
         }
         // fix up the spawnId to match what the server says
-        // otherwise there is going to be a bogus delete/new of the client entity in
-        // the first ClientReadFromSnapshot
+        // otherwise there is going to be a bogus delete/new of the client entity in the first ClientReadFromSnapshot
         spawnIds[client] = spawnId;
         break;
     }
@@ -1580,8 +1560,7 @@ void idGameLocal::ClientProcessReliableMessage(int clientNum, const idBitMsg &ms
         break;
     }
     case GAME_RELIABLE_MESSAGE_CHAT:
-    case GAME_RELIABLE_MESSAGE_TCHAT: { // (client should never get a TCHAT
-                                        // though)
+    case GAME_RELIABLE_MESSAGE_TCHAT: { // (client should never get a TCHAT though)
         char name[128];
         char text[128];
         msg.ReadString(name, sizeof(name));
@@ -1831,9 +1810,8 @@ bool idGameLocal::DownloadRequest(const char *IP, const char *guid, const char *
     }
 
     // 2: table of pak URLs
-    // first token is the game pak if request, empty if not requested by the
-    // client there may be empty tokens for paks the server couldn't pinpoint -
-    // the order matters
+    // first token is the game pak if request, empty if not requested by the client
+    // there may be empty tokens for paks the server couldn't pinpoint - the order matters
     idStr reply = "2;";
     idStrList dlTable, pakList;
     int i, j;
@@ -2005,8 +1983,8 @@ void idEventQueue::Enqueue(entityNetEvent_t *event, outOfOrderBehaviour_t behavi
         while (end && end->time > event->time)
         {
             entityNetEvent_t *outOfOrder = RemoveLast();
-            common->DPrintf("WARNING: new event with id %d ( time %d ) caused removal of event "
-                            "with id %d ( time %d ), game time = %d.\n",
+            common->DPrintf("WARNING: new event with id %d ( time %d ) caused removal of event with id %d ( time %d ), "
+                            "game time = %d.\n",
                             event->event, event->time, outOfOrder->event, outOfOrder->time, gameLocal.time);
             Free(outOfOrder);
         }

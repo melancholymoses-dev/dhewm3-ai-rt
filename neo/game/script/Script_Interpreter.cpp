@@ -19,23 +19,20 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Compiler.h"
 #include "script/Script_Thread.h"
-#include "sys/platform.h"
 
 #include "script/Script_Interpreter.h"
 
@@ -664,8 +661,8 @@ idInterpreter::EnterObjectFunction
 
 Calls a function on a script object.
 
-NOTE: If this is called from within a event called by this interpreter, the
-function arguments will be invalid after calling this function.
+NOTE: If this is called from within a event called by this interpreter, the function arguments will be invalid after
+calling this function.
 ================
 */
 void idInterpreter::EnterObjectFunction(idEntity *self, const function_t *func, bool clearStack)
@@ -689,8 +686,8 @@ idInterpreter::EnterFunction
 
 Returns the new program statement counter
 
-NOTE: If this is called from within a event called by this interpreter, the
-function arguments will be invalid after calling this function.
+NOTE: If this is called from within a event called by this interpreter, the function arguments will be invalid after
+calling this function.
 ====================
 */
 void idInterpreter::EnterFunction(const function_t *func, bool clearStack)
@@ -928,14 +925,12 @@ void idInterpreter::CallEvent(const function_t *func, int argsize)
 
         case D_EVENT_FLOAT:
             var.intPtr = (int *)&localstack[start + pos];
-            // NOTE: floats are the only type not passed as int or pointer in
-            // intptr_t,
+            // NOTE: floats are the only type not passed as int or pointer in intptr_t,
             //       but as float-data in the first 4 bytes of data[i].
-            //       So (unlike in the other cases), here this awkward code casting
-            //       &data[i] to another pointer type is actually necessary (same in
-            //       CallSysEvent()). In the other cases one could also use `data[i] =
-            //       (intptr_t)var.blaPtr;` (not doing those changes here now to
-            //       minimize potential merge conflicts)
+            //       So (unlike in the other cases), here this awkward code casting &data[i]
+            //       to another pointer type is actually necessary (same in CallSysEvent()).
+            //       In the other cases one could also use `data[i] = (intptr_t)var.blaPtr;`
+            //       (not doing those changes here now to minimize potential merge conflicts)
             (*(float *)&data[i]) = *var.floatPtr;
             break;
 
@@ -1757,8 +1752,7 @@ bool idInterpreter::Execute(void)
             }
             else if (!obj->GetTypeDef()->Inherits(st->b->TypeDef()))
             {
-                // Warning( "object '%s' cannot be converted to '%s'",
-                // obj->GetTypeName(), st->b->TypeDef()->Name() );
+                // Warning( "object '%s' cannot be converted to '%s'", obj->GetTypeName(), st->b->TypeDef()->Name() );
                 *var_b.entityNumberPtr = 0;
             }
             else
@@ -1949,16 +1943,14 @@ bool idInterpreter::Execute(void)
                 {
                     *var_b.evalPtr->entityNumberPtr = 0;
 
-                    // st->b points to type_pointer, which is just a temporary that gets
-                    // its type reassigned, so we store the real type in st->c so that we
-                    // can do a type check during run time since we don't know what type
-                    // the script object is at compile time because it comes from an
-                    // entity
+                    // st->b points to type_pointer, which is just a temporary that gets its type reassigned, so we
+                    // store the real type in st->c so that we can do a type check during run time since we don't know
+                    // what type the script object is at compile time because it comes from an entity
                 }
                 else if (!obj->GetTypeDef()->Inherits(st->c->TypeDef()))
                 {
-                    // Warning( "object '%s' cannot be converted to '%s'",
-                    // obj->GetTypeName(), st->c->TypeDef()->Name() );
+                    // Warning( "object '%s' cannot be converted to '%s'", obj->GetTypeName(), st->c->TypeDef()->Name()
+                    // );
                     *var_b.evalPtr->entityNumberPtr = 0;
                 }
                 else
@@ -2190,11 +2182,9 @@ void idGameEditExt::MSG_WriteCallstackFunc(idBitMsg *msg, const prstack_t *stack
         msg->WriteString(va("%s(  )", func->Name()));
     }
 
-    if (stack->s == -1) // this is a fake stack created by debugger, use
-                        // intruction pointer for retrieval.
+    if (stack->s == -1) // this is a fake stack created by debugger, use intruction pointer for retrieval.
         st = &const_cast<idProgram *>(program)->GetStatement(instructionPtr);
-    else // Use the calling statement as the filename and linenumber where the
-         // call was made from
+    else // Use the calling statement as the filename and linenumber where the call was made from
         st = &const_cast<idProgram *>(program)->GetStatement(stack->s);
 
     if (st)

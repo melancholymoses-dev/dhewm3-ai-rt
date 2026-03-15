@@ -19,31 +19,28 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
+#include "idlib/Parser.h"
 #include "framework/Common.h"
 #include "framework/FileSystem.h"
 #include "framework/Session.h"
-#include "idlib/Parser.h"
-#include "sys/platform.h"
 
 #include "renderer/Model_ma.h"
 
 /*
 ======================================================================
 
-        Parses Maya ASCII files.
+    Parses Maya ASCII files.
 
 ======================================================================
 */
@@ -242,8 +239,7 @@ bool MA_ParseVertex(idParser &parser, maAttribHeader_t *header)
     maMesh_t *pMesh = &maGlobal.currentObject->mesh;
     idToken token;
 
-    // Allocate enough space for all the verts if this is the first attribute for
-    // verticies
+    // Allocate enough space for all the verts if this is the first attribute for verticies
     if (!pMesh->vertexes)
     {
         pMesh->numVertexes = header->size; // XXX: +1?
@@ -275,8 +271,7 @@ bool MA_ParseVertexTransforms(idParser &parser, maAttribHeader_t *header)
     maMesh_t *pMesh = &maGlobal.currentObject->mesh;
     idToken token;
 
-    // Allocate enough space for all the verts if this is the first attribute for
-    // verticies
+    // Allocate enough space for all the verts if this is the first attribute for verticies
     if (!pMesh->vertTransforms)
     {
         if (header->size == 0)
@@ -339,8 +334,7 @@ bool MA_ParseEdge(idParser &parser, maAttribHeader_t *header)
     maMesh_t *pMesh = &maGlobal.currentObject->mesh;
     idToken token;
 
-    // Allocate enough space for all the verts if this is the first attribute for
-    // verticies
+    // Allocate enough space for all the verts if this is the first attribute for verticies
     if (!pMesh->edges)
     {
         pMesh->numEdges = header->size;
@@ -372,8 +366,7 @@ bool MA_ParseNormal(idParser &parser, maAttribHeader_t *header)
     maMesh_t *pMesh = &maGlobal.currentObject->mesh;
     idToken token;
 
-    // Allocate enough space for all the verts if this is the first attribute for
-    // verticies
+    // Allocate enough space for all the verts if this is the first attribute for verticies
     if (!pMesh->normals)
     {
         pMesh->numNormals = header->size;
@@ -432,8 +425,7 @@ bool MA_ParseFace(idParser &parser, maAttribHeader_t *header)
     maMesh_t *pMesh = &maGlobal.currentObject->mesh;
     idToken token;
 
-    // Allocate enough space for all the verts if this is the first attribute for
-    // verticies
+    // Allocate enough space for all the verts if this is the first attribute for verticies
     if (!pMesh->faces)
     {
         pMesh->numFaces = header->size;
@@ -465,8 +457,7 @@ bool MA_ParseFace(idParser &parser, maAttribHeader_t *header)
             {
                 throw idException(va("Maya Loader '%s': Face is not a triangle.", parser.GetFileName()));
             }
-            // Increment the face number because a new face always starts with an "f"
-            // token
+            // Increment the face number because a new face always starts with an "f" token
             currentFace++;
 
             // We cannot reorder edges until later because the normal processing
@@ -525,8 +516,7 @@ bool MA_ParseColor(idParser &parser, maAttribHeader_t *header)
     maMesh_t *pMesh = &maGlobal.currentObject->mesh;
     idToken token;
 
-    // Allocate enough space for all the verts if this is the first attribute for
-    // verticies
+    // Allocate enough space for all the verts if this is the first attribute for verticies
     if (!pMesh->colors)
     {
         pMesh->numColors = header->size;
@@ -809,8 +799,7 @@ void MA_ParseMesh(idParser &parser)
         }
     }
 
-    // Now that the normals are good...lets reorder the verts to make the tris
-    // face the right way
+    // Now that the normals are good...lets reorder the verts to make the tris face the right way
     for (int i = 0; i < pMesh->numFaces; i++)
     {
         int tmp = pMesh->faces[i].vertexNum[1];
@@ -837,10 +826,8 @@ void MA_ParseMesh(idParser &parser)
         if (idx < 0 || idx >= pMesh->numVertexes)
         {
             // this happens with d3xp/models/david/hell_h7.ma in the d3xp hell level
-            // TODO: if it happens for other models, too, maybe it's intended and the
-            // .ma parsing is broken
-            common->Warning("Model %s tried to set an out-of-bounds vertex transform "
-                            "(%d, but max vert. index is %d)!",
+            // TODO: if it happens for other models, too, maybe it's intended and the .ma parsing is broken
+            common->Warning("Model %s tried to set an out-of-bounds vertex transform (%d, but max vert. index is %d)!",
                             parser.GetFileName(), idx, pMesh->numVertexes - 1);
             continue;
         }

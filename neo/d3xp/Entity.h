@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,20 +32,20 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifndef __GAME_ENTITY_H__
 #define __GAME_ENTITY_H__
 
-#include "framework/DeclParticle.h"
 #include "idlib/math/Curve.h"
+#include "framework/DeclParticle.h"
 
-#include "Game_local.h"
+#include "physics/Physics_Static.h"
+#include "physics/Physics.h"
+#include "script/Script_Program.h"
 #include "gamesys/Class.h"
 #include "gamesys/Event.h"
-#include "physics/Physics.h"
-#include "physics/Physics_Static.h"
-#include "script/Script_Program.h"
+#include "Game_local.h"
 
 /*
 ===============================================================================
 
-        Game entity base class.
+    Game entity base class.
 
 ===============================================================================
 */
@@ -88,8 +85,7 @@ enum
 
 //
 // Signals
-// make sure to change script/doom_defs.script if you add any, or change their
-// order
+// make sure to change script/doom_defs.script if you add any, or change their order
 //
 typedef enum
 {
@@ -108,9 +104,8 @@ typedef enum
     NUM_SIGNALS
 } signalNum_t;
 
-// FIXME: At some point we may want to just limit it to one thread per signal,
-// but for now, I'm allowing multiple threads.  We should reevaluate this later
-// in the project
+// FIXME: At some point we may want to just limit it to one thread per signal, but
+// for now, I'm allowing multiple threads.  We should reevaluate this later in the project
 #define MAX_SIGNAL_THREADS 16 // probably overkill, but idList uses a granularity of 16
 
 struct signal_t
@@ -146,14 +141,12 @@ class idEntity : public idClass
 
     int thinkFlags;   // TH_? flags
     int dormantStart; // time that the entity was first closed off from player
-    bool cinematic;   // during cinematics, entity will only think if cinematic is
-                      // set
+    bool cinematic;   // during cinematics, entity will only think if cinematic is set
 
     renderView_t *renderView; // for camera views from this entity
     idEntity *cameraTarget;   // any remoteRenderMap shaders will use this
 
-    idList<idEntityPtr<idEntity>> targets; // when this entity is activated these
-                                           // entities entity are activated
+    idList<idEntityPtr<idEntity>> targets; // when this entity is activated these entities entity are activated
 
     int health; // FIXME: do all objects really need health?
 
@@ -164,17 +157,15 @@ class idEntity : public idClass
         bool takedamage : 1;         // if true this entity can be damaged
         bool hidden : 1;             // if true this entity is not visible
         bool bindOrientated : 1;     // if true both the master orientation is used for binding
-        bool solidForTeam : 1;       // if true this entity is considered solid when a
-                                     // physics team mate pushes entities
-        bool forcePhysicsUpdate : 1; // if true always update from the physics
-                                     // whether the object moved or not
+        bool solidForTeam : 1;       // if true this entity is considered solid when a physics team mate pushes entities
+        bool forcePhysicsUpdate : 1; // if true always update from the physics whether the object moved or not
         bool selected : 1;           // if true the entity is selected for editing
         bool neverDormant : 1;       // if true the entity never goes dormant
         bool isDormant : 1;          // if true the entity is dormant
-        bool hasAwakened : 1;        // before a monster has been awakened the first time,
-                                     // use full PVS for dormant instead of area-connected
-        bool networkSync : 1;        // if true the entity is synchronized over the network
-        bool grabbed : 1;            // if true object is currently being grabbed
+        bool hasAwakened : 1; // before a monster has been awakened the first time, use full PVS for dormant instead of
+                              // area-connected
+        bool networkSync : 1; // if true the entity is synchronized over the network
+        bool grabbed : 1;     // if true object is currently being grabbed
     } fl;
 
 #ifdef _D3XP
@@ -209,8 +200,7 @@ class idEntity : public idClass
     virtual void UpdateChangeableSpawnArgs(const idDict *source);
 
     // clients generate views based on all the player specific options,
-    // cameras have custom code, and everything else just uses the axis
-    // orientation
+    // cameras have custom code, and everything else just uses the axis orientation
     virtual renderView_t *GetRenderView();
 
     // thinking
@@ -262,8 +252,7 @@ class idEntity : public idClass
                     int *length);
     bool StartSoundShader(const idSoundShader *shader, const s_channelType channel, int soundShaderFlags,
                           bool broadcast, int *length);
-    void StopSound(const s_channelType channel,
-                   bool broadcast); // pass SND_CHANNEL_ANY to stop all sounds
+    void StopSound(const s_channelType channel, bool broadcast); // pass SND_CHANNEL_ANY to stop all sounds
     void SetSoundVolume(float volume);
     void UpdateSound(void);
     int GetListenerId(void) const;
@@ -309,24 +298,19 @@ class idEntity : public idClass
     void SetOrigin(const idVec3 &org);
     // set the axis of the physics object (relative to bindMaster if not NULL)
     void SetAxis(const idMat3 &axis);
-    // use angles to set the axis of the physics object (relative to bindMaster if
-    // not NULL)
+    // use angles to set the axis of the physics object (relative to bindMaster if not NULL)
     void SetAngles(const idAngles &ang);
     // get the floor position underneath the physics object
     bool GetFloorPos(float max_dist, idVec3 &floorpos) const;
-    // retrieves the transformation going from the physics origin/axis to the
-    // visual origin/axis
+    // retrieves the transformation going from the physics origin/axis to the visual origin/axis
     virtual bool GetPhysicsToVisualTransform(idVec3 &origin, idMat3 &axis);
-    // retrieves the transformation going from the physics origin/axis to the
-    // sound origin/axis
+    // retrieves the transformation going from the physics origin/axis to the sound origin/axis
     virtual bool GetPhysicsToSoundTransform(idVec3 &origin, idMat3 &axis);
-    // called from the physics object when colliding, should return true if the
-    // physics simulation should stop
+    // called from the physics object when colliding, should return true if the physics simulation should stop
     virtual bool Collide(const trace_t &collision, const idVec3 &velocity);
     // retrieves impact information, 'ent' is the entity retrieving the info
     virtual void GetImpactInfo(idEntity *ent, int id, const idVec3 &point, impactInfo_t *info);
-    // apply an impulse to the physics object, 'ent' is the entity applying the
-    // impulse
+    // apply an impulse to the physics object, 'ent' is the entity applying the impulse
     virtual void ApplyImpulse(idEntity *ent, int id, const idVec3 &point, const idVec3 &impulse);
     // add a force to the physics object, 'ent' is the entity adding the force
     virtual void AddForce(idEntity *ent, int id, const idVec3 &point, const idVec3 &force);
@@ -349,8 +333,8 @@ class idEntity : public idClass
                         const float damageScale, const int location);
     // adds a damage effect like overlays, blood, sparks, debris etc.
     virtual void AddDamageEffect(const trace_t &collision, const idVec3 &velocity, const char *damageDefName);
-    // callback function for when another entity received damage from this entity.
-    // damage can be adjusted and returned to the caller.
+    // callback function for when another entity received damage from this entity.  damage can be adjusted and returned
+    // to the caller.
     virtual void DamageFeedback(idEntity *victim, idEntity *inflictor, int &damage);
     // notifies this entity that it is in pain
     virtual bool Pain(idEntity *inflictor, idEntity *attacker, int damage, const idVec3 &dir, int location);
@@ -422,8 +406,7 @@ class idEntity : public idClass
     idEntity *teamChain;                // next entity in physics team
 
     int numPVSAreas;             // number of renderer areas the entity covers
-    int PVSAreas[MAX_PVS_AREAS]; // numbers of the renderer areas the entity
-                                 // covers
+    int PVSAreas[MAX_PVS_AREAS]; // numbers of the renderer areas the entity covers
 
     signalList_t *signals;
 
@@ -524,7 +507,7 @@ class idEntity : public idClass
 /*
 ===============================================================================
 
-        Animated entity base class.
+    Animated entity base class.
 
 ===============================================================================
 */

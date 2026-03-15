@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "idlib/math/Pluecker.h"
 #include "sys/platform.h"
+#include "idlib/math/Pluecker.h"
 
 #include "idlib/geometry/Surface.h"
 
@@ -169,13 +166,12 @@ int idSurface::Split(const idPlane &plane, const float epsilon, idSurface **fron
         }
     }
 
-    // each edge is shared by at most two triangles, as such there can never be
-    // more indexes than twice the number of edges
+    // each edge is shared by at most two triangles, as such there can never be more indexes than twice the number of
+    // edges
     surface[0]->indexes.Resize(((counts[SIDE_FRONT] + counts[SIDE_ON]) * 2) + (numEdgeSplitVertexes * 4));
     surface[1]->indexes.Resize(((counts[SIDE_BACK] + counts[SIDE_ON]) * 2) + (numEdgeSplitVertexes * 4));
 
-    // allocate indexes to construct the triangle indexes for the front and back
-    // surface
+    // allocate indexes to construct the triangle indexes for the front and back surface
     vertexRemap[0] = (int *)_alloca(verts.Num() * sizeof(int));
     memset(vertexRemap[0], -1, verts.Num() * sizeof(int));
     vertexRemap[1] = (int *)_alloca(verts.Num() * sizeof(int));
@@ -193,8 +189,7 @@ int idSurface::Split(const idPlane &plane, const float epsilon, idSurface **fron
     indexNum[1] = surface[1]->indexes.Num();
 
     maxOnPlaneEdges += 4 * numEdgeSplitVertexes;
-    // allocate one more in case no triangles are actually split which may happen
-    // for a disconnected surface
+    // allocate one more in case no triangles are actually split which may happen for a disconnected surface
     onPlaneEdges[0] = (int *)_alloca((maxOnPlaneEdges + 1) * sizeof(int));
     onPlaneEdges[1] = (int *)_alloca((maxOnPlaneEdges + 1) * sizeof(int));
     numOnPlaneEdges[0] = numOnPlaneEdges[1] = 0;
@@ -508,8 +503,7 @@ bool idSurface::ClipInPlace(const idPlane &plane, const float epsilon, const boo
     // more indexes than twice the number of edges
     newIndexes.Resize((counts[SIDE_FRONT] << 1) + (numEdgeSplitVertexes << 2));
 
-    // allocate indexes to construct the triangle indexes for the front and back
-    // surface
+    // allocate indexes to construct the triangle indexes for the front and back surface
     vertexRemap = (int *)_alloca(verts.Num() * sizeof(int));
     memset(vertexRemap, -1, verts.Num() * sizeof(int));
 

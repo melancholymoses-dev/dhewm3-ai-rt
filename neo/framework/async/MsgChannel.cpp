@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Compressor.h"
-#include "idlib/BitMsg.h"
 #include "sys/platform.h"
+#include "idlib/BitMsg.h"
+#include "framework/Compressor.h"
 
 #include "framework/async/MsgChannel.h"
 
@@ -43,10 +40,9 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 packet header
 -------------
 2 bytes		id
-4 bytes		outgoing sequence. high bit will be set if this is a fragmented
-message. 2 bytes		optional fragment start byte if fragment bit is
-set. 2 bytes		optional fragment length if fragment bit is set. if <
-FRAGMENT_SIZE, this is the last fragment.
+4 bytes		outgoing sequence. high bit will be set if this is a fragmented message.
+2 bytes		optional fragment start byte if fragment bit is set.
+2 bytes		optional fragment length if fragment bit is set. if < FRAGMENT_SIZE, this is the last fragment.
 
 If the id is -1, the packet should be handled as an out-of-band
 message instead of as part of the message channel.
@@ -596,11 +592,10 @@ int idMsgChannel::SendMessage(idPort &port, const int time, const idBitMsg &msg)
 =================
 idMsgChannel::Process
 
-  Returns false if the message should not be processed due to being out of order
-or a fragment.
+  Returns false if the message should not be processed due to being out of order or a fragment.
 
-  msg must be large enough to hold MAX_MESSAGE_SIZE, because if this is the
-final fragment of a multi-part message, the entire thing will be copied out.
+  msg must be large enough to hold MAX_MESSAGE_SIZE, because if this is the final
+  fragment of a multi-part message, the entire thing will be copied out.
 =================
 */
 bool idMsgChannel::Process(const netadr_t from, int time, idBitMsg &msg, int &sequence)

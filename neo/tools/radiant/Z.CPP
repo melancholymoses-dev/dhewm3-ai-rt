@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,7 +39,7 @@ z_t z;
 
 /*
  =======================================================================================================================
-        Z_Init
+    Z_Init
  =======================================================================================================================
  */
 void Z_Init(void)
@@ -59,7 +56,7 @@ static int cursorx, cursory;
 
 /*
  =======================================================================================================================
-        Z_MouseDown
+    Z_MouseDown
  =======================================================================================================================
  */
 void Z_MouseDown(int x, int y, int buttons)
@@ -91,8 +88,7 @@ void Z_MouseDown(int x, int y, int buttons)
     vright[1] = 0;
     vright[2] = 0;
 
-    // new mouse code for ZClip, I'll do this stuff before falling through into
-    // the standard ZWindow mouse code...
+    // new mouse code for ZClip, I'll do this stuff before falling through into the standard ZWindow mouse code...
     //
     if (g_pParentWnd->GetZWnd()->m_pZClip) // should always be the case I think, but this is safer
     {
@@ -155,8 +151,7 @@ void Z_MouseDown(int x, int y, int buttons)
     // button = set single face to texture
     //
 
-    // see code above for these next 3, I just commented them here as well for
-    // clarity...
+    // see code above for these next 3, I just commented them here as well for clarity...
     //
     // ctrl-shift-RIGHT button = toggle ZClip on/off
     //      shift-RIGHT button = set ZClip top marker
@@ -181,7 +176,7 @@ void Z_MouseDown(int x, int y, int buttons)
 
 /*
  =======================================================================================================================
-        Z_MouseUp
+    Z_MouseUp
  =======================================================================================================================
  */
 void Z_MouseUp(int x, int y, int buttons)
@@ -191,7 +186,7 @@ void Z_MouseUp(int x, int y, int buttons)
 
 /*
  =======================================================================================================================
-        Z_MouseMoved
+    Z_MouseMoved
  =======================================================================================================================
  */
 void Z_MouseMoved(int x, int y, int buttons)
@@ -233,8 +228,8 @@ void Z_MouseMoved(int x, int y, int buttons)
 
 /*
  =======================================================================================================================
-        DRAWING £
-        Z_DrawGrid
+    DRAWING £
+    Z_DrawGrid
  =======================================================================================================================
  */
 void Z_DrawGrid(void)
@@ -355,7 +350,7 @@ GLbitfield glbitClear = GL_COLOR_BUFFER_BIT; // HACK
 
 /*
  =======================================================================================================================
-        Z_Draw
+    Z_Draw
  =======================================================================================================================
  */
 void Z_Draw(void)
@@ -380,9 +375,10 @@ void Z_Draw(void)
 
     /*
      * GL Bug £
-     * When not using hw acceleration, gl will fault if we clear the depth buffer
-     * bit on the first pass. The hack fix is to set the GL_DEPTH_BUFFER_BIT only
-     * after Z_Draw() has been called once. Yeah, right. £ qglClear(glbitClear);
+     * When not using hw acceleration, gl will fault if we clear the depth buffer bit
+     * on the first pass. The hack fix is to set the GL_DEPTH_BUFFER_BIT only after
+     * Z_Draw() has been called once. Yeah, right. £
+     * qglClear(glbitClear);
      */
     qglClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 

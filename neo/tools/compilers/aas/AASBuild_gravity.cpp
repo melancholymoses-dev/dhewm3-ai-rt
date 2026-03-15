@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -143,8 +140,7 @@ void idAASBuild::GravSubdivLeafNode(idBrushBSPNode *node)
     int *bestNumSplits;
     int floor, gap, numFloorChecked;
 
-    // if this leaf node is already classified it cannot have a combination of
-    // floor and gap portals
+    // if this leaf node is already classified it cannot have a combination of floor and gap portals
     if (node->GetFlags() & (AREA_FLOOR | AREA_GAP))
     {
         return;
@@ -191,8 +187,7 @@ void idAASBuild::GravSubdivLeafNode(idBrushBSPNode *node)
         for (i = 0; i < w1->GetNumPoints(); i++)
         {
 
-            // create a plane through the edge of the gap parallel to the direction of
-            // gravity
+            // create a plane through the edge of the gap parallel to the direction of gravity
             normal = (*w1)[(i + 1) % w1->GetNumPoints()].ToVec3() - (*w1)[i].ToVec3();
             normal = normal.Cross(aasSettings->invGravityDir);
             if (normal.Normalize() < 0.2f)
@@ -209,8 +204,7 @@ void idAASBuild::GravSubdivLeafNode(idBrushBSPNode *node)
                 break;
             }
 
-            // test if the plane through the edge of the gap seperates the gap from a
-            // floor portal
+            // test if the plane through the edge of the gap seperates the gap from a floor portal
             for (p2 = node->GetPortals(); p2; p2 = p2->Next(s2))
             {
                 s2 = (p2->GetNode(1) == node);
@@ -270,8 +264,7 @@ void idAASBuild::GravSubdivLeafNode(idBrushBSPNode *node)
                     }
                 }
 
-                // a point of the floor portal was found to be at the same side of the
-                // plane as the gap
+                // a point of the floor portal was found to be at the same side of the plane as the gap
                 if (j < w2->GetNumPoints())
                 {
                     continue;
@@ -316,8 +309,7 @@ void idAASBuild::GravSubdivLeafNode(idBrushBSPNode *node)
     // if no valid seperators found
     if (planeList.Num() == 0)
     {
-        // NOTE: this should never happend, if it does the leaf node has degenerate
-        // portals
+        // NOTE: this should never happend, if it does the leaf node has degenerate portals
         return;
     }
 

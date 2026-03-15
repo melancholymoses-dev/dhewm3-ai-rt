@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,8 +32,8 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #ifdef WIN32
 #include <io.h> // for _read
 #else
-#include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -46,12 +43,12 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include <curl/curl.h>
 #endif
 
-#include "framework/DeclEntityDef.h"
-#include "framework/DeclManager.h"
-#include "framework/EventLoop.h"
+#include "idlib/hashing/MD4.h"
 #include "framework/Licensee.h"
 #include "framework/Unzip.h"
-#include "idlib/hashing/MD4.h"
+#include "framework/EventLoop.h"
+#include "framework/DeclEntityDef.h"
+#include "framework/DeclManager.h"
 
 #include "framework/FileSystem.h"
 
@@ -60,99 +57,91 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 DOOM FILESYSTEM
 
-All of Doom's data access is through a hierarchical file system, but the
-contents of the file system can be transparently merged from several sources.
+All of Doom's data access is through a hierarchical file system, but the contents of
+the file system can be transparently merged from several sources.
 
-A "relativePath" is a reference to game file data, which must include a
-terminating zero.
+A "relativePath" is a reference to game file data, which must include a terminating zero.
 "..", "\\", and ":" are explicitly illegal in qpaths to prevent any references
 outside the Doom directory system.
 
-The "base path" is the path to the directory holding all the game directories
-and usually the executable. It defaults to the current directory, but can be
-overridden with "+set fs_basepath c:\doom" on the command line. The base path
-cannot be modified at all after startup.
+The "base path" is the path to the directory holding all the game directories and
+usually the executable. It defaults to the current directory, but can be overridden
+with "+set fs_basepath c:\doom" on the command line. The base path cannot be modified
+at all after startup.
 
-The "save path" is the path to the directory where game files will be saved. It
-defaults to the base path, but can be overridden with a "+set fs_savepath
-c:\doom" on the command line. Any files that are created during the game (demos,
-screenshots, etc.) will be created reletive to the save path.
+The "save path" is the path to the directory where game files will be saved. It defaults
+to the base path, but can be overridden with a "+set fs_savepath c:\doom" on the
+command line. Any files that are created during the game (demos, screenshots, etc.) will
+be created reletive to the save path.
 
-The "cd path" is the path to an alternate hierarchy that will be searched if a
-file is not located in the base path. A user can do a partial install that
-copies some data to a base path created on their hard drive and leave the rest
-on the cd. It defaults to the current directory, but it can be overridden with
-"+set fs_cdpath g:\doom" on the command line.
+The "cd path" is the path to an alternate hierarchy that will be searched if a file
+is not located in the base path. A user can do a partial install that copies some
+data to a base path created on their hard drive and leave the rest on the cd. It defaults
+to the current directory, but it can be overridden with "+set fs_cdpath g:\doom" on the
+command line.
 
-The "dev path" is the path to an alternate hierarchy where the editors and tools
-used during development (Radiant, AF editor, dmap, runAAS) will write files to.
-It defaults to the cd path, but can be overridden with a "+set fs_devpath
-c:\doom" on the command line.
+The "dev path" is the path to an alternate hierarchy where the editors and tools used
+during development (Radiant, AF editor, dmap, runAAS) will write files to. It defaults to
+the cd path, but can be overridden with a "+set fs_devpath c:\doom" on the command line.
 
-If a user runs the game directly from a CD, the base path would be on the CD.
-This should still function correctly, but all file writes will fail
-(harmlessly).
+If a user runs the game directly from a CD, the base path would be on the CD. This
+should still function correctly, but all file writes will fail (harmlessly).
 
-The "base game" is the directory under the paths where data comes from by
-default, and can be either "base" or "demo".
+The "base game" is the directory under the paths where data comes from by default, and
+can be either "base" or "demo".
 
-The "current game" may be the same as the base game, or it may be the name of
-another directory under the paths that should be searched for files before
-looking in the base game. The game directory is set with "+set fs_game myaddon"
-on the command line. This is the basis for addons.
+The "current game" may be the same as the base game, or it may be the name of another
+directory under the paths that should be searched for files before looking in the base
+game. The game directory is set with "+set fs_game myaddon" on the command line. This is
+the basis for addons.
 
-No other directories outside of the base game and current game will ever be
-referenced by filesystem functions.
+No other directories outside of the base game and current game will ever be referenced by
+filesystem functions.
 
-To save disk space and speed up file loading, directory trees can be collapsed
-into zip files. The files use a ".pk4" extension to prevent users from unzipping
-them accidentally, but otherwise they are simply normal zip files. A game
-directory can have multiple zip files of the form "pak0.pk4", "pak1.pk4", etc.
-Zip files are searched in decending order from the highest number to the lowest,
-and will always take precedence over the filesystem. This allows a pk4
-distributed as a patch to override all existing data.
+To save disk space and speed up file loading, directory trees can be collapsed into zip
+files. The files use a ".pk4" extension to prevent users from unzipping them accidentally,
+but otherwise they are simply normal zip files. A game directory can have multiple zip
+files of the form "pak0.pk4", "pak1.pk4", etc. Zip files are searched in decending order
+from the highest number to the lowest, and will always take precedence over the filesystem.
+This allows a pk4 distributed as a patch to override all existing data.
 
-Because we will have updated executables freely available online, there is no
-point to trying to restrict demo / oem versions of the game with code changes.
-Demo / oem versions should be exactly the same executables as release versions,
-but with different data that automatically restricts where game media can come
-from to prevent add-ons from working.
+Because we will have updated executables freely available online, there is no point to
+trying to restrict demo / oem versions of the game with code changes. Demo / oem versions
+should be exactly the same executables as release versions, but with different data that
+automatically restricts where game media can come from to prevent add-ons from working.
 
-After the paths are initialized, Doom will look for the product.txt file. If not
-found and verified, the game will run in restricted mode. In restricted mode,
-only files contained in demo/pak0.pk4 will be available for loading, and only if
-the zip header is verified to not have been modified. A single exception is made
-for DoomConfig.cfg. Files can still be written out in restricted mode, so
-screenshots and demos are allowed. Restricted mode can be tested by setting
-"+set fs_restrict 1" on the command line, even if there is a valid product.txt
-under the basepath or cdpath.
+After the paths are initialized, Doom will look for the product.txt file. If not found
+and verified, the game will run in restricted mode. In restricted mode, only files
+contained in demo/pak0.pk4 will be available for loading, and only if the zip header is
+verified to not have been modified. A single exception is made for DoomConfig.cfg. Files
+can still be written out in restricted mode, so screenshots and demos are allowed.
+Restricted mode can be tested by setting "+set fs_restrict 1" on the command line, even
+if there is a valid product.txt under the basepath or cdpath.
 
-If the "fs_copyfiles" cvar is set to 1, then every time a file is sourced from
-the cd path, it will be copied over to the save path. This is a development aid
-to help build test releases and to copy working sets of files.
+If the "fs_copyfiles" cvar is set to 1, then every time a file is sourced from the cd
+path, it will be copied over to the save path. This is a development aid to help build
+test releases and to copy working sets of files.
 
-If the "fs_copyfiles" cvar is set to 2, any file found in fs_cdpath that is
-newer than it's fs_savepath version will be copied to fs_savepath (in addition
-to the fs_copyfiles 1 behaviour).
+If the "fs_copyfiles" cvar is set to 2, any file found in fs_cdpath that is newer than
+it's fs_savepath version will be copied to fs_savepath (in addition to the fs_copyfiles 1
+behaviour).
 
-If the "fs_copyfiles" cvar is set to 3, files from both basepath and cdpath will
-be copied over to the save path. This is useful when copying working sets of
-files mainly from base path with an additional cd path (which can be a slower
-network drive for instance).
+If the "fs_copyfiles" cvar is set to 3, files from both basepath and cdpath will be copied
+over to the save path. This is useful when copying working sets of files mainly from base
+path with an additional cd path (which can be a slower network drive for instance).
 
-If the "fs_copyfiles" cvar is set to 4, files that exist in the cd path but NOT
-the base path will be copied to the save path
+If the "fs_copyfiles" cvar is set to 4, files that exist in the cd path but NOT the base path
+will be copied to the save path
 
-NOTE: fs_copyfiles and case sensitivity. On fs_caseSensitiveOS 0 filesystems (
-win32 ), the copied files may change casing when copied over.
+NOTE: fs_copyfiles and case sensitivity. On fs_caseSensitiveOS 0 filesystems ( win32 ), the
+copied files may change casing when copied over.
 
-The relative path "sound/newstuff/test.wav" would be searched for in the
-following places:
+The relative path "sound/newstuff/test.wav" would be searched for in the following places:
 
 for save path, dev path, base path, cd path:
-        for current game, base game:
-                search directory
-                search zip files
+    for current game, base game:
+        search directory
+        search zip files
 
 downloaded files, to be written to save path + current game's directory
 
@@ -162,17 +151,17 @@ basedir / cddir / game combinations, but all other subsystems that rely on it
 
 
 "fs_caseSensitiveOS":
-This cvar is set on operating systems that use case sensitive filesystems (Linux
-and OSX) It is a common situation to have the media reference filenames, whereas
-the file on disc only matches in a case-insensitive way. When
-"fs_caseSensitiveOS" is set, the filesystem will always do a case insensitive
-search. IMPORTANT: This only applies to files, and not to directories. There is
-no case-insensitive matching of directories. All directory names should be
-lowercase, when "com_developer" is 1, the filesystem will warn when it catches
-bad directory situations (regardless of the "fs_caseSensitiveOS" setting) When
-bad casing in directories happen and "fs_caseSensitiveOS" is set, BuildOSPath
-will attempt to correct the situation by forcing the path to lowercase. This
-assumes the media is stored all lowercase.
+This cvar is set on operating systems that use case sensitive filesystems (Linux and OSX)
+It is a common situation to have the media reference filenames, whereas the file on disc
+only matches in a case-insensitive way. When "fs_caseSensitiveOS" is set, the filesystem
+will always do a case insensitive search.
+IMPORTANT: This only applies to files, and not to directories. There is no case-insensitive
+matching of directories. All directory names should be lowercase, when "com_developer" is 1,
+the filesystem will warn when it catches bad directory situations (regardless of the
+"fs_caseSensitiveOS" setting)
+When bad casing in directories happen and "fs_caseSensitiveOS" is set, BuildOSPath will
+attempt to correct the situation by forcing the path to lowercase. This assumes the media
+is stored all lowercase.
 
 "additional mod path search":
 fs_game_base can be used to set an additional search path
@@ -289,8 +278,7 @@ typedef struct fileInPack_s
 typedef enum
 {
     PURE_UNKNOWN = 0, // need to run the pak through GetPackStatus
-    PURE_NEUTRAL,     // neutral regarding pureness. gets in the pure list if
-                      // referenced
+    PURE_NEUTRAL,     // neutral regarding pureness. gets in the pure list if referenced
     PURE_ALWAYS,      // always referenced - for pak* named files, unless NEVER
     PURE_NEVER        // VO paks. may be referenced, won't be in the pure lists
 } pureStatus_t;
@@ -341,8 +329,7 @@ typedef struct searchpath_s
 // + .jpg and .tga
 #define MAX_CACHED_DIRS 6
 
-// how many OSes to handle game paks for ( we don't have to know them precisely
-// )
+// how many OSes to handle game paks for ( we don't have to know them precisely )
 #define BINARY_CONFIG "binary.conf"
 #define ADDON_CONFIG "addon.conf"
 
@@ -472,11 +459,9 @@ class idFileSystemLocal : public idFileSystem
     bool backgroundThread_exit;
 
     idList<pack_t *> serverPaks;
-    bool loadedFileFromDir;       // set to true once a file was loaded from a directory
-                                  // - can't switch to pure anymore
+    bool loadedFileFromDir;       // set to true once a file was loaded from a directory - can't switch to pure anymore
     idList<int> restartChecksums; // used during a restart to set things in right order
-    idList<int> addonChecksums;   // list of checksums that should go to the search
-                                  // list directly ( for restarts )
+    idList<int> addonChecksums;   // list of checksums that should go to the search list directly ( for restarts )
 
     idDEntry dir_cache[MAX_CACHED_DIRS]; // fifo
     int dir_cache_index;
@@ -532,8 +517,7 @@ idCVar idFileSystemLocal::fs_cdpath("fs_cdpath", "", CVAR_SYSTEM | CVAR_INIT, ""
 idCVar idFileSystemLocal::fs_devpath("fs_devpath", "", CVAR_SYSTEM | CVAR_INIT, "");
 idCVar idFileSystemLocal::fs_game("fs_game", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO, "mod path");
 idCVar idFileSystemLocal::fs_game_base("fs_game_base", "", CVAR_SYSTEM | CVAR_INIT | CVAR_SERVERINFO,
-                                       "alternate mod path, searched after the "
-                                       "main fs_game path, before the basedir");
+                                       "alternate mod path, searched after the main fs_game path, before the basedir");
 #if defined(__AROS__) || defined(WIN32)
 idCVar idFileSystemLocal::fs_caseSensitiveOS("fs_caseSensitiveOS", "0", CVAR_SYSTEM | CVAR_BOOL, "");
 #else
@@ -646,8 +630,7 @@ bool idFileSystemLocal::FilenameCompare(const char *s1, const char *s2) const
 /*
 ================
 idFileSystemLocal::OpenOSFile
-optional caseSensitiveName is set to case sensitive file name as found on disc
-(fs_caseSensitiveOS only)
+optional caseSensitiveName is set to case sensitive file name as found on disc (fs_caseSensitiveOS only)
 ================
 */
 FILE *idFileSystemLocal::OpenOSFile(const char *fileName, const char *mode, idStr *caseSensitiveName)
@@ -698,8 +681,7 @@ FILE *idFileSystemLocal::OpenOSFile(const char *fileName, const char *mode, idSt
                 else
                 {
                     // not supposed to happen if ListOSFiles is doing it's job correctly
-                    common->Warning("idFileSystemLocal::OpenFileRead: fs_caseSensitiveOS "
-                                    "1 could not open %s",
+                    common->Warning("idFileSystemLocal::OpenFileRead: fs_caseSensitiveOS 1 could not open %s",
                                     entry.c_str());
                 }
             }
@@ -973,8 +955,8 @@ const char *idFileSystemLocal::OSPathToRelativePath(const char *OSPath)
         base = strstr(base + 1, BASE_GAMEDIR);
     }
 
-    // fs_game and fs_game_base support - look for first complete name with a mod
-    // path ( fs_game searched before fs_game_base )
+    // fs_game and fs_game_base support - look for first complete name with a mod path
+    // ( fs_game searched before fs_game_base )
     const char *fsgame = NULL;
     int igame = 0;
     for (igame = 0; igame < 2; igame++)
@@ -1009,18 +991,14 @@ const char *idFileSystemLocal::OSPathToRelativePath(const char *OSPath)
 
     if (base)
     {
-        // DG: on Windows base might look like
-        // "base\\pak008.pk4/script/doom_util.script"
-        //     while on Linux it'll be more like
-        //     "base/pak008.pk4/script/doom_util.script" I /think/ we want to get
-        //     rid of the bla.pk4 part, at least that's what happens implicitly on
-        //     Windows (I hope these problems don't exist if the file is not from a
-        //     .pk4, so that case is handled like before)
+        // DG: on Windows base might look like "base\\pak008.pk4/script/doom_util.script"
+        //     while on Linux it'll be more like "base/pak008.pk4/script/doom_util.script"
+        //     I /think/ we want to get rid of the bla.pk4 part, at least that's what happens implicitly on Windows
+        //     (I hope these problems don't exist if the file is not from a .pk4, so that case is handled like before)
         s = strstr(base, ".pk4/");
         if (s != NULL)
         {
-            s += 4; // skip ".pk4", but *not* the following '/', that'll be skipped
-                    // below
+            s += 4; // skip ".pk4", but *not* the following '/', that'll be skipped below
         }
         else
         {
@@ -1105,8 +1083,7 @@ bool idFileSystemLocal::FileIsInPAK(const char *relativePath)
 
     if (!relativePath)
     {
-        common->FatalError("idFileSystemLocal::FileIsInPAK: NULL 'relativePath' "
-                           "parameter passed\n");
+        common->FatalError("idFileSystemLocal::FileIsInPAK: NULL 'relativePath' parameter passed\n");
     }
 
     // qpaths are not supposed to have a leading slash
@@ -1135,8 +1112,7 @@ bool idFileSystemLocal::FileIsInPAK(const char *relativePath)
         if (search->pack && search->pack->hashTable[hash])
         {
 
-            // disregard if it doesn't match one of the allowed pure pak files - or is
-            // a localization file
+            // disregard if it doesn't match one of the allowed pure pak files - or is a localization file
             if (serverPaks.Num())
             {
                 GetPackStatus(search->pack);
@@ -1597,9 +1573,8 @@ pack_t *idFileSystemLocal::LoadZipFile(const char *zipfile)
 /*
 ===============
 idFileSystemLocal::AddZipFile
-adds a downloaded pak file to the list so we can work out what we have and what
-we still need the isNew flag is set to true, indicating that we cannot add this
-pak to the search lists without a restart
+adds a downloaded pak file to the list so we can work out what we have and what we still need
+the isNew flag is set to true, indicating that we cannot add this pak to the search lists without a restart
 ===============
 */
 int idFileSystemLocal::AddZipFile(const char *path)
@@ -1684,8 +1659,8 @@ void idFileSystemLocal::GetExtensionList(const char *extension, idStrList &exten
 ===============
 idFileSystemLocal::GetFileList
 
-Does not clear the list first so this can be used to progressively build a file
-list. When 'sort' is true only the new files added to the list are sorted.
+Does not clear the list first so this can be used to progressively build a file list.
+When 'sort' is true only the new files added to the list are sorted.
 ===============
 */
 int idFileSystemLocal::GetFileList(const char *relativePath, const idStrList &extensions, idStrList &list,
@@ -2054,8 +2029,7 @@ idModList *idFileSystemLocal::ListMods(void)
     list->mods.Insert("");
     list->descriptions.Insert("Doom 3 (base game)");
 
-    // DG: if installed, add d3xp with useful description, right below the base
-    // game
+    // DG: if installed, add d3xp with useful description, right below the base game
     if (HasD3XP())
     {
         list->mods.Insert("d3xp", 1);
@@ -2146,8 +2120,7 @@ int idFileSystemLocal::ListOSFiles(const char *directory, const char *extension,
         {
             if (fs_debug.GetInteger())
             {
-                // common->Printf( "idFileSystemLocal::ListOSFiles: cache hit: %s\n",
-                // directory );
+                // common->Printf( "idFileSystemLocal::ListOSFiles: cache hit: %s\n", directory );
             }
             list = dir_cache[j];
             return list.Num();
@@ -2157,8 +2130,7 @@ int idFileSystemLocal::ListOSFiles(const char *directory, const char *extension,
 
     if (fs_debug.GetInteger())
     {
-        // common->Printf( "idFileSystemLocal::ListOSFiles: cache miss: %s\n",
-        // directory );
+        // common->Printf( "idFileSystemLocal::ListOSFiles: cache miss: %s\n", directory );
     }
 
     ret = Sys_ListFiles(directory, extension, list);
@@ -2412,8 +2384,7 @@ void idFileSystemLocal::TouchFileList_f(const idCmdArgs &args)
 ================
 idFileSystemLocal::AddGameDirectory
 
-Sets gameFolder, adds the directory to the head of the search paths, then loads
-any pk4 files.
+Sets gameFolder, adds the directory to the head of the search paths, then loads any pk4 files.
 ================
 */
 void idFileSystemLocal::AddGameDirectory(const char *path, const char *dir)
@@ -2599,8 +2570,8 @@ void idFileSystemLocal::Startup(void)
         SetupGameDirectories(fs_game.GetString());
     }
 
-    // currently all addons are in the search list - deal with filtering out and
-    // dependencies now scan through and deal with dependencies
+    // currently all addons are in the search list - deal with filtering out and dependencies now
+    // scan through and deal with dependencies
     search = &searchPaths;
     while (*search)
     {
@@ -2621,8 +2592,7 @@ void idFileSystemLocal::Startup(void)
         addon_index = addonChecksums.FindIndex(pak->checksum);
         if (addon_index >= 0)
         {
-            assert(!pak->addon_search); // any pak getting flagged as addon_search
-                                        // should also have been removed from
+            assert(!pak->addon_search); // any pak getting flagged as addon_search should also have been removed from
                                         // addonChecksums already
             pak->addon_search = true;
             addonChecksums.RemoveIndex(addon_index);
@@ -2698,9 +2668,9 @@ void idFileSystemLocal::Startup(void)
                         // last of the list can't be swapped back
                         if (fs_debug.GetBool())
                         {
-                            common->Printf("found pure checksum %x at index %d, but the end "
-                                           "of search path is reached\n",
-                                           (*search)->pack->checksum, i);
+                            common->Printf(
+                                "found pure checksum %x at index %d, but the end of search path is reached\n",
+                                (*search)->pack->checksum, i);
                             idStr checks;
                             checks.Clear();
                             for (i = 0; i < serverPaks.Num(); i++)
@@ -2715,8 +2685,7 @@ void idFileSystemLocal::Startup(void)
                             }
                             common->Printf("%d paks left - %s\n", restartChecksums.Num(), checks.c_str());
                         }
-                        common->FatalError("Failed to restart with pure mode restrictions "
-                                           "for server connect");
+                        common->FatalError("Failed to restart with pure mode restrictions for server connect");
                     }
                     // put this search path at the end of the list
                     searchpath_t *search_end;
@@ -2865,8 +2834,7 @@ int idFileSystemLocal::ValidateDownloadPakForChecksum(int checksum, char path[MA
     }
 
     // validate this pak for a potential download
-    // ignore pak*.pk4 for download. those are reserved to distribution and cannot
-    // be downloaded
+    // ignore pak*.pk4 for download. those are reserved to distribution and cannot be downloaded
     name = pak->pakFilename;
     name.StripPath();
     if (strstr(name.c_str(), "pak") == name.c_str())
@@ -2890,8 +2858,7 @@ int idFileSystemLocal::ValidateDownloadPakForChecksum(int checksum, char path[MA
     }
     if (i == testList.Num())
     {
-        common->Warning("idFileSystem::ValidateDownloadPak: failed to extract "
-                        "relative path for %s",
+        common->Warning("idFileSystem::ValidateDownloadPak: failed to extract relative path for %s",
                         pak->pakFilename.c_str());
         return 0;
     }
@@ -2916,14 +2883,13 @@ idFileSystemLocal::SetPureServerChecksums
 set the pure paks according to what the server asks
 if that's not possible, identify why and build an answer
 can be:
-  loadedFileFromDir - some files were loaded from directories instead of paks (a
-restart in pure pak-only is required) missing/wrong checksums - some pak files
-would need to be installed/updated (downloaded for instance) some pak files
-currently referenced are not referenced by the server wrong order - if the pak
-order doesn't match, means some stuff could have been loaded from somewhere else
-server referenced files are prepended to the list if possible ( that doesn't
-break pureness ) DLL: the checksum of the pak containing the DLL is maintained
-seperately, the server can send different replies by OS
+  loadedFileFromDir - some files were loaded from directories instead of paks (a restart in pure pak-only is required)
+  missing/wrong checksums - some pak files would need to be installed/updated (downloaded for instance)
+  some pak files currently referenced are not referenced by the server
+  wrong order - if the pak order doesn't match, means some stuff could have been loaded from somewhere else
+server referenced files are prepended to the list if possible ( that doesn't break pureness )
+DLL:
+  the checksum of the pak containing the DLL is maintained seperately, the server can send different replies by OS
 =====================
 */
 fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[MAX_PURE_PAKS],
@@ -2954,8 +2920,7 @@ fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[
     {
         if (j < serverPaks.Num() && serverPaks[j]->checksum == pureChecksums[i])
         {
-            canPrepend = false; // once you start matching into the list there is no
-                                // prepending anymore
+            canPrepend = false; // once you start matching into the list there is no prepending anymore
             i++;
             j++; // the pak is matched, is in the right order, continue..
         }
@@ -2965,8 +2930,7 @@ fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[
             if (pack && pack->addon && !pack->addon_search)
             {
                 // this is an addon pack, and it's not on our current search list
-                // setting success to false meaning that a restart including this addon
-                // is required
+                // setting success to false meaning that a restart including this addon is required
                 if (fs_debug.GetBool())
                 {
                     common->Printf("pak %s checksumed 0x%x is on addon list. Restart required.\n",
@@ -2979,8 +2943,7 @@ fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[
                 // that's a downloaded pack, we will need to restart
                 if (fs_debug.GetBool())
                 {
-                    common->Printf("pak %s checksumed 0x%x is a newly downloaded file. "
-                                   "Restart required.\n",
+                    common->Printf("pak %s checksumed 0x%x is a newly downloaded file. Restart required.\n",
                                    pack->pakFilename.c_str(), pack->checksum);
                 }
                 success = false;
@@ -2995,8 +2958,8 @@ fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[
                         common->Printf("prepend pak %s checksumed 0x%x at index %d\n", pack->pakFilename.c_str(),
                                        pack->checksum, j);
                     }
-                    // NOTE: there is a light possibility this adds at the end of the list
-                    // if UpdatePureServerChecksums didn't set anything
+                    // NOTE: there is a light possibility this adds at the end of the list if UpdatePureServerChecksums
+                    // didn't set anything
                     serverPaks.Insert(pack, j);
                     i++;
                     j++; // continue..
@@ -3009,15 +2972,15 @@ fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[
                         // verbose the situation
                         if (serverPaks.Find(pack))
                         {
-                            common->Printf("pak %s checksumed 0x%x is in the pure list at "
-                                           "wrong index. Current index is %d, found at %d\n",
+                            common->Printf("pak %s checksumed 0x%x is in the pure list at wrong index. Current index "
+                                           "is %d, found at %d\n",
                                            pack->pakFilename.c_str(), pack->checksum, j, serverPaks.FindIndex(pack));
                         }
                         else
                         {
-                            common->Printf("pak %s checksumed 0x%x can't be added to pure "
-                                           "list because of search order\n",
-                                           pack->pakFilename.c_str(), pack->checksum);
+                            common->Printf(
+                                "pak %s checksumed 0x%x can't be added to pure list because of search order\n",
+                                pack->pakFilename.c_str(), pack->checksum);
                         }
                     }
                     i++; // advance server checksums only
@@ -3039,12 +3002,10 @@ fsPureReply_t idFileSystemLocal::SetPureServerChecksums(const int pureChecksums[
     }
     while (j < serverPaks.Num())
     {
-        success = false; // just in case some extra pak files are referenced at the
-                         // end of our local list
+        success = false; // just in case some extra pak files are referenced at the end of our local list
         if (fs_debug.GetBool())
         {
-            common->Printf("pak %s checksumed 0x%x is an extra reference at the end "
-                           "of local pure list\n",
+            common->Printf("pak %s checksumed 0x%x is an extra reference at the end of local pure list\n",
                            serverPaks[j]->pakFilename.c_str(), serverPaks[j]->checksum);
         }
         j++;
@@ -3165,8 +3126,7 @@ void idFileSystemLocal::Init(void)
 
     if (ReadFile("default.cfg", NULL, NULL) <= 0)
     {
-        // DG: the demo gamedata is in demo/ instead of base/. to make it "just
-        // work", add a fallback for that
+        // DG: the demo gamedata is in demo/ instead of base/. to make it "just work", add a fallback for that
         if (fs_game.GetString()[0] == '\0' || idStr::Icmp(fs_game.GetString(), BASE_GAMEDIR) == 0)
         {
             common->Warning("Couldn't find default.cfg in %s/, trying again with demo/\n", BASE_GAMEDIR);
@@ -3306,18 +3266,15 @@ bool idFileSystemLocal::FileAllowedFromDir(const char *path)
 
     if (!strcmp(path + l - 4, ".cfg")    // for config files
         || !strcmp(path + l - 4, ".dat") // for journal files
-        || !strcmp(path + l - 4,
-                   ".dll") // dynamic modules are handled a different way for pure
+        || !strcmp(path + l - 4, ".dll") // dynamic modules are handled a different way for pure
         || !strcmp(path + l - 3, ".so") || (l > 6 && !strcmp(path + l - 6, ".dylib")) ||
-        (l > 10 && !strcmp(path + l - 10,
-                           ".scriptcfg")) // configuration script, such as map cycle
+        (l > 10 && !strcmp(path + l - 10, ".scriptcfg")) // configuration script, such as map cycle
 #if ID_PURE_ALLOWDDS
         || !strcmp(path + l - 4, ".dds")
 #endif
     )
     {
-        // note: cd and xp keys, as well as config.spec are opened through an
-        // explicit OS path and don't hit this
+        // note: cd and xp keys, as well as config.spec are opened through an explicit OS path and don't hit this
         return true;
     }
     // savegames
@@ -3432,8 +3389,7 @@ idFile_InZip *idFileSystemLocal::ReadFileFromZip(pack_t *pak, fileInPack_t *pakF
         common->FatalError("Couldn't reopen %s", pak->pakFilename.c_str());
     }
 
-    // the following stuff is needed to get the uncompress filesize (for
-    // file->fileSize)
+    // the following stuff is needed to get the uncompress filesize (for file->fileSize)
     char filename_inzip[MAX_ZIPPED_FILE_NAME];
     unz_file_info64 file_info;
     int err = unzGetCurrentFileInfo64(uf, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0);
@@ -3482,8 +3438,7 @@ idFile *idFileSystemLocal::OpenFileReadFlags(const char *relativePath, int searc
 
     if (!relativePath)
     {
-        common->FatalError("idFileSystemLocal::OpenFileRead: NULL 'relativePath' "
-                           "parameter passed\n");
+        common->FatalError("idFileSystemLocal::OpenFileRead: NULL 'relativePath' parameter passed\n");
     }
 
     if (foundInPak)
@@ -3512,8 +3467,7 @@ idFile *idFileSystemLocal::OpenFileReadFlags(const char *relativePath, int searc
     }
 
     // make sure the doomkey file is only readable by game at initialization
-    // any other time the key should only be accessed in memory using the provided
-    // functions
+    // any other time the key should only be accessed in memory using the provided functions
     if (common->IsInitialized() &&
         (idStr::Icmp(relativePath, CDKEY_FILE) == 0 || idStr::Icmp(relativePath, XPKEY_FILE) == 0))
     {
@@ -3575,13 +3529,13 @@ idFile *idFileSystemLocal::OpenFileReadFlags(const char *relativePath, int searc
             {
                 if (restartChecksums.Num())
                 {
-                    common->FatalError("'%s' loaded from directory: Failed to restart "
-                                       "with pure mode restrictions for server connect",
-                                       relativePath);
+                    common->FatalError(
+                        "'%s' loaded from directory: Failed to restart with pure mode restrictions for server connect",
+                        relativePath);
                 }
-                common->DPrintf("filesystem: switching to pure mode will require a "
-                                "restart. '%s' loaded from directory.\n",
-                                relativePath);
+                common->DPrintf(
+                    "filesystem: switching to pure mode will require a restart. '%s' loaded from directory.\n",
+                    relativePath);
                 loadedFileFromDir = true;
             }
 
@@ -3692,8 +3646,7 @@ idFile *idFileSystemLocal::OpenFileReadFlags(const char *relativePath, int searc
                         // mark this pak referenced
                         if (fs_debug.GetInteger())
                         {
-                            common->Printf("idFileSystem::OpenFileRead: %s -> adding %s to "
-                                           "referenced paks\n",
+                            common->Printf("idFileSystem::OpenFileRead: %s -> adding %s to referenced paks\n",
                                            relativePath, pak->pakFilename.c_str());
                         }
                         pak->referenced = true;
@@ -3726,8 +3679,7 @@ idFile *idFileSystemLocal::OpenFileReadFlags(const char *relativePath, int searc
                     {
                         *foundInPak = pak;
                     }
-                    // we don't toggle pure on paks found in addons - they can't be used
-                    // without a reloadEngine anyway
+                    // we don't toggle pure on paks found in addons - they can't be used without a reloadEngine anyway
                     if (fs_debug.GetInteger())
                     {
                         common->Printf("idFileSystem::OpenFileRead: %s (found in addon pk4 '%s')\n", relativePath,
@@ -4384,8 +4336,7 @@ bool idFileSystemLocal::HasD3XP(void)
 #else
     // check for d3xp's d3xp/pak000.pk4 in any search path
     // checking wether the pak is loaded by checksum wouldn't be enough:
-    // we may have a different fs_game right now but still need to reply that it's
-    // installed
+    // we may have a different fs_game right now but still need to reply that it's installed
     const char *search[4];
     idFile *pakfile;
     search[0] = fs_savepath.GetString();
@@ -4404,9 +4355,8 @@ bool idFileSystemLocal::HasD3XP(void)
     }
 #endif
 
-    // if we didn't find a pk4 file then the user might have unpacked so look for
-    // default.cfg file that's the old way mostly used during developement. don't
-    // think it hurts to leave it there
+    // if we didn't find a pk4 file then the user might have unpacked so look for default.cfg file
+    // that's the old way mostly used during developement. don't think it hurts to leave it there
     ListOSFiles(fs_basepath.GetString(), "/", dirs);
     for (i = 0; i < dirs.Num(); i++)
     {
@@ -4435,8 +4385,8 @@ idFileSystemLocal::RunningD3XP
 */
 bool idFileSystemLocal::RunningD3XP(void)
 {
-    // TODO: mark the checksum of the gold XP and check for it being referenced (
-    // for double mod support ) a simple fs_game check should be enough for now..
+    // TODO: mark the checksum of the gold XP and check for it being referenced ( for double mod support )
+    // a simple fs_game check should be enough for now..
     if (!idStr::Icmp(fs_game.GetString(), "d3xp") || !idStr::Icmp(fs_game_base.GetString(), "d3xp"))
     {
         return true;
@@ -4484,8 +4434,7 @@ findFile_t idFileSystemLocal::FindFile(const char *path, bool scheduleAddons)
         // found in FS, not even in paks
         return FIND_YES;
     }
-    // marking addons for inclusion on reload - may need to do that even when
-    // already in the search path
+    // marking addons for inclusion on reload - may need to do that even when already in the search path
     if (scheduleAddons && pak->addon && addonChecksums.FindIndex(pak->checksum) < 0)
     {
         addonChecksums.Append(pak->checksum);
@@ -4512,8 +4461,7 @@ int idFileSystemLocal::GetNumMaps()
     searchpath_t *search = NULL;
     int ret = declManager->GetNumDecls(DECL_MAPDEF);
 
-    // add to this all addon decls - coming from all addon packs ( searched or not
-    // )
+    // add to this all addon decls - coming from all addon packs ( searched or not )
     for (i = 0; i < 2; i++)
     {
         if (i == 0)

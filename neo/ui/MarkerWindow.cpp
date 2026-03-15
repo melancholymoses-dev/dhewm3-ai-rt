@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/KeyInput.h"
 #include "sys/platform.h"
+#include "framework/KeyInput.h"
 // included for image uploading for player stat graph
 #include "renderer/Image.h"
 #include "ui/DeviceContext.h"
-#include "ui/UserInterfaceLocal.h"
 #include "ui/Window.h"
+#include "ui/UserInterfaceLocal.h"
 
 #include "ui/MarkerWindow.h"
 
@@ -390,8 +387,7 @@ void idMarkerWindow::Activate(bool activate, idStr &act)
                 y1 = 63 * ((float)loggedStats[i].heartRate / RATE_MAX);
                 y2 = 63 * ((float)loggedStats[i + 1].heartRate / RATE_MAX);
                 Line(x1, y1, x2, y2, imageBuff, 0xff00ff00);
-                // stamina not quite as high on graph so health does not get obscured
-                // with both at 100%
+                // stamina not quite as high on graph so health does not get obscured with both at 100%
                 y1 = 62 * ((float)loggedStats[i].stamina / STAMINA_MAX);
                 y2 = 62 * ((float)loggedStats[i + 1].stamina / STAMINA_MAX);
                 Line(x1, y1, x2, y2, imageBuff, 0xffff0000);

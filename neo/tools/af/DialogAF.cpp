@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -37,11 +34,11 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #include "../../sys/win32/rc/AFEditor_resource.h"
 
 #include "DialogAF.h"
+#include "DialogAFName.h"
+#include "DialogAFView.h"
+#include "DialogAFProperties.h"
 #include "DialogAFBody.h"
 #include "DialogAFConstraint.h"
-#include "DialogAFName.h"
-#include "DialogAFProperties.h"
-#include "DialogAFView.h"
 
 #ifdef ID_DEBUG_MEMORY
 #undef new
@@ -56,16 +53,16 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 #define AFTAB_BODIES 0x03
 #define AFTAB_CONSTRAINTS 0x04
 
-toolTip_t DialogAF::toolTips[] = {{IDC_COMBO_AF, "select an articulated figure for editing"},
-                                  {IDC_BUTTON_AF_NEW, "create a new articulated figure"},
-                                  {IDC_BUTTON_AF_DELETE, "delete the selected articulated figure"},
-                                  {IDC_BUTTON_AF_SPAWN, "spawn ingame entity using the selected articulated figure"},
-                                  {IDC_BUTTON_AF_TPOSE, "set ingame entity using the selected articulated "
-                                                        "figure back into T-Pose"},
-                                  {IDC_BUTTON_AF_KILL, "kill ingame entity using the selected articulated figure"},
-                                  {IDC_BUTTON_AF_SAVE, "save the selected articulated figure"},
-                                  {IDCANCEL, "cancel all changes to all articulated figures"},
-                                  {0, NULL}};
+toolTip_t DialogAF::toolTips[] = {
+    {IDC_COMBO_AF, "select an articulated figure for editing"},
+    {IDC_BUTTON_AF_NEW, "create a new articulated figure"},
+    {IDC_BUTTON_AF_DELETE, "delete the selected articulated figure"},
+    {IDC_BUTTON_AF_SPAWN, "spawn ingame entity using the selected articulated figure"},
+    {IDC_BUTTON_AF_TPOSE, "set ingame entity using the selected articulated figure back into T-Pose"},
+    {IDC_BUTTON_AF_KILL, "kill ingame entity using the selected articulated figure"},
+    {IDC_BUTTON_AF_SAVE, "save the selected articulated figure"},
+    {IDCANCEL, "cancel all changes to all articulated figures"},
+    {0, NULL}};
 
 DialogAF *g_AFDialog = NULL;
 
@@ -276,8 +273,7 @@ BOOL DialogAF::OnInitDialog()
     // the body dialog may force the constraint dialog to reload the file
     bodyDlg->constraintDlg = constraintDlg;
 
-    // the properties dialog may force the body or constraint dialog to reload the
-    // file
+    // the properties dialog may force the body or constraint dialog to reload the file
     propertiesDlg->bodyDlg = bodyDlg;
     propertiesDlg->constraintDlg = constraintDlg;
 
@@ -337,10 +333,9 @@ void AFEditorInit(const idDict *spawnArgs)
     {
         g_AFDialog->Create(IDD_DIALOG_AF);
         /*
-                        // FIXME: restore position
-                        CRect rct;
-                        g_AFDialog->SetWindowPos( NULL, rct.left, rct.top, 0, 0,
-           SWP_NOSIZE );
+                // FIXME: restore position
+                CRect rct;
+                g_AFDialog->SetWindowPos( NULL, rct.left, rct.top, 0, 0, SWP_NOSIZE );
         */
     }
 
@@ -652,9 +647,8 @@ void DialogAF::OnBnClickedCancel()
     {
         if (static_cast<const idDeclAF *>(declManager->DeclByIndex(DECL_AF, i))->modified)
         {
-            if (MessageBox("Some articulated figures have been modified.\nCancel all "
-                           "changes ?",
-                           "Cancel", MB_YESNO | MB_ICONQUESTION) != IDYES)
+            if (MessageBox("Some articulated figures have been modified.\nCancel all changes ?", "Cancel",
+                           MB_YESNO | MB_ICONQUESTION) != IDYES)
             {
                 return;
             }

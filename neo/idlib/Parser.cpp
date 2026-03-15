@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "framework/Common.h"
-#include "idlib/Lib.h"
 #include "sys/platform.h"
+#include "idlib/Lib.h"
+#include "framework/Common.h"
 
 #include "idlib/Parser.h"
 
@@ -150,16 +147,16 @@ PC_PrintDefineHashTable
 ================
 * /
 static void PC_PrintDefineHashTable(define_t **definehash) {
-        int i;
-        define_t *d;
+    int i;
+    define_t *d;
 
-        for (i = 0; i < DEFINEHASHSIZE; i++) {
-                Log_Write("%4d:", i);
-                for (d = definehash[i]; d; d = d->hashnext) {
-                        Log_Write(" %s", d->name);
-                }
-                Log_Write("\n");
+    for (i = 0; i < DEFINEHASHSIZE; i++) {
+        Log_Write("%4d:", i);
+        for (d = definehash[i]; d; d = d->hashnext) {
+            Log_Write(" %s", d->name);
         }
+        Log_Write("\n");
+    }
 }
 */
 
@@ -764,12 +761,10 @@ static bool my_localtime(const time_t *t, struct tm *ts)
     // TODO: does any non-windows platform not support localtime_r()?
     //       then add them here (or handle them specially with their own #elif)
 #ifdef _WIN32
-    // localtime() is C89 so it should be available everywhere, but it *may* not
-    // be threadsafe. It *is* threadsafe on Windows though (there it returns a
-    // thread-local variable). (yes, Windows has localtime_s(), but it's unclear
-    // if MinGW supports that
-    //  or localtime_r() and in the end, *on Windows* localtime() is safe so use
-    //  it)
+    // localtime() is C89 so it should be available everywhere, but it *may* not be threadsafe.
+    // It *is* threadsafe on Windows though (there it returns a thread-local variable).
+    // (yes, Windows has localtime_s(), but it's unclear if MinGW supports that
+    //  or localtime_r() and in the end, *on Windows* localtime() is safe so use it)
 
     struct tm *tmp = localtime(t);
     if (tmp != NULL)
@@ -777,8 +772,7 @@ static bool my_localtime(const time_t *t, struct tm *ts)
         *ts = *tmp;
         return true;
     }
-#else // localtime_r() assumed available, use it (all Unix-likes incl. macOS
-      // support it, AROS as well)
+#else // localtime_r() assumed available, use it (all Unix-likes incl. macOS support it, AROS as well)
     if (localtime_r(t, ts) != NULL)
         return true;
 #endif
@@ -828,12 +822,11 @@ int idParser::ExpandBuiltinDefine(idToken *deftoken, define_t *define, idToken *
     }
     case BUILTIN_DATE: {
         t = time(NULL);
-        // DG: apparently this was supposed to extract the date part of "Wed Jun 30
-        // 21:49:08 1993\n" (like "Jun 30 1993") - it was both ugly and broken
-        // before I changed it, though Originally it copied stuff out of ctime(),
-        // which is ugly but ok, but also free'd the returned value (wrong) and
-        // tried to modify token in ways that should've crashed (like token[7] =
-        // NULL; which should've been (*token)[7] = '\0';)
+        // DG: apparently this was supposed to extract the date part of "Wed Jun 30 21:49:08 1993\n"
+        // (like "Jun 30 1993") - it was both ugly and broken before I changed it, though
+        // Originally it copied stuff out of ctime(), which is ugly but ok, but also
+        // free'd the returned value (wrong) and tried to modify token in ways that should've crashed
+        // (like token[7] = NULL; which should've been (*token)[7] = '\0';)
         struct tm ts;
         my_localtime(&t, &ts);
         strftime(buf, sizeof(buf), "\"%b %d %Y\"", &ts);
@@ -849,9 +842,9 @@ int idParser::ExpandBuiltinDefine(idToken *deftoken, define_t *define, idToken *
     }
     case BUILTIN_TIME: {
         t = time(NULL);
-        // DG: apparently this was supposed to extract the time part of "Wed Jun 30
-        // 21:49:08 1993\n" (like "21:49:08") - it was both ugly and broken before I
-        // changed it, though (had basicaly the same problems as BUILTIN_DATE)
+        // DG: apparently this was supposed to extract the time part of "Wed Jun 30 21:49:08 1993\n"
+        // (like "21:49:08") - it was both ugly and broken before I changed it, though
+        // (had basicaly the same problems as BUILTIN_DATE)
         struct tm ts;
         my_localtime(&t, &ts);
         strftime(buf, sizeof(buf), "\"%H:%M:%S\"", &ts);
@@ -1585,9 +1578,8 @@ int PC_OperatorPriority(int op)
 
 // #define AllocValue()			GetClearedMemory(sizeof(value_t));
 // #define FreeValue(val)		FreeMemory(val)
-// #define AllocOperator(op)		op = (operator_t *)
-// GetClearedMemory(sizeof(operator_t)); #define FreeOperator(op)
-// FreeMemory(op);
+// #define AllocOperator(op)		op = (operator_t *) GetClearedMemory(sizeof(operator_t));
+// #define FreeOperator(op)		FreeMemory(op);
 
 #define MAX_VALUES 64
 #define MAX_OPERATORS 64
@@ -2244,7 +2236,7 @@ int idParser::Evaluate(int *intvalue, double *floatvalue, int integer)
     else
         Log_Write("eval result: %f", *floatvalue);
 #endif // DEBUG_EVAL
-       //
+    //
     return true;
 }
 
@@ -2372,7 +2364,7 @@ int idParser::DollarEvaluate(int *intvalue, double *floatvalue, int integer)
     else
         Log_Write("$eval result: %f", *floatvalue);
 #endif // DEBUG_EVAL
-       //
+    //
     return true;
 }
 
@@ -2813,8 +2805,7 @@ int idParser::ReadToken(idToken *token)
         {
             continue;
         }
-        // recursively concatenate strings that are behind each other still
-        // resolving defines
+        // recursively concatenate strings that are behind each other still resolving defines
         if (token->type == TT_STRING && !(idParser::scriptstack->GetFlags() & LEXFL_NOSTRINGCONCAT))
         {
             idToken newtoken;
@@ -3507,8 +3498,7 @@ void idParser::SetMarker(void)
 ================
 idParser::GetStringFromMarker
 
-  FIXME: this is very bad code, the script isn't even garrenteed to still be
-around
+  FIXME: this is very bad code, the script isn't even garrenteed to still be around
 ================
 */
 void idParser::GetStringFromMarker(idStr &out, bool clean)

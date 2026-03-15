@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -81,8 +78,8 @@ bool rvDebuggerClient::Initialize(void)
     Sys_StringToNetAdr(com_dbgServerAdr.GetString(), &mServerAdr, true);
     mServerAdr.port = 27980;
 
-    // Attempt to let the server know we are here.  The server may not be running
-    // so this message will just get ignored.
+    // Attempt to let the server know we are here.  The server may not be running so this
+    // message will just get ignored.
     SendMessage(DBMSG_CONNECT);
 
     return true;
@@ -267,9 +264,9 @@ void rvDebuggerClient::InspectScripts(void)
 ================
 rvDebuggerClient::InspectVariable
 
-Instructs the client to inspect the given variable at the given callstack depth.
-The variable is inspected by sending a DBMSG_INSPECTVARIABLE message to the
-server which will in turn respond back to the client with the variable value
+Instructs the client to inspect the given variable at the given callstack depth.  The
+variable is inspected by sending a DBMSG_INSPECTVARIABLE message to the server which
+will in turn respond back to the client with the variable value
 ================
 */
 void rvDebuggerClient::InspectVariable(const char *name, int callstackDepth)
@@ -290,8 +287,8 @@ void rvDebuggerClient::InspectVariable(const char *name, int callstackDepth)
 ================
 rvDebuggerClient::HandleInspectScripts
 
-Handle the message DBMSG_INSPECTSCRIPTS being sent from the server.  This
-message is handled by adding the script entries to a list for later lookup.
+Handle the message DBMSG_INSPECTSCRIPTS being sent from the server.  This message
+is handled by adding the script entries to a list for later lookup.
 ================
 */
 void rvDebuggerClient::HandleInspectScripts(idBitMsg *msg)
@@ -315,8 +312,8 @@ void rvDebuggerClient::HandleInspectScripts(idBitMsg *msg)
 ================
 rvDebuggerClient::HandleInspectCallstack
 
-Handle the message DBMSG_INSPECTCALLSTACK being sent from the server.  This
-message is handled by adding the callstack entries to a list for later lookup.
+Handle the message DBMSG_INSPECTCALLSTACK being sent from the server.  This message
+is handled by adding the callstack entries to a list for later lookup.
 ================
 */
 void rvDebuggerClient::HandleInspectCallstack(idBitMsg *msg)
@@ -352,8 +349,8 @@ void rvDebuggerClient::HandleInspectCallstack(idBitMsg *msg)
 ================
 rvDebuggerClient::HandleInspectThreads
 
-Handle the message DBMSG_INSPECTTHREADS being sent from the server.  This
-message is handled by adding the list of threads to a list for later lookup.
+Handle the message DBMSG_INSPECTTHREADS being sent from the server.  This message
+is handled by adding the list of threads to a list for later lookup.
 ================
 */
 void rvDebuggerClient::HandleInspectThreads(idBitMsg *msg)
@@ -391,9 +388,8 @@ void rvDebuggerClient::HandleInspectThreads(idBitMsg *msg)
 ================
 rvDebuggerClient::HandleInspectVariable
 
-Handle the message DBMSG_INSPECTVARIABLE being sent from the server.  This
-message is handled by adding the inspected variable to a dictionary for later
-lookup
+Handle the message DBMSG_INSPECTVARIABLE being sent from the server.  This message
+is handled by adding the inspected variable to a dictionary for later lookup
 ================
 */
 void rvDebuggerClient::HandleInspectVariable(idBitMsg *msg)
@@ -496,8 +492,7 @@ void rvDebuggerClient::ClearBreakpoints(void)
 ================
 rvDebuggerClient::AddBreakpoint
 
-Adds a breakpoint to the client and server with the give nfilename and
-linenumber
+Adds a breakpoint to the client and server with the give nfilename and linenumber
 ================
 */
 int rvDebuggerClient::AddBreakpoint(const char *filename, int lineNumber, bool onceOnly)

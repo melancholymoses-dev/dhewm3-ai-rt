@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,7 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Pluecker coordinate
+    Pluecker coordinate
 
 ===============================================================================
 */
@@ -66,19 +63,17 @@ class idPluecker
     idPluecker &operator+=(const idPluecker &a);
     idPluecker &operator-=(const idPluecker &a);
 
-    bool Compare(const idPluecker &a) const; // exact compare, no epsilon
-    bool Compare(const idPluecker &a,
-                 const float epsilon) const;    // compare with epsilon
-    bool operator==(const idPluecker &a) const; // exact compare, no epsilon
-    bool operator!=(const idPluecker &a) const; // exact compare, no epsilon
+    bool Compare(const idPluecker &a) const;                      // exact compare, no epsilon
+    bool Compare(const idPluecker &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idPluecker &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idPluecker &a) const;                   // exact compare, no epsilon
 
     void Set(const float a1, const float a2, const float a3, const float a4, const float a5, const float a6);
     void Zero(void);
 
     void FromLine(const idVec3 &start, const idVec3 &end); // pluecker from line
     void FromRay(const idVec3 &start, const idVec3 &dir);  // pluecker from ray
-    bool FromPlanes(const idPlane &p1,
-                    const idPlane &p2);                    // pluecker from intersection of planes
+    bool FromPlanes(const idPlane &p1, const idPlane &p2); // pluecker from intersection of planes
     bool ToLine(idVec3 &start, idVec3 &end) const;         // pluecker to line
     bool ToRay(idVec3 &start, idVec3 &dir) const;          // pluecker to ray
     void ToDir(idVec3 &dir) const;                         // pluecker to direction

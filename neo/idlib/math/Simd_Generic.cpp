@@ -19,26 +19,23 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/geometry/DrawVert.h"
 #include "idlib/geometry/JointTransform.h"
-#include "idlib/math/Matrix.h"
-#include "idlib/math/Plane.h"
 #include "idlib/math/Vector.h"
+#include "idlib/math/Plane.h"
+#include "idlib/math/Matrix.h"
 #include "renderer/Model.h"
-#include "sys/platform.h"
 
 #include "idlib/math/Simd_Generic.h"
 
@@ -1432,14 +1429,14 @@ void VPCALL idSIMD_Generic::MatX_TransposeMultiplySubVecX(idVecX &dst, const idM
 ============
 idSIMD_Generic::MatX_MultiplyMatX
 
-        optimizes the following matrix multiplications:
+    optimizes the following matrix multiplications:
 
-        NxN * Nx6
-        6xN * Nx6
-        Nx6 * 6xN
-        6x6 * 6xN
+    NxN * Nx6
+    6xN * Nx6
+    Nx6 * 6xN
+    6x6 * 6xN
 
-        with N in the range [1-6].
+    with N in the range [1-6].
 ============
 */
 void VPCALL idSIMD_Generic::MatX_MultiplyMatX(idMatX &dst, const idMatX &m1, const idMatX &m2)
@@ -1807,12 +1804,12 @@ void VPCALL idSIMD_Generic::MatX_MultiplyMatX(idMatX &dst, const idMatX &m1, con
 ============
 idSIMD_Generic::MatX_TransposeMultiplyMatX
 
-        optimizes the following tranpose matrix multiplications:
+    optimizes the following tranpose matrix multiplications:
 
-        Nx6 * NxN
-        6xN * 6x6
+    Nx6 * NxN
+    6xN * 6x6
 
-        with N in the range [1-6].
+    with N in the range [1-6].
 ============
 */
 void VPCALL idSIMD_Generic::MatX_TransposeMultiplyMatX(idMatX &dst, const idMatX &m1, const idMatX &m2)
@@ -2964,7 +2961,7 @@ void VPCALL idSIMD_Generic::OverlayPointCull(byte *cullBits, idVec2 *texCoords, 
 ============
 idSIMD_Generic::DeriveTriPlanes
 
-        Derives a plane equation for each triangle.
+    Derives a plane equation for each triangle.
 ============
 */
 void VPCALL idSIMD_Generic::DeriveTriPlanes(idPlane *planes, const idDrawVert *verts, const int numVerts,
@@ -3010,10 +3007,10 @@ void VPCALL idSIMD_Generic::DeriveTriPlanes(idPlane *planes, const idDrawVert *v
 ============
 idSIMD_Generic::DeriveTangents
 
-        Derives the normal and orthogonal tangent vectors for the triangle
-vertices. For each vertex the normal and tangent vectors are derived from all
-triangles using the vertex which results in smooth tangents across the mesh. In
-the process the triangle planes are calculated as well.
+    Derives the normal and orthogonal tangent vectors for the triangle vertices.
+    For each vertex the normal and tangent vectors are derived from all triangles
+    using the vertex which results in smooth tangents across the mesh.
+    In the process the triangle planes are calculated as well.
 ============
 */
 void VPCALL idSIMD_Generic::DeriveTangents(idPlane *planes, idDrawVert *verts, const int numVerts, const int *indexes,
@@ -3143,9 +3140,8 @@ void VPCALL idSIMD_Generic::DeriveTangents(idPlane *planes, idDrawVert *verts, c
 ============
 idSIMD_Generic::DeriveUnsmoothedTangents
 
-        Derives the normal and orthogonal tangent vectors for the triangle
-vertices. For each vertex the normal and tangent vectors are derived from a
-single dominant triangle.
+    Derives the normal and orthogonal tangent vectors for the triangle vertices.
+    For each vertex the normal and tangent vectors are derived from a single dominant triangle.
 ============
 */
 #define DERIVE_UNSMOOTHED_BITANGENT
@@ -3230,8 +3226,8 @@ void VPCALL idSIMD_Generic::DeriveUnsmoothedTangents(idDrawVert *verts, const do
 ============
 idSIMD_Generic::NormalizeTangents
 
-        Normalizes each vertex normal and projects and normalizes the
-        tangent vectors onto the plane orthogonal to the vertex normal.
+    Normalizes each vertex normal and projects and normalizes the
+    tangent vectors onto the plane orthogonal to the vertex normal.
 ============
 */
 void VPCALL idSIMD_Generic::NormalizeTangents(idDrawVert *verts, const int numVerts)
@@ -3264,10 +3260,9 @@ void VPCALL idSIMD_Generic::NormalizeTangents(idDrawVert *verts, const int numVe
 ============
 idSIMD_Generic::CreateTextureSpaceLightVectors
 
-        Calculates light vectors in texture space for the given triangle
-vertices. For each vertex the direction towards the light origin is projected
-onto texture space. The light vectors are only calculated for the vertices
-referenced by the indexes.
+    Calculates light vectors in texture space for the given triangle vertices.
+    For each vertex the direction towards the light origin is projected onto texture space.
+    The light vectors are only calculated for the vertices referenced by the indexes.
 ============
 */
 void VPCALL idSIMD_Generic::CreateTextureSpaceLightVectors(idVec3 *lightVectors, const idVec3 &lightOrigin,
@@ -3304,11 +3299,10 @@ void VPCALL idSIMD_Generic::CreateTextureSpaceLightVectors(idVec3 *lightVectors,
 ============
 idSIMD_Generic::CreateSpecularTextureCoords
 
-        Calculates specular texture coordinates for the given triangle vertices.
-        For each vertex the normalized direction towards the light origin is
-added to the normalized direction towards the view origin and the result is
-projected onto texture space. The texture coordinates are only calculated for
-the vertices referenced by the indexes.
+    Calculates specular texture coordinates for the given triangle vertices.
+    For each vertex the normalized direction towards the light origin is added to the
+    normalized direction towards the view origin and the result is projected onto texture space.
+    The texture coordinates are only calculated for the vertices referenced by the indexes.
 ============
 */
 void VPCALL idSIMD_Generic::CreateSpecularTextureCoords(idVec4 *texCoords, const idVec3 &lightOrigin,

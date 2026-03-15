@@ -19,22 +19,19 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "framework/Session.h"
 #include "renderer/tr_local.h"
-#include "sys/platform.h"
 
 #include "renderer/MegaTexture.h"
 
@@ -301,8 +298,8 @@ void idMegaTexture::BindForViewOrigin(const idVec3 viewOrigin)
 ====================
 Unbind
 
-This can go away once everything uses fragment programs so the enable states
-don't need tracking
+This can go away once everything uses fragment programs so the enable states don't
+need tracking
 ====================
 */
 void idMegaTexture::Unbind(void)
@@ -362,8 +359,7 @@ void idMegaTexture::SetViewOrigin(const idVec3 viewOrigin)
 ====================
 UpdateTile
 
-A local tile will only be mapped to globalTile[ localTile + X * TILE_PER_LEVEL ]
-for some x
+A local tile will only be mapped to globalTile[ localTile + X * TILE_PER_LEVEL ] for some x
 ====================
 */
 void idTextureLevel::UpdateTile(int localX, int localY, int globalX, int globalY)
@@ -404,8 +400,7 @@ void idTextureLevel::UpdateTile(int localX, int localY, int globalX, int globalY
     if (idMegaTexture::r_showMegaTextureLabels.GetBool())
     {
         // put a color marker in it
-        // localX and localY are < TILE_PER_LEVEL => that fits perfectly into a
-        // byte.
+        // localX and localY are < TILE_PER_LEVEL => that fits perfectly into a byte.
         byte color[4] = {(byte)(255 * localX / TILE_PER_LEVEL), (byte)(255 * localY / TILE_PER_LEVEL), 0, 0};
         for (int x = 0; x < 8; x++)
         {
@@ -652,8 +647,7 @@ void idMegaTexture::GenerateMegaMipMaps(megaTextureHeader_t *header, idFile *out
 ====================
 GenerateMegaPreview
 
-Make a 2k x 2k preview image for a mega texture that can be used in modeling
-programs
+Make a 2k x 2k preview image for a mega texture that can be used in modeling programs
 ====================
 */
 void idMegaTexture::GenerateMegaPreview(const char *fileName)
@@ -730,8 +724,7 @@ void idMegaTexture::GenerateMegaPreview(const char *fileName)
 ====================
 MakeMegaTexture_f
 
-Incrementally load a giant tga file and process into the mega texture block
-format
+Incrementally load a giant tga file and process into the mega texture block format
 ====================
 */
 void idMegaTexture::MakeMegaTexture_f(const idCmdArgs &args)
@@ -783,9 +776,7 @@ void idMegaTexture::MakeMegaTexture_f(const idCmdArgs &args)
 
     if (targa_header.image_type != 2 && targa_header.image_type != 10 && targa_header.image_type != 3)
     {
-        common->Error("LoadTGA( %s ): Only type 2 (RGB), 3 (gray), and 10 (RGB) "
-                      "TGA images supported\n",
-                      name);
+        common->Error("LoadTGA( %s ): Only type 2 (RGB), 3 (gray), and 10 (RGB) TGA images supported\n", name);
     }
 
     if (targa_header.colormap_type != 0)

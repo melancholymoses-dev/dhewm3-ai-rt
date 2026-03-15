@@ -19,29 +19,26 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
-#include "sys/platform.h"
 
 #include "Class.h"
 
 /*
 
-Base class for all C++ objects.  Provides fast run-time type checking and
-run-time instancing of objects.
+Base class for all C++ objects.  Provides fast run-time type checking and run-time
+instancing of objects.
 
 */
 
@@ -173,8 +170,7 @@ void idTypeInfo::Init(void)
         c->lastChild++;
     }
 
-    // if we're not adding any new event callbacks, we can just use our
-    // superclass's table
+    // if we're not adding any new event callbacks, we can just use our superclass's table
     if ((!eventCallbacks || !eventCallbacks->event) && super)
     {
         eventMap = super->eventMap;
@@ -197,9 +193,9 @@ void idTypeInfo::Init(void)
     set = new bool[num];
     memset(set, 0, sizeof(bool) * num);
 
-    // go through the inheritence order and copies the event callback function
-    // into a list indexed by the event number.  This allows fast lookups of event
-    // functions.
+    // go through the inheritence order and copies the event callback function into
+    // a list indexed by the event number.  This allows fast lookups of
+    // event functions.
     for (c = this; c != NULL; c = c->super)
     {
         def = c->eventCallbacks;
@@ -376,8 +372,7 @@ void idClass::ListClasses_f(const idCmdArgs &args)
     idTypeInfo *type;
 
     gameLocal.Printf("%-24s %-24s %-6s %-6s\n", "Classname", "Superclass", "Type", "Subclasses");
-    gameLocal.Printf("-----------------------------------------------------------"
-                     "-----------\n");
+    gameLocal.Printf("----------------------------------------------------------------------\n");
 
     for (i = 0; i < types.Num(); i++)
     {
@@ -438,8 +433,8 @@ void idClass::Init(void)
         c->Init();
     }
 
-    // number the types according to the class hierarchy so we can quickly
-    // determine if a class is a subclass of another
+    // number the types according to the class hierarchy so we can quickly determine if a class
+    // is a subclass of another
     num = 0;
     for (c = classHierarchy.GetNext(); c != NULL; c = c->node.GetNext(), num++)
     {
@@ -583,8 +578,8 @@ void idClass::operator delete(void *ptr, int, int, char *, int)
 ================
 idClass::GetClass
 
-Returns the idTypeInfo for the name of the class passed in.  This is a static
-function so it must be called as idClass::GetClass( classname )
+Returns the idTypeInfo for the name of the class passed in.  This is a static function
+so it must be called as idClass::GetClass( classname )
 ================
 */
 idTypeInfo *idClass::GetClass(const char *name)
@@ -726,9 +721,9 @@ bool idClass::PostEventArgs(const idEventDef *ev, int time, int numargs, ...)
         return false;
     }
 
-    // we service events on the client to avoid any bad code filling up the event
-    // pool we don't want them processed usually, unless when the map is
-    // (re)loading. we allow threads to run fine, though.
+    // we service events on the client to avoid any bad code filling up the event pool
+    // we don't want them processed usually, unless when the map is (re)loading.
+    // we allow threads to run fine, though.
     if (gameLocal.isClient && (gameLocal.GameState() != GAMESTATE_STARTUP) && !IsType(idThread::Type))
     {
         return true;

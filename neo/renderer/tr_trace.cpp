@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -42,8 +39,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 =================
 R_LocalTrace
 
-If we resort the vertexes so all silverts come first, we can save some work
-here.
+If we resort the vertexes so all silverts come first, we can save some work here.
 =================
 */
 localTrace_t R_LocalTrace(const idVec3 &start, const idVec3 &end, const float radius, const srfTriangles_t *tri)
@@ -81,8 +77,7 @@ localTrace_t R_LocalTrace(const idVec3 &start, const idVec3 &end, const float ra
     cullBits = (byte *)_alloca16(tri->numVerts);
     SIMDProcessor->TracePointCull(cullBits, totalOr, radius, planes, tri->verts, tri->numVerts);
 
-    // if we don't have points on both sides of both the ray planes, no
-    // intersection
+    // if we don't have points on both sides of both the ray planes, no intersection
     if ((totalOr ^ (totalOr >> 4)) & 3)
     {
         // common->Printf( "nothing crossed the trace planes\n" );
@@ -125,8 +120,7 @@ localTrace_t R_LocalTrace(const idVec3 &start, const idVec3 &end, const float ra
         triOr |= cullBits[tri->indexes[i + 1]];
         triOr |= cullBits[tri->indexes[i + 2]];
 
-        // if we don't have points on both sides of both the ray planes, no
-        // intersection
+        // if we don't have points on both sides of both the ray planes, no intersection
         if ((triOr ^ (triOr >> 4)) & 3)
         {
             continue;
@@ -177,8 +171,7 @@ localTrace_t R_LocalTrace(const idVec3 &start, const idVec3 &end, const float ra
         point = start + f * startDir;
 
         // see if the point is within the three edges
-        // if radius > 0 the triangle is expanded with a circle in the triangle
-        // plane
+        // if radius > 0 the triangle is expanded with a circle in the triangle plane
 
         dir[0] = tri->verts[tri->indexes[i + 0]].xyz - point;
         dir[1] = tri->verts[tri->indexes[i + 1]].xyz - point;

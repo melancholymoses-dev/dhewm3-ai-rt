@@ -19,21 +19,18 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
-#include "renderer/ModelManager.h"
 #include "sys/platform.h"
+#include "renderer/ModelManager.h"
 
 #include "tools/compilers/dmap/dmap.h"
 
@@ -289,8 +286,7 @@ mapTri_t *TriListForSide(const side_t *s, const idWinding *w)
     }
 
     // set merge groups if needed, to prevent multiple sides from being
-    // merged into a single surface in the case of gui shaders, mirrors, and
-    // autosprites
+    // merged into a single surface in the case of gui shaders, mirrors, and autosprites
     if (s->material->IsDiscrete())
     {
         for (tri = triList; tri; tri = tri->next)
@@ -989,9 +985,9 @@ static void BuildLightShadows(uEntity_t *e, mapLight_t *light)
                     shadowerGroups = check;
                 }
 
-                // if any surface is a shadow-casting perforated or translucent surface,
-                // we can't use the face removal optimizations because we can see
-                // through some of the faces
+                // if any surface is a shadow-casting perforated or translucent surface, we
+                // can't use the face removal optimizations because we can see through
+                // some of the faces
                 if (group->material->Coverage() != MC_OPAQUE)
                 {
                     hasPerforatedSurface = true;

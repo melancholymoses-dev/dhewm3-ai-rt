@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -49,8 +46,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 
 This file only has a single entry point:
 
-void R_LoadImage( const char *name, byte **pic, int *width, int *height, bool
-makePowerOf2 );
+void R_LoadImage( const char *name, byte **pic, int *width, int *height, bool makePowerOf2 );
 
 */
 
@@ -584,9 +580,7 @@ static void LoadTGA(const char *name, byte **pic, int *width, int *height, ID_TI
 
     if (targa_header.image_type != 2 && targa_header.image_type != 10 && targa_header.image_type != 3)
     {
-        common->Error("LoadTGA( %s ): Only type 2 (RGB), 3 (gray), and 10 (RGB) "
-                      "TGA images supported\n",
-                      name);
+        common->Error("LoadTGA( %s ): Only type 2 (RGB), 3 (gray), and 10 (RGB) TGA images supported\n", name);
     }
 
     if (targa_header.colormap_type != 0)
@@ -837,16 +831,15 @@ static void LoadJPG(const char *filename, unsigned char **pic, int *width, int *
         return;
     }
 
-    // *pic must be allocated with R_StaticAlloc(), but stb_image allocates with
-    // malloc() (and as there is no R_StaticRealloc(), #define STBI_MALLOC etc
-    // won't help) so the decoded data must be copied once
+    // *pic must be allocated with R_StaticAlloc(), but stb_image allocates with malloc()
+    // (and as there is no R_StaticRealloc(), #define STBI_MALLOC etc won't help)
+    // so the decoded data must be copied once
     int size = w * h * 4;
     *pic = (byte *)R_StaticAlloc(size);
     memcpy(*pic, decodedImageData, size);
     *width = w;
     *height = h;
-    // now that decodedImageData has been copied into *pic, it's not needed
-    // anymore
+    // now that decodedImageData has been copied into *pic, it's not needed anymore
     stbi_image_free(decodedImageData);
 }
 
@@ -972,9 +965,9 @@ void R_LoadImage(const char *cname, byte **pic, int *width, int *height, ID_TIME
             resampledBuffer = R_ResampleTexture(*pic, w, h, outWidth, outHeight);
             if (outWidth != scaled_width || outHeight != scaled_height)
             {
-                common->Warning("Texture '%s' didn't have power-of-two size *and* was "
-                                "too big, scaled from %dx%d to %dx%d",
-                                name.c_str(), w, h, outWidth, outHeight);
+                common->Warning(
+                    "Texture '%s' didn't have power-of-two size *and* was too big, scaled from %dx%d to %dx%d",
+                    name.c_str(), w, h, outWidth, outHeight);
             }
 
             R_StaticFree(*pic);

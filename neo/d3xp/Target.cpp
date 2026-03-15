@@ -19,31 +19,28 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
+#include "sys/platform.h"
 #include "idlib/LangDict.h"
 #include "renderer/ModelManager.h"
-#include "sys/platform.h"
 
-#include "Light.h"
-#include "Misc.h"
-#include "Mover.h"
-#include "Player.h"
-#include "Sound.h"
-#include "WorldSpawn.h"
 #include "gamesys/SysCvar.h"
 #include "script/Script_Thread.h"
+#include "Light.h"
+#include "Player.h"
+#include "Mover.h"
+#include "Misc.h"
+#include "WorldSpawn.h"
+#include "Sound.h"
 
 #include "Target.h"
 
@@ -1678,21 +1675,19 @@ void idTarget_CallObjectFunction::Event_Activate(idEntity *activator)
             func = ent->scriptObject.GetFunction(funcName);
             if (!func)
             {
-                gameLocal.Error("Function '%s' not found on entity '%s' for function "
-                                "call from '%s'",
-                                funcName, ent->name.c_str(), name.c_str());
+                gameLocal.Error("Function '%s' not found on entity '%s' for function call from '%s'", funcName,
+                                ent->name.c_str(), name.c_str());
             }
             if (func->type->NumParameters() != 1)
             {
-                gameLocal.Error("Function '%s' on entity '%s' has the wrong number of "
-                                "parameters for function call from '%s'",
-                                funcName, ent->name.c_str(), name.c_str());
+                gameLocal.Error(
+                    "Function '%s' on entity '%s' has the wrong number of parameters for function call from '%s'",
+                    funcName, ent->name.c_str(), name.c_str());
             }
             if (!ent->scriptObject.GetTypeDef()->Inherits(func->type->GetParmType(0)))
             {
-                gameLocal.Error("Function '%s' on entity '%s' is the wrong type for "
-                                "function call from '%s'",
-                                funcName, ent->name.c_str(), name.c_str());
+                gameLocal.Error("Function '%s' on entity '%s' is the wrong type for function call from '%s'", funcName,
+                                ent->name.c_str(), name.c_str());
             }
             // create a thread and call the function
             thread = new idThread();

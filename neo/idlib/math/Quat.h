@@ -19,15 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms.
-You should have received a copy of these additional terms immediately following
-the terms and conditions of the GNU General Public License which accompanied the
-Doom 3 Source Code.  If not, please request a copy in writing from id Software
-at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional
-terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
-120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -40,7 +37,7 @@ terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite
 /*
 ===============================================================================
 
-        Quaternion
+    Quaternion
 
 ===============================================================================
 */
@@ -82,11 +79,10 @@ class idQuat
     friend idQuat operator*(const float a, const idQuat &b);
     friend idVec3 operator*(const idVec3 &a, const idQuat &b);
 
-    bool Compare(const idQuat &a) const; // exact compare, no epsilon
-    bool Compare(const idQuat &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idQuat &a) const;  // exact compare, no epsilon
-    bool operator!=(const idQuat &a) const;  // exact compare, no epsilon
+    bool Compare(const idQuat &a) const;                      // exact compare, no epsilon
+    bool Compare(const idQuat &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idQuat &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idQuat &a) const;                   // exact compare, no epsilon
 
     idQuat Inverse(void) const;
     float Length(void) const;
@@ -314,8 +310,7 @@ ID_INLINE idQuat &idQuat::Normalize(void)
 
 ID_INLINE float idQuat::CalcW(void) const
 {
-    // take the absolute value because floating point rounding may cause the dot
-    // of x,y,z to be larger than 1
+    // take the absolute value because floating point rounding may cause the dot of x,y,z to be larger than 1
     return sqrt(fabs(1.0f - (x * x + y * y + z * z)));
 }
 
@@ -337,7 +332,7 @@ ID_INLINE float *idQuat::ToFloatPtr(void)
 /*
 ===============================================================================
 
-        Compressed quaternion
+    Compressed quaternion
 
 ===============================================================================
 */
@@ -357,11 +352,10 @@ class idCQuat
     float operator[](int index) const;
     float &operator[](int index);
 
-    bool Compare(const idCQuat &a) const; // exact compare, no epsilon
-    bool Compare(const idCQuat &a,
-                 const float epsilon) const; // compare with epsilon
-    bool operator==(const idCQuat &a) const; // exact compare, no epsilon
-    bool operator!=(const idCQuat &a) const; // exact compare, no epsilon
+    bool Compare(const idCQuat &a) const;                      // exact compare, no epsilon
+    bool Compare(const idCQuat &a, const float epsilon) const; // compare with epsilon
+    bool operator==(const idCQuat &a) const;                   // exact compare, no epsilon
+    bool operator!=(const idCQuat &a) const;                   // exact compare, no epsilon
 
     int GetDimension(void) const;
 
@@ -444,8 +438,7 @@ ID_INLINE int idCQuat::GetDimension(void) const
 
 ID_INLINE idQuat idCQuat::ToQuat(void) const
 {
-    // take the absolute value because floating point rounding may cause the dot
-    // of x,y,z to be larger than 1
+    // take the absolute value because floating point rounding may cause the dot of x,y,z to be larger than 1
     return idQuat(x, y, z, sqrt(fabs(1.0f - (x * x + y * y + z * z))));
 }
 
