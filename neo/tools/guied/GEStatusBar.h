@@ -19,9 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -30,60 +33,58 @@ If you have questions concerning this license or the applicable additional terms
 
 class rvGEStatusBar
 {
-public:
+  public:
+    rvGEStatusBar();
 
-	rvGEStatusBar ( );
+    bool Create(HWND parent, UINT id, bool visible = true);
+    void Resize(int width, int height);
 
-	bool	Create			( HWND parent, UINT id, bool visible = true );
-	void	Resize			( int width, int height );
+    HWND GetWindow(void);
 
-	HWND	GetWindow		( void );
+    void SetZoom(int zoom);
+    void SetTriangles(int tris);
+    void SetSimple(bool simple);
 
-	void	SetZoom			( int zoom );
-	void	SetTriangles	( int tris );
-	void	SetSimple		( bool simple );
+    void Show(bool state);
+    void Update(void);
 
-	void	Show			( bool state );
-	void	Update			( void );
-
-protected:
-
-	HWND	mWnd;
-	bool	mSimple;
-	int		mZoom;
-	int		mTriangles;
+  protected:
+    HWND mWnd;
+    bool mSimple;
+    int mZoom;
+    int mTriangles;
 };
 
-ID_INLINE HWND rvGEStatusBar::GetWindow ( void )
+ID_INLINE HWND rvGEStatusBar::GetWindow(void)
 {
-	return mWnd;
+    return mWnd;
 }
 
-ID_INLINE void rvGEStatusBar::SetZoom ( int zoom )
+ID_INLINE void rvGEStatusBar::SetZoom(int zoom)
 {
-	if ( mZoom != zoom )
-	{
-		mZoom = zoom;
-		Update ( );
-	}
+    if (mZoom != zoom)
+    {
+        mZoom = zoom;
+        Update();
+    }
 }
 
-ID_INLINE void rvGEStatusBar::SetTriangles ( int triangles )
+ID_INLINE void rvGEStatusBar::SetTriangles(int triangles)
 {
-	if ( triangles != mTriangles )
-	{
-		mTriangles = triangles;
-		Update ( );
-	}
+    if (triangles != mTriangles)
+    {
+        mTriangles = triangles;
+        Update();
+    }
 }
 
-ID_INLINE void rvGEStatusBar::SetSimple ( bool simple )
+ID_INLINE void rvGEStatusBar::SetSimple(bool simple)
 {
-	if ( mSimple != simple )
-	{
-		mSimple = simple;
-		Update ( );
-	}
+    if (mSimple != simple)
+    {
+        mSimple = simple;
+        Update();
+    }
 }
 
 #endif // GESTATUSBAR_H_

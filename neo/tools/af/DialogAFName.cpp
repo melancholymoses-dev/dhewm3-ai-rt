@@ -19,15 +19,17 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
-
 
 #include "../../sys/win32/rc/AFEditor_resource.h"
 
@@ -43,9 +45,7 @@ IMPLEMENT_DYNAMIC(DialogAFName, CDialog)
 DialogAFName::DialogAFName
 ================
 */
-DialogAFName::DialogAFName(CWnd* pParent /*=NULL*/)
-	: CDialog(DialogAFName::IDD, pParent)
-	, m_combo(NULL)
+DialogAFName::DialogAFName(CWnd *pParent /*=NULL*/) : CDialog(DialogAFName::IDD, pParent), m_combo(NULL)
 {
 }
 
@@ -54,7 +54,8 @@ DialogAFName::DialogAFName(CWnd* pParent /*=NULL*/)
 DialogAFName::~DialogAFName
 ================
 */
-DialogAFName::~DialogAFName() {
+DialogAFName::~DialogAFName()
+{
 }
 
 /*
@@ -62,9 +63,10 @@ DialogAFName::~DialogAFName() {
 DialogAFName::DoDataExchange
 ================
 */
-void DialogAFName::DoDataExchange(CDataExchange* pDX) {
-	CDialog::DoDataExchange(pDX);
-	DDX_Text(pDX, IDC_EDIT_AF_NAME, m_editName);
+void DialogAFName::DoDataExchange(CDataExchange *pDX)
+{
+    CDialog::DoDataExchange(pDX);
+    DDX_Text(pDX, IDC_EDIT_AF_NAME, m_editName);
 }
 
 /*
@@ -72,8 +74,9 @@ void DialogAFName::DoDataExchange(CDataExchange* pDX) {
 DialogAFName::SetName
 ================
 */
-void DialogAFName::SetName( CString &str ) {
-	m_editName = str;
+void DialogAFName::SetName(CString &str)
+{
+    m_editName = str;
 }
 
 /*
@@ -81,8 +84,9 @@ void DialogAFName::SetName( CString &str ) {
 DialogAFName::GetName
 ================
 */
-void DialogAFName::GetName( CString &str ) {
-	str = m_editName;
+void DialogAFName::GetName(CString &str)
+{
+    str = m_editName;
 }
 
 /*
@@ -90,8 +94,9 @@ void DialogAFName::GetName( CString &str ) {
 DialogAFName::SetComboBox
 ================
 */
-void DialogAFName::SetComboBox( CComboBox *combo ) {
-	m_combo = combo;
+void DialogAFName::SetComboBox(CComboBox *combo)
+{
+    m_combo = combo;
 }
 
 /*
@@ -99,18 +104,19 @@ void DialogAFName::SetComboBox( CComboBox *combo ) {
 DialogAFName::OnInitDialog
 ================
 */
-BOOL DialogAFName::OnInitDialog()  {
-	CEdit *edit;
-	CString str;
+BOOL DialogAFName::OnInitDialog()
+{
+    CEdit *edit;
+    CString str;
 
-	CDialog::OnInitDialog();
+    CDialog::OnInitDialog();
 
-	edit = (CEdit *)GetDlgItem( IDC_EDIT_AF_NAME );
-	edit->SetFocus();
-	edit->GetWindowText( str );
-	edit->SetSel( 0, str.GetLength() );
+    edit = (CEdit *)GetDlgItem(IDC_EDIT_AF_NAME);
+    edit->SetFocus();
+    edit->GetWindowText(str);
+    edit->SetSel(0, str.GetLength());
 
-	return FALSE;
+    return FALSE;
 }
 
 /*
@@ -118,51 +124,56 @@ BOOL DialogAFName::OnInitDialog()  {
 EditVerifyName
 ================
 */
-void EditVerifyName( CEdit *edit ) {
-	CString strIn, strOut;
-	int start, end;
-	static bool entered = false;
+void EditVerifyName(CEdit *edit)
+{
+    CString strIn, strOut;
+    int start, end;
+    static bool entered = false;
 
-	if ( entered ) {
-		return;
-	}
-	entered = true;
+    if (entered)
+    {
+        return;
+    }
+    entered = true;
 
-	edit->GetSel( start, end );
-	edit->GetWindowText( strIn );
-	for ( int i = 0; i < strIn.GetLength(); i++ ) {
-		if ( ( strIn[i] >= 'a' && strIn[i] <= 'z' ) ||
-				( strIn[i] >= 'A' && strIn[i] <= 'Z' ) ||
-					( strIn[i] == '_' ) || ( strIn[i] >= '0' && strIn[i] <= '9' ) ) {
-			strOut.AppendChar( strIn[i] );
-		}
-	}
-	edit->SetWindowText( strOut );
-	edit->SetSel( start, end );
+    edit->GetSel(start, end);
+    edit->GetWindowText(strIn);
+    for (int i = 0; i < strIn.GetLength(); i++)
+    {
+        if ((strIn[i] >= 'a' && strIn[i] <= 'z') || (strIn[i] >= 'A' && strIn[i] <= 'Z') || (strIn[i] == '_') ||
+            (strIn[i] >= '0' && strIn[i] <= '9'))
+        {
+            strOut.AppendChar(strIn[i]);
+        }
+    }
+    edit->SetWindowText(strOut);
+    edit->SetSel(start, end);
 
-	entered = false;
+    entered = false;
 }
 
-
 BEGIN_MESSAGE_MAP(DialogAFName, CDialog)
-	ON_BN_CLICKED(IDOK, OnBnClickedOk)
-	ON_EN_CHANGE(IDC_EDIT_AF_NAME, OnEnChangeEditAfName)
+ON_BN_CLICKED(IDOK, OnBnClickedOk)
+ON_EN_CHANGE(IDC_EDIT_AF_NAME, OnEnChangeEditAfName)
 END_MESSAGE_MAP()
-
 
 // DialogAFName message handlers
 
-void DialogAFName::OnBnClickedOk() {
+void DialogAFName::OnBnClickedOk()
+{
 
-	UpdateData( TRUE );
-	if ( m_combo && m_combo->FindStringExact( -1, m_editName ) != -1 ) {
-		MessageBox( va( "The name %s is already used.", m_editName.GetBuffer() ), "Name", MB_OK );
-	}
-	else {
-		OnOK();
-	}
+    UpdateData(TRUE);
+    if (m_combo && m_combo->FindStringExact(-1, m_editName) != -1)
+    {
+        MessageBox(va("The name %s is already used.", m_editName.GetBuffer()), "Name", MB_OK);
+    }
+    else
+    {
+        OnOK();
+    }
 }
 
-void DialogAFName::OnEnChangeEditAfName() {
-	EditVerifyName( (CEdit *) GetDlgItem( IDC_EDIT_AF_NAME ) );
+void DialogAFName::OnEnChangeEditAfName()
+{
+    EditVerifyName((CEdit *)GetDlgItem(IDC_EDIT_AF_NAME));
 }

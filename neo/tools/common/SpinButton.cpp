@@ -19,73 +19,75 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
 
-
 #include "SpinButton.h"
 
-void SpinButton_SetIncrement ( HWND hWnd, float inc )
+void SpinButton_SetIncrement(HWND hWnd, float inc)
 {
-	SetWindowLongPtr ( hWnd, GWLP_USERDATA, (long)(inc * 100.0f) );
+    SetWindowLongPtr(hWnd, GWLP_USERDATA, (long)(inc * 100.0f));
 }
 
-void SpinButton_SetRange ( HWND hWnd, float minRange, float maxRange )
+void SpinButton_SetRange(HWND hWnd, float minRange, float maxRange)
 {
-	SendMessage ( hWnd, UDM_SETRANGE32, (LONG)(minRange*100.0f), (LONG)(maxRange*100.0f) );
+    SendMessage(hWnd, UDM_SETRANGE32, (LONG)(minRange * 100.0f), (LONG)(maxRange * 100.0f));
 }
 
-void SpinButton_HandleNotify ( NMHDR* hdr )
+void SpinButton_HandleNotify(NMHDR *hdr)
 {
-	// Return if incorrect data in edit box
-	NM_UPDOWN* udhdr= (NM_UPDOWN*)hdr;
+    // Return if incorrect data in edit box
+    NM_UPDOWN *udhdr = (NM_UPDOWN *)hdr;
 
-	// Change with 0.1 on each click
-	char strValue[64];
-	float value;
-	GetWindowText ( (HWND)SendMessage ( hdr->hwndFrom, UDM_GETBUDDY, 0, 0 ), strValue, 63 );
+    // Change with 0.1 on each click
+    char strValue[64];
+    float value;
+    GetWindowText((HWND)SendMessage(hdr->hwndFrom, UDM_GETBUDDY, 0, 0), strValue, 63);
 
-	float inc = (float)GetWindowLongPtr ( hdr->hwndFrom, GWLP_USERDATA );
-	if ( inc == 0 )
-	{
-		inc = 100.0f;
-		SetWindowLongPtr ( hdr->hwndFrom, GWLP_USERDATA, 100 );
-	}
-	inc /= 100.0f;
+    float inc = (float)GetWindowLongPtr(hdr->hwndFrom, GWLP_USERDATA);
+    if (inc == 0)
+    {
+        inc = 100.0f;
+        SetWindowLongPtr(hdr->hwndFrom, GWLP_USERDATA, 100);
+    }
+    inc /= 100.0f;
 
-	if ( GetAsyncKeyState ( VK_SHIFT ) & 0x8000 )
-	{
-		inc *= 10.0f;
-	}
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    {
+        inc *= 10.0f;
+    }
 
-	value  = atof(strValue);
-	value += (udhdr->iDelta)*(inc);
+    value = atof(strValue);
+    value += (udhdr->iDelta) * (inc);
 
-	// Avoid round-off errors
-	value = floor(value*1e3+0.5)/1e3;
+    // Avoid round-off errors
+    value = floor(value * 1e3 + 0.5) / 1e3;
 
-	LONG minRange;
-	LONG maxRange;
-	SendMessage ( hdr->hwndFrom, UDM_GETRANGE32, (LONG_PTR)&minRange, (LONG_PTR)&maxRange );
-	if ( minRange !=  0 || maxRange != 0 )
-	{
-		float minRangef = (float)(long)minRange / 100.0f;
-		float maxRangef = (float)maxRange / 100.0f;
-		if ( value > maxRangef )
-		{
-			value = maxRangef;
-		}
-		if ( value < minRangef )
-		{
-			value = minRangef;
-		}
-	}
+    LONG minRange;
+    LONG maxRange;
+    SendMessage(hdr->hwndFrom, UDM_GETRANGE32, (LONG_PTR)&minRange, (LONG_PTR)&maxRange);
+    if (minRange != 0 || maxRange != 0)
+    {
+        float minRangef = (float)(long)minRange / 100.0f;
+        float maxRangef = (float)maxRange / 100.0f;
+        if (value > maxRangef)
+        {
+            value = maxRangef;
+        }
+        if (value < minRangef)
+        {
+            value = minRangef;
+        }
+    }
 
-	SetWindowText ( (HWND)SendMessage ( hdr->hwndFrom, UDM_GETBUDDY, 0, 0 ), va("%g",value) );
+    SetWindowText((HWND)SendMessage(hdr->hwndFrom, UDM_GETBUDDY, 0, 0), va("%g", value));
 }
