@@ -19,9 +19,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
@@ -35,57 +38,59 @@ If you have questions concerning this license or the applicable additional terms
 /*
 ===============================================================================
 
-	Bezier patch surface.
+    Bezier patch surface.
 
 ===============================================================================
 */
 
-class idSurface_Patch : public idSurface {
+class idSurface_Patch : public idSurface
+{
 
-public:
-						idSurface_Patch( void );
-						idSurface_Patch( int maxPatchWidth, int maxPatchHeight );
-						idSurface_Patch( const idSurface_Patch &patch );
-						~idSurface_Patch( void );
+  public:
+    idSurface_Patch(void);
+    idSurface_Patch(int maxPatchWidth, int maxPatchHeight);
+    idSurface_Patch(const idSurface_Patch &patch);
+    ~idSurface_Patch(void);
 
-	void				SetSize( int patchWidth, int patchHeight );
-	int					GetWidth( void ) const;
-	int					GetHeight( void ) const;
+    void SetSize(int patchWidth, int patchHeight);
+    int GetWidth(void) const;
+    int GetHeight(void) const;
 
-						// subdivide the patch mesh based on error
-	void				Subdivide( float maxHorizontalError, float maxVerticalError, float maxLength, bool genNormals = false );
-						// subdivide the patch up to an explicit number of horizontal and vertical subdivisions
-	void				SubdivideExplicit( int horzSubdivisions, int vertSubdivisions, bool genNormals, bool removeLinear = false );
+    // subdivide the patch mesh based on error
+    void Subdivide(float maxHorizontalError, float maxVerticalError, float maxLength, bool genNormals = false);
+    // subdivide the patch up to an explicit number of horizontal and vertical subdivisions
+    void SubdivideExplicit(int horzSubdivisions, int vertSubdivisions, bool genNormals, bool removeLinear = false);
 
-protected:
-	int					width;			// width of patch
-	int					height;			// height of patch
-	int					maxWidth;		// maximum width allocated for
-	int					maxHeight;		// maximum height allocated for
-	bool				expanded;		// true if vertices are spaced out
+  protected:
+    int width;     // width of patch
+    int height;    // height of patch
+    int maxWidth;  // maximum width allocated for
+    int maxHeight; // maximum height allocated for
+    bool expanded; // true if vertices are spaced out
 
-private:
-						// put the approximation points on the curve
-	void				PutOnCurve( void );
-						// remove columns and rows with all points on one line
-	void				RemoveLinearColumnsRows( void );
-						// resize verts buffer
-	void				ResizeExpanded( int height, int width );
-						// space points out over maxWidth * maxHeight buffer
-	void				Expand( void );
-						// move all points to the start of the verts buffer
-	void				Collapse( void );
-						// project a point onto a vector to calculate maximum curve error
-	void				ProjectPointOntoVector( const idVec3 &point, const idVec3 &vStart, const idVec3 &vEnd, idVec3 &vProj );
-						// generate normals
-	void				GenerateNormals( void );
-						// generate triangle indexes
-	void				GenerateIndexes( void );
-						// lerp point from two patch point
-	void				LerpVert( const idDrawVert &a, const idDrawVert &b, idDrawVert &out ) const;
-						// sample a single 3x3 patch
-	void				SampleSinglePatchPoint( const idDrawVert ctrl[3][3], float u, float v, idDrawVert *out ) const;
-	void				SampleSinglePatch( const idDrawVert ctrl[3][3], int baseCol, int baseRow, int width, int horzSub, int vertSub, idDrawVert *outVerts ) const;
+  private:
+    // put the approximation points on the curve
+    void PutOnCurve(void);
+    // remove columns and rows with all points on one line
+    void RemoveLinearColumnsRows(void);
+    // resize verts buffer
+    void ResizeExpanded(int height, int width);
+    // space points out over maxWidth * maxHeight buffer
+    void Expand(void);
+    // move all points to the start of the verts buffer
+    void Collapse(void);
+    // project a point onto a vector to calculate maximum curve error
+    void ProjectPointOntoVector(const idVec3 &point, const idVec3 &vStart, const idVec3 &vEnd, idVec3 &vProj);
+    // generate normals
+    void GenerateNormals(void);
+    // generate triangle indexes
+    void GenerateIndexes(void);
+    // lerp point from two patch point
+    void LerpVert(const idDrawVert &a, const idDrawVert &b, idDrawVert &out) const;
+    // sample a single 3x3 patch
+    void SampleSinglePatchPoint(const idDrawVert ctrl[3][3], float u, float v, idDrawVert *out) const;
+    void SampleSinglePatch(const idDrawVert ctrl[3][3], int baseCol, int baseRow, int width, int horzSub, int vertSub,
+                           idDrawVert *outVerts) const;
 };
 
 /*
@@ -93,9 +98,10 @@ private:
 idSurface_Patch::idSurface_Patch
 =================
 */
-ID_INLINE idSurface_Patch::idSurface_Patch( void ) {
-	height = width = maxHeight = maxWidth = 0;
-	expanded = false;
+ID_INLINE idSurface_Patch::idSurface_Patch(void)
+{
+    height = width = maxHeight = maxWidth = 0;
+    expanded = false;
 }
 
 /*
@@ -103,12 +109,13 @@ ID_INLINE idSurface_Patch::idSurface_Patch( void ) {
 idSurface_Patch::idSurface_Patch
 =================
 */
-ID_INLINE idSurface_Patch::idSurface_Patch( int maxPatchWidth, int maxPatchHeight ) {
-	width = height = 0;
-	maxWidth = maxPatchWidth;
-	maxHeight = maxPatchHeight;
-	verts.SetNum( maxWidth * maxHeight );
-	expanded = false;
+ID_INLINE idSurface_Patch::idSurface_Patch(int maxPatchWidth, int maxPatchHeight)
+{
+    width = height = 0;
+    maxWidth = maxPatchWidth;
+    maxHeight = maxPatchHeight;
+    verts.SetNum(maxWidth * maxHeight);
+    expanded = false;
 }
 
 /*
@@ -116,8 +123,9 @@ ID_INLINE idSurface_Patch::idSurface_Patch( int maxPatchWidth, int maxPatchHeigh
 idSurface_Patch::idSurface_Patch
 =================
 */
-ID_INLINE idSurface_Patch::idSurface_Patch( const idSurface_Patch &patch ) {
-	(*this) = patch;
+ID_INLINE idSurface_Patch::idSurface_Patch(const idSurface_Patch &patch)
+{
+    (*this) = patch;
 }
 
 /*
@@ -125,7 +133,8 @@ ID_INLINE idSurface_Patch::idSurface_Patch( const idSurface_Patch &patch ) {
 idSurface_Patch::~idSurface_Patch
 =================
 */
-ID_INLINE idSurface_Patch::~idSurface_Patch() {
+ID_INLINE idSurface_Patch::~idSurface_Patch()
+{
 }
 
 /*
@@ -133,8 +142,9 @@ ID_INLINE idSurface_Patch::~idSurface_Patch() {
 idSurface_Patch::GetWidth
 =================
 */
-ID_INLINE int idSurface_Patch::GetWidth( void ) const {
-	return width;
+ID_INLINE int idSurface_Patch::GetWidth(void) const
+{
+    return width;
 }
 
 /*
@@ -142,8 +152,9 @@ ID_INLINE int idSurface_Patch::GetWidth( void ) const {
 idSurface_Patch::GetHeight
 =================
 */
-ID_INLINE int idSurface_Patch::GetHeight( void ) const {
-	return height;
+ID_INLINE int idSurface_Patch::GetHeight(void) const
+{
+    return height;
 }
 
 #endif /* !__SURFACE_PATCH_H__ */

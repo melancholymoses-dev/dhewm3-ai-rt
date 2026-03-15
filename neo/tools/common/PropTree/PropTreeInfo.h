@@ -30,37 +30,36 @@ class CPropTree;
 
 class PROPTREE_API CPropTreeInfo : public CStatic
 {
-// Construction
-public:
-	CPropTreeInfo();
+    // Construction
+  public:
+    CPropTreeInfo();
 
-// Attributes
-public:
-	// CPropTree class that this class belongs
-	void SetPropOwner(CPropTree* pProp);
+    // Attributes
+  public:
+    // CPropTree class that this class belongs
+    void SetPropOwner(CPropTree *pProp);
 
-protected:
-	CPropTree*		m_pProp;
+  protected:
+    CPropTree *m_pProp;
 
-// Operations
-public:
+    // Operations
+  public:
+    // Overrides
+    // ClassWizard generated virtual function overrides
+    //{{AFX_VIRTUAL(CPropTreeInfo)
+    //}}AFX_VIRTUAL
 
-// Overrides
-	// ClassWizard generated virtual function overrides
-	//{{AFX_VIRTUAL(CPropTreeInfo)
-	//}}AFX_VIRTUAL
+    // Implementation
+  public:
+    virtual ~CPropTreeInfo();
 
-// Implementation
-public:
-	virtual ~CPropTreeInfo();
+    // Generated message map functions
+  protected:
+    //{{AFX_MSG(CPropTreeInfo)
+    afx_msg void OnPaint();
+    //}}AFX_MSG
 
-	// Generated message map functions
-protected:
-	//{{AFX_MSG(CPropTreeInfo)
-	afx_msg void OnPaint();
-	//}}AFX_MSG
-
-	DECLARE_MESSAGE_MAP()
+    DECLARE_MESSAGE_MAP()
 };
 
 /////////////////////////////////////////////////////////////////////////////

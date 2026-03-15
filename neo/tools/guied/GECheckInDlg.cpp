@@ -19,15 +19,17 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
-In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU General Public License which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
+In addition, the Doom 3 Source Code is also subject to certain additional terms. You should have received a copy of
+these additional terms immediately following the terms and conditions of the GNU General Public License which
+accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at the address below.
 
-If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
+If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
+LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 ===========================================================================
 */
 
 #include "tools/edit_gui_common.h"
-
 
 #include "../../sys/win32/rc/guied_resource.h"
 
@@ -35,8 +37,8 @@ If you have questions concerning this license or the applicable additional terms
 
 typedef struct
 {
-	const char*		mFilename;
-	idStr*			mComment;
+    const char *mFilename;
+    idStr *mComment;
 
 } GECHECKINDLG;
 
@@ -47,47 +49,46 @@ GECheckInDlg_GeneralProc
 Dialog procedure for the check in dialog
 ================
 */
-static INT_PTR CALLBACK GECheckInDlg_GeneralProc ( HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam )
+static INT_PTR CALLBACK GECheckInDlg_GeneralProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	GECHECKINDLG* dlg = (GECHECKINDLG*) GetWindowLongPtr ( hwnd, GWLP_USERDATA );
+    GECHECKINDLG *dlg = (GECHECKINDLG *)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
-	switch ( msg )
-	{
-		case WM_INITDIALOG:
-			SetWindowLongPtr ( hwnd, GWLP_USERDATA, lParam );
-			dlg = (GECHECKINDLG*) lParam;
+    switch (msg)
+    {
+    case WM_INITDIALOG:
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, lParam);
+        dlg = (GECHECKINDLG *)lParam;
 
-			SetWindowText ( GetDlgItem ( hwnd, IDC_GUIED_FILENAME ), dlg->mFilename );
-			break;
+        SetWindowText(GetDlgItem(hwnd, IDC_GUIED_FILENAME), dlg->mFilename);
+        break;
 
-		case WM_COMMAND:
-			switch ( LOWORD ( wParam ) )
-			{
-				case IDOK:
-				{
-					char* temp;
-					int	  tempsize;
+    case WM_COMMAND:
+        switch (LOWORD(wParam))
+        {
+        case IDOK: {
+            char *temp;
+            int tempsize;
 
-					tempsize = GetWindowTextLength ( GetDlgItem ( hwnd, IDC_GUIED_COMMENT ) );
-					temp = new char [ tempsize + 2 ];
-					GetWindowText ( GetDlgItem ( hwnd, IDC_GUIED_COMMENT ), temp, tempsize + 1 );
+            tempsize = GetWindowTextLength(GetDlgItem(hwnd, IDC_GUIED_COMMENT));
+            temp = new char[tempsize + 2];
+            GetWindowText(GetDlgItem(hwnd, IDC_GUIED_COMMENT), temp, tempsize + 1);
 
-					*dlg->mComment = temp;
+            *dlg->mComment = temp;
 
-					delete[] temp;
+            delete[] temp;
 
-					EndDialog ( hwnd, 1 );
-					break;
-				}
+            EndDialog(hwnd, 1);
+            break;
+        }
 
-				case IDCANCEL:
-					EndDialog ( hwnd, 0 );
-					break;
-			}
-			break;
-	}
+        case IDCANCEL:
+            EndDialog(hwnd, 0);
+            break;
+        }
+        break;
+    }
 
-	return FALSE;
+    return FALSE;
 }
 
 /*
@@ -97,17 +98,18 @@ GECheckInDlg_DoModal
 Starts the check in dialog
 ================
 */
-bool GECheckInDlg_DoModal ( HWND parent, const char* filename, idStr* comment )
+bool GECheckInDlg_DoModal(HWND parent, const char *filename, idStr *comment)
 {
-	GECHECKINDLG	dlg;
+    GECHECKINDLG dlg;
 
-	dlg.mComment = comment;
-	dlg.mFilename = filename;
+    dlg.mComment = comment;
+    dlg.mFilename = filename;
 
-	if ( !DialogBoxParam ( gApp.GetInstance(), MAKEINTRESOURCE(IDD_GUIED_CHECKIN), parent, GECheckInDlg_GeneralProc, (LPARAM) &dlg ) )
-	{
-		return false;
-	}
+    if (!DialogBoxParam(gApp.GetInstance(), MAKEINTRESOURCE(IDD_GUIED_CHECKIN), parent, GECheckInDlg_GeneralProc,
+                        (LPARAM)&dlg))
+    {
+        return false;
+    }
 
-	return true;
+    return true;
 }
