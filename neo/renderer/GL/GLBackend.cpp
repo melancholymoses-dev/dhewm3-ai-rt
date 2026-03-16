@@ -7,20 +7,60 @@
 #include "renderer/GL/gl_buffer.h"
 
 // Forward declarations of the existing GL free functions
-// (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
 extern void RB_DrawView(const void *);
 extern const void RB_CopyRender(const void *);
+extern void R_CheckPortableExtensions(void);
 
 void GLBackend::Init()
 {
-    common->Printf("Starting GLBackend");
-    R_InitOpenGL();
+    // Load qgl function pointers now that the GL context exists.
+#define QGLPROC(name, rettype, args)                                                                                   \
+    q##name = (rettype(APIENTRYP) args)GLimp_ExtensionPointer(#name);                                                  \
+    if (!q##name)                                                                                                      \
+        common->FatalError("Unable to initialize OpenGL (%s)", #name);
+#include "renderer/qgl_proc.h"
+#undef QGLPROC
+
+    // get our config strings
+    glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
+    glConfig.renderer_string = (const char *)qglGetString(GL_RENDERER);
+    glConfig.version_string = (const char *)qglGetString(GL_VERSION);
+    glConfig.extensions_string = (const char *)qglGetString(GL_EXTENSIONS);
+
+    // OpenGL driver constants
+    GLint temp;
+    qglGetIntegerv(GL_MAX_TEXTURE_SIZE, &temp);
+    glConfig.maxTextureSize = temp;
+
+    // stubbed or broken drivers may have reported 0...
+    if (glConfig.maxTextureSize <= 0)
+    {
+        glConfig.maxTextureSize = 256;
+    }
+
+    glConfig.isInitialized = true;
+
+    common->Printf("OpenGL vendor: %s\n", glConfig.vendor_string);
+    common->Printf("OpenGL renderer: %s\n", glConfig.renderer_string);
+    common->Printf("OpenGL version: %s\n", glConfig.version_string);
+
+    // recheck all the extensions
+    R_CheckPortableExtensions();
+
+    // parse our vertex and fragment programs, possibly disabling support for
+    // one of the paths if there was an error
+    R_ARB2_Init();
+
+    cmdSystem->AddCommand("reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs");
+    R_ReloadARBPrograms_f(idCmdArgs());
+
+    // Initialize the GLSL backend (always try, activated via r_useGLSL)
+    R_GLSL_Init();
 }
 
 void GLBackend::Shutdown()
 {
-    common->Printf("Shutting down GLBackend");
-    GLimp_Shutdown();
+    // GLimp_Shutdown() is called by the outer shutdown path (ShutdownOpenGL / R_VidRestart_f).
 }
 void GLBackend::PostSwapBuffers()
 {

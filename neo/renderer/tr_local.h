@@ -1038,6 +1038,7 @@ extern idCVar r_materialOverride; // override all materials
 extern idCVar r_debugRenderToTexture;
 
 extern idCVar r_glDebugContext;     // DG: use debug context to call logging callbacks on GL errors
+extern idCVar r_inhibitFragmentProgram;
 extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
 extern idCVar r_useSoftParticles;
 
@@ -1110,6 +1111,7 @@ void R_ScreenShot_f(const idCmdArgs &args);
 void R_StencilShot(void);
 
 bool R_CheckExtension(const char *name);
+void R_CheckPortableExtensions(void);
 
 /*
 ====================================================================
