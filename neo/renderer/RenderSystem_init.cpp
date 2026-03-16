@@ -607,7 +607,6 @@ idStr R_GetVidModeValsString(bool addCustom)
 }
 // DG end
 
-
 /*
 ==================
 R_InitOpenGL
@@ -679,14 +678,17 @@ void R_InitOpenGL(void)
     // Create and initialize the rendering backend.
     // GLBackend::Init() loads qgl pointers, queries extensions, inits ARB2/GLSL.
     // VKBackend::Init() calls VKimp_InitFromGlimp and configures glConfig for Vulkan.
+#ifdef DHEWM3_VULKAN
     if (strcmp(r_backend.GetString(), "vulkan") == 0)
     {
         activeBackend = new VKBackend();
     }
     else
+#endif
     {
         activeBackend = new GLBackend();
     }
+
     activeBackend->Init();
 
     // input and sound systems need to be tied to the new window
@@ -764,7 +766,6 @@ void R_InitOpenGL(void)
     }
 #endif
 }
-
 
 /*
 =====================
