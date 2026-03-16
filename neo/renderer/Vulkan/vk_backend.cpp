@@ -427,22 +427,46 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 void VK_RB_DrawView(const void *data)
 {
     if (!vk.isInitialized || !vkPipes.isValid)
+    {
+        common->Printf("VK_RB_DrawView: skipped (isInitialized=%d, pipesValid=%d)\n",
+                       (int)vk.isInitialized, (int)vkPipes.isValid);
+        fflush(NULL);
         return;
+    }
+
+    static int s_frameCount = 0;
+    const int thisFrame = s_frameCount++;
+    if (thisFrame < 10 || (thisFrame % 60) == 0)
+    {
+        common->Printf("VK frame %d: begin (currentFrame slot=%d)\n", thisFrame, vk.currentFrame);
+        fflush(NULL);
+    }
 
     const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)data;
     backEnd.viewDef = cmd->viewDef;
 
     // --- Wait for previous frame's fence ---
-    vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
+    VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
+    if (fenceResult != VK_SUCCESS)
+    {
+        common->Printf("VK frame %d: vkWaitForFences returned %d (DEVICE_LOST=%d)\n",
+                       thisFrame, (int)fenceResult, (int)VK_ERROR_DEVICE_LOST);
+        fflush(NULL);
+        return;
+    }
 
     // --- Acquire swapchain image ---
     uint32_t imageIndex;
     VkResult acquireResult = vkAcquireNextImageKHR(
         vk.device, vk.swapchain, UINT64_MAX, vk.imageAvailableSemaphores[vk.currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
     {
-        // Swapchain needs recreation (window resized)
+        common->Printf("VK frame %d: vkAcquireNextImageKHR returned %d (OUT_OF_DATE=%d, DEVICE_LOST=%d)\n",
+                       thisFrame, (int)acquireResult, (int)VK_ERROR_OUT_OF_DATE_KHR, (int)VK_ERROR_DEVICE_LOST);
+        fflush(NULL);
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+            return;
         return;
     }
 
@@ -514,7 +538,19 @@ void VK_RB_DrawView(const void *data)
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
 
-    VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[vk.currentFrame]));
+    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[vk.currentFrame]);
+    if (submitResult != VK_SUCCESS)
+    {
+        common->Printf("VK frame %d: vkQueueSubmit FAILED %d (DEVICE_LOST=%d)\n",
+                       thisFrame, (int)submitResult, (int)VK_ERROR_DEVICE_LOST);
+        fflush(NULL);
+        common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
+    }
+    if (thisFrame < 10 || (thisFrame % 60) == 0)
+    {
+        common->Printf("VK frame %d: submit OK, imageIndex=%u\n", thisFrame, imageIndex);
+        fflush(NULL);
+    }
 
     // --- Present ---
     VkPresentInfoKHR presentInfo = {};

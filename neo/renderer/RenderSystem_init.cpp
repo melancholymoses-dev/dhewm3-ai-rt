@@ -2397,13 +2397,21 @@ void idRenderSystemLocal::Init(void)
 
     R_InitTriSurfData();
 
+    common->Printf("R_Init: globalImages->Init...\n"); fflush(NULL);
     globalImages->Init();
+    common->Printf("R_Init: globalImages->Init done\n"); fflush(NULL);
 
+    common->Printf("R_Init: InitCinematic...\n"); fflush(NULL);
     idCinematic::InitCinematic();
+    common->Printf("R_Init: InitCinematic done\n"); fflush(NULL);
 
+    common->Printf("R_Init: R_InitMaterials...\n"); fflush(NULL);
     R_InitMaterials();
+    common->Printf("R_Init: R_InitMaterials done\n"); fflush(NULL);
 
+    common->Printf("R_Init: renderModelManager->Init...\n"); fflush(NULL);
     renderModelManager->Init();
+    common->Printf("R_Init: renderModelManager->Init done\n"); fflush(NULL);
 
     // set the identity space
     identitySpace.modelMatrix[0 * 4 + 0] = 1.0f;
