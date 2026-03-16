@@ -441,6 +441,9 @@ GL_CheckErrors
 */
 void GL_CheckErrors(void)
 {
+    if (glConfig.isVulkan)
+        return;
+
     int err;
     char s[64];
     int i;

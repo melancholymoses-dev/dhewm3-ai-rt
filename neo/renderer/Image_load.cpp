@@ -32,7 +32,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "sys/platform.h"
 #include "idlib/hashing/MD4.h"
 #include "renderer/tr_local.h"
-
+#include "renderer/RendererBackend.h"
 #include "renderer/Image.h"
 
 /*
@@ -192,7 +192,6 @@ void idImage::UploadCompressedNormalMap(int width, int height, const byte *rgba,
 }
 
 //=======================================================================
-
 
 /*
 ===============
@@ -540,6 +539,35 @@ void idImage::GetDownsize(int &scaled_width, int &scaled_height) const
         scaled_width >>= 1;
         scaled_height >>= 1;
     }
+}
+
+/*
+===============
+GenerateImage — sets image parameters then dispatches upload to the active backend.
+Must have the parameters set even before a context exists so that image matching
+from shaders before OpenGL/Vulkan starts works correctly.
+===============
+*/
+void idImage::GenerateImage(const byte *pic, int width, int height, textureFilter_t filterParm, bool allowDownSizeParm,
+                            textureRepeat_t repeatParm, textureDepth_t depthParm)
+{
+    PurgeImage();
+
+    filter = filterParm;
+    allowDownSize = allowDownSizeParm;
+    repeat = repeatParm;
+    depth = depthParm;
+
+    // if we don't have a rendering context, just return after we
+    // have filled in the parms.  We must have the values set, or
+    // an image match from a shader before OpenGL starts would miss
+    // the generated texture
+    if (!glConfig.isInitialized)
+    {
+        return;
+    }
+
+    activeBackend->Image_Upload(this, pic, width, height, filterParm, allowDownSizeParm, repeatParm, depthParm);
 }
 
 /*
@@ -1684,6 +1712,18 @@ void idImage::ActuallyLoadImage(bool checkForPrecompressed, bool fromBackEnd)
         // write out the precompressed version of this file if needed
         WritePrecompressedImage();
     }
+}
+
+/*
+===============
+PurgeImage — dispatches to the active backend.
+The backend owns the resource lifetime (GL texnum or Vulkan backendData).
+===============
+*/
+void idImage::PurgeImage()
+{
+    if (activeBackend)
+        activeBackend->Image_Purge(this);
 }
 
 //=========================================================================================================

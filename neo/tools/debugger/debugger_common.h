@@ -114,7 +114,6 @@
 // renderer
 #include "renderer/GL/qgl.h"
 #include "renderer/Cinematic.h"
-#include "renderer/GL/qgl.h"
 #include "renderer/Material.h"
 #include "renderer/Model.h"
 #include "renderer/ModelManager.h"

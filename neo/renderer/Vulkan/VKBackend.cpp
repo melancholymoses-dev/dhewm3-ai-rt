@@ -79,7 +79,7 @@ void VKBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool i
     // Populate the shared linked-list header first, then create the device-local buffer.
     // TODO: skip GPU alloc for temp (stream) buffers once allocatingTempBuffer is exposed.
     vertexCache.Alloc(data, size, vc, indexBuffer);
-    if (*vc && data)
+    if (*vc && data && (*vc)->tag != TAG_TEMP)
     {
         VK_VertexCache_Alloc(*vc, data, size, indexBuffer);
     }
