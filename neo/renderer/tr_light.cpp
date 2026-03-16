@@ -33,6 +33,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "idlib/math/Interpolate.h"
 #include "framework/Game.h"
 #include "renderer/VertexCache.h"
+#include "renderer/RendererBackend.h"
 #include "renderer/RenderWorld_local.h"
 #include "ui/Window.h"
 
@@ -69,7 +70,7 @@ bool R_CreateAmbientCache(srfTriangles_t *tri, bool needsLighting)
         R_DeriveTangents(tri);
     }
 
-    vertexCache.Alloc(tri->verts, tri->numVerts * sizeof(tri->verts[0]), &tri->ambientCache);
+    activeBackend->VertexCache_Alloc(&tri->ambientCache, tri->verts, tri->numVerts * sizeof(tri->verts[0]), false);
     if (!tri->ambientCache)
     {
         return false;
@@ -141,7 +142,7 @@ bool R_CreateLightingCache(const idRenderEntityLocal *ent, const idRenderLightLo
 
 #endif
 
-    vertexCache.Alloc(cache, size, &tri->lightingCache);
+    activeBackend->VertexCache_Alloc(&tri->lightingCache, cache, size, false);
     if (!tri->lightingCache)
     {
         return false;
@@ -163,7 +164,7 @@ void R_CreatePrivateShadowCache(srfTriangles_t *tri)
         return;
     }
 
-    vertexCache.Alloc(tri->shadowVertexes, tri->numVerts * sizeof(*tri->shadowVertexes), &tri->shadowCache);
+    activeBackend->VertexCache_Alloc(&tri->shadowCache, tri->shadowVertexes, tri->numVerts * sizeof(*tri->shadowVertexes), false);
 }
 
 /*
@@ -208,7 +209,7 @@ void R_CreateVertexProgramShadowCache(srfTriangles_t *tri)
 
 #endif
 
-    vertexCache.Alloc(temp, tri->numVerts * 2 * sizeof(shadowCache_t), &tri->shadowCache);
+    activeBackend->VertexCache_Alloc(&tri->shadowCache, temp, tri->numVerts * 2 * sizeof(shadowCache_t), false);
     Mem_FreeA(temp, tempOnStack);
 }
 
@@ -1187,7 +1188,7 @@ void R_AddLightSurfaces(void)
 
             if (!tri->indexCache && r_useIndexBuffers.GetBool())
             {
-                vertexCache.Alloc(tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), &tri->indexCache, true);
+                activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), true);
             }
             if (tri->indexCache)
             {
@@ -1639,7 +1640,7 @@ static void R_AddAmbientDrawsurfs(viewEntity_t *vEntity)
 
             if (r_useIndexBuffers.GetBool() && !tri->indexCache)
             {
-                vertexCache.Alloc(tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), &tri->indexCache, true);
+                activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), true);
             }
             if (tri->indexCache)
             {
