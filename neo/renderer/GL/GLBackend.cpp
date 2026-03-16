@@ -3,22 +3,66 @@
 #include "renderer/VertexCache.h"
 #include "renderer/Image.h"
 #include "renderer/GL/GLBackend.h"
+#include "renderer/GL/gl_image.h"
+#include "renderer/GL/gl_buffer.h"
 
 // Forward declarations of the existing GL free functions
-// (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
-extern void RB_DrawView(const void *);
 extern const void RB_CopyRender(const void *);
+extern void R_CheckPortableExtensions(void);
 
 void GLBackend::Init()
 {
-    common->Printf("Starting GLBackend");
-    R_InitOpenGL();
+    // Ensure isVulkan is cleared in case of a backend switch (e.g. vid_restart).
+    glConfig.isVulkan = false;
+
+    // Load qgl function pointers now that the GL context exists.
+#define QGLPROC(name, rettype, args)                                                                                   \
+    q##name = (rettype(APIENTRYP) args)GLimp_ExtensionPointer(#name);                                                  \
+    if (!q##name)                                                                                                      \
+        common->FatalError("Unable to initialize OpenGL (%s)", #name);
+#include "renderer/qgl_proc.h"
+#undef QGLPROC
+
+    // get our config strings
+    glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
+    glConfig.renderer_string = (const char *)qglGetString(GL_RENDERER);
+    glConfig.version_string = (const char *)qglGetString(GL_VERSION);
+    glConfig.extensions_string = (const char *)qglGetString(GL_EXTENSIONS);
+
+    // OpenGL driver constants
+    GLint temp;
+    qglGetIntegerv(GL_MAX_TEXTURE_SIZE, &temp);
+    glConfig.maxTextureSize = temp;
+
+    // stubbed or broken drivers may have reported 0...
+    if (glConfig.maxTextureSize <= 0)
+    {
+        glConfig.maxTextureSize = 256;
+    }
+
+    glConfig.isInitialized = true;
+
+    common->Printf("OpenGL vendor: %s\n", glConfig.vendor_string);
+    common->Printf("OpenGL renderer: %s\n", glConfig.renderer_string);
+    common->Printf("OpenGL version: %s\n", glConfig.version_string);
+
+    // recheck all the extensions
+    R_CheckPortableExtensions();
+
+    // parse our vertex and fragment programs, possibly disabling support for
+    // one of the paths if there was an error
+    R_ARB2_Init();
+
+    cmdSystem->AddCommand("reloadARBprograms", R_ReloadARBPrograms_f, CMD_FL_RENDERER, "reloads ARB programs");
+    R_ReloadARBPrograms_f(idCmdArgs());
+
+    // Initialize the GLSL backend (always try, activated via r_useGLSL)
+    R_GLSL_Init();
 }
 
 void GLBackend::Shutdown()
 {
-    common->Printf("Shutting down GLBackend");
-    GLimp_Shutdown();
+    // GLimp_Shutdown() is called by the outer shutdown path (ShutdownOpenGL / R_VidRestart_f).
 }
 void GLBackend::PostSwapBuffers()
 {
@@ -28,12 +72,12 @@ void GLBackend::PostSwapBuffers()
 void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm,
                              bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm)
 {
-    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm, repeatParm, depthParm);
+    GL_GenerateTexture(img, data, w, h, filterParm, allowDownSizeParm, repeatParm, depthParm);
 }
 
 void GLBackend::Image_Purge(idImage *img)
 {
-    img->PurgeImage();
+    GL_PurgeTexture(img);
 }
 void GLBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool indexBuffer)
 {
@@ -41,14 +85,14 @@ void GLBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool i
 }
 void GLBackend::VertexCache_Free(vertCache_t *vc)
 {
-    vertexCache.Free(vc);
+    GL_VertexCache_Free(vc);
 }
 
 // Frame dispatch
 
-void GLBackend::DrawView(const viewDef_t *view)
+void GLBackend::DrawView(const drawSurfsCommand_t *cmd)
 {
-    RB_DrawView(view);
+    RB_DrawView(cmd);
 }
 
 void GLBackend::CopyRender(const copyRenderCommand_t &cmd)

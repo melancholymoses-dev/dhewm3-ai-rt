@@ -30,7 +30,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 */
 #pragma once
 #include "framework/CVarSystem.h"
-#include "renderer/qgl.h"
+#include "renderer/GL/qgl.h"
 
 // vertex cache calls should only be made by the front end
 
@@ -58,13 +58,7 @@ typedef struct vertCache_s
     struct vertCache_s *next, *prev; // may be on the static list or one of the frame lists
     int frameUsed;                   // it can't be purged if near the current frame
 
-#ifdef DHEWM3_VULKAN
-    // Vulkan device-local buffer backing.  uint64_t matches the underlying type
-    // of VkBuffer / VkDeviceMemory (non-dispatchable handles) without pulling
-    // <vulkan/vulkan.h> into every file that includes VertexCache.h.
-    uint64_t vkBuffer; // VkBuffer handle  (0 = not allocated)
-    uint64_t vkMemory; // VkDeviceMemory handle
-#endif
+    void *backendData; // backend-specific resource handle (NULL = not allocated)
 } vertCache_t;
 
 class idVertexCache

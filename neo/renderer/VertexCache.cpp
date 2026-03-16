@@ -34,6 +34,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "renderer/tr_local.h"
 
 #include "renderer/VertexCache.h"
+#include "renderer/RendererBackend.h"
 
 static const int FRAME_MEMORY_BYTES = 0x200000;
 static const int EXPAND_HEADERS = 1024;
@@ -77,28 +78,7 @@ void idVertexCache::ActuallyFree(vertCache_t *block)
     {
         staticAllocTotal -= block->size;
         staticCountTotal--;
-
-        if (block->vbo)
-        {
-#if 0 // this isn't really necessary, it will be reused soon enough
-      // filling with zero length data is the equivalent of freeing
-			qglBindBufferARB(GL_ARRAY_BUFFER_ARB, block->vbo);
-			qglBufferDataARB(GL_ARRAY_BUFFER_ARB, 0, 0, GL_DYNAMIC_DRAW_ARB);
-#endif
-        }
-        else if (block->virtMem)
-        {
-            Mem_Free(block->virtMem);
-            block->virtMem = NULL;
-        }
-
-#ifdef DHEWM3_VULKAN
-        if (block->vkBuffer)
-        {
-            extern void VK_VertexCache_Free(vertCache_t *);
-            VK_VertexCache_Free(block);
-        }
-#endif
+        activeBackend->VertexCache_Free(block);
     }
     block->tag = TAG_FREE; // mark as free
 
@@ -192,18 +172,15 @@ void idVertexCache::Init()
     virtualMemory = false;
 
     // use ARB_vertex_buffer_object unless explicitly disabled
-#ifdef DHEWM3_VULKAN
     if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
     {
-        // Vulkan manages GPU buffers separately (VK_VertexCache_Alloc); use CPU-side
-        // virtual memory here so that GL function pointers are never called.
+        // Vulkan manages GPU buffers separately; use CPU-side virtual memory so
+        // that GL function pointers are never called from the shared vertex cache.
         virtualMemory = true;
         r_useIndexBuffers.SetBool(false);
         common->Printf("Vulkan: vertex cache using CPU-side virtual memory (GPU buffers managed separately)\n");
     }
-    else
-#endif
-        if (r_useVertexBuffers.GetInteger() && glConfig.ARBVertexBufferObjectAvailable)
+    else if (r_useVertexBuffers.GetInteger() && glConfig.ARBVertexBufferObjectAvailable)
     {
         common->Printf("using ARB_vertex_buffer_object memory\n");
     }
@@ -303,10 +280,7 @@ void idVertexCache::Alloc(void *data, int size, vertCache_t **buffer, bool index
             // virtualMemory=true and qgl function pointers are null).
             block->vbo = 0;
             block->virtMem = NULL;
-#ifdef DHEWM3_VULKAN
-            block->vkBuffer = 0;
-            block->vkMemory = 0;
-#endif
+            block->backendData = NULL;
 
             if (!virtualMemory)
             {
@@ -372,16 +346,6 @@ void idVertexCache::Alloc(void *data, int size, vertCache_t **buffer, bool index
         SIMDProcessor->Memcpy(block->virtMem, data, size);
     }
 
-#ifdef DHEWM3_VULKAN
-    // For static (non-temp) allocations in the Vulkan path, also create a device-local VkBuffer.
-    block->vkBuffer = 0;
-    block->vkMemory = 0;
-    if (!allocatingTempBuffer && data)
-    {
-        extern void VK_VertexCache_Alloc(vertCache_t *, const void *, int, bool);
-        VK_VertexCache_Alloc(block, data, size, indexBuffer);
-    }
-#endif
 }
 
 /*

@@ -698,10 +698,8 @@ const int MAX_GUI_SURFACES = 1024; // default size of the drawSurfs list for gui
 typedef enum
 {
     BE_ARB2,
-    BE_GLSL, // modern GLSL backend (OpenGL 2.0+), replaces ARB assembly programs
-#ifdef DHEWM3_VULKAN
-    BE_VULKAN, // Vulkan/RTX backend; rendering dispatched via VK_RB_DrawView
-#endif
+    BE_GLSL,   // modern GLSL backend (OpenGL 2.0+), replaces ARB assembly programs
+    BE_VULKAN, // Vulkan/RTX backend
     BE_BAD
 } backEndName_t;
 
@@ -1038,6 +1036,7 @@ extern idCVar r_materialOverride; // override all materials
 extern idCVar r_debugRenderToTexture;
 
 extern idCVar r_glDebugContext;     // DG: use debug context to call logging callbacks on GL errors
+extern idCVar r_inhibitFragmentProgram;
 extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
 extern idCVar r_useSoftParticles;
 
@@ -1110,6 +1109,7 @@ void R_ScreenShot_f(const idCmdArgs &args);
 void R_StencilShot(void);
 
 bool R_CheckExtension(const char *name);
+void R_CheckPortableExtensions(void);
 
 /*
 ====================================================================
@@ -1757,11 +1757,13 @@ TR_BACKEND
 
 void RB_SetDefaultGLState(void);
 void RB_SetGL2D(void);
+void RB_SetBuffer(const void *data);
 
 void RB_ShowImages(void);
 
 void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds);
 
+const void RB_SwapBuffers(const void *data);
 const void RB_CopyRender(const void *data);
 /*
 =============================================================

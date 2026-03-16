@@ -96,11 +96,13 @@ void VK_UnmapBuffer(VkDeviceMemory memory)
 
 // ---------------------------------------------------------------------------
 // Vertex cache Vulkan buffer management
-//
-// Called from VertexCache.cpp under #ifdef DHEWM3_VULKAN.
-// vertCache_t stores handles as uint64_t to avoid <vulkan/vulkan.h> in the
-// header; we cast to the real Vulkan types here.
 // ---------------------------------------------------------------------------
+
+struct vkBufferData_t
+{
+    VkBuffer       buf;
+    VkDeviceMemory mem;
+};
 
 void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool indexBuffer)
 {
@@ -123,14 +125,10 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 #endif
 
-    VkBuffer buf;
-    VkDeviceMemory mem;
-    VK_CreateBuffer((VkDeviceSize)size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &buf, &mem);
-    VK_UploadBuffer(buf, data, (VkDeviceSize)size);
-
-    // Store as uint64_t — matches VkBuffer / VkDeviceMemory underlying type on all platforms
-    block->vkBuffer = (uint64_t)buf;
-    block->vkMemory = (uint64_t)mem;
+    vkBufferData_t *bd = new vkBufferData_t;
+    VK_CreateBuffer((VkDeviceSize)size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bd->buf, &bd->mem);
+    VK_UploadBuffer(bd->buf, data, (VkDeviceSize)size);
+    block->backendData = bd;
 }
 
 void VK_VertexCache_Free(vertCache_t *block)
@@ -138,24 +136,28 @@ void VK_VertexCache_Free(vertCache_t *block)
     if (!vk.isInitialized)
         return;
 
-    if (block->vkBuffer)
-    {
-        vkDestroyBuffer(vk.device, (VkBuffer)block->vkBuffer, NULL);
-        block->vkBuffer = 0;
-    }
-    if (block->vkMemory)
-    {
-        vkFreeMemory(vk.device, (VkDeviceMemory)block->vkMemory, NULL);
-        block->vkMemory = 0;
-    }
+    vkBufferData_t *bd = (vkBufferData_t *)block->backendData;
+    if (!bd)
+        return;
+
+    if (bd->buf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, bd->buf, NULL);
+    if (bd->mem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, bd->mem, NULL);
+
+    delete bd;
+    block->backendData = NULL;
 }
 
 // Returns true and fills buf/offset when the block has a valid Vulkan buffer.
 bool VK_VertexCache_GetBuffer(vertCache_t *block, VkBuffer *outBuf, VkDeviceSize *outOffset)
 {
-    if (!block || !block->vkBuffer)
+    if (!block)
         return false;
-    *outBuf = (VkBuffer)block->vkBuffer;
+    vkBufferData_t *bd = (vkBufferData_t *)block->backendData;
+    if (!bd || bd->buf == VK_NULL_HANDLE)
+        return false;
+    *outBuf = bd->buf;
     *outOffset = (VkDeviceSize)block->offset; // always 0 for static blocks
     return true;
 }

@@ -34,8 +34,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "idlib/containers/List.h"
 #include "framework/FileSystem.h"
+#include "renderer/GL/qgl.h"
 #include "renderer/Material.h"
-#include "renderer/qgl.h"
 
 /*
 ====================================================================
@@ -287,19 +287,12 @@ class idImage
 
     int refCount; // overall ref count
 
-#ifdef DHEWM3_VULKAN
-    // Opaque handle to Vulkan image resources (vkImageData_t, defined in vk_image.cpp).
-    // Populated by VK_Image_Upload(), freed by VK_Image_Purge().
-    // Using an opaque pointer avoids pulling <vulkan/vulkan.h> into every translation unit.
-    struct vkImageData_t *vkData;
-#endif
+    void *backendData; // backend-specific image resource handle (NULL = not uploaded)
 };
 
 ID_INLINE idImage::idImage()
 {
-#ifdef DHEWM3_VULKAN
-    vkData = NULL;
-#endif
+    backendData = NULL;
     texnum = TEXTURE_NOT_LOADED;
     partialImage = NULL;
     type = TT_DISABLED;
