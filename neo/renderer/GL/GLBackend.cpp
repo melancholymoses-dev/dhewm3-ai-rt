@@ -12,6 +12,9 @@ extern void R_CheckPortableExtensions(void);
 
 void GLBackend::Init()
 {
+    // Ensure isVulkan is cleared in case of a backend switch (e.g. vid_restart).
+    glConfig.isVulkan = false;
+
     // Load qgl function pointers now that the GL context exists.
 #define QGLPROC(name, rettype, args)                                                                                   \
     q##name = (rettype(APIENTRYP) args)GLimp_ExtensionPointer(#name);                                                  \
@@ -69,12 +72,12 @@ void GLBackend::PostSwapBuffers()
 void GLBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm,
                              bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm)
 {
-    img->GenerateImage(data, w, h, filterParm, allowDownSizeParm, repeatParm, depthParm);
+    GL_GenerateTexture(img, data, w, h, filterParm, allowDownSizeParm, repeatParm, depthParm);
 }
 
 void GLBackend::Image_Purge(idImage *img)
 {
-    img->PurgeImage();
+    GL_PurgeTexture(img);
 }
 void GLBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool indexBuffer)
 {

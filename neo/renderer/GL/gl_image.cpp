@@ -3,6 +3,8 @@
 #include "renderer/tr_local.h"
 
 #include "renderer/Image.h"
+#include "renderer/RendererBackend.h"
+#include "renderer/GL/gl_image.h"
 
 static byte mipBlendColors[16][4] = {
     {0, 0, 0, 0},     {255, 0, 0, 128}, {0, 255, 0, 128}, {0, 0, 255, 128}, {255, 0, 0, 128}, {0, 255, 0, 128},
@@ -39,39 +41,46 @@ There is no way to specify explicit mip map levels
 
 ================
 */
-void idImage::GenerateImage(const byte *pic, int width, int height, textureFilter_t filterParm, bool allowDownSizeParm,
-                            textureRepeat_t repeatParm, textureDepth_t depthParm)
+// ---------------------------------------------------------------------------
+// GL_PurgeTexture / GL_GenerateTexture
+// Backend-agnostic wrappers called by GLBackend::Image_Purge / Image_Upload.
+// These must NOT be called when Vulkan is active.
+// ---------------------------------------------------------------------------
+
+void GL_PurgeTexture(idImage *img)
+{
+    if (img->texnum != idImage::TEXTURE_NOT_LOADED)
+    {
+        qglDeleteTextures(1, &img->texnum);
+        img->texnum = idImage::TEXTURE_NOT_LOADED;
+    }
+
+    // clear all the current binding caches, so the next bind will do a real one
+    for (int i = 0; i < MAX_MULTITEXTURE_UNITS; i++)
+    {
+        backEnd.glState.tmu[i].current2DMap = -1;
+        backEnd.glState.tmu[i].current3DMap = -1;
+        backEnd.glState.tmu[i].currentCubeMap = -1;
+    }
+}
+
+void GL_GenerateTexture(idImage *img, const byte *pic, int width, int height, textureFilter_t filterParm,
+                        bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm)
 {
     bool preserveBorder;
     byte *scaledBuffer;
     int scaled_width, scaled_height;
     byte *shrunk;
 
-    PurgeImage();
+    GL_PurgeTexture(img);
 
-    filter = filterParm;
-    allowDownSize = allowDownSizeParm;
-    repeat = repeatParm;
-    depth = depthParm;
-
-    // if we don't have a rendering context, just return after we
-    // have filled in the parms.  We must have the values set, or
-    // an image match from a shader before OpenGL starts would miss
-    // the generated texture
-    if (!glConfig.isInitialized)
-    {
-        return;
-    }
+    img->filter = filterParm;
+    img->allowDownSize = allowDownSizeParm;
+    img->repeat = repeatParm;
+    img->depth = depthParm;
 
     // don't let mip mapping smear the texture into the clamped border
-    if (repeat == TR_CLAMP_TO_ZERO)
-    {
-        preserveBorder = true;
-    }
-    else
-    {
-        preserveBorder = false;
-    }
+    preserveBorder = (img->repeat == TR_CLAMP_TO_ZERO);
 
     // make sure it is a power of 2
     scaled_width = MakePowerOfTwo(width);
@@ -83,15 +92,15 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
     }
 
     // Optionally modify our width/height based on options/hardware
-    GetDownsize(scaled_width, scaled_height);
+    img->GetDownsize(scaled_width, scaled_height);
 
     scaledBuffer = NULL;
 
     // generate the texture number
-    qglGenTextures(1, &texnum);
+    qglGenTextures(1, &img->texnum);
 
     // select proper internal format before we resample
-    internalFormat = SelectInternalFormat(&pic, 1, width, height, depth);
+    img->internalFormat = img->SelectInternalFormat(&pic, 1, width, height, img->depth);
 
     // copy or resample data as appropriate for first MIP level
     if ((scaled_width == width) && (scaled_height == height))
@@ -141,13 +150,13 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
         scaled_height = height;
     }
 
-    uploadHeight = scaled_height;
-    uploadWidth = scaled_width;
-    type = TT_2D;
+    img->uploadHeight = scaled_height;
+    img->uploadWidth = scaled_width;
+    img->type = TT_2D;
 
     // zero the border if desired, allowing clamped projection textures
     // even after picmip resampling or careless artists.
-    if (repeat == TR_CLAMP_TO_ZERO)
+    if (img->repeat == TR_CLAMP_TO_ZERO)
     {
         byte rgba[4];
 
@@ -155,7 +164,7 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
         rgba[3] = 255;
         R_SetBorderTexels((byte *)scaledBuffer, width, height, rgba);
     }
-    if (repeat == TR_CLAMP_TO_ZERO_ALPHA)
+    if (img->repeat == TR_CLAMP_TO_ZERO_ALPHA)
     {
         byte rgba[4];
 
@@ -164,36 +173,17 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
         R_SetBorderTexels((byte *)scaledBuffer, width, height, rgba);
     }
 
-    if (generatorFunction == NULL && ((depth == TD_BUMP && globalImages->image_writeNormalTGA.GetBool()) ||
-                                      (depth != TD_BUMP && globalImages->image_writeTGA.GetBool())))
+    if (img->generatorFunction == NULL && ((img->depth == TD_BUMP && globalImages->image_writeNormalTGA.GetBool()) ||
+                                           (img->depth != TD_BUMP && globalImages->image_writeTGA.GetBool())))
     {
         // Optionally write out the texture to a .tga
         char filename[MAX_IMAGE_NAME];
-        ImageProgramStringToCompressedFileName(imgName, filename);
+        img->ImageProgramStringToCompressedFileName(img->imgName, filename);
         char *ext = strrchr(filename, '.');
         if (ext)
         {
             strcpy(ext, ".tga");
-            // swap the red/alpha for the write
-            /*
-            if ( depth == TD_BUMP ) {
-                    for ( int i = 0; i < scaled_width * scaled_height * 4; i += 4 ) {
-                            scaledBuffer[ i ] = scaledBuffer[ i + 3 ];
-                            scaledBuffer[ i + 3 ] = 0;
-                    }
-            }
-            */
             R_WriteTGA(filename, scaledBuffer, scaled_width, scaled_height, false);
-
-            // put it back
-            /*
-            if ( depth == TD_BUMP ) {
-                    for ( int i = 0; i < scaled_width * scaled_height * 4; i += 4 ) {
-                            scaledBuffer[ i + 3 ] = scaledBuffer[ i ];
-                            scaledBuffer[ i ] = 0;
-                    }
-            }
-            */
         }
     }
 
@@ -202,7 +192,7 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
     // one fragment program
     // if the image is precompressed ( either in palletized mode or true rxgb mode
     // ) then it is loaded above and the swap never happens here
-    if (depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 1)
+    if (img->depth == TD_BUMP && globalImages->image_useNormalCompression.GetInteger() != 1)
     {
         for (int i = 0; i < scaled_width * scaled_height * 4; i += 4)
         {
@@ -211,31 +201,21 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
         }
     }
     // upload the main image level
-    Bind();
+    img->Bind();
 
-    if (internalFormat == GL_COLOR_INDEX8_EXT)
+    if (img->internalFormat == GL_COLOR_INDEX8_EXT)
     {
-        /*
-        if ( depth == TD_BUMP ) {
-                for ( int i = 0; i < scaled_width * scaled_height * 4; i += 4 ) {
-                        scaledBuffer[ i ] = scaledBuffer[ i + 3 ];
-                        scaledBuffer[ i + 3 ] = 0;
-                }
-        }
-        */
-        UploadCompressedNormalMap(scaled_width, scaled_height, scaledBuffer, 0);
+        img->UploadCompressedNormalMap(scaled_width, scaled_height, scaledBuffer, 0);
     }
     else
     {
-        qglTexImage2D(GL_TEXTURE_2D, 0, internalFormat, scaled_width, scaled_height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+        qglTexImage2D(GL_TEXTURE_2D, 0, img->internalFormat, scaled_width, scaled_height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                       scaledBuffer);
     }
 
     // create and upload the mip map levels, which we do in all cases, even if we
     // don't think they are needed
-    int miplevel;
-
-    miplevel = 0;
+    int miplevel = 0;
     while (scaled_width > 1 || scaled_height > 1)
     {
         // preserve the border after mip map unless repeating
@@ -260,19 +240,19 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
         // rasterizer's texture level selection algorithm
         // Changing the color doesn't help with lumminance/alpha/intensity
         // formats...
-        if (depth == TD_DIFFUSE && globalImages->image_colorMipLevels.GetBool())
+        if (img->depth == TD_DIFFUSE && globalImages->image_colorMipLevels.GetBool())
         {
             R_BlendOverTexture((byte *)scaledBuffer, scaled_width * scaled_height, mipBlendColors[miplevel]);
         }
 
         // upload the mip map
-        if (internalFormat == GL_COLOR_INDEX8_EXT)
+        if (img->internalFormat == GL_COLOR_INDEX8_EXT)
         {
-            UploadCompressedNormalMap(scaled_width, scaled_height, scaledBuffer, miplevel);
+            img->UploadCompressedNormalMap(scaled_width, scaled_height, scaledBuffer, miplevel);
         }
         else
         {
-            qglTexImage2D(GL_TEXTURE_2D, miplevel, internalFormat, scaled_width, scaled_height, 0, GL_RGBA,
+            qglTexImage2D(GL_TEXTURE_2D, miplevel, img->internalFormat, scaled_width, scaled_height, 0, GL_RGBA,
                           GL_UNSIGNED_BYTE, scaledBuffer);
         }
     }
@@ -282,30 +262,8 @@ void idImage::GenerateImage(const byte *pic, int width, int height, textureFilte
         R_StaticFree(scaledBuffer);
     }
 
-    SetImageFilterAndRepeat();
+    img->SetImageFilterAndRepeat();
 
     // see if we messed anything up
     GL_CheckErrors();
-}
-
-/*
-===============
-PurgeImage
-===============
-*/
-void idImage::PurgeImage()
-{
-    if (texnum != TEXTURE_NOT_LOADED)
-    {
-        qglDeleteTextures(1, &texnum); // this should be the ONLY place it is ever called!
-        texnum = TEXTURE_NOT_LOADED;
-    }
-
-    // clear all the current binding caches, so the next bind will do a real one
-    for (int i = 0; i < MAX_MULTITEXTURE_UNITS; i++)
-    {
-        backEnd.glState.tmu[i].current2DMap = -1;
-        backEnd.glState.tmu[i].current3DMap = -1;
-        backEnd.glState.tmu[i].currentCubeMap = -1;
-    }
 }
