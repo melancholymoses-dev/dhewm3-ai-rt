@@ -9,8 +9,7 @@ mip chain (generated via vkCmdBlitImage), creates the matching VkImageView
 and VkSampler, and provides VK_Image_GetDescriptorInfo() for use in the
 interaction descriptor set.
 
-Hooked into idImage::GenerateImage() and idImage::PurgeImage() in
-Image_load.cpp via #ifdef DHEWM3_VULKAN guards.
+Hooked into idImage via the backendData void* field (see Image.h).
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
 
