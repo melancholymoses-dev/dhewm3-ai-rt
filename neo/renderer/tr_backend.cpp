@@ -32,6 +32,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "sys/sys_imgui.h"
 
 #include "renderer/tr_local.h"
+#include "renderer/RendererBackend.h"
 
 // GL state functions (RB_SetDefaultGLState, GL_State, GL_Cull, RB_SwapBuffers, etc.)
 // live in GL/gl_backend.cpp. Declarations remain in tr_local.h.
