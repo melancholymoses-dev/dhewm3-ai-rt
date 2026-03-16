@@ -1757,11 +1757,13 @@ TR_BACKEND
 
 void RB_SetDefaultGLState(void);
 void RB_SetGL2D(void);
+void RB_SetBuffer(const void *data);
 
 void RB_ShowImages(void);
 
 void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds);
 
+const void RB_SwapBuffers(const void *data);
 const void RB_CopyRender(const void *data);
 /*
 =============================================================
