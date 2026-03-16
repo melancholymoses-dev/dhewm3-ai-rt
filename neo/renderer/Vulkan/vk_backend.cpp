@@ -24,6 +24,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
+#include "sys/sys_imgui.h"
 #include <SDL.h>
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -522,6 +523,9 @@ void VK_RB_DrawView(const void *data)
 
     // Draw all light interactions
     VK_RB_DrawInteractions(cmdBuf);
+
+    // Render ImGui overlay (must be inside render pass)
+    D3::ImGuiHooks::RenderVulkan(cmdBuf);
 
     vkCmdEndRenderPass(cmdBuf);
     VK_CHECK(vkEndCommandBuffer(cmdBuf));

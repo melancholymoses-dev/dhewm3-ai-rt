@@ -18,6 +18,12 @@
 
 #include "../libs/imgui/backends/imgui_impl_opengl2.h"
 
+#ifdef DHEWM3_VULKAN
+#include "../libs/imgui/backends/imgui_impl_vulkan.h"
+#include "framework/Common.h" // needed by vk_common.h (VK_FindMemoryType calls common->FatalError)
+#include "renderer/Vulkan/vk_common.h"
+#endif
+
 #if SDL_VERSION_ATLEAST(3, 0, 0)
 #include "../libs/imgui/backends/imgui_impl_sdl3.h"
 #define ImGui_ImplSDLx_InitForOpenGL ImGui_ImplSDL3_InitForOpenGL
@@ -30,6 +36,14 @@
 #define ImGui_ImplSDLx_Shutdown ImGui_ImplSDL2_Shutdown
 #define ImGui_ImplSDLx_NewFrame ImGui_ImplSDL2_NewFrame
 #define ImGui_ImplSDLx_ProcessEvent ImGui_ImplSDL2_ProcessEvent
+#endif
+
+#ifdef DHEWM3_VULKAN
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+#define ImGui_ImplSDLx_InitForVulkan ImGui_ImplSDL3_InitForVulkan
+#else
+#define ImGui_ImplSDLx_InitForVulkan ImGui_ImplSDL2_InitForVulkan
+#endif
 #endif
 
 #include "framework/Common.h"
@@ -219,6 +233,9 @@ void SetScale(float scale)
 }
 
 static bool imgui_initialized = false;
+#ifdef DHEWM3_VULKAN
+static bool s_imguiVulkanReady = false;
+#endif
 
 // using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL headers into sys_imgui.h
 bool Init(void *_sdlWindow, void *sdlGlContext)
@@ -259,21 +276,68 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
     imgui_scale.SetModified(); // so NewFrame() will load the scaled font
 
     // Setup Platform/Renderer backends
-    if (!ImGui_ImplSDLx_InitForOpenGL(sdlWindow, sdlGlContext))
+#ifdef DHEWM3_VULKAN
+    if (glConfig.isVulkan)
     {
-        ImGui::DestroyContext(imguiCtx);
-        imguiCtx = NULL;
-        common->Warning("Failed to initialize ImGui SDL platform backend!\n");
-        return false;
-    }
+        if (!ImGui_ImplSDLx_InitForVulkan(sdlWindow))
+        {
+            ImGui::DestroyContext(imguiCtx);
+            imguiCtx = NULL;
+            common->Warning("Failed to initialize ImGui SDL platform backend for Vulkan!\n");
+            return false;
+        }
 
-    if (!ImGui_ImplOpenGL2_Init())
+        ImGui_ImplVulkan_InitInfo vkInfo = {};
+        vkInfo.Instance        = vk.instance;
+        vkInfo.PhysicalDevice  = vk.physicalDevice;
+        vkInfo.Device          = vk.device;
+        vkInfo.QueueFamily     = vk.graphicsFamily;
+        vkInfo.Queue           = vk.graphicsQueue;
+        vkInfo.DescriptorPoolSize = 2; // ImGui creates its own pool
+        vkInfo.RenderPass      = vk.renderPass;
+        vkInfo.MinImageCount   = 2;
+        vkInfo.ImageCount      = vk.swapchainImageCount;
+        vkInfo.MSAASamples     = VK_SAMPLE_COUNT_1_BIT;
+
+        if (!ImGui_ImplVulkan_Init(&vkInfo))
+        {
+            ImGui_ImplSDLx_Shutdown();
+            ImGui::DestroyContext(imguiCtx);
+            imguiCtx = NULL;
+            common->Warning("Failed to initialize ImGui Vulkan renderer backend!\n");
+            return false;
+        }
+
+        if (!ImGui_ImplVulkan_CreateFontsTexture())
+        {
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplSDLx_Shutdown();
+            ImGui::DestroyContext(imguiCtx);
+            imguiCtx = NULL;
+            common->Warning("Failed to create ImGui Vulkan font texture!\n");
+            return false;
+        }
+        s_imguiVulkanReady = true;
+    }
+    else
+#endif
     {
-        ImGui_ImplSDLx_Shutdown();
-        ImGui::DestroyContext(imguiCtx);
-        imguiCtx = NULL;
-        common->Warning("Failed to initialize ImGui OpenGL renderer backend!\n");
-        return false;
+        if (!ImGui_ImplSDLx_InitForOpenGL(sdlWindow, sdlGlContext))
+        {
+            ImGui::DestroyContext(imguiCtx);
+            imguiCtx = NULL;
+            common->Warning("Failed to initialize ImGui SDL platform backend!\n");
+            return false;
+        }
+
+        if (!ImGui_ImplOpenGL2_Init())
+        {
+            ImGui_ImplSDLx_Shutdown();
+            ImGui::DestroyContext(imguiCtx);
+            imguiCtx = NULL;
+            common->Warning("Failed to initialize ImGui OpenGL renderer backend!\n");
+            return false;
+        }
     }
 
     // Load Fonts
@@ -322,9 +386,21 @@ void Shutdown()
     {
         common->Printf("Shutting down ImGui\n");
 
-        // TODO: only if init was successful!
-        ImGui_ImplOpenGL2_Shutdown();
-        ImGui_ImplSDLx_Shutdown();
+#ifdef DHEWM3_VULKAN
+        if (glConfig.isVulkan)
+        {
+            vkDeviceWaitIdle(vk.device);
+            ImGui_ImplVulkan_Shutdown();
+            ImGui_ImplSDLx_Shutdown();
+            s_imguiVulkanReady = false;
+        }
+        else
+#endif
+        {
+            // TODO: only if init was successful!
+            ImGui_ImplOpenGL2_Shutdown();
+            ImGui_ImplSDLx_Shutdown();
+        }
         ImGui::DestroyContext(imguiCtx);
         imgui_initialized = false;
     }
@@ -334,10 +410,48 @@ void Shutdown()
 // => ProcessEvent() has already been called (probably multiple times)
 void NewFrame()
 {
-    // In Vulkan mode there is no OpenGL context, so the OpenGL ImGui backend
-    // cannot be used.  Skip the entire ImGui frame to avoid null qgl* crashes.
+#ifdef DHEWM3_VULKAN
     if (glConfig.isVulkan)
+    {
+        if (!s_imguiVulkanReady)
+            return;
+
+        if (haveNewFrame)
+            ImGui::EndFrame(); // discard unfinished frame from previous tick
+
+        static int framesAfterAllWindowsClosed_vk = 0;
+        if (openImguiWindows == 0)
+        {
+            if (framesAfterAllWindowsClosed_vk > 1)
+                return;
+            else
+                ++framesAfterAllWindowsClosed_vk;
+        }
+        else
+        {
+            framesAfterAllWindowsClosed_vk = 0;
+        }
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDLx_NewFrame();
+        ImGui::NewFrame();
+        haveNewFrame = true;
+
+        UpdateWarningOverlay();
+
+        if (openImguiWindows & D3_ImGuiWin_Settings)
+            Com_DrawDhewm3SettingsMenu();
+
+        if (openImguiWindows & D3_ImGuiWin_Demo)
+        {
+            bool show_demo_window = true;
+            ImGui::ShowDemoWindow(&show_demo_window);
+            if (!show_demo_window)
+                CloseWindow(D3_ImGuiWin_Demo);
+        }
         return;
+    }
+#endif
 
     // it can happen that NewFrame() is called without EndFrame() having been called
     // after the last NewFrame() call, for example when D3Radiant is active and in
@@ -581,8 +695,10 @@ bool ShouldShowCursor()
 
 void EndFrame()
 {
+#ifdef DHEWM3_VULKAN
     if (glConfig.isVulkan)
-        return;
+        return; // Vulkan: ImGui::Render() + draw call happen in RenderVulkan() from vk_backend.cpp
+#endif
 
     if (openImguiWindows == 0 && !haveNewFrame)
         return;
@@ -640,6 +756,26 @@ void EndFrame()
         hadKeyDownEvent = false;
     }
 }
+
+#ifdef DHEWM3_VULKAN
+void RenderVulkan(VkCommandBuffer cmdBuf)
+{
+    if (!s_imguiVulkanReady || !haveNewFrame)
+        return;
+
+    haveNewFrame = false;
+    ImGui::Render();
+
+    ImDrawData *drawData = ImGui::GetDrawData();
+    if (drawData && drawData->CmdListsCount > 0)
+    {
+        ImGui_ImplVulkan_RenderDrawData(drawData, cmdBuf);
+    }
+
+    if (hadKeyDownEvent)
+        hadKeyDownEvent = false;
+}
+#endif
 
 void OpenWindow(D3ImGuiWindow win)
 {
