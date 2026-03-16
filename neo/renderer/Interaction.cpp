@@ -33,6 +33,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "renderer/tr_local.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
+#include "renderer/RendererBackend.h"
 
 #include "renderer/Interaction.h"
 
@@ -1335,8 +1336,8 @@ void idInteraction::AddActiveInteraction(void)
 
                     if (!lightTris->indexCache && r_useIndexBuffers.GetBool())
                     {
-                        vertexCache.Alloc(lightTris->indexes, lightTris->numIndexes * sizeof(lightTris->indexes[0]),
-                                          &lightTris->indexCache, true);
+                        activeBackend->VertexCache_Alloc(&lightTris->indexCache, lightTris->indexes,
+                                                         lightTris->numIndexes * sizeof(lightTris->indexes[0]), true);
                     }
                     if (lightTris->indexCache)
                     {
@@ -1437,8 +1438,8 @@ void idInteraction::AddActiveInteraction(void)
 
             if (!shadowTris->indexCache && r_useIndexBuffers.GetBool())
             {
-                vertexCache.Alloc(shadowTris->indexes, shadowTris->numIndexes * sizeof(shadowTris->indexes[0]),
-                                  &shadowTris->indexCache, true);
+                activeBackend->VertexCache_Alloc(&shadowTris->indexCache, shadowTris->indexes,
+                                                 shadowTris->numIndexes * sizeof(shadowTris->indexes[0]), true);
                 vertexCache.Touch(shadowTris->indexCache);
             }
 

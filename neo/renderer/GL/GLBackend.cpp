@@ -3,6 +3,8 @@
 #include "renderer/VertexCache.h"
 #include "renderer/Image.h"
 #include "renderer/GL/GLBackend.h"
+#include "renderer/GL/gl_image.h"
+#include "renderer/GL/gl_buffer.h"
 
 // Forward declarations of the existing GL free functions
 // (the ones that already exist in draw_glsl.cpp, tr_backend.cpp, etc.)
@@ -41,7 +43,7 @@ void GLBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool i
 }
 void GLBackend::VertexCache_Free(vertCache_t *vc)
 {
-    vertexCache.Free(vc);
+    GL_VertexCache_Free(vc);
 }
 
 // Frame dispatch
