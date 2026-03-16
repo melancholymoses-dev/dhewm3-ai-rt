@@ -280,10 +280,7 @@ void idVertexCache::Alloc(void *data, int size, vertCache_t **buffer, bool index
             // virtualMemory=true and qgl function pointers are null).
             block->vbo = 0;
             block->virtMem = NULL;
-#ifdef DHEWM3_VULKAN
-            block->vkBuffer = 0;
-            block->vkMemory = 0;
-#endif
+            block->backendData = NULL;
 
             if (!virtualMemory)
             {
