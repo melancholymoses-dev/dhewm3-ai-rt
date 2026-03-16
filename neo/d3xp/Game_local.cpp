@@ -1302,8 +1302,8 @@ void idGameLocal::MapRestart()
     {
         gameLocal.mpGame.ReloadScoreboard();
         //		gameLocal.mpGame.Reset();	// force reconstruct the GUIs when reloading maps, different gametypes have
-        //different GUIs 		gameLocal.mpGame.UpdateMainGui(); 		gameLocal.mpGame.StartMenu(); 		gameLocal.mpGame.DisableMenu();
-        //		gameLocal.mpGame.Precache();
+        // different GUIs 		gameLocal.mpGame.UpdateMainGui(); 		gameLocal.mpGame.StartMenu();
+        // gameLocal.mpGame.DisableMenu(); 		gameLocal.mpGame.Precache();
     }
 #endif
 }
@@ -4806,6 +4806,9 @@ void idGameLocal::SetCamera(idCamera *cam)
     int i;
     idEntity *ent;
     idAI *ai;
+    common->Printf("Setting camera\n");
+    fflush(NULL);
+    Sleep(10);
 
     // this should fix going into a cinematic when dead.. rare but happens
     idPlayer *client = GetLocalPlayer();
@@ -4842,6 +4845,10 @@ void idGameLocal::SetCamera(idCamera *cam)
             if (entities[i])
             {
                 client = static_cast<idPlayer *>(entities[i]);
+                common->Printf("Entering cinematic\n");
+                fflush(NULL);
+                Sleep(10);
+
                 client->EnterCinematic();
             }
         }

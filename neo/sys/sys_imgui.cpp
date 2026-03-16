@@ -334,6 +334,11 @@ void Shutdown()
 // => ProcessEvent() has already been called (probably multiple times)
 void NewFrame()
 {
+    // In Vulkan mode there is no OpenGL context, so the OpenGL ImGui backend
+    // cannot be used.  Skip the entire ImGui frame to avoid null qgl* crashes.
+    if (glConfig.isVulkan)
+        return;
+
     // it can happen that NewFrame() is called without EndFrame() having been called
     // after the last NewFrame() call, for example when D3Radiant is active and in
     // idSessionLocal::UpdateScreen() Sys_IsWindowVisible() returns false.
@@ -576,6 +581,9 @@ bool ShouldShowCursor()
 
 void EndFrame()
 {
+    if (glConfig.isVulkan)
+        return;
+
     if (openImguiWindows == 0 && !haveNewFrame)
         return;
 

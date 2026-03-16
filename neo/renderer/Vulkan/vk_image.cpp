@@ -228,7 +228,15 @@ void VK_Image_Purge(idImage *img);
 void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
 {
     if (!vk.isInitialized || !pic || width <= 0 || height <= 0)
+    {
+        common->Printf("VK_Image_Upload: skipped '%s' (init=%d, pic=%p, %dx%d)\n",
+                       img ? img->imgName.c_str() : "<null>",
+                       (int)vk.isInitialized, (void*)pic, width, height);
+        fflush(NULL);
         return;
+    }
+    common->Printf("VK_Image_Upload: '%s' %dx%d\n", img->imgName.c_str(), width, height);
+    fflush(NULL);
 
     // Free any existing Vulkan resources for this image (e.g. during reload)
     if (img->backendData)
@@ -276,6 +284,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     allocInfo.memoryTypeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (vkAllocateMemory(vk.device, &allocInfo, NULL, &vkd->memory) != VK_SUCCESS)
     {
+        common->Warning("VK_Image_Upload: vkAllocateMemory failed for '%s'", img->imgName.c_str());
         vkDestroyImage(vk.device, vkd->image, NULL);
         delete vkd;
         return;
@@ -426,6 +435,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     viewInfo.subresourceRange.layerCount = 1;
     if (vkCreateImageView(vk.device, &viewInfo, NULL, &vkd->view) != VK_SUCCESS)
     {
+        common->Warning("VK_Image_Upload: vkCreateImageView failed for '%s'", img->imgName.c_str());
         vkDestroyImage(vk.device, vkd->image, NULL);
         vkFreeMemory(vk.device, vkd->memory, NULL);
         delete vkd;
@@ -454,6 +464,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     if (vkCreateSampler(vk.device, &samplerInfo, NULL, &vkd->sampler) != VK_SUCCESS)
     {
+        common->Warning("VK_Image_Upload: vkCreateSampler failed for '%s'", img->imgName.c_str());
         vkDestroyImageView(vk.device, vkd->view, NULL);
         vkDestroyImage(vk.device, vkd->image, NULL);
         vkFreeMemory(vk.device, vkd->memory, NULL);
@@ -461,6 +472,8 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
         return;
     }
 
+    common->Printf("VK_Image_Upload: '%s' uploaded OK (%u mips)\n", img->imgName.c_str(), CalcMipLevels(width, height));
+    fflush(NULL);
     img->backendData = vkd;
 }
 

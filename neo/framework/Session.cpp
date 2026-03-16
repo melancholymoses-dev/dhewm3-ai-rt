@@ -613,7 +613,15 @@ void idSessionLocal::ShowLoadingGui()
     while (Sys_Milliseconds() < stop || force-- > 0)
     {
         com_frameTime = com_ticNumber * USERCMD_MSEC;
+        common->Printf("Showing Frame\n");
+        fflush(NULL);
+        Sleep(10);
+
         session->Frame();
+        common->Printf("Updating screen\n");
+        fflush(NULL);
+        Sleep(10);
+
         session->UpdateScreen(false);
     }
 #else
@@ -2820,6 +2828,9 @@ idSessionLocal::Draw
 void idSessionLocal::Draw()
 {
     bool fullConsole = false;
+    common->Printf("Starting a draw\n");
+    fflush(NULL);
+    Sleep(10);
 
     if (insideExecuteMapChange)
     {
@@ -2843,6 +2854,8 @@ void idSessionLocal::Draw()
     }
     else if (guiActive && !guiActive->State().GetBool("gameDraw"))
     {
+        common->Printf("Draw: guiActive->Redraw path (gui=%p)\n", (void *)guiActive);
+        fflush(NULL);
 
         // draw the frozen gui in the background
         if (guiActive == guiMsg && guiMsgRestore)
@@ -2856,10 +2869,18 @@ void idSessionLocal::Draw()
             game->Draw(GetLocalClientNum());
         }
 
+        common->Printf("Draw: calling guiActive->Redraw\n");
+        fflush(NULL);
         guiActive->Redraw(com_frameTime);
+        common->Printf("Draw: guiActive->Redraw done\n");
+        fflush(NULL);
     }
     else if (readDemo)
     {
+        common->Printf("Rendering demo\n");
+        fflush(NULL);
+        Sleep(10);
+
         rw->RenderScene(&currentDemoRenderView);
         renderSystem->DrawDemoPics();
     }
@@ -2924,6 +2945,9 @@ void idSessionLocal::Draw()
     }
     fullConsole = false;
 #endif
+    common->Printf("Drawing wipe/graph\n");
+    fflush(NULL);
+    Sleep(10);
 
     // draw the wipe material on top of this if it hasn't completed yet
     DrawWipeModel();
@@ -2964,6 +2988,8 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
     }
 
     insideUpdateScreen = true;
+    common->Printf("UpdateScreen: entered\n");
+    fflush(NULL);
 
     // if this is a long-operation update and we are in windowed mode,
     // release the mouse capture back to the desktop
@@ -2972,10 +2998,18 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
         Sys_GrabMouseCursor(false);
     }
 
+    common->Printf("UpdateScreen: BeginFrame\n");
+    fflush(NULL);
     renderSystem->BeginFrame(renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight());
+    common->Printf("UpdateScreen: BeginFrame done\n");
+    fflush(NULL);
 
     // draw everything
+    common->Printf("UpdateScreen: Draw\n");
+    fflush(NULL);
     Draw();
+    common->Printf("UpdateScreen: Draw done\n");
+    fflush(NULL);
 
     if (com_speeds.GetBool())
     {
@@ -2983,10 +3017,14 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
     }
     else
     {
+        common->Printf("UpdateScreen: EndFrame\n");
+        fflush(NULL);
         renderSystem->EndFrame(NULL, NULL);
     }
 
     insideUpdateScreen = false;
+    common->Printf("UpdateScreen: done\n");
+    fflush(NULL);
 }
 
 /*
@@ -2998,6 +3036,9 @@ extern bool CheckOpenALDeviceAndRecoverIfNeeded();
 extern int g_screenshotFormat;
 void idSessionLocal::Frame()
 {
+    common->Printf("Session::Frame: enter\n");
+    fflush(NULL);
+    Sleep(10);
 
     if (com_asyncSound.GetInteger() == 0)
     {
@@ -3134,7 +3175,13 @@ void idSessionLocal::Frame()
     }
 
     // send frame and mouse events to active guis
+    common->Printf("Session::Frame: GuiFrameEvents\n");
+    fflush(NULL);
+    Sleep(10);
     GuiFrameEvents();
+    common->Printf("Session::Frame: GuiFrameEvents done\n");
+    fflush(NULL);
+    Sleep(10);
 
     // advance demos
     if (readDemo)
@@ -3450,26 +3497,47 @@ void idSessionLocal::Init()
     // the same idRenderWorld will be used for all games
     // and demos, insuring that level specific models
     // will be freed
+    common->Printf("Session::Init: AllocRenderWorld...\n");
+    fflush(NULL);
     rw = renderSystem->AllocRenderWorld();
     sw = soundSystem->AllocSoundWorld(rw);
-
     menuSoundWorld = soundSystem->AllocSoundWorld(rw);
+    common->Printf("Session::Init: worlds allocated\n");
+    fflush(NULL);
 
     // we have a single instance of the main menu
+    common->Printf("Session::Init: loading mainmenu.gui...\n");
+    fflush(NULL);
     guiMainMenu = uiManager->FindGui("guis/mainmenu.gui", true, false, true);
     if (!guiMainMenu)
     {
         guiMainMenu = uiManager->FindGui("guis/demo_mainmenu.gui", true, false, true);
         demoversion = (guiMainMenu != NULL);
     }
+    common->Printf("Session::Init: mainmenu.gui loaded (%s)\n", guiMainMenu ? "OK" : "NULL");
+    fflush(NULL);
+
     guiMainMenu_MapList = uiManager->AllocListGUI();
     guiMainMenu_MapList->Config(guiMainMenu, "mapList");
     idAsyncNetwork::client.serverList.GUIConfig(guiMainMenu, "serverList");
+
+    common->Printf("Session::Init: loading other GUIs...\n");
+    fflush(NULL);
     guiRestartMenu = uiManager->FindGui("guis/restart.gui", true, false, true);
+    common->Printf("Session::Init: restart.gui done\n");
+    fflush(NULL);
     guiGameOver = uiManager->FindGui("guis/gameover.gui", true, false, true);
+    common->Printf("Session::Init: gameover.gui done\n");
+    fflush(NULL);
     guiMsg = uiManager->FindGui("guis/msg.gui", true, false, true);
+    common->Printf("Session::Init: msg.gui done\n");
+    fflush(NULL);
     guiTakeNotes = uiManager->FindGui("guis/takeNotes.gui", true, false, true);
+    common->Printf("Session::Init: takeNotes.gui done\n");
+    fflush(NULL);
     guiIntro = uiManager->FindGui("guis/intro.gui", true, false, true);
+    common->Printf("Session::Init: intro.gui done\n");
+    fflush(NULL);
 
     whiteMaterial = declManager->FindMaterial("_white");
 
@@ -3480,6 +3548,9 @@ void idSessionLocal::Init()
     guiHandle = NULL;
 
     ReadCDKey();
+    common->Printf("Session::Init: complete\n");
+    fflush(NULL);
+    Sleep(10);
 }
 
 /*
