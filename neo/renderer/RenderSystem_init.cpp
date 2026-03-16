@@ -765,6 +765,9 @@ void R_InitOpenGL(void)
         }
     }
 #endif
+    common->Printf("Completed R_InitOpenGL\n");
+    fflush(NULL);
+    Sleep(10);
 }
 
 /*
@@ -2523,6 +2526,7 @@ void idRenderSystemLocal::InitOpenGL(void)
                 common->Printf("glGetError() = 0x%x\n", err);
             }
         }
+        common->Printf("Done Initializing OpenGL/Vulkan");
     }
 }
 
