@@ -605,6 +605,10 @@ set(src_renderer
 	renderer/tr_turboshadow.cpp
 
 	renderer/GL/GLBackend.cpp
+	renderer/GL/gl_image.cpp
+	renderer/GL/gl_backend.cpp
+	renderer/GL/gl_buffer.cpp
+	renderer/GL/gl_instance.cpp
 	renderer/stblib_impls.c
 )
 # ---------------------------------------------------------------------------
