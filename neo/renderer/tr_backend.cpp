@@ -60,11 +60,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
 
     backEndStartTime = Sys_Milliseconds();
 
-#ifdef DHEWM3_VULKAN
-    const bool usingVulkan = (idStr::Icmp(r_backend.GetString(), "vulkan") == 0);
-#else
-    const bool usingVulkan = false;
-#endif
+    const bool usingVulkan = glConfig.isVulkan;
 
     // needed for editor rendering (GL only; Vulkan has no fixed-function GL state)
     if (!usingVulkan)
@@ -82,17 +78,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
         case RC_NOP:
             break;
         case RC_DRAW_VIEW:
-#ifdef DHEWM3_VULKAN
-            if (usingVulkan)
-            {
-                extern void VK_RB_DrawView(const void *data);
-                VK_RB_DrawView(cmds);
-            }
-            else
-#endif
-            {
-                RB_DrawView(cmds);
-            }
+            activeBackend->DrawView((const drawSurfsCommand_t *)cmds);
             if (((const drawSurfsCommand_t *)cmds)->viewDef->viewEntitys)
             {
                 c_draw3d++;

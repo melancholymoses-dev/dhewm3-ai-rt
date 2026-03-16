@@ -21,7 +21,7 @@ struct IBackend
     virtual void VertexCache_Free(vertCache_t *vc) = 0;
 
     // Frame dispatch
-    virtual void DrawView(const viewDef_t *view) = 0;
+    virtual void DrawView(const drawSurfsCommand_t *cmd) = 0;
     virtual void CopyRender(const copyRenderCommand_t &cmd) = 0;
 };
 

@@ -232,7 +232,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
         return;
 
     // Free any existing Vulkan resources for this image (e.g. during reload)
-    if (img->vkData)
+    if (img->backendData)
     {
         VK_Image_Purge(img);
     }
@@ -462,7 +462,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
         return;
     }
 
-    img->vkData = vkd;
+    img->backendData = vkd;
 }
 
 // ---------------------------------------------------------------------------
@@ -472,7 +472,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
 
 void VK_Image_Purge(idImage *img)
 {
-    if (!img->vkData)
+    if (!img->backendData)
         return;
 
     // Wait for the device to be idle before destroying resources that may
@@ -480,7 +480,7 @@ void VK_Image_Purge(idImage *img)
     // should use per-frame deferred deletion queues.
     vkDeviceWaitIdle(vk.device);
 
-    vkImageData_t *vkd = img->vkData;
+    vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     if (vkd->sampler != VK_NULL_HANDLE)
         vkDestroySampler(vk.device, vkd->sampler, NULL);
     if (vkd->view != VK_NULL_HANDLE)
@@ -491,7 +491,7 @@ void VK_Image_Purge(idImage *img)
         vkFreeMemory(vk.device, vkd->memory, NULL);
 
     delete vkd;
-    img->vkData = NULL;
+    img->backendData = NULL;
 }
 
 // ---------------------------------------------------------------------------
@@ -503,9 +503,9 @@ void VK_Image_Purge(idImage *img)
 
 bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
 {
-    if (!img || !img->vkData)
+    if (!img || !img->backendData)
         return false;
-    vkImageData_t *vkd = img->vkData;
+    vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     out->sampler = vkd->sampler;
     out->imageView = vkd->view;
     out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;

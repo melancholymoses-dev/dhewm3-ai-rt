@@ -91,9 +91,9 @@ void VKBackend::VertexCache_Free(vertCache_t *vc)
 
 // Frame dispatch
 
-void VKBackend::DrawView(const viewDef_t *view)
+void VKBackend::DrawView(const drawSurfsCommand_t *cmd)
 {
-    VK_RB_DrawView((const void *)view);
+    VK_RB_DrawView(cmd);
 }
 
 void VKBackend::CopyRender(const copyRenderCommand_t &cmd)
