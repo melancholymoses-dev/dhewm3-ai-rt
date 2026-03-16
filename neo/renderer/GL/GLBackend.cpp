@@ -7,7 +7,6 @@
 #include "renderer/GL/gl_buffer.h"
 
 // Forward declarations of the existing GL free functions
-extern void RB_DrawView(const void *);
 extern const void RB_CopyRender(const void *);
 extern void R_CheckPortableExtensions(void);
 
@@ -88,9 +87,9 @@ void GLBackend::VertexCache_Free(vertCache_t *vc)
 
 // Frame dispatch
 
-void GLBackend::DrawView(const viewDef_t *view)
+void GLBackend::DrawView(const drawSurfsCommand_t *cmd)
 {
-    RB_DrawView(view);
+    RB_DrawView(cmd);
 }
 
 void GLBackend::CopyRender(const copyRenderCommand_t &cmd)
