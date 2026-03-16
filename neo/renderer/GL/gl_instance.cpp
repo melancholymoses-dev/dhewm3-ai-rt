@@ -27,6 +27,7 @@ along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 // Extracted from RenderSystem_init.cpp as part of the GL/Vulkan backend split.
 
 #include "sys/platform.h"
+#include "idlib/LangDict.h"
 #include "renderer/tr_local.h"
 
 // ---------------------------------------------------------------------------
