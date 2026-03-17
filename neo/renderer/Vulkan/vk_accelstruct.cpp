@@ -377,6 +377,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         // Use the first surface's triangles for the BLAS.
         // A more complete implementation would build one BLAS per model surface.
+        if (model->NumSurfaces() == 0)
+            continue;
         const modelSurface_t *surf = model->Surface(0);
         if (!surf || !surf->geometry || surf->geometry->numVerts == 0)
             continue;
