@@ -456,6 +456,12 @@ vertCache_t *idVertexCache::AllocFrameTemp(void *data, int size)
             block->prev = &freeDynamicHeaders;
             block->next->prev = block;
             block->prev->next = block;
+
+            // idBlockAlloc does not zero-initialize; clear handle fields
+            // so backendData is never mistaken for a valid Vulkan buffer.
+            block->vbo = 0;
+            block->virtMem = NULL;
+            block->backendData = NULL;
         }
     }
 

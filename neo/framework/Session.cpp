@@ -615,12 +615,10 @@ void idSessionLocal::ShowLoadingGui()
         com_frameTime = com_ticNumber * USERCMD_MSEC;
         common->Printf("Showing Frame\n");
         fflush(NULL);
-        Sleep(10);
 
         session->Frame();
         common->Printf("Updating screen\n");
         fflush(NULL);
-        Sleep(10);
 
         session->UpdateScreen(false);
     }
@@ -2830,7 +2828,6 @@ void idSessionLocal::Draw()
     bool fullConsole = false;
     common->Printf("Starting a draw\n");
     fflush(NULL);
-    Sleep(10);
 
     if (insideExecuteMapChange)
     {
@@ -2879,7 +2876,6 @@ void idSessionLocal::Draw()
     {
         common->Printf("Rendering demo\n");
         fflush(NULL);
-        Sleep(10);
 
         rw->RenderScene(&currentDemoRenderView);
         renderSystem->DrawDemoPics();
@@ -2947,7 +2943,6 @@ void idSessionLocal::Draw()
 #endif
     common->Printf("Drawing wipe/graph\n");
     fflush(NULL);
-    Sleep(10);
 
     // draw the wipe material on top of this if it hasn't completed yet
     DrawWipeModel();
@@ -3038,7 +3033,6 @@ void idSessionLocal::Frame()
 {
     common->Printf("Session::Frame: enter\n");
     fflush(NULL);
-    Sleep(10);
 
     if (com_asyncSound.GetInteger() == 0)
     {
@@ -3177,11 +3171,10 @@ void idSessionLocal::Frame()
     // send frame and mouse events to active guis
     common->Printf("Session::Frame: GuiFrameEvents\n");
     fflush(NULL);
-    Sleep(10);
+
     GuiFrameEvents();
     common->Printf("Session::Frame: GuiFrameEvents done\n");
     fflush(NULL);
-    Sleep(10);
 
     // advance demos
     if (readDemo)
@@ -3550,7 +3543,6 @@ void idSessionLocal::Init()
     ReadCDKey();
     common->Printf("Session::Init: complete\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 /*

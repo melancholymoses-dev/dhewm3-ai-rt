@@ -4808,7 +4808,6 @@ void idGameLocal::SetCamera(idCamera *cam)
     idAI *ai;
     common->Printf("Setting camera\n");
     fflush(NULL);
-    Sleep(10);
 
     // this should fix going into a cinematic when dead.. rare but happens
     idPlayer *client = GetLocalPlayer();
@@ -4847,7 +4846,6 @@ void idGameLocal::SetCamera(idCamera *cam)
                 client = static_cast<idPlayer *>(entities[i]);
                 common->Printf("Entering cinematic\n");
                 fflush(NULL);
-                Sleep(10);
 
                 client->EnterCinematic();
             }

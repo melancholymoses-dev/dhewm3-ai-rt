@@ -215,7 +215,7 @@ void R_ToggleSmpFrame(void)
 {
     common->Printf("  R_ToggleSmpFrame: FreeDeferredTriSurfs\n");
     fflush(NULL);
-    Sleep(10);
+
     R_FreeDeferredTriSurfs(frameData);
 
     // clear frame-temporary data
@@ -225,7 +225,7 @@ void R_ToggleSmpFrame(void)
     // update the highwater mark
     common->Printf("  R_ToggleSmpFrame: CountFrameData\n");
     fflush(NULL);
-    Sleep(10);
+
     R_CountFrameData();
 
     frame = frameData;
@@ -241,11 +241,10 @@ void R_ToggleSmpFrame(void)
 
     common->Printf("  R_ToggleSmpFrame: ClearCommandChain\n");
     fflush(NULL);
-    Sleep(10);
+
     R_ClearCommandChain();
     common->Printf("  R_ToggleSmpFrame: done\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 //=====================================================
@@ -320,11 +319,10 @@ void R_InitFrameData(void)
 
     common->Printf("R_InitFrameData: calling R_ToggleSmpFrame\n");
     fflush(NULL);
-    Sleep(10);
+
     R_ToggleSmpFrame();
     common->Printf("R_InitFrameData: done\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 /*
