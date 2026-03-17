@@ -981,6 +981,17 @@ static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 
+// Screenshot readback state.
+// VK_RequestReadback() is called just before rendering a screenshot frame.
+// VK_RB_SwapBuffers() appends a copy-to-buffer command, waits for the fence,
+// and sets s_readbackDone so VK_ReadPixels() can retrieve the data.
+static VkBuffer       s_readbackBuf       = VK_NULL_HANDLE;
+static VkDeviceMemory s_readbackMem       = VK_NULL_HANDLE;
+static void          *s_readbackMapped    = nullptr;
+static bool           s_readbackPending   = false; // set by VK_RequestReadback
+static bool           s_readbackSubmitted = false; // set inside SwapBuffers when copy was added
+static bool           s_readbackDone      = false; // set after fence wait; read by VK_ReadPixels
+
 void VK_RB_DrawView(const void *data)
 {
     if (!vk.isInitialized || !vkPipes.isValid)
@@ -1139,6 +1150,33 @@ void VK_RB_SwapBuffers()
     D3::ImGuiHooks::RenderVulkan(cmdBuf);
 
     vkCmdEndRenderPass(cmdBuf);
+
+    // If a screenshot readback was requested, copy the swapchain image to the
+    // staging buffer before presenting.  The image is in PRESENT_SRC_KHR after
+    // vkCmdEndRenderPass (that is the renderpass finalLayout).
+    s_readbackSubmitted = false;
+    if (s_readbackPending && s_readbackBuf != VK_NULL_HANDLE)
+    {
+        VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex],
+                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+        VkBufferImageCopy region = {};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = {vk.swapchainExtent.width, vk.swapchainExtent.height, 1};
+        vkCmdCopyImageToBuffer(cmdBuf, vk.swapchainImages[s_frameImageIndex],
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s_readbackBuf, 1, &region);
+
+        // Transition back so the image can be presented normally.
+        VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex],
+                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+        s_readbackPending   = false;
+        s_readbackSubmitted = true;
+    }
+
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
 
     // --- Submit ---
@@ -1153,7 +1191,8 @@ void VK_RB_SwapBuffers()
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
 
-    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[vk.currentFrame]);
+    uint32_t submittedFrame = vk.currentFrame; // capture before increment
+    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[submittedFrame]);
     if (submitResult != VK_SUCCESS)
     {
         s_frameActive = false;
@@ -1174,9 +1213,76 @@ void VK_RB_SwapBuffers()
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
         VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
 
+    // If we appended a readback copy this frame, wait for it to complete so
+    // R_ReadTiledPixels can immediately access the mapped buffer.
+    if (s_readbackSubmitted)
+    {
+        vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        s_readbackDone      = true;
+        s_readbackSubmitted = false;
+    }
+
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;
     s_frameActive = false;
     s_frameCmdBuf = VK_NULL_HANDLE;
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot readback helpers
+// ---------------------------------------------------------------------------
+
+// Call this just before the screenshot render frame (before session->UpdateScreen).
+// Allocates the staging buffer on first use.
+void VK_RequestReadback()
+{
+    if (!vk.isInitialized)
+        return;
+
+    if (s_readbackBuf == VK_NULL_HANDLE)
+    {
+        VkDeviceSize size = (VkDeviceSize)vk.swapchainExtent.width * vk.swapchainExtent.height * 4;
+        VK_CreateBuffer(size,
+                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &s_readbackBuf, &s_readbackMem);
+        VK_CHECK(vkMapMemory(vk.device, s_readbackMem, 0, size, 0, &s_readbackMapped));
+    }
+
+    s_readbackPending = true;
+    s_readbackDone    = false;
+}
+
+// Call this after the screenshot render frame returns.
+// Copies (x,y,w,h) pixels from the last captured swapchain image into out_rgb (packed RGB).
+// Does nothing if the readback did not complete.
+void VK_ReadPixels(int x, int y, int w, int h, byte *out_rgb)
+{
+    if (!s_readbackDone || !s_readbackMapped)
+        return;
+
+    uint32_t   sw     = vk.swapchainExtent.width;
+    const byte *src   = (const byte *)s_readbackMapped;
+    bool        isBGR = (vk.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM ||
+                         vk.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB);
+
+    for (int row = 0; row < h; row++)
+    {
+        for (int col = 0; col < w; col++)
+        {
+            const byte *p = src + ((y + row) * sw + (x + col)) * 4;
+            byte       *d = out_rgb + (row * w + col) * 3;
+            if (isBGR)
+            {
+                d[0] = p[2]; d[1] = p[1]; d[2] = p[0]; // BGRA → RGB
+            }
+            else
+            {
+                d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; // RGBA → RGB
+            }
+        }
+    }
+
+    s_readbackDone = false;
 }
 
 // ---------------------------------------------------------------------------
