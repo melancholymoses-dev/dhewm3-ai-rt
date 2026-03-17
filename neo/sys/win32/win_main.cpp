@@ -1323,7 +1323,6 @@ int SDL_main(int argc, char *argv[])
 #endif
     common->Printf("Trying to init via SDL\n");
     fflush(NULL);
-    Sleep(10);
 
     if (argc > 1)
     {
@@ -1374,7 +1373,7 @@ int SDL_main(int argc, char *argv[])
         }
 
         // Give the OS a little time to recuperate.
-        Sleep(10);
+
 #endif
 
         Win_Frame();
@@ -1440,7 +1439,6 @@ int SDL_main(int argc, char *argv[])
         // run the game
         common->Printf("Trying to make a Frame\n");
         fflush(NULL);
-        Sleep(10);
 
         common->Frame();
     }

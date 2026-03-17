@@ -54,10 +54,10 @@ static const VkDeviceSize VK_DATA_RING_SIZE = 32 * 1024 * 1024; // 32 MB per fra
 
 struct vkDataRing_t
 {
-    VkBuffer       buffer;
+    VkBuffer buffer;
     VkDeviceMemory memory;
-    void *         mapped;
-    VkDeviceSize   offset; // current linear allocation offset
+    void *mapped;
+    VkDeviceSize offset; // current linear allocation offset
 };
 
 static vkDataRing_t dataRings[VK_MAX_FRAMES_IN_FLIGHT];
@@ -66,8 +66,7 @@ static void VK_CreateDataRings(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        VK_CreateBuffer(VK_DATA_RING_SIZE,
-                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_CreateBuffer(VK_DATA_RING_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                         &dataRings[i].buffer, &dataRings[i].memory);
         VK_CHECK(vkMapMemory(vk.device, dataRings[i].memory, 0, VK_DATA_RING_SIZE, 0, &dataRings[i].mapped));
@@ -449,7 +448,7 @@ struct VkGuiUBO
     float modelViewProjection[16]; // 64 bytes
     float colorModulate[4];        // 16 bytes
     float colorAdd[4];             // 16 bytes
-};                                 // 96 bytes total
+}; // 96 bytes total
 
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
@@ -463,15 +462,22 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
+        common->Printf("VK Shader surface %d\n", si);
+        fflush(NULL);
+
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
+        common->Printf("VK surf ptr=%p\n", (void*)surf); fflush(NULL);
         if (!surf || !surf->material || !surf->geo)
             continue;
 
+        common->Printf("VK surf mat=%p geo=%p space=%p\n", (void*)surf->material, (void*)surf->geo, (void*)surf->space); fflush(NULL);
         const idMaterial *mat = surf->material;
         if (mat->SuppressInSubview())
             continue;
 
+        common->Printf("VK surf passed SuppressInSubview\n"); fflush(NULL);
         const srfTriangles_t *geo = surf->geo;
+        common->Printf("VK geo indexes=%p numIdx=%d numVerts=%d ambientCache=%p\n", (void*)geo->indexes, geo->numIndexes, geo->numVerts, (void*)geo->ambientCache); fflush(NULL);
         if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
             continue;
 
@@ -482,12 +488,16 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
 
+        common->Printf("VK calling VK_VertexCache_GetBuffer\n"); fflush(NULL);
         if (geo->ambientCache && VK_VertexCache_GetBuffer(geo->ambientCache, &vertBuf, &vertOffset))
         {
             haveVerts = true;
         }
         else
         {
+            common->Printf("VK Shader no verts.  Assigning\n");
+            fflush(NULL);
+
             const void *cpuVerts = NULL;
             if (geo->ambientCache)
                 cpuVerts = vertexCache.Position(geo->ambientCache);
@@ -520,6 +530,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
+            common->Printf("VK Shader stage %d\n", stageIdx);
+            fflush(NULL);
+
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
 
             // Skip disabled stages
@@ -550,28 +563,42 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             {
                 // Constant color only: colorModulate = (0,0,0,0), colorAdd = color
                 colorModulate[0] = colorModulate[1] = colorModulate[2] = colorModulate[3] = 0.0f;
-                colorAdd[0] = color[0]; colorAdd[1] = color[1];
-                colorAdd[2] = color[2]; colorAdd[3] = color[3];
+                colorAdd[0] = color[0];
+                colorAdd[1] = color[1];
+                colorAdd[2] = color[2];
+                colorAdd[3] = color[3];
             }
             else if (pStage->vertexColor == SVC_MODULATE)
             {
                 // vertex * color: colorModulate = color, colorAdd = (0,0,0,0)
-                colorModulate[0] = color[0]; colorModulate[1] = color[1];
-                colorModulate[2] = color[2]; colorModulate[3] = color[3];
+                colorModulate[0] = color[0];
+                colorModulate[1] = color[1];
+                colorModulate[2] = color[2];
+                colorModulate[3] = color[3];
             }
             else if (pStage->vertexColor == SVC_INVERSE_MODULATE)
             {
-                colorModulate[0] = -color[0]; colorModulate[1] = -color[1];
-                colorModulate[2] = -color[2]; colorModulate[3] = -color[3];
-                colorAdd[0] = color[0]; colorAdd[1] = color[1];
-                colorAdd[2] = color[2]; colorAdd[3] = color[3];
+                colorModulate[0] = -color[0];
+                colorModulate[1] = -color[1];
+                colorModulate[2] = -color[2];
+                colorModulate[3] = -color[3];
+                colorAdd[0] = color[0];
+                colorAdd[1] = color[1];
+                colorAdd[2] = color[2];
+                colorAdd[3] = color[3];
             }
 
             // Compute MVP
+            common->Printf("VK Shader Compute MVP\n");
+            fflush(NULL);
+
             float mvp[16];
             VK_MultiplyMatrix4(backEnd.viewDef->projectionMatrix, surf->space->modelViewMatrix, mvp);
 
             // Upload GUI UBO
+            common->Printf("VK Shader Upload GUI UBO\n");
+            fflush(NULL);
+
             uint32_t uboOffset = VK_AllocUBO();
             uint8_t *uboPtr = (uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset;
             VkGuiUBO *guiUbo = (VkGuiUBO *)uboPtr;
@@ -580,6 +607,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             memcpy(guiUbo->colorAdd, colorAdd, 16);
 
             // Allocate GUI descriptor set
+            common->Printf("VK Shader Allocate Descriptor\n");
+            fflush(NULL);
+
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
             dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
@@ -613,11 +643,13 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
             // Select pipeline based on blend mode
+            common->Printf("VK Shader Select Pipeline\n");
+            fflush(NULL);
+
             int blendBits = pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
             VkPipeline pipeline = (blendBits != 0) ? vkPipes.guiAlphaPipeline : vkPipes.guiOpaquePipeline;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout,
-                                    0, 1, &ds, 0, NULL);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
@@ -639,8 +671,10 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     RB_DetermineLightScale();
 
     int lightCount = 0;
-    for (viewLight_t *l = backEnd.viewDef->viewLights; l; l = l->next) lightCount++;
-    common->Printf("VK DrawInteractions: %d lights\n", lightCount); fflush(NULL);
+    for (viewLight_t *l = backEnd.viewDef->viewLights; l; l = l->next)
+        lightCount++;
+    common->Printf("VK DrawInteractions: %d lights\n", lightCount);
+    fflush(NULL);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
 
@@ -649,11 +683,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     {
         backEnd.vLight = vLight;
 
-        common->Printf("VK light %d: lightShader=%p localI=%p globalI=%p transI=%p\n",
-                       lightIdx, (void *)vLight->lightShader,
-                       (void *)vLight->localInteractions,
-                       (void *)vLight->globalInteractions,
-                       (void *)vLight->translucentInteractions);
+        common->Printf("VK light %d: lightShader=%p localI=%p globalI=%p transI=%p\n", lightIdx,
+                       (void *)vLight->lightShader, (void *)vLight->localInteractions,
+                       (void *)vLight->globalInteractions, (void *)vLight->translucentInteractions);
         fflush(NULL);
 
         if (!vLight->lightShader)
@@ -664,21 +696,25 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 
         if (vLight->lightShader->IsFogLight())
         {
-            common->Printf("VK light %d: skipped (fog)\n", lightIdx); fflush(NULL);
+            common->Printf("VK light %d: skipped (fog)\n", lightIdx);
+            fflush(NULL);
             continue;
         }
         if (vLight->lightShader->IsBlendLight())
         {
-            common->Printf("VK light %d: skipped (blend)\n", lightIdx); fflush(NULL);
+            common->Printf("VK light %d: skipped (blend)\n", lightIdx);
+            fflush(NULL);
             continue;
         }
         if (!vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions)
         {
-            common->Printf("VK light %d: skipped (no interactions)\n", lightIdx); fflush(NULL);
+            common->Printf("VK light %d: skipped (no interactions)\n", lightIdx);
+            fflush(NULL);
             continue;
         }
 
-        common->Printf("VK light %d: entering draw body\n", lightIdx); fflush(NULL);
+        common->Printf("VK light %d: entering draw body\n", lightIdx);
+        fflush(NULL);
 
         // Set scissor for this light
         if (r_useScissor.GetBool())
@@ -703,20 +739,16 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Draw lit interactions
         for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
         {
-            common->Printf("VK localI surf=%p material=%p geo=%p space=%p\n",
-                           (void *)surf,
-                           surf ? (void *)surf->material : nullptr,
-                           surf ? (void *)surf->geo : nullptr,
+            common->Printf("VK localI surf=%p material=%p geo=%p space=%p\n", (void *)surf,
+                           surf ? (void *)surf->material : nullptr, surf ? (void *)surf->geo : nullptr,
                            surf ? (void *)surf->space : nullptr);
             fflush(NULL);
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
         for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
         {
-            common->Printf("VK globalI surf=%p material=%p geo=%p space=%p\n",
-                           (void *)surf,
-                           surf ? (void *)surf->material : nullptr,
-                           surf ? (void *)surf->geo : nullptr,
+            common->Printf("VK globalI surf=%p material=%p geo=%p space=%p\n", (void *)surf,
+                           surf ? (void *)surf->material : nullptr, surf ? (void *)surf->geo : nullptr,
                            surf ? (void *)surf->space : nullptr);
             fflush(NULL);
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
@@ -726,10 +758,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             for (const drawSurf_t *surf = vLight->translucentInteractions; surf; surf = surf->nextOnLight)
             {
-                common->Printf("VK transI surf=%p material=%p geo=%p space=%p\n",
-                               (void *)surf,
-                               surf ? (void *)surf->material : nullptr,
-                               surf ? (void *)surf->geo : nullptr,
+                common->Printf("VK transI surf=%p material=%p geo=%p space=%p\n", (void *)surf,
+                               surf ? (void *)surf->material : nullptr, surf ? (void *)surf->geo : nullptr,
                                surf ? (void *)surf->space : nullptr);
                 fflush(NULL);
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
@@ -838,8 +868,8 @@ void VK_RB_DrawView(const void *data)
     rpBegin.pClearValues = clearValues;
 
     vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-    common->Printf("VK frame %d: render pass begun, fb=%p imageIndex=%u\n",
-                   thisFrame, (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
+    common->Printf("VK frame %d: render pass begun, fb=%p imageIndex=%u\n", thisFrame,
+                   (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
     fflush(NULL);
 
     // Set viewport
@@ -847,6 +877,9 @@ void VK_RB_DrawView(const void *data)
     vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
     vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+    common->Printf("VK set viewpoirt and scissor for frame %d, fb=%p imageIndex=%u\n", thisFrame,
+                   (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
+    fflush(NULL);
 
     // If RT is available and r_rtShadows is on, dispatch shadow rays before interaction pass
 #ifdef DHEWM3_RAYTRACING
@@ -863,20 +896,30 @@ void VK_RB_DrawView(const void *data)
 #endif
 
     // Draw unlit/2D shader passes (GUI, menus, HUD)
+    common->Printf("VK frame %d:Starting Shaders\n", thisFrame);
+    fflush(NULL);
+
     VK_RB_DrawShaderPasses(cmdBuf);
+    common->Printf("VK frame %d:Shaders Done\n", thisFrame);
+    fflush(NULL);
 
     // Draw all light interactions
-    common->Printf("VK frame %d: calling DrawInteractions\n", thisFrame); fflush(NULL);
+    common->Printf("VK frame %d: calling DrawInteractions\n", thisFrame);
+    fflush(NULL);
     VK_RB_DrawInteractions(cmdBuf);
-    common->Printf("VK frame %d: DrawInteractions done\n", thisFrame); fflush(NULL);
+    common->Printf("VK frame %d: DrawInteractions done\n", thisFrame);
+    fflush(NULL);
 
     // Render ImGui overlay (must be inside render pass)
-    common->Printf("VK frame %d: calling ImGui RenderVulkan\n", thisFrame); fflush(NULL);
+    common->Printf("VK frame %d: calling ImGui RenderVulkan\n", thisFrame);
+    fflush(NULL);
     D3::ImGuiHooks::RenderVulkan(cmdBuf);
-    common->Printf("VK frame %d: ImGui done\n", thisFrame); fflush(NULL);
+    common->Printf("VK frame %d: ImGui done\n", thisFrame);
+    fflush(NULL);
 
     vkCmdEndRenderPass(cmdBuf);
-    common->Printf("VK frame %d: ending command buffer\n", thisFrame); fflush(NULL);
+    common->Printf("VK frame %d: ending command buffer\n", thisFrame);
+    fflush(NULL);
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
 
     // --- Submit ---
