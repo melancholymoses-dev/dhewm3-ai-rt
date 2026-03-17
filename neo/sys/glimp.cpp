@@ -1293,6 +1293,10 @@ Tears down Vulkan before the SDL window is destroyed.
 void VKimp_ShutdownFromGlimp(void)
 {
     common->Printf("Shutting down Vulkan subsystem\n");
+    // Shut down ImGui while the Vulkan device is still alive.
+    // GLimp_Shutdown() will call it again, but the imgui_initialized guard
+    // makes that a no-op, preventing a double-free.
+    D3::ImGuiHooks::Shutdown();
     VKimp_PreShutdown();
     VKimp_Shutdown();
 }
