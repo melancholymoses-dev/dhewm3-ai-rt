@@ -717,7 +717,6 @@ void R_InitOpenGL(void)
     R_InitFrameData();
     common->Printf("R_InitFrameData returned OK\n");
     fflush(NULL);
-    Sleep(10);
 
     // Reset our gamma
     r_gammaInShader.ClearModified();
@@ -735,7 +734,6 @@ void R_InitOpenGL(void)
 #ifdef _WIN32
     common->Printf("Checking Windows/OpenGL versions\n");
     fflush(NULL);
-    Sleep(10);
 
     static bool glCheck = false;
     if (!glCheck && win32.osversion.dwMajorVersion == 6)
@@ -767,7 +765,6 @@ void R_InitOpenGL(void)
 #endif
     common->Printf("Completed R_InitOpenGL\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 /*
@@ -2054,7 +2051,6 @@ void R_VidRestart_f(const idCmdArgs &args)
     }
     common->Printf("In R_Vidrestart_f\n");
     fflush(NULL);
-    Sleep(10);
 
     bool full = true;
     bool forceWindow = false;
@@ -2123,7 +2119,7 @@ void R_VidRestart_f(const idCmdArgs &args)
 
     common->Printf("Dropping caches, frames and vertexes\n");
     fflush(NULL);
-    Sleep(10);
+
     // dump ambient caches
     renderModelManager->FreeModelVertexCaches();
 
@@ -2146,7 +2142,7 @@ void R_VidRestart_f(const idCmdArgs &args)
     // shut down the backend, then the window
     common->Printf("Calling shutdown\n");
     fflush(NULL);
-    Sleep(10);
+
     if (activeBackend)
     {
         activeBackend->Shutdown();
@@ -2164,7 +2160,7 @@ void R_VidRestart_f(const idCmdArgs &args)
     }
     common->Printf("Re-initialize InitOpenGL\n");
     fflush(NULL);
-    Sleep(10);
+
     R_InitOpenGL();
     cvarSystem->SetCVarBool("r_fullscreen", latch);
 
@@ -2397,21 +2393,29 @@ void idRenderSystemLocal::Init(void)
 
     R_InitTriSurfData();
 
-    common->Printf("R_Init: globalImages->Init...\n"); fflush(NULL);
+    common->Printf("R_Init: globalImages->Init...\n");
+    fflush(NULL);
     globalImages->Init();
-    common->Printf("R_Init: globalImages->Init done\n"); fflush(NULL);
+    common->Printf("R_Init: globalImages->Init done\n");
+    fflush(NULL);
 
-    common->Printf("R_Init: InitCinematic...\n"); fflush(NULL);
+    common->Printf("R_Init: InitCinematic...\n");
+    fflush(NULL);
     idCinematic::InitCinematic();
-    common->Printf("R_Init: InitCinematic done\n"); fflush(NULL);
+    common->Printf("R_Init: InitCinematic done\n");
+    fflush(NULL);
 
-    common->Printf("R_Init: R_InitMaterials...\n"); fflush(NULL);
+    common->Printf("R_Init: R_InitMaterials...\n");
+    fflush(NULL);
     R_InitMaterials();
-    common->Printf("R_Init: R_InitMaterials done\n"); fflush(NULL);
+    common->Printf("R_Init: R_InitMaterials done\n");
+    fflush(NULL);
 
-    common->Printf("R_Init: renderModelManager->Init...\n"); fflush(NULL);
+    common->Printf("R_Init: renderModelManager->Init...\n");
+    fflush(NULL);
     renderModelManager->Init();
-    common->Printf("R_Init: renderModelManager->Init done\n"); fflush(NULL);
+    common->Printf("R_Init: renderModelManager->Init done\n");
+    fflush(NULL);
 
     // set the identity space
     identitySpace.modelMatrix[0 * 4 + 0] = 1.0f;
