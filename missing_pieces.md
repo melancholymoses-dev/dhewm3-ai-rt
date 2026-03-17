@@ -327,3 +327,4 @@ Cull mode is also baked into pipeline state.
 | `neo/renderer/glsl/interaction.frag` | Add `u_LightScale` and multiply output |
 | `neo/renderer/glsl/shadow.vert` | Add extrusion logic (`w==1` → infinity) |
 | `neo/renderer/glsl/fog.vert/.frag` | New shaders for fog light pass |
+
