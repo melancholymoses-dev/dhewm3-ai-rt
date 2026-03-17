@@ -35,6 +35,7 @@ void VK_ShutdownPipelines(void);
 // Forward declarations (defined in vk_swapchain.cpp)
 void VK_CreateSwapchain(int width, int height);
 void VK_DestroySwapchain(void);
+void VK_RecreateSwapchain(int width, int height);
 
 // ---------------------------------------------------------------------------
 // Per-frame uniform buffer ring
@@ -114,6 +115,13 @@ struct vkUBORing_t
 };
 
 static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
+
+// Vulkan-corrected projection matrix for the current view.
+// Computed at the start of each VK_RB_DrawView call.
+// Z depth remap: OpenGL NDC z [-1,1] -> Vulkan NDC z [0,1]:
+//   new_row2[c] = 0.5 * old_row2[c] + 0.5 * old_row3[c]  (column-major indexing)
+// Y flip is handled via negative viewport height, not here.
+static float s_projVk[16];
 
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
@@ -261,7 +269,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // MVP matrix
     float mvp[16];
-    VK_MultiplyMatrix4(backEnd.viewDef->projectionMatrix, din->surf->space->modelViewMatrix, mvp);
+    VK_MultiplyMatrix4(s_projVk, din->surf->space->modelViewMatrix, mvp);
     memcpy(f, mvp, 64);
     f += 16;
 
@@ -593,7 +601,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             fflush(NULL);
 
             float mvp[16];
-            VK_MultiplyMatrix4(backEnd.viewDef->projectionMatrix, surf->space->modelViewMatrix, mvp);
+            VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
 
             // Upload GUI UBO
             common->Printf("VK Shader Upload GUI UBO\n");
@@ -771,9 +779,27 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RB_DrawView - main per-frame view rendering
-// Replaces RB_DrawView() for the Vulkan path.
+// VK_RB_DrawView / VK_RB_SwapBuffers - main per-frame view rendering
+//
+// Doom 3 submits multiple RC_DRAW_VIEW commands per EndFrame (e.g. the 3D
+// world view followed by the 2D GUI/menu overlay).  Each RC_DRAW_VIEW call
+// lands here via VKBackend::DrawView.  All views in one EndFrame must share
+// a single swapchain image and command buffer; only RC_SWAP_BUFFERS should
+// submit and present.
+//
+// VK_RB_DrawView   – records draw calls into the shared per-frame cmd buffer.
+//                    On the first call per EndFrame it acquires the image and
+//                    begins the command buffer + render pass.  Subsequent calls
+//                    just reset viewport/scissor and keep recording.
+// VK_RB_SwapBuffers – called from RC_SWAP_BUFFERS; finishes the render pass,
+//                    ends the command buffer, submits, and presents.
 // ---------------------------------------------------------------------------
+
+// Per-EndFrame state shared across multiple RC_DRAW_VIEW calls.
+static bool            s_frameActive     = false;
+static VkCommandBuffer s_frameCmdBuf     = VK_NULL_HANDLE;
+static uint32_t        s_frameImageIndex = 0;
+static int             s_frameLogIdx     = -1; // frame counter for log messages
 
 void VK_RB_DrawView(const void *data)
 {
@@ -787,179 +813,256 @@ void VK_RB_DrawView(const void *data)
 
     static int s_frameCount = 0;
     const int thisFrame = s_frameCount++;
-    if (thisFrame < 10 || (thisFrame % 60) == 0)
-    {
-        common->Printf("VK frame %d: begin (currentFrame slot=%d)\n", thisFrame, vk.currentFrame);
-        fflush(NULL);
-    }
+
     const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)data;
     backEnd.viewDef = cmd->viewDef;
-    common->Printf("VK frame %d: viewDef=%p viewLights=%p viewEntitys=%p\n", thisFrame, (void *)backEnd.viewDef,
-                   backEnd.viewDef ? (void *)backEnd.viewDef->viewLights : nullptr,
-                   backEnd.viewDef ? (void *)backEnd.viewDef->viewEntitys : nullptr);
-    fflush(NULL);
 
-    // --- Wait for previous frame's fence ---
-    VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
-    if (fenceResult != VK_SUCCESS)
+    // Build Vulkan-corrected projection matrix for this view.
+    // Remap Z from OpenGL NDC [-1,1] to Vulkan NDC [0,1]:
+    //   new_row2 = 0.5 * old_row2 + 0.5 * old_row3  (column-major: row2 @ index c*4+2)
+    // Y flip is handled by the viewport (negative height), not here.
     {
-        common->Printf("VK frame %d: vkWaitForFences returned %d (DEVICE_LOST=%d)\n", thisFrame, (int)fenceResult,
-                       (int)VK_ERROR_DEVICE_LOST);
-        fflush(NULL);
-        return;
+        const float *src = backEnd.viewDef->projectionMatrix;
+        memcpy(s_projVk, src, 64);
+        for (int c = 0; c < 4; c++)
+        {
+            s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
+        }
     }
-    common->Printf("VK frame %d: fence wait OK\n", thisFrame);
-    fflush(NULL);
-    // --- Acquire swapchain image ---
-    uint32_t imageIndex;
-    VkResult acquireResult = vkAcquireNextImageKHR(
-        vk.device, vk.swapchain, UINT64_MAX, vk.imageAvailableSemaphores[vk.currentFrame], VK_NULL_HANDLE, &imageIndex);
-    common->Printf("VK frame %d: acquired imageIndex=%u\n", thisFrame, imageIndex);
-    fflush(NULL);
-    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
+
+    if (!s_frameActive)
     {
-        common->Printf("VK frame %d: vkAcquireNextImageKHR returned %d (OUT_OF_DATE=%d, DEVICE_LOST=%d)\n", thisFrame,
-                       (int)acquireResult, (int)VK_ERROR_OUT_OF_DATE_KHR, (int)VK_ERROR_DEVICE_LOST);
+        // === First RC_DRAW_VIEW this EndFrame: acquire image and open command buffer ===
+        s_frameLogIdx = thisFrame;
+        if (thisFrame < 10 || (thisFrame % 60) == 0)
+        {
+            common->Printf("VK frame %d: begin (currentFrame slot=%d)\n", thisFrame, vk.currentFrame);
+            fflush(NULL);
+        }
+        common->Printf("VK frame %d: viewDef=%p viewLights=%p viewEntitys=%p\n", thisFrame,
+                       (void *)backEnd.viewDef,
+                       backEnd.viewDef ? (void *)backEnd.viewDef->viewLights : nullptr,
+                       backEnd.viewDef ? (void *)backEnd.viewDef->viewEntitys : nullptr);
+        fflush(NULL);
+
+        // --- Wait for previous frame's fence ---
+        VkResult fenceResult =
+            vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
+        if (fenceResult != VK_SUCCESS)
+        {
+            common->Printf("VK frame %d: vkWaitForFences returned %d (DEVICE_LOST=%d)\n", thisFrame,
+                           (int)fenceResult, (int)VK_ERROR_DEVICE_LOST);
+            fflush(NULL);
+            return;
+        }
+        common->Printf("VK frame %d: fence wait OK\n", thisFrame);
+        fflush(NULL);
+
+        // --- Acquire swapchain image ---
+        uint32_t imageIndex;
+        VkResult acquireResult =
+            vkAcquireNextImageKHR(vk.device, vk.swapchain, UINT64_MAX,
+                                  vk.imageAvailableSemaphores[vk.currentFrame], VK_NULL_HANDLE, &imageIndex);
+        common->Printf("VK frame %d: acquired imageIndex=%u\n", thisFrame, imageIndex);
         fflush(NULL);
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            common->Printf("VK frame %d: swapchain out of date on acquire, recreating\n", thisFrame);
+            fflush(NULL);
+            VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
+            return; // s_frameActive stays false; VK_RB_SwapBuffers will no-op
+        }
+        if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
+        {
+            common->Printf("VK frame %d: vkAcquireNextImageKHR returned %d\n", thisFrame, (int)acquireResult);
+            fflush(NULL);
             return;
-        return;
-    }
+        }
 
-    vk.currentImageIdx = imageIndex;
-    vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
+        vk.currentImageIdx = imageIndex;
+        s_frameImageIndex  = imageIndex;
+        vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
 
-    // Reset UBO/data rings and descriptor pool for this frame
-    uboRings[vk.currentFrame].offset = 0;
-    dataRings[vk.currentFrame].offset = 0;
-    vkResetDescriptorPool(vk.device, vkPipes.descPools[vk.currentFrame], 0);
-    common->Printf("VK frame %d: fences reset, UBO ring reset\n", thisFrame);
-    fflush(NULL);
-    // --- Record command buffer ---
-    VkCommandBuffer cmdBuf = vk.commandBuffers[vk.currentFrame];
-    VkResult resetResult = vkResetCommandBuffer(cmdBuf, 0);
-    common->Printf("VK frame %d: vkResetCommandBuffer=%d\n", thisFrame, (int)resetResult);
-    fflush(NULL);
-
-    VkCommandBufferBeginInfo beginInfo = {};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    VkResult beginCBResult = vkBeginCommandBuffer(cmdBuf, &beginInfo);
-    common->Printf("VK frame %d: vkBeginCommandBuffer=%d\n", thisFrame, (int)beginCBResult);
-    fflush(NULL);
-    if (beginCBResult != VK_SUCCESS)
-    {
-        common->Printf("VK frame %d: vkBeginCommandBuffer FAILED, aborting frame\n", thisFrame);
+        // Reset per-frame allocators (shared across all views in this EndFrame)
+        uboRings[vk.currentFrame].offset = 0;
+        dataRings[vk.currentFrame].offset = 0;
+        vkResetDescriptorPool(vk.device, vkPipes.descPools[vk.currentFrame], 0);
+        common->Printf("VK frame %d: fences reset, UBO ring reset\n", thisFrame);
         fflush(NULL);
-        return;
-    }
 
-    // Begin render pass
-    VkClearValue clearValues[2] = {};
-    clearValues[0].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-    clearValues[1].depthStencil = {1.0f, 128}; // depth=1.0, stencil=128
+        // Begin command buffer
+        VkCommandBuffer cmdBuf = vk.commandBuffers[vk.currentFrame];
+        VkResult resetResult = vkResetCommandBuffer(cmdBuf, 0);
+        common->Printf("VK frame %d: vkResetCommandBuffer=%d\n", thisFrame, (int)resetResult);
+        fflush(NULL);
 
-    VkRenderPassBeginInfo rpBegin = {};
-    rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpBegin.renderPass = vk.renderPass;
-    rpBegin.framebuffer = vk.swapchainFramebuffers[imageIndex];
-    rpBegin.renderArea.offset = {0, 0};
-    rpBegin.renderArea.extent = vk.swapchainExtent;
-    rpBegin.clearValueCount = 2;
-    rpBegin.pClearValues = clearValues;
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        VkResult beginCBResult = vkBeginCommandBuffer(cmdBuf, &beginInfo);
+        common->Printf("VK frame %d: vkBeginCommandBuffer=%d\n", thisFrame, (int)beginCBResult);
+        fflush(NULL);
+        if (beginCBResult != VK_SUCCESS)
+        {
+            common->Printf("VK frame %d: vkBeginCommandBuffer FAILED, aborting frame\n", thisFrame);
+            fflush(NULL);
+            return;
+        }
 
-    vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-    common->Printf("VK frame %d: render pass begun, fb=%p imageIndex=%u\n", thisFrame,
-                   (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
-    fflush(NULL);
+        // Begin render pass (one pass for the entire EndFrame; all views composite into it)
+        VkClearValue clearValues[2] = {};
+        clearValues[0].color        = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        clearValues[1].depthStencil = {1.0f, 128};
 
-    // Set viewport
-    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.0f, 1.0f};
-    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-    VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-    vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
-    common->Printf("VK set viewpoirt and scissor for frame %d, fb=%p imageIndex=%u\n", thisFrame,
-                   (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
-    fflush(NULL);
-
-    // If RT is available and r_rtShadows is on, dispatch shadow rays before interaction pass
-#ifdef DHEWM3_RAYTRACING
-    if (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool())
-    {
-        vkCmdEndRenderPass(cmdBuf); // RT dispatch happens outside render pass
-        VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
-        VK_RT_DispatchShadowRays(cmdBuf, backEnd.viewDef);
-        // Re-open render pass for rasterization
+        VkRenderPassBeginInfo rpBegin = {};
+        rpBegin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpBegin.renderPass        = vk.renderPass;
+        rpBegin.framebuffer       = vk.swapchainFramebuffers[imageIndex];
+        rpBegin.renderArea.offset = {0, 0};
+        rpBegin.renderArea.extent = vk.swapchainExtent;
+        rpBegin.clearValueCount   = 2;
+        rpBegin.pClearValues      = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
-    }
-#endif
+        common->Printf("VK frame %d: render pass begun, fb=%p imageIndex=%u\n", thisFrame,
+                       (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
+        fflush(NULL);
 
-    // Draw unlit/2D shader passes (GUI, menus, HUD)
+        // Negative height flips Y to match OpenGL NDC convention (Y-up).
+        // Per Vulkan spec (maintenance1), this also preserves VK_FRONT_FACE_COUNTER_CLOCKWISE.
+        VkViewport viewport = {0, (float)vk.swapchainExtent.height,
+                               (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height,
+                               0.0f, 1.0f};
+        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
+        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+        common->Printf("VK set viewpoirt and scissor for frame %d, fb=%p imageIndex=%u\n", thisFrame,
+                       (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
+        fflush(NULL);
+
+        s_frameCmdBuf = cmdBuf;
+        s_frameActive = true;
+
+        // RT shadow dispatch happens outside the render pass, before interactions.
+        // Only valid on the first (3D world) view.
+#ifdef DHEWM3_RAYTRACING
+        if (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool())
+        {
+            vkCmdEndRenderPass(cmdBuf);
+            VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+            VK_RT_DispatchShadowRays(cmdBuf, backEnd.viewDef);
+            // Reopen render pass; TODO: use a LOAD render pass variant to preserve prior draws
+            vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+            vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+        }
+#endif
+    }
+    else
+    {
+        // === Subsequent RC_DRAW_VIEW: render pass already open; reset viewport/scissor ===
+        common->Printf("VK frame %d: subsequent view (viewDef=%p viewLights=%p)\n", thisFrame,
+                       (void *)backEnd.viewDef,
+                       backEnd.viewDef ? (void *)backEnd.viewDef->viewLights : nullptr);
+        fflush(NULL);
+        VkViewport viewport = {0, (float)vk.swapchainExtent.height,
+                               (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height,
+                               0.0f, 1.0f};
+        vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
+        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
+        vkCmdSetScissor(s_frameCmdBuf, 0, 1, &fullScissor);
+    }
+
+    VkCommandBuffer cmdBuf = s_frameCmdBuf;
+
+    // Draw unlit/2D shader passes (GUI, menus, HUD) and 3D light interactions
     common->Printf("VK frame %d:Starting Shaders\n", thisFrame);
     fflush(NULL);
-
     VK_RB_DrawShaderPasses(cmdBuf);
     common->Printf("VK frame %d:Shaders Done\n", thisFrame);
     fflush(NULL);
 
-    // Draw all light interactions
     common->Printf("VK frame %d: calling DrawInteractions\n", thisFrame);
     fflush(NULL);
     VK_RB_DrawInteractions(cmdBuf);
     common->Printf("VK frame %d: DrawInteractions done\n", thisFrame);
     fflush(NULL);
 
+    // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
+}
+
+// ---------------------------------------------------------------------------
+// VK_RB_SwapBuffers - end the frame and present.
+// Called from RC_SWAP_BUFFERS (tr_backend.cpp) for the Vulkan path.
+// ---------------------------------------------------------------------------
+
+void VK_RB_SwapBuffers()
+{
+    if (!s_frameActive)
+        return; // acquire failed or no RC_DRAW_VIEW this EndFrame
+
+    VkCommandBuffer cmdBuf = s_frameCmdBuf;
+    const int       logIdx = s_frameLogIdx;
+
     // Render ImGui overlay (must be inside render pass)
-    common->Printf("VK frame %d: calling ImGui RenderVulkan\n", thisFrame);
+    common->Printf("VK frame %d: calling ImGui RenderVulkan\n", logIdx);
     fflush(NULL);
     D3::ImGuiHooks::RenderVulkan(cmdBuf);
-    common->Printf("VK frame %d: ImGui done\n", thisFrame);
+    common->Printf("VK frame %d: ImGui done\n", logIdx);
     fflush(NULL);
 
     vkCmdEndRenderPass(cmdBuf);
-    common->Printf("VK frame %d: ending command buffer\n", thisFrame);
+    common->Printf("VK frame %d: ending command buffer\n", logIdx);
     fflush(NULL);
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
 
     // --- Submit ---
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &vk.imageAvailableSemaphores[vk.currentFrame];
-    submitInfo.pWaitDstStageMask = &waitStage;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmdBuf;
+    VkSubmitInfo submitInfo        = {};
+    submitInfo.sType               = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount  = 1;
+    submitInfo.pWaitSemaphores     = &vk.imageAvailableSemaphores[vk.currentFrame];
+    submitInfo.pWaitDstStageMask   = &waitStage;
+    submitInfo.commandBufferCount  = 1;
+    submitInfo.pCommandBuffers     = &cmdBuf;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
+    submitInfo.pSignalSemaphores   = &vk.renderFinishedSemaphores[vk.currentFrame];
 
-    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[vk.currentFrame]);
+    VkResult submitResult =
+        vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[vk.currentFrame]);
     if (submitResult != VK_SUCCESS)
     {
-        common->Printf("VK frame %d: vkQueueSubmit FAILED %d (DEVICE_LOST=%d)\n", thisFrame, (int)submitResult,
+        common->Printf("VK frame %d: vkQueueSubmit FAILED %d (DEVICE_LOST=%d)\n", logIdx, (int)submitResult,
                        (int)VK_ERROR_DEVICE_LOST);
         fflush(NULL);
+        s_frameActive = false;
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
+        return;
     }
-    if (thisFrame < 10 || (thisFrame % 60) == 0)
+    if (logIdx < 10 || (logIdx % 60) == 0)
     {
-        common->Printf("VK frame %d: submit OK, imageIndex=%u\n", thisFrame, imageIndex);
+        common->Printf("VK frame %d: submit OK, imageIndex=%u\n", logIdx, s_frameImageIndex);
         fflush(NULL);
     }
 
     // --- Present ---
-    VkPresentInfoKHR presentInfo = {};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    VkPresentInfoKHR presentInfo   = {};
+    presentInfo.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &vk.swapchain;
-    presentInfo.pImageIndices = &imageIndex;
+    presentInfo.pWaitSemaphores    = &vk.renderFinishedSemaphores[vk.currentFrame];
+    presentInfo.swapchainCount     = 1;
+    presentInfo.pSwapchains        = &vk.swapchain;
+    presentInfo.pImageIndices      = &s_frameImageIndex;
 
-    vkQueuePresentKHR(vk.presentQueue, &presentInfo);
+    VkResult presentResult = vkQueuePresentKHR(vk.presentQueue, &presentInfo);
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+    {
+        common->Printf("VK frame %d: present returned %d, recreating swapchain\n", logIdx, (int)presentResult);
+        fflush(NULL);
+        VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
+    }
 
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;
+    s_frameActive   = false;
+    s_frameCmdBuf   = VK_NULL_HANDLE;
 }
 
 // ---------------------------------------------------------------------------
