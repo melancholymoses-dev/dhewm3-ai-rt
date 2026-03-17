@@ -299,10 +299,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     *useSM = 0;
 #endif
 
-    // Allocate descriptor set from pool
+    // Allocate descriptor set from the current frame's pool (pool is reset each frame)
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkPipes.descPool;
+    dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
     dsAlloc.descriptorSetCount = 1;
     dsAlloc.pSetLayouts = &vkPipes.interactionDescLayout;
 
@@ -435,6 +435,194 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     vkCmdBindIndexBuffer(s_cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RB_DrawShaderPasses - non-light-dependent surface rendering
+// Mirrors RB_STD_DrawShaderPasses for the Vulkan path.
+// Draws GUI surfaces, console, menus, and other unlit/2D content.
+// ---------------------------------------------------------------------------
+
+// GUI UBO layout (must match gui.vert uniform block, std140)
+struct VkGuiUBO
+{
+    float modelViewProjection[16]; // 64 bytes
+    float colorModulate[4];        // 16 bytes
+    float colorAdd[4];             // 16 bytes
+};                                 // 96 bytes total
+
+static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
+{
+    if (!backEnd.viewDef || backEnd.viewDef->numDrawSurfs == 0)
+        return;
+
+    extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
+    extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+
+    const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+
+    for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
+    {
+        const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
+        if (!surf || !surf->material || !surf->geo)
+            continue;
+
+        const idMaterial *mat = surf->material;
+        if (mat->SuppressInSubview())
+            continue;
+
+        const srfTriangles_t *geo = surf->geo;
+        if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
+            continue;
+
+        // Get vertex data (from cache or raw verts)
+        VkBuffer vertBuf;
+        VkDeviceSize vertOffset;
+        bool haveVerts = false;
+
+        extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+
+        if (geo->ambientCache && VK_VertexCache_GetBuffer(geo->ambientCache, &vertBuf, &vertOffset))
+        {
+            haveVerts = true;
+        }
+        else
+        {
+            const void *cpuVerts = NULL;
+            if (geo->ambientCache)
+                cpuVerts = vertexCache.Position(geo->ambientCache);
+            else if (geo->verts)
+                cpuVerts = geo->verts;
+
+            if (cpuVerts)
+            {
+                VkDeviceSize sz = (VkDeviceSize)geo->numVerts * sizeof(idDrawVert);
+                vertOffset = VK_AllocDataRing(sz, sizeof(float));
+                if (vertOffset != VK_WHOLE_SIZE)
+                {
+                    memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
+                    vertBuf = dataRings[vk.currentFrame].buffer;
+                    haveVerts = true;
+                }
+            }
+        }
+        if (!haveVerts)
+            continue;
+
+        // Upload index data
+        VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
+        VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+        if (idxOffset == VK_WHOLE_SIZE)
+            continue;
+        memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
+
+        const float *regs = surf->shaderRegisters;
+
+        for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
+        {
+            const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
+            // Skip disabled stages
+            if (!regs[pStage->conditionRegister])
+                continue;
+
+            // Skip lighting-specific stages (handled by interaction pass)
+            if (pStage->lighting != SL_AMBIENT)
+                continue;
+
+            idImage *img = pStage->texture.image;
+            VkDescriptorImageInfo imgInfo = {};
+            if (!img || !VK_Image_GetDescriptorInfo(img, &imgInfo))
+                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+
+            // Build color modulate/add from stage vertex color mode
+            float color[4] = {
+                regs[pStage->color.registers[0]],
+                regs[pStage->color.registers[1]],
+                regs[pStage->color.registers[2]],
+                regs[pStage->color.registers[3]],
+            };
+
+            float colorModulate[4] = {1, 1, 1, 1};
+            float colorAdd[4] = {0, 0, 0, 0};
+
+            if (pStage->vertexColor == SVC_IGNORE)
+            {
+                // Constant color only: colorModulate = (0,0,0,0), colorAdd = color
+                colorModulate[0] = colorModulate[1] = colorModulate[2] = colorModulate[3] = 0.0f;
+                colorAdd[0] = color[0]; colorAdd[1] = color[1];
+                colorAdd[2] = color[2]; colorAdd[3] = color[3];
+            }
+            else if (pStage->vertexColor == SVC_MODULATE)
+            {
+                // vertex * color: colorModulate = color, colorAdd = (0,0,0,0)
+                colorModulate[0] = color[0]; colorModulate[1] = color[1];
+                colorModulate[2] = color[2]; colorModulate[3] = color[3];
+            }
+            else if (pStage->vertexColor == SVC_INVERSE_MODULATE)
+            {
+                colorModulate[0] = -color[0]; colorModulate[1] = -color[1];
+                colorModulate[2] = -color[2]; colorModulate[3] = -color[3];
+                colorAdd[0] = color[0]; colorAdd[1] = color[1];
+                colorAdd[2] = color[2]; colorAdd[3] = color[3];
+            }
+
+            // Compute MVP
+            float mvp[16];
+            VK_MultiplyMatrix4(backEnd.viewDef->projectionMatrix, surf->space->modelViewMatrix, mvp);
+
+            // Upload GUI UBO
+            uint32_t uboOffset = VK_AllocUBO();
+            uint8_t *uboPtr = (uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset;
+            VkGuiUBO *guiUbo = (VkGuiUBO *)uboPtr;
+            memcpy(guiUbo->modelViewProjection, mvp, 64);
+            memcpy(guiUbo->colorModulate, colorModulate, 16);
+            memcpy(guiUbo->colorAdd, colorAdd, 16);
+
+            // Allocate GUI descriptor set
+            VkDescriptorSetAllocateInfo dsAlloc = {};
+            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
+            dsAlloc.descriptorSetCount = 1;
+            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
+
+            VkDescriptorSet ds;
+            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+                continue;
+
+            VkDescriptorBufferInfo bufInfo = {};
+            bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            bufInfo.offset = uboOffset;
+            bufInfo.range = sizeof(VkGuiUBO);
+
+            VkWriteDescriptorSet writes[2] = {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = ds;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfo;
+
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = ds;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo = &imgInfo;
+
+            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+
+            // Select pipeline based on blend mode
+            int blendBits = pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
+            VkPipeline pipeline = (blendBits != 0) ? vkPipes.guiAlphaPipeline : vkPipes.guiOpaquePipeline;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout,
+                                    0, 1, &ds, 0, NULL);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -611,9 +799,10 @@ void VK_RB_DrawView(const void *data)
     vk.currentImageIdx = imageIndex;
     vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
 
-    // Reset UBO and data rings for this frame
+    // Reset UBO/data rings and descriptor pool for this frame
     uboRings[vk.currentFrame].offset = 0;
     dataRings[vk.currentFrame].offset = 0;
+    vkResetDescriptorPool(vk.device, vkPipes.descPools[vk.currentFrame], 0);
     common->Printf("VK frame %d: fences reset, UBO ring reset\n", thisFrame);
     fflush(NULL);
     // --- Record command buffer ---
@@ -672,6 +861,9 @@ void VK_RB_DrawView(const void *data)
         vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
     }
 #endif
+
+    // Draw unlit/2D shader passes (GUI, menus, HUD)
+    VK_RB_DrawShaderPasses(cmdBuf);
 
     // Draw all light interactions
     common->Printf("VK frame %d: calling DrawInteractions\n", thisFrame); fflush(NULL);

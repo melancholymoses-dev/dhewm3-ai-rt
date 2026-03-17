@@ -124,7 +124,14 @@ struct vkPipelines_t
     VkPipelineLayout depthLayout;
     VkPipeline depthPipeline;
 
-    VkDescriptorPool descPool;
+    // GUI / unlit shader-pass pipeline (menu, HUD, console)
+    VkDescriptorSetLayout guiDescLayout;
+    VkPipelineLayout guiLayout;
+    VkPipeline guiOpaquePipeline;  // blend disabled (opaque stages)
+    VkPipeline guiAlphaPipeline;   // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+
+    // Per-frame descriptor pools (reset each frame after fence wait)
+    VkDescriptorPool descPools[VK_MAX_FRAMES_IN_FLIGHT];
 
     bool isValid;
 };
