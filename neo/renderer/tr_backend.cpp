@@ -100,9 +100,13 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
             c_setBuffers++;
             break;
         case RC_SWAP_BUFFERS:
-            // Vulkan present is handled inside VK_RB_DrawView (vkQueuePresentKHR);
-            // calling RB_SwapBuffers here would double-present and call GLimp_SwapBuffers.
-            if (!usingVulkan)
+            if (usingVulkan)
+            {
+                // Submit and present the accumulated EndFrame command buffer.
+                extern void VK_RB_SwapBuffers();
+                VK_RB_SwapBuffers();
+            }
+            else
             {
                 RB_SwapBuffers(cmds);
             }
