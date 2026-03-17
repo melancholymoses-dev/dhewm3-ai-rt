@@ -699,19 +699,16 @@ void R_InitOpenGL(void)
 
     common->Printf("Initialize Vertex Cache\n");
     fflush(NULL);
-    Sleep(100);
     vertexCache.Init();
 
     // select which renderSystem we are going to use
     common->Printf("Try to set renderer\n");
     fflush(NULL);
-    Sleep(100);
 
     r_renderer.SetModified();
     tr.SetBackEndRenderer();
     common->Printf("Try to initialize frame\n");
     fflush(NULL);
-    Sleep(100);
 
     // allocate the frame data, which may be more if smp is enabled
     R_InitFrameData();
