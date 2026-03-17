@@ -653,6 +653,8 @@ if(DHEWM3_VULKAN)
 		renderer/glsl/shadow.frag
 		renderer/glsl/depth.vert
 		renderer/glsl/depth.frag
+		renderer/glsl/gui.vert
+		renderer/glsl/gui.frag
 	)
 	if(DHEWM3_RAYTRACING)
 		list(APPEND GLSL_SHADER_SOURCES
