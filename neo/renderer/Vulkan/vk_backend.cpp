@@ -625,15 +625,137 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
-            // Select pipeline based on blend mode
-            int blendBits = pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
-            VkPipeline pipeline = (blendBits != 0) ? vkPipes.guiAlphaPipeline : vkPipes.guiOpaquePipeline;
+            // Select (or lazily create) a pipeline matching the exact GLS blend state.
+            extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits);
+            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RB_FillDepthBuffer - depth prepass
+// Draws all opaque (MC_OPAQUE) surfaces to the depth buffer only, so the
+// interaction pass can depth-test against a fully populated depth image.
+// Uses the depth pipeline (gui.vert.spv + guiLayout, colorWriteMask=0, depthWrite=LESS).
+// ---------------------------------------------------------------------------
+
+static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
+{
+    if (!backEnd.viewDef || !vkPipes.depthPipeline)
+        return;
+
+    extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+    extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.depthPipeline);
+
+    const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+
+    for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
+    {
+        const drawSurf_t *surf = backEnd.viewDef->drawSurfs[i];
+        if (!surf || !surf->material || !surf->geo)
+            continue;
+
+        // Only opaque surfaces contribute to the depth prepass.
+        // MC_PERFORATED (alpha-tested) and MC_TRANSLUCENT are skipped.
+        if (surf->material->Coverage() != MC_OPAQUE)
+            continue;
+
+        const srfTriangles_t *geo = surf->geo;
+        if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
+            continue;
+
+        // --- Vertex buffer ---
+        VkBuffer     vertBuf;
+        VkDeviceSize vertOffset;
+        bool haveVerts = false;
+
+        if (geo->ambientCache && VK_VertexCache_GetBuffer(geo->ambientCache, &vertBuf, &vertOffset))
+        {
+            haveVerts = true;
+        }
+        else
+        {
+            const void *cpuVerts = geo->ambientCache ? vertexCache.Position(geo->ambientCache) : geo->verts;
+            if (cpuVerts)
+            {
+                VkDeviceSize sz = (VkDeviceSize)geo->numVerts * sizeof(idDrawVert);
+                vertOffset = VK_AllocDataRing(sz, sizeof(float));
+                if (vertOffset != VK_WHOLE_SIZE)
+                {
+                    memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
+                    vertBuf   = dataRings[vk.currentFrame].buffer;
+                    haveVerts = true;
+                }
+            }
+        }
+        if (!haveVerts)
+            continue;
+
+        // --- Index buffer ---
+        VkDeviceSize idxSize   = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
+        VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+        if (idxOffset == VK_WHOLE_SIZE)
+            continue;
+        memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
+
+        // --- UBO (GuiUBO layout: MVP + colorModulate + colorAdd) ---
+        float mvp[16];
+        VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
+
+        uint32_t  uboOffset = VK_AllocUBO();
+        VkGuiUBO *ubo       = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+        memcpy(ubo->modelViewProjection, mvp, 64);
+        ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
+        ubo->colorAdd[0]      = ubo->colorAdd[1]      = ubo->colorAdd[2]      = ubo->colorAdd[3]      = 0.f;
+
+        // --- Descriptor set (guiDescLayout: binding0=UBO, binding1=sampler dummy) ---
+        VkDescriptorSetAllocateInfo dsAlloc = {};
+        dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+        dsAlloc.descriptorSetCount = 1;
+        dsAlloc.pSetLayouts        = &vkPipes.guiDescLayout;
+
+        VkDescriptorSet ds;
+        if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+            continue;
+
+        VkDescriptorBufferInfo bufInfo = {};
+        bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+        bufInfo.offset = uboOffset;
+        bufInfo.range  = sizeof(VkGuiUBO);
+
+        VkDescriptorImageInfo imgInfo = {};
+        VK_Image_GetFallbackDescriptorInfo(&imgInfo); // dummy sampler — colour writes disabled
+
+        VkWriteDescriptorSet writes[2] = {};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = ds;
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo     = &bufInfo;
+
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = ds;
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &imgInfo;
+
+        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+        vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+        vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
     }
 }
 
@@ -810,7 +932,8 @@ void VK_RB_DrawView(const void *data)
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
-        // Per Vulkan spec (maintenance1), this also preserves VK_FRONT_FACE_COUNTER_CLOCKWISE.
+        // NOTE: the negative height inverts the effective winding order, so our pipelines
+        // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
         VkViewport viewport = {0,
                                (float)vk.swapchainExtent.height,
                                (float)vk.swapchainExtent.width,
@@ -855,10 +978,13 @@ void VK_RB_DrawView(const void *data)
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
-    // Draw unlit/2D shader passes (GUI, menus, HUD) and 3D light interactions
-    VK_RB_DrawShaderPasses(cmdBuf);
+    // Rendering order: depth prepass → interactions → ambient/unlit shader passes.
+    // Matches vkDOOM3 reference: depth fills first, then lit surfaces, then 2D overlays.
+    VK_RB_FillDepthBuffer(cmdBuf);
 
     VK_RB_DrawInteractions(cmdBuf);
+
+    VK_RB_DrawShaderPasses(cmdBuf);
 
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
 }
