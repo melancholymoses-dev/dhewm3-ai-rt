@@ -140,6 +140,10 @@ void VK_VertexCache_Free(vertCache_t *block)
     if (!bd)
         return;
 
+    // Must not destroy a buffer while the GPU may still be reading it.
+    // vkDeviceWaitIdle is expensive but this only happens during map/model unloads.
+    vkDeviceWaitIdle(vk.device);
+
     if (bd->buf != VK_NULL_HANDLE)
         vkDestroyBuffer(vk.device, bd->buf, NULL);
     if (bd->mem != VK_NULL_HANDLE)

@@ -60,7 +60,6 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
     }
 
     backEndStartTime = Sys_Milliseconds();
-    common->Printf("RB_ExecuteBackEndCommands: entered\n"); fflush(NULL);
 
     const bool usingVulkan = glConfig.isVulkan;
 
@@ -75,7 +74,6 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
 
     for (; cmds; cmds = (const emptyCommand_t *)cmds->next)
     {
-        common->Printf("RB cmd: %d\n", (int)cmds->commandId); fflush(NULL);
         switch (cmds->commandId)
         {
         case RC_NOP:
