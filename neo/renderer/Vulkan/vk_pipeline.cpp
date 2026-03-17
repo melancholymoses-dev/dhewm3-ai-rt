@@ -221,7 +221,9 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout)
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // Y-flip viewport (negative height) inverts winding order in Vulkan window space.
+    // OpenGL CCW front faces become CW after Y-flip, so we tell Vulkan CW = front.
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
@@ -354,7 +356,9 @@ static VkPipeline VK_CreateShadowPipeline(VkPipelineLayout layout)
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = VK_CULL_MODE_NONE;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // Y-flip viewport inverts winding — same correction as interaction pipeline.
+    // Carmack's Reverse front/back stencil ops depend on correct face identification.
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthClampEnable = VK_TRUE; // needed for infinite projection
     rasterizer.lineWidth = 1.0f;
 
