@@ -176,4 +176,15 @@ void VK_EndSingleTimeCommands(VkCommandBuffer cmd);
 void VK_TransitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
                               VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
 
+// ---------------------------------------------------------------------------
+// Screenshot readback — defined in vk_backend.cpp
+// ---------------------------------------------------------------------------
+
+// Call before rendering the screenshot frame.  Allocates the staging buffer
+// on first use.
+void VK_RequestReadback();
+
+// Call after the screenshot frame returns.  Copies out packed RGB pixels.
+void VK_ReadPixels(int x, int y, int w, int h, unsigned char *out_rgb);
+
 #endif // __VK_COMMON_H__

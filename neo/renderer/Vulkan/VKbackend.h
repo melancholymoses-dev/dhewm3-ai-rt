@@ -1,6 +1,12 @@
 #pragma once
 #include "renderer/RendererBackend.h"
 
+// Screenshot readback helpers (vk_backend.cpp).
+// Call VK_RequestReadback() just before UpdateScreen/EndFrame for the screenshot
+// frame, then VK_ReadPixels() after it returns to retrieve packed RGB data.
+void VK_RequestReadback();
+void VK_ReadPixels(int x, int y, int w, int h, unsigned char *out_rgb);
+
 class VKBackend : public IBackend
 {
   public:

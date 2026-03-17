@@ -1203,6 +1203,13 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
             tr.viewportOffset[0] = -xo;
             tr.viewportOffset[1] = -yo;
 
+            if (glConfig.isVulkan)
+            {
+                // Vulkan: request a readback copy before rendering, then retrieve
+                // the pixels from the staging buffer after the frame completes.
+                VK_RequestReadback();
+            }
+
             if (ref)
             {
                 tr.BeginFrame(oldWidth, oldHeight);
@@ -1225,12 +1232,28 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
                 h = height - yo;
             }
 
-            if (glConfig.isWayland)
+            if (glConfig.isVulkan)
+            {
+                // Copy the captured swapchain tile into the output buffer.
+                // VK_ReadPixels writes packed RGB directly into temp (stride = w*3).
+                VK_ReadPixels(0, 0, w, h, temp);
+                for (int y = 0; y < h; y++)
+                {
+                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * w * 3, w * 3);
+                }
+            }
+            else if (glConfig.isWayland)
             {
                 // DG: Native Wayland (=> not XWayland) doesn't seem to support reading
                 //     from the front buffer - screenshot is black then..
                 //     So just read from the default (probably back-) buffer
                 qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
+
+                int row = (w * 3 + 3) & ~3; // OpenGL pads to dword boundaries
+                for (int y = 0; y < h; y++)
+                {
+                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * row, w * 3);
+                }
             }
             else
             {
@@ -1243,13 +1266,12 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
                 qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
 
                 qglReadBuffer(oldReadBuf);
-            }
 
-            int row = (w * 3 + 3) & ~3; // OpenGL pads to dword boundaries
-
-            for (int y = 0; y < h; y++)
-            {
-                memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * row, w * 3);
+                int row = (w * 3 + 3) & ~3; // OpenGL pads to dword boundaries
+                for (int y = 0; y < h; y++)
+                {
+                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * row, w * 3);
+                }
             }
         }
     }
