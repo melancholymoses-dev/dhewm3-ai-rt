@@ -43,6 +43,68 @@ void VK_DestroySwapchain(void);
 
 static const uint32_t VK_UBO_RING_SIZE = 4096; // max interactions per frame
 
+// ---------------------------------------------------------------------------
+// Per-frame data staging ring
+// Host-visible linear allocator for uploading CPU-side vertex/index data.
+// Used when geo->indexCache is NULL (r_useIndexBuffers=0, which is the default)
+// and for TAG_TEMP vertex data (GUI surfaces etc.).
+// ---------------------------------------------------------------------------
+
+static const VkDeviceSize VK_DATA_RING_SIZE = 32 * 1024 * 1024; // 32 MB per frame
+
+struct vkDataRing_t
+{
+    VkBuffer       buffer;
+    VkDeviceMemory memory;
+    void *         mapped;
+    VkDeviceSize   offset; // current linear allocation offset
+};
+
+static vkDataRing_t dataRings[VK_MAX_FRAMES_IN_FLIGHT];
+
+static void VK_CreateDataRings(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_CreateBuffer(VK_DATA_RING_SIZE,
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &dataRings[i].buffer, &dataRings[i].memory);
+        VK_CHECK(vkMapMemory(vk.device, dataRings[i].memory, 0, VK_DATA_RING_SIZE, 0, &dataRings[i].mapped));
+        dataRings[i].offset = 0;
+    }
+}
+
+static void VK_DestroyDataRings(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (dataRings[i].memory)
+            vkUnmapMemory(vk.device, dataRings[i].memory);
+        if (dataRings[i].buffer)
+            vkDestroyBuffer(vk.device, dataRings[i].buffer, NULL);
+        if (dataRings[i].memory)
+            vkFreeMemory(vk.device, dataRings[i].memory, NULL);
+    }
+    memset(dataRings, 0, sizeof(dataRings));
+}
+
+// Allocate 'size' bytes from the current frame's data ring, aligned to 'align'.
+// Returns the byte offset into dataRings[vk.currentFrame].buffer, or VK_WHOLE_SIZE on overflow.
+static VkDeviceSize VK_AllocDataRing(VkDeviceSize size, VkDeviceSize align)
+{
+    vkDataRing_t &ring = dataRings[vk.currentFrame];
+    // round offset up to alignment
+    VkDeviceSize aligned = (ring.offset + align - 1) & ~(align - 1);
+    if (aligned + size > VK_DATA_RING_SIZE)
+    {
+        common->Warning("VK: data ring overflow (need %llu bytes)", (unsigned long long)(aligned + size));
+        return VK_WHOLE_SIZE;
+    }
+    ring.offset = aligned + size;
+    return aligned;
+}
+
 struct vkUBORing_t
 {
     VkBuffer buffer;
@@ -330,26 +392,47 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // Bind descriptor set
     vkCmdBindDescriptorSets(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 1, &ds, 0, NULL);
 
-    // Bind vertex and index buffers from the vertex cache
+    // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
     const srfTriangles_t *geo = din->surf->geo;
+    if (!geo)
+    {
+        common->Warning("VK: NULL geo in DrawInteraction, skipping");
+        return;
+    }
+    if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
+    {
+        return;
+    }
 
+    // --- Vertex buffer ---
     VkBuffer vertBuf;
     VkDeviceSize vertOffset;
     if (!VK_VertexCache_GetBuffer(geo->ambientCache, &vertBuf, &vertOffset))
     {
-        return; // vertex data not ready — skip this surface
+        // TAG_TEMP or no VkBuffer allocated — upload from CPU vertex cache
+        const void *cpuVerts = vertexCache.Position(geo->ambientCache);
+        if (!cpuVerts)
+            return;
+        VkDeviceSize vertSize = (VkDeviceSize)geo->numVerts * sizeof(idDrawVert);
+        vertOffset = VK_AllocDataRing(vertSize, sizeof(float));
+        if (vertOffset == VK_WHOLE_SIZE)
+            return;
+        memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)vertSize);
+        vertBuf = dataRings[vk.currentFrame].buffer;
     }
     vkCmdBindVertexBuffers(s_cmd, 0, 1, &vertBuf, &vertOffset);
 
-    VkBuffer idxBuf;
-    VkDeviceSize idxOffset;
-    if (!VK_VertexCache_GetBuffer(geo->indexCache, &idxBuf, &idxOffset))
-    {
-        return; // index data not ready — skip this surface
-    }
+    // --- Index buffer ---
+    // geo->indexCache is always NULL (r_useIndexBuffers defaults to 0).
+    // Upload geo->indexes from the CPU array every time.
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    vkCmdBindIndexBuffer(s_cmd, idxBuf, idxOffset, idxType);
+    VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    if (idxOffset == VK_WHOLE_SIZE)
+        return;
+    memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
+    vkCmdBindIndexBuffer(s_cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 }
@@ -363,20 +446,51 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 {
     s_cmd = cmd;
 
+    // Must be called before RB_CreateSingleDrawInteractions so backEnd.lightScale is valid.
+    // Without this, all lightColor[] values are 0 and RB_SubmittInteraction never fires.
+    RB_DetermineLightScale();
+
+    int lightCount = 0;
+    for (viewLight_t *l = backEnd.viewDef->viewLights; l; l = l->next) lightCount++;
+    common->Printf("VK DrawInteractions: %d lights\n", lightCount); fflush(NULL);
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
 
-    for (viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next)
+    int lightIdx = 0;
+    for (viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next, lightIdx++)
     {
         backEnd.vLight = vLight;
 
-        if (vLight->lightShader->IsFogLight())
-            continue;
-        if (vLight->lightShader->IsBlendLight())
-            continue;
-        if (!vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions)
+        common->Printf("VK light %d: lightShader=%p localI=%p globalI=%p transI=%p\n",
+                       lightIdx, (void *)vLight->lightShader,
+                       (void *)vLight->localInteractions,
+                       (void *)vLight->globalInteractions,
+                       (void *)vLight->translucentInteractions);
+        fflush(NULL);
+
+        if (!vLight->lightShader)
         {
+            common->Warning("VK: NULL lightShader on viewLight %d, skipping", lightIdx);
             continue;
         }
+
+        if (vLight->lightShader->IsFogLight())
+        {
+            common->Printf("VK light %d: skipped (fog)\n", lightIdx); fflush(NULL);
+            continue;
+        }
+        if (vLight->lightShader->IsBlendLight())
+        {
+            common->Printf("VK light %d: skipped (blend)\n", lightIdx); fflush(NULL);
+            continue;
+        }
+        if (!vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions)
+        {
+            common->Printf("VK light %d: skipped (no interactions)\n", lightIdx); fflush(NULL);
+            continue;
+        }
+
+        common->Printf("VK light %d: entering draw body\n", lightIdx); fflush(NULL);
 
         // Set scissor for this light
         if (r_useScissor.GetBool())
@@ -401,10 +515,22 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Draw lit interactions
         for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
         {
+            common->Printf("VK localI surf=%p material=%p geo=%p space=%p\n",
+                           (void *)surf,
+                           surf ? (void *)surf->material : nullptr,
+                           surf ? (void *)surf->geo : nullptr,
+                           surf ? (void *)surf->space : nullptr);
+            fflush(NULL);
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
         for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
         {
+            common->Printf("VK globalI surf=%p material=%p geo=%p space=%p\n",
+                           (void *)surf,
+                           surf ? (void *)surf->material : nullptr,
+                           surf ? (void *)surf->geo : nullptr,
+                           surf ? (void *)surf->space : nullptr);
+            fflush(NULL);
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
 
@@ -412,6 +538,12 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             for (const drawSurf_t *surf = vLight->translucentInteractions; surf; surf = surf->nextOnLight)
             {
+                common->Printf("VK transI surf=%p material=%p geo=%p space=%p\n",
+                               (void *)surf,
+                               surf ? (void *)surf->material : nullptr,
+                               surf ? (void *)surf->geo : nullptr,
+                               surf ? (void *)surf->space : nullptr);
+                fflush(NULL);
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
             }
         }
@@ -429,8 +561,8 @@ void VK_RB_DrawView(const void *data)
 {
     if (!vk.isInitialized || !vkPipes.isValid)
     {
-        common->Printf("VK_RB_DrawView: skipped (isInitialized=%d, pipesValid=%d)\n",
-                       (int)vk.isInitialized, (int)vkPipes.isValid);
+        common->Printf("VK_RB_DrawView: skipped (isInitialized=%d, pipesValid=%d)\n", (int)vk.isInitialized,
+                       (int)vkPipes.isValid);
         fflush(NULL);
         return;
     }
@@ -442,29 +574,34 @@ void VK_RB_DrawView(const void *data)
         common->Printf("VK frame %d: begin (currentFrame slot=%d)\n", thisFrame, vk.currentFrame);
         fflush(NULL);
     }
-
     const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)data;
     backEnd.viewDef = cmd->viewDef;
+    common->Printf("VK frame %d: viewDef=%p viewLights=%p viewEntitys=%p\n", thisFrame, (void *)backEnd.viewDef,
+                   backEnd.viewDef ? (void *)backEnd.viewDef->viewLights : nullptr,
+                   backEnd.viewDef ? (void *)backEnd.viewDef->viewEntitys : nullptr);
+    fflush(NULL);
 
     // --- Wait for previous frame's fence ---
     VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
     if (fenceResult != VK_SUCCESS)
     {
-        common->Printf("VK frame %d: vkWaitForFences returned %d (DEVICE_LOST=%d)\n",
-                       thisFrame, (int)fenceResult, (int)VK_ERROR_DEVICE_LOST);
+        common->Printf("VK frame %d: vkWaitForFences returned %d (DEVICE_LOST=%d)\n", thisFrame, (int)fenceResult,
+                       (int)VK_ERROR_DEVICE_LOST);
         fflush(NULL);
         return;
     }
-
+    common->Printf("VK frame %d: fence wait OK\n", thisFrame);
+    fflush(NULL);
     // --- Acquire swapchain image ---
     uint32_t imageIndex;
     VkResult acquireResult = vkAcquireNextImageKHR(
         vk.device, vk.swapchain, UINT64_MAX, vk.imageAvailableSemaphores[vk.currentFrame], VK_NULL_HANDLE, &imageIndex);
-
+    common->Printf("VK frame %d: acquired imageIndex=%u\n", thisFrame, imageIndex);
+    fflush(NULL);
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
     {
-        common->Printf("VK frame %d: vkAcquireNextImageKHR returned %d (OUT_OF_DATE=%d, DEVICE_LOST=%d)\n",
-                       thisFrame, (int)acquireResult, (int)VK_ERROR_OUT_OF_DATE_KHR, (int)VK_ERROR_DEVICE_LOST);
+        common->Printf("VK frame %d: vkAcquireNextImageKHR returned %d (OUT_OF_DATE=%d, DEVICE_LOST=%d)\n", thisFrame,
+                       (int)acquireResult, (int)VK_ERROR_OUT_OF_DATE_KHR, (int)VK_ERROR_DEVICE_LOST);
         fflush(NULL);
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
             return;
@@ -474,16 +611,28 @@ void VK_RB_DrawView(const void *data)
     vk.currentImageIdx = imageIndex;
     vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
 
-    // Reset UBO ring for this frame
+    // Reset UBO and data rings for this frame
     uboRings[vk.currentFrame].offset = 0;
-
+    dataRings[vk.currentFrame].offset = 0;
+    common->Printf("VK frame %d: fences reset, UBO ring reset\n", thisFrame);
+    fflush(NULL);
     // --- Record command buffer ---
     VkCommandBuffer cmdBuf = vk.commandBuffers[vk.currentFrame];
-    vkResetCommandBuffer(cmdBuf, 0);
+    VkResult resetResult = vkResetCommandBuffer(cmdBuf, 0);
+    common->Printf("VK frame %d: vkResetCommandBuffer=%d\n", thisFrame, (int)resetResult);
+    fflush(NULL);
 
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vkBeginCommandBuffer(cmdBuf, &beginInfo);
+    VkResult beginCBResult = vkBeginCommandBuffer(cmdBuf, &beginInfo);
+    common->Printf("VK frame %d: vkBeginCommandBuffer=%d\n", thisFrame, (int)beginCBResult);
+    fflush(NULL);
+    if (beginCBResult != VK_SUCCESS)
+    {
+        common->Printf("VK frame %d: vkBeginCommandBuffer FAILED, aborting frame\n", thisFrame);
+        fflush(NULL);
+        return;
+    }
 
     // Begin render pass
     VkClearValue clearValues[2] = {};
@@ -500,6 +649,9 @@ void VK_RB_DrawView(const void *data)
     rpBegin.pClearValues = clearValues;
 
     vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+    common->Printf("VK frame %d: render pass begun, fb=%p imageIndex=%u\n",
+                   thisFrame, (void *)vk.swapchainFramebuffers[imageIndex], imageIndex);
+    fflush(NULL);
 
     // Set viewport
     VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.0f, 1.0f};
@@ -522,12 +674,17 @@ void VK_RB_DrawView(const void *data)
 #endif
 
     // Draw all light interactions
+    common->Printf("VK frame %d: calling DrawInteractions\n", thisFrame); fflush(NULL);
     VK_RB_DrawInteractions(cmdBuf);
+    common->Printf("VK frame %d: DrawInteractions done\n", thisFrame); fflush(NULL);
 
     // Render ImGui overlay (must be inside render pass)
+    common->Printf("VK frame %d: calling ImGui RenderVulkan\n", thisFrame); fflush(NULL);
     D3::ImGuiHooks::RenderVulkan(cmdBuf);
+    common->Printf("VK frame %d: ImGui done\n", thisFrame); fflush(NULL);
 
     vkCmdEndRenderPass(cmdBuf);
+    common->Printf("VK frame %d: ending command buffer\n", thisFrame); fflush(NULL);
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
 
     // --- Submit ---
@@ -545,8 +702,8 @@ void VK_RB_DrawView(const void *data)
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[vk.currentFrame]);
     if (submitResult != VK_SUCCESS)
     {
-        common->Printf("VK frame %d: vkQueueSubmit FAILED %d (DEVICE_LOST=%d)\n",
-                       thisFrame, (int)submitResult, (int)VK_ERROR_DEVICE_LOST);
+        common->Printf("VK frame %d: vkQueueSubmit FAILED %d (DEVICE_LOST=%d)\n", thisFrame, (int)submitResult,
+                       (int)VK_ERROR_DEVICE_LOST);
         fflush(NULL);
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
     }
@@ -590,6 +747,8 @@ void VKimp_PostInit(int width, int height)
     VK_InitPipelines();
     common->Printf("VK: creating UBO rings\n");
     VK_CreateUBORings();
+    common->Printf("VK: creating data rings\n");
+    VK_CreateDataRings();
     common->Printf("VK: initializing images\n");
     VK_Image_Init();
 
@@ -620,6 +779,7 @@ void VKimp_PreShutdown(void)
 #endif
 
     VK_Image_Shutdown();
+    VK_DestroyDataRings();
     VK_DestroyUBORings();
     VK_ShutdownPipelines();
     VK_DestroySwapchain();
