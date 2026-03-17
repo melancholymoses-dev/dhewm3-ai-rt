@@ -256,7 +256,16 @@ void VK_CreateSwapchain(int width, int height)
     VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vk.depthImage,
                    &vk.depthMemory);
-    vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+    // For combined depth+stencil formats, the image view must include VK_IMAGE_ASPECT_STENCIL_BIT
+    // so the framebuffer attachment exposes the stencil aspect and stencil test/clear work correctly.
+    {
+        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+            vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
+            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+    }
 
     // Create render pass
     VK_CreateRenderPass();
@@ -411,7 +420,14 @@ void VK_RecreateSwapchain(int width, int height)
     VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                    &vk.depthImage, &vk.depthMemory);
-    vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+    {
+        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+            vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
+            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+    }
 
     // Recreate framebuffers (reuse existing render pass)
     for (uint32_t i = 0; i < vk.swapchainImageCount; i++)
