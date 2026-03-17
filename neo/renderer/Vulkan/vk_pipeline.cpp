@@ -230,9 +230,10 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout)
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Depth+stencil: LEQUAL depth test (no depth prepass yet, so EQUAL would cull everything).
-    // Stencil: EQUAL 128 — draw where stencil == cleared value (outside shadow volumes).
-    // With no shadow pass this always passes everywhere, which is correct for now.
+    // Depth+stencil: LEQUAL depth test (depth prepass fills depth first with LESS).
+    // LEQUAL rather than EQUAL because MC_PERFORATED surfaces may not appear in the prepass.
+    // Stencil: EQUAL 128 — draw where stencil == cleared value (unmodified by shadow volumes).
+    // With no rasterised shadow pass this always passes; RT shadow mask is applied in-shader.
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
@@ -457,8 +458,176 @@ static VkDescriptorSetLayout VK_CreateGuiDescLayout(void)
     return layout;
 }
 
-// alphaBlend=false → opaque (blend disabled); alphaBlend=true → SRC_ALPHA/ONE_MINUS_SRC_ALPHA
-static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
+// ---------------------------------------------------------------------------
+// VK_CreateDepthPipeline - depth-only prepass
+// Writes depth without touching colour; used before the interaction pass so the
+// depth buffer is fully populated before expensive per-light shading runs.
+// Reuses the GUI pipeline layout (binding 0 = GuiUBO with MVP).
+// ---------------------------------------------------------------------------
+
+static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
+{
+    VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
+    VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
+    if (!vertModule || !fragModule)
+    {
+        if (vertModule) vkDestroyShaderModule(vk.device, vertModule, NULL);
+        if (fragModule) vkDestroyShaderModule(vk.device, fragModule, NULL);
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName  = "main";
+
+    VkVertexInputBindingDescription binding;
+    VkVertexInputAttributeDescription attrs[12];
+    uint32_t numAttrs = 0;
+    VK_GetInteractionVertexInput(&binding, attrs, &numAttrs);
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount   = 1;
+    vertexInput.pVertexBindingDescriptions      = &binding;
+    vertexInput.vertexAttributeDescriptionCount = numAttrs;
+    vertexInput.pVertexAttributeDescriptions    = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.f, 1.f};
+    VkRect2D   scissor  = {{0, 0}, vk.swapchainExtent};
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports    = &viewport;
+    viewportState.scissorCount  = 1;
+    viewportState.pScissors     = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode    = VK_CULL_MODE_BACK_BIT;
+    // Y-flip viewport inverts winding — same correction as interaction pipeline.
+    rasterizer.frontFace   = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // Depth write enabled, LESS test, no stencil.
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable  = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    // No colour output — depth only.
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.colorWriteMask = 0;
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 1;
+    blendState.pAttachments    = &colorBlend;
+
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates    = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 2;
+    pipelineInfo.pStages             = stages;
+    pipelineInfo.pVertexInputState   = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState   = &multisampling;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pColorBlendState    = &blendState;
+    pipelineInfo.pDynamicState       = &dynamicState;
+    pipelineInfo.layout              = layout;
+    pipelineInfo.renderPass          = vk.renderPass;
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
+
+    vkDestroyShaderModule(vk.device, vertModule, NULL);
+    vkDestroyShaderModule(vk.device, fragModule, NULL);
+    return pipeline;
+}
+
+// ---------------------------------------------------------------------------
+// GLS blend factor translation helpers
+// ---------------------------------------------------------------------------
+
+#include "renderer/tr_local.h"
+
+static VkBlendFactor VK_GlsSrcBlendToVk(int stateBits)
+{
+    switch (stateBits & GLS_SRCBLEND_BITS)
+    {
+    case GLS_SRCBLEND_ZERO:                return VK_BLEND_FACTOR_ZERO;
+    default:
+    case GLS_SRCBLEND_ONE:                 return VK_BLEND_FACTOR_ONE;
+    case GLS_SRCBLEND_DST_COLOR:           return VK_BLEND_FACTOR_DST_COLOR;
+    case GLS_SRCBLEND_ONE_MINUS_DST_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+    case GLS_SRCBLEND_SRC_ALPHA:           return VK_BLEND_FACTOR_SRC_ALPHA;
+    case GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case GLS_SRCBLEND_DST_ALPHA:           return VK_BLEND_FACTOR_DST_ALPHA;
+    case GLS_SRCBLEND_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    case GLS_SRCBLEND_ALPHA_SATURATE:      return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+    }
+}
+
+static VkBlendFactor VK_GlsDstBlendToVk(int stateBits)
+{
+    switch (stateBits & GLS_DSTBLEND_BITS)
+    {
+    default:
+    case GLS_DSTBLEND_ZERO:                return VK_BLEND_FACTOR_ZERO;
+    case GLS_DSTBLEND_ONE:                 return VK_BLEND_FACTOR_ONE;
+    case GLS_DSTBLEND_SRC_COLOR:           return VK_BLEND_FACTOR_SRC_COLOR;
+    case GLS_DSTBLEND_ONE_MINUS_SRC_COLOR: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    case GLS_DSTBLEND_SRC_ALPHA:           return VK_BLEND_FACTOR_SRC_ALPHA;
+    case GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    case GLS_DSTBLEND_DST_ALPHA:           return VK_BLEND_FACTOR_DST_ALPHA;
+    case GLS_DSTBLEND_ONE_MINUS_DST_ALPHA: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GUI blend pipeline cache — built on demand, one entry per unique blend state
+// ---------------------------------------------------------------------------
+
+struct VkBlendPipelineEntry
+{
+    uint32_t  blendKey; // (drawStateBits & (GLS_SRCBLEND_BITS|GLS_DSTBLEND_BITS))
+    VkPipeline pipeline;
+};
+
+static const int           MAX_BLEND_PIPELINES = 32;
+static VkBlendPipelineEntry s_blendCache[MAX_BLEND_PIPELINES];
+static int                  s_blendCacheCount = 0;
+
+// Core GUI pipeline builder — explicit blend control.
+// blendEnable=false overrides all blend factor args (fully opaque).
+static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnable,
+                                          VkBlendFactor srcColor, VkBlendFactor dstColor,
+                                          VkBlendFactor srcAlpha, VkBlendFactor dstAlpha)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
@@ -529,15 +698,15 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    if (alphaBlend)
+    if (blendEnable)
     {
-        colorBlend.blendEnable = VK_TRUE;
-        colorBlend.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        colorBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        colorBlend.colorBlendOp = VK_BLEND_OP_ADD;
-        colorBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        colorBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+        colorBlend.blendEnable         = VK_TRUE;
+        colorBlend.srcColorBlendFactor = srcColor;
+        colorBlend.dstColorBlendFactor = dstColor;
+        colorBlend.colorBlendOp        = VK_BLEND_OP_ADD;
+        colorBlend.srcAlphaBlendFactor = srcAlpha;
+        colorBlend.dstAlphaBlendFactor = dstAlpha;
+        colorBlend.alphaBlendOp        = VK_BLEND_OP_ADD;
     }
 
     VkPipelineColorBlendStateCreateInfo blendState = {};
@@ -574,6 +743,67 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
     return pipeline;
 }
 
+// Thin wrappers for the two pre-built GUI pipelines.
+static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
+{
+    if (!alphaBlend)
+        return VK_CreateGuiPipelineEx(layout, false,
+                                      VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO,
+                                      VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ZERO);
+    return VK_CreateGuiPipelineEx(layout, true,
+                                  VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                  VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+}
+
+// Look up or create a GUI pipeline matching the given drawStateBits blend state.
+// The two pre-built pipelines (opaque / alpha) are returned directly.
+// Any other blend combination is built on demand and cached for reuse.
+VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits)
+{
+    const uint32_t key = (uint32_t)(drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+
+    // Opaque (src=ONE, dst=ZERO — both bits are 0)
+    if (key == 0u)
+        return vkPipes.guiOpaquePipeline;
+
+    // Pre-built src-alpha blend
+    const uint32_t alphaKey = (uint32_t)(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
+    if (key == alphaKey)
+        return vkPipes.guiAlphaPipeline;
+
+    // Search cache
+    for (int i = 0; i < s_blendCacheCount; i++)
+    {
+        if (s_blendCache[i].blendKey == key)
+            return s_blendCache[i].pipeline;
+    }
+
+    // Not found — build a new pipeline
+    if (s_blendCacheCount >= MAX_BLEND_PIPELINES)
+    {
+        common->Warning("VK: blend pipeline cache full, falling back to alpha pipeline");
+        return vkPipes.guiAlphaPipeline;
+    }
+
+    VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
+    VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
+    VkPipeline    p   = VK_CreateGuiPipelineEx(vkPipes.guiLayout, true, src, dst, src, dst);
+    if (p == VK_NULL_HANDLE)
+        return vkPipes.guiAlphaPipeline;
+
+    s_blendCache[s_blendCacheCount++] = {key, p};
+    return p;
+}
+
+// Destroy all dynamically-built blend pipelines (the two pre-built ones are
+// destroyed separately in VK_ShutdownPipelines).
+void VK_DestroyBlendPipelineCache(void)
+{
+    for (int i = 0; i < s_blendCacheCount; i++)
+        vkDestroyPipeline(vk.device, s_blendCache[i].pipeline, NULL);
+    s_blendCacheCount = 0;
+}
+
 // ---------------------------------------------------------------------------
 // VK_InitPipelines - create all pipelines (called after swapchain is ready)
 // ---------------------------------------------------------------------------
@@ -604,6 +834,9 @@ void VK_InitPipelines(void)
     }
     vkPipes.shadowPipeline = VK_CreateShadowPipeline(vkPipes.shadowLayout);
 
+    // --- Depth prepass pipeline (reuses guiLayout; no separate desc layout needed) ---
+    // Must be created after guiLayout is ready (below), so we defer to after GUI init.
+
     // --- GUI pipeline ---
     vkPipes.guiDescLayout = VK_CreateGuiDescLayout();
     {
@@ -615,6 +848,9 @@ void VK_InitPipelines(void)
     }
     vkPipes.guiOpaquePipeline = VK_CreateGuiPipeline(vkPipes.guiLayout, false);
     vkPipes.guiAlphaPipeline  = VK_CreateGuiPipeline(vkPipes.guiLayout, true);
+
+    // --- Depth prepass pipeline (created after guiLayout is ready) ---
+    vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
 
     // --- Per-frame descriptor pools ---
     // Reset at the start of each frame (after fence wait) so descriptor sets don't accumulate.
@@ -638,8 +874,9 @@ void VK_InitPipelines(void)
 
     vkPipes.isValid = (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipeline != VK_NULL_HANDLE);
 
-    common->Printf("VK: Pipelines initialized (interaction=%s, shadow=%s, gui=%s/%s)\n",
+    common->Printf("VK: Pipelines initialized (interaction=%s, shadow=%s, depth=%s, gui=%s/%s)\n",
                    vkPipes.interactionPipeline ? "OK" : "FAIL", vkPipes.shadowPipeline ? "OK" : "FAIL",
+                   vkPipes.depthPipeline ? "OK" : "FAIL",
                    vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL");
 }
 
@@ -649,6 +886,8 @@ void VK_InitPipelines(void)
 
 void VK_ShutdownPipelines(void)
 {
+    VK_DestroyBlendPipelineCache();
+
     for (int fi = 0; fi < VK_MAX_FRAMES_IN_FLIGHT; fi++)
     {
         if (vkPipes.descPools[fi])
@@ -666,6 +905,8 @@ void VK_ShutdownPipelines(void)
         vkDestroyPipelineLayout(vk.device, vkPipes.shadowLayout, NULL);
     if (vkPipes.shadowDescLayout)
         vkDestroyDescriptorSetLayout(vk.device, vkPipes.shadowDescLayout, NULL);
+    if (vkPipes.depthPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.depthPipeline, NULL);
     if (vkPipes.guiOpaquePipeline)
         vkDestroyPipeline(vk.device, vkPipes.guiOpaquePipeline, NULL);
     if (vkPipes.guiAlphaPipeline)
