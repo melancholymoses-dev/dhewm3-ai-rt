@@ -903,14 +903,22 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (!vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions)
             continue;
 
-        // Set scissor for this light
+        // Set scissor for this light.
+        // vLight->scissorRect uses OpenGL Y-up window coordinates (y=0 at bottom).
+        // Vulkan scissor rects use Y-down coordinates (y=0 at top).
+        // Convert: vulkan_top = framebuffer_height - 1 - opengl_top_edge
         if (r_useScissor.GetBool())
         {
+            int h     = (int)vk.swapchainExtent.height;
+            int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
+            int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
+            int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
+
             VkRect2D scissor = {};
-            scissor.offset.x = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
-            scissor.offset.y = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1;
-            scissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
-            scissor.extent.height = vLight->scissorRect.y2 - vLight->scissorRect.y1 + 1;
+            scissor.offset.x      = absX1;
+            scissor.offset.y      = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
+            scissor.extent.width  = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
+            scissor.extent.height = absY2 - absY1 + 1;
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         }
 
