@@ -760,6 +760,120 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
+// Shadow UBO layout (matches shadow.vert ShadowParams block)
+struct VkShadowUBO
+{
+    float lightOrigin[4]; // vec4 — local-space light origin (w unused, set 0)
+    float mvp[16];        // mat4 — model-view-projection
+}; // 80 bytes — fits in the 384-byte UBO ring stride
+
+// ---------------------------------------------------------------------------
+// VK_RB_DrawShadowSurface
+// Records one shadow volume draw (Carmack's Reverse, depth-fail stencil).
+// Uploads shadow vertices from tri->shadowCache (vec4 idVec4 positions),
+// writes the shadow UBO (light origin + MVP), and issues vkCmdDrawIndexed.
+// ---------------------------------------------------------------------------
+
+static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf)
+{
+    extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+
+    const srfTriangles_t *tri = surf->geo;
+    if (!tri || !tri->shadowCache || tri->numIndexes <= 0)
+        return;
+
+    // Shadow vertices: shadowCache_t = idVec4 (16 bytes each)
+    VkBuffer     vertBuf;
+    VkDeviceSize vertOffset;
+    bool haveVerts = false;
+
+    if (VK_VertexCache_GetBuffer(tri->shadowCache, &vertBuf, &vertOffset))
+    {
+        haveVerts = true;
+    }
+    else
+    {
+        const void *cpuVerts = vertexCache.Position(tri->shadowCache);
+        if (cpuVerts)
+        {
+            // Count shadow verts: indexes reference vertices up to numVerts*2 (mirrored)
+            // Conservative: use numVerts from the ambient surface if available, else
+            // scan indexes to find the max referenced vertex.
+            const srfTriangles_t *amb = tri->ambientSurface ? tri->ambientSurface : tri;
+            int numShadowVerts = amb->numVerts * 2; // shadow verts are doubled (front+back caps)
+            if (numShadowVerts <= 0) numShadowVerts = 256; // safe fallback
+
+            VkDeviceSize sz = (VkDeviceSize)numShadowVerts * sizeof(shadowCache_t);
+            vertOffset = VK_AllocDataRing(sz, sizeof(float));
+            if (vertOffset != VK_WHOLE_SIZE)
+            {
+                memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
+                vertBuf   = dataRings[vk.currentFrame].buffer;
+                haveVerts = true;
+            }
+        }
+    }
+    if (!haveVerts)
+        return;
+
+    // Index data (tri->indexes, same field as regular geometry)
+    const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    VkDeviceSize idxSize   = (VkDeviceSize)tri->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    if (idxOffset == VK_WHOLE_SIZE)
+        return;
+    memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
+
+    // Light origin in model local space
+    idVec3 localLight;
+    R_GlobalPointToLocal(surf->space->modelMatrix, backEnd.vLight->globalLightOrigin, localLight);
+
+    // MVP matrix
+    float mvp[16];
+    VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
+
+    // Shadow UBO
+    uint32_t    uboOffset = VK_AllocUBO();
+    VkShadowUBO *ubo      = (VkShadowUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+    ubo->lightOrigin[0] = localLight.x;
+    ubo->lightOrigin[1] = localLight.y;
+    ubo->lightOrigin[2] = localLight.z;
+    ubo->lightOrigin[3] = 0.f;
+    memcpy(ubo->mvp, mvp, 64);
+
+    // Descriptor set (shadowDescLayout: binding 0 = UBO only)
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+    dsAlloc.descriptorSetCount = 1;
+    dsAlloc.pSetLayouts        = &vkPipes.shadowDescLayout;
+
+    VkDescriptorSet ds;
+    if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+        return;
+
+    VkDescriptorBufferInfo bufInfo = {};
+    bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+    bufInfo.offset = uboOffset;
+    bufInfo.range  = sizeof(VkShadowUBO);
+
+    VkWriteDescriptorSet write = {};
+    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet          = ds;
+    write.dstBinding      = 0;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.descriptorCount = 1;
+    write.pBufferInfo     = &bufInfo;
+    vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            vkPipes.shadowLayout, 0, 1, &ds, 0, NULL);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+    vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+    vkCmdDrawIndexed(cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
 // VK_RB_DrawInteractions - per-light interaction loop
 // Mirrors RB_ARB2_DrawInteractions / RB_GLSL_DrawInteractions
 // ---------------------------------------------------------------------------
@@ -800,11 +914,23 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             vkCmdSetScissor(cmd, 0, 1, &scissor);
         }
 
-        // Stencil shadow pass (still using geometry-based stencil volumes)
-        // Switch to shadow pipeline
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
-        // TODO: record shadow volume draw calls here from vLight->globalShadows / localShadows
-        // This is connected to vk_accelstruct.cpp when RT shadows replace this path.
+        // Stencil shadow volumes — only when RT shadows are unavailable or disabled.
+        // When RT is active, shadows are applied per-pixel in the interaction shader
+        // via shadowMaskSampler. Running both would produce double-shadowing.
+#ifdef DHEWM3_RAYTRACING
+        const bool useStencilShadows = !(vk.rayTracingSupported && r_rtShadows.GetBool());
+#else
+        const bool useStencilShadows = true;
+#endif
+        if (useStencilShadows && vkPipes.shadowPipeline &&
+            (vLight->globalShadows || vLight->localShadows))
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
+            for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
+                VK_RB_DrawShadowSurface(cmd, s);
+            for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
+                VK_RB_DrawShadowSurface(cmd, s);
+        }
 
         // Switch back to interaction pipeline for lit surfaces
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
