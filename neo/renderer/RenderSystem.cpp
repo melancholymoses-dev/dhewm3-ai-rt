@@ -1050,6 +1050,12 @@ void idRenderSystemLocal::CaptureRenderToFile(const char *fileName, bool fixAlph
         return;
     }
 
+    // Vulkan has no qglReadBuffer/qglReadPixels — pixel readback not yet implemented.
+    if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
+    {
+        return;
+    }
+
     renderCrop_t *rc = &renderCrops[currentRenderCrop];
 
     guiModel->EmitFullScreen();
