@@ -158,6 +158,8 @@ idCVar r_skipLightScale("r_skipLightScale", "0", CVAR_RENDERER | CVAR_BOOL,
                         "don't do any post-interaction light scaling, makes things dim on low-dynamic range cards");
 idCVar r_skipInteractions("r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL,
                           "skip all light/surface interaction drawing");
+idCVar r_skipDepthPrepass("r_skipDepthPrepass", "0", CVAR_RENDERER | CVAR_BOOL,
+                           "skip the depth prepass (diagnostic only — interactions run against clear depth 1.0)");
 idCVar r_skipDynamicTextures("r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL,
                              "don't dynamically create textures");
 idCVar r_skipCopyTexture("r_skipCopyTexture", "0", CVAR_RENDERER | CVAR_BOOL,
