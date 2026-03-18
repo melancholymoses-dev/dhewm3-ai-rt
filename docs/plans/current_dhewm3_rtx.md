@@ -1,6 +1,7 @@
 # dhewm3_rtx Rendering Pipeline
 
 Current state of the Vulkan rendering pipeline in `neo/renderer`.
+Last updated: 2026-03-17 (after fixing 1: stencil bleed, 2: fog/blend skip, 3: translucent stencil).
 
 ---
 
@@ -66,36 +67,56 @@ Subpass 0:
 - Opened on the first `RC_DRAW_VIEW` of the frame.
 - Closed just before `RC_SWAP_BUFFERS`.
 - No MSAA, no input attachments, no subpass dependencies.
-- The stencil is initialized to 128 so the interaction pass (which tests `stencil == 128`) always draws — a placeholder for missing shadow volumes.
 
 ---
 
 ## Rendering Passes (Draw Order)
 
-### 1. Shader Passes (`VK_RB_DrawShaderPasses`)
+```
+VK_RB_DrawView()
+  1. VK_RB_FillDepthBuffer()
+  2. VK_RB_DrawInteractions()
+  3. VK_RB_DrawShaderPasses()
+  [FogAllLights — NOT YET IMPLEMENTED]
+```
+
+### 1. Depth Prepass (`VK_RB_FillDepthBuffer`)
+
+Renders opaque (`MC_OPAQUE`) surfaces to depth buffer only.
+
+- Uses the depth pipeline: depth LESS, color write mask = 0, no blend, no stencil
+- Populates depth buffer for early-Z rejection in the interaction pass
+- Does **not** handle alpha-tested surfaces via clip (clip not implemented in depth shader)
+
+### 2. Interaction Pass (`VK_RB_DrawInteractions`)
+
+Per-light lit rendering with Phong + bump + specular.
+
+- Calls `RB_DetermineLightScale()` for `backEnd.lightScale`
+- For each `viewLight`:
+  1. Sets scissor rect to light bounds
+  2. **Clears stencil to 128** within the light scissor (`vkCmdClearAttachments`) — prevents cross-light stencil bleed
+  3. **Shadow volume pass** — Carmack's Reverse (depth-fail stencil) draw calls for `globalShadows` and `localShadows`; skipped when RT shadows are active
+  4. Binds `interactionPipeline` (stencil EQUAL 128)
+  5. Draws `localInteractions` and `globalInteractions`
+  6. For `translucentInteractions`: switches to `interactionPipelineNoStencil` (stencil disabled), draws, then restores opaque pipeline
+
+- Interaction UBO holds: light params, matrices, colors
+- Descriptor set per draw: bump, falloff, light projection, diffuse, specular, spec table, RT shadow mask (binding 7)
+
+### 3. Shader Passes (`VK_RB_DrawShaderPasses`)
 
 Renders unlit / 2D surfaces using the GUI pipeline.
 
 - Iterates `viewDef->drawSurfs`
+- **Skips fog/blend light volume geometry** (`mat->IsFogLight() || mat->IsBlendLight()`) — prevents depth-test-disabled GUI pipeline from rendering volumes through floors
 - Evaluates material registers to determine blend mode (opaque vs alpha)
 - Allocates a GUI UBO slot and descriptor set per draw
 - Issues `vkCmdDrawIndexed`
 
-### 2. Interaction Pass (`VK_RB_DrawInteractions`)
+### 4. Fog/Blend Lights — NOT IMPLEMENTED
 
-Renders per-light lit surfaces (Phong + bump + specular).
-
-- Calls `RB_DetermineLightScale()` for `backEnd.lightScale`
-- For each `viewLight`:
-  - Sets scissor rect to light bounds
-  - **Shadow volume pass: STUBBED** — pipeline bound, no draw calls issued
-  - For each surface in `localInteractions`, `globalInteractions`, `translucentInteractions`:
-    - Calls `RB_CreateSingleDrawInteractions()` → `VK_RB_DrawInteraction(din)`
-    - Fills UBO: light params, matrices, colors
-    - Allocates descriptor set; binds bump, falloff, light projection, diffuse, specular, spec table, RT shadow mask
-    - Issues `vkCmdDrawIndexed`
-
-**No depth prepass.** The interaction pipeline uses depth test `LESS_OR_EQUAL` as a workaround.
+`FogAllLights` is absent. Fog and blend light volumes are currently skipped entirely.
 
 ---
 
@@ -103,8 +124,10 @@ Renders per-light lit surfaces (Phong + bump + specular).
 
 | Pipeline | Shaders | Key State |
 |----------|---------|-----------|
-| **Interaction** | `interaction.vert/frag` | Depth LESS_OR_EQUAL, Stencil EQUAL 128, Additive blend (ONE+ONE) |
+| **Interaction** | `interaction.vert/frag` | Depth LESS_OR_EQUAL, no depth write, Stencil EQUAL 128, Additive blend (ONE+ONE) |
+| **Interaction (no stencil)** | `interaction.vert/frag` | Same as above but stencil disabled — used for translucent interactions |
 | **Shadow** | `shadow.vert/frag` | Depth LESS, no color write, Stencil depth-fail (Carmack's Reverse) |
+| **Depth** | `depth.vert/frag` (or gui.vert) | Depth LESS, color write mask = 0 |
 | **GUI Opaque** | `gui.vert/frag` | No depth/stencil test, no blend |
 | **GUI Alpha** | `gui.vert/frag` | No depth/stencil test, SRC_ALPHA / ONE_MINUS_SRC_ALPHA blend |
 
@@ -185,8 +208,7 @@ When enabled via compile flag:
    - Render pass closed → TLAS rebuild → `VK_RT_DispatchShadowRays()` → shadow mask image written
    - Render pass reopened
 4. Shadow mask sampled as binding 7 in the interaction descriptor set
-
-When disabled: stencil shadow volumes are the intended fallback (currently unimplemented).
+5. When RT is active, `useStencilShadows = false` — stencil shadow volume pass is skipped
 
 ---
 
@@ -207,19 +229,32 @@ VK_RB_SwapBuffers()
 
 ---
 
+## Recent Fixes Applied
+
+| Fix | Description |
+|-----|-------------|
+| Per-light stencil clear | `vkCmdClearAttachments(stencil=128)` before each light's scissor rect prevents shadow stencil bleed between lights |
+| Fog/blend light skip | `IsFogLight() \|\| IsBlendLight()` skipped in `DrawShaderPasses` so depth-test-less GUI pipeline doesn't draw volumes through floors |
+| Translucent no-stencil pipeline | `interactionPipelineNoStencil` (stencil disabled) used for `translucentInteractions` to avoid shadow volumes incorrectly culling transparent surfaces |
+| Shadow volume draw calls | `VK_RB_DrawShadowSurface` now issues real draw calls for `globalShadows`/`localShadows` using the shadow pipeline |
+| Depth prepass | `VK_RB_FillDepthBuffer` populates the depth buffer before interactions, enabling early-Z rejection |
+
+---
+
 ## Known Missing / Incomplete Features
 
 | Feature | Status | Impact |
 |---------|--------|--------|
-| Depth prepass | Missing | Z-fighting, overdraw not rejected |
-| Stencil shadow volumes | Stubbed (pipeline exists, no draw calls) | Shadows not rendered; stencil always 128 |
-| Multiple blend modes | Only 2 supported (opaque, src-alpha) | Particles, glows, additive effects broken |
-| Texture coordinate transforms | Missing | Animated materials (scroll, rotate) broken |
-| Fog / blend lights | Missing | Atmospheric effects absent |
+| FogAllLights pass | Missing | Fog and blend light volumetric effects not rendered |
+| Multiple blend modes | Only 2 supported (opaque, src-alpha) | Particles, glows, additive effects may be wrong |
+| Texture coordinate transforms | Not verified | Animated materials (scroll, rotate) may be broken |
 | Per-stage depth function | Missing | Some material stages depth-tested incorrectly |
 | Per-surface cull mode | Missing | Two-sided geometry may render incorrectly |
 | Post-process passes | Missing (`CopyRender` is a no-op stub) | No bloom, no screen-space effects |
-| Light scale / overbright | Partially implemented | Lighting intensity may be off |
 | Dynamic pipeline variant cache | Missing | Pipelines are fixed; cannot adapt to material state bits |
 | GPU index buffer usage | Missing | Indexes always copied to data ring per draw |
-| Skinned/joint geometry | Not verified | May not render correctly |
+| Skinned/joint geometry | Not verified | Skeletal animation may not render correctly |
+| Shadow volume ordering | Simplified | All global+local shadows drawn together per light; does not match vkDOOM3 ordering (global→local→local shadow→global shadow) |
+| Per-shadow scissor refinement | Missing | Uses full light scissor; vkDOOM3 refines scissor per shadow surface |
+| Resume render pass | Missing | RT shadow pass closes/reopens the render pass with CLEAR; prior draws preserved but DONT_CARE reopen is a hack |
+| Alpha-tested depth prepass | Missing | Alpha-clip not implemented in depth shader |

@@ -478,6 +478,13 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         if (mat->SuppressInSubview())
             continue;
 
+        // Fog lights and blend lights have volume geometry in drawSurfs.
+        // The GUI pipeline has no depth test, so these volumes would render
+        // through floors/walls if not skipped here.  They will be handled
+        // by a future VK_RB_FogAllLights pass.
+        if (mat->IsFogLight() || mat->IsBlendLight())
+            continue;
+
         const srfTriangles_t *geo = surf->geo;
         if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
             continue;
@@ -907,6 +914,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // vLight->scissorRect uses OpenGL Y-up window coordinates (y=0 at bottom).
         // Vulkan scissor rects use Y-down coordinates (y=0 at top).
         // Convert: vulkan_top = framebuffer_height - 1 - opengl_top_edge
+        // Keep a copy of the rect so we can use it in vkCmdClearAttachments below.
+        VkRect2D lightScissor = {{0, 0}, vk.swapchainExtent}; // default: full framebuffer
+
         if (r_useScissor.GetBool())
         {
             int h     = (int)vk.swapchainExtent.height;
@@ -914,12 +924,31 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
             int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
 
-            VkRect2D scissor = {};
-            scissor.offset.x      = absX1;
-            scissor.offset.y      = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
-            scissor.extent.width  = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
-            scissor.extent.height = absY2 - absY1 + 1;
-            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            lightScissor.offset.x      = absX1;
+            lightScissor.offset.y      = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
+            lightScissor.extent.width  = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
+            lightScissor.extent.height = absY2 - absY1 + 1;
+            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+        }
+
+        // Clear stencil to 128 within this light's scissor rect before processing it.
+        // Mirrors the GL path: qglClear(GL_STENCIL_BUFFER_BIT) before each light with shadows,
+        // or qglStencilFunc(GL_ALWAYS,...) for lights without shadows.
+        // Our interaction pipeline uses EQUAL 128, so clearing to 128 = "always pass" for
+        // unlit surfaces, while shadow volumes will re-mark their areas correctly.
+        // Without this, shadow volumes from light N bleed into light N+1's stencil test,
+        // causing black trailing regions behind moving lights.
+        {
+            VkClearAttachment clearAtt = {};
+            clearAtt.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT;
+            clearAtt.clearValue.depthStencil.stencil = 128;
+
+            VkClearRect clearRect = {};
+            clearRect.rect           = lightScissor;
+            clearRect.baseArrayLayer = 0;
+            clearRect.layerCount     = 1;
+
+            vkCmdClearAttachments(cmd, 1, &clearAtt, 1, &clearRect);
         }
 
         // Stencil shadow volumes — only when RT shadows are unavailable or disabled.
@@ -949,10 +978,17 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
 
-        if (!r_skipTranslucent.GetBool())
+        if (!r_skipTranslucent.GetBool() && vLight->translucentInteractions)
         {
+            // Translucent surfaces didn't write depth during the prepass, so they may not
+            // be at the same depth as opaque geometry.  Use a pipeline with stencil disabled
+            // so shadow volumes don't incorrectly cull them (mirrors GL path: performStencilTest=false).
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              vkPipes.interactionPipelineNoStencil);
             for (const drawSurf_t *surf = vLight->translucentInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
+            // Restore opaque interaction pipeline for next light
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
         }
     }
 

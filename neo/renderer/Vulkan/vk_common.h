@@ -114,7 +114,8 @@ struct vkPipelines_t
 {
     VkDescriptorSetLayout interactionDescLayout;
     VkPipelineLayout interactionLayout;
-    VkPipeline interactionPipeline;
+    VkPipeline interactionPipeline;          // stencil EQUAL 128 (opaque/normal interactions)
+    VkPipeline interactionPipelineNoStencil; // stencil disabled (translucent interactions)
 
     VkDescriptorSetLayout shadowDescLayout;
     VkPipelineLayout shadowLayout;

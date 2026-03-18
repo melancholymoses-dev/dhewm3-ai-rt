@@ -162,9 +162,11 @@ static void VK_GetInteractionVertexInput(VkVertexInputBindingDescription *bindin
 
 // ---------------------------------------------------------------------------
 // VK_CreateInteractionPipeline
+// enableStencil=true  → EQUAL 128 stencil (opaque interactions behind shadow volumes)
+// enableStencil=false → stencil disabled (translucent interactions, no shadow culling)
 // ---------------------------------------------------------------------------
 
-static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout)
+static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool enableStencil = true)
 {
     // Load SPIR-V shaders compiled from the GLSL files
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/interaction.vert.spv");
@@ -239,7 +241,7 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout)
     depthStencil.depthTestEnable = VK_TRUE;
     depthStencil.depthWriteEnable = VK_FALSE; // don't write depth in interaction pass
     depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    depthStencil.stencilTestEnable = VK_TRUE;
+    depthStencil.stencilTestEnable = enableStencil ? VK_TRUE : VK_FALSE;
     depthStencil.front.compareOp = VK_COMPARE_OP_EQUAL; // draw where stencil == 128 (lit area)
     depthStencil.front.compareMask = 255;
     depthStencil.front.reference = 128;
@@ -821,7 +823,8 @@ void VK_InitPipelines(void)
         layoutInfo.pSetLayouts = &vkPipes.interactionDescLayout;
         VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.interactionLayout));
     }
-    vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout);
+    vkPipes.interactionPipeline          = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true);
+    vkPipes.interactionPipelineNoStencil = VK_CreateInteractionPipeline(vkPipes.interactionLayout, false);
 
     // --- Shadow pipeline ---
     vkPipes.shadowDescLayout = VK_CreateShadowDescLayout();
@@ -895,6 +898,8 @@ void VK_ShutdownPipelines(void)
     }
     if (vkPipes.interactionPipeline)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipeline, NULL);
+    if (vkPipes.interactionPipelineNoStencil)
+        vkDestroyPipeline(vk.device, vkPipes.interactionPipelineNoStencil, NULL);
     if (vkPipes.interactionLayout)
         vkDestroyPipelineLayout(vk.device, vkPipes.interactionLayout, NULL);
     if (vkPipes.interactionDescLayout)
