@@ -928,6 +928,11 @@ set(src_imgui ${src_imgui}
 	sys/sys_imgui.cpp
 	sys/imgui_savestyle.cpp
 )
+
+if(DHEWM3_VULKAN)
+	set(src_imgui ${src_imgui} libs/imgui/backends/imgui_impl_vulkan.cpp)
+endif()
+
 else()
 set(src_imgui sys/sys_imgui.h)
 endif()

@@ -789,28 +789,37 @@ void RB_CreateSingleDrawInteractions(const drawSurf_t *surf, void (*DrawInteract
     if (surf->space != backEnd.currentSpace)
     {
         backEnd.currentSpace = surf->space;
-        qglLoadMatrixf(surf->space->modelViewMatrix);
+        if (!glConfig.isVulkan)
+        {
+            qglLoadMatrixf(surf->space->modelViewMatrix);
+        }
     }
 
     // change the scissor if needed
     if (r_useScissor.GetBool() && !backEnd.currentScissor.Equals(surf->scissorRect))
     {
         backEnd.currentScissor = surf->scissorRect;
-        qglScissor(backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
-                   backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
-                   backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
-                   backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1);
+        if (!glConfig.isVulkan)
+        {
+            qglScissor(backEnd.viewDef->viewport.x1 + backEnd.currentScissor.x1,
+                       backEnd.viewDef->viewport.y1 + backEnd.currentScissor.y1,
+                       backEnd.currentScissor.x2 + 1 - backEnd.currentScissor.x1,
+                       backEnd.currentScissor.y2 + 1 - backEnd.currentScissor.y1);
+        }
     }
 
     // hack depth range if needed
-    if (surf->space->weaponDepthHack)
+    if (!glConfig.isVulkan)
     {
-        RB_EnterWeaponDepthHack();
-    }
+        if (surf->space->weaponDepthHack)
+        {
+            RB_EnterWeaponDepthHack();
+        }
 
-    if (surf->space->modelDepthHack)
-    {
-        RB_EnterModelDepthHack(surf->space->modelDepthHack);
+        if (surf->space->modelDepthHack)
+        {
+            RB_EnterModelDepthHack(surf->space->modelDepthHack);
+        }
     }
 
     inter.surf = surf;
@@ -940,7 +949,7 @@ void RB_CreateSingleDrawInteractions(const drawSurf_t *surf, void (*DrawInteract
     }
 
     // unhack depth range if needed
-    if (surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f)
+    if (!glConfig.isVulkan && (surf->space->weaponDepthHack || surf->space->modelDepthHack != 0.0f))
     {
         RB_LeaveDepthHack();
     }

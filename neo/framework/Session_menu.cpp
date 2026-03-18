@@ -64,6 +64,10 @@ idSessionLocal::StartMainMenu
 */
 void idSessionLocal::StartMenu(bool playIntro)
 {
+    common->Printf("Starting Menu\n");
+    fflush(NULL);
+    Sleep(10);
+
     if (guiActive == guiMainMenu)
     {
         return;
@@ -74,18 +78,31 @@ void idSessionLocal::StartMenu(bool playIntro)
         // if we're playing a demo, esc kills it
         UnloadMap();
     }
+    common->Printf("Pausing audio\n");
+    fflush(NULL);
+    Sleep(10);
 
     // pause the game sound world
     if (sw != NULL && !sw->IsPaused())
     {
         sw->Pause();
     }
+    common->Printf("Playing sounds\n");
+    fflush(NULL);
+    Sleep(10);
 
     // start playing the menu sounds
     soundSystem->SetPlayingSoundWorld(menuSoundWorld);
+    common->Printf("Activating GUI\n");
+    fflush(NULL);
+    Sleep(10);
 
     SetGUI(guiMainMenu, NULL);
     guiMainMenu->HandleNamedEvent(playIntro ? "playIntro" : "noIntro");
+
+    common->Printf("Trying to set D3xp\n");
+    fflush(NULL);
+    Sleep(10);
 
     if (fileSystem->HasD3XP())
     {
@@ -97,6 +114,9 @@ void idSessionLocal::StartMenu(bool playIntro)
     }
 
     console->Close();
+    common->Printf("Completed starting Menu\n");
+    fflush(NULL);
+    Sleep(10);
 }
 
 /*
