@@ -50,7 +50,7 @@ struct VkInteractionUBO
     float screenWidth;  // framebuffer width  (for shadow mask UV)
     float screenHeight; // framebuffer height (for shadow mask UV)
     int useShadowMask;  // 1 when RT shadow mask is valid this frame
-    float _pad;
+    float lightScale;   // backEnd.overBright — final color multiplier before gamma
 };
 // Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE = 384.
 
