@@ -989,7 +989,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         }
     }
     if (!haveVerts)
-        return;
+        return VK_NULL_HANDLE;
 
     // Index count: Z-pass external uses silhouette quads only (no caps).
     // Z-fail internal uses the full geometry including caps.
