@@ -699,9 +699,13 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
-            // Select (or lazily create) a pipeline matching the exact GLS blend state.
-            extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits);
-            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits);
+            // Select (or lazily create) a pipeline matching the blend state.
+            // 3D world surfaces (GLS_DEPTHFUNC_ALWAYS not set) need depth testing so
+            // they respect the depth prepass and don't render through occluders or from
+            // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
+            extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
+            const bool needDepth = !(pStage->drawStateBits & GLS_DEPTHFUNC_ALWAYS);
+            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits, needDepth);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
@@ -1733,11 +1737,13 @@ void VK_RB_DrawView(const void *data)
     //   2. Interactions — per-light Phong shading with stencil shadow volumes
     //   3. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
     //   4. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
-    VK_RB_FillDepthBuffer(cmdBuf);
+    if (!r_skipDepthPrepass.GetBool())
+        VK_RB_FillDepthBuffer(cmdBuf);
 
     VK_RB_DrawInteractions(cmdBuf);
 
-    VK_RB_DrawShaderPasses(cmdBuf);
+    if (!r_skipAmbient.GetBool())
+        VK_RB_DrawShaderPasses(cmdBuf);
 
     VK_RB_FogAllLights(cmdBuf);
 

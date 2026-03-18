@@ -364,6 +364,14 @@ static VkPipeline VK_CreateShadowPipeline(VkPipelineLayout layout)
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthClampEnable = VK_TRUE; // needed for infinite projection
     rasterizer.lineWidth = 1.0f;
+    // Positive bias pushes shadow geometry z slightly farther than the depth prepass value.
+    // Near cap fragment z = z_true+bias; prepass stored z = z_true.
+    // (z_true+bias) < z_true = FALSE → LESS depth test fails → depthFailOp=DECREMENT_AND_WRAP fires.
+    // Without this, 1-ULP SPIR-V differences between shadow.vert and gui.vert occasionally let
+    // near caps pass LESS, applying passOp=KEEP instead, leaving stencil at 129 → dark triangles.
+    rasterizer.depthBiasEnable         = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 2.0f;
+    rasterizer.depthBiasSlopeFactor    = 0.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -756,7 +764,8 @@ static int                  s_blendCacheCount = 0;
 // blendEnable=false overrides all blend factor args (fully opaque).
 static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnable,
                                           VkBlendFactor srcColor, VkBlendFactor dstColor,
-                                          VkBlendFactor srcAlpha, VkBlendFactor dstAlpha)
+                                          VkBlendFactor srcAlpha, VkBlendFactor dstAlpha,
+                                          bool depthTest = false)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
@@ -809,20 +818,42 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     VkPipelineRasterizationStateCreateInfo rasterizer = {};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode = VK_CULL_MODE_NONE; // GUI surfaces can have any winding
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
+    if (depthTest)
+    {
+        // 3D world surface: back-face cull with the Y-flip winding convention
+        // (same as the interaction and depth-prepass pipelines).
+        rasterizer.cullMode  = VK_CULL_MODE_BACK_BIT;
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    }
+    else
+    {
+        // 2D GUI overlay: no culling, counter-clockwise (screen-space quads)
+        rasterizer.cullMode  = VK_CULL_MODE_NONE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    }
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // GUI: depth test disabled (2D overlay drawn in submission order)
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable = VK_FALSE;
-    depthStencil.depthWriteEnable = VK_FALSE;
     depthStencil.stencilTestEnable = VK_FALSE;
+    if (depthTest)
+    {
+        // 3D world surface: test against depth prepass, don't write depth
+        // (transparent/unlit surfaces render after opaque interactions).
+        depthStencil.depthTestEnable  = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_FALSE;
+        depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
+    }
+    else
+    {
+        // 2D GUI overlay: depth test disabled, drawn in submission order.
+        depthStencil.depthTestEnable  = VK_FALSE;
+        depthStencil.depthWriteEnable = VK_FALSE;
+    }
 
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask =
@@ -885,20 +916,24 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
 }
 
 // Look up or create a GUI pipeline matching the given drawStateBits blend state.
-// The two pre-built pipelines (opaque / alpha) are returned directly.
-// Any other blend combination is built on demand and cached for reuse.
-VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits)
+// depthTest=true is used for 3D world surfaces (GLS_DEPTHFUNC_ALWAYS not set);
+// depthTest=false for 2D GUI overlays (GLS_DEPTHFUNC_ALWAYS set, or explicit 2D call).
+// The two pre-built pipelines (opaque / alpha) are for 2D only; 3D variants are cached separately.
+VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
 {
-    const uint32_t key = (uint32_t)(drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+    const uint32_t blendBits = (uint32_t)(drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+    // Pack depth flag into the high bit of the key so 2D and 3D caches are separate.
+    const uint32_t key = blendBits | (depthTest ? 0x80000000u : 0u);
 
-    // Opaque (src=ONE, dst=ZERO — both bits are 0)
-    if (key == 0u)
-        return vkPipes.guiOpaquePipeline;
-
-    // Pre-built src-alpha blend
-    const uint32_t alphaKey = (uint32_t)(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
-    if (key == alphaKey)
-        return vkPipes.guiAlphaPipeline;
+    // Fast path: pre-built 2D pipelines (no depth test)
+    if (!depthTest)
+    {
+        if (blendBits == 0u)
+            return vkPipes.guiOpaquePipeline;
+        const uint32_t alphaKey = (uint32_t)(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
+        if (blendBits == alphaKey)
+            return vkPipes.guiAlphaPipeline;
+    }
 
     // Search cache
     for (int i = 0; i < s_blendCacheCount; i++)
@@ -916,7 +951,8 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits)
 
     VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
     VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
-    VkPipeline    p   = VK_CreateGuiPipelineEx(vkPipes.guiLayout, true, src, dst, src, dst);
+    bool blend = (blendBits != 0u);
+    VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest);
     if (p == VK_NULL_HANDLE)
         return vkPipes.guiAlphaPipeline;
 
