@@ -981,6 +981,18 @@ static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 
+// Window minimized state.
+// Set by VK_SetWindowMinimized() (called from SDL event handlers) and also
+// auto-detected in VK_RecreateSwapchain when the surface extent is 0x0.
+// When true, VK_RB_DrawView skips the frame entirely to avoid blocking
+// indefinitely inside vkAcquireNextImageKHR.
+static bool s_windowMinimized = false;
+
+void VK_SetWindowMinimized(bool minimized)
+{
+    s_windowMinimized = minimized;
+}
+
 // Screenshot readback state.
 // VK_RequestReadback() is called just before rendering a screenshot frame.
 // VK_RB_SwapBuffers() appends a copy-to-buffer command, waits for the fence,
@@ -996,6 +1008,15 @@ void VK_RB_DrawView(const void *data)
 {
     if (!vk.isInitialized || !vkPipes.isValid)
         return;
+
+    // When the window is minimized the presentation engine holds all swapchain
+    // images.  vkAcquireNextImageKHR with UINT64_MAX would block forever.
+    // Skip the frame; SDL_WINDOWEVENT_RESTORED will clear this flag.
+    if (s_windowMinimized)
+    {
+        SDL_Delay(10); // yield so we don't spin at 100% CPU while iconified
+        return;
+    }
 
     const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)data;
     backEnd.viewDef = cmd->viewDef;
