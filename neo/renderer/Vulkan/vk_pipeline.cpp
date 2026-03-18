@@ -227,14 +227,6 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     // OpenGL CCW front faces become CW after Y-flip, so we tell Vulkan CW = front.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
-    // Depth bias: pull interaction fragments slightly toward the camera so that LEQUAL
-    // depth test reliably passes against the depth-prepass values (which used LESS).
-    // Without this, sub-ULP rasterization differences at triangle edges cause the
-    // interaction pass to compute depth just barely > prepass, producing dark wireframe
-    // artifacts along all mesh triangle boundaries.
-    rasterizer.depthBiasEnable         = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = -1.0f;
-    rasterizer.depthBiasSlopeFactor    = -1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -428,6 +420,125 @@ static VkPipeline VK_CreateShadowPipeline(VkPipelineLayout layout)
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
     pipelineInfo.renderPass = vk.renderPass;
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
+
+    vkDestroyShaderModule(vk.device, vertModule, NULL);
+    vkDestroyShaderModule(vk.device, fragModule, NULL);
+    return pipeline;
+}
+
+// ---------------------------------------------------------------------------
+// VK_CreateShadowPipelineZPass
+// Z-pass (depth-PASS) stencil shadow pipeline for the common case where the
+// camera is outside the shadow volume.  Only silhouette quads are drawn (no
+// front/back caps), so there is no co-planar depth precision issue.
+// Front faces: passOp = INCREMENT   (shadow volume in front → lit surface behind → in shadow)
+// Back  faces: passOp = DECREMENT   (back side of volume → cancels for pixels outside)
+// Both faces:  depthFailOp = KEEP   (shadow volume behind scene → not in shadow)
+// ---------------------------------------------------------------------------
+
+static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout)
+{
+    VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/shadow.vert.spv");
+    VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/shadow.frag.spv");
+    if (!vertModule || !fragModule)
+    {
+        if (vertModule) vkDestroyShaderModule(vk.device, vertModule, NULL);
+        if (fragModule) vkDestroyShaderModule(vk.device, fragModule, NULL);
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_VERTEX_BIT,   vertModule, "main", NULL};
+    stages[1] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, NULL, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragModule, "main", NULL};
+
+    VkVertexInputBindingDescription    binding = {0, sizeof(float) * 4, VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription  attr    = {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0};
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount   = 1;
+    vertexInput.pVertexBindingDescriptions      = &binding;
+    vertexInput.vertexAttributeDescriptionCount = 1;
+    vertexInput.pVertexAttributeDescriptions    = &attr;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0, 1};
+    VkRect2D   scissor  = {{0, 0}, vk.swapchainExtent};
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1; viewportState.pViewports = &viewport;
+    viewportState.scissorCount  = 1; viewportState.pScissors  = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode    = VK_CULL_MODE_NONE; // two-sided: both faces contribute
+    rasterizer.frontFace   = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth   = 1.0f;
+    // No depthClamp needed for Z-pass (no back caps at infinity)
+
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // Z-pass: stencil modifies on depth PASS, not fail.
+    // Front faces increment, back faces decrement (LEQUAL depth test for robustness).
+    VkStencilOpState front = {};
+    front.failOp      = VK_STENCIL_OP_KEEP;
+    front.passOp      = VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    front.depthFailOp = VK_STENCIL_OP_KEEP;
+    front.compareOp   = VK_COMPARE_OP_ALWAYS;
+    front.compareMask = 0xFF;
+    front.writeMask   = 0xFF;
+    front.reference   = 0;
+
+    VkStencilOpState back = front;
+    back.passOp = VK_STENCIL_OP_DECREMENT_AND_WRAP;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType             = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable   = VK_TRUE;
+    depthStencil.depthWriteEnable  = VK_FALSE;
+    depthStencil.depthCompareOp    = VK_COMPARE_OP_LESS_OR_EQUAL; // LEQUAL for precision robustness
+    depthStencil.stencilTestEnable = VK_TRUE;
+    depthStencil.front             = front;
+    depthStencil.back              = back;
+
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.colorWriteMask = 0; // stencil-only
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 1;
+    blendState.pAttachments    = &colorBlend;
+
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates    = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 2;
+    pipelineInfo.pStages             = stages;
+    pipelineInfo.pVertexInputState   = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState   = &multisampling;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pColorBlendState    = &blendState;
+    pipelineInfo.pDynamicState       = &dynamicState;
+    pipelineInfo.layout              = layout;
+    pipelineInfo.renderPass          = vk.renderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -1061,7 +1172,8 @@ void VK_InitPipelines(void)
         layoutInfo.pSetLayouts = &vkPipes.shadowDescLayout;
         VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.shadowLayout));
     }
-    vkPipes.shadowPipeline = VK_CreateShadowPipeline(vkPipes.shadowLayout);
+    vkPipes.shadowPipeline       = VK_CreateShadowPipeline(vkPipes.shadowLayout);       // Z-fail (camera inside shadow)
+    vkPipes.shadowPipelineZPass  = VK_CreateShadowPipelineZPass(vkPipes.shadowLayout);  // Z-pass (camera outside shadow)
 
     // --- Depth prepass pipeline (reuses guiLayout; no separate desc layout needed) ---
     // Must be created after guiLayout is ready (below), so we defer to after GUI init.
@@ -1130,12 +1242,17 @@ void VK_InitPipelines(void)
         VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkPipes.descPools[fi]));
     }
 
-    vkPipes.isValid = (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipeline != VK_NULL_HANDLE);
+    vkPipes.isValid = (vkPipes.interactionPipeline != VK_NULL_HANDLE &&
+                       vkPipes.shadowPipeline     != VK_NULL_HANDLE &&
+                       vkPipes.shadowPipelineZPass != VK_NULL_HANDLE);
 
-    common->Printf("VK: Pipelines initialized (interaction=%s, shadow=%s, depth=%s, gui=%s/%s)\n",
-                   vkPipes.interactionPipeline ? "OK" : "FAIL", vkPipes.shadowPipeline ? "OK" : "FAIL",
-                   vkPipes.depthPipeline ? "OK" : "FAIL",
-                   vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL");
+    common->Printf("VK: Pipelines initialized (interaction=%s, shadow-zfail=%s, shadow-zpass=%s, depth=%s, gui=%s/%s)\n",
+                   vkPipes.interactionPipeline  ? "OK" : "FAIL",
+                   vkPipes.shadowPipeline       ? "OK" : "FAIL",
+                   vkPipes.shadowPipelineZPass  ? "OK" : "FAIL",
+                   vkPipes.depthPipeline        ? "OK" : "FAIL",
+                   vkPipes.guiOpaquePipeline    ? "OK" : "FAIL",
+                   vkPipes.guiAlphaPipeline     ? "OK" : "FAIL");
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,6 +1279,8 @@ void VK_ShutdownPipelines(void)
         vkDestroyDescriptorSetLayout(vk.device, vkPipes.interactionDescLayout, NULL);
     if (vkPipes.shadowPipeline)
         vkDestroyPipeline(vk.device, vkPipes.shadowPipeline, NULL);
+    if (vkPipes.shadowPipelineZPass)
+        vkDestroyPipeline(vk.device, vkPipes.shadowPipelineZPass, NULL);
     if (vkPipes.shadowLayout)
         vkDestroyPipelineLayout(vk.device, vkPipes.shadowLayout, NULL);
     if (vkPipes.shadowDescLayout)
