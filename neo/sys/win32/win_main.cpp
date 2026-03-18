@@ -1373,7 +1373,7 @@ int SDL_main(int argc, char *argv[])
         }
 
         // Give the OS a little time to recuperate.
-
+        Sleep(10);
 #endif
 
         Win_Frame();

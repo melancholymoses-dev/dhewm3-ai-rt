@@ -465,12 +465,15 @@ static VkDescriptorSetLayout VK_CreateGuiDescLayout(void)
 // Writes depth without touching colour; used before the interaction pass so the
 // depth buffer is fully populated before expensive per-light shading runs.
 // Reuses the GUI pipeline layout (binding 0 = GuiUBO with MVP).
+// fragSpv selects the fragment shader:
+//   "glprogs/glsl/gui.frag.spv"        — opaque (no texture sample)
+//   "glprogs/glsl/depth_clip.frag.spv" — alpha-clip (MC_PERFORATED)
 // ---------------------------------------------------------------------------
 
-static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
+static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *fragSpv)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
-    VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
+    VkShaderModule fragModule = VK_LoadSPIRV(fragSpv);
     if (!vertModule || !fragModule)
     {
         if (vertModule) vkDestroyShaderModule(vk.device, vertModule, NULL);
@@ -570,6 +573,11 @@ static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
     vkDestroyShaderModule(vk.device, vertModule, NULL);
     vkDestroyShaderModule(vk.device, fragModule, NULL);
     return pipeline;
+}
+
+static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
+{
+    return VK_CreateDepthPipelineEx(layout, "glprogs/glsl/gui.frag.spv");
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,8 +1070,9 @@ void VK_InitPipelines(void)
     vkPipes.guiOpaquePipeline = VK_CreateGuiPipeline(vkPipes.guiLayout, false);
     vkPipes.guiAlphaPipeline  = VK_CreateGuiPipeline(vkPipes.guiLayout, true);
 
-    // --- Depth prepass pipeline (created after guiLayout is ready) ---
-    vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
+    // --- Depth prepass pipelines (created after guiLayout is ready) ---
+    vkPipes.depthPipeline     = VK_CreateDepthPipeline(vkPipes.guiLayout);
+    vkPipes.depthClipPipeline = VK_CreateDepthPipelineEx(vkPipes.guiLayout, "glprogs/glsl/depth_clip.frag.spv");
 
     // --- Fog / blend-light pipelines ---
     vkPipes.fogDescLayout = VK_CreateFogDescLayout();
@@ -1151,6 +1160,8 @@ void VK_ShutdownPipelines(void)
         vkDestroyDescriptorSetLayout(vk.device, vkPipes.shadowDescLayout, NULL);
     if (vkPipes.depthPipeline)
         vkDestroyPipeline(vk.device, vkPipes.depthPipeline, NULL);
+    if (vkPipes.depthClipPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.depthClipPipeline, NULL);
     if (vkPipes.guiOpaquePipeline)
         vkDestroyPipeline(vk.device, vkPipes.guiOpaquePipeline, NULL);
     if (vkPipes.guiAlphaPipeline)

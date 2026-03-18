@@ -659,6 +659,7 @@ if(DHEWM3_VULKAN)
 		renderer/glsl/fog.frag
 		renderer/glsl/blendlight.vert
 		renderer/glsl/blendlight.frag
+		renderer/glsl/depth_clip.frag
 	)
 	if(DHEWM3_RAYTRACING)
 		list(APPEND GLSL_SHADER_SOURCES
