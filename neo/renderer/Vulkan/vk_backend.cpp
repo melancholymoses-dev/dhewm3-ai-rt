@@ -926,21 +926,35 @@ struct VkBlendUBO
 
 // ---------------------------------------------------------------------------
 // VK_RB_DrawShadowSurface
-// Records one shadow volume draw (Carmack's Reverse, depth-fail stencil).
-// Uploads shadow vertices from tri->shadowCache (vec4 idVec4 positions),
-// writes the shadow UBO (light origin + MVP), and issues vkCmdDrawIndexed.
+// Records one shadow volume draw.  Selects between two stencil methods:
+//   - Z-pass (shadowPipelineZPass): camera outside shadow volume.
+//     Uses only silhouette quads (numShadowIndexesNoCaps) — avoids co-planar
+//     front-cap depth precision issues that cause triangle-edge dark artifacts.
+//   - Z-fail (shadowPipeline, Carmack's Reverse): camera inside shadow volume.
+//     Must draw the full geometry including caps.
+// The method is chosen per-surface from DSF_VIEW_INSIDE_SHADOW in surf->dsFlags.
+// Returns the VkPipeline that was bound (so the caller can rebind if needed).
 // lightScissor: the current per-light scissor rect (already set on the command buffer).
-// If r_useScissor is on, tightens the scissor to surf->scissorRect before drawing and
-// restores lightScissor afterwards.
 // ---------------------------------------------------------------------------
 
-static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf, const VkRect2D &lightScissor)
+static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf, const VkRect2D &lightScissor)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
 
     const srfTriangles_t *tri = surf->geo;
     if (!tri || !tri->shadowCache || tri->numIndexes <= 0)
-        return;
+        return VK_NULL_HANDLE;
+
+    // Choose Z-pass (external) vs Z-fail (internal/Carmack's Reverse).
+    // When the camera is outside the shadow volume, we only need the silhouette
+    // quads (no caps).  This avoids co-planar depth test ambiguity on front caps
+    // (front caps are the same polygons as the scene geometry, causing inconsistent
+    // stencil at triangle edges when using Z-fail).
+    const bool external = !(surf->dsFlags & DSF_VIEW_INSIDE_SHADOW);
+    VkPipeline shadowPipe = external ? vkPipes.shadowPipelineZPass : vkPipes.shadowPipeline;
+    if (!shadowPipe)
+        return VK_NULL_HANDLE;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipe);
 
     // Shadow vertices: shadowCache_t = idVec4 (16 bytes each)
     VkBuffer vertBuf;
@@ -977,12 +991,18 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
     if (!haveVerts)
         return;
 
+    // Index count: Z-pass external uses silhouette quads only (no caps).
+    // Z-fail internal uses the full geometry including caps.
+    int numDrawIndexes = external ? tri->numShadowIndexesNoCaps : tri->numIndexes;
+    if (numDrawIndexes <= 0)
+        numDrawIndexes = tri->numIndexes; // fallback if noCaps count not populated
+
     // Index data (tri->indexes, same field as regular geometry)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    VkDeviceSize idxSize = (VkDeviceSize)tri->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxSize   = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
     VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
     if (idxOffset == VK_WHOLE_SIZE)
-        return;
+        return VK_NULL_HANDLE;
     memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
 
     // Light origin in model local space
@@ -1011,7 +1031,7 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
 
     VkDescriptorSet ds;
     if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-        return;
+        return VK_NULL_HANDLE;
 
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = uboRings[vk.currentFrame].buffer;
@@ -1071,11 +1091,13 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
         }
     }
 
-    vkCmdDrawIndexed(cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, (uint32_t)numDrawIndexes, 1, 0, 0, 0);
 
     // Restore light scissor if we tightened it.
     if (scissorTightened)
         vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+
+    return shadowPipe;
 }
 
 // ---------------------------------------------------------------------------
@@ -1166,27 +1188,26 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // BEFORE local shadows so they are not incorrectly darkened by them.
 
         // Step 1: global shadow volumes
-        if (useStencilShadows && vkPipes.shadowPipeline && vLight->globalShadows)
+        // VK_RB_DrawShadowSurface binds the correct pipeline (Z-pass or Z-fail) per surface.
+        if (useStencilShadows && vLight->globalShadows)
         {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
             for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s, lightScissor);
         }
 
-        // Step 2: local interactions (stencil still untouched by local shadows)
+        // Step 2: local interactions — rebind interaction pipeline after shadow draws.
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
         for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
 
         // Step 3: local shadow volumes
-        if (useStencilShadows && vkPipes.shadowPipeline && vLight->localShadows)
+        if (useStencilShadows && vLight->localShadows)
         {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s, lightScissor);
         }
 
-        // Step 4: global interactions (shadowed by both global and local shadow volumes)
+        // Step 4: global interactions — rebind interaction pipeline after shadow draws.
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
         for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
