@@ -191,6 +191,23 @@ void VK_CreateRenderPass(void)
     rpInfo.pDependencies = &dependency;
 
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPass));
+
+    // --- Resume render pass (LOAD variant) ---
+    // Used when the render pass is reopened after an RT dispatch so that prior
+    // colour and depth/stencil contents are preserved (not cleared again).
+    // The framebuffers are compatible with both passes (same attachment formats).
+    colorAttachment.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // layout after CLEAR pass ends
+    // finalLayout stays PRESENT_SRC_KHR
+
+    depthAttachment.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription resumeAttachments[2] = {colorAttachment, depthAttachment};
+    rpInfo.pAttachments = resumeAttachments;
+
+    VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPassResume));
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +326,7 @@ void VK_DestroySwapchain(void)
     vkDestroyImage(vk.device, vk.depthImage, NULL);
     vkFreeMemory(vk.device, vk.depthMemory, NULL);
     vkDestroyRenderPass(vk.device, vk.renderPass, NULL);
+    vkDestroyRenderPass(vk.device, vk.renderPassResume, NULL);
     vkDestroySwapchainKHR(vk.device, vk.swapchain, NULL);
 }
 

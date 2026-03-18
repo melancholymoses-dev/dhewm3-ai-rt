@@ -456,7 +456,9 @@ struct VkGuiUBO
     float modelViewProjection[16]; // 64 bytes
     float colorModulate[4];        // 16 bytes
     float colorAdd[4];             // 16 bytes
-}; // 96 bytes total
+    float texMatrixS[4];           // 16 bytes — row 0 of 2D affine UV transform
+    float texMatrixT[4];           // 16 bytes — row 1
+}; // 128 bytes total
 
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
@@ -599,6 +601,31 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             memcpy(guiUbo->colorModulate, colorModulate, 16);
             memcpy(guiUbo->colorAdd, colorAdd, 16);
 
+            // Texture coordinate transform
+            if (pStage->texture.hasMatrix)
+            {
+                const textureStage_t &tex = pStage->texture;
+                float s2 = regs[tex.matrix[0][2]];
+                if (s2 < -40.f || s2 > 40.f) s2 -= (float)(int)s2;
+                float t2 = regs[tex.matrix[1][2]];
+                if (t2 < -40.f || t2 > 40.f) t2 -= (float)(int)t2;
+                guiUbo->texMatrixS[0] = regs[tex.matrix[0][0]];
+                guiUbo->texMatrixS[1] = regs[tex.matrix[0][1]];
+                guiUbo->texMatrixS[2] = 0.f;
+                guiUbo->texMatrixS[3] = s2;
+                guiUbo->texMatrixT[0] = regs[tex.matrix[1][0]];
+                guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
+                guiUbo->texMatrixT[2] = 0.f;
+                guiUbo->texMatrixT[3] = t2;
+            }
+            else
+            {
+                guiUbo->texMatrixS[0] = 1.f; guiUbo->texMatrixS[1] = 0.f;
+                guiUbo->texMatrixS[2] = 0.f; guiUbo->texMatrixS[3] = 0.f;
+                guiUbo->texMatrixT[0] = 0.f; guiUbo->texMatrixT[1] = 1.f;
+                guiUbo->texMatrixT[2] = 0.f; guiUbo->texMatrixT[3] = 0.f;
+            }
+
             // Allocate GUI descriptor set
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -734,6 +761,9 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
             ubo->colorAdd[0]      = ubo->colorAdd[1]      = ubo->colorAdd[2]      = 0.f;
             ubo->colorAdd[3]      = alphaThreshold;
+            // Identity texture matrix — depth prepass doesn't need UV animation
+            ubo->texMatrixS[0] = 1.f; ubo->texMatrixS[1] = 0.f; ubo->texMatrixS[2] = 0.f; ubo->texMatrixS[3] = 0.f;
+            ubo->texMatrixT[0] = 0.f; ubo->texMatrixT[1] = 1.f; ubo->texMatrixT[2] = 0.f; ubo->texMatrixT[3] = 0.f;
 
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -848,9 +878,13 @@ struct VkBlendUBO
 // Records one shadow volume draw (Carmack's Reverse, depth-fail stencil).
 // Uploads shadow vertices from tri->shadowCache (vec4 idVec4 positions),
 // writes the shadow UBO (light origin + MVP), and issues vkCmdDrawIndexed.
+// lightScissor: the current per-light scissor rect (already set on the command buffer).
+// If r_useScissor is on, tightens the scissor to surf->scissorRect before drawing and
+// restores lightScissor afterwards.
 // ---------------------------------------------------------------------------
 
-static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf)
+static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
+                                    const VkRect2D &lightScissor)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
 
@@ -946,7 +980,54 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf)
                             vkPipes.shadowLayout, 0, 1, &ds, 0, NULL);
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
     vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+
+    // Tighten scissor to surf->scissorRect if it is smaller than the light scissor.
+    bool scissorTightened = false;
+    if (r_useScissor.GetBool() && !surf->scissorRect.IsEmpty())
+    {
+        int h = (int)vk.swapchainExtent.height;
+        int absX1 = backEnd.viewDef->viewport.x1 + surf->scissorRect.x1;
+        int absY1 = backEnd.viewDef->viewport.y1 + surf->scissorRect.y1;
+        int absY2 = backEnd.viewDef->viewport.y1 + surf->scissorRect.y2;
+
+        VkRect2D surfScissor;
+        surfScissor.offset.x      = absX1;
+        surfScissor.offset.y      = h - 1 - absY2;
+        surfScissor.extent.width  = surf->scissorRect.x2 - surf->scissorRect.x1 + 1;
+        surfScissor.extent.height = absY2 - absY1 + 1;
+
+        // Intersect with the light scissor.
+        int sx1 = idMath::ClampInt(surfScissor.offset.x, lightScissor.offset.x,
+                                   (int)(lightScissor.offset.x + lightScissor.extent.width));
+        int sy1 = idMath::ClampInt(surfScissor.offset.y, lightScissor.offset.y,
+                                   (int)(lightScissor.offset.y + lightScissor.extent.height));
+        int sx2 = idMath::ClampInt((int)(surfScissor.offset.x + surfScissor.extent.width),
+                                   lightScissor.offset.x,
+                                   (int)(lightScissor.offset.x + lightScissor.extent.width));
+        int sy2 = idMath::ClampInt((int)(surfScissor.offset.y + surfScissor.extent.height),
+                                   lightScissor.offset.y,
+                                   (int)(lightScissor.offset.y + lightScissor.extent.height));
+
+        if (sx2 > sx1 && sy2 > sy1)
+        {
+            VkRect2D clipped = {{sx1, sy1}, {(uint32_t)(sx2 - sx1), (uint32_t)(sy2 - sy1)}};
+            // Only switch scissor if it's actually tighter.
+            if (clipped.offset.x != (int32_t)lightScissor.offset.x ||
+                clipped.offset.y != (int32_t)lightScissor.offset.y ||
+                clipped.extent.width  != lightScissor.extent.width  ||
+                clipped.extent.height != lightScissor.extent.height)
+            {
+                vkCmdSetScissor(cmd, 0, 1, &clipped);
+                scissorTightened = true;
+            }
+        }
+    }
+
     vkCmdDrawIndexed(cmd, (uint32_t)tri->numIndexes, 1, 0, 0, 0);
+
+    // Restore light scissor if we tightened it.
+    if (scissorTightened)
+        vkCmdSetScissor(cmd, 0, 1, &lightScissor);
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,7 +1122,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
             for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
-                VK_RB_DrawShadowSurface(cmd, s);
+                VK_RB_DrawShadowSurface(cmd, s, lightScissor);
         }
 
         // Step 2: local interactions (stencil still untouched by local shadows)
@@ -1054,7 +1135,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
-                VK_RB_DrawShadowSurface(cmd, s);
+                VK_RB_DrawShadowSurface(cmd, s, lightScissor);
         }
 
         // Step 4: global interactions (shadowed by both global and local shadow volumes)
@@ -1492,6 +1573,10 @@ void VK_RB_DrawView(const void *data)
         s_frameImageIndex  = imageIndex;
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
 
+        // Drain deferred image deletions queued during the previous use of this frame slot.
+        extern void VK_Image_DrainGarbage(uint32_t frameIdx);
+        VK_Image_DrainGarbage(vk.currentFrame);
+
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
         dataRings[vk.currentFrame].offset = 0;
@@ -1547,8 +1632,12 @@ void VK_RB_DrawView(const void *data)
             vkCmdEndRenderPass(cmdBuf);
             VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
             VK_RT_DispatchShadowRays(cmdBuf, backEnd.viewDef);
-            // Reopen render pass; TODO: use a LOAD render pass variant to preserve prior draws
-            vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+            // Reopen with the LOAD render pass so prior colour/depth is preserved.
+            VkRenderPassBeginInfo rpResume = rpBegin;
+            rpResume.renderPass     = vk.renderPassResume;
+            rpResume.clearValueCount = 0;
+            rpResume.pClearValues   = NULL;
+            vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
             vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
         }
