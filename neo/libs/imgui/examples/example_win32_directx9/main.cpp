@@ -112,7 +112,7 @@ int main(int, char **)
             HRESULT hr = g_pd3dDevice->TestCooperativeLevel();
             if (hr == D3DERR_DEVICELOST)
             {
-                ::continue;
+                continue;
             }
             if (hr == D3DERR_DEVICENOTRESET)
                 ResetDevice();
