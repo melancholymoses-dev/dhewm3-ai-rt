@@ -1050,9 +1050,11 @@ void idRenderSystemLocal::CaptureRenderToFile(const char *fileName, bool fixAlph
         return;
     }
 
-    // Vulkan has no qglReadBuffer/qglReadPixels — pixel readback not yet implemented.
+    // Vulkan render-to-file capture is not implemented via this path; use the Vulkan screenshot
+    // readback mechanism instead. Emit a warning so callers know this is unsupported.
     if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
     {
+        common->Printf("WARNING: CaptureRenderToFile is not supported for Vulkan backend (r_backend \"vulkan\").\n");
         return;
     }
 
