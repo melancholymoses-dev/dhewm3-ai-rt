@@ -657,11 +657,13 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         return;
 
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+    extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.depthPipeline);
-
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+
+    // Bind the opaque depth pipeline up front; switch to depthClipPipeline per-draw for MC_PERFORATED.
+    VkPipeline activePipeline = VK_NULL_HANDLE;
 
     for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
     {
@@ -669,9 +671,14 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         if (!surf || !surf->material || !surf->geo)
             continue;
 
-        // Only opaque surfaces contribute to the depth prepass.
-        // MC_PERFORATED (alpha-tested) and MC_TRANSLUCENT are skipped.
-        if (surf->material->Coverage() != MC_OPAQUE)
+        const idMaterial *mat = surf->material;
+        const materialCoverage_t coverage = mat->Coverage();
+
+        // Translucent surfaces never write depth.
+        if (coverage == MC_TRANSLUCENT)
+            continue;
+        // Only opaque and alpha-tested surfaces.
+        if (coverage != MC_OPAQUE && coverage != MC_PERFORATED)
             continue;
 
         const srfTriangles_t *geo = surf->geo;
@@ -712,57 +719,95 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             continue;
         memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
 
-        // --- UBO (GuiUBO layout: MVP + colorModulate + colorAdd) ---
         float mvp[16];
         VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
 
-        uint32_t  uboOffset = VK_AllocUBO();
-        VkGuiUBO *ubo       = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
-        memcpy(ubo->modelViewProjection, mvp, 64);
-        ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
-        ubo->colorAdd[0]      = ubo->colorAdd[1]      = ubo->colorAdd[2]      = ubo->colorAdd[3]      = 0.f;
+        // Helper lambda to allocate a descriptor set and record one depth draw.
+        // imgInfo: texture to bind at binding 1.
+        // alphaThreshold: value written to colorAdd[3]; 0 means no clip (opaque pipeline).
+        // useClipPipeline: selects depthClipPipeline vs depthPipeline.
+        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline)
+        {
+            uint32_t  uboOffset = VK_AllocUBO();
+            VkGuiUBO *ubo       = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+            memcpy(ubo->modelViewProjection, mvp, 64);
+            ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
+            ubo->colorAdd[0]      = ubo->colorAdd[1]      = ubo->colorAdd[2]      = 0.f;
+            ubo->colorAdd[3]      = alphaThreshold;
 
-        // --- Descriptor set (guiDescLayout: binding0=UBO, binding1=sampler dummy) ---
-        VkDescriptorSetAllocateInfo dsAlloc = {};
-        dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
-        dsAlloc.descriptorSetCount = 1;
-        dsAlloc.pSetLayouts        = &vkPipes.guiDescLayout;
+            VkDescriptorSetAllocateInfo dsAlloc = {};
+            dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+            dsAlloc.descriptorSetCount = 1;
+            dsAlloc.pSetLayouts        = &vkPipes.guiDescLayout;
 
-        VkDescriptorSet ds;
-        if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-            continue;
+            VkDescriptorSet ds;
+            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+                return;
 
-        VkDescriptorBufferInfo bufInfo = {};
-        bufInfo.buffer = uboRings[vk.currentFrame].buffer;
-        bufInfo.offset = uboOffset;
-        bufInfo.range  = sizeof(VkGuiUBO);
+            VkDescriptorBufferInfo bufInfo = {};
+            bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            bufInfo.offset = uboOffset;
+            bufInfo.range  = sizeof(VkGuiUBO);
 
-        VkDescriptorImageInfo imgInfo = {};
-        VK_Image_GetFallbackDescriptorInfo(&imgInfo); // dummy sampler — colour writes disabled
+            VkWriteDescriptorSet writes[2] = {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[0].dstSet = ds;
+            writes[0].dstBinding = 0; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1; writes[0].pBufferInfo = &bufInfo;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[1].dstSet = ds;
+            writes[1].dstBinding = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1; writes[1].pImageInfo = &imgInfo;
+            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
-        VkWriteDescriptorSet writes[2] = {};
-        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet          = ds;
-        writes[0].dstBinding      = 0;
-        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[0].descriptorCount = 1;
-        writes[0].pBufferInfo     = &bufInfo;
+            VkPipeline pipe = useClipPipeline ? vkPipes.depthClipPipeline : vkPipes.depthPipeline;
+            if (pipe != activePipeline)
+            {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+                activePipeline = pipe;
+            }
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+        };
 
-        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet          = ds;
-        writes[1].dstBinding      = 1;
-        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[1].descriptorCount = 1;
-        writes[1].pImageInfo      = &imgInfo;
+        if (coverage == MC_OPAQUE)
+        {
+            VkDescriptorImageInfo imgInfo = {};
+            VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+            drawDepthSurf(imgInfo, 0.f, false);
+        }
+        else // MC_PERFORATED
+        {
+            const float *regs = surf->shaderRegisters;
+            bool didDraw = false;
+            for (int si = 0; si < mat->GetNumStages(); si++)
+            {
+                const shaderStage_t *pStage = mat->GetStage(si);
+                if (!pStage->hasAlphaTest)
+                    continue;
+                if (!regs[pStage->conditionRegister])
+                    continue;
+                float alphaScale = regs[pStage->color.registers[3]];
+                if (alphaScale <= 0.f)
+                    continue;
 
-        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+                VkDescriptorImageInfo imgInfo = {};
+                if (!pStage->texture.image || !VK_Image_GetDescriptorInfo(pStage->texture.image, &imgInfo))
+                    VK_Image_GetFallbackDescriptorInfo(&imgInfo);
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
-        vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
-        vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+                float threshold = regs[pStage->alphaTestRegister];
+                drawDepthSurf(imgInfo, threshold, true);
+                didDraw = true;
+            }
+            // If no alpha-test stage was active, fall back to opaque depth write.
+            if (!didDraw)
+            {
+                VkDescriptorImageInfo imgInfo = {};
+                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                drawDepthSurf(imgInfo, 0.f, false);
+            }
+        }
     }
 }
 

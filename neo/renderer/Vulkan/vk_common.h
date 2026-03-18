@@ -123,7 +123,8 @@ struct vkPipelines_t
 
     VkDescriptorSetLayout depthDescLayout;
     VkPipelineLayout depthLayout;
-    VkPipeline depthPipeline;
+    VkPipeline depthPipeline;          // opaque surfaces — no texture sample
+    VkPipeline depthClipPipeline;      // MC_PERFORATED — samples diffuse, discards on alpha
 
     // GUI / unlit shader-pass pipeline (menu, HUD, console)
     VkDescriptorSetLayout guiDescLayout;
