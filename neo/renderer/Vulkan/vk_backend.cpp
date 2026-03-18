@@ -306,6 +306,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     *useSM = 0;
 #endif
 
+    // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
+    float *lightScalePtr = (float *)(useSM + 1);
+    *lightScalePtr = backEnd.overBright;
+
     // Allocate descriptor set from the current frame's pool (pool is reset each frame)
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
