@@ -123,6 +123,36 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
+// ---------------------------------------------------------------------------
+// VK_BuildSurfMVP
+// Build a model-view-projection matrix for a surface, applying weaponDepthHack
+// or modelDepthHack to the projection when the surface requires it.
+// Mirrors RB_EnterWeaponDepthHack / RB_EnterModelDepthHack from tr_render.cpp:
+//   weaponDepthHack: proj[14] *= 0.25  (compresses near range, weapon stays in front)
+//   modelDepthHack:  proj[14] -= depth  (nudges a model's z to avoid z-fighting)
+// Both hacks operate on the GL projection matrix (before Vulkan Z remap).
+// ---------------------------------------------------------------------------
+static void VK_BuildSurfMVP(const viewEntity_t *space, float mvpOut[16])
+{
+    if (space->weaponDepthHack || space->modelDepthHack != 0.0f)
+    {
+        // Start from the original GL projection, apply hack, then Vulkan-remap Z.
+        float hackProj[16];
+        memcpy(hackProj, backEnd.viewDef->projectionMatrix, 64);
+        if (space->weaponDepthHack)
+            hackProj[14] *= 0.25f;
+        else
+            hackProj[14] -= space->modelDepthHack;
+        for (int c = 0; c < 4; c++)
+            hackProj[c * 4 + 2] = 0.5f * hackProj[c * 4 + 2] + 0.5f * hackProj[c * 4 + 3];
+        VK_MultiplyMatrix4(hackProj, space->modelViewMatrix, mvpOut);
+    }
+    else
+    {
+        VK_MultiplyMatrix4(s_projVk, space->modelViewMatrix, mvpOut);
+    }
+}
+
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
 // + screenSize vec2 + useShadowMask int + pad = 356 bytes -> round to 384.
@@ -267,9 +297,9 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     memcpy(f, ca, 16);
     f += 4;
 
-    // MVP matrix
+    // MVP matrix (applies weaponDepthHack / modelDepthHack when needed)
     float mvp[16];
-    VK_MultiplyMatrix4(s_projVk, din->surf->space->modelViewMatrix, mvp);
+    VK_BuildSurfMVP(din->surf->space, mvp);
     memcpy(f, mvp, 64);
     f += 16;
 
@@ -596,7 +626,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
 
             float mvp[16];
-            VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
+            VK_BuildSurfMVP(surf->space, mvp);
 
             uint32_t uboOffset = VK_AllocUBO();
             uint8_t *uboPtr = (uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset;
@@ -751,7 +781,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
 
         float mvp[16];
-        VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
+        VK_BuildSurfMVP(surf->space, mvp);
 
         // Helper lambda to allocate a descriptor set and record one depth draw.
         // imgInfo: texture to bind at binding 1.
