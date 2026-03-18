@@ -286,6 +286,7 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.features.samplerAnisotropy = VK_TRUE;
+    features2.features.depthClamp       = VK_TRUE; // required for shadow volume back-cap clamping
 
     // Extension list: base + optional RT extensions
     const char **exts;
