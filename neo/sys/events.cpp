@@ -40,6 +40,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "framework/Session_local.h"
 #include "renderer/RenderSystem.h"
 #include "renderer/tr_local.h"
+#include "renderer/Vulkan/VKBackend.h"
 
 #include "sys/sys_public.h"
 #include "sys/sys_imgui.h"
@@ -1337,6 +1338,16 @@ sysEvent_t Sys_GetEvent()
             in_hasFocus = false;
             continue; // handle next event
 
+        case SDL_EVENT_WINDOW_MINIMIZED:
+            if (glConfig.isVulkan)
+                VK_SetWindowMinimized(true);
+            continue; // handle next event
+
+        case SDL_EVENT_WINDOW_RESTORED:
+            if (glConfig.isVulkan)
+                VK_SetWindowMinimized(false);
+            continue; // handle next event
+
         case SDL_EVENT_WINDOW_RESIZED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             GLimp_UpdateWindowSize();
@@ -1367,6 +1378,14 @@ sysEvent_t Sys_GetEvent()
                 break;
             case SDL_WINDOWEVENT_FOCUS_LOST:
                 in_hasFocus = false;
+                break;
+            case SDL_WINDOWEVENT_MINIMIZED:
+                if (glConfig.isVulkan)
+                    VK_SetWindowMinimized(true);
+                break;
+            case SDL_WINDOWEVENT_RESTORED:
+                if (glConfig.isVulkan)
+                    VK_SetWindowMinimized(false);
                 break;
             case SDL_WINDOWEVENT_SIZE_CHANGED:
                 GLimp_UpdateWindowSize();
