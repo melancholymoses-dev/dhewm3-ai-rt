@@ -511,6 +511,10 @@ void VKimp_Shutdown(void)
 
     vkDeviceWaitIdle(vk.device);
 
+    // Drain any deferred image deletions before destroying the device.
+    extern void VK_Image_DrainAllGarbage(void);
+    VK_Image_DrainAllGarbage();
+
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(vk.device, vk.imageAvailableSemaphores[i], NULL);

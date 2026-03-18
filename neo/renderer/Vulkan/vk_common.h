@@ -80,7 +80,8 @@ struct vkState_t
     VkFormat depthFormat;
 
     // Render pass
-    VkRenderPass renderPass;
+    VkRenderPass renderPass;        // CLEAR load op — used on first begin each frame
+    VkRenderPass renderPassResume;  // LOAD load op  — used when reopening after RT dispatch
 
     // Command pool / buffers
     VkCommandPool commandPool;
