@@ -7,6 +7,11 @@
 void VK_RequestReadback();
 void VK_ReadPixels(int x, int y, int w, int h, unsigned char *out_rgb);
 
+// Called from SDL window event handlers (events.cpp) when the window is
+// minimized or restored.  Prevents vkAcquireNextImageKHR from blocking
+// forever while the presentation engine holds all swapchain images.
+void VK_SetWindowMinimized(bool minimized);
+
 class VKBackend : public IBackend
 {
   public:

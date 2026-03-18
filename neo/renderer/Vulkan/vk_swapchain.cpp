@@ -18,6 +18,9 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 
+// Defined in vk_backend.cpp
+void VK_SetWindowMinimized(bool minimized);
+
 // ---------------------------------------------------------------------------
 // Surface format / present mode selection
 // ---------------------------------------------------------------------------
@@ -318,6 +321,24 @@ void VK_DestroySwapchain(void)
 
 void VK_RecreateSwapchain(int width, int height)
 {
+    // Query surface size FIRST, before touching any Vulkan objects.
+    // On Windows (and some other platforms) the surface extent becomes 0x0 when
+    // the window is minimized.  Creating a swapchain with a 0x0 extent is
+    // illegal, so bail out here and let VK_RB_DrawView skip frames until the
+    // window is restored.
+    VkSurfaceCapabilitiesKHR caps;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physicalDevice, vk.surface, &caps);
+    if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0)
+    {
+        VK_SetWindowMinimized(true);
+        return;
+    }
+    if (caps.currentExtent.width != UINT32_MAX)
+    {
+        width  = (int)caps.currentExtent.width;
+        height = (int)caps.currentExtent.height;
+    }
+
     vkDeviceWaitIdle(vk.device);
 
     // Recreate semaphores and fences to clear any stale signaled state.
@@ -357,15 +378,6 @@ void VK_RecreateSwapchain(int width, int height)
 
     // Destroy old swapchain (after creating new one for driver efficiency, via oldSwapchain)
     VkSwapchainKHR oldSwapchain = vk.swapchain;
-
-    // Query actual surface size
-    VkSurfaceCapabilitiesKHR caps;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physicalDevice, vk.surface, &caps);
-    if (caps.currentExtent.width != UINT32_MAX && caps.currentExtent.width != 0 && caps.currentExtent.height != 0)
-    {
-        width  = (int)caps.currentExtent.width;
-        height = (int)caps.currentExtent.height;
-    }
 
     VkSurfaceFormatKHR surfaceFormat = VK_ChooseSurfaceFormat(vk.physicalDevice);
     VkPresentModeKHR   presentMode   = VK_ChoosePresentMode(vk.physicalDevice);
@@ -444,6 +456,10 @@ void VK_RecreateSwapchain(int width, int height)
         fbInfo.layers          = 1;
         VK_CHECK(vkCreateFramebuffer(vk.device, &fbInfo, NULL, &vk.swapchainFramebuffers[i]));
     }
+
+    // Swapchain is healthy again; clear any minimized flag set during the
+    // previous (aborted) recreation when the surface was 0x0.
+    VK_SetWindowMinimized(false);
 
     common->Printf("VK: Swapchain recreated (%dx%d, %u images)\n",
                    vk.swapchainExtent.width, vk.swapchainExtent.height, vk.swapchainImageCount);

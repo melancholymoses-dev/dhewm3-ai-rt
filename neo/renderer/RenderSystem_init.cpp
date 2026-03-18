@@ -399,8 +399,8 @@ idCVar r_useCarmacksReverse("r_useCarmacksReverse", "1", CVAR_RENDERER | CVAR_AR
                             "Use Z-Fail (Carmack's Reverse) when rendering shadows");
 idCVar r_useStencilOpSeparate("r_useStencilOpSeparate", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                               "Use glStencilOpSeparate() (if available) when rendering shadows");
-idCVar r_screenshotFormat("r_screenshotFormat", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                          "Screenshot format. 0 = TGA (default), 1 = BMP, 2 = PNG, 3 = JPG");
+idCVar r_screenshotFormat("r_screenshotFormat", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+                          "Screenshot format. 0 = TGA, 1 = BMP, 2 = PNG (default), 3 = JPG");
 idCVar r_screenshotJpgQuality(
     "r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "Screenshot quality for JPG images (1-100). Lower value means smaller file but worse quality");
@@ -1358,14 +1358,18 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
         r_jitter.SetBool(false);
     }
 
-    // The buffer is upside down, we need to flip it the right way.
-    for (i = 0; i < height / 2; ++i)
+    // OpenGL returns pixels bottom-up; flip so row 0 is the top of the image.
+    // Vulkan returns pixels top-down (already correct), so no flip needed there.
+    if (!glConfig.isVulkan)
     {
-        byte *line1 = &buffer[i * lineSize];
-        byte *line2 = &buffer[(height - i - 1) * lineSize];
-        memcpy(swapBuffer, line1, lineSize);
-        memcpy(line1, line2, lineSize);
-        memcpy(line2, swapBuffer, lineSize);
+        for (i = 0; i < height / 2; ++i)
+        {
+            byte *line1 = &buffer[i * lineSize];
+            byte *line2 = &buffer[(height - i - 1) * lineSize];
+            memcpy(swapBuffer, line1, lineSize);
+            memcpy(line1, line2, lineSize);
+            memcpy(line2, swapBuffer, lineSize);
+        }
     }
 
     idFile *f;
@@ -1383,7 +1387,6 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
     {
         g_screenshotFormat = cvarSystem->GetCVarInteger("r_screenshotFormat");
     }
-
     switch (g_screenshotFormat)
     {
     default:
