@@ -38,6 +38,26 @@ void VK_DestroySwapchain(void);
 void VK_RecreateSwapchain(int width, int height);
 
 // ---------------------------------------------------------------------------
+// Matrix helpers
+// ---------------------------------------------------------------------------
+
+static void VK_MultiplyMatrix4(const float *a, const float *b, float *out)
+{
+    for (int r = 0; r < 4; r++)
+    {
+        for (int c = 0; c < 4; c++)
+        {
+            float sum = 0.f;
+            for (int k = 0; k < 4; k++)
+            {
+                sum += a[k * 4 + r] * b[c * 4 + k];
+            }
+            out[c * 4 + r] = sum;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Per-frame uniform buffer ring
 // Pre-allocated pool of UBO memory for interaction parameters.
 // ---------------------------------------------------------------------------
@@ -205,26 +225,6 @@ static uint32_t VK_AllocUBO(void)
         ring.offset = 0;
     }
     return off;
-}
-
-// ---------------------------------------------------------------------------
-// Matrix helpers
-// ---------------------------------------------------------------------------
-
-static void VK_MultiplyMatrix4(const float *a, const float *b, float *out)
-{
-    for (int r = 0; r < 4; r++)
-    {
-        for (int c = 0; c < 4; c++)
-        {
-            float sum = 0.f;
-            for (int k = 0; k < 4; k++)
-            {
-                sum += a[k * 4 + r] * b[c * 4 + k];
-            }
-            out[c * 4 + r] = sum;
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -640,9 +640,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             {
                 const textureStage_t &tex = pStage->texture;
                 float s2 = regs[tex.matrix[0][2]];
-                if (s2 < -40.f || s2 > 40.f) s2 -= (float)(int)s2;
+                if (s2 < -40.f || s2 > 40.f)
+                    s2 -= (float)(int)s2;
                 float t2 = regs[tex.matrix[1][2]];
-                if (t2 < -40.f || t2 > 40.f) t2 -= (float)(int)t2;
+                if (t2 < -40.f || t2 > 40.f)
+                    t2 -= (float)(int)t2;
                 guiUbo->texMatrixS[0] = regs[tex.matrix[0][0]];
                 guiUbo->texMatrixS[1] = regs[tex.matrix[0][1]];
                 guiUbo->texMatrixS[2] = 0.f;
@@ -654,10 +656,14 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
             else
             {
-                guiUbo->texMatrixS[0] = 1.f; guiUbo->texMatrixS[1] = 0.f;
-                guiUbo->texMatrixS[2] = 0.f; guiUbo->texMatrixS[3] = 0.f;
-                guiUbo->texMatrixT[0] = 0.f; guiUbo->texMatrixT[1] = 1.f;
-                guiUbo->texMatrixT[2] = 0.f; guiUbo->texMatrixT[3] = 0.f;
+                guiUbo->texMatrixS[0] = 1.f;
+                guiUbo->texMatrixS[1] = 0.f;
+                guiUbo->texMatrixS[2] = 0.f;
+                guiUbo->texMatrixS[3] = 0.f;
+                guiUbo->texMatrixT[0] = 0.f;
+                guiUbo->texMatrixT[1] = 1.f;
+                guiUbo->texMatrixT[2] = 0.f;
+                guiUbo->texMatrixT[3] = 0.f;
             }
 
             // Allocate GUI descriptor set
@@ -747,7 +753,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             continue;
 
         // --- Vertex buffer ---
-        VkBuffer     vertBuf;
+        VkBuffer vertBuf;
         VkDeviceSize vertOffset;
         bool haveVerts = false;
 
@@ -765,7 +771,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 if (vertOffset != VK_WHOLE_SIZE)
                 {
                     memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
-                    vertBuf   = dataRings[vk.currentFrame].buffer;
+                    vertBuf = dataRings[vk.currentFrame].buffer;
                     haveVerts = true;
                 }
             }
@@ -774,7 +780,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             continue;
 
         // --- Index buffer ---
-        VkDeviceSize idxSize   = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
+        VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
         VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
         if (idxOffset == VK_WHOLE_SIZE)
             continue;
@@ -787,23 +793,28 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         // imgInfo: texture to bind at binding 1.
         // alphaThreshold: value written to colorAdd[3]; 0 means no clip (opaque pipeline).
         // useClipPipeline: selects depthClipPipeline vs depthPipeline.
-        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline)
-        {
-            uint32_t  uboOffset = VK_AllocUBO();
-            VkGuiUBO *ubo       = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline) {
+            uint32_t uboOffset = VK_AllocUBO();
+            VkGuiUBO *ubo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
             memcpy(ubo->modelViewProjection, mvp, 64);
             ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
-            ubo->colorAdd[0]      = ubo->colorAdd[1]      = ubo->colorAdd[2]      = 0.f;
-            ubo->colorAdd[3]      = alphaThreshold;
+            ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            ubo->colorAdd[3] = alphaThreshold;
             // Identity texture matrix — depth prepass doesn't need UV animation
-            ubo->texMatrixS[0] = 1.f; ubo->texMatrixS[1] = 0.f; ubo->texMatrixS[2] = 0.f; ubo->texMatrixS[3] = 0.f;
-            ubo->texMatrixT[0] = 0.f; ubo->texMatrixT[1] = 1.f; ubo->texMatrixT[2] = 0.f; ubo->texMatrixT[3] = 0.f;
+            ubo->texMatrixS[0] = 1.f;
+            ubo->texMatrixS[1] = 0.f;
+            ubo->texMatrixS[2] = 0.f;
+            ubo->texMatrixS[3] = 0.f;
+            ubo->texMatrixT[0] = 0.f;
+            ubo->texMatrixT[1] = 1.f;
+            ubo->texMatrixT[2] = 0.f;
+            ubo->texMatrixT[3] = 0.f;
 
             VkDescriptorSetAllocateInfo dsAlloc = {};
-            dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
             dsAlloc.descriptorSetCount = 1;
-            dsAlloc.pSetLayouts        = &vkPipes.guiDescLayout;
+            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
 
             VkDescriptorSet ds;
             if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
@@ -812,15 +823,21 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             VkDescriptorBufferInfo bufInfo = {};
             bufInfo.buffer = uboRings[vk.currentFrame].buffer;
             bufInfo.offset = uboOffset;
-            bufInfo.range  = sizeof(VkGuiUBO);
+            bufInfo.range = sizeof(VkGuiUBO);
 
             VkWriteDescriptorSet writes[2] = {};
-            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[0].dstSet = ds;
-            writes[0].dstBinding = 0; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            writes[0].descriptorCount = 1; writes[0].pBufferInfo = &bufInfo;
-            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[1].dstSet = ds;
-            writes[1].dstBinding = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[1].descriptorCount = 1; writes[1].pImageInfo = &imgInfo;
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = ds;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfo;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = ds;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo = &imgInfo;
             vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
             VkPipeline pipe = useClipPipeline ? vkPipes.depthClipPipeline : vkPipes.depthPipeline;
@@ -887,24 +904,24 @@ struct VkShadowUBO
 // Offsets: mvp=0, texGen0S=64, texGen0T=80, texGen1S=96, texGen1T=112, color=128  total=144
 struct VkFogUBO
 {
-    float mvp[16];      // mat4 u_MVP
-    float texGen0S[4];  // vec4 u_TexGen0S
-    float texGen0T[4];  // vec4 u_TexGen0T
-    float texGen1S[4];  // vec4 u_TexGen1S
-    float texGen1T[4];  // vec4 u_TexGen1T
-    float color[4];     // vec4 u_Color
+    float mvp[16];     // mat4 u_MVP
+    float texGen0S[4]; // vec4 u_TexGen0S
+    float texGen0T[4]; // vec4 u_TexGen0T
+    float texGen1S[4]; // vec4 u_TexGen1S
+    float texGen1T[4]; // vec4 u_TexGen1T
+    float color[4];    // vec4 u_Color
 }; // 144 bytes
 
 // Blend-light UBO layout (matches blendlight.vert/frag BlendParams block, std140)
 // Offsets: mvp=0, texGen0S=64, texGen0T=80, texGen0Q=96, texGen1S=112, color=128  total=144
 struct VkBlendUBO
 {
-    float mvp[16];      // mat4 u_MVP
-    float texGen0S[4];  // vec4 u_TexGen0S  (light proj S)
-    float texGen0T[4];  // vec4 u_TexGen0T  (light proj T)
-    float texGen0Q[4];  // vec4 u_TexGen0Q  (light proj Q, for perspective divide)
-    float texGen1S[4];  // vec4 u_TexGen1S  (falloff S)
-    float color[4];     // vec4 u_Color
+    float mvp[16];     // mat4 u_MVP
+    float texGen0S[4]; // vec4 u_TexGen0S  (light proj S)
+    float texGen0T[4]; // vec4 u_TexGen0T  (light proj T)
+    float texGen0Q[4]; // vec4 u_TexGen0Q  (light proj Q, for perspective divide)
+    float texGen1S[4]; // vec4 u_TexGen1S  (falloff S)
+    float color[4];    // vec4 u_Color
 }; // 144 bytes
 
 // ---------------------------------------------------------------------------
@@ -917,8 +934,7 @@ struct VkBlendUBO
 // restores lightScissor afterwards.
 // ---------------------------------------------------------------------------
 
-static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
-                                    const VkRect2D &lightScissor)
+static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf, const VkRect2D &lightScissor)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
 
@@ -927,7 +943,7 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
         return;
 
     // Shadow vertices: shadowCache_t = idVec4 (16 bytes each)
-    VkBuffer     vertBuf;
+    VkBuffer vertBuf;
     VkDeviceSize vertOffset;
     bool haveVerts = false;
 
@@ -945,14 +961,15 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
             // scan indexes to find the max referenced vertex.
             const srfTriangles_t *amb = tri->ambientSurface ? tri->ambientSurface : tri;
             int numShadowVerts = amb->numVerts * 2; // shadow verts are doubled (front+back caps)
-            if (numShadowVerts <= 0) numShadowVerts = 256; // safe fallback
+            if (numShadowVerts <= 0)
+                numShadowVerts = 256; // safe fallback
 
             VkDeviceSize sz = (VkDeviceSize)numShadowVerts * sizeof(shadowCache_t);
             vertOffset = VK_AllocDataRing(sz, sizeof(float));
             if (vertOffset != VK_WHOLE_SIZE)
             {
                 memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
-                vertBuf   = dataRings[vk.currentFrame].buffer;
+                vertBuf = dataRings[vk.currentFrame].buffer;
                 haveVerts = true;
             }
         }
@@ -962,7 +979,7 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
 
     // Index data (tri->indexes, same field as regular geometry)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    VkDeviceSize idxSize   = (VkDeviceSize)tri->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxSize = (VkDeviceSize)tri->numIndexes * sizeof(glIndex_t);
     VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
     if (idxOffset == VK_WHOLE_SIZE)
         return;
@@ -977,8 +994,8 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
     VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
 
     // Shadow UBO
-    uint32_t    uboOffset = VK_AllocUBO();
-    VkShadowUBO *ubo      = (VkShadowUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+    uint32_t uboOffset = VK_AllocUBO();
+    VkShadowUBO *ubo = (VkShadowUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
     ubo->lightOrigin[0] = localLight.x;
     ubo->lightOrigin[1] = localLight.y;
     ubo->lightOrigin[2] = localLight.z;
@@ -987,10 +1004,10 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
 
     // Descriptor set (shadowDescLayout: binding 0 = UBO only)
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
     dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts        = &vkPipes.shadowDescLayout;
+    dsAlloc.pSetLayouts = &vkPipes.shadowDescLayout;
 
     VkDescriptorSet ds;
     if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
@@ -999,19 +1016,18 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = uboRings[vk.currentFrame].buffer;
     bufInfo.offset = uboOffset;
-    bufInfo.range  = sizeof(VkShadowUBO);
+    bufInfo.range = sizeof(VkShadowUBO);
 
     VkWriteDescriptorSet write = {};
-    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet          = ds;
-    write.dstBinding      = 0;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = ds;
+    write.dstBinding = 0;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write.descriptorCount = 1;
-    write.pBufferInfo     = &bufInfo;
+    write.pBufferInfo = &bufInfo;
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            vkPipes.shadowLayout, 0, 1, &ds, 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowLayout, 0, 1, &ds, 0, NULL);
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
     vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
@@ -1025,9 +1041,9 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
         int absY2 = backEnd.viewDef->viewport.y1 + surf->scissorRect.y2;
 
         VkRect2D surfScissor;
-        surfScissor.offset.x      = absX1;
-        surfScissor.offset.y      = h - 1 - absY2;
-        surfScissor.extent.width  = surf->scissorRect.x2 - surf->scissorRect.x1 + 1;
+        surfScissor.offset.x = absX1;
+        surfScissor.offset.y = h - 1 - absY2;
+        surfScissor.extent.width = surf->scissorRect.x2 - surf->scissorRect.x1 + 1;
         surfScissor.extent.height = absY2 - absY1 + 1;
 
         // Intersect with the light scissor.
@@ -1035,11 +1051,9 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
                                    (int)(lightScissor.offset.x + lightScissor.extent.width));
         int sy1 = idMath::ClampInt(surfScissor.offset.y, lightScissor.offset.y,
                                    (int)(lightScissor.offset.y + lightScissor.extent.height));
-        int sx2 = idMath::ClampInt((int)(surfScissor.offset.x + surfScissor.extent.width),
-                                   lightScissor.offset.x,
+        int sx2 = idMath::ClampInt((int)(surfScissor.offset.x + surfScissor.extent.width), lightScissor.offset.x,
                                    (int)(lightScissor.offset.x + lightScissor.extent.width));
-        int sy2 = idMath::ClampInt((int)(surfScissor.offset.y + surfScissor.extent.height),
-                                   lightScissor.offset.y,
+        int sy2 = idMath::ClampInt((int)(surfScissor.offset.y + surfScissor.extent.height), lightScissor.offset.y,
                                    (int)(lightScissor.offset.y + lightScissor.extent.height));
 
         if (sx2 > sx1 && sy2 > sy1)
@@ -1048,7 +1062,7 @@ static void VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
             // Only switch scissor if it's actually tighter.
             if (clipped.offset.x != (int32_t)lightScissor.offset.x ||
                 clipped.offset.y != (int32_t)lightScissor.offset.y ||
-                clipped.extent.width  != lightScissor.extent.width  ||
+                clipped.extent.width != lightScissor.extent.width ||
                 clipped.extent.height != lightScissor.extent.height)
             {
                 vkCmdSetScissor(cmd, 0, 1, &clipped);
@@ -1103,14 +1117,14 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 
         if (r_useScissor.GetBool())
         {
-            int h     = (int)vk.swapchainExtent.height;
+            int h = (int)vk.swapchainExtent.height;
             int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
             int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
             int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
 
-            lightScissor.offset.x      = absX1;
-            lightScissor.offset.y      = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
-            lightScissor.extent.width  = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
+            lightScissor.offset.x = absX1;
+            lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
+            lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
             lightScissor.extent.height = absY2 - absY1 + 1;
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
         }
@@ -1128,9 +1142,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             clearAtt.clearValue.depthStencil.stencil = 128;
 
             VkClearRect clearRect = {};
-            clearRect.rect           = lightScissor;
+            clearRect.rect = lightScissor;
             clearRect.baseArrayLayer = 0;
-            clearRect.layerCount     = 1;
+            clearRect.layerCount = 1;
 
             vkCmdClearAttachments(cmd, 1, &clearAtt, 1, &clearRect);
         }
@@ -1182,8 +1196,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             // Translucent surfaces didn't write depth during the prepass, so they may not
             // be at the same depth as opaque geometry.  Use a pipeline with stencil disabled
             // so shadow volumes don't incorrectly cull them (mirrors GL path: performStencilTest=false).
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              vkPipes.interactionPipelineNoStencil);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
             for (const drawSurf_t *surf = vLight->translucentInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
             // Restore opaque interaction pipeline for next light
@@ -1211,8 +1224,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 //   by a 1D falloff texture.  Blend mode comes from stage->drawStateBits.
 // ---------------------------------------------------------------------------
 
-static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
-                                  const void *uboData, idImage *samp0img, idImage *samp1img)
+static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf, const void *uboData, idImage *samp0img,
+                                 idImage *samp1img)
 {
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
@@ -1223,7 +1236,7 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
         return;
 
     // Vertex buffer
-    VkBuffer     vertBuf;
+    VkBuffer vertBuf;
     VkDeviceSize vertOffset;
     bool haveVerts = false;
 
@@ -1241,7 +1254,7 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
             if (vertOffset != VK_WHOLE_SIZE)
             {
                 memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
-                vertBuf  = dataRings[vk.currentFrame].buffer;
+                vertBuf = dataRings[vk.currentFrame].buffer;
                 haveVerts = true;
             }
         }
@@ -1250,7 +1263,7 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
         return;
 
     // Index buffer
-    VkDeviceSize idxSize   = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
     VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
     if (idxOffset == VK_WHOLE_SIZE)
         return;
@@ -1262,10 +1275,10 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
 
     // Descriptor set
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
     dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts        = &vkPipes.fogDescLayout;
+    dsAlloc.pSetLayouts = &vkPipes.fogDescLayout;
 
     VkDescriptorSet ds;
     if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
@@ -1274,33 +1287,35 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = uboRings[vk.currentFrame].buffer;
     bufInfo.offset = uboOffset;
-    bufInfo.range  = sizeof(VkFogUBO);
+    bufInfo.range = sizeof(VkFogUBO);
 
     VkDescriptorImageInfo imgInfo0, imgInfo1;
-    if (!VK_Image_GetDescriptorInfo(samp0img, &imgInfo0)) VK_Image_GetFallbackDescriptorInfo(&imgInfo0);
-    if (!VK_Image_GetDescriptorInfo(samp1img, &imgInfo1)) VK_Image_GetFallbackDescriptorInfo(&imgInfo1);
+    if (!VK_Image_GetDescriptorInfo(samp0img, &imgInfo0))
+        VK_Image_GetFallbackDescriptorInfo(&imgInfo0);
+    if (!VK_Image_GetDescriptorInfo(samp1img, &imgInfo1))
+        VK_Image_GetFallbackDescriptorInfo(&imgInfo1);
 
     VkWriteDescriptorSet writes[3] = {};
-    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet          = ds;
-    writes[0].dstBinding      = 0;
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = ds;
+    writes[0].dstBinding = 0;
     writes[0].descriptorCount = 1;
-    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    writes[0].pBufferInfo     = &bufInfo;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].pBufferInfo = &bufInfo;
 
-    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet          = ds;
-    writes[1].dstBinding      = 1;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = ds;
+    writes[1].dstBinding = 1;
     writes[1].descriptorCount = 1;
-    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[1].pImageInfo      = &imgInfo0;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].pImageInfo = &imgInfo0;
 
-    writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet          = ds;
-    writes[2].dstBinding      = 2;
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = ds;
+    writes[2].dstBinding = 2;
     writes[2].descriptorCount = 1;
-    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[2].pImageInfo      = &imgInfo1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[2].pImageInfo = &imgInfo1;
 
     vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogLayout, 0, 1, &ds, 1, &uboOffset);
@@ -1312,8 +1327,8 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
 }
 
 // Build the VkFogUBO for one surface, computing local fog planes from the global ones.
-static void VK_BuildFogSurfaceUBO(const drawSurf_t *surf, const idPlane fogPlanes[4],
-                                   const float color[4], VkFogUBO *out)
+static void VK_BuildFogSurfaceUBO(const drawSurf_t *surf, const idPlane fogPlanes[4], const float color[4],
+                                  VkFogUBO *out)
 {
     // MVP
     float mvp[16];
@@ -1332,9 +1347,9 @@ static void VK_BuildFogSurfaceUBO(const drawSurf_t *surf, const idPlane fogPlane
 
     memcpy(out->texGen0S, local0.ToFloatPtr(), 16);
     memcpy(out->texGen0T, local1.ToFloatPtr(), 16);
-    memcpy(out->texGen1S, local3.ToFloatPtr(), 16);  // S-1 = fogPlanes[3] (view-origin entry S)
-    memcpy(out->texGen1T, local2.ToFloatPtr(), 16);  // T-1 = fogPlanes[2] (fog top-plane entry T)
-    memcpy(out->color,    color,               16);
+    memcpy(out->texGen1S, local3.ToFloatPtr(), 16); // S-1 = fogPlanes[3] (view-origin entry S)
+    memcpy(out->texGen1T, local2.ToFloatPtr(), 16); // T-1 = fogPlanes[2] (fog top-plane entry T)
+    memcpy(out->color, color, 16);
 }
 
 static void VK_RB_FogPass(VkCommandBuffer cmd, const viewLight_t *vLight)
@@ -1343,8 +1358,8 @@ static void VK_RB_FogPass(VkCommandBuffer cmd, const viewLight_t *vLight)
         return;
 
     const idMaterial *lightShader = vLight->lightShader;
-    const float *regs             = vLight->shaderRegisters;
-    const shaderStage_t *stage    = lightShader->GetStage(0); // fog shaders have one stage
+    const float *regs = vLight->shaderRegisters;
+    const shaderStage_t *stage = lightShader->GetStage(0); // fog shaders have one stage
 
     float fogColor[4];
     fogColor[0] = regs[stage->color.registers[0]];
@@ -1414,7 +1429,7 @@ static void VK_RB_FogPass(VkCommandBuffer cmd, const viewLight_t *vLight)
         static drawSurf_t capSurf;
         memset(&capSurf, 0, sizeof(capSurf));
         capSurf.space = &backEnd.viewDef->worldSpace;
-        capSurf.geo   = vLight->frustumTris;
+        capSurf.geo = vLight->frustumTris;
 
         VkFogUBO capUbo;
         VK_BuildFogSurfaceUBO(&capSurf, fogPlanes, fogColor, &capUbo);
@@ -1432,8 +1447,8 @@ static void VK_RB_BlendLightPass(VkCommandBuffer cmd, const viewLight_t *vLight)
     extern VkPipeline VK_GetOrCreateBlendlightPipeline(int drawStateBits);
 
     const idMaterial *lightShader = vLight->lightShader;
-    const float *regs             = vLight->shaderRegisters;
-    idImage *falloffImage         = vLight->falloffImage;
+    const float *regs = vLight->shaderRegisters;
+    idImage *falloffImage = vLight->falloffImage;
 
     for (int i = 0; i < lightShader->GetNumStages(); i++)
     {
@@ -1442,8 +1457,7 @@ static void VK_RB_BlendLightPass(VkCommandBuffer cmd, const viewLight_t *vLight)
             continue;
 
         // Pick or create a pipeline matching this stage's blend mode (depth EQUAL)
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          VK_GetOrCreateBlendlightPipeline(stage->drawStateBits));
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, VK_GetOrCreateBlendlightPipeline(stage->drawStateBits));
 
         float lightColor[4];
         lightColor[0] = regs[stage->color.registers[0]];
@@ -1465,12 +1479,12 @@ static void VK_RB_BlendLightPass(VkCommandBuffer cmd, const viewLight_t *vLight)
                 VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
 
                 VkBlendUBO ubo;
-                memcpy(ubo.mvp,      mvp,                     sizeof(ubo.mvp));
+                memcpy(ubo.mvp, mvp, sizeof(ubo.mvp));
                 memcpy(ubo.texGen0S, localProj[0].ToFloatPtr(), 16);
                 memcpy(ubo.texGen0T, localProj[1].ToFloatPtr(), 16);
                 memcpy(ubo.texGen0Q, localProj[2].ToFloatPtr(), 16);
                 memcpy(ubo.texGen1S, localProj[3].ToFloatPtr(), 16);
-                memcpy(ubo.color,    lightColor,               16);
+                memcpy(ubo.color, lightColor, 16);
 
                 VK_RB_DrawFogSurface(cmd, surf, &ubo, projImage, falloffImage);
             }
@@ -1538,12 +1552,12 @@ void VK_SetWindowMinimized(bool minimized)
 // VK_RequestReadback() is called just before rendering a screenshot frame.
 // VK_RB_SwapBuffers() appends a copy-to-buffer command, waits for the fence,
 // and sets s_readbackDone so VK_ReadPixels() can retrieve the data.
-static VkBuffer       s_readbackBuf       = VK_NULL_HANDLE;
-static VkDeviceMemory s_readbackMem       = VK_NULL_HANDLE;
-static void          *s_readbackMapped    = nullptr;
-static bool           s_readbackPending   = false; // set by VK_RequestReadback
-static bool           s_readbackSubmitted = false; // set inside SwapBuffers when copy was added
-static bool           s_readbackDone      = false; // set after fence wait; read by VK_ReadPixels
+static VkBuffer s_readbackBuf = VK_NULL_HANDLE;
+static VkDeviceMemory s_readbackMem = VK_NULL_HANDLE;
+static void *s_readbackMapped = nullptr;
+static bool s_readbackPending = false;   // set by VK_RequestReadback
+static bool s_readbackSubmitted = false; // set inside SwapBuffers when copy was added
+static bool s_readbackDone = false;      // set after fence wait; read by VK_ReadPixels
 
 void VK_RB_DrawView(const void *data)
 {
@@ -1604,7 +1618,7 @@ void VK_RB_DrawView(const void *data)
         }
 
         vk.currentImageIdx = imageIndex;
-        s_frameImageIndex  = imageIndex;
+        s_frameImageIndex = imageIndex;
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
 
         // Drain deferred image deletions queued during the previous use of this frame slot.
@@ -1668,9 +1682,9 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchShadowRays(cmdBuf, backEnd.viewDef);
             // Reopen with the LOAD render pass so prior colour/depth is preserved.
             VkRenderPassBeginInfo rpResume = rpBegin;
-            rpResume.renderPass     = vk.renderPassResume;
+            rpResume.renderPass = vk.renderPassResume;
             rpResume.clearValueCount = 0;
-            rpResume.pClearValues   = NULL;
+            rpResume.pClearValues = NULL;
             vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
             vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
@@ -1732,23 +1746,21 @@ void VK_RB_SwapBuffers()
     s_readbackSubmitted = false;
     if (s_readbackPending && s_readbackBuf != VK_NULL_HANDLE)
     {
-        VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex],
-                                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
         VkBufferImageCopy region = {};
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.layerCount = 1;
         region.imageExtent = {vk.swapchainExtent.width, vk.swapchainExtent.height, 1};
-        vkCmdCopyImageToBuffer(cmdBuf, vk.swapchainImages[s_frameImageIndex],
-                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s_readbackBuf, 1, &region);
+        vkCmdCopyImageToBuffer(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               s_readbackBuf, 1, &region);
 
         // Transition back so the image can be presented normally.
-        VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex],
-                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                  VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-        s_readbackPending   = false;
+        s_readbackPending = false;
         s_readbackSubmitted = true;
     }
 
@@ -1793,7 +1805,7 @@ void VK_RB_SwapBuffers()
     if (s_readbackSubmitted)
     {
         vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
-        s_readbackDone      = true;
+        s_readbackDone = true;
         s_readbackSubmitted = false;
     }
 
@@ -1816,15 +1828,14 @@ void VK_RequestReadback()
     if (s_readbackBuf == VK_NULL_HANDLE)
     {
         VkDeviceSize size = (VkDeviceSize)vk.swapchainExtent.width * vk.swapchainExtent.height * 4;
-        VK_CreateBuffer(size,
-                        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                        &s_readbackBuf, &s_readbackMem);
+        VK_CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_readbackBuf,
+                        &s_readbackMem);
         VK_CHECK(vkMapMemory(vk.device, s_readbackMem, 0, size, 0, &s_readbackMapped));
     }
 
     s_readbackPending = true;
-    s_readbackDone    = false;
+    s_readbackDone = false;
 }
 
 // Call this after the screenshot render frame returns.
@@ -1835,24 +1846,27 @@ void VK_ReadPixels(int x, int y, int w, int h, byte *out_rgb)
     if (!s_readbackDone || !s_readbackMapped)
         return;
 
-    uint32_t   sw     = vk.swapchainExtent.width;
-    const byte *src   = (const byte *)s_readbackMapped;
-    bool        isBGR = (vk.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM ||
-                         vk.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB);
+    uint32_t sw = vk.swapchainExtent.width;
+    const byte *src = (const byte *)s_readbackMapped;
+    bool isBGR = (vk.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM || vk.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB);
 
     for (int row = 0; row < h; row++)
     {
         for (int col = 0; col < w; col++)
         {
             const byte *p = src + ((y + row) * sw + (x + col)) * 4;
-            byte       *d = out_rgb + (row * w + col) * 3;
+            byte *d = out_rgb + (row * w + col) * 3;
             if (isBGR)
             {
-                d[0] = p[2]; d[1] = p[1]; d[2] = p[0]; // BGRA → RGB
+                d[0] = p[2];
+                d[1] = p[1];
+                d[2] = p[0]; // BGRA → RGB
             }
             else
             {
-                d[0] = p[0]; d[1] = p[1]; d[2] = p[2]; // RGBA → RGB
+                d[0] = p[0];
+                d[1] = p[1];
+                d[2] = p[2]; // RGBA → RGB
             }
         }
     }

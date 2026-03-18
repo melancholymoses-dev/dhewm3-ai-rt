@@ -227,6 +227,14 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     // OpenGL CCW front faces become CW after Y-flip, so we tell Vulkan CW = front.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
+    // Depth bias: pull interaction fragments slightly toward the camera so that LEQUAL
+    // depth test reliably passes against the depth-prepass values (which used LESS).
+    // Without this, sub-ULP rasterization differences at triangle edges cause the
+    // interaction pass to compute depth just barely > prepass, producing dark wireframe
+    // artifacts along all mesh triangle boundaries.
+    rasterizer.depthBiasEnable         = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = -1.0f;
+    rasterizer.depthBiasSlopeFactor    = -1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
