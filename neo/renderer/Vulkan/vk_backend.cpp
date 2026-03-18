@@ -774,6 +774,30 @@ struct VkShadowUBO
     float mvp[16];        // mat4 — model-view-projection
 }; // 80 bytes — fits in the 384-byte UBO ring stride
 
+// Fog UBO layout (matches fog.vert/frag FogParams block, std140)
+// Offsets: mvp=0, texGen0S=64, texGen0T=80, texGen1S=96, texGen1T=112, color=128  total=144
+struct VkFogUBO
+{
+    float mvp[16];      // mat4 u_MVP
+    float texGen0S[4];  // vec4 u_TexGen0S
+    float texGen0T[4];  // vec4 u_TexGen0T
+    float texGen1S[4];  // vec4 u_TexGen1S
+    float texGen1T[4];  // vec4 u_TexGen1T
+    float color[4];     // vec4 u_Color
+}; // 144 bytes
+
+// Blend-light UBO layout (matches blendlight.vert/frag BlendParams block, std140)
+// Offsets: mvp=0, texGen0S=64, texGen0T=80, texGen0Q=96, texGen1S=112, color=128  total=144
+struct VkBlendUBO
+{
+    float mvp[16];      // mat4 u_MVP
+    float texGen0S[4];  // vec4 u_TexGen0S  (light proj S)
+    float texGen0T[4];  // vec4 u_TexGen0T  (light proj T)
+    float texGen0Q[4];  // vec4 u_TexGen0Q  (light proj Q, for perspective divide)
+    float texGen1S[4];  // vec4 u_TexGen1S  (falloff S)
+    float color[4];     // vec4 u_Color
+}; // 144 bytes
+
 // ---------------------------------------------------------------------------
 // VK_RB_DrawShadowSurface
 // Records one shadow volume draw (Carmack's Reverse, depth-fail stencil).
@@ -959,22 +983,37 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 #else
         const bool useStencilShadows = true;
 #endif
-        if (useStencilShadows && vkPipes.shadowPipeline &&
-            (vLight->globalShadows || vLight->localShadows))
+        // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
+        //   1. global shadow volumes (affect all surfaces including local)
+        //   2. local interactions (unshadowed by global volumes — local means near-light)
+        //   3. local shadow volumes (only affect global interactions)
+        //   4. global interactions (shadowed by both global and local volumes)
+        // This ordering is required for correctness: local interactions must be drawn
+        // BEFORE local shadows so they are not incorrectly darkened by them.
+
+        // Step 1: global shadow volumes
+        if (useStencilShadows && vkPipes.shadowPipeline && vLight->globalShadows)
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
             for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s);
+        }
+
+        // Step 2: local interactions (stencil still untouched by local shadows)
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+        for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
+            RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
+
+        // Step 3: local shadow volumes
+        if (useStencilShadows && vkPipes.shadowPipeline && vLight->localShadows)
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowPipeline);
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s);
         }
 
-        // Switch back to interaction pipeline for lit surfaces
+        // Step 4: global interactions (shadowed by both global and local shadow volumes)
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
-
-        // Draw lit interactions
-        for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
-            RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
             RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
 
@@ -993,6 +1032,312 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     }
 
     s_cmd = VK_NULL_HANDLE;
+}
+
+// ---------------------------------------------------------------------------
+// VK_RB_FogAllLights
+// Post-interaction pass: renders fog volumes and blend lights.
+// Mirrors RB_STD_FogAllLights / RB_FogPass / RB_BlendLight from draw_common.cpp.
+//
+// Fog lights:
+//   For each visible surface inside the fog volume, sample two textures whose
+//   coordinates are derived from camera-space depth (fogImage) and the fog entry
+//   plane (fogEnterImage).  Uses SRC_ALPHA / ONE_MINUS_SRC_ALPHA blend, depth EQUAL.
+//   A second pass with the frustum back-caps (depth LESS, front-cull) fills in areas
+//   where the fog extends beyond visible geometry.
+//
+// Blend lights:
+//   Project a coloured light image onto surfaces via projective texgen, attenuated
+//   by a 1D falloff texture.  Blend mode comes from stage->drawStateBits.
+// ---------------------------------------------------------------------------
+
+static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf,
+                                  const void *uboData, idImage *samp0img, idImage *samp1img)
+{
+    extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
+    extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+    extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+
+    const srfTriangles_t *geo = surf->geo;
+    if (!geo || geo->numIndexes <= 0 || geo->numVerts <= 0)
+        return;
+
+    // Vertex buffer
+    VkBuffer     vertBuf;
+    VkDeviceSize vertOffset;
+    bool haveVerts = false;
+
+    if (geo->ambientCache && VK_VertexCache_GetBuffer(geo->ambientCache, &vertBuf, &vertOffset))
+    {
+        haveVerts = true;
+    }
+    else
+    {
+        const void *cpuVerts = geo->ambientCache ? vertexCache.Position(geo->ambientCache) : geo->verts;
+        if (cpuVerts)
+        {
+            VkDeviceSize sz = (VkDeviceSize)geo->numVerts * sizeof(idDrawVert);
+            vertOffset = VK_AllocDataRing(sz, sizeof(float));
+            if (vertOffset != VK_WHOLE_SIZE)
+            {
+                memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
+                vertBuf  = dataRings[vk.currentFrame].buffer;
+                haveVerts = true;
+            }
+        }
+    }
+    if (!haveVerts)
+        return;
+
+    // Index buffer
+    VkDeviceSize idxSize   = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    if (idxOffset == VK_WHOLE_SIZE)
+        return;
+    memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
+
+    // UBO
+    uint32_t uboOffset = VK_AllocUBO();
+    memcpy((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset, uboData, sizeof(VkFogUBO));
+
+    // Descriptor set
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool     = vkPipes.descPools[vk.currentFrame];
+    dsAlloc.descriptorSetCount = 1;
+    dsAlloc.pSetLayouts        = &vkPipes.fogDescLayout;
+
+    VkDescriptorSet ds;
+    if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+        return;
+
+    VkDescriptorBufferInfo bufInfo = {};
+    bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+    bufInfo.offset = uboOffset;
+    bufInfo.range  = sizeof(VkFogUBO);
+
+    VkDescriptorImageInfo imgInfo0, imgInfo1;
+    if (!VK_Image_GetDescriptorInfo(samp0img, &imgInfo0)) VK_Image_GetFallbackDescriptorInfo(&imgInfo0);
+    if (!VK_Image_GetDescriptorInfo(samp1img, &imgInfo1)) VK_Image_GetFallbackDescriptorInfo(&imgInfo1);
+
+    VkWriteDescriptorSet writes[3] = {};
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet          = ds;
+    writes[0].dstBinding      = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[0].pBufferInfo     = &bufInfo;
+
+    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet          = ds;
+    writes[1].dstBinding      = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].pImageInfo      = &imgInfo0;
+
+    writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet          = ds;
+    writes[2].dstBinding      = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[2].pImageInfo      = &imgInfo1;
+
+    vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogLayout, 0, 1, &ds, 1, &uboOffset);
+
+    const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+    vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+    vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+}
+
+// Build the VkFogUBO for one surface, computing local fog planes from the global ones.
+static void VK_BuildFogSurfaceUBO(const drawSurf_t *surf, const idPlane fogPlanes[4],
+                                   const float color[4], VkFogUBO *out)
+{
+    // MVP
+    float mvp[16];
+    VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
+    memcpy(out->mvp, mvp, sizeof(out->mvp));
+
+    // Transform global fog planes into local (model) space
+    idPlane local0, local1, local2, local3;
+    R_GlobalPlaneToLocal(surf->space->modelMatrix, fogPlanes[0], local0);
+    R_GlobalPlaneToLocal(surf->space->modelMatrix, fogPlanes[1], local1);
+    R_GlobalPlaneToLocal(surf->space->modelMatrix, fogPlanes[2], local2);
+    R_GlobalPlaneToLocal(surf->space->modelMatrix, fogPlanes[3], local3);
+
+    // Add the +0.5 bias to the depth S plane after the transform (matches GL RB_T_BasicFog).
+    local0[3] += 0.5f;
+
+    memcpy(out->texGen0S, local0.ToFloatPtr(), 16);
+    memcpy(out->texGen0T, local1.ToFloatPtr(), 16);
+    memcpy(out->texGen1S, local3.ToFloatPtr(), 16);  // S-1 = fogPlanes[3] (view-origin entry S)
+    memcpy(out->texGen1T, local2.ToFloatPtr(), 16);  // T-1 = fogPlanes[2] (fog top-plane entry T)
+    memcpy(out->color,    color,               16);
+}
+
+static void VK_RB_FogPass(VkCommandBuffer cmd, const viewLight_t *vLight)
+{
+    if (r_skipFogLights.GetBool())
+        return;
+
+    const idMaterial *lightShader = vLight->lightShader;
+    const float *regs             = vLight->shaderRegisters;
+    const shaderStage_t *stage    = lightShader->GetStage(0); // fog shaders have one stage
+
+    float fogColor[4];
+    fogColor[0] = regs[stage->color.registers[0]];
+    fogColor[1] = regs[stage->color.registers[1]];
+    fogColor[2] = regs[stage->color.registers[2]];
+    fogColor[3] = regs[stage->color.registers[3]];
+
+    // Fog density factor: if alpha <= 1 use default distance 500, else distance = alpha
+    float a = (fogColor[3] <= 1.0f) ? (-0.5f / DEFAULT_FOG_DISTANCE) : (-0.5f / fogColor[3]);
+
+    // Override alpha so the fog tint colour is always fully opaque (the fog textures carry density)
+    fogColor[3] = 1.0f;
+
+    // Compute the four fog plane vectors (mirror of RB_FogPass in draw_common.cpp).
+    // fogPlanes[0]: depth S (world-space camera forward)
+    // fogPlanes[1]: depth T (constant 0.5)
+    // fogPlanes[2]: enter T (fog top-plane, for entry fade)
+    // fogPlanes[3]: enter S (view origin distance into fog)
+    const float FOG_SCALE = 0.001f;
+    const float s = vLight->fogPlane.Distance(backEnd.viewDef->renderView.vieworg);
+
+    idPlane fogPlanes[4];
+    // fogPlanes[0]: fog depth S — camera forward direction scaled by fog density 'a'.
+    // The +0.5 bias is intentionally NOT included here; it is added after R_GlobalPlaneToLocal
+    // in VK_BuildFogSurfaceUBO, matching the GL path's RB_T_BasicFog which does local[3] += 0.5.
+    fogPlanes[0][0] = a * backEnd.viewDef->worldSpace.modelViewMatrix[2];
+    fogPlanes[0][1] = a * backEnd.viewDef->worldSpace.modelViewMatrix[6];
+    fogPlanes[0][2] = a * backEnd.viewDef->worldSpace.modelViewMatrix[10];
+    fogPlanes[0][3] = a * backEnd.viewDef->worldSpace.modelViewMatrix[14];
+
+    fogPlanes[1][0] = 0.0f;
+    fogPlanes[1][1] = 0.0f;
+    fogPlanes[1][2] = 0.0f;
+    fogPlanes[1][3] = 0.5f;
+
+    fogPlanes[2][0] = FOG_SCALE * vLight->fogPlane[0];
+    fogPlanes[2][1] = FOG_SCALE * vLight->fogPlane[1];
+    fogPlanes[2][2] = FOG_SCALE * vLight->fogPlane[2];
+    fogPlanes[2][3] = FOG_SCALE * vLight->fogPlane[3] + FOG_ENTER;
+
+    fogPlanes[3][0] = 0.0f;
+    fogPlanes[3][1] = 0.0f;
+    fogPlanes[3][2] = 0.0f;
+    fogPlanes[3][3] = FOG_SCALE * s + FOG_ENTER;
+
+    // Draw world/model surfaces with depth EQUAL (surface pass)
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogPipeline);
+
+    auto drawFogChain = [&](const drawSurf_t *surf) {
+        for (; surf; surf = surf->nextOnLight)
+        {
+            VkFogUBO ubo;
+            VK_BuildFogSurfaceUBO(surf, fogPlanes, fogColor, &ubo);
+            VK_RB_DrawFogSurface(cmd, surf, &ubo, globalImages->fogImage, globalImages->fogEnterImage);
+        }
+    };
+    drawFogChain(vLight->globalInteractions);
+    drawFogChain(vLight->localInteractions);
+
+    // Draw frustum back-caps with depth LESS (fog cap pass) — fills fog where no geometry exists
+    // Uses worldSpace for the frustumTris since they are in global space
+    if (vLight->frustumTris && vLight->frustumTris->ambientCache)
+    {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogFrustumPipeline);
+
+        // frustumTris is in global (world) space — use world modelViewMatrix directly
+        static drawSurf_t capSurf;
+        memset(&capSurf, 0, sizeof(capSurf));
+        capSurf.space = &backEnd.viewDef->worldSpace;
+        capSurf.geo   = vLight->frustumTris;
+
+        VkFogUBO capUbo;
+        VK_BuildFogSurfaceUBO(&capSurf, fogPlanes, fogColor, &capUbo);
+        VK_RB_DrawFogSurface(cmd, &capSurf, &capUbo, globalImages->fogImage, globalImages->fogEnterImage);
+    }
+}
+
+static void VK_RB_BlendLightPass(VkCommandBuffer cmd, const viewLight_t *vLight)
+{
+    if (!vLight->globalInteractions && !vLight->localInteractions)
+        return;
+    if (r_skipBlendLights.GetBool())
+        return;
+
+    extern VkPipeline VK_GetOrCreateBlendlightPipeline(int drawStateBits);
+
+    const idMaterial *lightShader = vLight->lightShader;
+    const float *regs             = vLight->shaderRegisters;
+    idImage *falloffImage         = vLight->falloffImage;
+
+    for (int i = 0; i < lightShader->GetNumStages(); i++)
+    {
+        const shaderStage_t *stage = lightShader->GetStage(i);
+        if (!regs[stage->conditionRegister])
+            continue;
+
+        // Pick or create a pipeline matching this stage's blend mode (depth EQUAL)
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          VK_GetOrCreateBlendlightPipeline(stage->drawStateBits));
+
+        float lightColor[4];
+        lightColor[0] = regs[stage->color.registers[0]];
+        lightColor[1] = regs[stage->color.registers[1]];
+        lightColor[2] = regs[stage->color.registers[2]];
+        lightColor[3] = regs[stage->color.registers[3]];
+
+        idImage *projImage = stage->texture.image;
+
+        auto drawBlendChain = [&](const drawSurf_t *surf) {
+            for (; surf; surf = surf->nextOnLight)
+            {
+                // Per-surface: transform light projection planes to local space
+                idPlane localProj[4];
+                for (int p = 0; p < 4; p++)
+                    R_GlobalPlaneToLocal(surf->space->modelMatrix, vLight->lightProject[p], localProj[p]);
+
+                float mvp[16];
+                VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
+
+                VkBlendUBO ubo;
+                memcpy(ubo.mvp,      mvp,                     sizeof(ubo.mvp));
+                memcpy(ubo.texGen0S, localProj[0].ToFloatPtr(), 16);
+                memcpy(ubo.texGen0T, localProj[1].ToFloatPtr(), 16);
+                memcpy(ubo.texGen0Q, localProj[2].ToFloatPtr(), 16);
+                memcpy(ubo.texGen1S, localProj[3].ToFloatPtr(), 16);
+                memcpy(ubo.color,    lightColor,               16);
+
+                VK_RB_DrawFogSurface(cmd, surf, &ubo, projImage, falloffImage);
+            }
+        };
+        drawBlendChain(vLight->globalInteractions);
+        drawBlendChain(vLight->localInteractions);
+    }
+}
+
+static void VK_RB_FogAllLights(VkCommandBuffer cmd)
+{
+    if (r_skipFogLights.GetBool())
+        return;
+    if (!backEnd.viewDef || !vkPipes.fogPipeline)
+        return;
+
+    for (const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next)
+    {
+        if (!vLight->lightShader)
+            continue;
+        backEnd.vLight = const_cast<viewLight_t *>(vLight);
+
+        if (vLight->lightShader->IsFogLight())
+            VK_RB_FogPass(cmd, vLight);
+        else if (vLight->lightShader->IsBlendLight())
+            VK_RB_BlendLightPass(cmd, vLight);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1180,13 +1525,18 @@ void VK_RB_DrawView(const void *data)
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
-    // Rendering order: depth prepass → interactions → ambient/unlit shader passes.
-    // Matches vkDOOM3 reference: depth fills first, then lit surfaces, then 2D overlays.
+    // Rendering order matches vkDOOM3 reference and GL path (draw_common.cpp RB_STD_DrawView):
+    //   1. Depth prepass — populate depth buffer for early-Z rejection
+    //   2. Interactions — per-light Phong shading with stencil shadow volumes
+    //   3. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
+    //   4. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
     VK_RB_FillDepthBuffer(cmdBuf);
 
     VK_RB_DrawInteractions(cmdBuf);
 
     VK_RB_DrawShaderPasses(cmdBuf);
+
+    VK_RB_FogAllLights(cmdBuf);
 
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
 }

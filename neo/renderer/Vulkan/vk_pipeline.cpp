@@ -807,6 +807,216 @@ void VK_DestroyBlendPipelineCache(void)
 }
 
 // ---------------------------------------------------------------------------
+// Fog / blend-light pipelines
+// Shared descriptor layout: binding0=UBO(vert+frag), binding1=samp(frag), binding2=samp(frag)
+// Used by VK_RB_FogAllLights for both fog lights and blend lights.
+// ---------------------------------------------------------------------------
+
+static VkDescriptorSetLayout VK_CreateFogDescLayout(void)
+{
+    VkDescriptorSetLayoutBinding bindings[3] = {};
+    // binding 0: UBO used by both vertex and fragment
+    bindings[0].binding            = 0;
+    bindings[0].descriptorType     = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount    = 1;
+    bindings[0].stageFlags         = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    // binding 1: samp0 (fog/light image, frag only)
+    bindings[1].binding            = 1;
+    bindings[1].descriptorType     = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount    = 1;
+    bindings[1].stageFlags         = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // binding 2: samp1 (fogEnter/falloff image, frag only)
+    bindings[2].binding            = 2;
+    bindings[2].descriptorType     = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount    = 1;
+    bindings[2].stageFlags         = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo info = {};
+    info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.bindingCount = 3;
+    info.pBindings    = bindings;
+
+    VkDescriptorSetLayout layout;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &layout));
+    return layout;
+}
+
+// Core fog pipeline builder.
+// vertSpv/fragSpv: SPIR-V paths for the fog or blendlight shaders.
+// depthOp: VK_COMPARE_OP_EQUAL (world surfaces) or VK_COMPARE_OP_LESS (frustum cap).
+// cullMode: VK_CULL_MODE_BACK_BIT (world surfaces) or VK_CULL_MODE_FRONT_BIT (frustum cap).
+// blendSrc/blendDst: colour blend factors.
+static VkPipeline VK_CreateFogPipelineEx(VkPipelineLayout layout,
+                                          const char *vertSpv, const char *fragSpv,
+                                          VkCompareOp depthOp, VkCullModeFlags cullMode,
+                                          VkBlendFactor blendSrc, VkBlendFactor blendDst)
+{
+    VkShaderModule vertModule = VK_LoadSPIRV(vertSpv);
+    VkShaderModule fragModule = VK_LoadSPIRV(fragSpv);
+    if (!vertModule || !fragModule)
+    {
+        if (vertModule) vkDestroyShaderModule(vk.device, vertModule, NULL);
+        if (fragModule) vkDestroyShaderModule(vk.device, fragModule, NULL);
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName  = "main";
+
+    // Vertex input: position only from idDrawVert (location 0, offset 0, stride sizeof(idDrawVert))
+    // Using VK_GetInteractionVertexInput which provides the full idDrawVert layout;
+    // the shader only reads location 0 (position), extra attrs are harmlessly present.
+    VkVertexInputBindingDescription binding;
+    VkVertexInputAttributeDescription attrs[12];
+    uint32_t numAttrs = 0;
+    VK_GetInteractionVertexInput(&binding, attrs, &numAttrs);
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount   = 1;
+    vertexInput.pVertexBindingDescriptions      = &binding;
+    vertexInput.vertexAttributeDescriptionCount = numAttrs;
+    vertexInput.pVertexAttributeDescriptions    = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.f, 1.f};
+    VkRect2D   scissor  = {{0, 0}, vk.swapchainExtent};
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports    = &viewport;
+    viewportState.scissorCount  = 1;
+    viewportState.pScissors     = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode    = cullMode;
+    // Y-flip viewport inverts winding — CW here matches front-facing world geometry.
+    rasterizer.frontFace   = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // Depth test at requested compare op; no depth write; no stencil.
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable  = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp   = depthOp;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.blendEnable         = VK_TRUE;
+    colorBlend.srcColorBlendFactor = blendSrc;
+    colorBlend.dstColorBlendFactor = blendDst;
+    colorBlend.colorBlendOp        = VK_BLEND_OP_ADD;
+    colorBlend.srcAlphaBlendFactor = blendSrc;
+    colorBlend.dstAlphaBlendFactor = blendDst;
+    colorBlend.alphaBlendOp        = VK_BLEND_OP_ADD;
+    colorBlend.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                     VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 1;
+    blendState.pAttachments    = &colorBlend;
+
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates    = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 2;
+    pipelineInfo.pStages             = stages;
+    pipelineInfo.pVertexInputState   = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState   = &multisampling;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pColorBlendState    = &blendState;
+    pipelineInfo.pDynamicState       = &dynamicState;
+    pipelineInfo.layout              = layout;
+    pipelineInfo.renderPass          = vk.renderPass;
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
+
+    vkDestroyShaderModule(vk.device, vertModule, NULL);
+    vkDestroyShaderModule(vk.device, fragModule, NULL);
+    return pipeline;
+}
+
+// Small pipeline cache for blend-light variants (different blend modes per material stage).
+struct VkBlendlightPipelineEntry
+{
+    uint32_t   blendKey; // (drawStateBits & (GLS_SRCBLEND_BITS|GLS_DSTBLEND_BITS))
+    VkPipeline pipeline;
+};
+static const int                  MAX_BLENDLIGHT_PIPELINES = 16;
+static VkBlendlightPipelineEntry  s_blendlightCache[MAX_BLENDLIGHT_PIPELINES];
+static int                        s_blendlightCacheCount = 0;
+
+// Return (creating on demand) a blendlight pipeline for the given blend state bits.
+// All variants share depth EQUAL, no depth write, blendlight.vert/frag shaders.
+VkPipeline VK_GetOrCreateBlendlightPipeline(int drawStateBits)
+{
+    // Pre-built default: modulate (DST_COLOR / ZERO) — the most common blend light in D3
+    const uint32_t defaultKey = (uint32_t)(GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO);
+    const uint32_t key        = (uint32_t)(drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+
+    if (key == defaultKey || key == 0u)
+        return vkPipes.blendlightPipeline;
+
+    for (int i = 0; i < s_blendlightCacheCount; i++)
+        if (s_blendlightCache[i].blendKey == key)
+            return s_blendlightCache[i].pipeline;
+
+    if (s_blendlightCacheCount >= MAX_BLENDLIGHT_PIPELINES)
+    {
+        common->Warning("VK: blendlight pipeline cache full, falling back to default");
+        return vkPipes.blendlightPipeline;
+    }
+
+    VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
+    VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
+    VkPipeline    p   = VK_CreateFogPipelineEx(vkPipes.fogLayout,
+                                               "glprogs/glsl/blendlight.vert.spv",
+                                               "glprogs/glsl/blendlight.frag.spv",
+                                               VK_COMPARE_OP_LESS_OR_EQUAL,
+                                               VK_CULL_MODE_BACK_BIT, src, dst);
+    if (p == VK_NULL_HANDLE)
+        return vkPipes.blendlightPipeline;
+
+    s_blendlightCache[s_blendlightCacheCount++] = {key, p};
+    return p;
+}
+
+void VK_DestroyBlendlightPipelineCache(void)
+{
+    for (int i = 0; i < s_blendlightCacheCount; i++)
+        vkDestroyPipeline(vk.device, s_blendlightCache[i].pipeline, NULL);
+    s_blendlightCacheCount = 0;
+}
+
+// ---------------------------------------------------------------------------
 // VK_InitPipelines - create all pipelines (called after swapchain is ready)
 // ---------------------------------------------------------------------------
 
@@ -855,6 +1065,34 @@ void VK_InitPipelines(void)
     // --- Depth prepass pipeline (created after guiLayout is ready) ---
     vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
 
+    // --- Fog / blend-light pipelines ---
+    vkPipes.fogDescLayout = VK_CreateFogDescLayout();
+    {
+        VkPipelineLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts    = &vkPipes.fogDescLayout;
+        VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.fogLayout));
+    }
+    // Fog surface pass: depth EQUAL, front-cull, SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+    vkPipes.fogPipeline = VK_CreateFogPipelineEx(
+        vkPipes.fogLayout,
+        "glprogs/glsl/fog.vert.spv", "glprogs/glsl/fog.frag.spv",
+        VK_COMPARE_OP_EQUAL, VK_CULL_MODE_BACK_BIT,
+        VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+    // Fog frustum cap pass: depth LESS, back-cull, SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+    vkPipes.fogFrustumPipeline = VK_CreateFogPipelineEx(
+        vkPipes.fogLayout,
+        "glprogs/glsl/fog.vert.spv", "glprogs/glsl/fog.frag.spv",
+        VK_COMPARE_OP_LESS, VK_CULL_MODE_FRONT_BIT,
+        VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+    // Blend light default: depth EQUAL, front-cull, DST_COLOR / ZERO (modulate)
+    vkPipes.blendlightPipeline = VK_CreateFogPipelineEx(
+        vkPipes.fogLayout,
+        "glprogs/glsl/blendlight.vert.spv", "glprogs/glsl/blendlight.frag.spv",
+        VK_COMPARE_OP_LESS_OR_EQUAL, VK_CULL_MODE_BACK_BIT,
+        VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
+
     // --- Per-frame descriptor pools ---
     // Reset at the start of each frame (after fence wait) so descriptor sets don't accumulate.
     // Sized to hold one frame's worth of interaction + GUI descriptor sets.
@@ -890,6 +1128,7 @@ void VK_InitPipelines(void)
 void VK_ShutdownPipelines(void)
 {
     VK_DestroyBlendPipelineCache();
+    VK_DestroyBlendlightPipelineCache();
 
     for (int fi = 0; fi < VK_MAX_FRAMES_IN_FLIGHT; fi++)
     {
@@ -920,5 +1159,15 @@ void VK_ShutdownPipelines(void)
         vkDestroyPipelineLayout(vk.device, vkPipes.guiLayout, NULL);
     if (vkPipes.guiDescLayout)
         vkDestroyDescriptorSetLayout(vk.device, vkPipes.guiDescLayout, NULL);
+    if (vkPipes.fogPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.fogPipeline, NULL);
+    if (vkPipes.fogFrustumPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.fogFrustumPipeline, NULL);
+    if (vkPipes.blendlightPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.blendlightPipeline, NULL);
+    if (vkPipes.fogLayout)
+        vkDestroyPipelineLayout(vk.device, vkPipes.fogLayout, NULL);
+    if (vkPipes.fogDescLayout)
+        vkDestroyDescriptorSetLayout(vk.device, vkPipes.fogDescLayout, NULL);
     memset(&vkPipes, 0, sizeof(vkPipes));
 }
