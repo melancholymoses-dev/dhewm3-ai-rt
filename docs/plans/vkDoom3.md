@@ -1,6 +1,7 @@
 # vkDoom3 Rendering Pipeline
 
 Current state of the Vulkan rendering pipeline in `neo/renderer` (BFG Edition base).
+Last updated: 2026-03-18.
 
 ---
 
@@ -28,20 +29,20 @@ idRenderBackend::Execute(renderCommands)          [Backend]
 
 | File | Role |
 |------|------|
-| `Vulkan/RenderBackend_VK.cpp` | Instance/device creation, swapchain, command buffers, render pass, frame sync |
-| `Vulkan/RenderProgs_VK.cpp` | Shader module compilation, pipeline creation/caching, descriptor set management |
-| `Vulkan/BufferObject_VK.cpp` | Vertex, index, and uniform buffer allocation |
-| `Vulkan/Image_VK.cpp` | Texture upload, format conversion, sampler creation, per-frame garbage collection |
-| `Vulkan/Allocator_VK.h/.cpp` | Custom block allocator; optional VMA (`ID_USE_AMD_ALLOCATOR`) |
-| `Vulkan/Staging_VK.h/.cpp` | Staging buffers for GPU uploads, fence-based sync |
-| `Vulkan/qvk.h` | `ID_VK_CHECK`, `ID_VK_VALIDATE`, platform surface macros |
+| `Vulkan/RenderBackend_VK.cpp` | Instance/device creation, swapchain, command buffers, render pass, frame sync (~1956 lines) |
+| `Vulkan/RenderProgs_VK.cpp` | Shader module compilation, pipeline creation/caching, descriptor set management (~1083 lines) |
+| `Vulkan/BufferObject_VK.cpp` | Vertex, index, and uniform buffer allocation (~725 lines) |
+| `Vulkan/Image_VK.cpp` | Texture upload, format conversion, sampler creation, per-frame garbage collection (~479 lines) |
+| `Vulkan/Allocator_VK.h/.cpp` | Custom block allocator; optional VMA (`ID_USE_AMD_ALLOCATOR`) — (~164 + 671 lines) |
+| `Vulkan/Staging_VK.h/.cpp` | Staging buffers for GPU uploads, fence-based sync (~82 + 248 lines) |
+| `Vulkan/qvk.h` | `ID_VK_CHECK`, `ID_VK_VALIDATE`, platform surface macros, VK error string mapping |
 
 Core (platform-agnostic) structures:
 
 | File | Role |
 |------|------|
-| `RenderBackend.h/.cpp` | `idRenderBackend` class, pass orchestration |
-| `RenderProgs.h` | `renderProg_t`, `shader_t`, `renderProgManager` interface |
+| `RenderBackend.h/.cpp` | `idRenderBackend` class, pass orchestration, `vulkanContext_t` global |
+| `RenderProgs.h` | `renderProg_t`, `shader_t`, `renderProgManager` interface, `RENDERPARM_*` enum |
 | `RenderCommon.h` | `viewDef_t`, `viewLight_t`, `drawSurf_t`, `drawInteraction_t` |
 | `BufferObject.h` | `idVertexBuffer`, `idIndexBuffer`, `idUniformBuffer` |
 | `VertexCache.h` | Per-frame dynamic + static buffer management |
@@ -53,7 +54,7 @@ Core (platform-agnostic) structures:
 
 - **Color format:** `VK_FORMAT_B8G8R8A8_UNORM` with SRGB colorspace
 - **Present mode:** IMMEDIATE or MAILBOX when vsync off; FIFO when vsync on
-- **Buffering:** `NUM_FRAME_DATA` images (typically 2–3)
+- **Buffering:** `NUM_FRAME_DATA = 3` (triple-buffered command buffers, descriptor pools, fences)
 - **Sync:** per-frame `m_acquireSemaphores`, `m_renderCompleteSemaphores`, command buffer fences
 
 ---
@@ -134,7 +135,14 @@ renderProg_t {
 }
 ```
 
-`stateBits` encodes blend modes, depth function, stencil ops, cull mode, fill mode — so each unique rendering state gets its own pipeline automatically.
+`stateBits` encodes blend modes, depth function, depth write, stencil ops, cull mode, polygon mode, fill mode — so each unique rendering state gets its own pipeline automatically.
+
+**State bit mapping:**
+- `GLS_SRCBLEND_*` / `GLS_DSTBLEND_*` → `VkBlendFactor`
+- `GLS_DEPTHFUNC_*` → `VkCompareOp`
+- `GLS_STENCIL_FUNC_*` → `VkStencilOp`
+- `GLS_POLYGON_OFFSET` → dynamic depth bias
+- `GLS_TWOSIDED` → cull mode NONE
 
 **Built-in programs (subset):**
 - `BUILTIN_GUI` — 2D UI
@@ -154,10 +162,10 @@ Per renderProg_t:
   Binding 1: Fragment UBO (render parameters used by fragment shader)
   Binding 2+: Combined image samplers
 
-m_descriptorPools[NUM_FRAME_DATA]
-  MAX_DESC_SETS          = 16 384
-  MAX_DESC_UNIFORM_BUFFERS = 8 192
-  MAX_DESC_IMAGE_SAMPLERS = 12 384
+m_descriptorPools[NUM_FRAME_DATA]  (3 pools)
+  MAX_DESC_SETS            = 16 384
+  MAX_DESC_UNIFORM_BUFFERS =  8 192
+  MAX_DESC_IMAGE_SAMPLERS  = 12 384
 ```
 
 **Shader parameter flow:**
@@ -169,7 +177,7 @@ CommitCurrent(stateBits, commandBuffer)
   → vkCmdBindDescriptorSets()
 ```
 
-Parameters are accumulated in `m_uniforms` and written to a per-frame uniform buffer on `CommitCurrent`.
+Parameters are accumulated in `m_uniforms[RENDERPARM_TOTAL]` (64 × vec4 = 1 KB) and written to a per-frame uniform buffer on `CommitCurrent`. Vertex and fragment UBOs are written separately.
 
 ---
 
@@ -184,11 +192,15 @@ Parameters are accumulated in `m_uniforms` and written to a per-frame uniform bu
 | Joint/bone | UNIFORM | CPU-to-GPU | per frame |
 
 **Memory allocator options:**
-- Custom block allocator (`idVulkanAllocator`) — linked list of chunks per memory type
+- Custom block allocator (`idVulkanAllocator`) — linked list of chunks per memory type, configurable budgets via CVars:
+  - `r_vkDeviceLocalMemoryMB` (default: 128 MB)
+  - `r_vkHostVisibleMemoryMB` (default: 64 MB)
 - AMD VMA (`ID_USE_AMD_ALLOCATOR`) — automatic pooling
 
 **Staging:**
-- `idVulkanStagingManager` — one staging buffer per frame, fence-synchronized, used for GPU uploads
+- `idVulkanStagingManager` — one staging buffer per frame (`NUM_FRAME_DATA = 3`), fence-synchronized
+- `r_vkUploadBufferSizeMB` (default: 64 MB)
+- Transfers via `vkCmdCopyBufferToImage`, flushed and waited before reuse
 
 **Vertex cache handle packing:** `size (23 bits) | offset (25 bits) | frame (15 bits) | static flag`
 
@@ -216,7 +228,8 @@ idImage {
 | FMT_DXT5 | VK_FORMAT_BC3_UNORM_BLOCK |
 | FMT_DEPTH | `vkcontext.depthFormat` |
 
-- Deferred deletion: images/samplers placed in `m_imageGarbage[frame]` and freed when that frame slot is next reused.
+- Deferred deletion: images/views/samplers/allocations placed in `m_imageGarbage[frame]` and freed when that frame slot is next reused.
+- Component swizzling: formats like green-alpha use `VkComponentMapping` for correct channel mapping.
 
 ---
 
@@ -226,9 +239,9 @@ Three distinct layouts with matching pipeline input descriptions:
 
 | Layout | Contents | Use |
 |--------|----------|-----|
-| `LAYOUT_DRAW_VERT` | Position, TexCoord, Normal, Tangent, 2× Color (RGBA8) | All standard geometry |
-| `LAYOUT_DRAW_SHADOW_VERT` | Position XYZW | Shadow volumes |
-| `LAYOUT_DRAW_SHADOW_VERT_SKINNED` | Position XYZW, 2× Color | Skeletal animation shadow volumes |
+| `LAYOUT_DRAW_VERT` | Position (R32G32B32), TexCoord (R16G16), Normal (R8G8B8A8), Tangent, Color1, Color2 | All standard geometry |
+| `LAYOUT_DRAW_SHADOW_VERT` | Position XYZW (R32G32B32A32) | Shadow volumes |
+| `LAYOUT_DRAW_SHADOW_VERT_SKINNED` | Position XYZW + 2× Color (R8G8B8A8) | Skeletal animation shadow volumes |
 
 ---
 
@@ -237,15 +250,18 @@ Three distinct layouts with matching pipeline input descriptions:
 Shader parameters are addressed by `RENDERPARM_*` enum and passed as `idVec4[RENDERPARM_TOTAL]`. Key parameters:
 
 ```
-RENDERPARM_LOCALLIGHTORIGIN       – light position
+RENDERPARM_LOCALLIGHTORIGIN       – light position in model space
 RENDERPARM_LIGHTPROJECTION_S/T/Q  – light projection matrix rows
 RENDERPARM_LIGHTFALLOFF_S         – falloff texture coord scale
-RENDERPARM_DIFFUSEMODIFIER        – light color / intensity
+RENDERPARM_DIFFUSEMODIFIER        – diffuse color / intensity
 RENDERPARM_SPECULARMODIFIER       – specular multiplier
 RENDERPARM_VIEWORIGIN             – camera position
-RENDERPARM_MVPMATRIX_X/Y/Z/W      – model-view-projection matrix
-RENDERPARM_MODELMATRIX_X/Y/Z/W    – model matrix
+RENDERPARM_MVPMATRIX_X/Y/Z/W      – model-view-projection matrix rows
+RENDERPARM_MODELMATRIX_X/Y/Z/W    – model matrix rows
+RENDERPARM_TEXTUREMATRIX_S/T      – texture coordinate transform
 ```
+
+Total: ~64 `RENDERPARM_*` entries covering all built-in programs.
 
 ---
 
@@ -253,10 +269,12 @@ RENDERPARM_MODELMATRIX_X/Y/Z/W    – model matrix
 
 ```
 GL_StartFrame()
-  ├─ vkWaitForFences(commandBuffer fence)
+  ├─ vkWaitForFences(commandBuffer fence for oldest frame)
   ├─ vkAcquireNextImageKHR() → imageIndex
-  └─ vkBeginCommandBuffer()
-  └─ vkCmdBeginRenderPass(renderPass, framebuffer[imageIndex])
+  ├─ vkBeginCommandBuffer()
+  ├─ vkCmdBeginRenderPass(renderPass, framebuffer[imageIndex])
+  ├─ Read GPU timestamps from previous frame
+  └─ renderProgManager.StartFrame() — reset descriptor pool
 
 [Depth + Interaction + ShaderPasses + Fog]
 
@@ -270,24 +288,31 @@ GL_EndFrame()
   └─ vkQueuePresentKHR(presentQueue)
 ```
 
+Frame counter cycles: `m_currentFrameData = counter % NUM_FRAME_DATA` (0→1→2→0…)
+
 ---
 
 ## GPU Timing
 
-- `vkCmdResetQueryPool()` and `vkCmdWriteTimestamp()` bracketing passes
-- Results read back for GPU timing stats
+- `vkCmdResetQueryPool()` and `vkCmdWriteTimestamp()` bracketing each pass
+- Results read back at start of next frame for GPU timing stats
+- Driven by `r_showPrimitives` / debug CVars
 
 ---
 
 ## Notable Strengths vs Basic Vulkan Port
 
 1. **Depth prepass** — eliminates overdraw, enables correct interaction stencil
-2. **Dynamic pipeline cache** — one pipeline per state combination, created on demand
-3. **Full blend mode support** — all `GLS_*` state bits translate to pipeline variants
-4. **Complete shadow volume rendering** — stencil depth-fail (Carmack's Reverse) implemented
-5. **Fog/blend lights pass** — atmospheric effects present
-6. **Resume render pass** — can suspend/resume rendering without clearing
-7. **Deferred image deletion** — no GPU hazards on image destroy
-8. **MSAA support** — resolve attachment wired up
-9. **GPU timing queries** — profiling infrastructure present
-10. **Full shader parameter system** — `RENDERPARM_*` enum with 60+ parameters
+2. **Dynamic pipeline cache** — one pipeline per state combination, created on demand; full `GLS_*` support
+3. **Full blend mode support** — all `GLS_SRCBLEND_*`/`GLS_DSTBLEND_*` bits translate to pipeline variants
+4. **Complete shadow volume rendering** — stencil depth-fail (Carmack's Reverse) implemented; correct per-light ordering
+5. **Fog/blend lights pass** — `FogAllLights()` atmospheric effects fully present
+6. **Resume render pass** — can suspend/resume rendering without clearing (DONT_CARE + LOAD pattern)
+7. **Deferred image deletion** — `m_imageGarbage[frame]` prevents GPU hazards on texture streaming
+8. **MSAA support** — resolve attachment wired up; configurable sample count + sample shading
+9. **GPU timing queries** — profiling infrastructure present and active
+10. **Full shader parameter system** — `RENDERPARM_*` enum with 64 parameters, vertex + fragment UBOs
+11. **Skinned geometry** — `SHADOW_VERT_SKINNED` layout + joint UBO for skeletal animations
+12. **Triple buffering** — `NUM_FRAME_DATA = 3` avoids CPU/GPU stalls between frames
+13. **Deferred memory allocator** — custom block allocator or AMD VMA with configurable budgets
+14. **Staging manager** — batched CPU→GPU uploads with fence-based synchronization

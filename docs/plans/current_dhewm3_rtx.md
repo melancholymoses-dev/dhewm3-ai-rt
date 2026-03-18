@@ -1,7 +1,7 @@
 # dhewm3_rtx Rendering Pipeline
 
 Current state of the Vulkan rendering pipeline in `neo/renderer`.
-Last updated: 2026-03-17 (after fixing 1: stencil bleed, 2: fog/blend skip, 3: translucent stencil).
+Last updated: 2026-03-18 (after blend support, tex coord transforms, alpha-clip depth prepass, fog/blend light pipelines, resume render pass, deferred image deletion).
 
 ---
 
@@ -30,10 +30,10 @@ A polymorphic `IBackend` interface (`RendererBackend.h`) allows swapping the GL 
 | `Vulkan/VKBackend.h/.cpp` | `IBackend` implementation; Init, Shutdown, resource entry points |
 | `Vulkan/vk_backend.cpp` | Main frame loop: `VK_RB_DrawView`, `VK_RB_SwapBuffers`, draw state |
 | `Vulkan/vk_instance.cpp` | Physical/logical device, queue families, extension/layer negotiation, RT capability probe |
-| `Vulkan/vk_swapchain.cpp` | Swapchain, render pass, framebuffers, synchronization primitives |
+| `Vulkan/vk_swapchain.cpp` | Swapchain, render passes (initial + resume), framebuffers, synchronization primitives |
 | `Vulkan/vk_pipeline.cpp` | All graphics pipelines, descriptor set layouts, per-frame descriptor pools |
 | `Vulkan/vk_buffer.cpp` | Buffer allocation, vertex cache integration, per-frame UBO/data rings |
-| `Vulkan/vk_image.cpp` | Texture upload, mipmap generation via blit, sampler creation |
+| `Vulkan/vk_image.cpp` | Texture upload, mipmap generation via blit, sampler creation, deferred deletion garbage ring |
 | `Vulkan/vk_shader.cpp` | SPIR-V shader module loading from disk |
 | `Vulkan/vk_common.h` | Global `vkState_t`, pipeline state `vkPipelines_t`, helper macros (`VK_CHECK`) |
 | `Vulkan/vk_raytracing.h` | RT type declarations (BLAS, TLAS, shadow mask) |
@@ -53,20 +53,19 @@ A polymorphic `IBackend` interface (`RendererBackend.h`) allows swapping the GL 
 
 ---
 
-## Render Pass
+## Render Passes
 
-A **single monolithic render pass** covers the entire frame. All views in one `EndFrame` (3D world + GUI overlay) share it.
+Two render passes are created:
 
-```
-Subpass 0:
-  Color attachment  – swapchain image   – Load: CLEAR,  Store: STORE
-  Depth attachment  – dedicated buffer  – Load: CLEAR,  Store: DONT_CARE
-  Clear values: color=(0,0,0,1)  depth=1.0  stencil=128
-```
+| Pass | Load Op | Use |
+|------|---------|-----|
+| `vkState.renderPass` | CLEAR | Fresh frame / first open |
+| `vkState.renderPassResume` | LOAD | Reopen after RT dispatch (preserves prior draws) |
 
-- Opened on the first `RC_DRAW_VIEW` of the frame.
-- Closed just before `RC_SWAP_BUFFERS`.
-- No MSAA, no input attachments, no subpass dependencies.
+- Stencil clear value: 128
+- Color clear: (0, 0, 0, 1)
+- Depth clear: 1.0
+- Both passes share the same attachment formats so all pipelines are compatible with both.
 
 ---
 
@@ -77,16 +76,16 @@ VK_RB_DrawView()
   1. VK_RB_FillDepthBuffer()
   2. VK_RB_DrawInteractions()
   3. VK_RB_DrawShaderPasses()
-  [FogAllLights — NOT YET IMPLEMENTED]
+  4. VK_RB_FogAllLights()     [pipelines defined; dispatch partially implemented]
 ```
 
 ### 1. Depth Prepass (`VK_RB_FillDepthBuffer`)
 
-Renders opaque (`MC_OPAQUE`) surfaces to depth buffer only.
+Renders opaque and perforated surfaces to depth buffer only.
 
-- Uses the depth pipeline: depth LESS, color write mask = 0, no blend, no stencil
+- **`depthPipeline`** — `MC_OPAQUE` surfaces: depth LESS, no color write
+- **`depthClipPipeline`** — `MC_PERFORATED` (alpha-tested) surfaces: same, but fragment shader samples diffuse and discards on `alpha < threshold`
 - Populates depth buffer for early-Z rejection in the interaction pass
-- Does **not** handle alpha-tested surfaces via clip (clip not implemented in depth shader)
 
 ### 2. Interaction Pass (`VK_RB_DrawInteractions`)
 
@@ -96,27 +95,30 @@ Per-light lit rendering with Phong + bump + specular.
 - For each `viewLight`:
   1. Sets scissor rect to light bounds
   2. **Clears stencil to 128** within the light scissor (`vkCmdClearAttachments`) — prevents cross-light stencil bleed
-  3. **Shadow volume pass** — Carmack's Reverse (depth-fail stencil) draw calls for `globalShadows` and `localShadows`; skipped when RT shadows are active
+  3. **Shadow volume pass** — draw calls for `globalShadows` and `localShadows` using shadow pipeline; skipped when RT shadows are active
   4. Binds `interactionPipeline` (stencil EQUAL 128)
   5. Draws `localInteractions` and `globalInteractions`
-  6. For `translucentInteractions`: switches to `interactionPipelineNoStencil` (stencil disabled), draws, then restores opaque pipeline
+  6. For `translucentInteractions`: switches to `interactionPipelineNoStencil`, draws, then restores
 
-- Interaction UBO holds: light params, matrices, colors
+- Interaction UBO holds: light params, matrices, colors, texture coordinate transforms, overbright scale
 - Descriptor set per draw: bump, falloff, light projection, diffuse, specular, spec table, RT shadow mask (binding 7)
 
 ### 3. Shader Passes (`VK_RB_DrawShaderPasses`)
 
-Renders unlit / 2D surfaces using the GUI pipeline.
+Renders unlit / 2D surfaces.
 
 - Iterates `viewDef->drawSurfs`
-- **Skips fog/blend light volume geometry** (`mat->IsFogLight() || mat->IsBlendLight()`) — prevents depth-test-disabled GUI pipeline from rendering volumes through floors
-- Evaluates material registers to determine blend mode (opaque vs alpha)
-- Allocates a GUI UBO slot and descriptor set per draw
-- Issues `vkCmdDrawIndexed`
+- Skips fog/blend light volume geometry (handled in pass 4)
+- Evaluates material registers and `drawStateBits` per stage to select blend mode
+- Supports multiple blend modes: opaque, src-alpha, additive ONE+ONE, and others via state bit mapping
+- Evaluates and uploads texture coordinate transform matrices per stage
+- Handles overbright color scaling
 
-### 4. Fog/Blend Lights — NOT IMPLEMENTED
+### 4. Fog / Blend Lights (`VK_RB_FogAllLights`)
 
-`FogAllLights` is absent. Fog and blend light volumes are currently skipped entirely.
+- Pipelines defined: `fogPipeline` (depth EQUAL, additive), `fogFrustumPipeline` (depth LESS, back-cull), `blendlightPipeline` (depth EQUAL, DST_COLOR/ZERO modulate)
+- Shaders exist: `fog.vert/frag`, `blendlight.vert/frag`
+- Render dispatch partially implemented; correctness being iterated
 
 ---
 
@@ -125,13 +127,18 @@ Renders unlit / 2D surfaces using the GUI pipeline.
 | Pipeline | Shaders | Key State |
 |----------|---------|-----------|
 | **Interaction** | `interaction.vert/frag` | Depth LESS_OR_EQUAL, no depth write, Stencil EQUAL 128, Additive blend (ONE+ONE) |
-| **Interaction (no stencil)** | `interaction.vert/frag` | Same as above but stencil disabled — used for translucent interactions |
-| **Shadow** | `shadow.vert/frag` | Depth LESS, no color write, Stencil depth-fail (Carmack's Reverse) |
-| **Depth** | `depth.vert/frag` (or gui.vert) | Depth LESS, color write mask = 0 |
+| **Interaction (no stencil)** | `interaction.vert/frag` | Same but stencil disabled — translucent interactions |
+| **Shadow (Z-fail)** | `shadow.vert/frag` | Depth LESS, no color write, Stencil depth-fail (Carmack's Reverse) |
+| **Shadow (Z-pass)** | `shadow.vert/frag` | Depth LESS, no color write, Stencil depth-pass |
+| **Depth (opaque)** | `depth.vert/frag` | Depth LESS, color write mask = 0 |
+| **Depth (alpha-clip)** | `depth.vert` + `depth_clip.frag` | Depth LESS, color mask = 0, alpha discard |
 | **GUI Opaque** | `gui.vert/frag` | No depth/stencil test, no blend |
 | **GUI Alpha** | `gui.vert/frag` | No depth/stencil test, SRC_ALPHA / ONE_MINUS_SRC_ALPHA blend |
+| **Fog** | `fog.vert/frag` | Depth EQUAL, additive blend |
+| **Fog Frustum** | `fog.vert/frag` | Depth LESS, back-face cull |
+| **Blend Light** | `blendlight.vert/frag` | Depth EQUAL, DST_COLOR/ZERO modulate |
 
-Pipeline state is **fixed** at creation time — there is no dynamic pipeline variant cache.
+Pipeline state is **fixed** at creation time — no dynamic pipeline variant cache.
 
 ---
 
@@ -139,7 +146,7 @@ Pipeline state is **fixed** at creation time — there is no dynamic pipeline va
 
 | Set | Binding | Type | Content |
 |-----|---------|------|---------|
-| Interaction | 0 | UBO | Interaction params (matrices, colors, light) |
+| Interaction | 0 | UBO | Interaction params (matrices, colors, light, tex coord transforms) |
 | Interaction | 1–6 | Sampler | bump, falloff, light proj, diffuse, specular, spec table |
 | Interaction | 7 | Sampler | RT shadow mask (optional) |
 | Shadow | 0 | UBO | MVP + light origin |
@@ -187,6 +194,7 @@ idImage (frontend)
 - Fallback: 1×1 white texture used when `idImage` has no GPU backing
 - Sampler wrapping: TR_CLAMP → CLAMP_TO_EDGE, TR_CLAMP_TO_ZERO → CLAMP_TO_BORDER, default REPEAT
 - Filtering: TF_NEAREST → NEAREST, default LINEAR
+- **Deferred deletion:** `VK_Image_Purge` queues into `imageGarbage[frame]` ring; drained after per-frame fence (`VK_Image_DrainGarbage`)
 
 ---
 
@@ -203,12 +211,14 @@ idImage (frontend)
 When enabled via compile flag:
 
 1. **BLAS** built per mesh from vertex/index buffers (`vk_accelstruct.cpp`)
-2. **TLAS** rebuilt each frame from visible entities
+2. **TLAS** rebuilt each frame from visible entities (structure defined; population loop incomplete)
 3. Shadow rays dispatched before the interaction pass:
    - Render pass closed → TLAS rebuild → `VK_RT_DispatchShadowRays()` → shadow mask image written
-   - Render pass reopened
+   - Render pass reopened using `renderPassResume` (LOAD op — preserves prior draws)
 4. Shadow mask sampled as binding 7 in the interaction descriptor set
 5. When RT is active, `useStencilShadows = false` — stencil shadow volume pass is skipped
+
+RT pipeline is initialized (`VK_RT_InitShadowPipeline`), SBT built; dispatch loop still under construction.
 
 ---
 
@@ -234,10 +244,18 @@ VK_RB_SwapBuffers()
 | Fix | Description |
 |-----|-------------|
 | Per-light stencil clear | `vkCmdClearAttachments(stencil=128)` before each light's scissor rect prevents shadow stencil bleed between lights |
-| Fog/blend light skip | `IsFogLight() \|\| IsBlendLight()` skipped in `DrawShaderPasses` so depth-test-less GUI pipeline doesn't draw volumes through floors |
-| Translucent no-stencil pipeline | `interactionPipelineNoStencil` (stencil disabled) used for `translucentInteractions` to avoid shadow volumes incorrectly culling transparent surfaces |
-| Shadow volume draw calls | `VK_RB_DrawShadowSurface` now issues real draw calls for `globalShadows`/`localShadows` using the shadow pipeline |
-| Depth prepass | `VK_RB_FillDepthBuffer` populates the depth buffer before interactions, enabling early-Z rejection |
+| Fog/blend light skip | `IsFogLight() \|\| IsBlendLight()` skipped in `DrawShaderPasses`; fog/blend handled in dedicated pass |
+| Translucent no-stencil pipeline | `interactionPipelineNoStencil` used for `translucentInteractions` |
+| Shadow volume draw calls | `VK_RB_DrawShadowSurface` issues real draw calls using the shadow pipeline |
+| Depth prepass | `VK_RB_FillDepthBuffer` with opaque + alpha-clip variants |
+| Blend mode support | `DrawShaderPasses` evaluates `drawStateBits` per stage for multiple blend modes |
+| Texture coord transforms | Material stage texture matrices evaluated and uploaded to interaction UBO |
+| Alpha-clip depth prepass | `depthClipPipeline` samples diffuse and discards in fragment shader for perforated surfaces |
+| Fog/blend light pipelines | `fogPipeline`, `fogFrustumPipeline`, `blendlightPipeline` created; shaders compiled |
+| Resume render pass | `renderPassResume` (LOAD op) created; used when reopening after RT dispatch |
+| Deferred image deletion | `VK_Image_Purge` enqueues to garbage ring; freed after frame fence |
+| Overbright handling | Light overbright scale uploaded to interaction UBO and applied in shaders |
+| Z-pass shadow variant | `shadowPipelineZPass` added alongside Z-fail for camera-outside-volume cases |
 
 ---
 
@@ -245,16 +263,15 @@ VK_RB_SwapBuffers()
 
 | Feature | Status | Impact |
 |---------|--------|--------|
-| FogAllLights pass | Missing | Fog and blend light volumetric effects not rendered |
-| Multiple blend modes | Only 2 supported (opaque, src-alpha) | Particles, glows, additive effects may be wrong |
-| Texture coordinate transforms | Not verified | Animated materials (scroll, rotate) may be broken |
-| Per-stage depth function | Missing | Some material stages depth-tested incorrectly |
-| Per-surface cull mode | Missing | Two-sided geometry may render incorrectly |
-| Post-process passes | Missing (`CopyRender` is a no-op stub) | No bloom, no screen-space effects |
-| Dynamic pipeline variant cache | Missing | Pipelines are fixed; cannot adapt to material state bits |
-| GPU index buffer usage | Missing | Indexes always copied to data ring per draw |
+| FogAllLights dispatch | Pipelines and shaders exist; render loop correctness in progress | Fog/blend light volumes may not render correctly |
+| Dynamic pipeline variant cache | Fixed pipeline set; cannot adapt to arbitrary material state bits | Some exotic blend/depth states render wrong |
+| Per-stage depth function | Not verified | Some material stages depth-tested incorrectly |
+| Per-surface cull mode | Not verified | Two-sided geometry may render incorrectly |
+| Post-process passes | `CopyRender` is a no-op stub | No bloom, no screen-space effects |
+| GPU index buffer usage | Indexes copied to data ring per draw | Extra host memory traffic |
 | Skinned/joint geometry | Not verified | Skeletal animation may not render correctly |
-| Shadow volume ordering | Simplified | All global+local shadows drawn together per light; does not match vkDOOM3 ordering (global→local→local shadow→global shadow) |
-| Per-shadow scissor refinement | Missing | Uses full light scissor; vkDOOM3 refines scissor per shadow surface |
-| Resume render pass | Missing | RT shadow pass closes/reopens the render pass with CLEAR; prior draws preserved but DONT_CARE reopen is a hack |
-| Alpha-tested depth prepass | Missing | Alpha-clip not implemented in depth shader |
+| Shadow volume ordering | Simplified (all global+local shadows together per light) | May differ from vkDOOM3 (global→local→local shadow→global shadow) |
+| Per-shadow scissor refinement | Uses full light scissor | Some extra GPU fragment work |
+| RT shadow TLAS population | Structure allocated; per-frame populate loop incomplete | RT shadows not yet dispatching |
+| RT shadow dispatch loop | Pipeline created, SBT built; dispatch loop incomplete | RT mode does not produce shadow masks yet |
+| Geometry rendering correctness | Recent commits show "still triangles" debug state | Possible vertex input or pipeline configuration issue |

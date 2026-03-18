@@ -1,6 +1,6 @@
 # Vulkan Pipeline Comparison: dhewm3_rtx vs vkDOOM3
 
-Comparison as of 2026-03-17.  Reference: `vkDoom3.md`.  Current state: `current_dhewm3_rtx.md`.
+Comparison as of 2026-03-18.  Reference: `vkDoom3.md`.  Current state: `current_dhewm3_rtx.md`.
 
 ---
 
@@ -8,45 +8,66 @@ Comparison as of 2026-03-17.  Reference: `vkDoom3.md`.  Current state: `current_
 
 | Aspect | dhewm3_rtx | vkDOOM3 |
 |--------|-----------|---------|
-| **Depth prepass** | Implemented (`VK_RB_FillDepthBuffer`) — no alpha-clip | Full depth prepass with alpha-test clip in shader |
-| **Shadow volumes** | Implemented (Carmack's Reverse, depth-fail stencil) — draw calls issued per light | Same; also has per-shadow scissor refinement and depth bounds test |
-| **Interaction ordering** | global+local shadows → all local interactions → all global interactions → translucent | Per-light: global shadows → local interactions → local shadows → global interactions → translucent |
+| **Depth prepass** | Implemented — opaque + alpha-clip (MC_PERFORATED) variants | Full depth prepass with alpha-test clip in shader |
+| **Shadow volumes** | Implemented (Z-fail and Z-pass variants); per-light stencil clear | Same; also has per-shadow scissor refinement and depth bounds test |
+| **Interaction ordering** | global+local shadows → all interactions → translucent | Per-light: global shadows → local interactions → local shadows → global interactions → translucent |
 | **Stencil clear per light** | Yes — `vkCmdClearAttachments(128)` in light scissor | Yes — equivalent stencil reset before each light |
 | **Translucent interactions** | `interactionPipelineNoStencil` (stencil disabled) | Stencil ALWAYS via state bits; no-stencil pipeline variant |
-| **Fog/blend lights** | SKIPPED in shader passes; no FogAllLights pass | `FogAllLights()` post-interaction pass using `BUILTIN_FOG`/`BUILTIN_BLEND` |
-| **Pipeline management** | Fixed pipelines created at startup (6 total) | Dynamic pipeline cache keyed by `(renderProg, stateBits)` — creates on demand |
-| **Blend modes** | 2 hardcoded (opaque, src-alpha) | Full `GLS_*` → VkPipelineColorBlendAttachmentState mapping |
-| **Shader parameter system** | Single UBO struct per interaction/GUI/shadow | `RENDERPARM_*` enum (60+ params), `CommitCurrent()` writes uniform buffer on each draw |
-| **Render pass design** | Single monolithic pass; RT shadow hack closes/reopens with CLEAR | Two passes: `renderPass` (DONT_CARE load) + `renderPassResume` (LOAD) — can suspend without clearing |
+| **Fog/blend lights** | Pipelines + shaders defined; dispatch being iterated | `FogAllLights()` post-interaction pass fully implemented |
+| **Pipeline management** | Fixed pipelines created at startup (11 total) | Dynamic pipeline cache keyed by `(renderProg, stateBits)` — creates on demand |
+| **Blend modes** | Multiple modes via `drawStateBits` evaluation (opaque, src-alpha, additive, modulate) | Full `GLS_*` → VkPipelineColorBlendAttachmentState mapping |
+| **Shader parameter system** | Single UBO struct per interaction/GUI/shadow; texture matrices in interaction UBO | `RENDERPARM_*` enum (64 params), `CommitCurrent()` writes separate vertex+fragment UBOs on each draw |
+| **Texture coordinate transforms** | Evaluated and uploaded per stage in interaction and shader passes | Handled via `RENDERPARM_TEXTUREMATRIX_*` params in shaders |
+| **Render pass design** | Two passes: initial (CLEAR) + resume (LOAD) | Two passes: `renderPass` (DONT_CARE load) + `renderPassResume` (LOAD) — identical concept |
+| **Deferred image deletion** | Implemented — `imageGarbage[frame]` ring, drained after fence | `m_imageGarbage[frame]` — freed when frame slot recycles |
 | **MSAA** | Not supported | Resolve attachment wired up; configurable sample count |
-| **Deferred image deletion** | No — images freed immediately (potential GPU hazard) | `m_imageGarbage[frame]` — freed when frame slot recycles |
 | **GPU timing** | Not implemented | `vkCmdWriteTimestamp` bracketing passes |
 | **Vertex layouts** | 1 layout (idDrawVert for all geometry) | 3 layouts: `DRAW_VERT`, `SHADOW_VERT`, `SHADOW_VERT_SKINNED` |
 | **Index buffers** | Always copied to data ring per draw | Static GPU index buffers; dynamic ring for temp geometry |
 | **Skinned geometry** | Not verified | `SHADOW_VERT_SKINNED` layout + joint UBO |
-| **Texture coordinate transforms** | Not implemented | Handled via `RENDERPARM_*` matrix params in shaders |
+| **Buffering** | Double-buffered (`VK_MAX_FRAMES_IN_FLIGHT = 2`) | Triple-buffered (`NUM_FRAME_DATA = 3`) |
+| **Memory allocator** | Direct `vkAllocateMemory` per buffer | Custom block allocator (`idVulkanAllocator`) or AMD VMA |
+| **Staging manager** | Manual staging per upload | `idVulkanStagingManager` — ring buffer, fence-synced, batched uploads |
+| **Overbright handling** | Implemented — scale uploaded to interaction UBO | Via `RENDERPARM_DIFFUSEMODIFIER` / `RENDERPARM_SPECULARMODIFIER` |
 
 ---
 
-## Highest Value Fixes (Prioritized)
+## Resolved / Previously Missing
+
+The following items were missing in the 2026-03-17 snapshot and have since been addressed:
+
+| Item | Previous State | Current State |
+|------|---------------|---------------|
+| Deferred image deletion | Images freed immediately (GPU hazard) | `imageGarbage[frame]` ring + `VK_Image_DrainGarbage` after fence |
+| Resume render pass | Missing; RT reopen used CLEAR (discarded prior draws) | `renderPassResume` (LOAD op) created; used when reopening after RT dispatch |
+| Alpha-clip depth prepass | Missing (all perforated surfaces wrote wrong depth) | `depthClipPipeline` + `depth_clip.frag` — samples diffuse, discards on alpha < threshold |
+| Texture coordinate transforms | Not implemented | Evaluated per stage and uploaded to interaction UBO; applied in shaders |
+| Blend mode support | Only 2 hardcoded modes | `drawStateBits` evaluated per material stage; multiple blend modes mapped |
+| Overbright light handling | Missing | Scale uploaded to interaction UBO and applied in fragment shader |
+| Fog/blend light pipelines | No pipelines or shaders | `fogPipeline`, `fogFrustumPipeline`, `blendlightPipeline` + shaders added |
+| Z-pass shadow variant | Missing | `shadowPipelineZPass` added alongside Z-fail |
+
+---
+
+## Remaining Gaps (Prioritized)
 
 ### P1 — Critical for correctness
 
-#### 1. Implement `VK_RB_FogAllLights()`
-**Gap:** Fog and blend light volumes are currently skipped entirely (both in `DrawShaderPasses` and never rendered otherwise). Atmospheric effects (underwater, fire glow, etc.) are invisible.
+#### 1. Complete `VK_RB_FogAllLights()` Dispatch
+**Gap:** Fog and blend light pipelines and shaders exist, but the render dispatch loop is still being iterated for correctness.
 
 **What to do:**
-- Add `VK_RB_FogAllLights(cmdBuf)` called after `DrawShaderPasses` in `VK_RB_DrawView`.
-- For each `viewLight` where `vLight->lightShader->IsFogLight()` or `IsBlendLight()`: render the proxy volume geometry with depth test EQUAL (only where world geometry exists at that pixel), additive or fog blend.
-- Reference: `RB_STD_FogAllLights()` / `RB_FogPass()` / `RB_BlendLight()` in `draw_common.cpp`.
-- Requires a new fog pipeline with `depthTestEnable=true`, `depthCompareOp=EQUAL`, appropriate blend state.
+- For each `viewLight` where `IsFogLight()`: bind `fogPipeline`, draw proxy volume geometry with depth EQUAL (only where world exists at pixel)
+- For each `viewLight` where `IsBlendLight()`: bind `blendlightPipeline`, draw with DST_COLOR/ZERO modulate blend
+- For fog frustum caps: bind `fogFrustumPipeline` (depth LESS, back-cull)
+- Reference: `RB_STD_FogAllLights()` / `RB_FogPass()` / `RB_BlendLight()` in `draw_common.cpp`
 
 **Impact:** Restores all fog and colored blend light effects (significant for atmosphere in many maps).
 
 ---
 
 #### 2. Fix Interaction Shadow Ordering to Match GL Path
-**Gap:** dhewm3_rtx draws all global+local shadows together, then all interactions. The correct GL ordering is: global shadows → local interactions → local shadows → global interactions.
+**Gap:** dhewm3_rtx draws all shadows together, then all interactions. The correct GL ordering is: global shadows → local interactions → local shadows → global interactions.
 
 **What to do:** In `VK_RB_DrawInteractions`, reorder the loop body:
 ```
@@ -58,79 +79,62 @@ Comparison as of 2026-03-17.  Reference: `vkDoom3.md`.  Current state: `current_
 ```
 This matches `RB_STD_DrawInteractions` in `draw_interaction.cpp`.
 
-**Impact:** Prevents local light surfaces from being incorrectly shadowed by global shadow volumes that were drawn before local interactions got a chance to render.
+**Impact:** Prevents local light surfaces from being incorrectly shadowed by global shadow volumes drawn before local interactions.
+
+---
+
+#### 3. Geometry Rendering Correctness ("still triangles")
+**Gap:** Recent commits indicate geometry is rendering as triangles or in an incorrect state, suggesting a pipeline or vertex input configuration issue.
+
+**What to investigate:**
+- Vertex input binding stride vs `sizeof(idDrawVert)` mismatch
+- Vertex attribute offsets in `vk_pipeline.cpp` vs actual `idDrawVert` layout
+- Index buffer binding type and format (`VK_INDEX_TYPE_UINT32` vs `UINT16`)
+- Topology setting in pipeline (`TRIANGLE_LIST` vs `TRIANGLE_STRIP`)
+
+**Impact:** Blocking — nothing renders correctly until resolved.
 
 ---
 
 ### P2 — Important for visual quality
 
-#### 3. Full Blend Mode Support in `DrawShaderPasses`
-**Gap:** `VK_RB_DrawShaderPasses` only selects between two hardcoded pipelines (opaque / src-alpha). Many material stages use additive, modulate, or other `GLS_*` blend modes. These currently render wrong (as opaque or wrong alpha).
+#### 4. Complete RT Shadow TLAS Population and Dispatch
+**Gap:** BLAS building works. TLAS structure is allocated but the per-frame entity→TLAS instance population loop and the shadow ray dispatch are incomplete.
 
 **What to do:**
-- Parse `pStage->drawStateBits` (or equivalent) per stage.
-- Map `GLS_SRCBLEND_*` / `GLS_DSTBLEND_*` bits to `VkBlendFactor`.
-- Create a small set of common pipeline variants (opaque, src-alpha, additive ONE+ONE, additive ONE+ONE with alpha, modulate) or implement a mini pipeline cache.
+- In `VK_RT_RebuildTLAS()`: iterate `backEnd.viewDef->viewEntitys`, map entity transforms to `VkAccelerationStructureInstanceKHR`, fill instance buffer, build TLAS
+- In `VK_RT_DispatchShadowRays()`: bind RT pipeline + descriptor sets (TLAS, shadow mask, depth sampler, per-light params UBO), call `vkCmdTraceRaysKHR`
 
-**Impact:** Particles, decals, glows, lens flares, and many environmental effects render correctly.
+**Impact:** Enables RT shadow mode which is the primary goal of the project.
 
 ---
 
-#### 4. Texture Coordinate Transforms in Interaction Shader
-**Gap:** Animated material stages (scroll, rotate, shear) use texture matrix transforms stored in shader registers. These are not passed to the shaders and are silently ignored.
+#### 5. Per-Shadow Scissor Refinement
+**Gap:** Shadow volumes are drawn with the full light scissor. vkDOOM3 sets a tighter scissor per shadow surface.
 
-**What to do:**
-- Add `texMat0` and `texMat1` (or equivalent) to the interaction UBO.
-- In `VK_RB_DrawInteraction`, evaluate and upload `pStage->texture.matrix` registers.
-- Apply in `interaction.frag` before sampling.
+**What to do:** Before each shadow draw call, compute scissor from the shadow surface's `scissorRect` field (clamped to the light scissor), set via `vkCmdSetScissor`.
 
-**Impact:** Many in-game surfaces with animated textures (computer screens, water, fire) will animate correctly.
-
----
-
-#### 5. Alpha-Test / Alpha-Clip in Depth Prepass
-**Gap:** `VK_RB_FillDepthBuffer` draws all `MC_OPAQUE` surfaces unconditionally. Alpha-tested surfaces (fences, grates) need a clip test in the depth shader to avoid incorrect depth writes through transparent pixels.
-
-**What to do:**
-- Add `alphaTest` uniform to depth pipeline UBO.
-- In depth shader, sample diffuse texture and `discard` if alpha < threshold.
-- Only bind the diffuse texture for alpha-tested surfaces; skip the texture bind for fully opaque ones.
-
-**Impact:** Fences, grates, and foliage no longer incorrectly occlude geometry behind them.
+**Impact:** GPU perf improvement — fragments outside the shadow surface scissor culled earlier.
 
 ---
 
 ### P3 — Polish / robustness
 
-#### 6. Resume Render Pass for RT Shadow Interop
-**Gap:** When RT shadows are enabled, the code closes the render pass, dispatches RT, then reopens it with `vkCmdBeginRenderPass` using the CLEAR load op — discarding any prior color draws in that frame.
+#### 6. Per-Stage Depth Function and Cull Mode
+**Gap:** Material stages can specify depth compare op and two-sided rendering. These are not read from material state.
 
-**What to do:**
-- Create a second `renderPassResume` with `loadOp=LOAD`, `initialLayout=COLOR_ATTACHMENT_OPTIMAL`.
-- Use `renderPassResume` when reopening the pass after the RT dispatch.
-- All pipelines must be compatible with both render pass objects (same attachment formats/layouts — they are).
+**What to do:** Read `pStage->drawStateBits` depth function bits and cull mode bits; select the appropriate pipeline or add pipeline variants.
 
-**Impact:** Removes visual flash/clear when RT shadows are active; matches vkDOOM3's resume-pass design.
+**Impact:** Some surfaces with non-standard depth ops render incorrectly.
 
 ---
 
-#### 7. Deferred Image Deletion
-**Gap:** `VK_Image_Purge` destroys the `VkImage`/`VkImageView`/`VkSampler` immediately. If the GPU is still reading that image (e.g. in a descriptor set from the previous frame), this is a GPU hazard.
+#### 7. GPU Index Buffer Usage
+**Gap:** Index data is always copied to the per-frame data ring even when the mesh has a static GPU index buffer.
 
-**What to do:**
-- Add a `imageGarbage[VK_MAX_FRAMES_IN_FLIGHT]` ring similar to vkDOOM3.
-- Move destroy calls into the garbage ring; drain when the corresponding frame fence fires.
+**What to do:** Check if the surface has a cached GPU index buffer (similar to how `VK_VertexCache_GetBuffer` works for vertices); bind it directly instead of copying.
 
-**Impact:** Prevents potential validation errors and crashes on texture streaming / map loads.
-
----
-
-#### 8. Per-Shadow Scissor Refinement
-**Gap:** Shadow volumes are drawn with the full light scissor. vkDOOM3 sets a tighter scissor per shadow surface.
-
-**What to do:** Before each shadow draw call in `VK_RB_DrawShadowSurface`, compute and set a scissor from the shadow surface's `scissorRect` field (clamped to the light scissor).
-
-**Impact:** GPU perf improvement — fragments outside the shadow surface scissor are culled earlier.
+**Impact:** Reduces host memory traffic and copy overhead for static geometry.
 
 ---
 
@@ -138,7 +142,9 @@ This matches `RB_STD_DrawInteractions` in `draw_interaction.cpp`.
 
 | vkDOOM3 Feature | Reason Not Needed |
 |-----------------|-------------------|
-| `RENDERPARM_*` system (60+ params) | dhewm3_rtx uses structured UBOs per pipeline; acceptable for the current fixed pipeline set |
-| AMD VMA allocator | GPU memory pressure is currently low; the simple `vkAllocateMemory` path is fine until performance becomes a concern |
-| MSAA | RT path doesn't benefit from MSAA; can be added later |
+| `RENDERPARM_*` system (64 params) | dhewm3_rtx uses structured UBOs per pipeline; acceptable for the current fixed pipeline set |
+| AMD VMA allocator | GPU memory pressure is currently low; direct `vkAllocateMemory` is fine until performance becomes a concern |
+| MSAA | RT path doesn't benefit from MSAA; can be added later if needed |
 | GPU timing queries | Nice-to-have profiling; low priority |
+| Triple buffering | Double buffering is sufficient for the current workload |
+| Skinned shadow vertex layout | Not yet exercised; can be added when skeletal animation is validated |
