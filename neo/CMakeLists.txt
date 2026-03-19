@@ -91,7 +91,7 @@ option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
 # Vulkan rendering backend (required for ray tracing)
-option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing" ON)
+option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing" OFF)
  
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)
