@@ -531,8 +531,13 @@ void VK_Image_Purge(idImage *img)
     else
     {
         // Garbage ring full — stall once and destroy immediately.
-        common->Warning("VK: image garbage ring full for frame %u, stalling", frameIdx);
-        vkDeviceWaitIdle(vk.device);
+        // If the device is already lost (e.g., shutdown after a crash), skip the
+        // stall to avoid spamming the log; the process is exiting anyway.
+        VkResult waitResult = vkDeviceWaitIdle(vk.device);
+        if (waitResult == VK_SUCCESS)
+        {
+            common->Warning("VK: image garbage ring full for frame %u, stalling", frameIdx);
+        }
         VK_DestroyImageData(vkd);
     }
 }

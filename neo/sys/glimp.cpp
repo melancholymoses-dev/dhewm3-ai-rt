@@ -48,6 +48,14 @@ typedef Uint32 My_SDL_WindowFlags;
 
 #include "sys/sys_imgui.h"
 
+#ifdef DHEWM3_VULKAN
+// Forward declaration — implemented in vk_backend.cpp.
+// Called when a fullscreen/windowed toggle succeeds so the Vulkan backend can
+// skip the current frame's submit and recreate the swapchain, preventing
+// VK_ERROR_DEVICE_LOST on drivers that invalidate the surface immediately.
+extern void VK_NotifyWindowModeChanged();
+#endif
+
 #if defined(_WIN32) && defined(ID_ALLOW_TOOLS)
 #include "sys/win32/win_local.h"
 
@@ -1052,6 +1060,13 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
     }
 
     glConfig.isFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+
+#ifdef DHEWM3_VULKAN
+    // The SDL window-mode change may have invalidated the Vulkan surface on the
+    // driver side.  Notify the backend so it skips the current frame's submit
+    // and recreates the swapchain, preventing VK_ERROR_DEVICE_LOST.
+    VK_NotifyWindowModeChanged();
+#endif
 
     return true;
 
