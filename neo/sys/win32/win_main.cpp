@@ -1437,9 +1437,6 @@ int SDL_main(int argc, char *argv[])
         }
 #endif
         // run the game
-        common->Printf("Trying to make a Frame\n");
-        fflush(NULL);
-
         common->Frame();
     }
 
