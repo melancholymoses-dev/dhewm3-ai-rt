@@ -1861,6 +1861,8 @@ void VK_RB_SwapBuffers()
     if (submitResult != VK_SUCCESS)
     {
         s_frameActive = false;
+        common->Printf("VK: vkQueueSubmit failed with error %d\n", (int)submitResult);
+        fflush(NULL);
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
         return;
     }
@@ -2024,6 +2026,11 @@ void VKimp_PostInit(int width, int height)
 #endif
 
     common->Printf("VK: Backend ready\n");
+
+    // Switch ImGui from the OpenGL backend (used during GLimp_Init before
+    // glConfig.isVulkan was set) to the Vulkan backend now that the device,
+    // swapchain, and render pass are all up.
+    D3::ImGuiHooks::InitVulkan();
 }
 
 void VKimp_PreShutdown(void)

@@ -21,8 +21,6 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#ifdef DHEWM3_VULKAN
-
 #include "sys/platform.h"
 #include "renderer/Image.h"
 #include "renderer/tr_local.h"
@@ -53,14 +51,18 @@ struct vkImageData_t
 static const int VK_IMAGE_GARBAGE_MAX = 512; // max purges per frame slot
 
 static vkImageData_t *s_imageGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_IMAGE_GARBAGE_MAX];
-static int            s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 static void VK_DestroyImageData(vkImageData_t *vkd)
 {
-    if (vkd->sampler != VK_NULL_HANDLE) vkDestroySampler(vk.device, vkd->sampler, NULL);
-    if (vkd->view    != VK_NULL_HANDLE) vkDestroyImageView(vk.device, vkd->view, NULL);
-    if (vkd->image   != VK_NULL_HANDLE) vkDestroyImage(vk.device, vkd->image, NULL);
-    if (vkd->memory  != VK_NULL_HANDLE) vkFreeMemory(vk.device, vkd->memory, NULL);
+    if (vkd->sampler != VK_NULL_HANDLE)
+        vkDestroySampler(vk.device, vkd->sampler, NULL);
+    if (vkd->view != VK_NULL_HANDLE)
+        vkDestroyImageView(vk.device, vkd->view, NULL);
+    if (vkd->image != VK_NULL_HANDLE)
+        vkDestroyImage(vk.device, vkd->image, NULL);
+    if (vkd->memory != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, vkd->memory, NULL);
     delete vkd;
 }
 
@@ -559,5 +561,3 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
     out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return true;
 }
-
-#endif // DHEWM3_VULKAN

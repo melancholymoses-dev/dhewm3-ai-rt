@@ -139,7 +139,7 @@ idCVar r_useGLSL("r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 idCVar r_backend("r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"");
 idCVar r_useRayTracing("r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "enable hardware ray tracing (requires Vulkan backend and RTX hardware)");
-idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_rtShadows("r_rtShadows", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)");
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
@@ -159,11 +159,12 @@ idCVar r_skipLightScale("r_skipLightScale", "0", CVAR_RENDERER | CVAR_BOOL,
 idCVar r_skipInteractions("r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL,
                           "skip all light/surface interaction drawing");
 idCVar r_skipDepthPrepass("r_skipDepthPrepass", "0", CVAR_RENDERER | CVAR_BOOL,
-                           "skip the depth prepass (diagnostic only — interactions run against clear depth 1.0)");
-idCVar r_skipShadows("r_skipShadows", "0", CVAR_RENDERER | CVAR_BOOL,
-                     "skip all stencil shadow volume draws (diagnostic: if dark-triangle wireframe vanishes, shadows are the culprit)");
+                          "skip the depth prepass (diagnostic only — interactions run against clear depth 1.0)");
+idCVar r_skipShadows(
+    "r_skipShadows", "0", CVAR_RENDERER | CVAR_BOOL,
+    "skip all stencil shadow volume draws (diagnostic: if dark-triangle wireframe vanishes, shadows are the culprit)");
 idCVar r_skipShaderPasses("r_skipShaderPasses", "0", CVAR_RENDERER | CVAR_BOOL,
-                           "skip non-light-dependent shader passes (GUI surfaces, console, menus, unlit/2D content)");
+                          "skip non-light-dependent shader passes (GUI surfaces, console, menus, unlit/2D content)");
 idCVar r_skipDynamicTextures("r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL,
                              "don't dynamically create textures");
 idCVar r_skipCopyTexture("r_skipCopyTexture", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -684,13 +685,11 @@ void R_InitOpenGL(void)
     // Create and initialize the rendering backend.
     // GLBackend::Init() loads qgl pointers, queries extensions, inits ARB2/GLSL.
     // VKBackend::Init() calls VKimp_InitFromGlimp and configures glConfig for Vulkan.
-#ifdef DHEWM3_VULKAN
     if (strcmp(r_backend.GetString(), "vulkan") == 0)
     {
         activeBackend = new VKBackend();
     }
     else
-#endif
     {
         activeBackend = new GLBackend();
     }

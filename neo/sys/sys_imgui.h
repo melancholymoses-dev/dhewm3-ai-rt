@@ -9,11 +9,10 @@
 
 // Forward-declare VkCommandBuffer at global scope so the typedef doesn't end up
 // inside D3::ImGuiHooks and conflict with the real type from <vulkan/vulkan.h>.
-#ifdef DHEWM3_VULKAN
+
 #ifndef VK_DEFINE_HANDLE
 struct VkCommandBuffer_T;
 typedef struct VkCommandBuffer_T *VkCommandBuffer;
-#endif
 #endif
 
 namespace D3
@@ -70,11 +69,14 @@ extern void NewFrame();
 // renders ImGui menus then
 extern void EndFrame();
 
-#ifdef DHEWM3_VULKAN
 // Called from vk_backend.cpp inside an active render pass.
 // Calls ImGui::Render() and ImGui_ImplVulkan_RenderDrawData().
 extern void RenderVulkan(VkCommandBuffer cmdBuf);
-#endif
+
+// Switch ImGui from the OpenGL backend (used during GLimp_Init) to the
+// Vulkan backend once the device/swapchain/renderpass are ready.
+// No-op if already running on Vulkan or ImGui is not initialized.
+extern void InitVulkan();
 
 extern float GetScale();
 extern void SetScale(float scale);
@@ -143,11 +145,9 @@ inline void EndFrame()
 {
 }
 
-#ifdef DHEWM3_VULKAN
 inline void RenderVulkan(VkCommandBuffer)
 {
 }
-#endif
 
 inline void OpenWindow(D3ImGuiWindow win)
 {

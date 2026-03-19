@@ -48,13 +48,11 @@ typedef Uint32 My_SDL_WindowFlags;
 
 #include "sys/sys_imgui.h"
 
-#ifdef DHEWM3_VULKAN
 // Forward declaration — implemented in vk_backend.cpp.
 // Called when a fullscreen/windowed toggle succeeds so the Vulkan backend can
 // skip the current frame's submit and recreate the swapchain, preventing
 // VK_ERROR_DEVICE_LOST on drivers that invalidate the surface immediately.
 extern void VK_NotifyWindowModeChanged();
-#endif
 
 #if defined(_WIN32) && defined(ID_ALLOW_TOOLS)
 #include "sys/win32/win_local.h"
@@ -195,12 +193,8 @@ bool GLimp_Init(glimpParms_t parms)
 
     assert(SDL_WasInit(SDL_INIT_VIDEO));
 
-#ifdef DHEWM3_VULKAN
     extern idCVar r_backend;
     const bool usingVulkan = (idStr::Icmp(r_backend.GetString(), "vulkan") == 0);
-#else
-    const bool usingVulkan = false;
-#endif
 
     My_SDL_WindowFlags flags = usingVulkan ? SDL_WINDOW_VULKAN : SDL_WINDOW_OPENGL;
 
@@ -1061,12 +1055,10 @@ bool GLimp_SetScreenParms(glimpParms_t parms)
 
     glConfig.isFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
 
-#ifdef DHEWM3_VULKAN
     // The SDL window-mode change may have invalidated the Vulkan surface on the
     // driver side.  Notify the backend so it skips the current frame's submit
     // and recreates the swapchain, preventing VK_ERROR_DEVICE_LOST.
     VK_NotifyWindowModeChanged();
-#endif
 
     return true;
 
@@ -1258,12 +1250,10 @@ void GLimp_SetGamma(unsigned short red[256], unsigned short green[256], unsigned
 }
 
 // ============================================================================
-// Vulkan init/shutdown stubs — compiled only when DHEWM3_VULKAN is defined.
+// Vulkan init/shutdown stubs
 // Called from RenderSystem_init.cpp after GLimp_Init returns, when
 // r_backend == "vulkan".
 // ============================================================================
-
-#ifdef DHEWM3_VULKAN
 
 #include "renderer/Vulkan/vk_common.h"
 
@@ -1315,8 +1305,6 @@ void VKimp_ShutdownFromGlimp(void)
     VKimp_PreShutdown();
     VKimp_Shutdown();
 }
-
-#endif // DHEWM3_VULKAN
 
 /*
 =================
