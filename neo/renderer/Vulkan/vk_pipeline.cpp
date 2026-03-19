@@ -65,6 +65,18 @@ struct VkInteractionUBO
 // vkPipelines_t declared in vk_common.h
 vkPipelines_t vkPipes;
 
+#ifndef DHEWM3_BUILD_TAG
+#define DHEWM3_BUILD_TAG "local"
+#endif
+
+#ifndef DHEWM3_BUILD_GIT
+#define DHEWM3_BUILD_GIT "unknown"
+#endif
+
+// Runtime stamp for proving which binary is executing from logs.
+static const char *VK_BUILD_SIGNATURE =
+    "tag=" DHEWM3_BUILD_TAG " git=" DHEWM3_BUILD_GIT " built=" __DATE__ " " __TIME__;
+
 // ---------------------------------------------------------------------------
 // Descriptor set layout helpers
 // ---------------------------------------------------------------------------
@@ -1222,6 +1234,9 @@ void VK_DestroyBlendlightPipelineCache(void)
 void VK_InitPipelines(void)
 {
     memset(&vkPipes, 0, sizeof(vkPipes));
+
+    common->Printf("VK BUILD SIGNATURE: %s\n", VK_BUILD_SIGNATURE);
+    fflush(NULL);
 
     // --- Interaction pipeline ---
     vkPipes.interactionDescLayout = VK_CreateInteractionDescLayout();
