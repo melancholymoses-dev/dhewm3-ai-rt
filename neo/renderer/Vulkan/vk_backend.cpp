@@ -57,6 +57,59 @@ static void VK_MultiplyMatrix4(const float *a, const float *b, float *out)
     }
 }
 
+static const char *VK_ResultToString(VkResult r)
+{
+    switch (r)
+    {
+    case VK_SUCCESS:
+        return "VK_SUCCESS";
+    case VK_NOT_READY:
+        return "VK_NOT_READY";
+    case VK_TIMEOUT:
+        return "VK_TIMEOUT";
+    case VK_EVENT_SET:
+        return "VK_EVENT_SET";
+    case VK_EVENT_RESET:
+        return "VK_EVENT_RESET";
+    case VK_INCOMPLETE:
+        return "VK_INCOMPLETE";
+    case VK_ERROR_OUT_OF_HOST_MEMORY:
+        return "VK_ERROR_OUT_OF_HOST_MEMORY";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+        return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+    case VK_ERROR_INITIALIZATION_FAILED:
+        return "VK_ERROR_INITIALIZATION_FAILED";
+    case VK_ERROR_DEVICE_LOST:
+        return "VK_ERROR_DEVICE_LOST";
+    case VK_ERROR_MEMORY_MAP_FAILED:
+        return "VK_ERROR_MEMORY_MAP_FAILED";
+    case VK_ERROR_LAYER_NOT_PRESENT:
+        return "VK_ERROR_LAYER_NOT_PRESENT";
+    case VK_ERROR_EXTENSION_NOT_PRESENT:
+        return "VK_ERROR_EXTENSION_NOT_PRESENT";
+    case VK_ERROR_FEATURE_NOT_PRESENT:
+        return "VK_ERROR_FEATURE_NOT_PRESENT";
+    case VK_ERROR_INCOMPATIBLE_DRIVER:
+        return "VK_ERROR_INCOMPATIBLE_DRIVER";
+    case VK_ERROR_TOO_MANY_OBJECTS:
+        return "VK_ERROR_TOO_MANY_OBJECTS";
+    case VK_ERROR_FORMAT_NOT_SUPPORTED:
+        return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+    case VK_ERROR_FRAGMENTED_POOL:
+        return "VK_ERROR_FRAGMENTED_POOL";
+    case VK_ERROR_SURFACE_LOST_KHR:
+        return "VK_ERROR_SURFACE_LOST_KHR";
+    case VK_ERROR_NATIVE_WINDOW_IN_USE_KHR:
+        return "VK_ERROR_NATIVE_WINDOW_IN_USE_KHR";
+    case VK_SUBOPTIMAL_KHR:
+        return "VK_SUBOPTIMAL_KHR";
+    case VK_ERROR_OUT_OF_DATE_KHR:
+        return "VK_ERROR_OUT_OF_DATE_KHR";
+    default:
+        return "VK_ERROR_UNKNOWN";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Per-frame uniform buffer ring
 // Pre-allocated pool of UBO memory for interaction parameters.
@@ -943,6 +996,8 @@ struct VkBlendUBO
 static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf, const VkRect2D &lightScissor)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+    static const viewDef_t *s_loggedView = NULL;
+    static const viewLight_t *s_loggedLight = NULL;
 
     const srfTriangles_t *tri = surf->geo;
     if (!tri || !tri->shadowCache || tri->numIndexes <= 0)
@@ -953,19 +1008,24 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     int numDrawIndexes = 0;
     bool external = false;
 
+    const char *indexSet = "full";
+
     if (!r_useExternalShadows.GetInteger())
     {
         numDrawIndexes = tri->numIndexes;
+        indexSet = "full";
     }
     else if (r_useExternalShadows.GetInteger() == 2)
     {
         // Debug/testing path from GL: force no-caps index set.
         numDrawIndexes = tri->numShadowIndexesNoCaps;
+        indexSet = "no-caps (forced)";
     }
     else if (!(surf->dsFlags & DSF_VIEW_INSIDE_SHADOW))
     {
         // Viewer outside the shadow projection: caps are not needed.
         numDrawIndexes = tri->numShadowIndexesNoCaps;
+        indexSet = "no-caps";
         external = true;
     }
     else if (!backEnd.vLight->viewInsideLight && !(tri->shadowCapPlaneBits & SHADOW_CAP_INFINITE))
@@ -973,15 +1033,22 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         // Inside shadow projection, outside light, finite shadow volume.
         // May omit front caps (or all caps) depending on visible cap planes.
         if (backEnd.vLight->viewSeesShadowPlaneBits & tri->shadowCapPlaneBits)
+        {
             numDrawIndexes = tri->numShadowIndexesNoFrontCaps;
+            indexSet = "no-front-caps";
+        }
         else
+        {
             numDrawIndexes = tri->numShadowIndexesNoCaps;
+            indexSet = "no-caps";
+        }
 
         external = true;
     }
     else
     {
         numDrawIndexes = tri->numIndexes;
+        indexSet = "full";
     }
 
     if (numDrawIndexes <= 0)
@@ -990,6 +1057,29 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     VkPipeline shadowPipe = external ? vkPipes.shadowPipelineZPass : vkPipes.shadowPipelineZFail;
     if (!shadowPipe)
         return VK_NULL_HANDLE;
+
+    const int logMode = r_vkLogShadowBranch.GetInteger();
+    if (logMode > 0)
+    {
+        if (s_loggedView != backEnd.viewDef)
+        {
+            s_loggedView = backEnd.viewDef;
+            s_loggedLight = NULL;
+        }
+
+        const bool shouldLog = (logMode >= 2) || (s_loggedLight != backEnd.vLight);
+        if (shouldLog)
+        {
+            common->Printf("VK SHADOW BRANCH: mode=%s indexSet=%s draw=%d full=%d noFront=%d noCaps=%d ext=%d "
+                           "insideFlag=%d insideLight=%d capBits=0x%X\n",
+                           external ? "zpass" : "zfail", indexSet, numDrawIndexes, tri->numIndexes,
+                           tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps, external ? 1 : 0,
+                           (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? 1 : 0, backEnd.vLight->viewInsideLight ? 1 : 0,
+                           tri->shadowCapPlaneBits);
+            s_loggedLight = backEnd.vLight;
+        }
+    }
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipe);
 
     // Shadow vertices: shadowCache_t = idVec4 (16 bytes each)
@@ -1875,6 +1965,25 @@ void VK_RB_SwapBuffers()
     submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
 
     uint32_t submittedFrame = vk.currentFrame; // capture before increment
+    const int submitLogMode = r_vkLogSubmitInfo.GetInteger();
+    if (submitLogMode > 0)
+    {
+        int rtActive = 0;
+#ifdef DHEWM3_RAYTRACING
+        rtActive = (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool()) ? 1 : 0;
+#endif
+        common->Printf("VK SUBMIT: frame=%u image=%u rt=%d readbackPending=%d readbackSubmitted=%d swapRecreate=%d\n",
+                       submittedFrame, (unsigned int)s_frameImageIndex, rtActive, s_readbackPending ? 1 : 0,
+                       s_readbackSubmitted ? 1 : 0, s_swapchainNeedsRecreate ? 1 : 0);
+
+        if (submitLogMode >= 2)
+        {
+            VkResult fenceStatus = vkGetFenceStatus(vk.device, vk.inFlightFences[submittedFrame]);
+            common->Printf("VK SUBMIT: fenceStatus(before)=%d (%s)\n", (int)fenceStatus,
+                           VK_ResultToString(fenceStatus));
+        }
+    }
+
     // fflush before submit: ensures any preceding swapchain recreation log is written, and
     // incidentally gives the presentation engine time to finish processing OUT_OF_DATE.
     fflush(NULL);
@@ -1882,7 +1991,8 @@ void VK_RB_SwapBuffers()
     if (submitResult != VK_SUCCESS)
     {
         s_frameActive = false;
-        common->Printf("VK: vkQueueSubmit failed with error %d\n", (int)submitResult);
+        common->Printf("VK: vkQueueSubmit failed with error %d (%s)\n", (int)submitResult,
+                       VK_ResultToString(submitResult));
         fflush(NULL);
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
         return;
@@ -1906,7 +2016,7 @@ void VK_RB_SwapBuffers()
     }
     else if (presentResult != VK_SUCCESS)
     {
-        common->Warning("VK: vkQueuePresentKHR failed: %d", (int)presentResult);
+        common->Warning("VK: vkQueuePresentKHR failed: %d (%s)", (int)presentResult, VK_ResultToString(presentResult));
     }
 
     // If we appended a readback copy this frame, wait for it to complete so

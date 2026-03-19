@@ -914,6 +914,8 @@ extern idCVar
     r_usePreciseTriangleInteractions;    // 1 = do winding clipping to determine if each ambiguous tri should be lit
 extern idCVar r_useTurboShadow;          // 1 = use the infinite projection with W technique for dynamic shadows
 extern idCVar r_useExternalShadows;      // 1 = skip drawing caps when outside the light volume
+extern idCVar r_vkLogShadowBranch;       // Vulkan shadow branch logging (0=off,1=per-light,2=per-surface)
+extern idCVar r_vkLogSubmitInfo;         // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)
 extern idCVar r_useOptimizedShadows;     // 1 = use the dmap generated static shadow volumes
 extern idCVar r_useShadowVertexProgram;  // 1 = do the shadow projection in the vertex program on capable cards
 extern idCVar r_useShadowProjectedCull;  // 1 = discard triangles outside light volume before shadowing
@@ -1038,7 +1040,7 @@ extern idCVar r_materialOverride; // override all materials
 
 extern idCVar r_debugRenderToTexture;
 
-extern idCVar r_glDebugContext;     // DG: use debug context to call logging callbacks on GL errors
+extern idCVar r_glDebugContext; // DG: use debug context to call logging callbacks on GL errors
 extern idCVar r_inhibitFragmentProgram;
 extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
 extern idCVar r_useSoftParticles;

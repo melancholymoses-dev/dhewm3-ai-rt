@@ -254,6 +254,14 @@ idCVar r_flareSize("r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the fl
 idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogShadowBranch(
+    "r_vkLogShadowBranch", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every shadow surface", 0, 2,
+    idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogSubmitInfo(
+    "r_vkLogSubmitInfo", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,
+    idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
                              "use the dmap generated static shadow volumes");
 idCVar r_useScissor("r_useScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor clip as portals and lights are processed");
