@@ -1677,6 +1677,7 @@ void VK_RB_DrawView(const void *data)
         vk.currentImageIdx = imageIndex;
         s_frameImageIndex = imageIndex;
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
+        common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
         // Drain deferred image and buffer deletions queued during the previous use of this frame slot.
         extern void VK_Image_DrainGarbage(uint32_t frameIdx);
@@ -1834,6 +1835,7 @@ void VK_RB_SwapBuffers()
     // Skip the submit and recreate the swapchain so the next frame starts clean.
     if (s_swapchainNeedsRecreate)
     {
+        common->Printf("VK: window changed mid-frame, dropping frame and recreating swapchain\n");
         s_swapchainNeedsRecreate = false;
         vkResetCommandBuffer(vk.commandBuffers[vk.currentFrame], 0);
         VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
@@ -1874,7 +1876,15 @@ void VK_RB_SwapBuffers()
 
     VkResult presentResult = vkQueuePresentKHR(vk.presentQueue, &presentInfo);
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
+    {
+        common->Printf("VK: present returned %s, recreating swapchain\n",
+                       presentResult == VK_ERROR_OUT_OF_DATE_KHR ? "OUT_OF_DATE" : "SUBOPTIMAL");
         VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
+    }
+    else if (presentResult != VK_SUCCESS)
+    {
+        common->Warning("VK: vkQueuePresentKHR failed: %d", (int)presentResult);
+    }
 
     // If we appended a readback copy this frame, wait for it to complete so
     // R_ReadTiledPixels can immediately access the mapped buffer.
@@ -1909,10 +1919,10 @@ void VK_RequestReadback()
         vkUnmapMemory(vk.device, s_readbackMem);
         vkDestroyBuffer(vk.device, s_readbackBuf, NULL);
         vkFreeMemory(vk.device, s_readbackMem, NULL);
-        s_readbackBuf    = VK_NULL_HANDLE;
-        s_readbackMem    = VK_NULL_HANDLE;
+        s_readbackBuf = VK_NULL_HANDLE;
+        s_readbackMem = VK_NULL_HANDLE;
         s_readbackMapped = nullptr;
-        s_readbackSize   = 0;
+        s_readbackSize = 0;
     }
 
     if (s_readbackBuf == VK_NULL_HANDLE)
@@ -1935,10 +1945,10 @@ void VK_CleanupReadback()
         vkUnmapMemory(vk.device, s_readbackMem);
         vkDestroyBuffer(vk.device, s_readbackBuf, NULL);
         vkFreeMemory(vk.device, s_readbackMem, NULL);
-        s_readbackBuf    = VK_NULL_HANDLE;
-        s_readbackMem    = VK_NULL_HANDLE;
+        s_readbackBuf = VK_NULL_HANDLE;
+        s_readbackMem = VK_NULL_HANDLE;
         s_readbackMapped = nullptr;
-        s_readbackSize   = 0;
+        s_readbackSize = 0;
     }
 }
 
