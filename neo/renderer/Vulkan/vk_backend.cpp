@@ -930,21 +930,11 @@ struct VkBlendUBO
 
 // ---------------------------------------------------------------------------
 // VK_RB_DrawShadowSurface
-// Records one shadow volume draw using Z-fail (Carmack's Reverse) for all surfaces.
+// Records one shadow volume draw.
 //
-// Always uses shadowPipeline (Z-fail with depth bias), matching the GL default of
-// r_useCarmacksReverse=1.  The depth bias on shadowPipeline pushes front caps slightly
-// farther than the depth prepass value so they consistently FAIL the LESS depth test,
-// triggering depthFailOp correctly.
-//
-// Why NOT Z-pass for "external" (camera outside shadow volume):
-//   Z-pass only works correctly with silhouette-only geometry (no caps).  However
-//   Interaction.cpp sets numShadowIndexesNoCaps = numIndexes for perforated/suppressed
-//   surfaces, so the "no caps" index set actually includes caps.  Drawing full caps
-//   with Z-pass lets front caps stochastically PASS the depth test (they are co-planar
-//   with the depth prepass geometry), incrementing stencil 128→129.  The interaction
-//   pass then fails (EQUAL 128) at exactly those pixels → black triangle artifacts
-//   tracing every triangle in the scene mesh.
+// This mirrors the GL RB_T_Shadow decision tree:
+// - choose numIndexes/numShadowIndexesNoFrontCaps/numShadowIndexesNoCaps per surface
+// - choose Z-fail (inside) vs Z-pass (external) stencil pipeline
 //
 // Returns the VkPipeline that was bound (so the caller can rebind if needed).
 // lightScissor: the current per-light scissor rect (already set on the command buffer).
@@ -958,10 +948,46 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     if (!tri || !tri->shadowCache || tri->numIndexes <= 0)
         return VK_NULL_HANDLE;
 
-    // Always use Z-fail (Carmack's Reverse).  The depth bias in shadowPipeline ensures
-    // front caps consistently fail the depth test.
-    const bool external = !(surf->dsFlags & DSF_VIEW_INSIDE_SHADOW);
-    VkPipeline shadowPipe = vkPipes.shadowPipeline;
+    // Match GL's external-shadow logic so we choose the same index set and
+    // stencil method (Z-fail when inside, Z-pass when external).
+    int numDrawIndexes = 0;
+    bool external = false;
+
+    if (!r_useExternalShadows.GetInteger())
+    {
+        numDrawIndexes = tri->numIndexes;
+    }
+    else if (r_useExternalShadows.GetInteger() == 2)
+    {
+        // Debug/testing path from GL: force no-caps index set.
+        numDrawIndexes = tri->numShadowIndexesNoCaps;
+    }
+    else if (!(surf->dsFlags & DSF_VIEW_INSIDE_SHADOW))
+    {
+        // Viewer outside the shadow projection: caps are not needed.
+        numDrawIndexes = tri->numShadowIndexesNoCaps;
+        external = true;
+    }
+    else if (!backEnd.vLight->viewInsideLight && !(tri->shadowCapPlaneBits & SHADOW_CAP_INFINITE))
+    {
+        // Inside shadow projection, outside light, finite shadow volume.
+        // May omit front caps (or all caps) depending on visible cap planes.
+        if (backEnd.vLight->viewSeesShadowPlaneBits & tri->shadowCapPlaneBits)
+            numDrawIndexes = tri->numShadowIndexesNoFrontCaps;
+        else
+            numDrawIndexes = tri->numShadowIndexesNoCaps;
+
+        external = true;
+    }
+    else
+    {
+        numDrawIndexes = tri->numIndexes;
+    }
+
+    if (numDrawIndexes <= 0)
+        return VK_NULL_HANDLE;
+
+    VkPipeline shadowPipe = external ? vkPipes.shadowPipelineZPass : vkPipes.shadowPipelineZFail;
     if (!shadowPipe)
         return VK_NULL_HANDLE;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipe);
@@ -1000,14 +1026,6 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     }
     if (!haveVerts)
         return VK_NULL_HANDLE;
-
-    // Index count: always use the full shadow geometry with Z-fail.
-    // With Z-fail and depth bias, front caps consistently fail the depth test and their
-    // stencil effect cancels with the back caps, so drawing full geometry is always correct.
-    // (The performance optimization of drawing only numShadowIndexesNoCaps is deferred
-    // until shadow rendering is verified correct.)
-    (void)external; // reserved for future optimization
-    int numDrawIndexes = tri->numIndexes;
 
     // Index data (tri->indexes, same field as regular geometry)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
