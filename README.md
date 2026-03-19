@@ -1,4 +1,16 @@
-# ABOUT
+# ABOUT DHEWM3_RTX
+
+This an attempt to implement Vulkan raytracing on top of Dhewm3.  Its a game that could sing with Raytracing, and cries out for an implementation, far more so than Quake 2 did, given the emphasis on dark shadows and light.
+This is the original version, so no shoulder flashlight.  Just a world lit only by shotgun blasts.
+
+Forked Dhewm3, and have been using Claude Code Sonnet 4.5 Code and Github Copilot (GPT 5-3) to code this up as an experiment on refactoring a complex code base.
+Have also been using the vkDoom3 Vulkan implementation as a reference, which was found after starting work.
+
+
+## Plans
+Plans live in docs/plans
+
+# ABOUT DHEWM3
 
 _dhewm 3_ is a _Doom 3_ GPL source port, known to work on at least Windows, Linux, macOS and FreeBSD.
 
