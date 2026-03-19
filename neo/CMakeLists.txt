@@ -1,6 +1,33 @@
 cmake_minimum_required(VERSION 2.6...3.22 FATAL_ERROR)
 project(dhewm3_rtx)
 
+# Build/version stamp from git metadata (falls back to "unknown" for source archives).
+set(DHEWM3_GIT_VERSION "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+	execute_process(
+		COMMAND ${GIT_EXECUTABLE} describe --always --dirty --tags
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		RESULT_VARIABLE DHEWM3_GIT_DESCRIBE_RESULT
+		OUTPUT_VARIABLE DHEWM3_GIT_DESCRIBE_OUTPUT
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+	)
+	if(DHEWM3_GIT_DESCRIBE_RESULT EQUAL 0 AND NOT DHEWM3_GIT_DESCRIBE_OUTPUT STREQUAL "")
+		set(DHEWM3_GIT_VERSION "${DHEWM3_GIT_DESCRIBE_OUTPUT}")
+	endif()
+endif()
+
+message(STATUS "Git version: ${DHEWM3_GIT_VERSION}")
+
+configure_file(
+	${CMAKE_CURRENT_SOURCE_DIR}/version.h.in
+	${CMAKE_BINARY_DIR}/version.h
+	@ONLY
+)
+
+# Also expose git version as a compile definition for runtime log signatures.
+add_definitions(-DDHEWM3_BUILD_GIT=\"${DHEWM3_GIT_VERSION}\")
+
 # TODO
 
 # osx: place game .dylib's in the bundle (next to the binary)
