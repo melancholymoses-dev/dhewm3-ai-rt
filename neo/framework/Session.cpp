@@ -613,12 +613,8 @@ void idSessionLocal::ShowLoadingGui()
     while (Sys_Milliseconds() < stop || force-- > 0)
     {
         com_frameTime = com_ticNumber * USERCMD_MSEC;
-        common->Printf("Showing Frame\n");
-        fflush(NULL);
 
         session->Frame();
-        common->Printf("Updating screen\n");
-        fflush(NULL);
 
         session->UpdateScreen(false);
     }
@@ -2826,8 +2822,6 @@ idSessionLocal::Draw
 void idSessionLocal::Draw()
 {
     bool fullConsole = false;
-    common->Printf("Starting a draw\n");
-    fflush(NULL);
 
     if (insideExecuteMapChange)
     {
@@ -2866,11 +2860,7 @@ void idSessionLocal::Draw()
             game->Draw(GetLocalClientNum());
         }
 
-        common->Printf("Draw: calling guiActive->Redraw\n");
-        fflush(NULL);
         guiActive->Redraw(com_frameTime);
-        common->Printf("Draw: guiActive->Redraw done\n");
-        fflush(NULL);
     }
     else if (readDemo)
     {
@@ -2941,8 +2931,6 @@ void idSessionLocal::Draw()
     }
     fullConsole = false;
 #endif
-    common->Printf("Drawing wipe/graph\n");
-    fflush(NULL);
 
     // draw the wipe material on top of this if it hasn't completed yet
     DrawWipeModel();
@@ -2983,8 +2971,6 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
     }
 
     insideUpdateScreen = true;
-    common->Printf("UpdateScreen: entered\n");
-    fflush(NULL);
 
     // if this is a long-operation update and we are in windowed mode,
     // release the mouse capture back to the desktop
@@ -2993,18 +2979,10 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
         Sys_GrabMouseCursor(false);
     }
 
-    common->Printf("UpdateScreen: BeginFrame\n");
-    fflush(NULL);
     renderSystem->BeginFrame(renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight());
-    common->Printf("UpdateScreen: BeginFrame done\n");
-    fflush(NULL);
 
     // draw everything
-    common->Printf("UpdateScreen: Draw\n");
-    fflush(NULL);
     Draw();
-    common->Printf("UpdateScreen: Draw done\n");
-    fflush(NULL);
 
     if (com_speeds.GetBool())
     {
@@ -3012,14 +2990,10 @@ void idSessionLocal::UpdateScreen(bool outOfSequence)
     }
     else
     {
-        common->Printf("UpdateScreen: EndFrame\n");
-        fflush(NULL);
         renderSystem->EndFrame(NULL, NULL);
     }
 
     insideUpdateScreen = false;
-    common->Printf("UpdateScreen: done\n");
-    fflush(NULL);
 }
 
 /*
@@ -3031,8 +3005,6 @@ extern bool CheckOpenALDeviceAndRecoverIfNeeded();
 extern int g_screenshotFormat;
 void idSessionLocal::Frame()
 {
-    common->Printf("Session::Frame: enter\n");
-    fflush(NULL);
 
     if (com_asyncSound.GetInteger() == 0)
     {
@@ -3169,12 +3141,7 @@ void idSessionLocal::Frame()
     }
 
     // send frame and mouse events to active guis
-    common->Printf("Session::Frame: GuiFrameEvents\n");
-    fflush(NULL);
-
     GuiFrameEvents();
-    common->Printf("Session::Frame: GuiFrameEvents done\n");
-    fflush(NULL);
 
     // advance demos
     if (readDemo)

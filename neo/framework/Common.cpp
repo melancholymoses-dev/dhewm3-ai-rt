@@ -2784,14 +2784,8 @@ idCommonLocal::Frame
 */
 void idCommonLocal::Frame(void)
 {
-    common->Printf("Starting Frame2\n");
-    fflush(NULL);
-
     try
     {
-        common->Printf("Generate events\n");
-        fflush(NULL);
-
         // pump all the events
         Sys_GenerateEvents();
 
@@ -2815,9 +2809,6 @@ void idCommonLocal::Frame(void)
                 DebuggerServerShutdown();
             }
         }
-        common->Printf("Start event loop\n");
-        fflush(NULL);
-
         eventLoop->RunEventLoop();
 
         // DG: prepare new ImGui frame - I guess this is a good place, as all new events should be available?
@@ -2837,15 +2828,8 @@ void idCommonLocal::Frame(void)
         }
         else
         {
-            common->Printf("Starting Frame inside a frame\n");
-            fflush(NULL);
-
             session->Frame();
-
             // normal, in-sequence screen update
-            common->Printf("Starting Update Screen inside a frame\n");
-            fflush(NULL);
-
             session->UpdateScreen(false);
         }
 
@@ -2870,13 +2854,11 @@ void idCommonLocal::Frame(void)
 
     catch (idException &)
     {
-        common->Printf("GOt an error yo!\n");
+        common->Printf("Got an ERP_DROP error\n");
         fflush(NULL);
 
         return; // an ERP_DROP was thrown
     }
-    common->Printf("FInished frame outer\n");
-    fflush(NULL);
 }
 
 /*

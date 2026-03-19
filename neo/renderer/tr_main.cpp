@@ -213,8 +213,6 @@ R_ToggleSmpFrame
 */
 void R_ToggleSmpFrame(void)
 {
-    common->Printf("  R_ToggleSmpFrame: FreeDeferredTriSurfs\n");
-    fflush(NULL);
 
     R_FreeDeferredTriSurfs(frameData);
 
@@ -223,8 +221,6 @@ void R_ToggleSmpFrame(void)
     frameMemoryBlock_t *block;
 
     // update the highwater mark
-    common->Printf("  R_ToggleSmpFrame: CountFrameData\n");
-    fflush(NULL);
 
     R_CountFrameData();
 
@@ -239,12 +235,7 @@ void R_ToggleSmpFrame(void)
         block->used = 0;
     }
 
-    common->Printf("  R_ToggleSmpFrame: ClearCommandChain\n");
-    fflush(NULL);
-
     R_ClearCommandChain();
-    common->Printf("  R_ToggleSmpFrame: done\n");
-    fflush(NULL);
 }
 
 //=====================================================
@@ -291,12 +282,8 @@ void R_InitFrameData(void)
     frameData_t *frame;
     frameMemoryBlock_t *block;
 
-    common->Printf("R_InitFrameData: frameData ptr before shutdown: %p\n", (void *)frameData);
-    fflush(NULL);
     R_ShutdownFrameData();
 
-    common->Printf("R_InitFrameData: allocating frameData struct\n");
-    fflush(NULL);
     frameData = (frameData_t *)Mem_ClearedAlloc(sizeof(*frameData));
     if (!frameData)
     {
@@ -304,8 +291,6 @@ void R_InitFrameData(void)
     }
     frame = frameData;
     size = MEMORY_BLOCK_SIZE;
-    common->Printf("R_InitFrameData: allocating memory block (%d bytes)\n", size);
-    fflush(NULL);
     block = (frameMemoryBlock_t *)Mem_Alloc(size + sizeof(*block));
     if (!block)
     {
@@ -317,12 +302,7 @@ void R_InitFrameData(void)
     frame->memory = block;
     frame->memoryHighwater = 0;
 
-    common->Printf("R_InitFrameData: calling R_ToggleSmpFrame\n");
-    fflush(NULL);
-
     R_ToggleSmpFrame();
-    common->Printf("R_InitFrameData: done\n");
-    fflush(NULL);
 }
 
 /*
