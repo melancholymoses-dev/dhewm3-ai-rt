@@ -242,7 +242,7 @@ void VK_CreateSwapchain(int width, int height)
     swapInfo.imageColorSpace = surfaceFormat.colorSpace;
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
-    swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -417,7 +417,7 @@ void VK_RecreateSwapchain(int width, int height)
     swapInfo.imageColorSpace  = surfaceFormat.colorSpace;
     swapInfo.imageExtent      = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
-    swapInfo.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapInfo.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
     swapInfo.preTransform     = caps.currentTransform;
     swapInfo.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode      = presentMode;
