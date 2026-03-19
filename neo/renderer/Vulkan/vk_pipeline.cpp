@@ -314,7 +314,7 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
 // VK_CreateShadowPipelineZFail - stencil shadow volume pipeline
 // ---------------------------------------------------------------------------
 
-static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout)
+static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mirrorView)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/shadow.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/shadow.frag.spv");
@@ -391,22 +391,23 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout)
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Depth-fail stencil shadow (Carmack's Reverse).
-    // GL reference (draw_common.cpp ~1580):
-    //   CT_FRONT_SIDED = glCullFace(GL_FRONT) = draws BACK faces:  depthFail = DECREMENT
-    //   CT_BACK_SIDED  = glCullFace(GL_BACK)  = draws FRONT faces: depthFail = INCREMENT
-    // With VK_FRONT_FACE_CLOCKWISE + Y-flipped viewport, Vulkan front == GL front.
+    // GL parity note (keep in sync with draw_common.cpp RB_T_Shadow):
+    // Z-fail / Carmack's Reverse uses depthFailOp only.
+    //   non-mirror: back=DECR, front=INCR
+    //   mirror:     back=INCR, front=DECR (swapped)
+    // In this Vulkan pipeline, front/back refer to post-viewport face classification
+    // (with our Y-flipped viewport and frontFace=CLOCKWISE convention).
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = VK_STENCIL_OP_KEEP;
-    front.depthFailOp = VK_STENCIL_OP_INCREMENT_AND_WRAP; // GL: CT_BACK_SIDED draws fronts, depthFail = incr
+    front.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
     front.compareOp = VK_COMPARE_OP_ALWAYS;
     front.compareMask = 0xFF;
     front.writeMask = 0xFF;
     front.reference = 0;
 
     VkStencilOpState back = front;
-    back.depthFailOp = VK_STENCIL_OP_DECREMENT_AND_WRAP; // GL: CT_FRONT_SIDED draws backs, depthFail = decr
+    back.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -465,7 +466,7 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout)
 // Both faces:  depthFailOp = KEEP   (shadow volume behind scene → not in shadow)
 // ---------------------------------------------------------------------------
 
-static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout)
+static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mirrorView)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/shadow.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/shadow.frag.spv");
@@ -530,11 +531,14 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout)
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Z-pass: stencil modifies on depth PASS, not fail.
-    // Front faces increment, back faces decrement (LEQUAL depth test for robustness).
+    // GL parity note (keep in sync with draw_common.cpp RB_T_Shadow):
+    // Z-pass uses passOp only.
+    //   non-mirror: back=INCR, front=DECR
+    //   mirror:     back=DECR, front=INCR (swapped)
+    // depthFailOp stays KEEP for both faces in Z-pass.
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
-    front.passOp = VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    front.passOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
     front.depthFailOp = VK_STENCIL_OP_KEEP;
     front.compareOp = VK_COMPARE_OP_ALWAYS;
     front.compareMask = 0xFF;
@@ -542,7 +546,7 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout)
     front.reference = 0;
 
     VkStencilOpState back = front;
-    back.passOp = VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    back.passOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -1260,8 +1264,10 @@ void VK_InitPipelines(void)
         layoutInfo.pSetLayouts = &vkPipes.shadowDescLayout;
         VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.shadowLayout));
     }
-    vkPipes.shadowPipelineZFail = VK_CreateShadowPipelineZFail(vkPipes.shadowLayout); // Z-fail (camera inside shadow)
-    vkPipes.shadowPipelineZPass = VK_CreateShadowPipelineZPass(vkPipes.shadowLayout); // Z-pass (camera outside shadow)
+    vkPipes.shadowPipelineZFail = VK_CreateShadowPipelineZFail(vkPipes.shadowLayout, false);      // normal view
+    vkPipes.shadowPipelineZFailMirror = VK_CreateShadowPipelineZFail(vkPipes.shadowLayout, true); // mirrored view
+    vkPipes.shadowPipelineZPass = VK_CreateShadowPipelineZPass(vkPipes.shadowLayout, false);      // normal view
+    vkPipes.shadowPipelineZPassMirror = VK_CreateShadowPipelineZPass(vkPipes.shadowLayout, true); // mirrored view
 
     // --- Depth prepass pipeline (reuses guiLayout; no separate desc layout needed) ---
     // Must be created after guiLayout is ready (below), so we defer to after GUI init.
@@ -1324,13 +1330,16 @@ void VK_InitPipelines(void)
         VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkPipes.descPools[fi]));
     }
 
-    vkPipes.isValid = (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipelineZFail != VK_NULL_HANDLE &&
-                       vkPipes.shadowPipelineZPass != VK_NULL_HANDLE);
+    vkPipes.isValid =
+        (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipelineZFail != VK_NULL_HANDLE &&
+         vkPipes.shadowPipelineZFailMirror != VK_NULL_HANDLE && vkPipes.shadowPipelineZPass != VK_NULL_HANDLE &&
+         vkPipes.shadowPipelineZPassMirror != VK_NULL_HANDLE);
 
     common->Printf(
-        "VK: Pipelines initialized (interaction=%s, shadow-zfail=%s, shadow-zpass=%s, depth=%s, gui=%s/%s)\n",
+        "VK: Pipelines initialized (interaction=%s, shadow-zfail=%s/%s, shadow-zpass=%s/%s, depth=%s, gui=%s/%s)\n",
         vkPipes.interactionPipeline ? "OK" : "FAIL", vkPipes.shadowPipelineZFail ? "OK" : "FAIL",
-        vkPipes.shadowPipelineZPass ? "OK" : "FAIL", vkPipes.depthPipeline ? "OK" : "FAIL",
+        vkPipes.shadowPipelineZFailMirror ? "OK" : "FAIL", vkPipes.shadowPipelineZPass ? "OK" : "FAIL",
+        vkPipes.shadowPipelineZPassMirror ? "OK" : "FAIL", vkPipes.depthPipeline ? "OK" : "FAIL",
         vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL");
 }
 
@@ -1358,8 +1367,12 @@ void VK_ShutdownPipelines(void)
         vkDestroyDescriptorSetLayout(vk.device, vkPipes.interactionDescLayout, NULL);
     if (vkPipes.shadowPipelineZFail)
         vkDestroyPipeline(vk.device, vkPipes.shadowPipelineZFail, NULL);
+    if (vkPipes.shadowPipelineZFailMirror)
+        vkDestroyPipeline(vk.device, vkPipes.shadowPipelineZFailMirror, NULL);
     if (vkPipes.shadowPipelineZPass)
         vkDestroyPipeline(vk.device, vkPipes.shadowPipelineZPass, NULL);
+    if (vkPipes.shadowPipelineZPassMirror)
+        vkDestroyPipeline(vk.device, vkPipes.shadowPipelineZPassMirror, NULL);
     if (vkPipes.shadowLayout)
         vkDestroyPipelineLayout(vk.device, vkPipes.shadowLayout, NULL);
     if (vkPipes.shadowDescLayout)
