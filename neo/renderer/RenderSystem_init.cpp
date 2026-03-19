@@ -160,6 +160,10 @@ idCVar r_skipInteractions("r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL,
                           "skip all light/surface interaction drawing");
 idCVar r_skipDepthPrepass("r_skipDepthPrepass", "0", CVAR_RENDERER | CVAR_BOOL,
                            "skip the depth prepass (diagnostic only — interactions run against clear depth 1.0)");
+idCVar r_skipShadows("r_skipShadows", "0", CVAR_RENDERER | CVAR_BOOL,
+                     "skip all stencil shadow volume draws (diagnostic: if dark-triangle wireframe vanishes, shadows are the culprit)");
+idCVar r_skipShaderPasses("r_skipShaderPasses", "0", CVAR_RENDERER | CVAR_BOOL,
+                           "skip non-light-dependent shader passes (GUI surfaces, console, menus, unlit/2D content)");
 idCVar r_skipDynamicTextures("r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL,
                              "don't dynamically create textures");
 idCVar r_skipCopyTexture("r_skipCopyTexture", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -692,6 +696,24 @@ void R_InitOpenGL(void)
     }
 
     activeBackend->Init();
+
+    // Vulkan: images declared before the context was ready (e.g. console charSetShader,
+    // built-in images from globalImages->Init()) had their GenerateImage() calls silently
+    // skipped because glConfig.isInitialized was false at declaration time.  The GL path
+    // recovered via idImage::Bind()'s lazy-load (texnum==TEXTURE_NOT_LOADED check), but
+    // the Vulkan path has no equivalent Bind() call.  Re-upload every image whose
+    // backendData is still null now that the device is live.
+    if (glConfig.isVulkan)
+    {
+        common->Printf("VK: uploading pre-context images...\n");
+        for (int i = 0; i < globalImages->images.Num(); i++)
+        {
+            idImage *img = globalImages->images[i];
+            if (!img->backendData)
+                img->Reload(true, true); // checkPrecompressed=true, force=true
+        }
+        common->Printf("VK: pre-context image upload done (%d images)\n", globalImages->images.Num());
+    }
 
     // input and sound systems need to be tied to the new window
     Sys_InitInput();
