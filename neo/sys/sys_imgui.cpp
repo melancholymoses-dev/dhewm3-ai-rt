@@ -318,10 +318,12 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
             return false;
         }
         s_imguiVulkanReady = true;
+        common->Printf("ImGui: Vulkan backend initialized (imageCount=%u)\n", vk.swapchainImageCount);
     }
     else
 #endif
     {
+        common->Printf("ImGui: OpenGL backend initialized (isVulkan=%d)\n", (int)glConfig.isVulkan);
         if (!ImGui_ImplSDLx_InitForOpenGL(sdlWindow, sdlGlContext))
         {
             ImGui::DestroyContext(imguiCtx);
@@ -384,7 +386,12 @@ void Shutdown()
 {
     if (imgui_initialized)
     {
+#ifdef DHEWM3_VULKAN
+        common->Printf("Shutting down ImGui (isVulkan=%d, vulkanReady=%d)\n",
+                       (int)glConfig.isVulkan, (int)s_imguiVulkanReady);
+#else
         common->Printf("Shutting down ImGui\n");
+#endif
 
 #ifdef DHEWM3_VULKAN
         if (glConfig.isVulkan)
