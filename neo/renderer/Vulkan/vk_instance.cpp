@@ -286,6 +286,7 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.features.samplerAnisotropy = VK_TRUE;
+    features2.features.depthClamp       = VK_TRUE; // required for shadow volume back-cap clamping
 
     // Extension list: base + optional RT extensions
     const char **exts;
@@ -510,6 +511,10 @@ void VKimp_Shutdown(void)
         return;
 
     vkDeviceWaitIdle(vk.device);
+
+    // Drain any deferred image deletions before destroying the device.
+    extern void VK_Image_DrainAllGarbage(void);
+    VK_Image_DrainAllGarbage();
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {

@@ -375,8 +375,6 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
 
         idStr::Copynz(outFont->name, name, sizeof(outFont->name));
 
-        common->Printf("      RegisterFont: reading %s\n", name);
-        fflush(NULL);
         len = fileSystem->ReadFile(name, NULL, &ftime);
         if (len != FILESIZE_fontInfo_t)
         {
@@ -410,8 +408,6 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
 
         int mw = 0;
         int mh = 0;
-        common->Printf("      RegisterFont: loading %d glyphs for size %d\n", GLYPH_END - GLYPH_START, pointSize);
-        fflush(NULL);
         for (i = GLYPH_START; i < GLYPH_END; i++)
         {
             idStr::snPrintf(name, sizeof(name), "%s/%s", fontName, outFont->glyphs[i].shaderName);
@@ -441,8 +437,6 @@ bool idRenderSystemLocal::RegisterFont(const char *fontName, fontInfoEx_t &font)
             font.maxWidthLarge = mw;
             font.maxHeightLarge = mh;
         }
-        common->Printf("      RegisterFont: done with size %d\n", pointSize);
-        fflush(NULL);
         fileSystem->FreeFile(faceData);
     }
 
