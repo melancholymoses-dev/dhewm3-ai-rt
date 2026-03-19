@@ -17,6 +17,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "version.h"
 
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkShaderModule VK_LoadSPIRVFromMemory(const uint32_t *code, size_t codeSize);
@@ -70,7 +71,7 @@ vkPipelines_t vkPipes;
 #endif
 
 #ifndef DHEWM3_BUILD_GIT
-#define DHEWM3_BUILD_GIT "unknown"
+#define DHEWM3_BUILD_GIT GIT_COMMIT_HASH
 #endif
 
 // Runtime stamp for proving which binary is executing from logs.
