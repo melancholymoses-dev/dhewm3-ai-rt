@@ -765,8 +765,6 @@ void idRenderSystemLocal::EndFrame(int *frontEndMsec, int *backEndMsec)
     }
 
     // close any gui drawing
-    common->Printf("EndFrame: EmitFullScreen\n");
-    fflush(NULL);
     guiModel->EmitFullScreen();
     guiModel->Clear();
 

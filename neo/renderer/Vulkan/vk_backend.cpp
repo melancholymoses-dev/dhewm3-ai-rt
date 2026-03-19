@@ -1011,7 +1011,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     // Index data (tri->indexes, same field as regular geometry)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    VkDeviceSize idxSize   = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxSize = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
     VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
     if (idxOffset == VK_WHOLE_SIZE)
         return VK_NULL_HANDLE;
@@ -1609,6 +1609,7 @@ void VK_NotifyWindowModeChanged()
 static VkBuffer s_readbackBuf = VK_NULL_HANDLE;
 static VkDeviceMemory s_readbackMem = VK_NULL_HANDLE;
 static void *s_readbackMapped = nullptr;
+static VkDeviceSize s_readbackSize = 0;  // allocated size of s_readbackBuf
 static bool s_readbackPending = false;   // set by VK_RequestReadback
 static bool s_readbackSubmitted = false; // set inside SwapBuffers when copy was added
 static bool s_readbackDone = false;      // set after fence wait; read by VK_ReadPixels
@@ -1662,6 +1663,8 @@ void VK_RB_DrawView(const void *data)
                                   VK_NULL_HANDLE, &imageIndex);
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
         {
+            common->Printf("VK Out of Date\n");
+            fflush(NULL);
             VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
             return; // s_frameActive stays false; VK_RB_SwapBuffers will no-op
         }
@@ -1675,9 +1678,11 @@ void VK_RB_DrawView(const void *data)
         s_frameImageIndex = imageIndex;
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
 
-        // Drain deferred image deletions queued during the previous use of this frame slot.
+        // Drain deferred image and buffer deletions queued during the previous use of this frame slot.
         extern void VK_Image_DrainGarbage(uint32_t frameIdx);
         VK_Image_DrainGarbage(vk.currentFrame);
+        extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
+        VK_Buffer_DrainGarbage(vk.currentFrame);
 
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
@@ -1769,12 +1774,14 @@ void VK_RB_DrawView(const void *data)
     if (!r_skipDepthPrepass.GetBool())
         VK_RB_FillDepthBuffer(cmdBuf);
 
-    VK_RB_DrawInteractions(cmdBuf);
+    if (!r_skipInteractions.GetBool())
+        VK_RB_DrawInteractions(cmdBuf);
 
     if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
         VK_RB_DrawShaderPasses(cmdBuf);
 
-    VK_RB_FogAllLights(cmdBuf);
+    if (!r_skipFogLights.GetBool())
+        VK_RB_FogAllLights(cmdBuf);
 
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
 }
@@ -1825,7 +1832,8 @@ void VK_RB_SwapBuffers()
     // If the window mode changed this frame (Alt+Enter fullscreen toggle), the
     // SDL surface may have been invalidated by the driver before we submit.
     // Skip the submit and recreate the swapchain so the next frame starts clean.
-    if (s_swapchainNeedsRecreate) {
+    if (s_swapchainNeedsRecreate)
+    {
         s_swapchainNeedsRecreate = false;
         vkResetCommandBuffer(vk.commandBuffers[vk.currentFrame], 0);
         VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
@@ -1893,17 +1901,45 @@ void VK_RequestReadback()
     if (!vk.isInitialized)
         return;
 
+    VkDeviceSize size = (VkDeviceSize)vk.swapchainExtent.width * vk.swapchainExtent.height * 4;
+
+    // Reallocate if the swapchain grew since the buffer was first created.
+    if (s_readbackBuf != VK_NULL_HANDLE && size > s_readbackSize)
+    {
+        vkUnmapMemory(vk.device, s_readbackMem);
+        vkDestroyBuffer(vk.device, s_readbackBuf, NULL);
+        vkFreeMemory(vk.device, s_readbackMem, NULL);
+        s_readbackBuf    = VK_NULL_HANDLE;
+        s_readbackMem    = VK_NULL_HANDLE;
+        s_readbackMapped = nullptr;
+        s_readbackSize   = 0;
+    }
+
     if (s_readbackBuf == VK_NULL_HANDLE)
     {
-        VkDeviceSize size = (VkDeviceSize)vk.swapchainExtent.width * vk.swapchainExtent.height * 4;
         VK_CreateBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_readbackBuf,
                         &s_readbackMem);
         VK_CHECK(vkMapMemory(vk.device, s_readbackMem, 0, size, 0, &s_readbackMapped));
+        s_readbackSize = size;
     }
 
     s_readbackPending = true;
     s_readbackDone = false;
+}
+
+void VK_CleanupReadback()
+{
+    if (s_readbackBuf != VK_NULL_HANDLE)
+    {
+        vkUnmapMemory(vk.device, s_readbackMem);
+        vkDestroyBuffer(vk.device, s_readbackBuf, NULL);
+        vkFreeMemory(vk.device, s_readbackMem, NULL);
+        s_readbackBuf    = VK_NULL_HANDLE;
+        s_readbackMem    = VK_NULL_HANDLE;
+        s_readbackMapped = nullptr;
+        s_readbackSize   = 0;
+    }
 }
 
 // Call this after the screenshot render frame returns.

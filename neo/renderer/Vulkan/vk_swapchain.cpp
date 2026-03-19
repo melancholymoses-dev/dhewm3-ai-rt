@@ -400,6 +400,7 @@ void VK_RecreateSwapchain(int width, int height)
     VkSurfaceFormatKHR surfaceFormat = VK_ChooseSurfaceFormat(vk.physicalDevice);
     VkPresentModeKHR   presentMode   = VK_ChoosePresentMode(vk.physicalDevice);
 
+    vk.swapchainFormat = surfaceFormat.format;
     vk.swapchainExtent = {(uint32_t)width, (uint32_t)height};
 
     uint32_t imageCount = caps.minImageCount + 1;

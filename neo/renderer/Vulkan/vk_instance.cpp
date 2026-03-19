@@ -282,6 +282,14 @@ static void VKimp_CreateDevice(void)
         numQueues++;
     }
 
+    // Query supported features before enabling them.
+    VkPhysicalDeviceFeatures supportedFeatures = {};
+    vkGetPhysicalDeviceFeatures(vk.physicalDevice, &supportedFeatures);
+    if (!supportedFeatures.depthClamp)
+        common->Error("Vulkan: depthClamp is required for shadow volumes but is not supported by this GPU.");
+    if (!supportedFeatures.samplerAnisotropy)
+        common->Error("Vulkan: samplerAnisotropy is required but is not supported by this GPU.");
+
     // Device features
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -512,9 +520,13 @@ void VKimp_Shutdown(void)
 
     vkDeviceWaitIdle(vk.device);
 
-    // Drain any deferred image deletions before destroying the device.
+    // Drain any deferred image/buffer deletions and free the readback buffer.
     extern void VK_Image_DrainAllGarbage(void);
     VK_Image_DrainAllGarbage();
+    extern void VK_Buffer_DrainAllGarbage(void);
+    VK_Buffer_DrainAllGarbage();
+    extern void VK_CleanupReadback(void);
+    VK_CleanupReadback();
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
