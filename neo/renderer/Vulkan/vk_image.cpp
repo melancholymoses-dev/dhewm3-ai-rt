@@ -21,8 +21,6 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#ifdef DHEWM3_VULKAN
-
 #include "sys/platform.h"
 #include "renderer/Image.h"
 #include "renderer/tr_local.h"
@@ -43,6 +41,44 @@ struct vkImageData_t
     VkImageView view;
     VkSampler sampler;
 };
+
+// ---------------------------------------------------------------------------
+// Deferred image deletion garbage ring
+// Images purged while the GPU may still be reading them are queued here.
+// VK_Image_DrainGarbage(frameIdx) is called after the per-frame fence fires.
+// ---------------------------------------------------------------------------
+
+static const int VK_IMAGE_GARBAGE_MAX = 512; // max purges per frame slot
+
+static vkImageData_t *s_imageGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_IMAGE_GARBAGE_MAX];
+static int s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+static void VK_DestroyImageData(vkImageData_t *vkd)
+{
+    if (vkd->sampler != VK_NULL_HANDLE)
+        vkDestroySampler(vk.device, vkd->sampler, NULL);
+    if (vkd->view != VK_NULL_HANDLE)
+        vkDestroyImageView(vk.device, vkd->view, NULL);
+    if (vkd->image != VK_NULL_HANDLE)
+        vkDestroyImage(vk.device, vkd->image, NULL);
+    if (vkd->memory != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, vkd->memory, NULL);
+    delete vkd;
+}
+
+void VK_Image_DrainGarbage(uint32_t frameIdx)
+{
+    for (int i = 0; i < s_imageGarbageCount[frameIdx]; i++)
+        VK_DestroyImageData(s_imageGarbage[frameIdx][i]);
+    s_imageGarbageCount[frameIdx] = 0;
+}
+
+// Drain all frame slots — called at shutdown.
+void VK_Image_DrainAllGarbage(void)
+{
+    for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+        VK_Image_DrainGarbage(f);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -228,15 +264,7 @@ void VK_Image_Purge(idImage *img);
 void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
 {
     if (!vk.isInitialized || !pic || width <= 0 || height <= 0)
-    {
-        common->Printf("VK_Image_Upload: skipped '%s' (init=%d, pic=%p, %dx%d)\n",
-                       img ? img->imgName.c_str() : "<null>",
-                       (int)vk.isInitialized, (void*)pic, width, height);
-        fflush(NULL);
         return;
-    }
-    common->Printf("VK_Image_Upload: '%s' %dx%d\n", img->imgName.c_str(), width, height);
-    fflush(NULL);
 
     // Free any existing Vulkan resources for this image (e.g. during reload)
     if (img->backendData)
@@ -472,8 +500,6 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
         return;
     }
 
-    common->Printf("VK_Image_Upload: '%s' uploaded OK (%u mips)\n", img->imgName.c_str(), CalcMipLevels(width, height));
-    fflush(NULL);
     img->backendData = vkd;
 }
 
@@ -487,23 +513,35 @@ void VK_Image_Purge(idImage *img)
     if (!img->backendData)
         return;
 
-    // Wait for the device to be idle before destroying resources that may
-    // still be referenced by in-flight frames.  A proper implementation
-    // should use per-frame deferred deletion queues.
-    vkDeviceWaitIdle(vk.device);
-
     vkImageData_t *vkd = (vkImageData_t *)img->backendData;
-    if (vkd->sampler != VK_NULL_HANDLE)
-        vkDestroySampler(vk.device, vkd->sampler, NULL);
-    if (vkd->view != VK_NULL_HANDLE)
-        vkDestroyImageView(vk.device, vkd->view, NULL);
-    if (vkd->image != VK_NULL_HANDLE)
-        vkDestroyImage(vk.device, vkd->image, NULL);
-    if (vkd->memory != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, vkd->memory, NULL);
-
-    delete vkd;
     img->backendData = NULL;
+
+    // If the Vulkan device isn't up yet (or we're at shutdown after draining),
+    // destroy immediately.  Otherwise queue for the current frame slot so the
+    // GPU cannot still be reading the resource.
+    if (!vk.isInitialized)
+    {
+        VK_DestroyImageData(vkd);
+        return;
+    }
+
+    uint32_t frameIdx = vk.currentFrame;
+    if (s_imageGarbageCount[frameIdx] < VK_IMAGE_GARBAGE_MAX)
+    {
+        s_imageGarbage[frameIdx][s_imageGarbageCount[frameIdx]++] = vkd;
+    }
+    else
+    {
+        // Garbage ring full — stall once and destroy immediately.
+        // If the device is already lost (e.g., shutdown after a crash), skip the
+        // stall to avoid spamming the log; the process is exiting anyway.
+        VkResult waitResult = vkDeviceWaitIdle(vk.device);
+        if (waitResult == VK_SUCCESS)
+        {
+            common->Warning("VK: image garbage ring full for frame %u, stalling", frameIdx);
+        }
+        VK_DestroyImageData(vkd);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -523,5 +561,3 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
     out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return true;
 }
-
-#endif // DHEWM3_VULKAN

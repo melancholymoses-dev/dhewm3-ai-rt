@@ -765,7 +765,6 @@ void idRenderSystemLocal::EndFrame(int *frontEndMsec, int *backEndMsec)
     }
 
     // close any gui drawing
-    common->Printf("EndFrame: EmitFullScreen\n"); fflush(NULL);
     guiModel->EmitFullScreen();
     guiModel->Clear();
 
@@ -780,30 +779,23 @@ void idRenderSystemLocal::EndFrame(int *frontEndMsec, int *backEndMsec)
     }
 
     // print any other statistics and clear all of them
-    common->Printf("EndFrame: R_PerformanceCounters\n"); fflush(NULL);
     R_PerformanceCounters();
 
     // check for dynamic changes that require some initialization
-    common->Printf("EndFrame: R_CheckCvars\n"); fflush(NULL);
     R_CheckCvars();
 
     // check for errors
-    common->Printf("EndFrame: GL_CheckErrors\n"); fflush(NULL);
     GL_CheckErrors();
 
     // add the swapbuffers command
-    common->Printf("EndFrame: RC_SWAP_BUFFERS\n"); fflush(NULL);
     cmd = (emptyCommand_t *)R_GetCommandBuffer(sizeof(*cmd));
     cmd->commandId = RC_SWAP_BUFFERS;
 
     // start the back end up again with the new command list
-    common->Printf("EndFrame: R_IssueRenderCommands\n"); fflush(NULL);
     R_IssueRenderCommands();
-    common->Printf("EndFrame: R_IssueRenderCommands done\n"); fflush(NULL);
 
     // use the other buffers next frame, because another CPU
     // may still be rendering into the current buffers
-
     R_ToggleSmpFrame();
 
     // we can now release the vertexes used this frame
@@ -1047,6 +1039,14 @@ void idRenderSystemLocal::CaptureRenderToFile(const char *fileName, bool fixAlph
 {
     if (!glConfig.isInitialized)
     {
+        return;
+    }
+
+    // Vulkan render-to-file capture is not implemented via this path; use the Vulkan screenshot
+    // readback mechanism instead. Emit a warning so callers know this is unsupported.
+    if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
+    {
+        common->Printf("WARNING: CaptureRenderToFile is not supported for Vulkan backend (r_backend \"vulkan\").\n");
         return;
     }
 

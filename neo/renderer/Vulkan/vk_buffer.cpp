@@ -104,6 +104,35 @@ struct vkBufferData_t
     VkDeviceMemory mem;
 };
 
+// ---------------------------------------------------------------------------
+// Buffer garbage list — deferred destruction after the per-frame fence fires,
+// mirroring the image garbage pattern in vk_image.cpp.
+// ---------------------------------------------------------------------------
+
+static const int VK_BUFFER_GARBAGE_MAX = 512;
+static vkBufferData_t *s_bufferGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_BUFFER_GARBAGE_MAX];
+static int             s_bufferGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+static void VK_DestroyBufferData(vkBufferData_t *bd)
+{
+    if (bd->buf != VK_NULL_HANDLE) vkDestroyBuffer(vk.device, bd->buf, NULL);
+    if (bd->mem != VK_NULL_HANDLE) vkFreeMemory(vk.device, bd->mem, NULL);
+    delete bd;
+}
+
+void VK_Buffer_DrainGarbage(uint32_t frameIdx)
+{
+    for (int i = 0; i < s_bufferGarbageCount[frameIdx]; i++)
+        VK_DestroyBufferData(s_bufferGarbage[frameIdx][i]);
+    s_bufferGarbageCount[frameIdx] = 0;
+}
+
+void VK_Buffer_DrainAllGarbage()
+{
+    for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+        VK_Buffer_DrainGarbage(f);
+}
+
 void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool indexBuffer)
 {
     if (!vk.isInitialized || !data || size <= 0)
@@ -140,12 +169,19 @@ void VK_VertexCache_Free(vertCache_t *block)
     if (!bd)
         return;
 
-    if (bd->buf != VK_NULL_HANDLE)
-        vkDestroyBuffer(vk.device, bd->buf, NULL);
-    if (bd->mem != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, bd->mem, NULL);
-
-    delete bd;
+    // Defer destruction until the frame fence has fired for this slot,
+    // avoiding a full GPU stall on every buffer free during map/model unloads.
+    uint32_t frameIdx = vk.currentFrame;
+    if (s_bufferGarbageCount[frameIdx] < VK_BUFFER_GARBAGE_MAX)
+    {
+        s_bufferGarbage[frameIdx][s_bufferGarbageCount[frameIdx]++] = bd;
+    }
+    else
+    {
+        // Garbage ring full — stall once and destroy immediately.
+        vkDeviceWaitIdle(vk.device);
+        VK_DestroyBufferData(bd);
+    }
     block->backendData = NULL;
 }
 

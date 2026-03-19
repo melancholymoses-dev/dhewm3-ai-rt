@@ -2744,7 +2744,6 @@ void idCommonLocal::InitRenderSystem(void)
     PrintLoadingMessage(common->GetLanguageDict()->GetString("#str_04343"));
     common->Printf("Initialized Render System\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 /*
@@ -2785,16 +2784,8 @@ idCommonLocal::Frame
 */
 void idCommonLocal::Frame(void)
 {
-    common->Printf("Starting Frame2\n");
-    fflush(NULL);
-    Sleep(10);
-
     try
     {
-        common->Printf("Generate events\n");
-        fflush(NULL);
-        Sleep(10);
-
         // pump all the events
         Sys_GenerateEvents();
 
@@ -2818,10 +2809,6 @@ void idCommonLocal::Frame(void)
                 DebuggerServerShutdown();
             }
         }
-        common->Printf("Start event loop\n");
-        fflush(NULL);
-        Sleep(10);
-
         eventLoop->RunEventLoop();
 
         // DG: prepare new ImGui frame - I guess this is a good place, as all new events should be available?
@@ -2841,17 +2828,8 @@ void idCommonLocal::Frame(void)
         }
         else
         {
-            common->Printf("Starting Frame inside a frame\n");
-            fflush(NULL);
-            Sleep(10);
-
             session->Frame();
-
             // normal, in-sequence screen update
-            common->Printf("Starting Update Screen inside a frame\n");
-            fflush(NULL);
-            Sleep(10);
-
             session->UpdateScreen(false);
         }
 
@@ -2876,15 +2854,11 @@ void idCommonLocal::Frame(void)
 
     catch (idException &)
     {
-        common->Printf("GOt an error yo!\n");
+        common->Printf("Got an ERP_DROP error\n");
         fflush(NULL);
-        Sleep(10);
 
         return; // an ERP_DROP was thrown
     }
-    common->Printf("FInished frame outer\n");
-    fflush(NULL);
-    Sleep(10);
 }
 
 /*
@@ -3541,7 +3515,6 @@ void idCommonLocal::Init(int argc, char **argv)
         InitGame();
         common->Printf("Post Game Init\n");
         fflush(NULL);
-        Sleep(10);
 
         // don't add startup commands if no CD key is present
 #if ID_ENFORCE_KEY
@@ -3568,7 +3541,6 @@ void idCommonLocal::Init(int argc, char **argv)
         ClearCommandLine();
         common->Printf("Loading history\n");
         fflush(NULL);
-        Sleep(10);
 
         // load the persistent console history
         console->LoadHistory();
@@ -3583,7 +3555,6 @@ void idCommonLocal::Init(int argc, char **argv)
 
     common->Printf("Got through init.  Starting Timer\n");
     fflush(NULL);
-    Sleep(10);
 
     async_timer = SDL_AddTimer(USERCMD_MSEC, AsyncTimer, NULL);
 
@@ -3761,7 +3732,7 @@ void idCommonLocal::InitGame(void)
     // initialize the user interfaces
     common->Printf("UiManager\n");
     fflush(NULL);
-    Sleep(10);
+
     uiManager->Init();
 
     PrintLoadingMessage(common->GetLanguageDict()->GetString("#str_04350"));
@@ -3769,7 +3740,7 @@ void idCommonLocal::InitGame(void)
     // load the game dll
     common->Printf("LoadGameDLL\n");
     fflush(NULL);
-    Sleep(10);
+
     LoadGameDLL();
 
     // startup the script debugger
@@ -3781,11 +3752,10 @@ void idCommonLocal::InitGame(void)
     // init the session
     common->Printf("Init Session\n");
     fflush(NULL);
-    Sleep(10);
+
     session->Init();
     common->Printf("Finished Init Session\n");
     fflush(NULL);
-    Sleep(10);
 
     // have to do this twice.. first one sets the correct r_mode for the renderer init
     // this time around the backend is all setup correct.. a bit fugly but do not want
@@ -3800,7 +3770,6 @@ void idCommonLocal::InitGame(void)
     }
     common->Printf("Finished Sys detect\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 /*

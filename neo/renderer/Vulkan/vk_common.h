@@ -80,7 +80,8 @@ struct vkState_t
     VkFormat depthFormat;
 
     // Render pass
-    VkRenderPass renderPass;
+    VkRenderPass renderPass;        // CLEAR load op — used on first begin each frame
+    VkRenderPass renderPassResume;  // LOAD load op  — used when reopening after RT dispatch
 
     // Command pool / buffers
     VkCommandPool commandPool;
@@ -114,17 +115,37 @@ struct vkPipelines_t
 {
     VkDescriptorSetLayout interactionDescLayout;
     VkPipelineLayout interactionLayout;
-    VkPipeline interactionPipeline;
+    VkPipeline interactionPipeline;          // stencil EQUAL 128 (opaque/normal interactions)
+    VkPipeline interactionPipelineNoStencil; // stencil disabled (translucent interactions)
 
     VkDescriptorSetLayout shadowDescLayout;
     VkPipelineLayout shadowLayout;
-    VkPipeline shadowPipeline;
+    VkPipeline shadowPipelineZFail;  // Z-fail (Carmack's Reverse) — camera inside shadow volume
+    VkPipeline shadowPipelineZFailMirror; // Z-fail for mirrored views (front/back ops swapped)
+    VkPipeline shadowPipelineZPass;  // Z-pass — camera outside shadow volume (no caps needed)
+    VkPipeline shadowPipelineZPassMirror; // Z-pass for mirrored views (front/back ops swapped)
 
     VkDescriptorSetLayout depthDescLayout;
     VkPipelineLayout depthLayout;
-    VkPipeline depthPipeline;
+    VkPipeline depthPipeline;          // opaque surfaces — no texture sample
+    VkPipeline depthClipPipeline;      // MC_PERFORATED — samples diffuse, discards on alpha
 
-    VkDescriptorPool descPool;
+    // GUI / unlit shader-pass pipeline (menu, HUD, console)
+    VkDescriptorSetLayout guiDescLayout;
+    VkPipelineLayout guiLayout;
+    VkPipeline guiOpaquePipeline;  // blend disabled (opaque stages)
+    VkPipeline guiAlphaPipeline;   // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+
+    // Fog light pipeline (FogAllLights pass)
+    // Shared descriptor layout: binding0=UBO, binding1=samp0, binding2=samp1
+    VkDescriptorSetLayout fogDescLayout;
+    VkPipelineLayout fogLayout;
+    VkPipeline fogPipeline;         // depth EQUAL, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    VkPipeline fogFrustumPipeline;  // depth LESS,  SRC_ALPHA/ONE_MINUS_SRC_ALPHA, back-cull (fog cap)
+    VkPipeline blendlightPipeline;  // depth EQUAL, DST_COLOR/ZERO (modulate) — most common blend light
+
+    // Per-frame descriptor pools (reset each frame after fence wait)
+    VkDescriptorPool descPools[VK_MAX_FRAMES_IN_FLIGHT];
 
     bool isValid;
 };
@@ -168,5 +189,16 @@ void VK_EndSingleTimeCommands(VkCommandBuffer cmd);
 
 void VK_TransitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
                               VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+
+// ---------------------------------------------------------------------------
+// Screenshot readback — defined in vk_backend.cpp
+// ---------------------------------------------------------------------------
+
+// Call before rendering the screenshot frame.  Allocates the staging buffer
+// on first use.
+void VK_RequestReadback();
+
+// Call after the screenshot frame returns.  Copies out packed RGB pixels.
+void VK_ReadPixels(int x, int y, int w, int h, unsigned char *out_rgb);
 
 #endif // __VK_COMMON_H__

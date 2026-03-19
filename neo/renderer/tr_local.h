@@ -914,6 +914,8 @@ extern idCVar
     r_usePreciseTriangleInteractions;    // 1 = do winding clipping to determine if each ambiguous tri should be lit
 extern idCVar r_useTurboShadow;          // 1 = use the infinite projection with W technique for dynamic shadows
 extern idCVar r_useExternalShadows;      // 1 = skip drawing caps when outside the light volume
+extern idCVar r_vkLogShadowBranch;       // Vulkan shadow branch logging (0=off,1=per-light,2=per-surface)
+extern idCVar r_vkLogSubmitInfo;         // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)
 extern idCVar r_useOptimizedShadows;     // 1 = use the dmap generated static shadow volumes
 extern idCVar r_useShadowVertexProgram;  // 1 = do the shadow projection in the vertex program on capable cards
 extern idCVar r_useShadowProjectedCull;  // 1 = discard triangles outside light volume before shadowing
@@ -936,6 +938,9 @@ extern idCVar r_supportNoSpecular; // support nospecular parm of lights
 extern idCVar r_skipPostProcess;     // skip all post-process renderings
 extern idCVar r_skipSuppress;        // ignore the per-view suppressions
 extern idCVar r_skipInteractions;    // skip all light/surface interaction drawing
+extern idCVar r_skipDepthPrepass;    // skip the depth prepass (diagnostic: isolates z-fighting artifacts)
+extern idCVar r_skipShadows;         // skip all stencil shadow volume draws (diagnostic)
+extern idCVar r_skipShaderPasses;    // skip non-light-dependent shader passes (diagnostic)
 extern idCVar r_skipFrontEnd;        // bypasses all front end work, but 2D gui rendering still draws
 extern idCVar r_skipBackEnd;         // don't draw anything
 extern idCVar r_skipCopyTexture;     // do all rendering, but don't actually copyTexSubImage2D
@@ -1035,7 +1040,7 @@ extern idCVar r_materialOverride; // override all materials
 
 extern idCVar r_debugRenderToTexture;
 
-extern idCVar r_glDebugContext;     // DG: use debug context to call logging callbacks on GL errors
+extern idCVar r_glDebugContext; // DG: use debug context to call logging callbacks on GL errors
 extern idCVar r_inhibitFragmentProgram;
 extern idCVar r_enableDepthCapture; // DG: disable capturing depth buffer, used for soft particles
 extern idCVar r_useSoftParticles;

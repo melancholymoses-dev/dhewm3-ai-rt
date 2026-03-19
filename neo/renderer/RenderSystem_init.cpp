@@ -139,7 +139,7 @@ idCVar r_useGLSL("r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 idCVar r_backend("r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"");
 idCVar r_useRayTracing("r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "enable hardware ray tracing (requires Vulkan backend and RTX hardware)");
-idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_rtShadows("r_rtShadows", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)");
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
@@ -158,6 +158,13 @@ idCVar r_skipLightScale("r_skipLightScale", "0", CVAR_RENDERER | CVAR_BOOL,
                         "don't do any post-interaction light scaling, makes things dim on low-dynamic range cards");
 idCVar r_skipInteractions("r_skipInteractions", "0", CVAR_RENDERER | CVAR_BOOL,
                           "skip all light/surface interaction drawing");
+idCVar r_skipDepthPrepass("r_skipDepthPrepass", "0", CVAR_RENDERER | CVAR_BOOL,
+                          "skip the depth prepass (diagnostic only — interactions run against clear depth 1.0)");
+idCVar r_skipShadows(
+    "r_skipShadows", "0", CVAR_RENDERER | CVAR_BOOL,
+    "skip all stencil shadow volume draws (diagnostic: if dark-triangle wireframe vanishes, shadows are the culprit)");
+idCVar r_skipShaderPasses("r_skipShaderPasses", "0", CVAR_RENDERER | CVAR_BOOL,
+                          "skip non-light-dependent shader passes (GUI surfaces, console, menus, unlit/2D content)");
 idCVar r_skipDynamicTextures("r_skipDynamicTextures", "0", CVAR_RENDERER | CVAR_BOOL,
                              "don't dynamically create textures");
 idCVar r_skipCopyTexture("r_skipCopyTexture", "0", CVAR_RENDERER | CVAR_BOOL,
@@ -247,6 +254,14 @@ idCVar r_flareSize("r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the fl
 idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogShadowBranch(
+    "r_vkLogShadowBranch", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every shadow surface", 0, 2,
+    idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogSubmitInfo(
+    "r_vkLogSubmitInfo", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,
+    idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
                              "use the dmap generated static shadow volumes");
 idCVar r_useScissor("r_useScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor clip as portals and lights are processed");
@@ -399,8 +414,8 @@ idCVar r_useCarmacksReverse("r_useCarmacksReverse", "1", CVAR_RENDERER | CVAR_AR
                             "Use Z-Fail (Carmack's Reverse) when rendering shadows");
 idCVar r_useStencilOpSeparate("r_useStencilOpSeparate", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                               "Use glStencilOpSeparate() (if available) when rendering shadows");
-idCVar r_screenshotFormat("r_screenshotFormat", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                          "Screenshot format. 0 = TGA (default), 1 = BMP, 2 = PNG, 3 = JPG");
+idCVar r_screenshotFormat("r_screenshotFormat", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+                          "Screenshot format. 0 = TGA, 1 = BMP, 2 = PNG (default), 3 = JPG");
 idCVar r_screenshotJpgQuality(
     "r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "Screenshot quality for JPG images (1-100). Lower value means smaller file but worse quality");
@@ -678,18 +693,34 @@ void R_InitOpenGL(void)
     // Create and initialize the rendering backend.
     // GLBackend::Init() loads qgl pointers, queries extensions, inits ARB2/GLSL.
     // VKBackend::Init() calls VKimp_InitFromGlimp and configures glConfig for Vulkan.
-#ifdef DHEWM3_VULKAN
     if (strcmp(r_backend.GetString(), "vulkan") == 0)
     {
         activeBackend = new VKBackend();
     }
     else
-#endif
     {
         activeBackend = new GLBackend();
     }
 
     activeBackend->Init();
+
+    // Vulkan: images declared before the context was ready (e.g. console charSetShader,
+    // built-in images from globalImages->Init()) had their GenerateImage() calls silently
+    // skipped because glConfig.isInitialized was false at declaration time.  The GL path
+    // recovered via idImage::Bind()'s lazy-load (texnum==TEXTURE_NOT_LOADED check), but
+    // the Vulkan path has no equivalent Bind() call.  Re-upload every image whose
+    // backendData is still null now that the device is live.
+    if (glConfig.isVulkan)
+    {
+        common->Printf("VK: uploading pre-context images...\n");
+        for (int i = 0; i < globalImages->images.Num(); i++)
+        {
+            idImage *img = globalImages->images[i];
+            if (!img->backendData)
+                img->Reload(true, true); // checkPrecompressed=true, force=true
+        }
+        common->Printf("VK: pre-context image upload done (%d images)\n", globalImages->images.Num());
+    }
 
     // input and sound systems need to be tied to the new window
     Sys_InitInput();
@@ -699,25 +730,21 @@ void R_InitOpenGL(void)
 
     common->Printf("Initialize Vertex Cache\n");
     fflush(NULL);
-    Sleep(100);
     vertexCache.Init();
 
     // select which renderSystem we are going to use
     common->Printf("Try to set renderer\n");
     fflush(NULL);
-    Sleep(100);
 
     r_renderer.SetModified();
     tr.SetBackEndRenderer();
     common->Printf("Try to initialize frame\n");
     fflush(NULL);
-    Sleep(100);
 
     // allocate the frame data, which may be more if smp is enabled
     R_InitFrameData();
     common->Printf("R_InitFrameData returned OK\n");
     fflush(NULL);
-    Sleep(10);
 
     // Reset our gamma
     r_gammaInShader.ClearModified();
@@ -735,7 +762,6 @@ void R_InitOpenGL(void)
 #ifdef _WIN32
     common->Printf("Checking Windows/OpenGL versions\n");
     fflush(NULL);
-    Sleep(10);
 
     static bool glCheck = false;
     if (!glCheck && win32.osversion.dwMajorVersion == 6)
@@ -767,7 +793,6 @@ void R_InitOpenGL(void)
 #endif
     common->Printf("Completed R_InitOpenGL\n");
     fflush(NULL);
-    Sleep(10);
 }
 
 /*
@@ -1209,6 +1234,13 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
             tr.viewportOffset[0] = -xo;
             tr.viewportOffset[1] = -yo;
 
+            if (glConfig.isVulkan)
+            {
+                // Vulkan: request a readback copy before rendering, then retrieve
+                // the pixels from the staging buffer after the frame completes.
+                VK_RequestReadback();
+            }
+
             if (ref)
             {
                 tr.BeginFrame(oldWidth, oldHeight);
@@ -1231,12 +1263,28 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
                 h = height - yo;
             }
 
-            if (glConfig.isWayland)
+            if (glConfig.isVulkan)
+            {
+                // Copy the captured swapchain tile into the output buffer.
+                // VK_ReadPixels writes packed RGB directly into temp (stride = w*3).
+                VK_ReadPixels(0, 0, w, h, temp);
+                for (int y = 0; y < h; y++)
+                {
+                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * w * 3, w * 3);
+                }
+            }
+            else if (glConfig.isWayland)
             {
                 // DG: Native Wayland (=> not XWayland) doesn't seem to support reading
                 //     from the front buffer - screenshot is black then..
                 //     So just read from the default (probably back-) buffer
                 qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
+
+                int row = (w * 3 + 3) & ~3; // OpenGL pads to dword boundaries
+                for (int y = 0; y < h; y++)
+                {
+                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * row, w * 3);
+                }
             }
             else
             {
@@ -1249,13 +1297,12 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
                 qglReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, temp);
 
                 qglReadBuffer(oldReadBuf);
-            }
 
-            int row = (w * 3 + 3) & ~3; // OpenGL pads to dword boundaries
-
-            for (int y = 0; y < h; y++)
-            {
-                memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * row, w * 3);
+                int row = (w * 3 + 3) & ~3; // OpenGL pads to dword boundaries
+                for (int y = 0; y < h; y++)
+                {
+                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * row, w * 3);
+                }
             }
         }
     }
@@ -1342,14 +1389,18 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
         r_jitter.SetBool(false);
     }
 
-    // The buffer is upside down, we need to flip it the right way.
-    for (i = 0; i < height / 2; ++i)
+    // OpenGL returns pixels bottom-up; flip so row 0 is the top of the image.
+    // Vulkan returns pixels top-down (already correct), so no flip needed there.
+    if (!glConfig.isVulkan)
     {
-        byte *line1 = &buffer[i * lineSize];
-        byte *line2 = &buffer[(height - i - 1) * lineSize];
-        memcpy(swapBuffer, line1, lineSize);
-        memcpy(line1, line2, lineSize);
-        memcpy(line2, swapBuffer, lineSize);
+        for (i = 0; i < height / 2; ++i)
+        {
+            byte *line1 = &buffer[i * lineSize];
+            byte *line2 = &buffer[(height - i - 1) * lineSize];
+            memcpy(swapBuffer, line1, lineSize);
+            memcpy(line1, line2, lineSize);
+            memcpy(line2, swapBuffer, lineSize);
+        }
     }
 
     idFile *f;
@@ -1367,7 +1418,6 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
     {
         g_screenshotFormat = cvarSystem->GetCVarInteger("r_screenshotFormat");
     }
-
     switch (g_screenshotFormat)
     {
     default:
@@ -2054,7 +2104,6 @@ void R_VidRestart_f(const idCmdArgs &args)
     }
     common->Printf("In R_Vidrestart_f\n");
     fflush(NULL);
-    Sleep(10);
 
     bool full = true;
     bool forceWindow = false;
@@ -2123,7 +2172,7 @@ void R_VidRestart_f(const idCmdArgs &args)
 
     common->Printf("Dropping caches, frames and vertexes\n");
     fflush(NULL);
-    Sleep(10);
+
     // dump ambient caches
     renderModelManager->FreeModelVertexCaches();
 
@@ -2146,7 +2195,7 @@ void R_VidRestart_f(const idCmdArgs &args)
     // shut down the backend, then the window
     common->Printf("Calling shutdown\n");
     fflush(NULL);
-    Sleep(10);
+
     if (activeBackend)
     {
         activeBackend->Shutdown();
@@ -2164,7 +2213,7 @@ void R_VidRestart_f(const idCmdArgs &args)
     }
     common->Printf("Re-initialize InitOpenGL\n");
     fflush(NULL);
-    Sleep(10);
+
     R_InitOpenGL();
     cvarSystem->SetCVarBool("r_fullscreen", latch);
 
@@ -2397,21 +2446,29 @@ void idRenderSystemLocal::Init(void)
 
     R_InitTriSurfData();
 
-    common->Printf("R_Init: globalImages->Init...\n"); fflush(NULL);
+    common->Printf("R_Init: globalImages->Init...\n");
+    fflush(NULL);
     globalImages->Init();
-    common->Printf("R_Init: globalImages->Init done\n"); fflush(NULL);
+    common->Printf("R_Init: globalImages->Init done\n");
+    fflush(NULL);
 
-    common->Printf("R_Init: InitCinematic...\n"); fflush(NULL);
+    common->Printf("R_Init: InitCinematic...\n");
+    fflush(NULL);
     idCinematic::InitCinematic();
-    common->Printf("R_Init: InitCinematic done\n"); fflush(NULL);
+    common->Printf("R_Init: InitCinematic done\n");
+    fflush(NULL);
 
-    common->Printf("R_Init: R_InitMaterials...\n"); fflush(NULL);
+    common->Printf("R_Init: R_InitMaterials...\n");
+    fflush(NULL);
     R_InitMaterials();
-    common->Printf("R_Init: R_InitMaterials done\n"); fflush(NULL);
+    common->Printf("R_Init: R_InitMaterials done\n");
+    fflush(NULL);
 
-    common->Printf("R_Init: renderModelManager->Init...\n"); fflush(NULL);
+    common->Printf("R_Init: renderModelManager->Init...\n");
+    fflush(NULL);
     renderModelManager->Init();
-    common->Printf("R_Init: renderModelManager->Init done\n"); fflush(NULL);
+    common->Printf("R_Init: renderModelManager->Init done\n");
+    fflush(NULL);
 
     // set the identity space
     identitySpace.modelMatrix[0 * 4 + 0] = 1.0f;

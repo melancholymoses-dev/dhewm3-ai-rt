@@ -66,7 +66,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     float u_ScreenWidth;
     float u_ScreenHeight;
     int   u_UseShadowMask;
-    float _ubo_pad;
+    float u_LightScale;  // backEnd.overBright — multiply final color before gamma
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -115,6 +115,8 @@ void main() {
     // --- Combine ---
     vec3 color = (diffuse + specular) * attenuation * shadow;
     color *= vary_Color.rgb;
+
+    color *= u_LightScale;
 
     vec4 result = vec4(color, vary_Color.a);
 

@@ -18,6 +18,9 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 
+// Defined in vk_backend.cpp
+void VK_SetWindowMinimized(bool minimized);
+
 // ---------------------------------------------------------------------------
 // Surface format / present mode selection
 // ---------------------------------------------------------------------------
@@ -188,6 +191,23 @@ void VK_CreateRenderPass(void)
     rpInfo.pDependencies = &dependency;
 
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPass));
+
+    // --- Resume render pass (LOAD variant) ---
+    // Used when the render pass is reopened after an RT dispatch so that prior
+    // colour and depth/stencil contents are preserved (not cleared again).
+    // The framebuffers are compatible with both passes (same attachment formats).
+    colorAttachment.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // layout after CLEAR pass ends
+    // finalLayout stays PRESENT_SRC_KHR
+
+    depthAttachment.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depthAttachment.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription resumeAttachments[2] = {colorAttachment, depthAttachment};
+    rpInfo.pAttachments = resumeAttachments;
+
+    VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPassResume));
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +242,7 @@ void VK_CreateSwapchain(int width, int height)
     swapInfo.imageColorSpace = surfaceFormat.colorSpace;
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
-    swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -256,7 +276,16 @@ void VK_CreateSwapchain(int width, int height)
     VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vk.depthImage,
                    &vk.depthMemory);
-    vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+    // For combined depth+stencil formats, the image view must include VK_IMAGE_ASPECT_STENCIL_BIT
+    // so the framebuffer attachment exposes the stencil aspect and stencil test/clear work correctly.
+    {
+        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+            vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
+            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+    }
 
     // Create render pass
     VK_CreateRenderPass();
@@ -297,5 +326,171 @@ void VK_DestroySwapchain(void)
     vkDestroyImage(vk.device, vk.depthImage, NULL);
     vkFreeMemory(vk.device, vk.depthMemory, NULL);
     vkDestroyRenderPass(vk.device, vk.renderPass, NULL);
+    vkDestroyRenderPass(vk.device, vk.renderPassResume, NULL);
     vkDestroySwapchainKHR(vk.device, vk.swapchain, NULL);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RecreateSwapchain
+// Tear down only the swapchain-dependent objects (framebuffers, image views,
+// depth buffer) and rebuild them.  The render pass and pipelines are reused
+// because the surface format does not change between recreations.
+// ---------------------------------------------------------------------------
+
+void VK_RecreateSwapchain(int width, int height)
+{
+    // Query surface size FIRST, before touching any Vulkan objects.
+    // On Windows (and some other platforms) the surface extent becomes 0x0 when
+    // the window is minimized.  Creating a swapchain with a 0x0 extent is
+    // illegal, so bail out here and let VK_RB_DrawView skip frames until the
+    // window is restored.
+    VkSurfaceCapabilitiesKHR caps;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physicalDevice, vk.surface, &caps);
+    if (caps.currentExtent.width == 0 || caps.currentExtent.height == 0)
+    {
+        VK_SetWindowMinimized(true);
+        return;
+    }
+    if (caps.currentExtent.width != UINT32_MAX)
+    {
+        width  = (int)caps.currentExtent.width;
+        height = (int)caps.currentExtent.height;
+    }
+
+    VkResult waitResult = vkDeviceWaitIdle(vk.device);
+    common->Printf("VK: RecreateSwapchain vkDeviceWaitIdle result=%d\n", (int)waitResult);
+    fflush(NULL);
+    if (waitResult != VK_SUCCESS)
+    {
+        common->Warning("VK: vkDeviceWaitIdle returned %d in RecreateSwapchain — device may be lost\n", (int)waitResult);
+        if (waitResult == VK_ERROR_DEVICE_LOST)
+        {
+            common->FatalError("Vulkan device lost detected during swapchain recreation");
+            return;
+        }
+    }
+
+    // Recreate semaphores and fences to clear any stale signaled state.
+    // When vkQueuePresentKHR returns OUT_OF_DATE, the wait semaphores may not
+    // have been consumed, leaving renderFinishedSemaphores in a signaled state.
+    // Signaling an already-signaled semaphore is undefined behavior and causes
+    // every subsequent present to also fail.
+    {
+        VkSemaphoreCreateInfo semInfo = {};
+        semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        VkFenceCreateInfo fenceInfo = {};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // pre-signaled so first vkWaitForFences returns immediately
+
+        for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        {
+            vkDestroySemaphore(vk.device, vk.imageAvailableSemaphores[i], NULL);
+            vkDestroySemaphore(vk.device, vk.renderFinishedSemaphores[i], NULL);
+            vkDestroyFence(vk.device, vk.inFlightFences[i], NULL);
+            VK_CHECK(vkCreateSemaphore(vk.device, &semInfo, NULL, &vk.imageAvailableSemaphores[i]));
+            VK_CHECK(vkCreateSemaphore(vk.device, &semInfo, NULL, &vk.renderFinishedSemaphores[i]));
+            VK_CHECK(vkCreateFence(vk.device, &fenceInfo, NULL, &vk.inFlightFences[i]));
+        }
+    }
+
+    // Destroy framebuffers and swapchain image views
+    for (uint32_t i = 0; i < vk.swapchainImageCount; i++)
+    {
+        vkDestroyFramebuffer(vk.device, vk.swapchainFramebuffers[i], NULL);
+        vkDestroyImageView(vk.device, vk.swapchainImageViews[i], NULL);
+    }
+
+    // Destroy depth buffer
+    vkDestroyImageView(vk.device, vk.depthView, NULL);
+    vkDestroyImage(vk.device, vk.depthImage, NULL);
+    vkFreeMemory(vk.device, vk.depthMemory, NULL);
+
+    // Destroy old swapchain (after creating new one for driver efficiency, via oldSwapchain)
+    VkSwapchainKHR oldSwapchain = vk.swapchain;
+
+    VkSurfaceFormatKHR surfaceFormat = VK_ChooseSurfaceFormat(vk.physicalDevice);
+    VkPresentModeKHR   presentMode   = VK_ChoosePresentMode(vk.physicalDevice);
+
+    vk.swapchainFormat = surfaceFormat.format;
+    vk.swapchainExtent = {(uint32_t)width, (uint32_t)height};
+
+    uint32_t imageCount = caps.minImageCount + 1;
+    if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount)
+        imageCount = caps.maxImageCount;
+    if (imageCount > VK_MAX_SWAPCHAIN_IMAGES)
+        imageCount = VK_MAX_SWAPCHAIN_IMAGES;
+
+    VkSwapchainCreateInfoKHR swapInfo = {};
+    swapInfo.sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapInfo.surface          = vk.surface;
+    swapInfo.minImageCount    = imageCount;
+    swapInfo.imageFormat      = surfaceFormat.format;
+    swapInfo.imageColorSpace  = surfaceFormat.colorSpace;
+    swapInfo.imageExtent      = vk.swapchainExtent;
+    swapInfo.imageArrayLayers = 1;
+    swapInfo.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
+    swapInfo.preTransform     = caps.currentTransform;
+    swapInfo.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    swapInfo.presentMode      = presentMode;
+    swapInfo.clipped          = VK_TRUE;
+    swapInfo.oldSwapchain     = oldSwapchain;
+
+    uint32_t queueFamilies[2] = {vk.graphicsFamily, vk.presentFamily};
+    if (vk.graphicsFamily != vk.presentFamily)
+    {
+        swapInfo.imageSharingMode      = VK_SHARING_MODE_CONCURRENT;
+        swapInfo.queueFamilyIndexCount = 2;
+        swapInfo.pQueueFamilyIndices   = queueFamilies;
+    }
+    else
+    {
+        swapInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
+
+    VK_CHECK(vkCreateSwapchainKHR(vk.device, &swapInfo, NULL, &vk.swapchain));
+    vkDestroySwapchainKHR(vk.device, oldSwapchain, NULL);
+
+    vkGetSwapchainImagesKHR(vk.device, vk.swapchain, &vk.swapchainImageCount, NULL);
+    vkGetSwapchainImagesKHR(vk.device, vk.swapchain, &vk.swapchainImageCount, vk.swapchainImages);
+
+    for (uint32_t i = 0; i < vk.swapchainImageCount; i++)
+        vk.swapchainImageViews[i] =
+            VK_CreateImageView(vk.swapchainImages[i], vk.swapchainFormat, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    // Recreate depth buffer
+    vk.depthFormat = VK_FindDepthFormat();
+    VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
+                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                   &vk.depthImage, &vk.depthMemory);
+    {
+        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+            vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
+            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+    }
+
+    // Recreate framebuffers (reuse existing render pass)
+    for (uint32_t i = 0; i < vk.swapchainImageCount; i++)
+    {
+        VkImageView attachments[2] = {vk.swapchainImageViews[i], vk.depthView};
+
+        VkFramebufferCreateInfo fbInfo = {};
+        fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass      = vk.renderPass;
+        fbInfo.attachmentCount = 2;
+        fbInfo.pAttachments    = attachments;
+        fbInfo.width           = vk.swapchainExtent.width;
+        fbInfo.height          = vk.swapchainExtent.height;
+        fbInfo.layers          = 1;
+        VK_CHECK(vkCreateFramebuffer(vk.device, &fbInfo, NULL, &vk.swapchainFramebuffers[i]));
+    }
+
+    // Swapchain is healthy again; clear any minimized flag set during the
+    // previous (aborted) recreation when the surface was 0x0.
+    VK_SetWindowMinimized(false);
+
+    common->Printf("VK: Swapchain recreated (%dx%d, %u images)\n",
+                   vk.swapchainExtent.width, vk.swapchainExtent.height, vk.swapchainImageCount);
 }
