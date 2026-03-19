@@ -930,13 +930,22 @@ struct VkBlendUBO
 
 // ---------------------------------------------------------------------------
 // VK_RB_DrawShadowSurface
-// Records one shadow volume draw.  Selects between two stencil methods:
-//   - Z-pass (shadowPipelineZPass): camera outside shadow volume.
-//     Uses only silhouette quads (numShadowIndexesNoCaps) — avoids co-planar
-//     front-cap depth precision issues that cause triangle-edge dark artifacts.
-//   - Z-fail (shadowPipeline, Carmack's Reverse): camera inside shadow volume.
-//     Must draw the full geometry including caps.
-// The method is chosen per-surface from DSF_VIEW_INSIDE_SHADOW in surf->dsFlags.
+// Records one shadow volume draw using Z-fail (Carmack's Reverse) for all surfaces.
+//
+// Always uses shadowPipeline (Z-fail with depth bias), matching the GL default of
+// r_useCarmacksReverse=1.  The depth bias on shadowPipeline pushes front caps slightly
+// farther than the depth prepass value so they consistently FAIL the LESS depth test,
+// triggering depthFailOp correctly.
+//
+// Why NOT Z-pass for "external" (camera outside shadow volume):
+//   Z-pass only works correctly with silhouette-only geometry (no caps).  However
+//   Interaction.cpp sets numShadowIndexesNoCaps = numIndexes for perforated/suppressed
+//   surfaces, so the "no caps" index set actually includes caps.  Drawing full caps
+//   with Z-pass lets front caps stochastically PASS the depth test (they are co-planar
+//   with the depth prepass geometry), incrementing stencil 128→129.  The interaction
+//   pass then fails (EQUAL 128) at exactly those pixels → black triangle artifacts
+//   tracing every triangle in the scene mesh.
+//
 // Returns the VkPipeline that was bound (so the caller can rebind if needed).
 // lightScissor: the current per-light scissor rect (already set on the command buffer).
 // ---------------------------------------------------------------------------
@@ -949,13 +958,10 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     if (!tri || !tri->shadowCache || tri->numIndexes <= 0)
         return VK_NULL_HANDLE;
 
-    // Choose Z-pass (external) vs Z-fail (internal/Carmack's Reverse).
-    // When the camera is outside the shadow volume, we only need the silhouette
-    // quads (no caps).  This avoids co-planar depth test ambiguity on front caps
-    // (front caps are the same polygons as the scene geometry, causing inconsistent
-    // stencil at triangle edges when using Z-fail).
+    // Always use Z-fail (Carmack's Reverse).  The depth bias in shadowPipeline ensures
+    // front caps consistently fail the depth test.
     const bool external = !(surf->dsFlags & DSF_VIEW_INSIDE_SHADOW);
-    VkPipeline shadowPipe = external ? vkPipes.shadowPipelineZPass : vkPipes.shadowPipeline;
+    VkPipeline shadowPipe = vkPipes.shadowPipeline;
     if (!shadowPipe)
         return VK_NULL_HANDLE;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipe);
@@ -995,11 +1001,13 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     if (!haveVerts)
         return VK_NULL_HANDLE;
 
-    // Index count: Z-pass external uses silhouette quads only (no caps).
-    // Z-fail internal uses the full geometry including caps.
-    int numDrawIndexes = external ? tri->numShadowIndexesNoCaps : tri->numIndexes;
-    if (numDrawIndexes <= 0)
-        numDrawIndexes = tri->numIndexes; // fallback if noCaps count not populated
+    // Index count: always use the full shadow geometry with Z-fail.
+    // With Z-fail and depth bias, front caps consistently fail the depth test and their
+    // stencil effect cancels with the back caps, so drawing full geometry is always correct.
+    // (The performance optimization of drawing only numShadowIndexesNoCaps is deferred
+    // until shadow rendering is verified correct.)
+    (void)external; // reserved for future optimization
+    int numDrawIndexes = tri->numIndexes;
 
     // Index data (tri->indexes, same field as regular geometry)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
@@ -1579,6 +1587,21 @@ void VK_SetWindowMinimized(bool minimized)
     s_windowMinimized = minimized;
 }
 
+// Swapchain needs recreation flag.
+// Set by VK_NotifyWindowModeChanged() when GLimp_SetScreenParms succeeds
+// (e.g., Alt+Enter fullscreen toggle).  On some drivers the SDL fullscreen
+// toggle invalidates the Vulkan surface so the already-acquired swapchain
+// image becomes unusable, causing VK_ERROR_DEVICE_LOST on vkQueueSubmit.
+// VK_RB_SwapBuffers checks this flag before submitting and, if set, aborts
+// the current frame and recreates the swapchain so the next frame starts
+// clean without ever touching the invalidated image.
+static bool s_swapchainNeedsRecreate = false;
+
+void VK_NotifyWindowModeChanged()
+{
+    s_swapchainNeedsRecreate = true;
+}
+
 // Screenshot readback state.
 // VK_RequestReadback() is called just before rendering a screenshot frame.
 // VK_RB_SwapBuffers() appends a copy-to-buffer command, waits for the fence,
@@ -1798,6 +1821,18 @@ void VK_RB_SwapBuffers()
     }
 
     VK_CHECK(vkEndCommandBuffer(cmdBuf));
+
+    // If the window mode changed this frame (Alt+Enter fullscreen toggle), the
+    // SDL surface may have been invalidated by the driver before we submit.
+    // Skip the submit and recreate the swapchain so the next frame starts clean.
+    if (s_swapchainNeedsRecreate) {
+        s_swapchainNeedsRecreate = false;
+        vkResetCommandBuffer(vk.commandBuffers[vk.currentFrame], 0);
+        VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
+        s_frameActive = false;
+        s_frameCmdBuf = VK_NULL_HANDLE;
+        return;
+    }
 
     // --- Submit ---
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;

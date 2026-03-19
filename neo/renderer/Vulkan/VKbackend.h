@@ -12,6 +12,12 @@ void VK_ReadPixels(int x, int y, int w, int h, unsigned char *out_rgb);
 // forever while the presentation engine holds all swapchain images.
 void VK_SetWindowMinimized(bool minimized);
 
+// Called from GLimp_SetScreenParms (glimp.cpp) when a fullscreen/windowed
+// toggle succeeds.  On some drivers the SDL window-mode change invalidates
+// the Vulkan surface so the already-acquired swapchain image is unusable;
+// VK_RB_SwapBuffers will skip the submit and recreate the swapchain instead.
+void VK_NotifyWindowModeChanged();
+
 class VKBackend : public IBackend
 {
   public:
