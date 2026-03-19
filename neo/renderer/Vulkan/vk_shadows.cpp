@@ -286,7 +286,7 @@ void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     if (!vkRT.isInitialized || !vkRT.tlas.isValid)
         return;
-    if (!r_rtShadows.GetBool())
+    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
         return;
 
     uint32_t frameIdx = vk.currentFrame;
