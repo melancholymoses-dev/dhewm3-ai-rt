@@ -357,7 +357,16 @@ void VK_RecreateSwapchain(int width, int height)
         height = (int)caps.currentExtent.height;
     }
 
-    vkDeviceWaitIdle(vk.device);
+    VkResult waitResult = vkDeviceWaitIdle(vk.device);
+    if (waitResult != VK_SUCCESS)
+    {
+        common->Warning("VK: vkDeviceWaitIdle returned %d in RecreateSwapchain — device may be lost\n", (int)waitResult);
+        if (waitResult == VK_ERROR_DEVICE_LOST)
+        {
+            common->FatalError("Vulkan device lost detected during swapchain recreation");
+            return;
+        }
+    }
 
     // Recreate semaphores and fences to clear any stale signaled state.
     // When vkQueuePresentKHR returns OUT_OF_DATE, the wait semaphores may not
