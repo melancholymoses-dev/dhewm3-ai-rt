@@ -121,7 +121,9 @@ struct vkPipelines_t
     VkDescriptorSetLayout shadowDescLayout;
     VkPipelineLayout shadowLayout;
     VkPipeline shadowPipelineZFail;  // Z-fail (Carmack's Reverse) — camera inside shadow volume
+    VkPipeline shadowPipelineZFailMirror; // Z-fail for mirrored views (front/back ops swapped)
     VkPipeline shadowPipelineZPass;  // Z-pass — camera outside shadow volume (no caps needed)
+    VkPipeline shadowPipelineZPassMirror; // Z-pass for mirrored views (front/back ops swapped)
 
     VkDescriptorSetLayout depthDescLayout;
     VkPipelineLayout depthLayout;

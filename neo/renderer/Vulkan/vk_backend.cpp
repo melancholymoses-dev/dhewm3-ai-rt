@@ -1063,7 +1063,12 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     if (numDrawIndexes <= 0)
         return VK_NULL_HANDLE;
 
-    VkPipeline shadowPipe = external ? vkPipes.shadowPipelineZPass : vkPipes.shadowPipelineZFail;
+    const bool mirrorView = backEnd.viewDef && backEnd.viewDef->isMirror;
+    VkPipeline shadowPipe;
+    if (external)
+        shadowPipe = mirrorView ? vkPipes.shadowPipelineZPassMirror : vkPipes.shadowPipelineZPass;
+    else
+        shadowPipe = mirrorView ? vkPipes.shadowPipelineZFailMirror : vkPipes.shadowPipelineZFail;
     if (!shadowPipe)
         return VK_NULL_HANDLE;
 
@@ -1079,10 +1084,11 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         const bool shouldLog = (logMode >= 2) || (s_loggedLight != backEnd.vLight);
         if (shouldLog)
         {
-            common->Printf("VK SHADOW BRANCH: mode=%s indexSet=%s draw=%d full=%d noFront=%d noCaps=%d ext=%d "
-                           "insideFlag=%d insideLight=%d capBits=0x%X\n",
-                           external ? "zpass" : "zfail", indexSet, numDrawIndexes, tri->numIndexes,
-                           tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps, external ? 1 : 0,
+            common->Printf("VK SHADOW BRANCH: mode=%s mirror=%d indexSet=%s draw=%d full=%d noFront=%d noCaps=%d "
+                           "ext=%d insideFlag=%d insideLight=%d capBits=0x%X\n",
+                           external ? "zpass" : "zfail", mirrorView ? 1 : 0, indexSet, numDrawIndexes,
+                           tri->numIndexes, tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps,
+                           external ? 1 : 0,
                            (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? 1 : 0, backEnd.vLight->viewInsideLight ? 1 : 0,
                            tri->shadowCapPlaneBits);
             s_loggedLight = backEnd.vLight;
