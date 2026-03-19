@@ -27,6 +27,15 @@ the Free Software Foundation, either version 3 of the License, or
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 
+static bool VK_RTShadowsEnabled()
+{
+#ifdef DHEWM3_RAYTRACING
+    return vk.rayTracingSupported && vkRT.isInitialized && r_useRayTracing.GetBool() && r_rtShadows.GetBool();
+#else
+    return false;
+#endif
+}
+
 // Forward declarations (defined in vk_pipeline.cpp)
 // vkPipelines_t and vkPipes are declared in vk_common.h
 void VK_InitPipelines(void);
@@ -380,7 +389,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // useShadowMask: 1 when RT shadow mask is valid this frame
 #ifdef DHEWM3_RAYTRACING
     int *useSM = (int *)(fsz + 2);
-    *useSM = (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool() &&
+    *useSM = (VK_RTShadowsEnabled() &&
               vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE)
                  ? 1
                  : 0;
@@ -1295,7 +1304,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // When RT is active, shadows are applied per-pixel in the interaction shader
         // via shadowMaskSampler. Running both would produce double-shadowing.
 #ifdef DHEWM3_RAYTRACING
-        const bool useStencilShadows = !(vk.rayTracingSupported && r_rtShadows.GetBool());
+    const bool useStencilShadows = !VK_RTShadowsEnabled();
 #else
         const bool useStencilShadows = true;
 #endif
@@ -1843,7 +1852,7 @@ void VK_RB_DrawView(const void *data)
         // RT shadow dispatch happens outside the render pass, before interactions.
         // Only valid on the first (3D world) view.
 #ifdef DHEWM3_RAYTRACING
-        if (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool())
+    if (VK_RTShadowsEnabled())
         {
             vkCmdEndRenderPass(cmdBuf);
             VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
@@ -1970,11 +1979,18 @@ void VK_RB_SwapBuffers()
     {
         int rtActive = 0;
 #ifdef DHEWM3_RAYTRACING
-        rtActive = (vk.rayTracingSupported && vkRT.isInitialized && r_rtShadows.GetBool()) ? 1 : 0;
+        rtActive = VK_RTShadowsEnabled() ? 1 : 0;
 #endif
-        common->Printf("VK SUBMIT: frame=%u image=%u rt=%d readbackPending=%d readbackSubmitted=%d swapRecreate=%d\n",
-                       submittedFrame, (unsigned int)s_frameImageIndex, rtActive, s_readbackPending ? 1 : 0,
-                       s_readbackSubmitted ? 1 : 0, s_swapchainNeedsRecreate ? 1 : 0);
+        common->Printf(
+            "VK SUBMIT: frame=%u image=%u rt=%d useRT=%d rtShadows=%d readbackPending=%d readbackSubmitted=%d swapRecreate=%d\n",
+            submittedFrame,
+            (unsigned int)s_frameImageIndex,
+            rtActive,
+            r_useRayTracing.GetBool() ? 1 : 0,
+            r_rtShadows.GetBool() ? 1 : 0,
+            s_readbackPending ? 1 : 0,
+            s_readbackSubmitted ? 1 : 0,
+            s_swapchainNeedsRecreate ? 1 : 0);
 
         if (submitLogMode >= 2)
         {
