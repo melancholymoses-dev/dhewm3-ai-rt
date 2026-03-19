@@ -1193,28 +1193,34 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 
         // Step 1: global shadow volumes
         // VK_RB_DrawShadowSurface binds the correct pipeline (Z-pass or Z-fail) per surface.
-        if (useStencilShadows && vLight->globalShadows)
+        if (useStencilShadows && vLight->globalShadows && !r_skipShadows.GetBool())
         {
             for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s, lightScissor);
         }
 
         // Step 2: local interactions — rebind interaction pipeline after shadow draws.
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
-        for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
-            RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
+        if (!r_skipInteractions.GetBool())
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
+                RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
+        }
 
         // Step 3: local shadow volumes
-        if (useStencilShadows && vLight->localShadows)
+        if (useStencilShadows && vLight->localShadows && !r_skipShadows.GetBool())
         {
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s, lightScissor);
         }
 
         // Step 4: global interactions — rebind interaction pipeline after shadow draws.
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
-        for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
-            RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
+        if (!r_skipInteractions.GetBool())
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
+                RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
+        }
 
         if (!r_skipTranslucent.GetBool() && vLight->translucentInteractions)
         {
@@ -1742,7 +1748,7 @@ void VK_RB_DrawView(const void *data)
 
     VK_RB_DrawInteractions(cmdBuf);
 
-    if (!r_skipAmbient.GetBool())
+    if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
         VK_RB_DrawShaderPasses(cmdBuf);
 
     VK_RB_FogAllLights(cmdBuf);

@@ -585,6 +585,7 @@ void idGuiModel::DrawStretchPic(float x, float y, float w, float h, float s1, fl
     verts[0].tangents[1][0] = 0;
     verts[0].tangents[1][1] = 1;
     verts[0].tangents[1][2] = 0;
+    verts[0].color[0] = verts[0].color[1] = verts[0].color[2] = verts[0].color[3] = 255;
     verts[1].xyz[0] = x + w;
     verts[1].xyz[1] = y;
     verts[1].xyz[2] = 0;
@@ -599,6 +600,7 @@ void idGuiModel::DrawStretchPic(float x, float y, float w, float h, float s1, fl
     verts[1].tangents[1][0] = 0;
     verts[1].tangents[1][1] = 1;
     verts[1].tangents[1][2] = 0;
+    verts[1].color[0] = verts[1].color[1] = verts[1].color[2] = verts[1].color[3] = 255;
     verts[2].xyz[0] = x + w;
     verts[2].xyz[1] = y + h;
     verts[2].xyz[2] = 0;
@@ -613,6 +615,7 @@ void idGuiModel::DrawStretchPic(float x, float y, float w, float h, float s1, fl
     verts[2].tangents[1][0] = 0;
     verts[2].tangents[1][1] = 1;
     verts[2].tangents[1][2] = 0;
+    verts[2].color[0] = verts[2].color[1] = verts[2].color[2] = verts[2].color[3] = 255;
     verts[3].xyz[0] = x;
     verts[3].xyz[1] = y + h;
     verts[3].xyz[2] = 0;
@@ -627,6 +630,7 @@ void idGuiModel::DrawStretchPic(float x, float y, float w, float h, float s1, fl
     verts[3].tangents[1][0] = 0;
     verts[3].tangents[1][1] = 1;
     verts[3].tangents[1][2] = 0;
+    verts[3].color[0] = verts[3].color[1] = verts[3].color[2] = verts[3].color[3] = 255;
 
     DrawStretchPic(&verts[0], &indexes[0], 4, 6, hShader, false, 0.0f, 0.0f, 640.0f, 480.0f);
 }
@@ -672,6 +676,7 @@ void idGuiModel::DrawStretchTri(idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVe
     tempVerts[0].tangents[1][0] = 0;
     tempVerts[0].tangents[1][1] = 1;
     tempVerts[0].tangents[1][2] = 0;
+    tempVerts[0].color[0] = tempVerts[0].color[1] = tempVerts[0].color[2] = tempVerts[0].color[3] = 255;
     tempVerts[1].xyz[0] = p2.x;
     tempVerts[1].xyz[1] = p2.y;
     tempVerts[1].xyz[2] = 0;
@@ -686,6 +691,7 @@ void idGuiModel::DrawStretchTri(idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVe
     tempVerts[1].tangents[1][0] = 0;
     tempVerts[1].tangents[1][1] = 1;
     tempVerts[1].tangents[1][2] = 0;
+    tempVerts[1].color[0] = tempVerts[1].color[1] = tempVerts[1].color[2] = tempVerts[1].color[3] = 255;
     tempVerts[2].xyz[0] = p3.x;
     tempVerts[2].xyz[1] = p3.y;
     tempVerts[2].xyz[2] = 0;
@@ -700,6 +706,7 @@ void idGuiModel::DrawStretchTri(idVec2 p1, idVec2 p2, idVec2 p3, idVec2 t1, idVe
     tempVerts[2].tangents[1][0] = 0;
     tempVerts[2].tangents[1][1] = 1;
     tempVerts[2].tangents[1][2] = 0;
+    tempVerts[2].color[0] = tempVerts[2].color[1] = tempVerts[2].color[2] = tempVerts[2].color[3] = 255;
 
     // break the current surface if we are changing to a new material
     if (material != surf->material)
