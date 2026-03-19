@@ -1857,6 +1857,9 @@ void VK_RB_SwapBuffers()
     submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
 
     uint32_t submittedFrame = vk.currentFrame; // capture before increment
+    // fflush before submit: ensures any preceding swapchain recreation log is written, and
+    // incidentally gives the presentation engine time to finish processing OUT_OF_DATE.
+    fflush(NULL);
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[submittedFrame]);
     if (submitResult != VK_SUCCESS)
     {
@@ -1892,7 +1895,9 @@ void VK_RB_SwapBuffers()
     // R_ReadTiledPixels can immediately access the mapped buffer.
     if (s_readbackSubmitted)
     {
-        vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        VkResult rbFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        common->Printf("VK: readback fence wait result=%d (frame=%u)\n", (int)rbFence, submittedFrame);
+        fflush(NULL);
         s_readbackDone = true;
         s_readbackSubmitted = false;
     }

@@ -358,6 +358,8 @@ void VK_RecreateSwapchain(int width, int height)
     }
 
     VkResult waitResult = vkDeviceWaitIdle(vk.device);
+    common->Printf("VK: RecreateSwapchain vkDeviceWaitIdle result=%d\n", (int)waitResult);
+    fflush(NULL);
     if (waitResult != VK_SUCCESS)
     {
         common->Warning("VK: vkDeviceWaitIdle returned %d in RecreateSwapchain — device may be lost\n", (int)waitResult);
