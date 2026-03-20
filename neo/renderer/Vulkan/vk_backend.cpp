@@ -20,6 +20,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include "sys/platform.h"
 #include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
+#include "renderer/Cinematic.h"
+#include "idlib/containers/StrList.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_image.h"
@@ -133,7 +135,7 @@ static const uint32_t VK_UBO_RING_SIZE = 4096; // max interactions per frame
 // and for TAG_TEMP vertex data (GUI surfaces etc.).
 // ---------------------------------------------------------------------------
 
-static const VkDeviceSize VK_DATA_RING_SIZE = 32 * 1024 * 1024; // 32 MB per frame
+static const VkDeviceSize VK_DATA_RING_SIZE = 64 * 1024 * 1024; // 64 MB per frame
 
 struct vkDataRing_t
 {
@@ -552,6 +554,53 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RB_UpdateCinematics
+//
+// Must be called BEFORE vkCmdBeginRenderPass on the first view of a frame.
+// Scans all draw surfaces for cinematic stages; calls ImageForTime on each
+// and uploads the decoded RGBA frame into the shared cinematic VkImage via
+// cmd (recorded as transfer ops, legal outside a render pass).
+//
+// Mirrors the GL path in RB_BindVariableStageImage (tr_render.cpp).
+// ---------------------------------------------------------------------------
+
+static void VK_RB_UpdateCinematics(VkCommandBuffer cmd)
+{
+    if (!backEnd.viewDef || r_skipDynamicTextures.GetBool())
+        return;
+
+    const int time = (int)(1000 * (backEnd.viewDef->floatTime +
+                                   backEnd.viewDef->renderView.shaderParms[11]));
+
+    for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
+    {
+        const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
+        if (!surf || !surf->material)
+            continue;
+
+        const idMaterial *mat = surf->material;
+        const float      *regs = surf->shaderRegisters;
+
+        for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
+        {
+            const shaderStage_t *pStage = mat->GetStage(stageIdx);
+            if (!regs[pStage->conditionRegister])
+                continue;
+            if (!pStage->texture.cinematic)
+                continue;
+
+            cinData_t cin = pStage->texture.cinematic->ImageForTime(time);
+            if (cin.image)
+                VK_Image_UpdateCinematic(cmd, cin.image, cin.imageWidth, cin.imageHeight);
+            // Only one cinematic image is supported per frame (matches GL behaviour).
+            // If multiple distinct cinematics are ever needed, a per-idCinematic* cache
+            // is the natural extension.
+            return;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VK_RB_DrawShaderPasses - non-light-dependent surface rendering
 // Mirrors RB_STD_DrawShaderPasses for the Vulkan path.
 // Draws GUI surfaces, console, menus, and other unlit/2D content.
@@ -655,15 +704,31 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             idImage *img = pStage->texture.image;
             VkDescriptorImageInfo imgInfo = {};
-            if (!img || !VK_Image_GetDescriptorInfo(img, &imgInfo))
+            if (!img)
             {
-                static idStr lastFallbackMat;
-                if (lastFallbackMat != mat->GetName())
+                if (pStage->texture.cinematic)
                 {
-                    lastFallbackMat = mat->GetName();
+                    // Use the cinematic image uploaded by VK_RB_UpdateCinematics this frame.
+                    VK_Image_GetCinematicDescriptorInfo(&imgInfo);
+                }
+                else
+                {
+                    // Portal/mirror/other dynamic texture — not yet supported, skip.
+                    continue;
+                }
+            }
+            else if (!VK_Image_GetDescriptorInfo(img, &imgInfo))
+            {
+                // Image not yet on GPU (e.g. cubemap pending upload).
+                // Log once per material to avoid per-frame spam, then use white fallback.
+                static idStrList s_loggedFallbacks;
+                idStr matName(mat->GetName());
+                if (s_loggedFallbacks.Find(matName) < 0)
+                {
+                    s_loggedFallbacks.Append(matName);
                     common->Printf(
                         "VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' lighting=%d blend=0x%x\n",
-                        mat->GetName(), stageIdx, img ? img->imgName.c_str() : "<null>", (int)pStage->lighting,
+                        mat->GetName(), stageIdx, img->imgName.c_str(), (int)pStage->lighting,
                         pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
                 }
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
@@ -1027,6 +1092,30 @@ struct VkBlendUBO
 static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t *surf, const VkRect2D &lightScissor)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
+    struct shadowBranchTrack_t
+    {
+        const srfTriangles_t *tri;
+        const idRenderLightLocal *lightDef;
+        const idMaterial *material;
+        uint32_t signature;
+        int lastSeenFrame;
+        int lastLoggedFrame;
+        bool valid;
+    };
+    struct shadowGeomTrack_t
+    {
+        const srfTriangles_t *tri;
+        const idRenderLightLocal *lightDef;
+        const idMaterial *material;
+        uint32_t signature;
+        uint32_t sampledIndexHash;
+        int lastSeenFrame;
+        int lastLoggedFrame;
+        bool valid;
+    };
+    static const int SHADOW_BRANCH_TRACK_SIZE = 32768;
+    static shadowBranchTrack_t s_branchTrack[SHADOW_BRANCH_TRACK_SIZE] = {};
+    static shadowGeomTrack_t s_geomTrack[SHADOW_BRANCH_TRACK_SIZE] = {};
     static const viewDef_t *s_loggedView = NULL;
     static const viewLight_t *s_loggedLight = NULL;
 
@@ -1106,7 +1195,19 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     const float shadowBiasConst = -r_shadowPolygonOffset.GetFloat();
     const float shadowBiasSlope = r_shadowPolygonFactor.GetFloat();
 
+    const int indexSetId = (indexSet[0] == 'f') ? 0 : (indexSet[3] == 'f' ? 1 : 2); // full / no-front-caps / no-caps
+    uint32_t branchSig = 0;
+    branchSig |= external ? (1u << 0) : 0u;
+    branchSig |= mirrorView ? (1u << 1) : 0u;
+    branchSig |= effectiveMirrorOps ? (1u << 2) : 0u;
+    branchSig |= flipShadowOps ? (1u << 3) : 0u;
+    branchSig |= (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? (1u << 4) : 0u;
+    branchSig |= backEnd.vLight->viewInsideLight ? (1u << 5) : 0u;
+    branchSig |= (uint32_t)(indexSetId & 0x3) << 6;
+    branchSig |= (uint32_t)(numDrawIndexes & 0xFFFF) << 8;
+
     const int logMode = r_vkLogShadowBranch.GetInteger();
+    bool branchChangedThisDraw = false;
     if (logMode > 0)
     {
         if (s_loggedView != backEnd.viewDef)
@@ -1115,7 +1216,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
             s_loggedLight = NULL;
         }
 
-        const bool shouldLog = (logMode >= 2) || (s_loggedLight != backEnd.vLight);
+        const bool shouldLog = (logMode == 2) || ((logMode == 1) && (s_loggedLight != backEnd.vLight));
         if (shouldLog)
         {
             common->Printf("VK SHADOW BRANCH: mode=%s mirror=%d effectiveMirror=%d flipOps=%d indexSet=%s draw=%d "
@@ -1128,6 +1229,99 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
                            tri->shadowCapPlaneBits, shadowBiasConst, shadowBiasSlope);
             s_loggedLight = backEnd.vLight;
         }
+
+        // mode 3: only log when this light+surface branch/signature changes between frames.
+        if (logMode >= 3)
+        {
+            const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
+            const idMaterial *material = surf->material;
+            const uintptr_t hTri = (uintptr_t)tri >> 4;
+            const uintptr_t hLightDef = (uintptr_t)lightDef >> 4;
+            const uintptr_t hMat = (uintptr_t)material >> 4;
+            uint32_t slot = (uint32_t)((hTri ^ (hLightDef * 33u) ^ (hMat * 131u)) & (SHADOW_BRANCH_TRACK_SIZE - 1));
+            int found = -1;
+            int empty = -1;
+
+            for (int probe = 0; probe < SHADOW_BRANCH_TRACK_SIZE; probe++)
+            {
+                const int i = (int)((slot + (uint32_t)probe) & (SHADOW_BRANCH_TRACK_SIZE - 1));
+                if (!s_branchTrack[i].valid)
+                {
+                    if (empty < 0)
+                        empty = i;
+                    continue;
+                }
+                if (s_branchTrack[i].tri == tri && s_branchTrack[i].lightDef == lightDef &&
+                    s_branchTrack[i].material == material)
+                {
+                    found = i;
+                    break;
+                }
+            }
+
+            const int trackIdx = (found >= 0) ? found : ((empty >= 0) ? empty : (int)slot);
+            shadowBranchTrack_t &track = s_branchTrack[trackIdx];
+            const bool firstSeen = !track.valid;
+            const bool seenLastFrame = !firstSeen && (track.lastSeenFrame == tr.frameCount - 1);
+            const bool changed = seenLastFrame && (track.signature != branchSig);
+
+            if (changed && track.lastLoggedFrame != tr.frameCount)
+            {
+                const uint32_t delta = track.signature ^ branchSig;
+                const int changedMode = (delta & (1u << 0)) ? 1 : 0;
+                const int changedMirror = (delta & (1u << 1)) ? 1 : 0;
+                const int changedEffMirror = (delta & (1u << 2)) ? 1 : 0;
+                const int changedFlipOps = (delta & (1u << 3)) ? 1 : 0;
+                const int changedInsideFlag = (delta & (1u << 4)) ? 1 : 0;
+                const int changedInsideLight = (delta & (1u << 5)) ? 1 : 0;
+                const int changedIndexSet = (delta & (0x3u << 6)) ? 1 : 0;
+                const int changedDrawCount = (delta & (0xFFFFu << 8)) ? 1 : 0;
+                common->Printf(
+                    "VK SHADOW BRANCH CHANGE: tri=%p lightDef=%p frame=%d prevSig=0x%08X newSig=0x%08X "
+                    "d(mode=%d mirror=%d effMirror=%d flipOps=%d inside=%d insideLight=%d indexSet=%d draw=%d) "
+                    "mode=%s indexSet=%s draw=%d full=%d noFront=%d noCaps=%d insideFlag=%d insideLight=%d mirror=%d "
+                    "effectiveMirror=%d\n",
+                    tri, lightDef, tr.frameCount, track.signature, branchSig, changedMode, changedMirror,
+                    changedEffMirror, changedFlipOps, changedInsideFlag, changedInsideLight, changedIndexSet,
+                    changedDrawCount, external ? "zpass" : "zfail", indexSet, numDrawIndexes, tri->numIndexes,
+                    tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps,
+                    (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? 1 : 0, backEnd.vLight->viewInsideLight ? 1 : 0,
+                    mirrorView ? 1 : 0, effectiveMirrorOps ? 1 : 0);
+
+                // Always emit a geometry/index-content pre-snapshot with branch changes,
+                // even if later shadow draw setup bails out before detailed geom logging.
+                if (r_vkLogShadowGeom.GetInteger() == 0)
+                {
+                    uint32_t preHash = 2166136261u;
+                    if (numDrawIndexes > 0)
+                    {
+                        const int sampleCount = 64;
+                        const int step = (numDrawIndexes / sampleCount > 1) ? (numDrawIndexes / sampleCount) : 1;
+                        for (int ii = 0; ii < numDrawIndexes; ii += step)
+                        {
+                            preHash ^= (uint32_t)tri->indexes[ii];
+                            preHash *= 16777619u;
+                        }
+                        preHash ^= (uint32_t)tri->indexes[numDrawIndexes - 1];
+                        preHash *= 16777619u;
+                    }
+
+                    common->Printf("VK SHADOW GEOM PRE: tri=%p lightDef=%p frame=%d draw=%d hash=0x%08X full=%d noFront=%d noCaps=%d\n",
+                                   tri, lightDef, tr.frameCount, numDrawIndexes, preHash, tri->numIndexes,
+                                   tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps);
+                }
+
+                track.lastLoggedFrame = tr.frameCount;
+                branchChangedThisDraw = true;
+            }
+
+            track.tri = tri;
+            track.lightDef = lightDef;
+            track.material = material;
+            track.signature = branchSig;
+            track.lastSeenFrame = tr.frameCount;
+            track.valid = true;
+        }
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipe);
@@ -1135,11 +1329,30 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     // Vulkan mapping: slopeFactor = factor, constantFactor = units.
     vkCmdSetDepthBias(cmd, shadowBiasConst, 0.0f, shadowBiasSlope);
 
+    const bool forceCpuShadowGeometry = r_vkShadowStableMode.GetBool();
+    const int geomLogMode = r_vkLogShadowGeom.GetInteger();
+    bool usingCpuVerts = false;
+    bool usingCpuIdx = false;
+
+    int maxShadowVertForDraw = -1;
+    if (geomLogMode > 0 || branchChangedThisDraw)
+    {
+        for (int i = 0; i < numDrawIndexes; i++)
+        {
+            const int idx = tri->indexes[i];
+            if (idx > maxShadowVertForDraw)
+                maxShadowVertForDraw = idx;
+        }
+    }
+
     // Shadow vertices: shadowCache_t = idVec4 (16 bytes each)
     VkBuffer vertBuf;
     VkDeviceSize vertOffset;
     bool haveVerts = false;
-    const bool forceCpuShadowUpload = r_vkShadowStableMode.GetBool();
+    // Stable mode should only force CPU geometry when an explicit CPU shadow array
+    // is present (dynamic/private shadows). For static cached shadows, prefer the
+    // cache buffers to avoid stale CPU index/vertex divergence.
+    const bool forceCpuShadowUpload = forceCpuShadowGeometry && (tri->shadowVertexes != NULL);
 
     if (!forceCpuShadowUpload && VK_VertexCache_GetBuffer(tri->shadowCache, &vertBuf, &vertOffset))
     {
@@ -1194,19 +1407,127 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
                 memcpy((byte *)dataRings[vk.currentFrame].mapped + vertOffset, cpuVerts, (size_t)sz);
                 vertBuf = dataRings[vk.currentFrame].buffer;
                 haveVerts = true;
+                usingCpuVerts = true;
             }
         }
     }
     if (!haveVerts)
         return VK_NULL_HANDLE;
 
-    // Index data (tri->indexes, same field as regular geometry)
+    // Index data: if we forced CPU shadow vertices, keep indices on the same source
+    // (CPU) for consistency. Otherwise prefer resident index cache.
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    VkDeviceSize idxSize = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
-    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
-    if (idxOffset == VK_WHOLE_SIZE)
-        return VK_NULL_HANDLE;
-    memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
+    VkBuffer idxBuf = VK_NULL_HANDLE;
+    VkDeviceSize idxOffset = 0;
+    if (!forceCpuShadowUpload && VK_VertexCache_GetBuffer(tri->indexCache, &idxBuf, &idxOffset))
+    {
+        // Use resident cache buffer.
+    }
+    else
+    {
+        VkDeviceSize idxSize = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
+        idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+        if (idxOffset == VK_WHOLE_SIZE)
+            return VK_NULL_HANDLE;
+        memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
+        idxBuf = dataRings[vk.currentFrame].buffer;
+        usingCpuIdx = true;
+    }
+
+    // Sampled index-content hash: catches index mutation even when draw counts stay constant.
+    uint32_t sampledIndexHash = 2166136261u;
+    if (numDrawIndexes > 0)
+    {
+        const int sampleCount = 64;
+        const int step = (numDrawIndexes / sampleCount > 1) ? (numDrawIndexes / sampleCount) : 1;
+        for (int i = 0; i < numDrawIndexes; i += step)
+        {
+            sampledIndexHash ^= (uint32_t)tri->indexes[i];
+            sampledIndexHash *= 16777619u;
+        }
+        sampledIndexHash ^= (uint32_t)tri->indexes[numDrawIndexes - 1];
+        sampledIndexHash *= 16777619u;
+    }
+
+    if (geomLogMode > 0)
+    {
+        const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
+        const idMaterial *material = surf->material;
+        const uintptr_t hTri = (uintptr_t)tri >> 4;
+        const uintptr_t hLightDef = (uintptr_t)lightDef >> 4;
+        const uintptr_t hMat = (uintptr_t)material >> 4;
+        const uint32_t slot = (uint32_t)((hTri ^ (hLightDef * 33u) ^ (hMat * 131u)) & (SHADOW_BRANCH_TRACK_SIZE - 1));
+
+        uint32_t geomSig = 0;
+        geomSig |= usingCpuVerts ? (1u << 0) : 0u;
+        geomSig |= usingCpuIdx ? (1u << 1) : 0u;
+        geomSig |= (tri->shadowVertexes != NULL) ? (1u << 2) : 0u;
+        geomSig |= (uint32_t)(numDrawIndexes & 0xFFFF) << 8;
+        const uint32_t clampedShadowVerts = (uint32_t)((maxShadowVertForDraw + 1) < 0 ? 0 : (maxShadowVertForDraw + 1));
+        geomSig |= (clampedShadowVerts & 0xFFu) << 24;
+
+        int found = -1;
+        int empty = -1;
+        for (int probe = 0; probe < SHADOW_BRANCH_TRACK_SIZE; probe++)
+        {
+            const int i = (int)((slot + (uint32_t)probe) & (SHADOW_BRANCH_TRACK_SIZE - 1));
+            if (!s_geomTrack[i].valid)
+            {
+                if (empty < 0)
+                    empty = i;
+                continue;
+            }
+            if (s_geomTrack[i].tri == tri && s_geomTrack[i].lightDef == lightDef && s_geomTrack[i].material == material)
+            {
+                found = i;
+                break;
+            }
+        }
+
+        const int trackIdx = (found >= 0) ? found : ((empty >= 0) ? empty : (int)slot);
+        shadowGeomTrack_t &track = s_geomTrack[trackIdx];
+        const bool firstSeen = !track.valid;
+        const bool seenLastFrame = !firstSeen && (track.lastSeenFrame == tr.frameCount - 1);
+        const bool changed = seenLastFrame && ((track.signature != geomSig) || (track.sampledIndexHash != sampledIndexHash));
+        const bool shouldLogGeom = (geomLogMode >= 2) || changed;
+
+        if (shouldLogGeom && track.lastLoggedFrame != tr.frameCount)
+        {
+            const uint32_t delta = track.signature ^ geomSig;
+            const int dCpuVerts = (delta & (1u << 0)) ? 1 : 0;
+            const int dCpuIdx = (delta & (1u << 1)) ? 1 : 0;
+            const int dHasShadowVerts = (delta & (1u << 2)) ? 1 : 0;
+            const int dDraw = (delta & (0xFFFFu << 8)) ? 1 : 0;
+            const int dVertRange = (delta & (0xFFu << 24)) ? 1 : 0;
+            const int dHash = (track.sampledIndexHash != sampledIndexHash) ? 1 : 0;
+            common->Printf("VK SHADOW GEOM: tri=%p lightDef=%p frame=%d changed=%d src(v=%s i=%s cpuShadow=%d) "
+                           "draw=%d maxVert=%d hash=0x%08X full=%d noFront=%d noCaps=%d d(vsrc=%d isrc=%d cpuShadow=%d "
+                           "draw=%d maxVert=%d hash=%d)\n",
+                           tri, lightDef, tr.frameCount, changed ? 1 : 0, usingCpuVerts ? "cpu" : "cache",
+                           usingCpuIdx ? "cpu" : "cache", tri->shadowVertexes ? 1 : 0, numDrawIndexes,
+                           maxShadowVertForDraw + 1, sampledIndexHash, tri->numIndexes,
+                           tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps, dCpuVerts, dCpuIdx,
+                           dHasShadowVerts, dDraw, dVertRange, dHash);
+            track.lastLoggedFrame = tr.frameCount;
+        }
+
+        track.tri = tri;
+        track.lightDef = lightDef;
+        track.material = material;
+        track.signature = geomSig;
+        track.sampledIndexHash = sampledIndexHash;
+        track.lastSeenFrame = tr.frameCount;
+        track.valid = true;
+    }
+    else if (branchChangedThisDraw)
+    {
+        const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
+        common->Printf("VK SHADOW GEOM SNAP: tri=%p lightDef=%p frame=%d src(v=%s i=%s cpuShadow=%d) "
+                       "draw=%d maxVert=%d hash=0x%08X full=%d noFront=%d noCaps=%d\n",
+                       tri, lightDef, tr.frameCount, usingCpuVerts ? "cpu" : "cache", usingCpuIdx ? "cpu" : "cache",
+                       tri->shadowVertexes ? 1 : 0, numDrawIndexes, maxShadowVertForDraw + 1, sampledIndexHash,
+                       tri->numIndexes, tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps);
+    }
 
     // Light origin in model local space
     idVec3 localLight;
@@ -1252,7 +1573,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowLayout, 0, 1, &ds, 0, NULL);
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
-    vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+    vkCmdBindIndexBuffer(cmd, idxBuf, idxOffset, idxType);
 
     vkCmdDrawIndexed(cmd, (uint32_t)numDrawIndexes, 1, 0, 0, 0);
 
@@ -1876,6 +2197,10 @@ void VK_RB_DrawView(const void *data)
             common->Warning("VK: vkBeginCommandBuffer failed, aborting frame");
             return;
         }
+
+        // Upload any cinematic frames before the render pass opens
+        // (transfer ops are illegal inside a render pass).
+        VK_RB_UpdateCinematics(cmdBuf);
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
         VkClearValue clearValues[2] = {};
