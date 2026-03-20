@@ -389,10 +389,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // useShadowMask: 1 when RT shadow mask is valid this frame
 #ifdef DHEWM3_RAYTRACING
     int *useSM = (int *)(fsz + 2);
-    *useSM = (VK_RTShadowsEnabled() &&
-              vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE)
-                 ? 1
-                 : 0;
+    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE) ? 1 : 0;
 #else
     int *useSM = (int *)(fsz + 2);
     *useSM = 0;
@@ -434,11 +431,21 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
+    static const char *s_texSlotNames[6] = {"bump",    "lightFalloff", "lightProjection",
+                                            "diffuse", "specular",     "specularTable"};
     VkDescriptorImageInfo imgInfos[6] = {};
     for (int i = 0; i < 6; i++)
     {
         if (!texImages[i] || !VK_Image_GetDescriptorInfo(texImages[i], &imgInfos[i]))
         {
+            static idStr lastFallbackInterMat;
+            const char *matName = din->surf && din->surf->material ? din->surf->material->GetName() : "<null>";
+            if (lastFallbackInterMat != matName)
+            {
+                lastFallbackInterMat = matName;
+                common->Printf("VK Interaction: fallback texture slot=%s mat='%s' img='%s'\n", s_texSlotNames[i],
+                               matName, texImages[i] ? texImages[i]->imgName.c_str() : "<null>");
+            }
             VK_Image_GetFallbackDescriptorInfo(&imgInfos[i]);
         }
     }
@@ -645,7 +652,18 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             idImage *img = pStage->texture.image;
             VkDescriptorImageInfo imgInfo = {};
             if (!img || !VK_Image_GetDescriptorInfo(img, &imgInfo))
+            {
+                static idStr lastFallbackMat;
+                if (lastFallbackMat != mat->GetName())
+                {
+                    lastFallbackMat = mat->GetName();
+                    common->Printf(
+                        "VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' lighting=%d blend=0x%x\n",
+                        mat->GetName(), stageIdx, img ? img->imgName.c_str() : "<null>", (int)pStage->lighting,
+                        pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                }
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+            }
 
             // Build color modulate/add from stage vertex color mode
             float color[4] = {
@@ -1009,7 +1027,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     static const viewLight_t *s_loggedLight = NULL;
 
     const srfTriangles_t *tri = surf->geo;
-    if (!tri || !tri->shadowCache || tri->numIndexes <= 0)
+    if (!tri || !tri->shadowCache || !tri->indexes || tri->numIndexes <= 0)
         return VK_NULL_HANDLE;
 
     // Match GL's external-shadow logic so we choose the same index set and
@@ -1019,7 +1037,14 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     const char *indexSet = "full";
 
-    if (!r_useExternalShadows.GetInteger())
+    if (r_vkShadowStableMode.GetBool())
+    {
+        // Stabilization mode: avoid view-dependent external/no-cap branch switching.
+        numDrawIndexes = tri->numIndexes;
+        indexSet = "full (stable)";
+        external = false;
+    }
+    else if (!r_useExternalShadows.GetInteger())
     {
         numDrawIndexes = tri->numIndexes;
         indexSet = "full";
@@ -1064,13 +1089,18 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         return VK_NULL_HANDLE;
 
     const bool mirrorView = backEnd.viewDef && backEnd.viewDef->isMirror;
+    const bool flipShadowOps = r_vkShadowFlipOps.GetBool();
+    const bool effectiveMirrorOps = mirrorView ^ flipShadowOps;
     VkPipeline shadowPipe;
     if (external)
-        shadowPipe = mirrorView ? vkPipes.shadowPipelineZPassMirror : vkPipes.shadowPipelineZPass;
+        shadowPipe = effectiveMirrorOps ? vkPipes.shadowPipelineZPassMirror : vkPipes.shadowPipelineZPass;
     else
-        shadowPipe = mirrorView ? vkPipes.shadowPipelineZFailMirror : vkPipes.shadowPipelineZFail;
+        shadowPipe = effectiveMirrorOps ? vkPipes.shadowPipelineZFailMirror : vkPipes.shadowPipelineZFail;
     if (!shadowPipe)
         return VK_NULL_HANDLE;
+
+    const float shadowBiasConst = -r_shadowPolygonOffset.GetFloat();
+    const float shadowBiasSlope = r_shadowPolygonFactor.GetFloat();
 
     const int logMode = r_vkLogShadowBranch.GetInteger();
     if (logMode > 0)
@@ -1084,40 +1114,74 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         const bool shouldLog = (logMode >= 2) || (s_loggedLight != backEnd.vLight);
         if (shouldLog)
         {
-            common->Printf("VK SHADOW BRANCH: mode=%s mirror=%d indexSet=%s draw=%d full=%d noFront=%d noCaps=%d "
-                           "ext=%d insideFlag=%d insideLight=%d capBits=0x%X\n",
-                           external ? "zpass" : "zfail", mirrorView ? 1 : 0, indexSet, numDrawIndexes,
-                           tri->numIndexes, tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps,
-                           external ? 1 : 0,
+            common->Printf("VK SHADOW BRANCH: mode=%s mirror=%d effectiveMirror=%d flipOps=%d indexSet=%s draw=%d "
+                           "full=%d noFront=%d noCaps=%d ext=%d insideFlag=%d insideLight=%d capBits=0x%X "
+                           "biasConst=%.3f biasSlope=%.3f\n",
+                           external ? "zpass" : "zfail", mirrorView ? 1 : 0, effectiveMirrorOps ? 1 : 0,
+                           flipShadowOps ? 1 : 0, indexSet, numDrawIndexes, tri->numIndexes,
+                           tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps, external ? 1 : 0,
                            (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? 1 : 0, backEnd.vLight->viewInsideLight ? 1 : 0,
-                           tri->shadowCapPlaneBits);
+                           tri->shadowCapPlaneBits, shadowBiasConst, shadowBiasSlope);
             s_loggedLight = backEnd.vLight;
         }
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowPipe);
+    // GL parity: qglPolygonOffset(r_shadowPolygonFactor, -r_shadowPolygonOffset)
+    // Vulkan mapping: slopeFactor = factor, constantFactor = units.
+    vkCmdSetDepthBias(cmd, shadowBiasConst, 0.0f, shadowBiasSlope);
 
     // Shadow vertices: shadowCache_t = idVec4 (16 bytes each)
     VkBuffer vertBuf;
     VkDeviceSize vertOffset;
     bool haveVerts = false;
+    const bool forceCpuShadowUpload = r_vkShadowStableMode.GetBool();
 
-    if (VK_VertexCache_GetBuffer(tri->shadowCache, &vertBuf, &vertOffset))
+    if (!forceCpuShadowUpload && VK_VertexCache_GetBuffer(tri->shadowCache, &vertBuf, &vertOffset))
     {
         haveVerts = true;
     }
     else
     {
-        const void *cpuVerts = vertexCache.Position(tri->shadowCache);
+        // Prefer stable CPU shadow vertices when present. Dynamic/private shadow volumes
+        // keep authoritative data in tri->shadowVertexes and can be volatile in cache memory.
+        const shadowCache_t *cpuShadowVerts = tri->shadowVertexes;
+        if (!cpuShadowVerts)
+            cpuShadowVerts = (const shadowCache_t *)vertexCache.Position(tri->shadowCache);
+
+        const void *cpuVerts = cpuShadowVerts;
         if (cpuVerts)
         {
-            // Count shadow verts: indexes reference vertices up to numVerts*2 (mirrored)
-            // Conservative: use numVerts from the ambient surface if available, else
-            // scan indexes to find the max referenced vertex.
-            const srfTriangles_t *amb = tri->ambientSurface ? tri->ambientSurface : tri;
-            int numShadowVerts = amb->numVerts * 2; // shadow verts are doubled (front+back caps)
+            // Size shadow vertex upload from the actual index range used by this draw.
+            // Heuristic sizing (e.g. numVerts*2) can under/over-copy and produce malformed shadow wedges.
+            int maxShadowVert = -1;
+            for (int i = 0; i < numDrawIndexes; i++)
+            {
+                const int idx = tri->indexes[i];
+                if (idx > maxShadowVert)
+                    maxShadowVert = idx;
+            }
+
+            int numShadowVerts = maxShadowVert + 1;
+
+            // Private shadow arrays are explicitly sized by tri->numVerts.
+            if (tri->shadowVertexes)
+            {
+                if (numShadowVerts > tri->numVerts)
+                {
+                    static bool s_warnedShadowIndexRange = false;
+                    if (!s_warnedShadowIndexRange)
+                    {
+                        common->Warning("VK: shadow index range exceeds shadowVertexes size (%d > %d)", numShadowVerts,
+                                        tri->numVerts);
+                        s_warnedShadowIndexRange = true;
+                    }
+                    return VK_NULL_HANDLE;
+                }
+            }
+
             if (numShadowVerts <= 0)
-                numShadowVerts = 256; // safe fallback
+                return VK_NULL_HANDLE;
 
             VkDeviceSize sz = (VkDeviceSize)numShadowVerts * sizeof(shadowCache_t);
             vertOffset = VK_AllocDataRing(sz, sizeof(float));
@@ -1186,51 +1250,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
     vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
-    // Tighten scissor to surf->scissorRect if it is smaller than the light scissor.
-    bool scissorTightened = false;
-    if (r_useScissor.GetBool() && !surf->scissorRect.IsEmpty())
-    {
-        int h = (int)vk.swapchainExtent.height;
-        int absX1 = backEnd.viewDef->viewport.x1 + surf->scissorRect.x1;
-        int absY1 = backEnd.viewDef->viewport.y1 + surf->scissorRect.y1;
-        int absY2 = backEnd.viewDef->viewport.y1 + surf->scissorRect.y2;
-
-        VkRect2D surfScissor;
-        surfScissor.offset.x = absX1;
-        surfScissor.offset.y = h - 1 - absY2;
-        surfScissor.extent.width = surf->scissorRect.x2 - surf->scissorRect.x1 + 1;
-        surfScissor.extent.height = absY2 - absY1 + 1;
-
-        // Intersect with the light scissor.
-        int sx1 = idMath::ClampInt(surfScissor.offset.x, lightScissor.offset.x,
-                                   (int)(lightScissor.offset.x + lightScissor.extent.width));
-        int sy1 = idMath::ClampInt(surfScissor.offset.y, lightScissor.offset.y,
-                                   (int)(lightScissor.offset.y + lightScissor.extent.height));
-        int sx2 = idMath::ClampInt((int)(surfScissor.offset.x + surfScissor.extent.width), lightScissor.offset.x,
-                                   (int)(lightScissor.offset.x + lightScissor.extent.width));
-        int sy2 = idMath::ClampInt((int)(surfScissor.offset.y + surfScissor.extent.height), lightScissor.offset.y,
-                                   (int)(lightScissor.offset.y + lightScissor.extent.height));
-
-        if (sx2 > sx1 && sy2 > sy1)
-        {
-            VkRect2D clipped = {{sx1, sy1}, {(uint32_t)(sx2 - sx1), (uint32_t)(sy2 - sy1)}};
-            // Only switch scissor if it's actually tighter.
-            if (clipped.offset.x != (int32_t)lightScissor.offset.x ||
-                clipped.offset.y != (int32_t)lightScissor.offset.y ||
-                clipped.extent.width != lightScissor.extent.width ||
-                clipped.extent.height != lightScissor.extent.height)
-            {
-                vkCmdSetScissor(cmd, 0, 1, &clipped);
-                scissorTightened = true;
-            }
-        }
-    }
-
     vkCmdDrawIndexed(cmd, (uint32_t)numDrawIndexes, 1, 0, 0, 0);
-
-    // Restore light scissor if we tightened it.
-    if (scissorTightened)
-        vkCmdSetScissor(cmd, 0, 1, &lightScissor);
 
     return shadowPipe;
 }
@@ -1310,7 +1330,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // When RT is active, shadows are applied per-pixel in the interaction shader
         // via shadowMaskSampler. Running both would produce double-shadowing.
 #ifdef DHEWM3_RAYTRACING
-    const bool useStencilShadows = !VK_RTShadowsEnabled();
+        const bool useStencilShadows = !VK_RTShadowsEnabled();
 #else
         const bool useStencilShadows = true;
 #endif
@@ -1480,7 +1500,8 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf, co
     writes[2].pImageInfo = &imgInfo1;
 
     vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogLayout, 0, 1, &ds, 1, &uboOffset);
+    // fog/blendlight UBO is a regular uniform buffer; offset is set in VkDescriptorBufferInfo.
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogLayout, 0, 1, &ds, 0, NULL);
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
@@ -1628,6 +1649,15 @@ static void VK_RB_BlendLightPass(VkCommandBuffer cmd, const viewLight_t *vLight)
         lightColor[3] = regs[stage->color.registers[3]];
 
         idImage *projImage = stage->texture.image;
+        if (!projImage)
+            continue;
+
+        // GL parity: blend lights can have a stage texture matrix. In GL this is
+        // applied in texture space after texgen; here we fold it into S/T texgen planes.
+        float stageTexMat[16];
+        bool hasStageTexMat = stage->texture.hasMatrix;
+        if (hasStageTexMat)
+            RB_GetShaderTextureMatrix(regs, &stage->texture, stageTexMat);
 
         auto drawBlendChain = [&](const drawSurf_t *surf) {
             for (; surf; surf = surf->nextOnLight)
@@ -1636,6 +1666,24 @@ static void VK_RB_BlendLightPass(VkCommandBuffer cmd, const viewLight_t *vLight)
                 idPlane localProj[4];
                 for (int p = 0; p < 4; p++)
                     R_GlobalPlaneToLocal(surf->space->modelMatrix, vLight->lightProject[p], localProj[p]);
+
+                if (hasStageTexMat)
+                {
+                    const idPlane sPlane = localProj[0];
+                    const idPlane tPlane = localProj[1];
+                    const idPlane qPlane = localProj[2];
+
+                    // Matrix rows from RB_GetShaderTextureMatrix:
+                    // S' = m00*S + m01*T + m03*Q
+                    // T' = m10*S + m11*T + m13*Q
+                    for (int c = 0; c < 4; c++)
+                    {
+                        localProj[0][c] =
+                            stageTexMat[0] * sPlane[c] + stageTexMat[4] * tPlane[c] + stageTexMat[12] * qPlane[c];
+                        localProj[1][c] =
+                            stageTexMat[1] * sPlane[c] + stageTexMat[5] * tPlane[c] + stageTexMat[13] * qPlane[c];
+                    }
+                }
 
                 float mvp[16];
                 VK_MultiplyMatrix4(s_projVk, surf->space->modelViewMatrix, mvp);
@@ -1858,7 +1906,7 @@ void VK_RB_DrawView(const void *data)
         // RT shadow dispatch happens outside the render pass, before interactions.
         // Only valid on the first (3D world) view.
 #ifdef DHEWM3_RAYTRACING
-    if (VK_RTShadowsEnabled())
+        if (VK_RTShadowsEnabled())
         {
             vkCmdEndRenderPass(cmdBuf);
             VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
@@ -1987,16 +2035,11 @@ void VK_RB_SwapBuffers()
 #ifdef DHEWM3_RAYTRACING
         rtActive = VK_RTShadowsEnabled() ? 1 : 0;
 #endif
-        common->Printf(
-            "VK SUBMIT: frame=%u image=%u rt=%d useRT=%d rtShadows=%d readbackPending=%d readbackSubmitted=%d swapRecreate=%d\n",
-            submittedFrame,
-            (unsigned int)s_frameImageIndex,
-            rtActive,
-            r_useRayTracing.GetBool() ? 1 : 0,
-            r_rtShadows.GetBool() ? 1 : 0,
-            s_readbackPending ? 1 : 0,
-            s_readbackSubmitted ? 1 : 0,
-            s_swapchainNeedsRecreate ? 1 : 0);
+        common->Printf("VK SUBMIT: frame=%u image=%u rt=%d useRT=%d rtShadows=%d readbackPending=%d "
+                       "readbackSubmitted=%d swapRecreate=%d\n",
+                       submittedFrame, (unsigned int)s_frameImageIndex, rtActive, r_useRayTracing.GetBool() ? 1 : 0,
+                       r_rtShadows.GetBool() ? 1 : 0, s_readbackPending ? 1 : 0, s_readbackSubmitted ? 1 : 0,
+                       s_swapchainNeedsRecreate ? 1 : 0);
 
         if (submitLogMode >= 2)
         {

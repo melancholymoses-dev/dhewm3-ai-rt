@@ -16,7 +16,8 @@ the Free Software Foundation, either version 3 of the License, or
 */
 
 // Shadow volume vertex shader - replaces shadow.vp ARB vertex program.
-// Extrudes shadow volume geometry toward the light (for stencil shadow volumes).
+// Use the original branchless w-based extrusion form to avoid edge-case
+// instability from thresholding on in_Position.w.
 
 #version 450
 
@@ -30,27 +31,11 @@ layout(set=0, binding=0) uniform ShadowParams {
 };
 
 void main() {
-    // If w == 0, this vertex is at "infinity" in the direction away from the light.
-    // Extrude: mix between the vertex and the light->vertex direction at infinity.
-    // When w=1: regular cap vertex at in_Position.xyz
-    // When w=0: vertex extruded to infinity in direction (vertex - light), rendered
-    //           in homogeneous clip space as a point at infinity.
-
-    // Doom 3 shadow vertex format: w component encodes extrusion flag.
-    // The ARB program multiplied the vertex position by the w component to collapse
-    // w=0 vertices to the light origin, then moved them to infinity in projection.
-
-    // In homogeneous coordinates: for w=0, gl_Position = P*MVP where the xyz are
-    // the direction (vertex - light) expressed at infinity.
-    vec4 pos = in_Position;
-
-    if (pos.w < 0.5) {
-        // Extruded vertex: direction from light to surface vertex, at infinity
-        vec3 dir = pos.xyz - u_LightOrigin.xyz;
-        // Set w=0 in clip space so the point is at infinity (no perspective divide)
-        gl_Position = u_ModelViewProjection * vec4(dir, 0.0);
-    } else {
-        // Cap vertex: regular position
-        gl_Position = u_ModelViewProjection * vec4(pos.xyz, 1.0);
-    }
+    // ARB/vkDOOM3 equivalent:
+    //   vPos = in_Position - lightOrigin
+    //   vPos = vPos.w * lightOrigin + vPos
+    // For w=1 => original position. For w=0 => extruded direction at infinity.
+    vec4 vPos = in_Position - u_LightOrigin;
+    vPos = (vPos.wwww * u_LightOrigin) + vPos;
+    gl_Position = u_ModelViewProjection * vPos;
 }

@@ -52,6 +52,7 @@ static const int VK_IMAGE_GARBAGE_MAX = 512; // max purges per frame slot
 
 static vkImageData_t *s_imageGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_IMAGE_GARBAGE_MAX];
 static int s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static uint32_t s_imageGarbageOverflowCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 static void VK_DestroyImageData(vkImageData_t *vkd)
 {
@@ -71,6 +72,13 @@ void VK_Image_DrainGarbage(uint32_t frameIdx)
     for (int i = 0; i < s_imageGarbageCount[frameIdx]; i++)
         VK_DestroyImageData(s_imageGarbage[frameIdx][i]);
     s_imageGarbageCount[frameIdx] = 0;
+
+    if (s_imageGarbageOverflowCount[frameIdx] > 0)
+    {
+        common->Printf("VK: image garbage overflow summary for frame slot %u: %u immediate destroys after ring-full\n",
+                       frameIdx, s_imageGarbageOverflowCount[frameIdx]);
+        s_imageGarbageOverflowCount[frameIdx] = 0;
+    }
 }
 
 // Drain all frame slots — called at shutdown.
@@ -532,13 +540,16 @@ void VK_Image_Purge(idImage *img)
     }
     else
     {
-        // Garbage ring full — stall once and destroy immediately.
+        // Garbage ring full — destroy immediately. Log once per frame slot to avoid spam.
         // If the device is already lost (e.g., shutdown after a crash), skip the
         // stall to avoid spamming the log; the process is exiting anyway.
+        s_imageGarbageOverflowCount[frameIdx]++;
         VkResult waitResult = vkDeviceWaitIdle(vk.device);
-        if (waitResult == VK_SUCCESS)
+        if (waitResult == VK_SUCCESS && s_imageGarbageOverflowCount[frameIdx] == 1)
         {
-            common->Warning("VK: image garbage ring full for frame %u, stalling", frameIdx);
+            common->Warning(
+                "VK: image garbage ring full for frame %u, stalling (additional overflows this slot suppressed)",
+                frameIdx);
         }
         VK_DestroyImageData(vkd);
     }

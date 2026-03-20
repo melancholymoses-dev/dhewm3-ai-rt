@@ -255,11 +255,19 @@ idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_IN
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkLogShadowBranch(
-    "r_vkLogShadowBranch", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every shadow surface", 0, 2,
     idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkShadowFlipOps(
+    "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkShadowStableMode(
+    "r_vkShadowStableMode", "1", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow stabilization: force full-volume Z-fail path to reduce view-dependent popping/flicker", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkLogSubmitInfo(
-    "r_vkLogSubmitInfo", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "r_vkLogSubmitInfo", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,
     idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
@@ -414,8 +422,8 @@ idCVar r_useCarmacksReverse("r_useCarmacksReverse", "1", CVAR_RENDERER | CVAR_AR
                             "Use Z-Fail (Carmack's Reverse) when rendering shadows");
 idCVar r_useStencilOpSeparate("r_useStencilOpSeparate", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                               "Use glStencilOpSeparate() (if available) when rendering shadows");
-idCVar r_screenshotFormat("r_screenshotFormat", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                          "Screenshot format. 0 = TGA, 1 = BMP, 2 = PNG (default), 3 = JPG");
+idCVar r_screenshotFormat("r_screenshotFormat", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+                          "Screenshot format. 0 = TGA, 1 = BMP, 2 = PNG, 3 = JPG (default)");
 idCVar r_screenshotJpgQuality(
     "r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "Screenshot quality for JPG images (1-100). Lower value means smaller file but worse quality");
