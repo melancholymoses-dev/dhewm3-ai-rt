@@ -740,8 +740,14 @@ void idImage::GenerateCubeImage(const byte *pic[6], int size, textureFilter_t fi
     // have filled in the parms.  We must have the values set, or
     // an image match from a shader before OpenGL starts would miss
     // the generated texture
-    if (!glConfig.isInitialized || glConfig.isVulkan)
+    if (!glConfig.isInitialized)
     {
+        return;
+    }
+
+    if (glConfig.isVulkan)
+    {
+        activeBackend->CubeImage_Upload(this, pic, size);
         return;
     }
 
