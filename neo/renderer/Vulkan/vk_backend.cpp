@@ -302,6 +302,7 @@ static uint32_t VK_AllocUBO(void)
 
 // We use a file-static to pass the command buffer through the callback
 static VkCommandBuffer s_cmd = VK_NULL_HANDLE;
+static const char *s_shadowPhaseTag = "unknown";
 
 static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 {
@@ -569,8 +570,7 @@ static void VK_RB_UpdateCinematics(VkCommandBuffer cmd)
     if (!backEnd.viewDef || r_skipDynamicTextures.GetBool())
         return;
 
-    const int time = (int)(1000 * (backEnd.viewDef->floatTime +
-                                   backEnd.viewDef->renderView.shaderParms[11]));
+    const int time = (int)(1000 * (backEnd.viewDef->floatTime + backEnd.viewDef->renderView.shaderParms[11]));
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
@@ -579,7 +579,7 @@ static void VK_RB_UpdateCinematics(VkCommandBuffer cmd)
             continue;
 
         const idMaterial *mat = surf->material;
-        const float      *regs = surf->shaderRegisters;
+        const float *regs = surf->shaderRegisters;
 
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
@@ -1129,30 +1129,35 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     bool external = false;
 
     const char *indexSet = "full";
+    const char *decisionPath = "full-default";
 
     if (r_vkShadowStableMode.GetBool())
     {
         // Stabilization mode: avoid view-dependent external/no-cap branch switching.
         numDrawIndexes = tri->numIndexes;
         indexSet = "full (stable)";
+        decisionPath = "stable-force-full";
         external = false;
     }
     else if (!r_useExternalShadows.GetInteger())
     {
         numDrawIndexes = tri->numIndexes;
         indexSet = "full";
+        decisionPath = "external-shadows-disabled";
     }
     else if (r_useExternalShadows.GetInteger() == 2)
     {
         // Debug/testing path from GL: force no-caps index set.
         numDrawIndexes = tri->numShadowIndexesNoCaps;
         indexSet = "no-caps (forced)";
+        decisionPath = "external-shadows-force-no-caps";
     }
     else if (!(surf->dsFlags & DSF_VIEW_INSIDE_SHADOW))
     {
         // Viewer outside the shadow projection: caps are not needed.
         numDrawIndexes = tri->numShadowIndexesNoCaps;
         indexSet = "no-caps";
+        decisionPath = "outside-shadow";
         external = true;
     }
     else if (!backEnd.vLight->viewInsideLight && !(tri->shadowCapPlaneBits & SHADOW_CAP_INFINITE))
@@ -1163,11 +1168,13 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         {
             numDrawIndexes = tri->numShadowIndexesNoFrontCaps;
             indexSet = "no-front-caps";
+            decisionPath = "inside-shadow-outside-light-visible-cap-planes";
         }
         else
         {
             numDrawIndexes = tri->numShadowIndexesNoCaps;
             indexSet = "no-caps";
+            decisionPath = "inside-shadow-outside-light-hidden-cap-planes";
         }
 
         external = true;
@@ -1176,6 +1183,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     {
         numDrawIndexes = tri->numIndexes;
         indexSet = "full";
+        decisionPath = "full-default";
     }
 
     if (numDrawIndexes <= 0)
@@ -1189,6 +1197,8 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         shadowPipe = effectiveMirrorOps ? vkPipes.shadowPipelineZPassMirror : vkPipes.shadowPipelineZPass;
     else
         shadowPipe = effectiveMirrorOps ? vkPipes.shadowPipelineZFailMirror : vkPipes.shadowPipelineZFail;
+    const char *pipeTag =
+        external ? (effectiveMirrorOps ? "zpass-mirror" : "zpass") : (effectiveMirrorOps ? "zfail-mirror" : "zfail");
     if (!shadowPipe)
         return VK_NULL_HANDLE;
 
@@ -1233,6 +1243,31 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         // mode 3: only log when this light+surface branch/signature changes between frames.
         if (logMode >= 3)
         {
+            // Once per frame (verbose mode only): scan for surfaces that were drawn
+            // last frame but are absent so far this frame. Useful for deep churn
+            // debugging, but too noisy for normal branch/inside-flag tracing.
+            if (logMode >= 5)
+            {
+                static int s_absentScanFrame = -1;
+                if (s_absentScanFrame != tr.frameCount)
+                {
+                    s_absentScanFrame = tr.frameCount;
+                    for (int probe = 0; probe < SHADOW_BRANCH_TRACK_SIZE; probe++)
+                    {
+                        const shadowBranchTrack_t &t = s_branchTrack[probe];
+                        if (t.valid && t.lastSeenFrame == tr.frameCount - 1)
+                        {
+                            common->Printf("VK SHADOW ABSENT: tri=%p lightDef=%p frame=%d prevSig=0x%08X "
+                                           "prevMode=%s prevIndexSet=%d prevInsideFlag=%d prevInsideLight=%d\n",
+                                           t.tri, t.lightDef, tr.frameCount, t.signature,
+                                           (t.signature & (1u << 0)) ? "zpass" : "zfail",
+                                           (int)((t.signature >> 6) & 0x3), (t.signature & (1u << 4)) ? 1 : 0,
+                                           (t.signature & (1u << 5)) ? 1 : 0);
+                        }
+                    }
+                }
+            }
+
             const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
             const idMaterial *material = surf->material;
             const uintptr_t hTri = (uintptr_t)tri >> 4;
@@ -1276,21 +1311,16 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
                 const int changedInsideLight = (delta & (1u << 5)) ? 1 : 0;
                 const int changedIndexSet = (delta & (0x3u << 6)) ? 1 : 0;
                 const int changedDrawCount = (delta & (0xFFFFu << 8)) ? 1 : 0;
-                common->Printf(
-                    "VK SHADOW BRANCH CHANGE: tri=%p lightDef=%p frame=%d prevSig=0x%08X newSig=0x%08X "
-                    "d(mode=%d mirror=%d effMirror=%d flipOps=%d inside=%d insideLight=%d indexSet=%d draw=%d) "
-                    "mode=%s indexSet=%s draw=%d full=%d noFront=%d noCaps=%d insideFlag=%d insideLight=%d mirror=%d "
-                    "effectiveMirror=%d\n",
-                    tri, lightDef, tr.frameCount, track.signature, branchSig, changedMode, changedMirror,
-                    changedEffMirror, changedFlipOps, changedInsideFlag, changedInsideLight, changedIndexSet,
-                    changedDrawCount, external ? "zpass" : "zfail", indexSet, numDrawIndexes, tri->numIndexes,
-                    tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps,
-                    (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? 1 : 0, backEnd.vLight->viewInsideLight ? 1 : 0,
-                    mirrorView ? 1 : 0, effectiveMirrorOps ? 1 : 0);
+                const bool structuralChange = (changedMode | changedMirror | changedEffMirror | changedFlipOps |
+                                               changedInsideFlag | changedInsideLight) != 0;
 
-                // Always emit a geometry/index-content pre-snapshot with branch changes,
-                // even if later shadow draw setup bails out before detailed geom logging.
-                if (r_vkLogShadowGeom.GetInteger() == 0)
+                // At normal debug levels, suppress branch changes that are only
+                // index-set/draw-count churn to keep logs readable during camera sweeps.
+                if (!structuralChange && logMode < 5)
+                {
+                    track.lastLoggedFrame = tr.frameCount;
+                }
+                else
                 {
                     uint32_t preHash = 2166136261u;
                     if (numDrawIndexes > 0)
@@ -1305,14 +1335,73 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
                         preHash ^= (uint32_t)tri->indexes[numDrawIndexes - 1];
                         preHash *= 16777619u;
                     }
+                    common->Printf(
+                        "VK SHADOW BRANCH CHANGE: tri=%p lightDef=%p frame=%d prevSig=0x%08X newSig=0x%08X "
+                        "d(mode=%d mirror=%d effMirror=%d flipOps=%d inside=%d insideLight=%d indexSet=%d draw=%d) "
+                        "mode=%s indexSet=%s draw=%d hash=0x%08X full=%d noFront=%d noCaps=%d insideFlag=%d "
+                        "insideLight=%d "
+                        "mirror=%d effectiveMirror=%d phase=%s scissor=(%d,%d %u,%u)\n",
+                        tri, lightDef, tr.frameCount, track.signature, branchSig, changedMode, changedMirror,
+                        changedEffMirror, changedFlipOps, changedInsideFlag, changedInsideLight, changedIndexSet,
+                        changedDrawCount, external ? "zpass" : "zfail", indexSet, numDrawIndexes, preHash,
+                        tri->numIndexes, tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps,
+                        (surf->dsFlags & DSF_VIEW_INSIDE_SHADOW) ? 1 : 0, backEnd.vLight->viewInsideLight ? 1 : 0,
+                        mirrorView ? 1 : 0, effectiveMirrorOps ? 1 : 0, s_shadowPhaseTag, lightScissor.offset.x,
+                        lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                        (unsigned int)lightScissor.extent.height);
 
-                    common->Printf("VK SHADOW GEOM PRE: tri=%p lightDef=%p frame=%d draw=%d hash=0x%08X full=%d noFront=%d noCaps=%d\n",
-                                   tri, lightDef, tr.frameCount, numDrawIndexes, preHash, tri->numIndexes,
-                                   tri->numShadowIndexesNoFrontCaps, tri->numShadowIndexesNoCaps);
+                    track.lastLoggedFrame = tr.frameCount;
+                    branchChangedThisDraw = true;
                 }
 
-                track.lastLoggedFrame = tr.frameCount;
-                branchChangedThisDraw = true;
+                if (changedInsideFlag && logMode >= 4)
+                {
+                    uint32_t insideHash = 2166136261u;
+                    if (numDrawIndexes > 0)
+                    {
+                        const int sampleCount = 64;
+                        const int step = (numDrawIndexes / sampleCount > 1) ? (numDrawIndexes / sampleCount) : 1;
+                        for (int ii = 0; ii < numDrawIndexes; ii += step)
+                        {
+                            insideHash ^= (uint32_t)tri->indexes[ii];
+                            insideHash *= 16777619u;
+                        }
+                        insideHash ^= (uint32_t)tri->indexes[numDrawIndexes - 1];
+                        insideHash *= 16777619u;
+                    }
+                    const int prevInsideFlag = (track.signature & (1u << 4)) ? 1 : 0;
+                    const int newInsideFlag = (branchSig & (1u << 4)) ? 1 : 0;
+                    common->Printf(
+                        "VK SHADOW INSIDE FLAG CHANGE: tri=%p lightDef=%p frame=%d prevInside=%d newInside=%d "
+                        "dsFlags=0x%X viewInsideLight=%d seesBits=0x%X capBits=0x%X capInfinite=%d "
+                        "path=%s indexSet=%s pipe=%s mirror=%d flipOps=%d effectiveMirror=%d phase=%s "
+                        "draw=%d hash=0x%08X scissor=(%d,%d %u,%u)\n",
+                        tri, lightDef, tr.frameCount, prevInsideFlag, newInsideFlag, (unsigned int)surf->dsFlags,
+                        backEnd.vLight->viewInsideLight ? 1 : 0, backEnd.vLight->viewSeesShadowPlaneBits,
+                        tri->shadowCapPlaneBits, (tri->shadowCapPlaneBits & SHADOW_CAP_INFINITE) ? 1 : 0, decisionPath,
+                        indexSet, pipeTag, mirrorView ? 1 : 0, flipShadowOps ? 1 : 0, effectiveMirrorOps ? 1 : 0,
+                        s_shadowPhaseTag, numDrawIndexes, insideHash, lightScissor.offset.x, lightScissor.offset.y,
+                        (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height);
+                }
+
+                if (logMode >= 4 && (changedInsideFlag || changedInsideLight))
+                {
+                    const int prevInsideFlag = (track.signature & (1u << 4)) ? 1 : 0;
+                    const int prevInsideLight = (track.signature & (1u << 5)) ? 1 : 0;
+                    const int newInsideFlag = (branchSig & (1u << 4)) ? 1 : 0;
+                    const int newInsideLight = (branchSig & (1u << 5)) ? 1 : 0;
+                    common->Printf(
+                        "VK SHADOW FLICKER CANDIDATE: tri=%p lightDef=%p frame=%d dInside=%d dInsideLight=%d "
+                        "inside=%d->%d insideLight=%d->%d pipe=%s mode=%s path=%s indexSet=%s "
+                        "mirror=%d flipOps=%d effectiveMirror=%d seesBits=0x%X capBits=0x%X phase=%s "
+                        "scissor=(%d,%d %u,%u)\n",
+                        tri, lightDef, tr.frameCount, changedInsideFlag, changedInsideLight, prevInsideFlag,
+                        newInsideFlag, prevInsideLight, newInsideLight, pipeTag, external ? "zpass" : "zfail",
+                        decisionPath, indexSet, mirrorView ? 1 : 0, flipShadowOps ? 1 : 0, effectiveMirrorOps ? 1 : 0,
+                        backEnd.vLight->viewSeesShadowPlaneBits, tri->shadowCapPlaneBits, s_shadowPhaseTag,
+                        lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                        (unsigned int)lightScissor.extent.height);
+                }
             }
 
             track.tri = tri;
@@ -1488,7 +1577,8 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         shadowGeomTrack_t &track = s_geomTrack[trackIdx];
         const bool firstSeen = !track.valid;
         const bool seenLastFrame = !firstSeen && (track.lastSeenFrame == tr.frameCount - 1);
-        const bool changed = seenLastFrame && ((track.signature != geomSig) || (track.sampledIndexHash != sampledIndexHash));
+        const bool changed =
+            seenLastFrame && ((track.signature != geomSig) || (track.sampledIndexHash != sampledIndexHash));
         const bool shouldLogGeom = (geomLogMode >= 2) || changed;
 
         if (shouldLogGeom && track.lastLoggedFrame != tr.frameCount)
@@ -1589,6 +1679,37 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 {
     s_cmd = cmd;
 
+    struct lightPassTrack_t
+    {
+        const idRenderLightLocal *lightDef;
+        uint32_t signature;
+        int lastSeenFrame;
+        int lastLoggedFrame;
+        bool valid;
+    };
+    static const int LIGHT_PASS_TRACK_SIZE = 8192;
+    static lightPassTrack_t s_lightPassTrack[LIGHT_PASS_TRACK_SIZE] = {};
+
+    auto CountAndHashSurfList = [](const drawSurf_t *head, int &outCount, uint32_t &outHash) {
+        outCount = 0;
+        outHash = 2166136261u;
+        for (const drawSurf_t *s = head; s; s = s->nextOnLight)
+        {
+            outCount++;
+            const srfTriangles_t *tri = s->geo;
+            const uintptr_t hSurf = (uintptr_t)s >> 4;
+            const uintptr_t hTri = (uintptr_t)tri >> 4;
+            const uintptr_t hMat = (uintptr_t)s->material >> 4;
+            outHash ^= (uint32_t)(hSurf ^ (hTri * 33u) ^ (hMat * 131u));
+            outHash *= 16777619u;
+            if (tri)
+            {
+                outHash ^= (uint32_t)tri->numIndexes;
+                outHash *= 16777619u;
+            }
+        }
+    };
+
     // Must be called before RB_CreateSingleDrawInteractions so backEnd.lightScale is valid.
     // Without this, all lightColor[] values are 0 and RB_SubmittInteraction never fires.
     RB_DetermineLightScale();
@@ -1617,7 +1738,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Keep a copy of the rect so we can use it in vkCmdClearAttachments below.
         VkRect2D lightScissor = {{0, 0}, vk.swapchainExtent}; // default: full framebuffer
 
-        if (r_useScissor.GetBool())
+        if (r_useScissor.GetBool() && !r_vkLightFullScissor.GetBool())
         {
             int h = (int)vk.swapchainExtent.height;
             int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
@@ -1629,6 +1750,95 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
             lightScissor.extent.height = absY2 - absY1 + 1;
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+        }
+
+        if (r_vkLogShadowBranch.GetInteger() >= 5)
+        {
+            int countGS = 0, countLS = 0, countGI = 0, countLI = 0, countTI = 0;
+            uint32_t hashGS = 0, hashLS = 0, hashGI = 0, hashLI = 0, hashTI = 0;
+            CountAndHashSurfList(vLight->globalShadows, countGS, hashGS);
+            CountAndHashSurfList(vLight->localShadows, countLS, hashLS);
+            CountAndHashSurfList(vLight->globalInteractions, countGI, hashGI);
+            CountAndHashSurfList(vLight->localInteractions, countLI, hashLI);
+            CountAndHashSurfList(vLight->translucentInteractions, countTI, hashTI);
+
+            const idRenderLightLocal *lightDef = vLight->lightDef;
+            const uintptr_t hLightDef = (uintptr_t)lightDef >> 4;
+            const uint32_t slot = (uint32_t)(hLightDef & (LIGHT_PASS_TRACK_SIZE - 1));
+            int found = -1;
+            int empty = -1;
+            for (int probe = 0; probe < LIGHT_PASS_TRACK_SIZE; probe++)
+            {
+                const int i = (int)((slot + (uint32_t)probe) & (LIGHT_PASS_TRACK_SIZE - 1));
+                if (!s_lightPassTrack[i].valid)
+                {
+                    if (empty < 0)
+                        empty = i;
+                    continue;
+                }
+                if (s_lightPassTrack[i].lightDef == lightDef)
+                {
+                    found = i;
+                    break;
+                }
+            }
+
+            const int trackIdx = (found >= 0) ? found : ((empty >= 0) ? empty : (int)slot);
+            lightPassTrack_t &track = s_lightPassTrack[trackIdx];
+            const bool firstSeen = !track.valid;
+
+            uint32_t passSig = 2166136261u;
+            passSig ^= (uint32_t)lightScissor.offset.x;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)lightScissor.offset.y;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)lightScissor.extent.width;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)lightScissor.extent.height;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)countGS;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)countLS;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)countGI;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)countLI;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)countTI;
+            passSig *= 16777619u;
+            passSig ^= hashGS;
+            passSig *= 16777619u;
+            passSig ^= hashLS;
+            passSig *= 16777619u;
+            passSig ^= hashGI;
+            passSig *= 16777619u;
+            passSig ^= hashLI;
+            passSig *= 16777619u;
+            passSig ^= hashTI;
+            passSig *= 16777619u;
+            passSig ^= vLight->viewInsideLight ? 0x9E3779B9u : 0u;
+            passSig *= 16777619u;
+            passSig ^= (uint32_t)vLight->viewSeesShadowPlaneBits;
+            passSig *= 16777619u;
+
+            const bool changed = !firstSeen && (track.signature != passSig);
+            if (changed && track.lastLoggedFrame != tr.frameCount)
+            {
+                common->Printf(
+                    "VK LIGHT PASS CHANGE: lightDef=%p frame=%d prevSig=0x%08X newSig=0x%08X "
+                    "insideLight=%d seesBits=0x%X scissor=(%d,%d %u,%u) "
+                    "counts(gs=%d ls=%d gi=%d li=%d ti=%d) hashes(gs=0x%08X ls=0x%08X gi=0x%08X li=0x%08X ti=0x%08X)\n",
+                    lightDef, tr.frameCount, track.signature, passSig, vLight->viewInsideLight ? 1 : 0,
+                    vLight->viewSeesShadowPlaneBits, lightScissor.offset.x, lightScissor.offset.y,
+                    (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, countGS, countLS,
+                    countGI, countLI, countTI, hashGS, hashLS, hashGI, hashLI, hashTI);
+                track.lastLoggedFrame = tr.frameCount;
+            }
+
+            track.lightDef = lightDef;
+            track.signature = passSig;
+            track.lastSeenFrame = tr.frameCount;
+            track.valid = true;
         }
 
         // Clear stencil to 128 within this light's scissor rect before processing it.
@@ -1659,6 +1869,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 #else
         const bool useStencilShadows = true;
 #endif
+        const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
+        const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -1671,13 +1883,16 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // VK_RB_DrawShadowSurface binds the correct pipeline (Z-pass or Z-fail) per surface.
         if (useStencilShadows && vLight->globalShadows && !r_skipShadows.GetBool())
         {
+            vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
+            s_shadowPhaseTag = "global";
             for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
-                VK_RB_DrawShadowSurface(cmd, s, lightScissor);
+                VK_RB_DrawShadowSurface(cmd, s, shadowScissor);
         }
 
         // Step 2: local interactions — rebind interaction pipeline after shadow draws.
         if (!r_skipInteractions.GetBool())
         {
+            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
             for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
@@ -1686,13 +1901,16 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Step 3: local shadow volumes
         if (useStencilShadows && vLight->localShadows && !r_skipShadows.GetBool())
         {
+            vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
+            s_shadowPhaseTag = "local";
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
-                VK_RB_DrawShadowSurface(cmd, s, lightScissor);
+                VK_RB_DrawShadowSurface(cmd, s, shadowScissor);
         }
 
         // Step 4: global interactions — rebind interaction pipeline after shadow draws.
         if (!r_skipInteractions.GetBool())
         {
+            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
             for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
@@ -1700,6 +1918,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
 
         if (!r_skipTranslucent.GetBool() && vLight->translucentInteractions)
         {
+            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             // Translucent surfaces didn't write depth during the prepass, so they may not
             // be at the same depth as opaque geometry.  Use a pipeline with stencil disabled
             // so shadow volumes don't incorrectly cull them (mirrors GL path: performStencilTest=false).
