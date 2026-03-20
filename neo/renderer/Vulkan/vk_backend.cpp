@@ -225,8 +225,12 @@ static void VK_BuildSurfMVP(const viewEntity_t *space, float mvpOut[16])
             hackProj[14] *= 0.25f;
         else
             hackProj[14] -= space->modelDepthHack;
+        // GL→VK Z remap.  weaponDepthHack uses [0, 0.5] to match glDepthRange(0, 0.5);
+        // modelDepthHack uses the standard [0, 1] range (it only needs a Z shift).
+        const float zS = space->weaponDepthHack ? 0.25f : 0.5f;
+        const float zB = space->weaponDepthHack ? 0.25f : 0.5f;
         for (int c = 0; c < 4; c++)
-            hackProj[c * 4 + 2] = 0.5f * hackProj[c * 4 + 2] + 0.5f * hackProj[c * 4 + 3];
+            hackProj[c * 4 + 2] = zS * hackProj[c * 4 + 2] + zB * hackProj[c * 4 + 3];
         VK_MultiplyMatrix4(hackProj, space->modelViewMatrix, mvpOut);
     }
     else
