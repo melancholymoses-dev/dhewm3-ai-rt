@@ -917,6 +917,7 @@ extern idCVar r_useExternalShadows;      // 1 = skip drawing caps when outside t
 extern idCVar r_vkLogShadowBranch;       // Vulkan shadow branch logging (0=off,1=per-light,2=per-surface)
 extern idCVar r_vkShadowFlipOps;         // Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection
 extern idCVar r_vkShadowStableMode;      // Vulkan shadow stabilization: force full-volume Z-fail path
+extern idCVar r_vkLogShadowGeom;         // Vulkan shadow geometry logging (source path and geometry signature)
 extern idCVar r_vkLogSubmitInfo;         // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)
 extern idCVar r_useOptimizedShadows;     // 1 = use the dmap generated static shadow volumes
 extern idCVar r_useShadowVertexProgram;  // 1 = do the shadow projection in the vertex program on capable cards

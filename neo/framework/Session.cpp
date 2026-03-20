@@ -2845,8 +2845,6 @@ void idSessionLocal::Draw()
     }
     else if (guiActive && !guiActive->State().GetBool("gameDraw"))
     {
-        common->Printf("Draw: guiActive->Redraw path (gui=%p)\n", (void *)guiActive);
-        fflush(NULL);
 
         // draw the frozen gui in the background
         if (guiActive == guiMsg && guiMsgRestore)

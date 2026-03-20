@@ -254,10 +254,10 @@ idCVar r_flareSize("r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the fl
 idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
-idCVar r_vkLogShadowBranch(
-    "r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every shadow surface", 0, 2,
-    idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogShadowBranch("r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
+                           "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every "
+                           "shadow surface, 3=log only per-surface branch/signature changes",
+                           0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
 idCVar r_vkShadowFlipOps(
     "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
@@ -266,6 +266,10 @@ idCVar r_vkShadowStableMode(
     "r_vkShadowStableMode", "1", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow stabilization: force full-volume Z-fail path to reduce view-dependent popping/flicker", 0, 1,
     idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkLogShadowGeom(
+    "r_vkLogShadowGeom", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan shadow geometry debug: 0=off, 1=log per-surface geometry/source signature changes, 2=log every shadow draw",
+    0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkLogSubmitInfo(
     "r_vkLogSubmitInfo", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,

@@ -70,6 +70,11 @@ void VKBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textu
     VK_Image_Upload(img, data, w, h);
 }
 
+void VKBackend::CubeImage_Upload(idImage *img, const byte *const pic[6], int size)
+{
+    VK_Image_UploadCubemap(img, pic, size);
+}
+
 void VKBackend::Image_Purge(idImage *img)
 {
     VK_Image_Purge(img);

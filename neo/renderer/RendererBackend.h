@@ -16,6 +16,7 @@ struct IBackend
     // Resource management
     virtual void Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm,
                               bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm) = 0;
+    virtual void CubeImage_Upload(idImage *img, const byte *const pic[6], int size) {}
     virtual void Image_Purge(idImage *img) = 0;
     virtual void VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool indexBuffer) = 0;
     virtual void VertexCache_Free(vertCache_t *vc) = 0;

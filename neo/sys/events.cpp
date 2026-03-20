@@ -40,7 +40,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "framework/Session_local.h"
 #include "renderer/RenderSystem.h"
 #include "renderer/tr_local.h"
-#include "renderer/Vulkan/VKbackend.h"
+#include "renderer/Vulkan/VKBackend.h"
 
 #include "sys/sys_public.h"
 #include "sys/sys_imgui.h"
