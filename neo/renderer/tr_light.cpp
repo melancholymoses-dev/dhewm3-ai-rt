@@ -164,7 +164,8 @@ void R_CreatePrivateShadowCache(srfTriangles_t *tri)
         return;
     }
 
-    activeBackend->VertexCache_Alloc(&tri->shadowCache, tri->shadowVertexes, tri->numVerts * sizeof(*tri->shadowVertexes), false);
+    activeBackend->VertexCache_Alloc(&tri->shadowCache, tri->shadowVertexes,
+                                     tri->numVerts * sizeof(*tri->shadowVertexes), false);
 }
 
 /*
@@ -500,6 +501,20 @@ a viewLight and add it to the list with an empty scissor rect.
 */
 viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
 {
+    struct lightInsideTrack_t
+    {
+        const idRenderLightLocal *lightDef;
+        int lastSeenFrame;
+        int lastLoggedFrame;
+        bool viewInsideLight;
+        float maxD;
+        int outsideMask;
+        int seesBits;
+        bool valid;
+    };
+    static const int LIGHT_INSIDE_TRACK_SIZE = 2048;
+    static lightInsideTrack_t s_lightInsideTrack[LIGHT_INSIDE_TRACK_SIZE] = {};
+
     viewLight_t *vLight;
 
     if (light->viewCount == tr.viewCount)
@@ -516,24 +531,151 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
     vLight->scissorRect.Clear();
 
     // calculate the shadow cap optimization states
-    vLight->viewInsideLight = R_TestPointInViewLight(tr.viewDef->renderView.vieworg, light);
-    if (!vLight->viewInsideLight)
+    float frustumD[6];
+    int outsideMask = 0;
+    float maxD = -idMath::INFINITY;
+    int maxPlane = 0;
+    for (int i = 0; i < 6; i++)
     {
-        vLight->viewSeesShadowPlaneBits = 0;
-        for (int i = 0; i < light->numShadowFrustums; i++)
+        const float d = light->frustum[i].Distance(tr.viewDef->renderView.vieworg);
+        frustumD[i] = d;
+        if (d > INSIDE_LIGHT_FRUSTUM_SLOP)
         {
-            float d = light->shadowFrustums[i].planes[5].Distance(tr.viewDef->renderView.vieworg);
-            if (d < INSIDE_LIGHT_FRUSTUM_SLOP)
-            {
-                vLight->viewSeesShadowPlaneBits |= 1 << i;
-            }
+            outsideMask |= (1 << i);
         }
+        if (d > maxD)
+        {
+            maxD = d;
+            maxPlane = i;
+        }
+    }
+
+    const uintptr_t hLight = (uintptr_t)light >> 4;
+    uint32_t slot = (uint32_t)(hLight & (LIGHT_INSIDE_TRACK_SIZE - 1));
+    int found = -1;
+    int empty = -1;
+    for (int probe = 0; probe < LIGHT_INSIDE_TRACK_SIZE; probe++)
+    {
+        const int idx = (int)((slot + (uint32_t)probe) & (LIGHT_INSIDE_TRACK_SIZE - 1));
+        if (!s_lightInsideTrack[idx].valid)
+        {
+            if (empty < 0)
+            {
+                empty = idx;
+            }
+            continue;
+        }
+        if (s_lightInsideTrack[idx].lightDef == light)
+        {
+            found = idx;
+            break;
+        }
+    }
+
+    const int trackIdx = (found >= 0) ? found : ((empty >= 0) ? empty : (int)slot);
+    lightInsideTrack_t &track = s_lightInsideTrack[trackIdx];
+    const bool firstSeen = !track.valid;
+
+    const bool rawInside = R_TestPointInViewLight(tr.viewDef->renderView.vieworg, light);
+    bool stableInside = rawInside;
+
+    const float hystEnterRaw = r_vkInsideLightHysteresisEnter.GetFloat();
+    const float hystExitRaw = r_vkInsideLightHysteresisExit.GetFloat();
+    const float hystEnter = (hystEnterRaw > 0.0f) ? hystEnterRaw : 0.0f;
+    const float hystExit = (hystExitRaw > 0.0f) ? hystExitRaw : 0.0f;
+    if ((hystEnter > 0.0f || hystExit > 0.0f) && !firstSeen)
+    {
+        if (track.viewInsideLight)
+        {
+            stableInside = (maxD <= (INSIDE_LIGHT_FRUSTUM_SLOP + hystExit));
+        }
+        else
+        {
+            stableInside = (maxD < (INSIDE_LIGHT_FRUSTUM_SLOP - hystEnter));
+        }
+    }
+
+    const bool useVkStableShadowPolicy = (tr.backEndRenderer == BE_VULKAN) && r_vkShadowStableMode.GetBool();
+
+    if (useVkStableShadowPolicy)
+    {
+        // Vulkan stable mode: avoid camera-threshold toggles driving hard culling.
+        // Keep the light in the "inside" path and expose all finite cap planes.
+        vLight->viewInsideLight = true;
+        const int cappedFrustums = (light->numShadowFrustums < 6) ? light->numShadowFrustums : 6;
+        vLight->viewSeesShadowPlaneBits = (cappedFrustums > 0) ? ((1 << cappedFrustums) - 1) : 0;
     }
     else
     {
-        // this should not be referenced in this case
-        vLight->viewSeesShadowPlaneBits = 63;
+        vLight->viewInsideLight = stableInside;
+        if (!vLight->viewInsideLight)
+        {
+            vLight->viewSeesShadowPlaneBits = 0;
+            for (int i = 0; i < light->numShadowFrustums; i++)
+            {
+                float d = light->shadowFrustums[i].planes[5].Distance(tr.viewDef->renderView.vieworg);
+                if (d < INSIDE_LIGHT_FRUSTUM_SLOP)
+                {
+                    vLight->viewSeesShadowPlaneBits |= 1 << i;
+                }
+            }
+        }
+        else
+        {
+            // this should not be referenced in this case
+            vLight->viewSeesShadowPlaneBits = 63;
+        }
     }
+
+    if (r_vkLogShadowBranch.GetInteger() >= 4)
+    {
+        float shadowDMin = idMath::INFINITY;
+        float shadowDMax = -idMath::INFINITY;
+        for (int i = 0; i < light->numShadowFrustums; i++)
+        {
+            const float d = light->shadowFrustums[i].planes[5].Distance(tr.viewDef->renderView.vieworg);
+            if (d < shadowDMin)
+            {
+                shadowDMin = d;
+            }
+            if (d > shadowDMax)
+            {
+                shadowDMax = d;
+            }
+        }
+        if (light->numShadowFrustums <= 0)
+        {
+            shadowDMin = 0.0f;
+            shadowDMax = 0.0f;
+        }
+
+        const bool changed = !firstSeen && (track.viewInsideLight != vLight->viewInsideLight);
+        if (changed && track.lastLoggedFrame != tr.frameCount)
+        {
+            const float marginNow = INSIDE_LIGHT_FRUSTUM_SLOP - maxD;
+            const float marginPrev = INSIDE_LIGHT_FRUSTUM_SLOP - track.maxD;
+            common->Printf(
+                "VK LIGHT INSIDE CHANGE: lightDef=%p frame=%d prev=%d new=%d outsideMask=0x%02X "
+                "maxPlane=%d maxD=%.3f slop=%.3f seesBits=0x%X numShadowFrustums=%d shadowD[min=%.3f max=%.3f] "
+                "marginNow=%.3f marginPrev=%.3f dMaxD=%.3f prevOutsideMask=0x%02X prevSeesBits=0x%X "
+                "hyst=(%.3f,%.3f) rawInside=%d frustumD=[%.3f %.3f %.3f %.3f %.3f %.3f] vieworg=(%.2f %.2f %.2f)\n",
+                light, tr.frameCount, track.viewInsideLight ? 1 : 0, vLight->viewInsideLight ? 1 : 0, outsideMask,
+                maxPlane, maxD, INSIDE_LIGHT_FRUSTUM_SLOP, vLight->viewSeesShadowPlaneBits, light->numShadowFrustums,
+                shadowDMin, shadowDMax, marginNow, marginPrev, maxD - track.maxD, track.outsideMask, track.seesBits,
+                hystEnter, hystExit, rawInside ? 1 : 0, frustumD[0], frustumD[1], frustumD[2], frustumD[3], frustumD[4],
+                frustumD[5], tr.viewDef->renderView.vieworg.x, tr.viewDef->renderView.vieworg.y,
+                tr.viewDef->renderView.vieworg.z);
+            track.lastLoggedFrame = tr.frameCount;
+        }
+    }
+
+    track.lightDef = light;
+    track.viewInsideLight = vLight->viewInsideLight;
+    track.maxD = maxD;
+    track.outsideMask = outsideMask;
+    track.seesBits = vLight->viewSeesShadowPlaneBits;
+    track.lastSeenFrame = tr.frameCount;
+    track.valid = true;
 
     // see if the light center is in view, which will allow us to cull invisible shadows
     vLight->viewSeesGlobalLightOrigin = R_PointInFrustum(light->globalLightOrigin, tr.viewDef->frustum, 4);
@@ -1188,7 +1330,8 @@ void R_AddLightSurfaces(void)
 
             if (!tri->indexCache && r_useIndexBuffers.GetBool())
             {
-                activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), true);
+                activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes,
+                                                 tri->numIndexes * sizeof(tri->indexes[0]), true);
             }
             if (tri->indexCache)
             {
@@ -1640,7 +1783,8 @@ static void R_AddAmbientDrawsurfs(viewEntity_t *vEntity)
 
             if (r_useIndexBuffers.GetBool() && !tri->indexCache)
             {
-                activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes, tri->numIndexes * sizeof(tri->indexes[0]), true);
+                activeBackend->VertexCache_Alloc(&tri->indexCache, tri->indexes,
+                                                 tri->numIndexes * sizeof(tri->indexes[0]), true);
             }
             if (tri->indexCache)
             {

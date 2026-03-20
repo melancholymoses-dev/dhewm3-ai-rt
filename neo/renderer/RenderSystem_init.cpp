@@ -256,8 +256,10 @@ idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_IN
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkLogShadowBranch("r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
                            "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every "
-                           "shadow surface, 3=log only per-surface branch/signature changes",
-                           0, 3, idCmdSystem::ArgCompletion_Integer<0, 3>);
+                           "shadow surface, 3=log only per-surface branch/signature changes, 4=also log "
+                           "viewInsideLight classification flips with plane-distance diagnostics, 5=verbose "
+                           "(includes light pass/list churn and index/draw-only branch deltas)",
+                           0, 5, idCmdSystem::ArgCompletion_Integer<0, 5>);
 idCVar r_vkShadowFlipOps(
     "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
@@ -270,6 +272,21 @@ idCVar r_vkLogShadowGeom(
     "r_vkLogShadowGeom", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan shadow geometry debug: 0=off, 1=log per-surface geometry/source signature changes, 2=log every shadow draw",
     0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkShadowFullScissor(
+    "r_vkShadowFullScissor", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow debug: 1 = draw shadow volumes with full-frame scissor (interactions still use light scissor)", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkLightFullScissor(
+    "r_vkLightFullScissor", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow debug: 1 = force full-frame scissor for each whole light pass (clear+shadows+interactions)", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkInsideLightHysteresisEnter(
+    "r_vkInsideLightHysteresisEnter", "0.50", CVAR_RENDERER | CVAR_FLOAT,
+    "Vulkan shadow stability: extra enter-inside margin (units) below INSIDE_LIGHT_FRUSTUM_SLOP", 0.0f, 64.0f);
+idCVar r_vkInsideLightHysteresisExit(
+    "r_vkInsideLightHysteresisExit", "1.50", CVAR_RENDERER | CVAR_FLOAT,
+    "Vulkan shadow stability: extra stay-inside margin (units) above INSIDE_LIGHT_FRUSTUM_SLOP before leaving", 0.0f,
+    64.0f);
 idCVar r_vkLogSubmitInfo(
     "r_vkLogSubmitInfo", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,

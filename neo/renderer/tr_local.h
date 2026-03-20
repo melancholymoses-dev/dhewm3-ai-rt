@@ -911,30 +911,35 @@ extern idCVar r_useInteractionScissors; // 1 = use a custom scissor rectangle fo
 extern idCVar r_useFrustumFarDistance;  // if != 0 force the view frustum far distance to this distance
 extern idCVar r_useShadowCulling;       // try to cull shadows from partially visible lights
 extern idCVar
-    r_usePreciseTriangleInteractions;    // 1 = do winding clipping to determine if each ambiguous tri should be lit
-extern idCVar r_useTurboShadow;          // 1 = use the infinite projection with W technique for dynamic shadows
-extern idCVar r_useExternalShadows;      // 1 = skip drawing caps when outside the light volume
-extern idCVar r_vkLogShadowBranch;       // Vulkan shadow branch logging (0=off,1=per-light,2=per-surface)
-extern idCVar r_vkShadowFlipOps;         // Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection
-extern idCVar r_vkShadowStableMode;      // Vulkan shadow stabilization: force full-volume Z-fail path
-extern idCVar r_vkLogShadowGeom;         // Vulkan shadow geometry logging (source path and geometry signature)
-extern idCVar r_vkLogSubmitInfo;         // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)
-extern idCVar r_useOptimizedShadows;     // 1 = use the dmap generated static shadow volumes
-extern idCVar r_useShadowVertexProgram;  // 1 = do the shadow projection in the vertex program on capable cards
-extern idCVar r_useShadowProjectedCull;  // 1 = discard triangles outside light volume before shadowing
-extern idCVar r_useDeferredTangents;     // 1 = don't always calc tangents after deform
-extern idCVar r_useCachedDynamicModels;  // 1 = cache snapshots of dynamic models
-extern idCVar r_useTwoSidedStencil;      // 1 = do stencil shadows in one pass with different ops on each side
-extern idCVar r_useInfiniteFarZ;         // 1 = use the no-far-clip-plane trick
-extern idCVar r_useScissor;              // 1 = scissor clip as portals and lights are processed
-extern idCVar r_usePortals;              // 1 = use portals to perform area culling, otherwise draw everything
-extern idCVar r_useStateCaching;         // avoid redundant state changes in GL_*() calls
-extern idCVar r_useCombinerDisplayLists; // if 1, put all nvidia register combiner programming in display lists
-extern idCVar r_useVertexBuffers;        // if 0, don't use ARB_vertex_buffer_object for vertexes
-extern idCVar r_useIndexBuffers;         // if 0, don't use ARB_vertex_buffer_object for indexes
-extern idCVar r_useEntityCallbacks;      // if 0, issue the callback immediately at update time, rather than defering
-extern idCVar r_lightAllBackFaces;       // light all the back faces, even when they would be shadowed
-extern idCVar r_useDepthBoundsTest;      // use depth bounds test to reduce shadow fill
+    r_usePreciseTriangleInteractions; // 1 = do winding clipping to determine if each ambiguous tri should be lit
+extern idCVar r_useTurboShadow;       // 1 = use the infinite projection with W technique for dynamic shadows
+extern idCVar r_useExternalShadows;   // 1 = skip drawing caps when outside the light volume
+extern idCVar r_vkLogShadowBranch;    // Vulkan shadow branch logging (0=off,1=per-light,2=per-surface,3=signature
+                                      // changes,4=+inside-light flip diagnostics,5=+verbose pass/list churn)
+extern idCVar r_vkShadowFlipOps;      // Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection
+extern idCVar r_vkShadowStableMode;   // Vulkan shadow stabilization: force full-volume Z-fail path
+extern idCVar r_vkLogShadowGeom;      // Vulkan shadow geometry logging (source path and geometry signature)
+extern idCVar r_vkShadowFullScissor;  // Vulkan shadow debug: draw shadow volumes with full-frame scissor
+extern idCVar r_vkLightFullScissor;   // Vulkan shadow debug: force full-frame scissor for whole light pass
+extern idCVar r_vkInsideLightHysteresisEnter; // Vulkan shadow stability: extra enter-inside margin below slop
+extern idCVar r_vkInsideLightHysteresisExit;  // Vulkan shadow stability: extra leave-inside margin above slop
+extern idCVar r_vkLogSubmitInfo;              // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)
+extern idCVar r_useOptimizedShadows;          // 1 = use the dmap generated static shadow volumes
+extern idCVar r_useShadowVertexProgram;       // 1 = do the shadow projection in the vertex program on capable cards
+extern idCVar r_useShadowProjectedCull;       // 1 = discard triangles outside light volume before shadowing
+extern idCVar r_useDeferredTangents;          // 1 = don't always calc tangents after deform
+extern idCVar r_useCachedDynamicModels;       // 1 = cache snapshots of dynamic models
+extern idCVar r_useTwoSidedStencil;           // 1 = do stencil shadows in one pass with different ops on each side
+extern idCVar r_useInfiniteFarZ;              // 1 = use the no-far-clip-plane trick
+extern idCVar r_useScissor;                   // 1 = scissor clip as portals and lights are processed
+extern idCVar r_usePortals;                   // 1 = use portals to perform area culling, otherwise draw everything
+extern idCVar r_useStateCaching;              // avoid redundant state changes in GL_*() calls
+extern idCVar r_useCombinerDisplayLists;      // if 1, put all nvidia register combiner programming in display lists
+extern idCVar r_useVertexBuffers;             // if 0, don't use ARB_vertex_buffer_object for vertexes
+extern idCVar r_useIndexBuffers;              // if 0, don't use ARB_vertex_buffer_object for indexes
+extern idCVar r_useEntityCallbacks; // if 0, issue the callback immediately at update time, rather than defering
+extern idCVar r_lightAllBackFaces;  // light all the back faces, even when they would be shadowed
+extern idCVar r_useDepthBoundsTest; // use depth bounds test to reduce shadow fill
 
 extern idCVar r_supportNoSpecular; // support nospecular parm of lights
 

@@ -239,40 +239,19 @@ void VK_Image_Init(void)
     s_fallbackValid = true;
 }
 
-void VK_Image_Shutdown(void)
-{
-    VK_DestroyCinematicImage();
-
-    if (!s_fallbackValid)
-        return;
-    vkDestroySampler(vk.device, s_fallback.sampler, NULL);
-    vkDestroyImageView(vk.device, s_fallback.view, NULL);
-    vkDestroyImage(vk.device, s_fallback.image, NULL);
-    vkFreeMemory(vk.device, s_fallback.memory, NULL);
-    memset(&s_fallback, 0, sizeof(s_fallback));
-    s_fallbackValid = false;
-}
-
-void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *out)
-{
-    out->sampler = s_fallback.sampler;
-    out->imageView = s_fallback.view;
-    out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-}
-
 // ---------------------------------------------------------------------------
 // Cinematic (video) image — one shared 2D image re-uploaded each frame.
 // Matches the role of globalImages->cinematicImage in the GL path.
 // ---------------------------------------------------------------------------
 
-static vkImageData_t  s_cinImage;
-static bool           s_cinImageValid  = false;
-static int            s_cinImageW      = 0;
-static int            s_cinImageH      = 0;
-static VkBuffer       s_cinStaging     = VK_NULL_HANDLE;
-static VkDeviceMemory s_cinStagingMem  = VK_NULL_HANDLE;
-static void          *s_cinStagingPtr  = NULL;
-static VkImageLayout  s_cinLayout      = VK_IMAGE_LAYOUT_UNDEFINED;
+static vkImageData_t s_cinImage;
+static bool s_cinImageValid = false;
+static int s_cinImageW = 0;
+static int s_cinImageH = 0;
+static VkBuffer s_cinStaging = VK_NULL_HANDLE;
+static VkDeviceMemory s_cinStagingMem = VK_NULL_HANDLE;
+static void *s_cinStagingPtr = NULL;
+static VkImageLayout s_cinLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
 // Destroy the current cinematic image and staging buffer (called on shutdown or resize).
 static void VK_DestroyCinematicImage(void)
@@ -294,12 +273,33 @@ static void VK_DestroyCinematicImage(void)
 
     memset(&s_cinImage, 0, sizeof(s_cinImage));
     s_cinImageValid = false;
-    s_cinStaging    = VK_NULL_HANDLE;
+    s_cinStaging = VK_NULL_HANDLE;
     s_cinStagingMem = VK_NULL_HANDLE;
     s_cinStagingPtr = NULL;
-    s_cinImageW     = 0;
-    s_cinImageH     = 0;
-    s_cinLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+    s_cinImageW = 0;
+    s_cinImageH = 0;
+    s_cinLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
+void VK_Image_Shutdown(void)
+{
+    VK_DestroyCinematicImage();
+
+    if (!s_fallbackValid)
+        return;
+    vkDestroySampler(vk.device, s_fallback.sampler, NULL);
+    vkDestroyImageView(vk.device, s_fallback.view, NULL);
+    vkDestroyImage(vk.device, s_fallback.image, NULL);
+    vkFreeMemory(vk.device, s_fallback.memory, NULL);
+    memset(&s_fallback, 0, sizeof(s_fallback));
+    s_fallbackValid = false;
+}
+
+void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *out)
+{
+    out->sampler = s_fallback.sampler;
+    out->imageView = s_fallback.view;
+    out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
 // Ensure the cinematic VkImage + persistent staging buffer exist at the given size.
@@ -313,58 +313,58 @@ static void VK_EnsureCinematicImage(int w, int h)
     vkDeviceWaitIdle(vk.device);
     VK_DestroyCinematicImage();
 
-    const VkFormat fmt   = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkFormat fmt = VK_FORMAT_R8G8B8A8_UNORM;
     const VkDeviceSize sz = (VkDeviceSize)w * h * 4;
 
     // --- VkImage ---
     VkImageCreateInfo ic = {};
-    ic.sType        = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ic.imageType    = VK_IMAGE_TYPE_2D;
-    ic.format       = fmt;
-    ic.extent       = {(uint32_t)w, (uint32_t)h, 1};
-    ic.mipLevels    = 1;
-    ic.arrayLayers  = 1;
-    ic.samples      = VK_SAMPLE_COUNT_1_BIT;
-    ic.tiling       = VK_IMAGE_TILING_OPTIMAL;
-    ic.usage        = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    ic.sharingMode  = VK_SHARING_MODE_EXCLUSIVE;
-    ic.initialLayout= VK_IMAGE_LAYOUT_UNDEFINED;
+    ic.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ic.imageType = VK_IMAGE_TYPE_2D;
+    ic.format = fmt;
+    ic.extent = {(uint32_t)w, (uint32_t)h, 1};
+    ic.mipLevels = 1;
+    ic.arrayLayers = 1;
+    ic.samples = VK_SAMPLE_COUNT_1_BIT;
+    ic.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ic.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ic.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ic.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(vk.device, &ic, NULL, &s_cinImage.image));
 
     VkMemoryRequirements mr;
     vkGetImageMemoryRequirements(vk.device, s_cinImage.image, &mr);
     VkMemoryAllocateInfo ai = {};
-    ai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize  = mr.size;
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = mr.size;
     ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &s_cinImage.memory));
     VK_CHECK(vkBindImageMemory(vk.device, s_cinImage.image, s_cinImage.memory, 0));
 
     // --- Staging buffer (persistently mapped host-coherent) ---
     VkBufferCreateInfo bi = {};
-    bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bi.size        = sz;
-    bi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = sz;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &s_cinStaging));
 
     VkMemoryRequirements smr;
     vkGetBufferMemoryRequirements(vk.device, s_cinStaging, &smr);
     VkMemoryAllocateInfo sai = {};
-    sai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    sai.allocationSize  = smr.size;
+    sai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    sai.allocationSize = smr.size;
     sai.memoryTypeIndex = VK_FindMemoryType(smr.memoryTypeBits,
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VK_CHECK(vkAllocateMemory(vk.device, &sai, NULL, &s_cinStagingMem));
     VK_CHECK(vkBindBufferMemory(vk.device, s_cinStaging, s_cinStagingMem, 0));
     VK_CHECK(vkMapMemory(vk.device, s_cinStagingMem, 0, sz, 0, &s_cinStagingPtr));
 
     // --- View ---
     VkImageViewCreateInfo vci = {};
-    vci.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image                       = s_cinImage.image;
-    vci.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format                      = fmt;
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = s_cinImage.image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
     vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vci.subresourceRange.levelCount = 1;
     vci.subresourceRange.layerCount = 1;
@@ -372,20 +372,20 @@ static void VK_EnsureCinematicImage(int w, int h)
 
     // --- Sampler ---
     VkSamplerCreateInfo si = {};
-    si.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    si.magFilter     = VK_FILTER_LINEAR;
-    si.minFilter     = VK_FILTER_LINEAR;
-    si.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    si.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    si.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    si.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    si.maxLod        = 0.0f;
+    si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    si.magFilter = VK_FILTER_LINEAR;
+    si.minFilter = VK_FILTER_LINEAR;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    si.maxLod = 0.0f;
     VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &s_cinImage.sampler));
 
     s_cinImageValid = true;
-    s_cinImageW     = w;
-    s_cinImageH     = h;
-    s_cinLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
+    s_cinImageW = w;
+    s_cinImageH = h;
+    s_cinLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
 // Record a cinematic frame upload into cmd (must be outside any render pass).
@@ -404,39 +404,34 @@ bool VK_Image_UpdateCinematic(VkCommandBuffer cmd, const byte *rgba, int w, int 
 
     // Transition: current layout → TRANSFER_DST
     VkImageMemoryBarrier toXfer = {};
-    toXfer.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    toXfer.oldLayout           = s_cinLayout;
-    toXfer.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toXfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toXfer.oldLayout = s_cinLayout;
+    toXfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     toXfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     toXfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toXfer.image               = s_cinImage.image;
-    toXfer.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    toXfer.srcAccessMask       = (s_cinLayout == VK_IMAGE_LAYOUT_UNDEFINED)
-                                     ? 0 : VK_ACCESS_SHADER_READ_BIT;
-    toXfer.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toXfer.image = s_cinImage.image;
+    toXfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    toXfer.srcAccessMask = (s_cinLayout == VK_IMAGE_LAYOUT_UNDEFINED) ? 0 : VK_ACCESS_SHADER_READ_BIT;
+    toXfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     vkCmdPipelineBarrier(cmd,
-        (s_cinLayout == VK_IMAGE_LAYOUT_UNDEFINED)
-            ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, 0, NULL, 0, NULL, 1, &toXfer);
+                         (s_cinLayout == VK_IMAGE_LAYOUT_UNDEFINED) ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                                                                    : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &toXfer);
 
     // Copy staging → image
     VkBufferImageCopy rgn = {};
     rgn.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    rgn.imageExtent      = {(uint32_t)w, (uint32_t)h, 1};
-    vkCmdCopyBufferToImage(cmd, s_cinStaging, s_cinImage.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &rgn);
+    rgn.imageExtent = {(uint32_t)w, (uint32_t)h, 1};
+    vkCmdCopyBufferToImage(cmd, s_cinStaging, s_cinImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &rgn);
 
     // Transition: TRANSFER_DST → SHADER_READ_ONLY
     VkImageMemoryBarrier toRead = toXfer;
-    toRead.oldLayout      = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    toRead.newLayout      = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    toRead.srcAccessMask  = VK_ACCESS_TRANSFER_WRITE_BIT;
-    toRead.dstAccessMask  = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0, 0, NULL, 0, NULL, 1, &toRead);
+    toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                         NULL, 1, &toRead);
 
     s_cinLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return true;
@@ -446,8 +441,8 @@ void VK_Image_GetCinematicDescriptorInfo(VkDescriptorImageInfo *out)
 {
     if (s_cinImageValid)
     {
-        out->sampler     = s_cinImage.sampler;
-        out->imageView   = s_cinImage.view;
+        out->sampler = s_cinImage.sampler;
+        out->imageView = s_cinImage.view;
         out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
     else
@@ -724,7 +719,8 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     if (!vk.isInitialized || !pic || size <= 0)
         return;
     for (int i = 0; i < 6; i++)
-        if (!pic[i]) return;
+        if (!pic[i])
+            return;
 
     if (img->backendData)
         VK_Image_Purge(img);
@@ -735,18 +731,18 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 
     // --- Create cube-compatible VkImage (2D array, 6 layers) ---
     VkImageCreateInfo imgCI = {};
-    imgCI.sType        = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imgCI.flags        = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
-    imgCI.imageType    = VK_IMAGE_TYPE_2D;
-    imgCI.format       = format;
-    imgCI.extent       = {(uint32_t)size, (uint32_t)size, 1};
-    imgCI.mipLevels    = 1;
-    imgCI.arrayLayers  = 6;
-    imgCI.samples      = VK_SAMPLE_COUNT_1_BIT;
-    imgCI.tiling       = VK_IMAGE_TILING_OPTIMAL;
-    imgCI.usage        = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    imgCI.sharingMode  = VK_SHARING_MODE_EXCLUSIVE;
-    imgCI.initialLayout= VK_IMAGE_LAYOUT_UNDEFINED;
+    imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgCI.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = format;
+    imgCI.extent = {(uint32_t)size, (uint32_t)size, 1};
+    imgCI.mipLevels = 1;
+    imgCI.arrayLayers = 6;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    imgCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     vkImageData_t *vkd = new vkImageData_t();
     memset(vkd, 0, sizeof(*vkd));
@@ -761,8 +757,8 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     VkMemoryRequirements memReqs;
     vkGetImageMemoryRequirements(vk.device, vkd->image, &memReqs);
     VkMemoryAllocateInfo allocInfo = {};
-    allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize  = memReqs.size;
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
     allocInfo.memoryTypeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (vkAllocateMemory(vk.device, &allocInfo, NULL, &vkd->memory) != VK_SUCCESS)
     {
@@ -778,19 +774,19 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     VkDeviceMemory stagingMem;
     {
         VkBufferCreateInfo bi = {};
-        bi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bi.size        = totalSize;
-        bi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bi.size = totalSize;
+        bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         vkCreateBuffer(vk.device, &bi, NULL, &stagingBuf);
 
         VkMemoryRequirements smr;
         vkGetBufferMemoryRequirements(vk.device, stagingBuf, &smr);
         VkMemoryAllocateInfo sai = {};
-        sai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        sai.allocationSize  = smr.size;
-        sai.memoryTypeIndex = VK_FindMemoryType(smr.memoryTypeBits,
-                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        sai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        sai.allocationSize = smr.size;
+        sai.memoryTypeIndex = VK_FindMemoryType(smr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                                        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         vkAllocateMemory(vk.device, &sai, NULL, &stagingMem);
         vkBindBufferMemory(vk.device, stagingBuf, stagingMem, 0);
 
@@ -806,17 +802,17 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     // Transition all 6 layers to TRANSFER_DST
     {
         VkImageMemoryBarrier bar = {};
-        bar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        bar.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
-        bar.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bar.image               = vkd->image;
-        bar.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
-        bar.srcAccessMask       = 0;
-        bar.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             0, 0, NULL, 0, NULL, 1, &bar);
+        bar.image = vkd->image;
+        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
+        bar.srcAccessMask = 0;
+        bar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &bar);
     }
 
     // Copy each face from the staging buffer
@@ -824,30 +820,29 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     for (int i = 0; i < 6; i++)
     {
         regions[i] = {};
-        regions[i].bufferOffset                    = (VkDeviceSize)i * faceSize;
-        regions[i].imageSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-        regions[i].imageSubresource.mipLevel       = 0;
+        regions[i].bufferOffset = (VkDeviceSize)i * faceSize;
+        regions[i].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        regions[i].imageSubresource.mipLevel = 0;
         regions[i].imageSubresource.baseArrayLayer = (uint32_t)i;
-        regions[i].imageSubresource.layerCount     = 1;
-        regions[i].imageExtent                     = {(uint32_t)size, (uint32_t)size, 1};
+        regions[i].imageSubresource.layerCount = 1;
+        regions[i].imageExtent = {(uint32_t)size, (uint32_t)size, 1};
     }
-    vkCmdCopyBufferToImage(cmd, stagingBuf, vkd->image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6, regions);
+    vkCmdCopyBufferToImage(cmd, stagingBuf, vkd->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6, regions);
 
     // Transition all 6 layers to SHADER_READ_ONLY
     {
         VkImageMemoryBarrier bar = {};
-        bar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        bar.oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        bar.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        bar.image               = vkd->image;
-        bar.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
-        bar.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
-        bar.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 0, NULL, 0, NULL, 1, &bar);
+        bar.image = vkd->image;
+        bar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6};
+        bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &bar);
     }
 
     VK_EndSingleTimeCommands(cmd);
@@ -857,15 +852,15 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 
     // --- 2D view of face 0 (for sampler2D binding; cube view added when needed) ---
     VkImageViewCreateInfo viewInfo = {};
-    viewInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image                           = vkd->image;
-    viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format                          = format;
-    viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel   = 0;
-    viewInfo.subresourceRange.levelCount     = 1;
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = vkd->image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount     = 1;
+    viewInfo.subresourceRange.layerCount = 1;
     if (vkCreateImageView(vk.device, &viewInfo, NULL, &vkd->view) != VK_SUCCESS)
     {
         common->Warning("VK_Image_UploadCubemap: vkCreateImageView failed for '%s'", img->imgName.c_str());
@@ -877,16 +872,16 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 
     // --- Sampler (clamp-to-edge, linear, no mips) ---
     VkSamplerCreateInfo samplerInfo = {};
-    samplerInfo.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter     = VK_FILTER_LINEAR;
-    samplerInfo.minFilter     = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.addressModeU  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW  = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.minLod        = 0.0f;
-    samplerInfo.maxLod        = 0.0f;
-    samplerInfo.borderColor   = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
     if (vkCreateSampler(vk.device, &samplerInfo, NULL, &vkd->sampler) != VK_SUCCESS)
     {
         common->Warning("VK_Image_UploadCubemap: vkCreateSampler failed for '%s'", img->imgName.c_str());
