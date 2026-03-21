@@ -290,11 +290,9 @@ static void VK_RT_InitShadowPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_DispatchShadowRays
-// Called once per frame per light, outside the render pass.
-// cmd must be recording outside a render pass instance.
+// VK_RT_DispatchShadowRays (removed — superseded by VK_RT_DispatchShadowRaysForLight)
 // ---------------------------------------------------------------------------
-
+#if 0
 void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     if (!vkRT.isInitialized || !vkRT.tlas.isValid)
@@ -477,6 +475,7 @@ void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
         VK_EndSingleTimeCommands(transCmd);
     }
 }
+#endif // removed VK_RT_DispatchShadowRays
 
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchShadowRaysForLight
