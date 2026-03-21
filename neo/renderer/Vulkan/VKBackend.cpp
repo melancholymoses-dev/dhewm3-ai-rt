@@ -94,6 +94,27 @@ void VKBackend::VertexCache_Free(vertCache_t *vc)
     VK_VertexCache_Free(vc);
 }
 
+// Command batch lifecycle
+
+void VKBackend::BeginCommandBatch()
+{ // no-op: Vulkan has no fixed-function GL state to reset
+}
+
+void VKBackend::EndCommandBatch()
+{ // no-op: no GL texture bindings to restore
+}
+
+void VKBackend::SetBuffer(const void *data)
+{ // no-op: Vulkan has no draw-buffer concept
+    (void)data;
+}
+
+void VKBackend::SwapBuffers(const void *data)
+{
+    (void)data;
+    VK_RB_SwapBuffers();
+}
+
 // Frame dispatch
 
 void VKBackend::DrawView(const drawSurfsCommand_t *cmd)
