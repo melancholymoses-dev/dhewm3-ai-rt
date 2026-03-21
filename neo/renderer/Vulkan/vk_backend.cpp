@@ -1243,30 +1243,6 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
         // mode 3: only log when this light+surface branch/signature changes between frames.
         if (logMode >= 3)
         {
-            // Once per frame (verbose mode only): scan for surfaces that were drawn
-            // last frame but are absent so far this frame. Useful for deep churn
-            // debugging, but too noisy for normal branch/inside-flag tracing.
-            if (logMode >= 5)
-            {
-                static int s_absentScanFrame = -1;
-                if (s_absentScanFrame != tr.frameCount)
-                {
-                    s_absentScanFrame = tr.frameCount;
-                    for (int probe = 0; probe < SHADOW_BRANCH_TRACK_SIZE; probe++)
-                    {
-                        const shadowBranchTrack_t &t = s_branchTrack[probe];
-                        if (t.valid && t.lastSeenFrame == tr.frameCount - 1)
-                        {
-                            common->Printf("VK SHADOW ABSENT: tri=%p lightDef=%p frame=%d prevSig=0x%08X "
-                                           "prevMode=%s prevIndexSet=%d prevInsideFlag=%d prevInsideLight=%d\n",
-                                           t.tri, t.lightDef, tr.frameCount, t.signature,
-                                           (t.signature & (1u << 0)) ? "zpass" : "zfail",
-                                           (int)((t.signature >> 6) & 0x3), (t.signature & (1u << 4)) ? 1 : 0,
-                                           (t.signature & (1u << 5)) ? 1 : 0);
-                        }
-                    }
-                }
-            }
 
             const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
             const idMaterial *material = surf->material;

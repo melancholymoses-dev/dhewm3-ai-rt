@@ -387,23 +387,26 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // GL parity note (keep in sync with draw_common.cpp RB_T_Shadow):
     // Z-fail / Carmack's Reverse uses depthFailOp only.
-    //   non-mirror: back=DECR, front=INCR
-    //   mirror:     back=INCR, front=DECR (swapped)
+    // For a shadowed pixel (between near and far shadow caps):
+    //   near cap (front face, faces camera): d_sv < d_scene → depth PASSES → no event
+    //   far  cap (back  face, faces away  ): d_sv > d_scene → depth FAILS  → stencil fires
+    // Correct convention: front=DECR, back=INCR
+    //   non-mirror: front=DECR, back=INCR
+    //   mirror:     front=INCR, back=DECR (winding reversed in mirrored view)
     // In this Vulkan pipeline, front/back refer to post-viewport face classification
     // (with our Y-flipped viewport and frontFace=CLOCKWISE convention).
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = VK_STENCIL_OP_KEEP;
-    front.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    front.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
     front.compareOp = VK_COMPARE_OP_ALWAYS;
     front.compareMask = 0xFF;
     front.writeMask = 0xFF;
     front.reference = 0;
 
     VkStencilOpState back = front;
-    back.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    back.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
