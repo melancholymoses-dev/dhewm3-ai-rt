@@ -18,8 +18,6 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#ifdef DHEWM3_RAYTRACING
-
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
@@ -230,8 +228,19 @@ static void VK_RT_InitShadowPipeline(void)
 
     vkRT.rgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.missRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.hitRegion = {sbtBase + 2 * stride, stride, stride};
+    vkRT.hitRegion  = {sbtBase + 2 * stride, stride, stride};
     vkRT.callRegion = {0, 0, 0};
+
+    common->Printf("VK RT SBT: handleSize=%u handleAlignment=%u baseAlignment=%u stride=%u sbtTotalBytes=%u\n",
+                   handleSize, handleAlignment, baseAlignment, stride, sbtSize);
+    common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n",
+                   (unsigned long long)sbtBase,
+                   (unsigned long long)vkRT.rgenRegion.deviceAddress,
+                   (unsigned long long)vkRT.missRegion.deviceAddress,
+                   (unsigned long long)vkRT.hitRegion.deviceAddress);
+    common->Printf("VK RT SBT: rgen base-alignment check: addr%%baseAlign=%llu (must be 0)\n",
+                   (unsigned long long)(vkRT.rgenRegion.deviceAddress % baseAlignment));
+    fflush(NULL);
 
     // --- Descriptor pool and sets ---
     VkDescriptorPoolSize poolSizes[4] = {
@@ -290,194 +299,6 @@ static void VK_RT_InitShadowPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_DispatchShadowRays (removed — superseded by VK_RT_DispatchShadowRaysForLight)
-// ---------------------------------------------------------------------------
-#if 0
-void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
-{
-    if (!vkRT.isInitialized || !vkRT.tlas.isValid)
-        return;
-    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
-        return;
-
-    uint32_t frameIdx = vk.currentFrame;
-    vkShadowMask_t &sm = vkRT.shadowMask[frameIdx];
-
-    if (sm.image == VK_NULL_HANDLE)
-        return;
-
-    // Iterate over active lights in this view
-    for (const viewLight_t *vLight = viewDef->viewLights; vLight != NULL; vLight = vLight->next)
-    {
-        if (!vLight->lightDef)
-            continue;
-
-        const renderLight_t &light = vLight->lightDef->parms;
-
-        // Build UBO
-        ShadowParamsUBO ubo;
-        memset(&ubo, 0, sizeof(ubo));
-
-        // Inverse view-projection: projection * modelView from viewDef
-        // We need the inverse of (projectionMatrix * worldSpace.modelViewMatrix).
-        // For simplicity, compute it on the CPU side here.
-        // idMath doesn't have a matrix inverse; use the idMat4 wrapper.
-        {
-            const float *proj = viewDef->projectionMatrix;
-            const float *mv = viewDef->worldSpace.modelViewMatrix;
-            // Multiply proj * mv (column-major)
-            float vp[16];
-            for (int r = 0; r < 4; r++)
-            {
-                for (int c = 0; c < 4; c++)
-                {
-                    vp[c * 4 + r] = 0.0f;
-                    for (int k = 0; k < 4; k++)
-                    {
-                        vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-                    }
-                }
-            }
-            // Invert using idMat4
-            idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                         idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-            idMat4 invVP = vpMat.Inverse();
-            memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
-        }
-
-        ubo.lightOrigin[0] = light.origin.x;
-        ubo.lightOrigin[1] = light.origin.y;
-        ubo.lightOrigin[2] = light.origin.z;
-        ubo.lightOrigin[3] = light.lightRadius.x; // use X radius for cone jitter
-
-        // Falloff radius: length of the major light projection axis
-        ubo.lightFalloffRadius = light.lightRadius.Length();
-        ubo.numSamples = r_rtShadowSamples.GetInteger();
-        ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
-        ubo.pad = 0.0f;
-
-        // Upload UBO to a temporary host-visible buffer
-        VkBuffer uboBuf;
-        VkDeviceMemory uboMem;
-        VK_CreateBuffer(sizeof(ShadowParamsUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &uboBuf, &uboMem);
-        void *uboPtr;
-        vkMapMemory(vk.device, uboMem, 0, sizeof(ShadowParamsUBO), 0, &uboPtr);
-        memcpy(uboPtr, &ubo, sizeof(ShadowParamsUBO));
-        vkUnmapMemory(vk.device, uboMem);
-
-        // Update descriptor set for this frame
-        VkDescriptorSet ds = vkRT.shadowDescSets[frameIdx];
-
-        // Binding 0: TLAS
-        VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
-        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-        tlasWrite.accelerationStructureCount = 1;
-        tlasWrite.pAccelerationStructures = &vkRT.tlas.handle;
-
-        VkWriteDescriptorSet writes[4] = {};
-
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].pNext = &tlasWrite;
-        writes[0].dstSet = ds;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-
-        // Binding 1: shadow mask storage image
-        VkDescriptorImageInfo smImgInfo = {};
-        smImgInfo.imageView = sm.view;
-        smImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = ds;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &smImgInfo;
-
-        // Binding 2: depth sampler (swapchain depth)
-        // A VkSampler is needed; for now create a simple one on the fly.
-        // A production implementation would cache this.
-        VkSampler depthSampler;
-        {
-            VkSamplerCreateInfo si = {};
-            si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-            si.magFilter = VK_FILTER_NEAREST;
-            si.minFilter = VK_FILTER_NEAREST;
-            si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-            si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            vkCreateSampler(vk.device, &si, NULL, &depthSampler);
-        }
-
-        VkDescriptorImageInfo depthImgInfo = {};
-        depthImgInfo.sampler = depthSampler;
-        depthImgInfo.imageView = vk.depthView;
-        depthImgInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = ds;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorCount = 1;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo = &depthImgInfo;
-
-        // Binding 3: UBO
-        VkDescriptorBufferInfo uboInfo = {uboBuf, 0, sizeof(ShadowParamsUBO)};
-        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet = ds;
-        writes[3].dstBinding = 3;
-        writes[3].descriptorCount = 1;
-        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[3].pBufferInfo = &uboInfo;
-
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
-
-        // Bind pipeline and dispatch
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 0, 1, &ds, 0,
-                                NULL);
-
-        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, sm.width,
-                          sm.height, 1);
-
-        // Barrier: shadow mask write must complete before sampling in the lighting pass
-        VkImageMemoryBarrier imgBarrier = {};
-        imgBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        imgBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        imgBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        imgBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        imgBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imgBarrier.image = sm.image;
-        imgBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 0, NULL, 0, NULL, 1, &imgBarrier);
-
-        // Clean up per-dispatch temporary resources
-        // (sampler and UBO buffer freed after queue submission via deferred cleanup in production;
-        // for correctness here we wait idle — a ring buffer approach is preferred long term)
-        vkQueueWaitIdle(vk.graphicsQueue);
-        vkDestroySampler(vk.device, depthSampler, NULL);
-        vkDestroyBuffer(vk.device, uboBuf, NULL);
-        vkFreeMemory(vk.device, uboMem, NULL);
-
-        // Transition shadow mask back to GENERAL for the next frame's write
-        VkCommandBuffer transCmd = VK_BeginSingleTimeCommands();
-        VkImageMemoryBarrier backBarrier = imgBarrier;
-        backBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        backBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        backBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        backBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        vkCmdPipelineBarrier(transCmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &backBarrier);
-        VK_EndSingleTimeCommands(transCmd);
-    }
-}
-#endif // removed VK_RT_DispatchShadowRays
-
-// ---------------------------------------------------------------------------
 // VK_RT_DispatchShadowRaysForLight
 // Called once per light, outside a render pass, after the depth prepass.
 //
@@ -507,6 +328,26 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     if (sm.image == VK_NULL_HANDLE)
         return;
 
+    if (r_vkLogRT.GetInteger() >= 2)
+    {
+        const renderLight_t &lp = vLight->lightDef->parms;
+        common->Printf("VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
+                       "pipeline=%s tlas=%s tlasAddr=0x%llx "
+                       "shadowMask=%s %ux%u "
+                       "rgen=0x%llx miss=0x%llx hit=0x%llx\n",
+                       frameIdx,
+                       lp.origin.x, lp.origin.y, lp.origin.z,
+                       (vkRT.shadowPipeline  != VK_NULL_HANDLE) ? "OK" : "NULL",
+                       (vkRT.tlas.handle     != VK_NULL_HANDLE) ? "OK" : "NULL",
+                       (unsigned long long)vkRT.tlas.deviceAddress,
+                       (sm.image             != VK_NULL_HANDLE) ? "OK" : "NULL",
+                       sm.width, sm.height,
+                       (unsigned long long)vkRT.rgenRegion.deviceAddress,
+                       (unsigned long long)vkRT.missRegion.deviceAddress,
+                       (unsigned long long)vkRT.hitRegion.deviceAddress);
+        fflush(NULL);
+    }
+
     // --- Depth barrier: render-pass final layout → shader-readable ---
     VkImageMemoryBarrier depthToRead = {};
     depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -516,9 +357,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     depthToRead.image = vk.depthImage;
     depthToRead.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                          0, 0, NULL, 0, NULL, 1, &depthToRead);
 
     // --- Update frame-level descriptor set (TLAS, shadow mask, depth sampler, UBO base) ---
@@ -573,7 +412,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         // VK_AllocUBOForShadow is called below to get the per-light slot, but the buffer
         // handle is the same for all lights in this frame slot, so we always use slot 0 offset
         // here as the base; the dynamic offset passed to vkCmdBindDescriptorSets is the real one.
-        extern bool VK_AllocUBOForShadow(VkBuffer * outBuf, uint32_t * outOffset, void **outMapped);
+        extern bool VK_AllocUBOForShadow(VkBuffer * outBuf, uint32_t *outOffset, void **outMapped);
         VkBuffer uboBuf;
         uint32_t uboOff;
         void *uboMapped;
@@ -631,11 +470,18 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 
         // --- Dispatch ---
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout,
-                                0, 1, &ds, 1, &uboOff);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 0, 1, &ds, 1,
+                                &uboOff);
 
-        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion,
-                          sm.width, sm.height, 1);
+        if (r_vkLogRT.GetInteger() >= 1)
+        {
+            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u\n",
+                           frameIdx, uboOff, sm.width, sm.height);
+            fflush(NULL);
+        }
+
+        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, sm.width,
+                          sm.height, 1);
     }
 
     // --- Memory barrier: shadow mask RT-write → fragment-shader-read (layout stays GENERAL) ---
@@ -643,23 +489,20 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     shadowMemBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     shadowMemBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     shadowMemBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 1, &shadowMemBarrier, 0, NULL, 0, NULL);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                         &shadowMemBarrier, 0, NULL, 0, NULL);
 
     // --- Depth barrier: restore to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for render pass resume ---
     VkImageMemoryBarrier depthRestore = {};
     depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    depthRestore.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthRestore.dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthRestore.image = vk.depthImage;
     depthRestore.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                          0, 0, NULL, 0, NULL, 1, &depthRestore);
 }
 
@@ -676,5 +519,3 @@ void VK_RT_InitShadows(void)
     VK_RT_InitShadowPipeline();
     VK_RT_ResizeShadowMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
 }
-
-#endif // DHEWM3_RAYTRACING

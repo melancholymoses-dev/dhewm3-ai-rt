@@ -301,12 +301,10 @@ class idRenderEntityLocal : public idRenderEntity
 
     bool needsPortalSky;
 
-#ifdef DHEWM3_RAYTRACING
     // Per-entity Bottom-Level Acceleration Structure (Vulkan RT).
     // Allocated by VK_RT_BuildBLAS() when the entity is first seen; freed on FreeRenderEntity().
     struct vkBLAS_t *blas; // NULL until built; rebuilt each frame for animated models
     int blasFrameCount;    // frame number when blas was last built
-#endif
 };
 
 // viewLights are allocated on the frame temporary stack memory
@@ -888,6 +886,7 @@ extern idCVar r_rtShadows;       // ray traced shadows
 extern idCVar r_rtAO;            // ray traced ambient occlusion
 extern idCVar r_rtReflections;   // ray traced reflections
 extern idCVar r_rtShadowSamples; // shadow rays per pixel
+extern idCVar r_vkLogRT;         // RT diagnostics verbosity (0=off,1=frame,2=per-light)
 extern idCVar r_rtAOSamples;     // AO rays per pixel
 extern idCVar r_rtDenoise;       // temporal denoising
 
