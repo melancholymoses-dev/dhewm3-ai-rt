@@ -88,6 +88,29 @@ void GLBackend::VertexCache_Free(vertCache_t *vc)
     GL_VertexCache_Free(vc);
 }
 
+// Command batch lifecycle
+
+void GLBackend::BeginCommandBatch()
+{
+    RB_SetDefaultGLState();
+}
+
+void GLBackend::EndCommandBatch()
+{
+    qglBindTexture(GL_TEXTURE_2D, 0);
+    backEnd.glState.tmu[0].current2DMap = -1;
+}
+
+void GLBackend::SetBuffer(const void *data)
+{
+    RB_SetBuffer(data);
+}
+
+void GLBackend::SwapBuffers(const void *data)
+{
+    RB_SwapBuffers(data);
+}
+
 // Frame dispatch
 
 void GLBackend::DrawView(const drawSurfsCommand_t *cmd)

@@ -61,13 +61,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
 
     backEndStartTime = Sys_Milliseconds();
 
-    const bool usingVulkan = glConfig.isVulkan;
-
-    // needed for editor rendering (GL only; Vulkan has no fixed-function GL state)
-    if (!usingVulkan)
-    {
-        RB_SetDefaultGLState();
-    }
+    activeBackend->BeginCommandBatch();
 
     // upload any image loads that have completed
     globalImages->CompleteBackgroundImageLoads();
@@ -90,32 +84,15 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
             }
             break;
         case RC_SET_BUFFER:
-            // GL-specific draw buffer setup; Vulkan has no equivalent
-            if (!usingVulkan)
-            {
-                RB_SetBuffer(cmds);
-            }
+            activeBackend->SetBuffer(cmds);
             c_setBuffers++;
             break;
         case RC_SWAP_BUFFERS:
-            if (usingVulkan)
-            {
-                // Submit and present the accumulated EndFrame command buffer.
-                extern void VK_RB_SwapBuffers();
-                VK_RB_SwapBuffers();
-            }
-            else
-            {
-                RB_SwapBuffers(cmds);
-            }
+            activeBackend->SwapBuffers(cmds);
             c_swapBuffers++;
             break;
         case RC_COPY_RENDER:
-            // CopyFramebuffer uses GL; skip for Vulkan
-            if (!usingVulkan)
-            {
-                RB_CopyRender(cmds);
-            }
+            activeBackend->CopyRender(*(const copyRenderCommand_t *)cmds);
             c_copyRenders++;
             break;
         default:
@@ -124,12 +101,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
         }
     }
 
-    // go back to the default texture so the editor doesn't mess up a bound image
-    if (!usingVulkan)
-    {
-        qglBindTexture(GL_TEXTURE_2D, 0);
-        backEnd.glState.tmu[0].current2DMap = -1;
-    }
+    activeBackend->EndCommandBatch();
 
     // stop rendering on this thread
     backEndFinishTime = Sys_Milliseconds();
