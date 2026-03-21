@@ -29,13 +29,14 @@ the Free Software Foundation, either version 3 of the License, or
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 
+// Per-EndFrame state shared across multiple RC_DRAW_VIEW calls.
+static bool s_frameActive = false;
+static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
+static uint32_t s_frameImageIndex = 0;
+
 static bool VK_RTShadowsEnabled()
 {
-#ifdef DHEWM3_RAYTRACING
     return vk.rayTracingSupported && vkRT.isInitialized && r_useRayTracing.GetBool() && r_rtShadows.GetBool();
-#else
-    return false;
-#endif
 }
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -408,13 +409,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     fsz[1] = (float)vk.swapchainExtent.height;
 
     // useShadowMask: 1 when RT shadow mask is valid this frame
-#ifdef DHEWM3_RAYTRACING
     int *useSM = (int *)(fsz + 2);
     *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE) ? 1 : 0;
-#else
-    int *useSM = (int *)(fsz + 2);
-    *useSM = 0;
-#endif
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useSM + 1);
@@ -472,7 +468,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     }
 
     // Binding 7: shadow mask
-#ifdef DHEWM3_RAYTRACING
     VkDescriptorImageInfo shadowMaskInfo = {};
     if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE)
     {
@@ -486,10 +481,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     {
         VK_Image_GetFallbackDescriptorInfo(&shadowMaskInfo);
     }
-#else
-    VkDescriptorImageInfo shadowMaskInfo = {};
-    VK_Image_GetFallbackDescriptorInfo(&shadowMaskInfo);
-#endif
 
     VkWriteDescriptorSet writes[8] = {};
 
@@ -1837,7 +1828,6 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // End the current render pass, dispatch shadow rays for this light, then reopen.
         // The shadow mask (VK_IMAGE_LAYOUT_GENERAL) is written by the dispatch and read
         // by the interaction fragment shader without any layout transition.
-#ifdef DHEWM3_RAYTRACING
         if (VK_RTShadowsEnabled())
         {
             vkCmdEndRenderPass(cmd);
@@ -1862,7 +1852,6 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
         }
-#endif
 
         // Clear stencil to 128 within this light's scissor rect before processing it.
         // Mirrors the GL path: qglClear(GL_STENCIL_BUFFER_BIT) before each light with shadows,
@@ -1887,11 +1876,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Stencil shadow volumes — only when RT shadows are unavailable or disabled.
         // When RT is active, shadows are applied per-pixel in the interaction shader
         // via shadowMaskSampler. Running both would produce double-shadowing.
-#ifdef DHEWM3_RAYTRACING
         const bool useStencilShadows = !VK_RTShadowsEnabled();
-#else
-        const bool useStencilShadows = true;
-#endif
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
@@ -2308,11 +2293,6 @@ static void VK_RB_FogAllLights(VkCommandBuffer cmd)
 //                    ends the command buffer, submits, and presents.
 // ---------------------------------------------------------------------------
 
-// Per-EndFrame state shared across multiple RC_DRAW_VIEW calls.
-static bool s_frameActive = false;
-static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
-static uint32_t s_frameImageIndex = 0;
-
 // Window minimized state.
 // Set by VK_SetWindowMinimized() (called from SDL event handlers) and also
 // auto-detected in VK_RecreateSwapchain when the surface extent is 0x0.
@@ -2390,7 +2370,16 @@ void VK_RB_DrawView(const void *data)
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
         if (fenceResult != VK_SUCCESS)
         {
-            common->Warning("VK: vkWaitForFences failed: %d", (int)fenceResult);
+            // VK_ERROR_DEVICE_LOST (-4): GPU crashed executing the previous frame's command buffer.
+            // Enable r_vkLogRT 1 (or 2 for per-light detail) to see RT breadcrumbs before the crash.
+            // Enable r_vkLogSubmitInfo 2 to see per-frame submit state.
+            common->Warning("VK: vkWaitForFences failed: %d (%s)%s",
+                            (int)fenceResult,
+                            VK_ResultToString(fenceResult),
+                            (fenceResult == VK_ERROR_DEVICE_LOST)
+                                ? " — GPU DEVICE LOST: enable r_vkLogRT 2 to see RT breadcrumbs"
+                                : "");
+            fflush(NULL);
             return;
         }
 
@@ -2473,7 +2462,6 @@ void VK_RB_DrawView(const void *data)
 
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
-
     }
     else
     {
@@ -2504,10 +2492,45 @@ void VK_RB_DrawView(const void *data)
     // per-light shadow ray dispatches read from them.  The TLAS build must be outside a
     // render pass, so we end/reopen here once; per-light dispatches do the same inside
     // VK_RB_DrawInteractions.
-#ifdef DHEWM3_RAYTRACING
     if (VK_RTShadowsEnabled())
     {
         vkCmdEndRenderPass(cmdBuf);
+
+        // Clear shadow mask to 1.0 (fully lit) before any per-light dispatches.
+        // Without this, pixels not covered by any light this frame retain stale shadow
+        // values from the previous frame and appear as a stuck black afterimage.
+        {
+            vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];
+            // Barrier: last frame's RT writes → transfer clear
+            VkImageMemoryBarrier toTransfer = {};
+            toTransfer.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toTransfer.srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+            toTransfer.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toTransfer.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
+            toTransfer.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+            toTransfer.image            = sm.image;
+            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmdBuf,
+                VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 0, NULL, 0, NULL, 1, &toTransfer);
+
+            VkClearColorValue clearVal = {};
+            clearVal.float32[0] = 1.0f; // fully lit
+            clearVal.float32[1] = 1.0f;
+            clearVal.float32[2] = 1.0f;
+            clearVal.float32[3] = 1.0f;
+            VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cmdBuf, sm.image, VK_IMAGE_LAYOUT_GENERAL, &clearVal, 1, &range);
+
+            // Barrier: transfer clear → RT shader writes
+            VkImageMemoryBarrier toRT = toTransfer;
+            toRT.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toRT.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(cmdBuf,
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                0, 0, NULL, 0, NULL, 1, &toRT);
+        }
+
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -2528,7 +2551,6 @@ void VK_RB_DrawView(const void *data)
         VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
         vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
     }
-#endif
 
     if (!r_skipInteractions.GetBool())
         VK_RB_DrawInteractions(cmdBuf);
@@ -2616,9 +2638,7 @@ void VK_RB_SwapBuffers()
     if (submitLogMode > 0)
     {
         int rtActive = 0;
-#ifdef DHEWM3_RAYTRACING
         rtActive = VK_RTShadowsEnabled() ? 1 : 0;
-#endif
         common->Printf("VK SUBMIT: frame=%u image=%u rt=%d useRT=%d rtShadows=%d readbackPending=%d "
                        "readbackSubmitted=%d swapRecreate=%d\n",
                        submittedFrame, (unsigned int)s_frameImageIndex, rtActive, r_useRayTracing.GetBool() ? 1 : 0,
@@ -2797,7 +2817,6 @@ void VKimp_PostInit(int width, int height)
     common->Printf("VK: initializing images\n");
     VK_Image_Init();
 
-#ifdef DHEWM3_RAYTRACING
     if (vk.rayTracingSupported)
     {
         common->Printf("VK: initializing RT\n");
@@ -2805,7 +2824,6 @@ void VKimp_PostInit(int width, int height)
         common->Printf("VK: initializing RT shadows\n");
         VK_RT_InitShadows();
     }
-#endif
 
     common->Printf("VK: Backend ready\n");
 
@@ -2820,14 +2838,10 @@ void VKimp_PreShutdown(void)
     if (!vk.isInitialized)
         return;
     vkDeviceWaitIdle(vk.device);
-
-#ifdef DHEWM3_RAYTRACING
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {
         VK_RT_Shutdown();
     }
-#endif
-
     VK_Image_Shutdown();
     VK_DestroyDataRings();
     VK_DestroyUBORings();

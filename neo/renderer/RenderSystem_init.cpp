@@ -137,15 +137,17 @@ idCVar r_useGLSL("r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 
 // Vulkan / Ray Tracing backend CVars
 idCVar r_backend("r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"");
-idCVar r_useRayTracing("r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_useRayTracing("r_useRayTracing", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "enable hardware ray tracing (requires Vulkan backend and RTX hardware)");
-idCVar r_rtShadows("r_rtShadows", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)");
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "ray traced reflections (expensive)");
 idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
+idCVar r_vkLogRT("r_vkLogRT", "0", CVAR_RENDERER | CVAR_INTEGER,
+                 "RT pipeline diagnostics: 0=off 1=per-frame TLAS+dispatch summary 2=per-light verbose (flushed)");
 idCVar r_rtAOSamples("r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel");
 idCVar r_rtDenoise("r_rtDenoise", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "enable temporal denoising for RT effects");

@@ -3,11 +3,11 @@
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
+#include "renderer/Vulkan/vk_backend.h"
 
 // Forward declarations - defined in vk_backend.cpp
 extern void VKimp_InitFromGlimp(int width, int height);
 extern void VKimp_ShutdownFromGlimp(void);
-extern void VK_RB_DrawView(const void *data);
 
 // Populate glConfig string fields from the Vulkan physical device.
 // Called once from VKBackend::Init() after VKimp_InitFromGlimp succeeds.

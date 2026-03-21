@@ -1978,7 +1978,6 @@ static CVarOption videoOptionsImmediately[] = {
     CVarOption("r_skipSpecular", "Disable Specular", OT_BOOL),
     CVarOption("r_skipBump", "Disable Bump Maps", OT_BOOL),
 
-#ifdef DHEWM3_RAYTRACING
     CVarOption(
         "r_rtShadows",
         [](idCVar &cvar) {
@@ -2002,7 +2001,6 @@ static CVarOption videoOptionsImmediately[] = {
                     : "Ray traced shadows require the Vulkan backend (r_backend vulkan).";
             AddCVarOptionTooltips(cvar, descr);
         }),
-#endif // DHEWM3_RAYTRACING
 
 };
 

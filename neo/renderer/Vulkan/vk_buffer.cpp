@@ -100,7 +100,7 @@ void VK_UnmapBuffer(VkDeviceMemory memory)
 
 struct vkBufferData_t
 {
-    VkBuffer       buf;
+    VkBuffer buf;
     VkDeviceMemory mem;
 };
 
@@ -111,12 +111,14 @@ struct vkBufferData_t
 
 static const int VK_BUFFER_GARBAGE_MAX = 512;
 static vkBufferData_t *s_bufferGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_BUFFER_GARBAGE_MAX];
-static int             s_bufferGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_bufferGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 static void VK_DestroyBufferData(vkBufferData_t *bd)
 {
-    if (bd->buf != VK_NULL_HANDLE) vkDestroyBuffer(vk.device, bd->buf, NULL);
-    if (bd->mem != VK_NULL_HANDLE) vkFreeMemory(vk.device, bd->mem, NULL);
+    if (bd->buf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, bd->buf, NULL);
+    if (bd->mem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, bd->mem, NULL);
     delete bd;
 }
 
@@ -148,11 +150,9 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
         usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     }
 
-#ifdef DHEWM3_RAYTRACING
     // Allow use as geometry input for BLAS builds
     usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-#endif
 
     vkBufferData_t *bd = new vkBufferData_t;
     VK_CreateBuffer((VkDeviceSize)size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bd->buf, &bd->mem);
