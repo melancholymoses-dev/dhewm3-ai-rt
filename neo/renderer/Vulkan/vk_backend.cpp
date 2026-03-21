@@ -295,6 +295,20 @@ static uint32_t VK_AllocUBO(void)
     return off;
 }
 
+// Allocate one UBO slot from the per-frame ring for RT shadow dispatch.
+// Returns the VkBuffer, byte offset, and mapped CPU pointer for the caller to fill.
+// The ring is reset each frame before recording begins, so the allocation is valid
+// until the frame command buffer finishes executing.
+bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped)
+{
+    vkUBORing_t &ring = uboRings[vk.currentFrame];
+    uint32_t off = VK_AllocUBO();
+    *outBuf = ring.buffer;
+    *outOffset = off;
+    *outMapped = (uint8_t *)ring.mapped + off;
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // VK_RB_DrawInteraction - record draw commands for one light-surface interaction
 // Called from VK_RB_DrawInteractions via RB_CreateSingleDrawInteractions callback.
@@ -464,7 +478,9 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     {
         shadowMaskInfo.sampler = vkRT.shadowMaskSampler;
         shadowMaskInfo.imageView = vkRT.shadowMask[vk.currentFrame].view;
-        shadowMaskInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // Shadow mask stays in VK_IMAGE_LAYOUT_GENERAL throughout the frame (no layout transitions).
+        // GENERAL is valid for combined image samplers per the Vulkan spec.
+        shadowMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
     else
     {
@@ -1817,6 +1833,37 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             track.valid = true;
         }
 
+        // --- Per-light RT shadow dispatch ---
+        // End the current render pass, dispatch shadow rays for this light, then reopen.
+        // The shadow mask (VK_IMAGE_LAYOUT_GENERAL) is written by the dispatch and read
+        // by the interaction fragment shader without any layout transition.
+#ifdef DHEWM3_RAYTRACING
+        if (VK_RTShadowsEnabled())
+        {
+            vkCmdEndRenderPass(cmd);
+            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight);
+            VkRenderPassBeginInfo rpResume = {};
+            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpResume.renderPass = vk.renderPassResume;
+            rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+            rpResume.renderArea.offset = {0, 0};
+            rpResume.renderArea.extent = vk.swapchainExtent;
+            rpResume.clearValueCount = 0;
+            rpResume.pClearValues = NULL;
+            vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+            VkViewport rtViewport = {0,
+                                     (float)vk.swapchainExtent.height,
+                                     (float)vk.swapchainExtent.width,
+                                     -(float)vk.swapchainExtent.height,
+                                     0.0f,
+                                     1.0f};
+            vkCmdSetViewport(cmd, 0, 1, &rtViewport);
+            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+            // Rebind the interaction pipeline after reopening the render pass.
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+        }
+#endif
+
         // Clear stencil to 128 within this light's scissor rect before processing it.
         // Mirrors the GL path: qglClear(GL_STENCIL_BUFFER_BIT) before each light with shadows,
         // or qglStencilFunc(GL_ALWAYS,...) for lights without shadows.
@@ -2427,24 +2474,6 @@ void VK_RB_DrawView(const void *data)
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
 
-        // RT shadow dispatch happens outside the render pass, before interactions.
-        // Only valid on the first (3D world) view.
-#ifdef DHEWM3_RAYTRACING
-        if (VK_RTShadowsEnabled())
-        {
-            vkCmdEndRenderPass(cmdBuf);
-            VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
-            VK_RT_DispatchShadowRays(cmdBuf, backEnd.viewDef);
-            // Reopen with the LOAD render pass so prior colour/depth is preserved.
-            VkRenderPassBeginInfo rpResume = rpBegin;
-            rpResume.renderPass = vk.renderPassResume;
-            rpResume.clearValueCount = 0;
-            rpResume.pClearValues = NULL;
-            vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-            vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-            vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
-        }
-#endif
     }
     else
     {
@@ -2464,11 +2493,42 @@ void VK_RB_DrawView(const void *data)
 
     // Rendering order matches vkDOOM3 reference and GL path (draw_common.cpp RB_STD_DrawView):
     //   1. Depth prepass — populate depth buffer for early-Z rejection
-    //   2. Interactions — per-light Phong shading with stencil shadow volumes
-    //   3. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
-    //   4. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
+    //   2. TLAS rebuild (if RT active) — must be outside render pass, uses the filled depth
+    //   3. Interactions — per-light: [end RP] [dispatch shadow rays] [reopen RP] [draw light]
+    //   4. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
+    //   5. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
     if (!r_skipDepthPrepass.GetBool())
         VK_RB_FillDepthBuffer(cmdBuf);
+
+    // Rebuild TLAS after the depth prepass so that depth values are populated before any
+    // per-light shadow ray dispatches read from them.  The TLAS build must be outside a
+    // render pass, so we end/reopen here once; per-light dispatches do the same inside
+    // VK_RB_DrawInteractions.
+#ifdef DHEWM3_RAYTRACING
+    if (VK_RTShadowsEnabled())
+    {
+        vkCmdEndRenderPass(cmdBuf);
+        VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+        VkRenderPassBeginInfo rpResume = {};
+        rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpResume.renderPass = vk.renderPassResume;
+        rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+        rpResume.renderArea.offset = {0, 0};
+        rpResume.renderArea.extent = vk.swapchainExtent;
+        rpResume.clearValueCount = 0;
+        rpResume.pClearValues = NULL;
+        vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+        VkViewport viewport = {0,
+                               (float)vk.swapchainExtent.height,
+                               (float)vk.swapchainExtent.width,
+                               -(float)vk.swapchainExtent.height,
+                               0.0f,
+                               1.0f};
+        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
+        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+    }
+#endif
 
     if (!r_skipInteractions.GetBool())
         VK_RB_DrawInteractions(cmdBuf);
