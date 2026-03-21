@@ -80,8 +80,8 @@ struct vkState_t
     VkFormat depthFormat;
 
     // Render pass
-    VkRenderPass renderPass;        // CLEAR load op — used on first begin each frame
-    VkRenderPass renderPassResume;  // LOAD load op  — used when reopening after RT dispatch
+    VkRenderPass renderPass;       // CLEAR load op — used on first begin each frame
+    VkRenderPass renderPassResume; // LOAD load op  — used when reopening after RT dispatch
 
     // Command pool / buffers
     VkCommandPool commandPool;
@@ -120,29 +120,29 @@ struct vkPipelines_t
 
     VkDescriptorSetLayout shadowDescLayout;
     VkPipelineLayout shadowLayout;
-    VkPipeline shadowPipelineZFail;  // Z-fail (Carmack's Reverse) — camera inside shadow volume
+    VkPipeline shadowPipelineZFail;       // Z-fail (Carmack's Reverse) — camera inside shadow volume
     VkPipeline shadowPipelineZFailMirror; // Z-fail for mirrored views (front/back ops swapped)
-    VkPipeline shadowPipelineZPass;  // Z-pass — camera outside shadow volume (no caps needed)
+    VkPipeline shadowPipelineZPass;       // Z-pass — camera outside shadow volume (no caps needed)
     VkPipeline shadowPipelineZPassMirror; // Z-pass for mirrored views (front/back ops swapped)
 
     VkDescriptorSetLayout depthDescLayout;
     VkPipelineLayout depthLayout;
-    VkPipeline depthPipeline;          // opaque surfaces — no texture sample
-    VkPipeline depthClipPipeline;      // MC_PERFORATED — samples diffuse, discards on alpha
+    VkPipeline depthPipeline;     // opaque surfaces — no texture sample
+    VkPipeline depthClipPipeline; // MC_PERFORATED — samples diffuse, discards on alpha
 
     // GUI / unlit shader-pass pipeline (menu, HUD, console)
     VkDescriptorSetLayout guiDescLayout;
     VkPipelineLayout guiLayout;
-    VkPipeline guiOpaquePipeline;  // blend disabled (opaque stages)
-    VkPipeline guiAlphaPipeline;   // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+    VkPipeline guiOpaquePipeline; // blend disabled (opaque stages)
+    VkPipeline guiAlphaPipeline;  // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
 
     // Fog light pipeline (FogAllLights pass)
     // Shared descriptor layout: binding0=UBO, binding1=samp0, binding2=samp1
     VkDescriptorSetLayout fogDescLayout;
     VkPipelineLayout fogLayout;
-    VkPipeline fogPipeline;         // depth EQUAL, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
-    VkPipeline fogFrustumPipeline;  // depth LESS,  SRC_ALPHA/ONE_MINUS_SRC_ALPHA, back-cull (fog cap)
-    VkPipeline blendlightPipeline;  // depth EQUAL, DST_COLOR/ZERO (modulate) — most common blend light
+    VkPipeline fogPipeline;        // depth EQUAL, SRC_ALPHA/ONE_MINUS_SRC_ALPHA
+    VkPipeline fogFrustumPipeline; // depth LESS,  SRC_ALPHA/ONE_MINUS_SRC_ALPHA, back-cull (fog cap)
+    VkPipeline blendlightPipeline; // depth EQUAL, DST_COLOR/ZERO (modulate) — most common blend light
 
     // Per-frame descriptor pools (reset each frame after fence wait)
     VkDescriptorPool descPools[VK_MAX_FRAMES_IN_FLIGHT];

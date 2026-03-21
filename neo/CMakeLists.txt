@@ -90,8 +90,6 @@ option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for
 
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
-# Vulkan rendering backend (required for ray tracing)
-option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing" ON)
 
 # Optional path to the folder that contains game data directories like base/.
 # This is used to make Visual Studio debug launches find assets reliably.
@@ -663,12 +661,11 @@ set(src_vulkan
 	renderer/Vulkan/VKBackend.cpp
 )
 
-if(DHEWM3_RAYTRACING)
-	list(APPEND src_vulkan
-		renderer/Vulkan/vk_accelstruct.cpp
-		renderer/Vulkan/vk_shadows.cpp
-	)
-endif()
+list(APPEND src_vulkan
+	renderer/Vulkan/vk_accelstruct.cpp
+	renderer/Vulkan/vk_shadows.cpp
+)
+
 
 list(APPEND src_renderer ${src_vulkan})
 
@@ -696,21 +693,19 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/blendlight.frag
 	renderer/glsl/depth_clip.frag
 )
-if(DHEWM3_RAYTRACING)
-	list(APPEND GLSL_SHADER_SOURCES
-		renderer/glsl/shadow_ray.rgen
-		renderer/glsl/shadow_ray.rmiss
-		renderer/glsl/shadow_ray.rahit
-	)
-endif()
+list(APPEND GLSL_SHADER_SOURCES
+	renderer/glsl/shadow_ray.rgen
+	renderer/glsl/shadow_ray.rmiss
+	renderer/glsl/shadow_ray.rahit
+)
+
 
 set(SPV_OUTPUT_DIR "${CMAKE_BINARY_DIR}/glprogs/glsl")
 file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
 
 set(GLSLC_FLAGS --target-env=vulkan1.2)
-if(DHEWM3_RAYTRACING)
-	list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
-endif()
+list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
+
 
 set(SPIRV_BINARIES "")
 foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
@@ -1464,9 +1459,7 @@ endif()
 			VS_DEBUGGER_COMMAND_ARGUMENTS "+set fs_basepath \"${DHEWM3_RUNTIME_BASEPATH}\"")
 	endif()
 
-	if(DHEWM3_RAYTRACING)
-		target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
-	endif()
+	#target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
 	add_dependencies(${DHEWM3BINARY} dhewm3_spirv)
 
 	# Mirror compiled SPIR-V next to the executable so non-install local runs

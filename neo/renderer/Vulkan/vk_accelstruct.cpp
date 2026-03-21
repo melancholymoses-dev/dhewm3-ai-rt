@@ -14,8 +14,6 @@ the Free Software Foundation, either version 3 of the License, or
 ===========================================================================
 */
 
-#ifdef DHEWM3_RAYTRACING
-
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/VertexCache.h"
@@ -130,7 +128,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
         return NULL;
 
     VkDeviceSize vertexDataSize = (VkDeviceSize)tri->numVerts * sizeof(idDrawVert);
-    VkDeviceSize indexDataSize  = (VkDeviceSize)tri->numIndexes * sizeof(glIndex_t);
+    VkDeviceSize indexDataSize = (VkDeviceSize)tri->numIndexes * sizeof(glIndex_t);
 
     vkBLAS_t *blas = new vkBLAS_t();
     memset(blas, 0, sizeof(*blas));
@@ -147,11 +145,11 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
         bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         VkMemoryAllocateFlagsInfo fi = {};
-        fi.sType  = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-        fi.flags  = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        fi.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        fi.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
         VkMemoryAllocateInfo ai = {};
-        ai.sType  = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        ai.pNext  = &fi;
+        ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.pNext = &fi;
 
         VkMemoryRequirements mr;
         void *ptr;
@@ -160,9 +158,9 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
         bi.size = vertexDataSize;
         VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &blas->geomVertBuf));
         vkGetBufferMemoryRequirements(vk.device, blas->geomVertBuf, &mr);
-        ai.allocationSize  = mr.size;
-        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        ai.allocationSize = mr.size;
+        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomVertMem));
         VK_CHECK(vkBindBufferMemory(vk.device, blas->geomVertBuf, blas->geomVertMem, 0));
         VK_CHECK(vkMapMemory(vk.device, blas->geomVertMem, 0, vertexDataSize, 0, &ptr));
@@ -173,9 +171,9 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
         bi.size = indexDataSize;
         VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &blas->geomIdxBuf));
         vkGetBufferMemoryRequirements(vk.device, blas->geomIdxBuf, &mr);
-        ai.allocationSize  = mr.size;
-        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        ai.allocationSize = mr.size;
+        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomIdxMem));
         VK_CHECK(vkBindBufferMemory(vk.device, blas->geomIdxBuf, blas->geomIdxMem, 0));
         VK_CHECK(vkMapMemory(vk.device, blas->geomIdxMem, 0, indexDataSize, 0, &ptr));
@@ -185,51 +183,50 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
 
     // Describe geometry
     VkAccelerationStructureGeometryTrianglesDataKHR triData = {};
-    triData.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    triData.vertexFormat  = VK_FORMAT_R32G32B32_SFLOAT; // xyz at offset 0 of idDrawVert
+    triData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    triData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT; // xyz at offset 0 of idDrawVert
     triData.vertexData.deviceAddress = GetBufferDeviceAddress(blas->geomVertBuf);
-    triData.vertexStride  = sizeof(idDrawVert);
-    triData.maxVertex     = (uint32_t)tri->numVerts - 1;
-    triData.indexType     = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+    triData.vertexStride = sizeof(idDrawVert);
+    triData.maxVertex = (uint32_t)tri->numVerts - 1;
+    triData.indexType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBuf);
     triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
 
     VkAccelerationStructureGeometryKHR asGeom = {};
-    asGeom.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    asGeom.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    asGeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     asGeom.geometry.triangles = triData;
-    asGeom.flags              = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    asGeom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
-    buildInfo.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-    buildInfo.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    buildInfo.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
-                              VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-    buildInfo.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                      VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.geometryCount = 1;
-    buildInfo.pGeometries   = &asGeom;
+    buildInfo.pGeometries = &asGeom;
 
     uint32_t primitiveCount = (uint32_t)tri->numIndexes / 3;
 
     VkAccelerationStructureBuildSizesInfoKHR sizeInfo = {};
     sizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-    vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-                                            &buildInfo, &primitiveCount, &sizeInfo);
+    vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
+                                            &primitiveCount, &sizeInfo);
 
     AllocASBuffer(sizeInfo.accelerationStructureSize, 0, &blas->buffer, &blas->memory);
 
     VkAccelerationStructureCreateInfoKHR asInfo = {};
-    asInfo.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    asInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
     asInfo.buffer = blas->buffer;
-    asInfo.size   = sizeInfo.accelerationStructureSize;
-    asInfo.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    asInfo.size = sizeInfo.accelerationStructureSize;
+    asInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     VK_CHECK(vkCreateAccelerationStructureKHR(vk.device, &asInfo, NULL, &blas->handle));
 
     // Scratch buffer kept in blas struct — freed at VK_RT_DestroyBLAS.
-    AllocASBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                  &blas->scratchBuf, &blas->scratchMem);
+    AllocASBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &blas->scratchBuf, &blas->scratchMem);
 
-    buildInfo.dstAccelerationStructure  = blas->handle;
+    buildInfo.dstAccelerationStructure = blas->handle;
     buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(blas->scratchBuf);
 
     VkAccelerationStructureBuildRangeInfoKHR rangeInfo = {};
@@ -242,7 +239,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
 
     // Device address is a property of the AS object; valid immediately after creation.
     VkAccelerationStructureDeviceAddressInfoKHR addrInfo = {};
-    addrInfo.sType                = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    addrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     addrInfo.accelerationStructure = blas->handle;
     blas->deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &addrInfo);
 
@@ -364,20 +361,33 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (instanceCount == 0)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+        {
+            common->Printf("VK RT TLAS: no instances this frame, skipping build\n");
+            fflush(NULL);
+        }
         return;
+    }
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK RT TLAS: building — instances=%u blasBuiltThisFrame=%s\n",
+                       instanceCount, anyBLASBuilt ? "yes" : "no");
+        fflush(NULL);
+    }
 
     // One barrier for all BLAS builds recorded above.
     // Ensures every BLAS write is visible to the TLAS build that follows.
     if (anyBLASBuilt)
     {
         VkMemoryBarrier blasBarrier = {};
-        blasBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        blasBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         blasBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
         blasBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-        vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-            0, 1, &blasBarrier, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &blasBarrier, 0, NULL, 0,
+                             NULL);
     }
 
     vkTLAS_t &tlas = vkRT.tlas;
@@ -657,5 +667,3 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         sm.height = height;
     }
 }
-
-#endif // DHEWM3_RAYTRACING

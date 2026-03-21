@@ -52,8 +52,17 @@ vec3 reconstructWorldPos( ivec2 coord, ivec2 size ) {
     vec2 uv = (vec2(coord) + 0.5) / vec2(size);
     float depth = texelFetch( depthSampler, coord, 0 ).r;
 
-    // NDC: [-1,1] in XY, depth in [0,1] for Vulkan
-    vec4 clipPos = vec4( uv * 2.0 - 1.0, depth, 1.0 );
+    // Vulkan framebuffer: pixel y=0 is top of screen.
+    // Viewport uses negative height (Y-flip), so NDC y=+1 is top.
+    // Therefore: ndcY = 1.0 - 2.0*uv.y  (not uv.y*2-1 which would be inverted).
+    //
+    // Depth buffer contains Vulkan Z in [0,1] (via s_projVk Z remap in vk_backend.cpp).
+    // invViewProj is built from the GL projection matrix which uses Z in [-1,1].
+    // Remap: ndcZ_gl = 2.0 * depth - 1.0.
+    vec4 clipPos = vec4( uv.x * 2.0 - 1.0,
+                         1.0 - 2.0 * uv.y,
+                         2.0 * depth - 1.0,
+                         1.0 );
     vec4 worldPos = params.invViewProj * clipPos;
     return worldPos.xyz / worldPos.w;
 }
