@@ -58,6 +58,16 @@ struct vkBLAS_t
     VkBuffer buffer;
     VkDeviceMemory memory;
     VkDeviceAddress deviceAddress;
+    // Host-visible geometry buffers for the AS build input.
+    // Kept alive until VK_RT_DestroyBLAS because they must outlive the
+    // command buffer submission in which the BLAS build was recorded.
+    VkBuffer geomVertBuf;
+    VkDeviceMemory geomVertMem;
+    VkBuffer geomIdxBuf;
+    VkDeviceMemory geomIdxMem;
+    // Scratch buffer used during build (freed at destroy time).
+    VkBuffer scratchBuf;
+    VkDeviceMemory scratchMem;
     bool isValid;
 };
 
@@ -134,16 +144,14 @@ void VK_RT_Shutdown(void);
 // Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
 
-// Build/update BLAS for a mesh (called when geometry is added to the scene)
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri);
+// Build/update BLAS for a mesh.  cmd must be a command buffer currently recording
+// outside a render pass.  All BLAS builds for a frame should share the same cmd so
+// a single barrier can synchronize them all before the TLAS build.
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
-
-// Dispatch shadow ray pass for all lights (legacy - writes shadow mask for current frame).
-// Not used in the per-light interleaved path; kept for reference.
-void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Dispatch shadow rays for a single light.
 // Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
