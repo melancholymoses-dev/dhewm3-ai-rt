@@ -98,6 +98,7 @@ struct vkRTState_t
     vkTLAS_t tlas;
     vkShadowMask_t shadowMask[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler shadowMaskSampler; // nearest-clamp, used when sampling shadow mask in lighting pass
+    VkSampler depthSampler;      // nearest-clamp, for sampling depth in the RT shadow rgen
 
     // RT pipeline for shadow rays
     VkPipeline shadowPipeline;
@@ -140,8 +141,15 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Dispatch shadow ray pass - writes shadow mask for current frame
+// Dispatch shadow ray pass for all lights (legacy - writes shadow mask for current frame).
+// Not used in the per-light interleaved path; kept for reference.
 void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Dispatch shadow rays for a single light.
+// Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
+// this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
+// The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight);
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);

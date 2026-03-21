@@ -86,7 +86,7 @@ static void VK_RT_InitShadowPipeline(void)
     bindings[2].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
     bindings[3].binding = 3;
-    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
@@ -238,7 +238,7 @@ static void VK_RT_InitShadowPipeline(void)
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -270,6 +270,19 @@ static void VK_RT_InitShadowPipeline(void)
         si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.shadowMaskSampler));
+    }
+
+    // --- Depth sampler (used by the rgen shader to reconstruct world position from depth) ---
+    {
+        VkSamplerCreateInfo si = {};
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter = VK_FILTER_NEAREST;
+        si.minFilter = VK_FILTER_NEAREST;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.depthSampler));
     }
 
     vkRT.isInitialized = true;
@@ -463,6 +476,192 @@ void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef)
                              VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &backBarrier);
         VK_EndSingleTimeCommands(transCmd);
     }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchShadowRaysForLight
+// Called once per light, outside a render pass, after the depth prepass.
+//
+// Dispatches shadow rays for a single light and writes to the shadow mask
+// (VK_IMAGE_LAYOUT_GENERAL throughout — no layout transition for the mask).
+//
+// Depth image is transitioned: DEPTH_STENCIL_ATTACHMENT_OPTIMAL →
+// DEPTH_STENCIL_READ_ONLY_OPTIMAL for the dispatch, then restored before return
+// so the caller can immediately reopen a render pass.
+//
+// The shadow-params UBO is allocated from the per-frame UBO ring (dynamic binding),
+// so per-light data is captured in the command buffer's bind offset — no per-call
+// alloc/free and no vkQueueWaitIdle.
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight)
+{
+    if (!vkRT.isInitialized || !vkRT.tlas.isValid)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
+        return;
+    if (!vLight || !vLight->lightDef)
+        return;
+
+    uint32_t frameIdx = vk.currentFrame;
+    vkShadowMask_t &sm = vkRT.shadowMask[frameIdx];
+    if (sm.image == VK_NULL_HANDLE)
+        return;
+
+    // --- Depth barrier: render-pass final layout → shader-readable ---
+    VkImageMemoryBarrier depthToRead = {};
+    depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    depthToRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    depthToRead.image = vk.depthImage;
+    depthToRead.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                         0, 0, NULL, 0, NULL, 1, &depthToRead);
+
+    // --- Update frame-level descriptor set (TLAS, shadow mask, depth sampler, UBO base) ---
+    // The UBO binding is DYNAMIC: the descriptor stores the ring buffer base; the per-light
+    // offset is supplied at vkCmdBindDescriptorSets time, so this update only needs to happen
+    // once per frame slot (when the ring buffer handle changes, which is never after init).
+    // We update unconditionally for safety; it's idempotent.
+    {
+        VkDescriptorSet ds = vkRT.shadowDescSets[frameIdx];
+
+        // Binding 0: TLAS
+        VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
+        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        tlasWrite.accelerationStructureCount = 1;
+        tlasWrite.pAccelerationStructures = &vkRT.tlas.handle;
+
+        VkWriteDescriptorSet writes[4] = {};
+
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].pNext = &tlasWrite;
+        writes[0].dstSet = ds;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
+        // Binding 1: shadow mask storage image (always GENERAL)
+        VkDescriptorImageInfo smImgInfo = {};
+        smImgInfo.imageView = sm.view;
+        smImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = ds;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &smImgInfo;
+
+        // Binding 2: depth sampler (cached, created once at init)
+        VkDescriptorImageInfo depthImgInfo = {};
+        depthImgInfo.sampler = vkRT.depthSampler;
+        depthImgInfo.imageView = vk.depthView;
+        depthImgInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = ds;
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo = &depthImgInfo;
+
+        // Binding 3: UBO (DYNAMIC) — stores the ring buffer base; per-light offset at bind time.
+        // VK_AllocUBOForShadow is called below to get the per-light slot, but the buffer
+        // handle is the same for all lights in this frame slot, so we always use slot 0 offset
+        // here as the base; the dynamic offset passed to vkCmdBindDescriptorSets is the real one.
+        extern bool VK_AllocUBOForShadow(VkBuffer * outBuf, uint32_t * outOffset, void **outMapped);
+        VkBuffer uboBuf;
+        uint32_t uboOff;
+        void *uboMapped;
+        VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
+
+        VkDescriptorBufferInfo uboInfo = {};
+        uboInfo.buffer = uboBuf;
+        uboInfo.offset = 0; // base 0; dynamic offset added at bind time
+        uboInfo.range = sizeof(ShadowParamsUBO);
+
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = ds;
+        writes[3].dstBinding = 3;
+        writes[3].descriptorCount = 1;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        writes[3].pBufferInfo = &uboInfo;
+
+        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+
+        // --- Build per-light UBO data into the allocated ring slot ---
+        const renderLight_t &light = vLight->lightDef->parms;
+
+        ShadowParamsUBO ubo;
+        memset(&ubo, 0, sizeof(ubo));
+
+        {
+            const float *proj = viewDef->projectionMatrix;
+            const float *mv = viewDef->worldSpace.modelViewMatrix;
+            float vp[16];
+            for (int r = 0; r < 4; r++)
+            {
+                for (int c = 0; c < 4; c++)
+                {
+                    vp[c * 4 + r] = 0.0f;
+                    for (int k = 0; k < 4; k++)
+                        vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
+                }
+            }
+            idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
+                         idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
+            idMat4 invVP = vpMat.Inverse();
+            memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
+        }
+
+        ubo.lightOrigin[0] = light.origin.x;
+        ubo.lightOrigin[1] = light.origin.y;
+        ubo.lightOrigin[2] = light.origin.z;
+        ubo.lightOrigin[3] = light.lightRadius.x;
+        ubo.lightFalloffRadius = light.lightRadius.Length();
+        ubo.numSamples = r_rtShadowSamples.GetInteger();
+        ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
+        ubo.pad = 0.0f;
+
+        memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
+
+        // --- Dispatch ---
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout,
+                                0, 1, &ds, 1, &uboOff);
+
+        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion,
+                          sm.width, sm.height, 1);
+    }
+
+    // --- Memory barrier: shadow mask RT-write → fragment-shader-read (layout stays GENERAL) ---
+    VkMemoryBarrier shadowMemBarrier = {};
+    shadowMemBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    shadowMemBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    shadowMemBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 1, &shadowMemBarrier, 0, NULL, 0, NULL);
+
+    // --- Depth barrier: restore to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for render pass resume ---
+    VkImageMemoryBarrier depthRestore = {};
+    depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    depthRestore.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthRestore.image = vk.depthImage;
+    depthRestore.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                         VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+                         0, 0, NULL, 0, NULL, 1, &depthRestore);
 }
 
 // ---------------------------------------------------------------------------

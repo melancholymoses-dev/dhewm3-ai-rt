@@ -1,0 +1,44 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 23,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "vs2022-x64",
+            "displayName": "VS 2022 x64",
+            "description": "Configure dhewm3_rtx with Vulkan using local third-party libs",
+            "generator": "Visual Studio 17 2022",
+            "architecture": {
+                "value": "x64",
+                "strategy": "set"
+            },
+            "binaryDir": "C:/Users/jonat/source/repos/build_rtx",
+            "cacheVariables": {
+                "DHEWM3_VULKAN": "ON",
+                "DHEWM3_RAYTRACING": "ON",
+                "DHEWM3LIBS": "C:/Users/jonat/source/repos/dhewm3-libs/x86_64-w64-mingw32",
+                "CMAKE_PREFIX_PATH": "C:/Users/jonat/source/repos/dhewm3-libs/x86_64-w64-mingw32"
+            },
+            "environment": {
+                "PATH": "$penv{PATH};C:/Users/jonat/source/repos/dhewm3-libs/x86_64-w64-mingw32/bin"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "release",
+            "displayName": "Build Release",
+            "configurePreset": "vs2022-x64",
+            "configuration": "Release"
+        },
+        {
+            "name": "debug",
+            "displayName": "Build Debug",
+            "configurePreset": "vs2022-x64",
+            "configuration": "Debug"
+        }
+    ]
+}
