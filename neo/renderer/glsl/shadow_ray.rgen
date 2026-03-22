@@ -137,13 +137,15 @@ void main() {
         uint seed = wang_hash( baseSeed + uint(s) * 1013u );
         vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed );
 
-        // Initialize to 0.0 (shadowed). On opaque hit no shader runs, so payload
-        // stays 0.0 = shadowed.  On miss the miss shader writes 1.0 = lit.
-        // (VK_GEOMETRY_OPAQUE_BIT_KHR skips the any-hit shader entirely.)
+        // Initialize to 0.0 (shadowed). Opaque geometry bypasses the any-hit shader
+        // via VK_GEOMETRY_OPAQUE_BIT_KHR so the payload stays 0.0 = shadowed.
+        // Perforated geometry invokes the any-hit shader, which calls
+        // ignoreIntersectionEXT for transparent regions (phases 3-5 TODO).
+        // On miss the miss shader writes 1.0 = lit.
         shadowFactor = 0.0;
         traceRayEXT(
             topLevelAS,
-            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsOpaqueEXT,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
             0xFF,   // cull mask
             0,      // SBT offset
             0,      // SBT stride
