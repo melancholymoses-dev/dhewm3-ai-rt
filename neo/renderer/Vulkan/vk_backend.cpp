@@ -2367,6 +2367,12 @@ void VK_RB_DrawView(const void *data)
         // === First RC_DRAW_VIEW this EndFrame: acquire image and open command buffer ===
 
         // --- Wait for previous frame's fence ---
+        if (r_vkLogRT.GetInteger() >= 1)
+        {
+            common->Printf("VK FRAME: fence wait — slot=%u frameCount=%d\n",
+                           vk.currentFrame, tr.frameCount);
+            fflush(NULL);
+        }
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
         if (fenceResult != VK_SUCCESS)
         {
@@ -2479,6 +2485,14 @@ void VK_RB_DrawView(const void *data)
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d\n",
+                       vk.currentFrame, vk.currentImageIdx, tr.frameCount,
+                       VK_RTShadowsEnabled() ? 1 : 0);
+        fflush(NULL);
+    }
+
     // Rendering order matches vkDOOM3 reference and GL path (draw_common.cpp RB_STD_DrawView):
     //   1. Depth prepass — populate depth buffer for early-Z rejection
     //   2. TLAS rebuild (if RT active) — must be outside render pass, uses the filled depth
@@ -2554,6 +2568,13 @@ void VK_RB_DrawView(const void *data)
 
     if (!r_skipInteractions.GetBool())
         VK_RB_DrawInteractions(cmdBuf);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK FRAME: interactions done — slot=%u frameCount=%d\n",
+                       vk.currentFrame, tr.frameCount);
+        fflush(NULL);
+    }
 
     if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
         VK_RB_DrawShaderPasses(cmdBuf);

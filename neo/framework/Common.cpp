@@ -123,8 +123,8 @@ idCVar com_showAsyncStats("com_showAsyncStats", "0", CVAR_BOOL | CVAR_SYSTEM | C
                           "show async network stats");
 idCVar com_showSoundDecoders("com_showSoundDecoders", "0", CVAR_BOOL | CVAR_SYSTEM | CVAR_NOCHEAT,
                              "show sound decoders");
-idCVar com_timestampPrints("com_timestampPrints", "0", CVAR_SYSTEM,
-                           "print time with each console print, 1 = msec, 2 = sec", 0, 2,
+idCVar com_timestampPrints("com_timestampPrints", "2", CVAR_SYSTEM,
+                           "print time with each console print, 1 = sec, 2 = msec (default on)", 0, 2,
                            idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar com_timescale("timescale", "1", CVAR_SYSTEM | CVAR_FLOAT, "scales the time", 0.1f, 10.0f);
 idCVar com_makingBuild("com_makingBuild", "0", CVAR_BOOL | CVAR_SYSTEM, "1 when making a build");

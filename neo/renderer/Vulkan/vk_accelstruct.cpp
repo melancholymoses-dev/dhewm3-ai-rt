@@ -287,6 +287,35 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (!viewDef)
         return;
 
+    // Multiple DrawViews can occur within a single frame (game world, HUD, PDA, etc.).
+    // Each records commands into the same command buffer.  If we destroy+recreate the
+    // TLAS for a later DrawView, the earlier trace commands (already recorded) reference
+    // a freed acceleration structure → VK_ERROR_DEVICE_LOST.
+    // Fix: only build the TLAS once per frameCount.  Subsequent DrawViews reuse it.
+    vkTLAS_t &tlasRef = vkRT.tlas;
+    if (tlasRef.isValid && tlasRef.lastBuiltFrameCount == tr.frameCount)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+        {
+            common->Printf("VK RT TLAS: reusing — already built this frame (frameCount=%d)\n", tr.frameCount);
+            fflush(NULL);
+        }
+        return;
+    }
+
+    // Wait for prior frame submissions so we don't destroy TLAS still referenced
+    // by an in-flight command buffer from the previous frame.
+    // TODO: double-buffer the TLAS to avoid this serialisation.
+    if (tlasRef.handle != VK_NULL_HANDLE)
+        vkDeviceWaitIdle(vk.device);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK RT TLAS: begin rebuild — frame=%u frameCount=%d\n",
+                       vk.currentFrame, tr.frameCount);
+        fflush(NULL);
+    }
+
     // Count and collect instances
     static VkAccelerationStructureInstanceKHR instances[4096];
     uint32_t instanceCount = 0;
@@ -517,6 +546,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     addrInfo.accelerationStructure = tlas.handle;
     tlas.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &addrInfo);
     tlas.isValid = true;
+    tlas.lastBuiltFrameCount = tr.frameCount;
 }
 
 // ---------------------------------------------------------------------------
