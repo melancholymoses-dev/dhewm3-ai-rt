@@ -90,6 +90,7 @@ struct vkTLAS_t
     VkDeviceMemory scratchMemory;
 
     bool isValid;
+    int lastBuiltFrameCount; // skip redundant rebuilds within same frame
 };
 
 // Shadow mask buffer (R8 UNORM, one pixel per screen pixel)
