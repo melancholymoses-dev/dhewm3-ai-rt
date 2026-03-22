@@ -52,8 +52,17 @@ vec3 reconstructWorldPos( ivec2 coord, ivec2 size ) {
     vec2 uv = (vec2(coord) + 0.5) / vec2(size);
     float depth = texelFetch( depthSampler, coord, 0 ).r;
 
-    // NDC: [-1,1] in XY, depth in [0,1] for Vulkan
-    vec4 clipPos = vec4( uv * 2.0 - 1.0, depth, 1.0 );
+    // Vulkan framebuffer: pixel y=0 is top of screen.
+    // Viewport uses negative height (Y-flip), so NDC y=+1 is top.
+    // Therefore: ndcY = 1.0 - 2.0*uv.y  (not uv.y*2-1 which would be inverted).
+    //
+    // Depth buffer contains Vulkan Z in [0,1] (via s_projVk Z remap in vk_backend.cpp).
+    // invViewProj is built from the GL projection matrix which uses Z in [-1,1].
+    // Remap: ndcZ_gl = 2.0 * depth - 1.0.
+    vec4 clipPos = vec4( uv.x * 2.0 - 1.0,
+                         1.0 - 2.0 * uv.y,
+                         2.0 * depth - 1.0,
+                         1.0 );
     vec4 worldPos = params.invViewProj * clipPos;
     return worldPos.xyz / worldPos.w;
 }
@@ -128,10 +137,13 @@ void main() {
         uint seed = wang_hash( baseSeed + uint(s) * 1013u );
         vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed );
 
-        shadowFactor = 1.0; // miss shader writes 1.0 (lit)
+        // Initialize to 0.0 (shadowed). On opaque hit no shader runs, so payload
+        // stays 0.0 = shadowed.  On miss the miss shader writes 1.0 = lit.
+        // (VK_GEOMETRY_OPAQUE_BIT_KHR skips the any-hit shader entirely.)
+        shadowFactor = 0.0;
         traceRayEXT(
             topLevelAS,
-            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsOpaqueEXT,
             0xFF,   // cull mask
             0,      // SBT offset
             0,      // SBT stride
@@ -142,7 +154,7 @@ void main() {
             tMax,
             0       // payload location
         );
-        occluded += (1.0 - shadowFactor); // shadowFactor 0.0 from any-hit → hit → occluded
+        occluded += (1.0 - shadowFactor); // miss → 1.0 → 0.0 added; hit → 0.0 → 1.0 added
     }
 
     float shadow = 1.0 - (occluded / float(N));

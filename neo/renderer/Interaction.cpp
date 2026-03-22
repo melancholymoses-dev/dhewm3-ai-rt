@@ -1443,8 +1443,12 @@ void idInteraction::AddActiveInteraction(void)
                 vertexCache.Touch(shadowTris->indexCache);
             }
 
-            // see if we can avoid using the shadow volume caps
-            bool inside = R_PotentiallyInsideInfiniteShadow(sint->ambientTris, localViewOrigin, localLightOrigin);
+            // see if we can avoid using the shadow volume caps.
+            // When the camera is conservatively inside the light (stable shadow policy forces
+            // viewInsideLight=true), also force caps on to prevent per-surface insideFlag
+            // flickering at occluder bounding-box boundaries.
+            bool inside = vLight->viewInsideLight ||
+                          R_PotentiallyInsideInfiniteShadow(sint->ambientTris, localViewOrigin, localLightOrigin);
 
             if (sint->shader->TestMaterialFlag(MF_NOSELFSHADOW))
             {

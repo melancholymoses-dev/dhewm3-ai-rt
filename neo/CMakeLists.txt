@@ -90,8 +90,15 @@ option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for
 
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
 
-# Vulkan rendering backend (required for ray tracing)
-option(DHEWM3_RAYTRACING "Enable Vulkan ray tracing" OFF)
+
+# Optional path to the folder that contains game data directories like base/.
+# This is used to make Visual Studio debug launches find assets reliably.
+set(_dhewm3_default_runtime_basepath "")
+if(EXISTS "${CMAKE_SOURCE_DIR}/../base")
+	set(_dhewm3_default_runtime_basepath "${CMAKE_SOURCE_DIR}/..")
+endif()
+set(DHEWM3_RUNTIME_BASEPATH "${_dhewm3_default_runtime_basepath}" CACHE PATH "Runtime path containing Doom 3 game data folders (base/, d3xp/) for IDE launches")
+unset(_dhewm3_default_runtime_basepath)
  
 if(NOT MSVC) # GCC/clang or compatible, hopefully
 	option(FORCE_COLORED_OUTPUT "Always produce ANSI-colored compiler warnings/errors (GCC/Clang only; esp. useful with ninja)." OFF)
@@ -654,12 +661,11 @@ set(src_vulkan
 	renderer/Vulkan/VKBackend.cpp
 )
 
-if(DHEWM3_RAYTRACING)
-	list(APPEND src_vulkan
-		renderer/Vulkan/vk_accelstruct.cpp
-		renderer/Vulkan/vk_shadows.cpp
-	)
-endif()
+list(APPEND src_vulkan
+	renderer/Vulkan/vk_accelstruct.cpp
+	renderer/Vulkan/vk_shadows.cpp
+)
+
 
 list(APPEND src_renderer ${src_vulkan})
 
@@ -687,21 +693,20 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/blendlight.frag
 	renderer/glsl/depth_clip.frag
 )
-if(DHEWM3_RAYTRACING)
-	list(APPEND GLSL_SHADER_SOURCES
-		renderer/glsl/shadow_ray.rgen
-		renderer/glsl/shadow_ray.rmiss
-		renderer/glsl/shadow_ray.rahit
-	)
-endif()
+list(APPEND GLSL_SHADER_SOURCES
+	renderer/glsl/shadow_ray.rgen
+	renderer/glsl/shadow_ray.rmiss
+	renderer/glsl/shadow_ray.rahit
+	renderer/glsl/shadow_blur.comp
+)
+
 
 set(SPV_OUTPUT_DIR "${CMAKE_BINARY_DIR}/glprogs/glsl")
 file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
 
 set(GLSLC_FLAGS --target-env=vulkan1.2)
-if(DHEWM3_RAYTRACING)
-	list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
-endif()
+list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
+
 
 set(SPIRV_BINARIES "")
 foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
@@ -1447,10 +1452,27 @@ endif()
 	else()
 		target_link_libraries(${DHEWM3BINARY} Vulkan::Vulkan)
 	endif()
-	if(DHEWM3_RAYTRACING)
-		target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
+
+	if(MSVC AND DHEWM3_RUNTIME_BASEPATH)
+		# Ensure F5/debug from Visual Studio can locate base/ data and defaults.
+		set_target_properties(${DHEWM3BINARY} PROPERTIES
+			VS_DEBUGGER_WORKING_DIRECTORY "${DHEWM3_RUNTIME_BASEPATH}"
+			VS_DEBUGGER_COMMAND_ARGUMENTS "+set fs_basepath \"${DHEWM3_RUNTIME_BASEPATH}\"")
 	endif()
+
+	#target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_RAYTRACING)
 	add_dependencies(${DHEWM3BINARY} dhewm3_spirv)
+
+	# Mirror compiled SPIR-V next to the executable so non-install local runs
+	# can be moved/copied with their shader payload intact.
+	set(SPIRV_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/glprogs/glsl")
+	add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+		COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPIRV_EXE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E copy_directory
+				"${CMAKE_BINARY_DIR}/glprogs/glsl"
+				"${SPIRV_EXE_DIR}"
+		COMMENT "Copying SPIR-V shaders next to executable"
+	)
 
 	# Copy compiled SPIR-V into <build_output>/base/glprogs/glsl/ so the
 	# game finds them at runtime (Sys_GetPath(PATH_BASE) checks <exe>/base/).

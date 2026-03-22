@@ -137,15 +137,19 @@ idCVar r_useGLSL("r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 
 // Vulkan / Ray Tracing backend CVars
 idCVar r_backend("r_backend", "opengl", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"");
-idCVar r_useRayTracing("r_useRayTracing", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_useRayTracing("r_useRayTracing", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "enable hardware ray tracing (requires Vulkan backend and RTX hardware)");
-idCVar r_rtShadows("r_rtShadows", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)");
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "ray traced reflections (expensive)");
 idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
+idCVar r_rtShadowBlur("r_rtShadowBlur", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+                      "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
+idCVar r_vkLogRT("r_vkLogRT", "0", CVAR_RENDERER | CVAR_INTEGER,
+                 "RT pipeline diagnostics: 0=off 1=per-frame TLAS+dispatch summary 2=per-light verbose (flushed)");
 idCVar r_rtAOSamples("r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel");
 idCVar r_rtDenoise("r_rtDenoise", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "enable temporal denoising for RT effects");
@@ -254,12 +258,41 @@ idCVar r_flareSize("r_flareSize", "1", CVAR_RENDERER | CVAR_FLOAT, "scale the fl
 idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
-idCVar r_vkLogShadowBranch(
-    "r_vkLogShadowBranch", "1", CVAR_RENDERER | CVAR_INTEGER,
-    "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every shadow surface", 0, 2,
-    idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogShadowBranch("r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
+                           "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every "
+                           "shadow surface, 3=log only per-surface branch/signature changes, 4=also log "
+                           "viewInsideLight classification flips with plane-distance diagnostics, 5=verbose "
+                           "(includes light pass/list churn and index/draw-only branch deltas)",
+                           0, 5, idCmdSystem::ArgCompletion_Integer<0, 5>);
+idCVar r_vkShadowFlipOps(
+    "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkShadowStableMode(
+    "r_vkShadowStableMode", "1", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow stabilization: force full-volume Z-fail path to reduce view-dependent popping/flicker", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkLogShadowGeom(
+    "r_vkLogShadowGeom", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan shadow geometry debug: 0=off, 1=log per-surface geometry/source signature changes, 2=log every shadow draw",
+    0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkShadowFullScissor(
+    "r_vkShadowFullScissor", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow debug: 1 = draw shadow volumes with full-frame scissor (interactions still use light scissor)", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkLightFullScissor(
+    "r_vkLightFullScissor", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Vulkan shadow debug: 1 = force full-frame scissor for each whole light pass (clear+shadows+interactions)", 0, 1,
+    idCmdSystem::ArgCompletion_Integer<0, 1>);
+idCVar r_vkInsideLightHysteresisEnter(
+    "r_vkInsideLightHysteresisEnter", "0.50", CVAR_RENDERER | CVAR_FLOAT,
+    "Vulkan shadow stability: extra enter-inside margin (units) below INSIDE_LIGHT_FRUSTUM_SLOP", 0.0f, 64.0f);
+idCVar r_vkInsideLightHysteresisExit(
+    "r_vkInsideLightHysteresisExit", "1.50", CVAR_RENDERER | CVAR_FLOAT,
+    "Vulkan shadow stability: extra stay-inside margin (units) above INSIDE_LIGHT_FRUSTUM_SLOP before leaving", 0.0f,
+    64.0f);
 idCVar r_vkLogSubmitInfo(
-    "r_vkLogSubmitInfo", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "r_vkLogSubmitInfo", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,
     idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
@@ -414,8 +447,8 @@ idCVar r_useCarmacksReverse("r_useCarmacksReverse", "1", CVAR_RENDERER | CVAR_AR
                             "Use Z-Fail (Carmack's Reverse) when rendering shadows");
 idCVar r_useStencilOpSeparate("r_useStencilOpSeparate", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                               "Use glStencilOpSeparate() (if available) when rendering shadows");
-idCVar r_screenshotFormat("r_screenshotFormat", "2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
-                          "Screenshot format. 0 = TGA, 1 = BMP, 2 = PNG (default), 3 = JPG");
+idCVar r_screenshotFormat("r_screenshotFormat", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+                          "Screenshot format. 0 = TGA, 1 = BMP, 2 = PNG, 3 = JPG (default)");
 idCVar r_screenshotJpgQuality(
     "r_screenshotJpgQuality", "75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "Screenshot quality for JPG images (1-100). Lower value means smaller file but worse quality");

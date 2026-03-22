@@ -3,11 +3,11 @@
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
+#include "renderer/Vulkan/vk_backend.h"
 
 // Forward declarations - defined in vk_backend.cpp
 extern void VKimp_InitFromGlimp(int width, int height);
 extern void VKimp_ShutdownFromGlimp(void);
-extern void VK_RB_DrawView(const void *data);
 
 // Populate glConfig string fields from the Vulkan physical device.
 // Called once from VKBackend::Init() after VKimp_InitFromGlimp succeeds.
@@ -70,6 +70,11 @@ void VKBackend::Image_Upload(idImage *img, const byte *data, int w, int h, textu
     VK_Image_Upload(img, data, w, h);
 }
 
+void VKBackend::CubeImage_Upload(idImage *img, const byte *const pic[6], int size)
+{
+    VK_Image_UploadCubemap(img, pic, size);
+}
+
 void VKBackend::Image_Purge(idImage *img)
 {
     VK_Image_Purge(img);
@@ -87,6 +92,27 @@ void VKBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool i
 void VKBackend::VertexCache_Free(vertCache_t *vc)
 {
     VK_VertexCache_Free(vc);
+}
+
+// Command batch lifecycle
+
+void VKBackend::BeginCommandBatch()
+{ // no-op: Vulkan has no fixed-function GL state to reset
+}
+
+void VKBackend::EndCommandBatch()
+{ // no-op: no GL texture bindings to restore
+}
+
+void VKBackend::SetBuffer(const void *data)
+{ // no-op: Vulkan has no draw-buffer concept
+    (void)data;
+}
+
+void VKBackend::SwapBuffers(const void *data)
+{
+    (void)data;
+    VK_RB_SwapBuffers();
 }
 
 // Frame dispatch

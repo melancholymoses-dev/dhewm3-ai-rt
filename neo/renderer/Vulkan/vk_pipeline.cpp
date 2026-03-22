@@ -378,36 +378,35 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthClampEnable = VK_TRUE; // needed for infinite projection
     rasterizer.lineWidth = 1.0f;
-    // Positive bias pushes shadow geometry z slightly farther than the depth prepass value.
-    // Near cap fragment z = z_true+bias; prepass stored z = z_true.
-    // (z_true+bias) < z_true = FALSE → LESS depth test fails → depthFailOp=DECREMENT_AND_WRAP fires.
-    // Without this, 1-ULP SPIR-V differences between shadow.vert and gui.vert occasionally let
-    // near caps pass LESS, applying passOp=KEEP instead, leaving stencil at 129 → dark triangles.
+    // Match GL shadow polygon offset behavior; values are set dynamically from cvars per draw.
     rasterizer.depthBiasEnable = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 2.0f;
+    rasterizer.depthBiasConstantFactor = 0.0f;
     rasterizer.depthBiasSlopeFactor = 0.0f;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // GL parity note (keep in sync with draw_common.cpp RB_T_Shadow):
     // Z-fail / Carmack's Reverse uses depthFailOp only.
-    //   non-mirror: back=DECR, front=INCR
-    //   mirror:     back=INCR, front=DECR (swapped)
+    // For a shadowed pixel (between near and far shadow caps):
+    //   near cap (front face, faces camera): d_sv < d_scene → depth PASSES → no event
+    //   far  cap (back  face, faces away  ): d_sv > d_scene → depth FAILS  → stencil fires
+    // Correct convention: front=DECR, back=INCR
+    //   non-mirror: front=DECR, back=INCR
+    //   mirror:     front=INCR, back=DECR (winding reversed in mirrored view)
     // In this Vulkan pipeline, front/back refer to post-viewport face classification
     // (with our Y-flipped viewport and frontFace=CLOCKWISE convention).
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = VK_STENCIL_OP_KEEP;
-    front.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    front.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
     front.compareOp = VK_COMPARE_OP_ALWAYS;
     front.compareMask = 0xFF;
     front.writeMask = 0xFF;
     front.reference = 0;
 
     VkStencilOpState back = front;
-    back.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    back.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -427,10 +426,10 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 2;
+    dynamicState.dynamicStateCount = 3;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
@@ -524,6 +523,10 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = VK_CULL_MODE_NONE; // two-sided: both faces contribute
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    // Keep Z-pass offset consistent with Z-fail (GL enables polygon offset for the whole shadow pass).
+    rasterizer.depthBiasEnable = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 0.0f;
+    rasterizer.depthBiasSlopeFactor = 0.0f;
     rasterizer.lineWidth = 1.0f;
     // No depthClamp needed for Z-pass (no back caps at infinity)
 
@@ -565,10 +568,10 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 2;
+    dynamicState.dynamicStateCount = 3;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
@@ -1061,7 +1064,7 @@ static VkDescriptorSetLayout VK_CreateFogDescLayout(void)
 // Core fog pipeline builder.
 // vertSpv/fragSpv: SPIR-V paths for the fog or blendlight shaders.
 // depthOp: VK_COMPARE_OP_EQUAL (world surfaces) or VK_COMPARE_OP_LESS (frustum cap).
-// cullMode: VK_CULL_MODE_BACK_BIT (world surfaces) or VK_CULL_MODE_FRONT_BIT (frustum cap).
+// cullMode: VK_CULL_MODE_FRONT_BIT (world surfaces) or VK_CULL_MODE_BACK_BIT (frustum cap).
 // blendSrc/blendDst: colour blend factors.
 static VkPipeline VK_CreateFogPipelineEx(VkPipelineLayout layout, const char *vertSpv, const char *fragSpv,
                                          VkCompareOp depthOp, VkCullModeFlags cullMode, VkBlendFactor blendSrc,
@@ -1216,8 +1219,8 @@ VkPipeline VK_GetOrCreateBlendlightPipeline(int drawStateBits)
     VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
     VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
     VkPipeline p = VK_CreateFogPipelineEx(vkPipes.fogLayout, "glprogs/glsl/blendlight.vert.spv",
-                                          "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_LESS_OR_EQUAL,
-                                          VK_CULL_MODE_BACK_BIT, src, dst);
+                                          "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_EQUAL,
+                                          VK_CULL_MODE_FRONT_BIT, src, dst);
     if (p == VK_NULL_HANDLE)
         return vkPipes.blendlightPipeline;
 
@@ -1300,15 +1303,15 @@ void VK_InitPipelines(void)
     // Fog surface pass: depth EQUAL, front-cull, SRC_ALPHA / ONE_MINUS_SRC_ALPHA
     vkPipes.fogPipeline = VK_CreateFogPipelineEx(
         vkPipes.fogLayout, "glprogs/glsl/fog.vert.spv", "glprogs/glsl/fog.frag.spv", VK_COMPARE_OP_EQUAL,
-        VK_CULL_MODE_BACK_BIT, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+        VK_CULL_MODE_FRONT_BIT, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
     // Fog frustum cap pass: depth LESS, back-cull, SRC_ALPHA / ONE_MINUS_SRC_ALPHA
     vkPipes.fogFrustumPipeline = VK_CreateFogPipelineEx(
         vkPipes.fogLayout, "glprogs/glsl/fog.vert.spv", "glprogs/glsl/fog.frag.spv", VK_COMPARE_OP_LESS,
-        VK_CULL_MODE_FRONT_BIT, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
+        VK_CULL_MODE_BACK_BIT, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
     // Blend light default: depth EQUAL, front-cull, DST_COLOR / ZERO (modulate)
     vkPipes.blendlightPipeline = VK_CreateFogPipelineEx(
-        vkPipes.fogLayout, "glprogs/glsl/blendlight.vert.spv", "glprogs/glsl/blendlight.frag.spv",
-        VK_COMPARE_OP_LESS_OR_EQUAL, VK_CULL_MODE_BACK_BIT, VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
+        vkPipes.fogLayout, "glprogs/glsl/blendlight.vert.spv", "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_EQUAL,
+        VK_CULL_MODE_FRONT_BIT, VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
 
     // --- Per-frame descriptor pools ---
     // Reset at the start of each frame (after fence wait) so descriptor sets don't accumulate.

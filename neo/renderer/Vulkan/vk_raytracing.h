@@ -58,6 +58,16 @@ struct vkBLAS_t
     VkBuffer buffer;
     VkDeviceMemory memory;
     VkDeviceAddress deviceAddress;
+    // Host-visible geometry buffers for the AS build input.
+    // Kept alive until VK_RT_DestroyBLAS because they must outlive the
+    // command buffer submission in which the BLAS build was recorded.
+    VkBuffer geomVertBuf;
+    VkDeviceMemory geomVertMem;
+    VkBuffer geomIdxBuf;
+    VkDeviceMemory geomIdxMem;
+    // Scratch buffer used during build (freed at destroy time).
+    VkBuffer scratchBuf;
+    VkDeviceMemory scratchMem;
     bool isValid;
 };
 
@@ -80,6 +90,7 @@ struct vkTLAS_t
     VkDeviceMemory scratchMemory;
 
     bool isValid;
+    int lastBuiltFrameCount; // skip redundant rebuilds within same frame
 };
 
 // Shadow mask buffer (R8 UNORM, one pixel per screen pixel)
@@ -88,6 +99,10 @@ struct vkShadowMask_t
     VkImage image;
     VkDeviceMemory memory;
     VkImageView view;
+    // Temp image for blur ping-pong (same format/size as shadow mask)
+    VkImage blurTempImage;
+    VkDeviceMemory blurTempMemory;
+    VkImageView blurTempView;
     uint32_t width;
     uint32_t height;
 };
@@ -95,9 +110,10 @@ struct vkShadowMask_t
 // Global RT state
 struct vkRTState_t
 {
-    vkTLAS_t tlas;
+    vkTLAS_t tlas[VK_MAX_FRAMES_IN_FLIGHT];
     vkShadowMask_t shadowMask[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler shadowMaskSampler; // nearest-clamp, used when sampling shadow mask in lighting pass
+    VkSampler depthSampler;      // nearest-clamp, for sampling depth in the RT shadow rgen
 
     // RT pipeline for shadow rays
     VkPipeline shadowPipeline;
@@ -105,6 +121,14 @@ struct vkRTState_t
     VkDescriptorSetLayout shadowDescLayout;
     VkDescriptorPool shadowDescPool;
     VkDescriptorSet shadowDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Shadow mask blur (compute pipeline)
+    VkPipeline blurPipeline;
+    VkPipelineLayout blurPipelineLayout;
+    VkDescriptorSetLayout blurDescLayout;
+    VkDescriptorPool blurDescPool;
+    VkDescriptorSet blurDescSetH; // horizontal pass: shadowMask→blurTemp
+    VkDescriptorSet blurDescSetV; // vertical pass: blurTemp→shadowMask
 
     // SBT buffers
     VkBuffer sbtBuffer;
@@ -133,15 +157,23 @@ void VK_RT_Shutdown(void);
 // Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
 
-// Build/update BLAS for a mesh (called when geometry is added to the scene)
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri);
+// Build/update BLAS for a mesh.  cmd must be a command buffer currently recording
+// outside a render pass.  All BLAS builds for a frame should share the same cmd so
+// a single barrier can synchronize them all before the TLAS build.
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
+
+// Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
+void VK_RT_DrainBLASGarbage(void);
 
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Dispatch shadow ray pass - writes shadow mask for current frame
-void VK_RT_DispatchShadowRays(VkCommandBuffer cmd, const viewDef_t *viewDef);
+// Dispatch shadow rays for a single light.
+// Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
+// this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
+// The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight);
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
