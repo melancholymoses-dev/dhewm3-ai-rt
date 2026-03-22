@@ -160,7 +160,7 @@ void VK_RT_InitShadows(void);
 // Build/update BLAS for a mesh.  cmd must be a command buffer currently recording
 // outside a render pass.  All BLAS builds for a frame should share the same cmd so
 // a single barrier can synchronize them all before the TLAS build.
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd);
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 
 // Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
