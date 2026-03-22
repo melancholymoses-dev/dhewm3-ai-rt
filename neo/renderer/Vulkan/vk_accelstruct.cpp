@@ -40,6 +40,70 @@ PFN_vkGetBufferDeviceAddressKHR pfn_vkGetBufferDeviceAddressKHR = NULL;
 vkRTState_t vkRT;
 
 // ---------------------------------------------------------------------------
+// Deferred BLAS deletion queue
+//
+// When entities are destroyed (e.g. cutscene transitions, map loads), their
+// BLAS is freed.  But in-flight command buffers may still reference the BLAS
+// via the TLAS.  We queue destroyed BLASes and only free them once enough
+// frames have passed that no in-flight work can reference them.
+// ---------------------------------------------------------------------------
+
+static const int BLAS_GARBAGE_MAX = 1024;
+
+struct blasGarbageEntry_t
+{
+    vkBLAS_t *blas;
+    int retireFrameCount; // safe to free when tr.frameCount >= this
+};
+
+static blasGarbageEntry_t s_blasGarbage[BLAS_GARBAGE_MAX];
+static int s_blasGarbageCount = 0;
+
+// Actually free a BLAS's GPU resources and memory.
+static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
+{
+    if (!blas)
+        return;
+    if (blas->handle != VK_NULL_HANDLE)
+        vkDestroyAccelerationStructureKHR(vk.device, blas->handle, NULL);
+    if (blas->buffer != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, blas->buffer, NULL);
+    if (blas->memory != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, blas->memory, NULL);
+    if (blas->scratchBuf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, blas->scratchBuf, NULL);
+    if (blas->scratchMem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, blas->scratchMem, NULL);
+    if (blas->geomVertBuf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, blas->geomVertBuf, NULL);
+    if (blas->geomVertMem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, blas->geomVertMem, NULL);
+    if (blas->geomIdxBuf != VK_NULL_HANDLE)
+        vkDestroyBuffer(vk.device, blas->geomIdxBuf, NULL);
+    if (blas->geomIdxMem != VK_NULL_HANDLE)
+        vkFreeMemory(vk.device, blas->geomIdxMem, NULL);
+    delete blas;
+}
+
+// Drain BLAS garbage entries that are safe to free (called after fence wait).
+void VK_RT_DrainBLASGarbage(void)
+{
+    int kept = 0;
+    for (int i = 0; i < s_blasGarbageCount; i++)
+    {
+        if (tr.frameCount >= s_blasGarbage[i].retireFrameCount)
+        {
+            VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
+        }
+        else
+        {
+            s_blasGarbage[kept++] = s_blasGarbage[i];
+        }
+    }
+    s_blasGarbageCount = kept;
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_LoadFunctionPointers
 // Must be called after logical device creation.
 // ---------------------------------------------------------------------------
@@ -255,25 +319,24 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas)
 {
     if (!blas)
         return;
-    if (blas->handle != VK_NULL_HANDLE)
-        vkDestroyAccelerationStructureKHR(vk.device, blas->handle, NULL);
-    if (blas->buffer != VK_NULL_HANDLE)
-        vkDestroyBuffer(vk.device, blas->buffer, NULL);
-    if (blas->memory != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, blas->memory, NULL);
-    if (blas->scratchBuf != VK_NULL_HANDLE)
-        vkDestroyBuffer(vk.device, blas->scratchBuf, NULL);
-    if (blas->scratchMem != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, blas->scratchMem, NULL);
-    if (blas->geomVertBuf != VK_NULL_HANDLE)
-        vkDestroyBuffer(vk.device, blas->geomVertBuf, NULL);
-    if (blas->geomVertMem != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, blas->geomVertMem, NULL);
-    if (blas->geomIdxBuf != VK_NULL_HANDLE)
-        vkDestroyBuffer(vk.device, blas->geomIdxBuf, NULL);
-    if (blas->geomIdxMem != VK_NULL_HANDLE)
-        vkFreeMemory(vk.device, blas->geomIdxMem, NULL);
-    delete blas;
+
+    // Defer destruction: in-flight command buffers may still reference this
+    // BLAS via the TLAS.  Wait VK_MAX_FRAMES_IN_FLIGHT frames so all slots
+    // have completed their GPU work before freeing.
+    if (s_blasGarbageCount < BLAS_GARBAGE_MAX)
+    {
+        blasGarbageEntry_t &entry = s_blasGarbage[s_blasGarbageCount++];
+        entry.blas = blas;
+        entry.retireFrameCount = tr.frameCount + VK_MAX_FRAMES_IN_FLIGHT;
+    }
+    else
+    {
+        // Queue full — must free immediately (risk of device lost, but
+        // better than leaking unboundedly).  This shouldn't happen in
+        // practice with a 1024-entry queue.
+        common->Warning("VK RT: BLAS garbage queue full, forcing immediate free");
+        VK_RT_FreeBLASImmediate(blas);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +355,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // TLAS for a later DrawView, the earlier trace commands (already recorded) reference
     // a freed acceleration structure → VK_ERROR_DEVICE_LOST.
     // Fix: only build the TLAS once per frameCount.  Subsequent DrawViews reuse it.
-    vkTLAS_t &tlasRef = vkRT.tlas;
+    vkTLAS_t &tlasRef = vkRT.tlas[vk.currentFrame];
     if (tlasRef.isValid && tlasRef.lastBuiltFrameCount == tr.frameCount)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -302,12 +365,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         }
         return;
     }
-
-    // Wait for prior frame submissions so we don't destroy TLAS still referenced
-    // by an in-flight command buffer from the previous frame.
-    // TODO: double-buffer the TLAS to avoid this serialisation.
-    if (tlasRef.handle != VK_NULL_HANDLE)
-        vkDeviceWaitIdle(vk.device);
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
@@ -419,7 +476,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                              NULL);
     }
 
-    vkTLAS_t &tlas = vkRT.tlas;
+    vkTLAS_t &tlas = vkRT.tlas[vk.currentFrame];
 
     // (Re)create instance buffer if size changed
     VkDeviceSize instBufSize = instanceCount * sizeof(VkAccelerationStructureInstanceKHR);
@@ -566,22 +623,31 @@ void VK_RT_Shutdown(void)
 {
     vkDeviceWaitIdle(vk.device);
 
-    // Destroy TLAS
-    if (vkRT.tlas.handle != VK_NULL_HANDLE)
+    // Flush deferred BLAS deletions (device is idle, all are safe to free)
+    for (int i = 0; i < s_blasGarbageCount; i++)
+        VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
+    s_blasGarbageCount = 0;
+
+    // Destroy TLAS (one per frame-in-flight slot)
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkDestroyAccelerationStructureKHR(vk.device, vkRT.tlas.handle, NULL);
-        vkDestroyBuffer(vk.device, vkRT.tlas.buffer, NULL);
-        vkFreeMemory(vk.device, vkRT.tlas.memory, NULL);
-    }
-    if (vkRT.tlas.instanceBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(vk.device, vkRT.tlas.instanceBuffer, NULL);
-        vkFreeMemory(vk.device, vkRT.tlas.instanceMemory, NULL);
-    }
-    if (vkRT.tlas.scratchBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(vk.device, vkRT.tlas.scratchBuffer, NULL);
-        vkFreeMemory(vk.device, vkRT.tlas.scratchMemory, NULL);
+        vkTLAS_t &tlas = vkRT.tlas[i];
+        if (tlas.handle != VK_NULL_HANDLE)
+        {
+            vkDestroyAccelerationStructureKHR(vk.device, tlas.handle, NULL);
+            vkDestroyBuffer(vk.device, tlas.buffer, NULL);
+            vkFreeMemory(vk.device, tlas.memory, NULL);
+        }
+        if (tlas.instanceBuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, tlas.instanceBuffer, NULL);
+            vkFreeMemory(vk.device, tlas.instanceMemory, NULL);
+        }
+        if (tlas.scratchBuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, tlas.scratchBuffer, NULL);
+            vkFreeMemory(vk.device, tlas.scratchMemory, NULL);
+        }
     }
 
     // Shadow mask images

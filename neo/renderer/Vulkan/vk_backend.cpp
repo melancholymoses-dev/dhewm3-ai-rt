@@ -2412,11 +2412,13 @@ void VK_RB_DrawView(const void *data)
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
-        // Drain deferred image and buffer deletions queued during the previous use of this frame slot.
+        // Drain deferred image, buffer, and BLAS deletions queued during the previous use of this frame slot.
         extern void VK_Image_DrainGarbage(uint32_t frameIdx);
         VK_Image_DrainGarbage(vk.currentFrame);
         extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
         VK_Buffer_DrainGarbage(vk.currentFrame);
+        if (vk.rayTracingSupported)
+            VK_RT_DrainBLASGarbage();
 
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
