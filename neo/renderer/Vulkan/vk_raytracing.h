@@ -99,6 +99,10 @@ struct vkShadowMask_t
     VkImage image;
     VkDeviceMemory memory;
     VkImageView view;
+    // Temp image for blur ping-pong (same format/size as shadow mask)
+    VkImage blurTempImage;
+    VkDeviceMemory blurTempMemory;
+    VkImageView blurTempView;
     uint32_t width;
     uint32_t height;
 };
@@ -117,6 +121,14 @@ struct vkRTState_t
     VkDescriptorSetLayout shadowDescLayout;
     VkDescriptorPool shadowDescPool;
     VkDescriptorSet shadowDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Shadow mask blur (compute pipeline)
+    VkPipeline blurPipeline;
+    VkPipelineLayout blurPipelineLayout;
+    VkDescriptorSetLayout blurDescLayout;
+    VkDescriptorPool blurDescPool;
+    VkDescriptorSet blurDescSetH; // horizontal pass: shadowMask→blurTemp
+    VkDescriptorSet blurDescSetV; // vertical pass: blurTemp→shadowMask
 
     // SBT buffers
     VkBuffer sbtBuffer;

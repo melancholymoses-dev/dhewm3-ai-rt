@@ -650,7 +650,7 @@ void VK_RT_Shutdown(void)
         }
     }
 
-    // Shadow mask images
+    // Shadow mask images (including blur temp images)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkShadowMask_t &sm = vkRT.shadowMask[i];
@@ -660,6 +660,12 @@ void VK_RT_Shutdown(void)
             vkDestroyImage(vk.device, sm.image, NULL);
         if (sm.memory != VK_NULL_HANDLE)
             vkFreeMemory(vk.device, sm.memory, NULL);
+        if (sm.blurTempView != VK_NULL_HANDLE)
+            vkDestroyImageView(vk.device, sm.blurTempView, NULL);
+        if (sm.blurTempImage != VK_NULL_HANDLE)
+            vkDestroyImage(vk.device, sm.blurTempImage, NULL);
+        if (sm.blurTempMemory != VK_NULL_HANDLE)
+            vkFreeMemory(vk.device, sm.blurTempMemory, NULL);
     }
 
     // Shadow pipeline (destroyed by vk_shadows.cpp if initialized)
@@ -688,6 +694,16 @@ void VK_RT_Shutdown(void)
     {
         vkDestroySampler(vk.device, vkRT.shadowMaskSampler, NULL);
     }
+
+    // Blur pipeline
+    if (vkRT.blurPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(vk.device, vkRT.blurPipeline, NULL);
+    if (vkRT.blurPipelineLayout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(vk.device, vkRT.blurPipelineLayout, NULL);
+    if (vkRT.blurDescLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.blurDescLayout, NULL);
+    if (vkRT.blurDescPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(vk.device, vkRT.blurDescPool, NULL);
 
     memset(&vkRT, 0, sizeof(vkRT));
 }
@@ -718,6 +734,22 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         {
             vkFreeMemory(vk.device, sm.memory, NULL);
             sm.memory = VK_NULL_HANDLE;
+        }
+        // Destroy blur temp image
+        if (sm.blurTempView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(vk.device, sm.blurTempView, NULL);
+            sm.blurTempView = VK_NULL_HANDLE;
+        }
+        if (sm.blurTempImage != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(vk.device, sm.blurTempImage, NULL);
+            sm.blurTempImage = VK_NULL_HANDLE;
+        }
+        if (sm.blurTempMemory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, sm.blurTempMemory, NULL);
+            sm.blurTempMemory = VK_NULL_HANDLE;
         }
 
         // R8 UNORM storage image
@@ -753,9 +785,22 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         viewInfo.subresourceRange.layerCount = 1;
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &sm.view));
 
-        // Transition to GENERAL layout for storage image use
+        // Create blur temp image (same format/size as shadow mask)
+        VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &sm.blurTempImage));
+        vkGetImageMemoryRequirements(vk.device, sm.blurTempImage, &mr);
+        ai.allocationSize = mr.size;
+        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &sm.blurTempMemory));
+        VK_CHECK(vkBindImageMemory(vk.device, sm.blurTempImage, sm.blurTempMemory, 0));
+
+        viewInfo.image = sm.blurTempImage;
+        VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &sm.blurTempView));
+
+        // Transition both images to GENERAL layout for storage image use
         VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
         VK_TransitionImageLayout(cmd, sm.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                                 VK_IMAGE_ASPECT_COLOR_BIT);
+        VK_TransitionImageLayout(cmd, sm.blurTempImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                                  VK_IMAGE_ASPECT_COLOR_BIT);
         VK_EndSingleTimeCommands(cmd);
 

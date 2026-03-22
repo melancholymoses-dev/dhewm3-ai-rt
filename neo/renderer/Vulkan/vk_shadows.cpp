@@ -299,6 +299,89 @@ static void VK_RT_InitShadowPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_InitBlurPipeline
+// Builds the compute pipeline for the separable shadow mask blur.
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitBlurPipeline(void)
+{
+    // --- Descriptor set layout: 2 storage images (input, output) ---
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.blurDescLayout));
+
+    // --- Push constant: direction (int) + radius (int) + 2 floats pad ---
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = 16; // 2 ints + 2 floats pad = 16 bytes
+
+    VkPipelineLayoutCreateInfo plInfo = {};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts = &vkRT.blurDescLayout;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.blurPipelineLayout));
+
+    // --- Compute shader ---
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/shadow_blur.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT: failed to load shadow_blur.comp.spv — blur disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageInfo = {};
+    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageInfo.module = compModule;
+    stageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipeInfo = {};
+    pipeInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeInfo.stage = stageInfo;
+    pipeInfo.layout = vkRT.blurPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeInfo, NULL, &vkRT.blurPipeline));
+
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    // --- Descriptor pool and sets (2 sets: H pass and V pass) ---
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4}; // 2 images × 2 sets
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 2;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.blurDescPool));
+
+    VkDescriptorSetLayout layouts[2] = {vkRT.blurDescLayout, vkRT.blurDescLayout};
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.blurDescPool;
+    dsAlloc.descriptorSetCount = 2;
+    dsAlloc.pSetLayouts = layouts;
+    VkDescriptorSet sets[2];
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, sets));
+    vkRT.blurDescSetH = sets[0];
+    vkRT.blurDescSetV = sets[1];
+
+    common->Printf("VK RT: shadow blur compute pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_DispatchShadowRaysForLight
 // Called once per light, outside a render pass, after the depth prepass.
 //
@@ -484,13 +567,101 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
                           sm.height, 1);
     }
 
-    // --- Memory barrier: shadow mask RT-write → fragment-shader-read (layout stays GENERAL) ---
-    VkMemoryBarrier shadowMemBarrier = {};
-    shadowMemBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    shadowMemBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    shadowMemBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
-                         &shadowMemBarrier, 0, NULL, 0, NULL);
+    // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---
+    int blurRadius = r_rtShadowBlur.GetInteger();
+    bool didBlur = false;
+    if (blurRadius > 0 && vkRT.blurPipeline != VK_NULL_HANDLE && sm.blurTempImage != VK_NULL_HANDLE)
+    {
+        if (blurRadius > 8)
+            blurRadius = 8;
+
+        uint32_t groupsX = (sm.width  + 7) / 8;
+        uint32_t groupsY = (sm.height + 7) / 8;
+
+        // Barrier: RT write → compute read
+        VkMemoryBarrier barrier = {};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, NULL, 0, NULL);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipeline);
+
+        // Update H-pass descriptors: input=shadowMask, output=blurTemp
+        VkDescriptorImageInfo hInput  = { VK_NULL_HANDLE, sm.view,        VK_IMAGE_LAYOUT_GENERAL };
+        VkDescriptorImageInfo hOutput = { VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL };
+        VkWriteDescriptorSet hWrites[2] = {};
+        hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        hWrites[0].dstSet = vkRT.blurDescSetH;
+        hWrites[0].dstBinding = 0;
+        hWrites[0].descriptorCount = 1;
+        hWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        hWrites[0].pImageInfo = &hInput;
+        hWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        hWrites[1].dstSet = vkRT.blurDescSetH;
+        hWrites[1].dstBinding = 1;
+        hWrites[1].descriptorCount = 1;
+        hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        hWrites[1].pImageInfo = &hOutput;
+        vkUpdateDescriptorSets(vk.device, 2, hWrites, 0, NULL);
+
+        // Push constants: direction=0 (horizontal), radius
+        struct { int direction; int radius; float pad0; float pad1; } pc;
+        pc.direction = 0;
+        pc.radius = blurRadius;
+        pc.pad0 = 0.f;
+        pc.pad1 = 0.f;
+        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1,
+                                &vkRT.blurDescSetH, 0, NULL);
+        vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+        // Barrier: compute H-pass write → compute V-pass read
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, NULL, 0, NULL);
+
+        // Update V-pass descriptors: input=blurTemp, output=shadowMask
+        VkDescriptorImageInfo vInput  = { VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL };
+        VkDescriptorImageInfo vOutput = { VK_NULL_HANDLE, sm.view,         VK_IMAGE_LAYOUT_GENERAL };
+        VkWriteDescriptorSet vWrites[2] = {};
+        vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        vWrites[0].dstSet = vkRT.blurDescSetV;
+        vWrites[0].dstBinding = 0;
+        vWrites[0].descriptorCount = 1;
+        vWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        vWrites[0].pImageInfo = &vInput;
+        vWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        vWrites[1].dstSet = vkRT.blurDescSetV;
+        vWrites[1].dstBinding = 1;
+        vWrites[1].descriptorCount = 1;
+        vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        vWrites[1].pImageInfo = &vOutput;
+        vkUpdateDescriptorSets(vk.device, 2, vWrites, 0, NULL);
+
+        // Push constants: direction=1 (vertical), same radius
+        pc.direction = 1;
+        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1,
+                                &vkRT.blurDescSetV, 0, NULL);
+        vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+        didBlur = true;
+    }
+
+    // --- Barrier: shadow mask → fragment shader read ---
+    {
+        VkMemoryBarrier memBarrier = {};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkPipelineStageFlags srcStage = didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                                                : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+        vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 1, &memBarrier, 0, NULL, 0, NULL);
+    }
 
     // --- Depth barrier: restore to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for render pass resume ---
     VkImageMemoryBarrier depthRestore = {};
@@ -502,7 +673,9 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthRestore.image = vk.depthImage;
     depthRestore.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+    VkPipelineStageFlags depthSrcStage = didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                                                 : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+    vkCmdPipelineBarrier(cmd, depthSrcStage, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                          0, 0, NULL, 0, NULL, 1, &depthRestore);
 }
 
@@ -517,5 +690,6 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 void VK_RT_InitShadows(void)
 {
     VK_RT_InitShadowPipeline();
+    VK_RT_InitBlurPipeline();
     VK_RT_ResizeShadowMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
 }
