@@ -778,7 +778,7 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
         bi.size = totalSize;
         bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        vkCreateBuffer(vk.device, &bi, NULL, &stagingBuf);
+        VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &stagingBuf));
 
         VkMemoryRequirements smr;
         vkGetBufferMemoryRequirements(vk.device, stagingBuf, &smr);
@@ -787,11 +787,11 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
         sai.allocationSize = smr.size;
         sai.memoryTypeIndex = VK_FindMemoryType(smr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkAllocateMemory(vk.device, &sai, NULL, &stagingMem);
-        vkBindBufferMemory(vk.device, stagingBuf, stagingMem, 0);
+        VK_CHECK(vkAllocateMemory(vk.device, &sai, NULL, &stagingMem));
+        VK_CHECK(vkBindBufferMemory(vk.device, stagingBuf, stagingMem, 0));
 
         void *ptr;
-        vkMapMemory(vk.device, stagingMem, 0, totalSize, 0, &ptr);
+        VK_CHECK(vkMapMemory(vk.device, stagingMem, 0, totalSize, 0, &ptr));
         for (int i = 0; i < 6; i++)
             memcpy((byte *)ptr + i * faceSize, pic[i], (size_t)faceSize);
         vkUnmapMemory(vk.device, stagingMem);

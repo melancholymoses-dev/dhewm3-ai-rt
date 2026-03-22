@@ -231,16 +231,17 @@ static void VK_RT_InitShadowPipeline(void)
     vkRT.hitRegion  = {sbtBase + 2 * stride, stride, stride};
     vkRT.callRegion = {0, 0, 0};
 
-    common->Printf("VK RT SBT: handleSize=%u handleAlignment=%u baseAlignment=%u stride=%u sbtTotalBytes=%u\n",
-                   handleSize, handleAlignment, baseAlignment, stride, sbtSize);
-    common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n",
-                   (unsigned long long)sbtBase,
-                   (unsigned long long)vkRT.rgenRegion.deviceAddress,
-                   (unsigned long long)vkRT.missRegion.deviceAddress,
-                   (unsigned long long)vkRT.hitRegion.deviceAddress);
-    common->Printf("VK RT SBT: rgen base-alignment check: addr%%baseAlign=%llu (must be 0)\n",
-                   (unsigned long long)(vkRT.rgenRegion.deviceAddress % baseAlignment));
-    fflush(NULL);
+    if (r_vkLogRT.GetInteger() >= 1) {
+        common->Printf("VK RT SBT: handleSize=%u handleAlignment=%u baseAlignment=%u stride=%u sbtTotalBytes=%u\n",
+                       handleSize, handleAlignment, baseAlignment, stride, sbtSize);
+        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n",
+                       (unsigned long long)sbtBase,
+                       (unsigned long long)vkRT.rgenRegion.deviceAddress,
+                       (unsigned long long)vkRT.missRegion.deviceAddress,
+                       (unsigned long long)vkRT.hitRegion.deviceAddress);
+        common->Printf("VK RT SBT: rgen base-alignment check: addr%%baseAlign=%llu (must be 0)\n",
+                       (unsigned long long)(vkRT.rgenRegion.deviceAddress % baseAlignment));
+    }
 
     // --- Descriptor pool and sets ---
     VkDescriptorPoolSize poolSizes[4] = {
@@ -439,7 +440,11 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     depthToRead.image = vk.depthImage;
-    depthToRead.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                          0, 0, NULL, 0, NULL, 1, &depthToRead);
 
