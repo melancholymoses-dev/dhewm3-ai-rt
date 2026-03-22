@@ -273,18 +273,22 @@ void VK_CreateSwapchain(int width, int height)
     }
 
     // Create depth buffer
+    // VK_IMAGE_USAGE_SAMPLED_BIT is required so the RT shadow pass can sample the depth texture.
     VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
-                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vk.depthImage,
-                   &vk.depthMemory);
-    // For combined depth+stencil formats, the image view must include VK_IMAGE_ASPECT_STENCIL_BIT
-    // so the framebuffer attachment exposes the stencil aspect and stencil test/clear work correctly.
+                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vk.depthImage, &vk.depthMemory);
+    // For combined depth+stencil formats, the framebuffer attachment view must include
+    // VK_IMAGE_ASPECT_STENCIL_BIT so stencil test/clear work correctly.
+    // A separate depth-only view (depthSampledView) is created for shader sampling —
+    // Vulkan does not allow sampling a combined depth+stencil view.
     {
         VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
             vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
             vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
             depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-        vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+        vk.depthView        = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+        vk.depthSampledView = VK_CreateImageView(vk.depthImage, vk.depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
     }
 
     // Create render pass
@@ -322,6 +326,7 @@ void VK_DestroySwapchain(void)
         vkDestroyFramebuffer(vk.device, vk.swapchainFramebuffers[i], NULL);
         vkDestroyImageView(vk.device, vk.swapchainImageViews[i], NULL);
     }
+    vkDestroyImageView(vk.device, vk.depthSampledView, NULL);
     vkDestroyImageView(vk.device, vk.depthView, NULL);
     vkDestroyImage(vk.device, vk.depthImage, NULL);
     vkFreeMemory(vk.device, vk.depthMemory, NULL);
@@ -401,6 +406,7 @@ void VK_RecreateSwapchain(int width, int height)
     }
 
     // Destroy depth buffer
+    vkDestroyImageView(vk.device, vk.depthSampledView, NULL);
     vkDestroyImageView(vk.device, vk.depthView, NULL);
     vkDestroyImage(vk.device, vk.depthImage, NULL);
     vkFreeMemory(vk.device, vk.depthMemory, NULL);
@@ -460,15 +466,16 @@ void VK_RecreateSwapchain(int width, int height)
     // Recreate depth buffer
     vk.depthFormat = VK_FindDepthFormat();
     VK_CreateImage(vk.swapchainExtent.width, vk.swapchainExtent.height, vk.depthFormat,
-                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                   &vk.depthImage, &vk.depthMemory);
+                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vk.depthImage, &vk.depthMemory);
     {
         VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
             vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
             vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
             depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-        vk.depthView = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+        vk.depthView        = VK_CreateImageView(vk.depthImage, vk.depthFormat, depthAspect);
+        vk.depthSampledView = VK_CreateImageView(vk.depthImage, vk.depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
     }
 
     // Recreate framebuffers (reuse existing render pass)

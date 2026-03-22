@@ -76,7 +76,8 @@ struct vkState_t
     // Depth buffer
     VkImage depthImage;
     VkDeviceMemory depthMemory;
-    VkImageView depthView;
+    VkImageView depthView;         // combined depth+stencil view (framebuffer attachment)
+    VkImageView depthSampledView;  // depth-only view (for shader sampling — conformant)
     VkFormat depthFormat;
 
     // Render pass
