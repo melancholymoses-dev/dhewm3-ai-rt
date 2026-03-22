@@ -697,6 +697,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/shadow_ray.rgen
 	renderer/glsl/shadow_ray.rmiss
 	renderer/glsl/shadow_ray.rahit
+	renderer/glsl/shadow_blur.comp
 )
 
 
