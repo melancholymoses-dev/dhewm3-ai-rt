@@ -106,7 +106,7 @@ struct vkShadowMask_t
 // Global RT state
 struct vkRTState_t
 {
-    vkTLAS_t tlas;
+    vkTLAS_t tlas[VK_MAX_FRAMES_IN_FLIGHT];
     vkShadowMask_t shadowMask[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler shadowMaskSampler; // nearest-clamp, used when sampling shadow mask in lighting pass
     VkSampler depthSampler;      // nearest-clamp, for sampling depth in the RT shadow rgen
@@ -150,6 +150,9 @@ void VK_RT_InitShadows(void);
 // a single barrier can synchronize them all before the TLAS build.
 vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
+
+// Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
+void VK_RT_DrainBLASGarbage(void);
 
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
