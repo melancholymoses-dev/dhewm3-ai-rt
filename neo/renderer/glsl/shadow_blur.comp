@@ -1,0 +1,53 @@
+#version 460
+
+// ---------------------------------------------------------------------------
+// shadow_blur.comp  —  Separable Gaussian blur for the shadow mask
+//
+// Dispatched twice per light: once horizontal (direction=0), once vertical (direction=1).
+// Reads from inputImage, writes to outputImage.
+// ---------------------------------------------------------------------------
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, r8) uniform readonly  image2D inputImage;
+layout(set = 0, binding = 1, r8) uniform writeonly image2D outputImage;
+
+layout(push_constant) uniform BlurParams {
+    int   direction;   // 0 = horizontal, 1 = vertical
+    int   radius;      // kernel half-width in pixels (e.g. 3 means 7-tap)
+    float pad0;
+    float pad1;
+};
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(inputImage);
+
+    if (coord.x >= size.x || coord.y >= size.y)
+        return;
+
+    // Gaussian weights (precomputed for sigma ≈ radius/2)
+    // We use a simple triangular/tent approximation for speed:
+    //   weight(i) = (radius + 1 - abs(i)) / sum
+    // This is visually close to Gaussian and avoids exp() in shader.
+    float sum   = 0.0;
+    float total = 0.0;
+    int r = max(radius, 0);
+
+    ivec2 step = (direction == 0) ? ivec2(1, 0) : ivec2(0, 1);
+
+    for (int i = -r; i <= r; i++) {
+        ivec2 sampleCoord = coord + step * i;
+
+        // Clamp to image bounds
+        sampleCoord = clamp(sampleCoord, ivec2(0), size - 1);
+
+        float w = float(r + 1 - abs(i));
+        float val = imageLoad(inputImage, sampleCoord).r;
+        sum   += val * w;
+        total += w;
+    }
+
+    float result = sum / total;
+    imageStore(outputImage, coord, vec4(result));
+}
