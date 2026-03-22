@@ -19,6 +19,7 @@ the detailed steps for Phase 5 (RTAO + reflections).
 | 3 | Acceleration structures (BLAS/TLAS) | **Done structurally; performance issues remain** |
 | 4 | RT shadow pass | **Structurally done; critical correctness bug; performance issues** |
 | 5 | RTAO + RT reflections | **Not started** |
+| 6 | One-bounce global illumination | **Not started — scope expansion, see §Phase 6** |
 
 The Stencil shadow fallback path (`VK_RB_DrawShadowSurface`, z-fail / Carmack's Reverse)
 was a source of debugging pain but is now structurally complete. It can be left as-is for
@@ -506,6 +507,10 @@ specularLight += reflColor * specularMask;
 
 ### Step 5.4 — TLAS Instance Metadata for Material Lookup
 
+**Note: this step is now a shared prerequisite for Phase 6 (GI) and the
+deferred alpha-test fix (shadow_ray.rahit). Implementing it once here
+unlocks all three. See §Phase 6 for the full design.**
+
 Both the AO closest-hit and the reflection closest-hit need to know what
 material was hit so they can look up diffuse colour, alpha mask, and
 roughness. This requires storing material data in the TLAS.
@@ -525,8 +530,12 @@ layout(std430, set=2, binding=0) readonly buffer MaterialTable {
 struct MaterialEntry {
     uint  diffuseTexIndex;    // index into a bindless texture array
     uint  normalTexIndex;
-    float roughness;
-    uint  flags;              // alpha-tested, two-sided, etc.
+    float roughness;          // derived from Doom3 specularExponent (see §Phase 6)
+    uint  flags;              // MATERIAL_FLAG_ALPHA_TESTED, MATERIAL_FLAG_TWO_SIDED, etc.
+    uint  vtxBufInstance;     // index into VertexBufferTable for UV interpolation
+    uint  idxBufInstance;     // index into IndexBufferTable for UV interpolation
+    float alphaThreshold;     // from alphaTestRegister (MC_PERFORATED only)
+    uint  pad;
 };
 ```
 
@@ -540,9 +549,274 @@ material table. This requires the
 `VkPhysicalDeviceFeatures::shaderSampledImageArrayDynamicIndexing` feature
 (widely supported on all RT-capable GPUs).
 
+A **vertex buffer table SSBO** and **index buffer table SSBO** (one entry
+per BLAS, pointing to device addresses of `geomVtxBuf` and `geomIdxBuf`)
+allow any-hit and closest-hit shaders to interpolate UVs at secondary hit
+points using `gl_PrimitiveID` and `gl_HitBarycentricsEXT`. These are the
+same buffers already retained in `vkBLAS_t`; no new uploads are needed.
+
 This is a substantial infrastructure change and can be deferred until
-reflection hit shading is needed. For AO (which only needs 0/1 occlusion),
-no material data is required.
+reflection hit shading or GI is needed. For AO (which only needs 0/1
+occlusion), no material data is required.
+
+---
+
+---
+
+## Phase 6 — One-Bounce Global Illumination
+
+### Goal
+
+Add indirect diffuse lighting: light that bounces off geometry and
+illuminates surfaces not directly lit by a source. This produces the
+"light leaking into shadows" quality typically missing from direct-only
+rendering — corners brighten slightly from nearby lit walls, coloured
+surfaces tint adjacent geometry.
+
+This is a scope expansion beyond Phase 5. It builds directly on the
+material infrastructure from Step 5.4 (SSBO + bindless textures + vertex
+buffer table).
+
+---
+
+### Albedo and Roughness from Existing Doom3 Materials
+
+**No new art or modeling is required.**
+
+Doom3's material system already contains everything needed:
+
+| GI Property | Doom3 Source | Notes |
+|-------------|-------------|-------|
+| Albedo | `diffuse` stage texture (`diffuseTexIndex` in MaterialEntry) | Exactly what GI needs — base colour at secondary hit |
+| Roughness | `specularExponent` on the specular stage | Map to GGX roughness: `roughness = sqrt(2.0 / (specExp + 2.0))`. Store the result in `MaterialEntry.roughness` at SSBO build time. |
+| Emissive | Materials with a `blend add` stage and no `diffuse` | These are lights/glows; their contribution naturally appears as GI source geometry |
+| Alpha mask | `MC_PERFORATED` + `alphaTestRegister` | Already in `MaterialEntry.flags` + `alphaThreshold` |
+
+The roughness conversion maps Doom3's Blinn-Phong exponent to GGX:
+- `specExp = 64` → `roughness ≈ 0.17` (polished metal, floor panels)
+- `specExp = 16` → `roughness ≈ 0.33` (painted surfaces)
+- `specExp = 4`  → `roughness ≈ 0.58` (rough rock, concrete)
+- No specular stage → `roughness = 1.0` (fully diffuse)
+
+This is computed once per material at SSBO build time
+(`VK_RT_BuildMaterialTable()`) — no per-frame cost.
+
+---
+
+### Approach: Albedo-Weighted Irradiance (Coloured AO)
+
+The simplest one-bounce GI that produces the desired visual result:
+
+1. From each camera-visible pixel, shoot one (or a small number of)
+   cosine-weighted hemisphere rays.
+2. At the secondary hit: interpolate the UV using `gl_HitBarycentricsEXT`
+   + vertex/index buffer SSBOs, sample the albedo texture.
+3. Weight the albedo by a simple irradiance estimate at the hit point.
+4. Accumulate and write to a `VK_FORMAT_R16G16B16A16_SFLOAT` GI buffer.
+5. The interaction shader adds the GI buffer contribution to the diffuse term.
+
+For the irradiance estimate (step 3), two options in ascending cost:
+
+**Option A — Ambient-only (start here):**
+`gi_colour = albedo * r_giAmbientScale`
+
+The secondary hit geometry's colour tints the bounce light. No additional
+shadow rays. Gives colour bleeding and contact brightening in corners.
+Essentially coloured AO. Very cheap: ~1 ray + 1 texture sample per pixel.
+
+**Option B — Single light evaluation at secondary hit:**
+For each secondary hit, fire a shadow ray toward the nearest/brightest
+light from `viewDef->viewLights`. Multiply by `albedo * lightColour /
+lightAttenuation`. Gives directional bounce light (e.g. a red corridor
+wall catching the key light and bouncing red into the floor). ~2 rays per
+pixel. Does not require a G-buffer.
+
+Start with Option A and promote to B once the infrastructure is stable.
+
+---
+
+### Step 6.1 — Material SSBO + Bindless Textures (Shared Foundation)
+
+This is Step 5.4 promoted and expanded. Implement once; shared by:
+- Alpha-test in `shadow_ray.rahit` (deferred from Phase 4)
+- GI secondary-hit albedo lookup
+- Reflection closest-hit shading (Phase 5.3)
+
+#### C++ Side (`vk_material_table.cpp`, new file)
+
+```cpp
+// Called once at scene load / material registration change.
+// Iterates all registered idMaterials, fills MaterialEntry SSBO.
+void VK_RT_BuildMaterialTable();
+
+// Per-frame update: only needed if dynamic materials changed.
+void VK_RT_UpdateMaterialTable();
+```
+
+`MaterialEntry` (as defined in Step 5.4, reproduced for reference):
+```cpp
+struct VkMaterialEntry {
+    uint32_t diffuseTexIndex;
+    uint32_t normalTexIndex;
+    float    roughness;       // pre-computed from specularExponent
+    uint32_t flags;
+    uint32_t vtxBufInstance;  // index into vertex buffer device-address table
+    uint32_t idxBufInstance;  // index into index buffer device-address table
+    float    alphaThreshold;
+    uint32_t pad;
+};
+```
+
+The vertex/index buffer device address tables are simple `uint64_t[]` arrays
+(one entry per BLAS) that map `gl_InstanceID` → buffer device address.
+These are populated when `VK_RT_BuildBLAS` is called and persist in
+`vkBLAS_t`. The tables are rebuilt into a SSBO each time the TLAS is rebuilt.
+
+#### Shader Side
+
+All RT shaders that need material data bind:
+```glsl
+layout(set=2, binding=0) readonly buffer MaterialTable  { MaterialEntry materials[]; };
+layout(set=2, binding=1) readonly buffer VtxAddrTable   { uint64_t vtxAddrs[]; };
+layout(set=2, binding=2) readonly buffer IdxAddrTable   { uint64_t idxAddrs[]; };
+layout(set=2, binding=3) uniform sampler2D textures[];  // bindless array
+```
+
+UV interpolation helper (shared across shaders via `#include`):
+```glsl
+vec2 interpolateUV(uint instanceID, uint primitiveID, vec2 bary) {
+    // fetch 3 indices
+    uint base = primitiveID * 3;
+    uint i0 = fetchIndex(instanceID, base + 0);
+    uint i1 = fetchIndex(instanceID, base + 1);
+    uint i2 = fetchIndex(instanceID, base + 2);
+    // idDrawVert: xyz(12) + st(8) → UV at byte offset 12, stride 60
+    vec2 uv0 = fetchVertexUV(instanceID, i0);
+    vec2 uv1 = fetchVertexUV(instanceID, i1);
+    vec2 uv2 = fetchVertexUV(instanceID, i2);
+    vec3 b = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
+    return b.x * uv0 + b.y * uv1 + b.z * uv2;
+}
+```
+
+---
+
+### Step 6.2 — GI Ray Generation Shader (`gi_ray.rgen`)
+
+```
+neo/renderer/glsl/gi_ray.rgen    — GI ray generation
+neo/renderer/glsl/gi_ray.rchit  — GI closest-hit (albedo lookup)
+neo/renderer/glsl/gi_ray.rmiss  — GI miss (sky/environment colour)
+neo/renderer/Vulkan/vk_gi.cpp   — GI pipeline, dispatch, image lifecycle
+```
+
+#### `gi_ray.rgen` Sketch
+
+```glsl
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(set=0, binding=0) uniform accelerationStructureEXT topLevelAS;
+layout(set=0, binding=1, rgba16f) uniform image2D giImage;
+layout(set=0, binding=2) uniform sampler2D depthSampler;
+layout(set=0, binding=3) uniform GIParams {
+    mat4  invViewProj;
+    vec4  ambientColour;   // fallback irradiance scale (Option A)
+    float giRadius;        // max bounce ray distance (default: 512 units)
+    int   numSamples;      // rays per pixel (1 for Option A, 1-2 for Option B)
+    uint  frameIndex;
+    float pad;
+};
+
+layout(location = 0) rayPayloadEXT vec3 giPayload;
+
+void main() {
+    ivec2 coord = ivec2(gl_LaunchIDEXT.xy);
+    vec3 worldPos = reconstructWorldPos(coord, ...);
+    vec3 normal   = reconstructNormal(coord, ...);  // depth-derived (same as AO)
+
+    vec3 indirect = vec3(0.0);
+    for (int i = 0; i < numSamples; i++) {
+        vec3 dir = cosineSampleHemisphere(normal, seed + uint(i));
+        giPayload = ambientColour.rgb;  // miss shader returns ambient
+        traceRayEXT(topLevelAS,
+            gl_RayFlagsNoneEXT,   // need closest-hit for albedo
+            0xFF, 0, 0, 0,
+            worldPos + normal * 0.5,
+            0.01, dir, giRadius, 0);
+        indirect += giPayload;
+    }
+    vec3 gi = indirect / float(numSamples);
+    imageStore(giImage, coord, vec4(gi, 1.0));
+}
+```
+
+#### `gi_ray.rchit` — Albedo Lookup at Secondary Hit
+
+```glsl
+void main() {
+    MaterialEntry mat = materials[gl_InstanceID];
+
+    // Option A: albedo * ambient scale (no shadow ray)
+    vec2 uv = interpolateUV(gl_InstanceID, gl_PrimitiveID, gl_HitBarycentricsEXT);
+    vec3 albedo = texture(textures[nonuniformEXT(mat.diffuseTexIndex)], uv).rgb;
+    giPayload = albedo * ambientScale;  // ambient scale from GI UBO
+
+    // Option B (upgrade path): fire a shadow ray toward nearest light here,
+    // multiply albedo * lightColour * shadowFactor / attenuation.
+}
+```
+
+The miss shader writes `ambientColour.rgb` directly (sky/open-air areas
+bounce ambient light).
+
+#### GI Image
+
+- Format: `VK_FORMAT_R16G16B16A16_SFLOAT` (HDR colour bounce)
+- One image per frame-in-flight, same lifecycle as shadow mask
+- Add `vkGI_t giBuffer[VK_MAX_FRAMES_IN_FLIGHT]` to `vkRTState_t`
+
+---
+
+### Step 6.3 — Temporal Accumulation for GI
+
+Use the same EMA resolve infrastructure from Step 5.2 (`vk_temporal.cpp`).
+GI is noisy at 1 sample/pixel; temporal accumulation across 8–16 frames
+brings it to an acceptable level with no additional ray cost per frame.
+Camera-cut detection (existing `historyValid` mechanism) also resets GI
+history.
+
+---
+
+### Step 6.4 — Integration in `interaction.frag`
+
+Add GI buffer binding (binding 10) and sample it in the ambient/diffuse term:
+
+```glsl
+layout(set=0, binding=10) uniform sampler2D u_GIMap;
+// in UBO: int u_UseGI; float u_GIStrength;
+
+vec3 gi = (u_UseGI != 0)
+    ? texture(u_GIMap, screenUV).rgb * u_GIStrength
+    : vec3(0.0);
+diffuseLight += gi;
+```
+
+`u_GIStrength` (default 1.0, tweakable at runtime) lets the player tune the
+intensity of the bounce contribution without recompiling.
+
+---
+
+### Phase 6 New CVars
+
+| CVar | Default | Description |
+|------|---------|-------------|
+| `r_rtGI` | `0` | Enable one-bounce GI (requires `r_useRayTracing 1`) |
+| `r_rtGISamples` | `1` | Bounce rays per pixel (1 for Option A, 1-2 for Option B) |
+| `r_rtGIRadius` | `512.0` | Max bounce ray distance in world units |
+| `r_rtGIStrength` | `1.0` | Scale applied to GI contribution in interaction shader |
+| `r_rtGILightBounce` | `0` | Enable Option B: evaluate nearest light at secondary hit |
 
 ---
 
@@ -560,8 +834,19 @@ Verify RT shadows are working visually with r_useRayTracing 1 r_rtShadows 1
 Phase 5 steps
   5.1: RTAO (ao_ray.rgen + vk_ao.cpp + interaction.frag binding)
   5.2: Temporal denoising for shadows and AO
+  5.4: Material SSBO + bindless textures + vertex/index buffer tables
+       (promoted: prerequisite for alpha-test fix, GI, and reflections)
   5.3: RT Reflections (reflect_ray.rgen + vk_reflections.cpp)
-  5.4: TLAS material metadata (SSBO + bindless textures) for reflection hits
+       (uses 5.4 infrastructure for hit shading)
+
+Phase 6 steps
+  6.1: (covered by 5.4 — no extra work if 5.4 is done first)
+  6.2: GI ray generation + closest-hit shaders + vk_gi.cpp
+  6.3: Temporal accumulation for GI (extend vk_temporal.cpp from 5.2)
+  6.4: GI binding in interaction.frag
+
+Deferred alpha-test fix (shadow_ray.rahit texture sampling)
+  - Implement once Step 5.4 is done; all infrastructure is already present
 
 Rendering correctness (can be done in parallel with Phase 4 fixes)
   - Multiple blend modes
@@ -577,17 +862,24 @@ Rendering correctness (can be done in parallel with Phase 4 fixes)
 | File | Change |
 |------|--------|
 | `neo/renderer/Vulkan/vk_shadows.cpp` | Refactor `VK_RT_DispatchShadowRays` → add `VK_RT_DispatchShadowRaysForLight`; add shadow UBO ring; remove `vkQueueWaitIdle`; create depth sampler once at init |
-| `neo/renderer/Vulkan/vk_raytracing.h` | Declare `VK_RT_DispatchShadowRaysForLight`; add AO/history/reflection image fields to `vkRTState_t`; add `shadowUBORing` |
-| `neo/renderer/Vulkan/vk_backend.cpp` | Move RT dispatch inside per-light loop in `VK_RB_DrawInteractions`: end RP → dispatch → reopen RP per light; call `VK_RT_DispatchAO` before FillDepthBuffer |
-| `neo/renderer/Vulkan/vk_accelstruct.cpp` | Fix CPU-verts guard; batch BLAS submissions |
+| `neo/renderer/Vulkan/vk_raytracing.h` | Declare `VK_RT_DispatchShadowRaysForLight`; add AO/history/reflection/GI image fields to `vkRTState_t`; add `shadowUBORing` |
+| `neo/renderer/Vulkan/vk_backend.cpp` | Move RT dispatch inside per-light loop in `VK_RB_DrawInteractions`: end RP → dispatch → reopen RP per light; call `VK_RT_DispatchAO` and `VK_RT_DispatchGI` before FillDepthBuffer |
+| `neo/renderer/Vulkan/vk_accelstruct.cpp` | Fix CPU-verts guard; batch BLAS submissions; expose `geomVtxBuf`/`geomIdxBuf` device addresses for vtx/idx buffer tables |
+| `neo/renderer/Vulkan/vk_material_table.cpp` | New: build and update MaterialEntry SSBO + bindless texture array + vtx/idx device-address tables; `VK_RT_BuildMaterialTable()` |
 | `neo/renderer/Vulkan/vk_ao.cpp` | New: AO pipeline init, dispatch, image lifecycle |
-| `neo/renderer/Vulkan/vk_temporal.cpp` | New: EMA resolve pipeline for shadow + AO history |
+| `neo/renderer/Vulkan/vk_temporal.cpp` | New: EMA resolve pipeline for shadow + AO + GI history |
 | `neo/renderer/Vulkan/vk_reflections.cpp` | New: reflection pipeline init and dispatch |
+| `neo/renderer/Vulkan/vk_gi.cpp` | New: GI pipeline init, dispatch, image lifecycle |
+| `neo/renderer/glsl/rt_material.glsl` | New: shared include — `MaterialEntry` struct, UV interpolation helper, bindless texture/vtx/idx bindings |
 | `neo/renderer/glsl/ao_ray.rgen` | New: AO ray generation shader |
 | `neo/renderer/glsl/temporal_resolve.comp` | New: compute EMA blend into history image |
 | `neo/renderer/glsl/reflect_ray.rgen` | New: reflection ray generation shader |
-| `neo/renderer/glsl/reflect_ray.rchit` | New: reflection closest-hit shader (diffuse lookup) |
-| `neo/renderer/glsl/interaction.frag` | Add AO and reflection bindings (8, 9); multiply AO into diffuse; add reflection to specular |
+| `neo/renderer/glsl/reflect_ray.rchit` | New: reflection closest-hit shader (uses rt_material.glsl) |
+| `neo/renderer/glsl/gi_ray.rgen` | New: GI bounce ray generation shader |
+| `neo/renderer/glsl/gi_ray.rchit` | New: GI closest-hit — albedo lookup + optional light evaluation (uses rt_material.glsl) |
+| `neo/renderer/glsl/gi_ray.rmiss` | New: GI miss — returns ambient sky colour |
+| `neo/renderer/glsl/shadow_ray.rahit` | Extend with alpha-test (MC_PERFORATED): UV interpolation + texture sample; `ignoreIntersectionEXT` if alpha < threshold |
+| `neo/renderer/glsl/interaction.frag` | Add AO (binding 8), reflection (binding 9), GI (binding 10); multiply AO into diffuse; add reflection to specular; add GI to diffuse |
 | `neo/renderer/glsl/interaction.vert` | No change |
-| `neo/renderer/Vulkan/vk_pipeline.cpp` | Add AO, reflection, temporal pipeline descriptors; extend interaction desc layout to binding 9 |
-| `neo/CMakeLists.txt` | Add new `.comp`/`.rgen`/`.rchit` to GLSL_SHADER_SOURCES |
+| `neo/renderer/Vulkan/vk_pipeline.cpp` | Add AO, reflection, temporal, GI pipeline descriptors; extend interaction desc layout to binding 10; add material table descriptors |
+| `neo/CMakeLists.txt` | Add new `.comp`/`.rgen`/`.rchit`/`.rmiss`/`.glsl` to GLSL_SHADER_SOURCES |

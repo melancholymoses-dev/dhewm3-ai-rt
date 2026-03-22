@@ -179,7 +179,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
 // Geometry is read from the ambient vertex cache (already on GPU as a GL/Vk buffer).
 // ---------------------------------------------------------------------------
 
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated)
 {
     if (!tri || tri->numVerts == 0 || tri->numIndexes == 0)
         return NULL;
@@ -260,7 +260,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd)
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     asGeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     asGeom.geometry.triangles = triData;
-    asGeom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    asGeom.flags = isPerforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -399,6 +399,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             continue;
 
         const srfTriangles_t *geo = surf->geometry;
+        // Translucent surfaces never cast shadows in Doom3 (same rule as GL stencil path).
+        if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT)
+            continue;
+        const bool isPerforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
         bool needRebuild = !ent->blas || !ent->blas->isValid;
 
         // Dynamic/animated models must be rebuilt every frame
@@ -410,7 +414,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (ent->blas)
                 VK_RT_DestroyBLAS(ent->blas);
             // Pass cmd so all BLAS builds share one command buffer — no per-BLAS GPU sync.
-            ent->blas = VK_RT_BuildBLAS(geo, cmd);
+            ent->blas = VK_RT_BuildBLAS(geo, cmd, isPerforated);
             ent->blasFrameCount = tr.frameCount;
             if (ent->blas)
                 anyBLASBuilt = true;
@@ -443,6 +447,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         inst.mask = 0xFF;
         inst.instanceShaderBindingTableRecordOffset = 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        if (isPerforated)
+            inst.flags |= VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR;
         inst.accelerationStructureReference = ent->blas->deviceAddress;
     }
 
