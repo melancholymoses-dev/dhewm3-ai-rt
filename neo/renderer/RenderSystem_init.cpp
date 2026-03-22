@@ -148,7 +148,7 @@ idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE 
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
 idCVar r_rtShadowBlur("r_rtShadowBlur", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                       "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
-idCVar r_vkLogRT("r_vkLogRT", "1", CVAR_RENDERER | CVAR_INTEGER,
+idCVar r_vkLogRT("r_vkLogRT", "0", CVAR_RENDERER | CVAR_INTEGER,
                  "RT pipeline diagnostics: 0=off 1=per-frame TLAS+dispatch summary 2=per-light verbose (flushed)");
 idCVar r_rtAOSamples("r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel");
 idCVar r_rtDenoise("r_rtDenoise", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
