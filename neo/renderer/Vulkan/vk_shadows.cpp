@@ -398,7 +398,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         // Binding 2: depth sampler (cached, created once at init)
         VkDescriptorImageInfo depthImgInfo = {};
         depthImgInfo.sampler = vkRT.depthSampler;
-        depthImgInfo.imageView = vk.depthView;
+        depthImgInfo.imageView = vk.depthSampledView;  // depth-only view (conformant for sampling)
         depthImgInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

@@ -137,10 +137,13 @@ void main() {
         uint seed = wang_hash( baseSeed + uint(s) * 1013u );
         vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed );
 
-        shadowFactor = 1.0; // miss shader writes 1.0 (lit)
+        // Initialize to 0.0 (shadowed). On opaque hit no shader runs, so payload
+        // stays 0.0 = shadowed.  On miss the miss shader writes 1.0 = lit.
+        // (VK_GEOMETRY_OPAQUE_BIT_KHR skips the any-hit shader entirely.)
+        shadowFactor = 0.0;
         traceRayEXT(
             topLevelAS,
-            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT | gl_RayFlagsOpaqueEXT,
             0xFF,   // cull mask
             0,      // SBT offset
             0,      // SBT stride
@@ -151,7 +154,7 @@ void main() {
             tMax,
             0       // payload location
         );
-        occluded += (1.0 - shadowFactor); // shadowFactor 0.0 from any-hit → hit → occluded
+        occluded += (1.0 - shadowFactor); // miss → 1.0 → 0.0 added; hit → 0.0 → 1.0 added
     }
 
     float shadow = 1.0 - (occluded / float(N));
