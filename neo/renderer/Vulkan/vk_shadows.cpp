@@ -316,7 +316,7 @@ static void VK_RT_InitShadowPipeline(void)
 
 void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight)
 {
-    if (!vkRT.isInitialized || !vkRT.tlas.isValid)
+    if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
         return;
     if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
         return;
@@ -338,8 +338,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
                        frameIdx,
                        lp.origin.x, lp.origin.y, lp.origin.z,
                        (vkRT.shadowPipeline  != VK_NULL_HANDLE) ? "OK" : "NULL",
-                       (vkRT.tlas.handle     != VK_NULL_HANDLE) ? "OK" : "NULL",
-                       (unsigned long long)vkRT.tlas.deviceAddress,
+                       (vkRT.tlas[frameIdx].handle     != VK_NULL_HANDLE) ? "OK" : "NULL",
+                       (unsigned long long)vkRT.tlas[frameIdx].deviceAddress,
                        (sm.image             != VK_NULL_HANDLE) ? "OK" : "NULL",
                        sm.width, sm.height,
                        (unsigned long long)vkRT.rgenRegion.deviceAddress,
@@ -372,7 +372,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
         tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
         tlasWrite.accelerationStructureCount = 1;
-        tlasWrite.pAccelerationStructures = &vkRT.tlas.handle;
+        tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
         VkWriteDescriptorSet writes[4] = {};
 
