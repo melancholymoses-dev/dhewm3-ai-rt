@@ -195,7 +195,7 @@ static void VKimp_CreateInstance(SDL_Window *window)
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 5, 1);
     appInfo.pEngineName = "dhewm3";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 5, 1);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

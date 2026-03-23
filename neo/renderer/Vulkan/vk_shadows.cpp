@@ -545,9 +545,26 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
         }
 
-        ubo.lightOrigin[0] = light.origin.x;
-        ubo.lightOrigin[1] = light.origin.y;
-        ubo.lightOrigin[2] = light.origin.z;
+        // Flashlight bias: push shadow origin forward along the view axis to reduce
+        // weapon/hand self-shadowing.  Detect the flashlight by checking whether the
+        // light origin is very close to the player view origin (within 64 units).
+        idVec3 shadowOrigin = light.origin;
+        float flashlightBias = r_rtFlashlightBias.GetFloat();
+        if (flashlightBias > 0.0f)
+        {
+            const idVec3 &viewOrg = viewDef->renderView.vieworg;
+            float distToView = (light.origin - viewOrg).Length();
+            if (distToView < 64.0f)
+            {
+                // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
+                const idVec3 &fwd = viewDef->renderView.viewaxis[0];
+                shadowOrigin = light.origin + fwd * flashlightBias;
+            }
+        }
+
+        ubo.lightOrigin[0] = shadowOrigin.x;
+        ubo.lightOrigin[1] = shadowOrigin.y;
+        ubo.lightOrigin[2] = shadowOrigin.z;
         ubo.lightOrigin[3] = light.lightRadius.x;
         ubo.lightFalloffRadius = light.lightRadius.Length();
         ubo.numSamples = r_rtShadowSamples.GetInteger();
