@@ -886,10 +886,14 @@ extern idCVar r_rtShadows;       // ray traced shadows
 extern idCVar r_rtAO;            // ray traced ambient occlusion
 extern idCVar r_rtReflections;   // ray traced reflections
 extern idCVar r_rtShadowSamples; // shadow rays per pixel
-extern idCVar r_rtShadowBlur;   // shadow mask blur radius (0=off, 1-8=kernel half-width)
-extern idCVar r_vkLogRT;         // RT diagnostics verbosity (0=off,1=frame,2=per-light)
+extern idCVar r_rtShadowBlur;        // shadow mask blur radius (0=off, 1-8=kernel half-width)
+extern idCVar r_rtFlashlightBias;   // units to push flashlight origin forward to avoid hand self-shadow
+extern idCVar r_vkLogRT;            // RT diagnostics verbosity (0=off,1=frame,2=per-light)
 extern idCVar r_rtAOSamples;     // AO rays per pixel
 extern idCVar r_rtDenoise;       // temporal denoising
+
+extern idCVar r_offsetFactor; // polygon offset factor (slope scale)
+extern idCVar r_offsetUnits;  // polygon offset units (constant bias, typically -600)
 
 extern idCVar r_checkBounds; // compare all surface bounds with precalculated ones
 
