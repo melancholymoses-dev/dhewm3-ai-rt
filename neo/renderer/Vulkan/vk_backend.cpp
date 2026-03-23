@@ -558,6 +558,29 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
     vkCmdBindIndexBuffer(s_cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
+    // --- Per-surface dynamic state ---
+    // Polygon offset: mirrors GL qglPolygonOffset in the interaction pass.
+    // Both depth prepass AND interaction pass must apply the same bias so the biased
+    // prepass depth (D-ε) matches the biased interaction fragment depth (D-ε) for LEQUAL.
+    {
+        const idMaterial *mat = din->surf->material;
+        float biasConstant = 0.0f;
+        if (mat && mat->TestMaterialFlag(MF_POLYGONOFFSET))
+            biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+        vkCmdSetDepthBias(s_cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+    }
+
+    // Cull mode: CT_TWO_SIDED materials disable face culling (fences, grates, glass panes).
+    {
+        const idMaterial *mat = din->surf->material;
+        VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
+        if (mat && mat->GetCullType() == CT_TWO_SIDED)
+            cullMode = VK_CULL_MODE_NONE;
+        else if (mat && mat->GetCullType() == CT_BACK_SIDED)
+            cullMode = VK_CULL_MODE_FRONT_BIT; // inverted: back-sided in GL = cull front in VK
+        vkCmdSetCullMode(s_cmd, cullMode);
+    }
+
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 }
 
@@ -891,6 +914,9 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     // Bind the opaque depth pipeline up front; switch to depthClipPipeline per-draw for MC_PERFORATED.
     VkPipeline activePipeline = VK_NULL_HANDLE;
+    // Track depth bias so we only call vkCmdSetDepthBias when it changes.
+    // Initialise to a sentinel that won't match any real value.
+    float activeBiasConstant = 1e30f;
 
     for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
     {
@@ -1011,6 +1037,20 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
+
+        // Apply polygon offset for decal/overlay surfaces (mirrors GL qglPolygonOffset).
+        // r_offsetUnits (-600 by default) * material polygonOffset value pulls the depth
+        // toward the camera so co-planar decals pass the LEQUAL interaction test.
+        {
+            float biasConstant = 0.0f;
+            if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
+                biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+            if (biasConstant != activeBiasConstant)
+            {
+                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+                activeBiasConstant = biasConstant;
+            }
+        }
 
         if (coverage == MC_OPAQUE)
         {
