@@ -32,6 +32,19 @@ static VkSurfaceFormatKHR VK_ChooseSurfaceFormat(VkPhysicalDevice physDev)
     VkSurfaceFormatKHR *formats = (VkSurfaceFormatKHR *)alloca(sizeof(VkSurfaceFormatKHR) * count);
     vkGetPhysicalDeviceSurfaceFormatsKHR(physDev, vk.surface, &count, formats);
 
+    // Prefer UNORM to match the GL path: Doom3 textures are loaded as UNORM (sRGB-encoded
+    // bytes treated as linear by the GPU).  The GL renderer uses a UNORM framebuffer + hardware
+    // gamma tables, so the sRGB-encoded texture values pass through to the display unchanged.
+    // An sRGB swapchain would apply an *additional* linear→sRGB conversion on write, double-
+    // encoding the already-sRGB values and making everything appear too bright.
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (formats[i].format == VK_FORMAT_B8G8R8A8_UNORM && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            return formats[i];
+        }
+    }
+    // Fallback: accept SRGB if UNORM is not available (less accurate match to GL path)
     for (uint32_t i = 0; i < count; i++)
     {
         if (formats[i].format == VK_FORMAT_B8G8R8A8_SRGB && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
@@ -39,7 +52,7 @@ static VkSurfaceFormatKHR VK_ChooseSurfaceFormat(VkPhysicalDevice physDev)
             return formats[i];
         }
     }
-    return formats[0]; // fallback
+    return formats[0]; // last resort fallback
 }
 
 static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
