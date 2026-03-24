@@ -656,6 +656,10 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
+    // Sentinel for depth bias tracking — larger than any real bias value (which is
+    // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
+    float activeShaderBias = 1000000.0f;
+
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
@@ -719,6 +723,20 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
 
         const float *regs = surf->shaderRegisters;
+
+        // Polygon offset for co-planar decals/overlays, mirroring GL's qglPolygonOffset
+        // in RB_STD_T_RenderShaderPasses.  Only relevant for 3D surfaces (depthTest path);
+        // 2D GUI surfaces skip depth entirely so bias has no effect there.
+        {
+            float biasConstant = 0.0f;
+            if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
+                biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+            if (biasConstant != activeShaderBias)
+            {
+                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+                activeShaderBias = biasConstant;
+            }
+        }
 
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
@@ -884,6 +902,14 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
             const bool needDepth = !(pStage->drawStateBits & GLS_DEPTHFUNC_ALWAYS);
+
+            if (r_vkLogRT.GetInteger() >= 3)
+            {
+                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
+                               mat->GetName(), stageIdx, pStage->drawStateBits, blendBits, (int)needDepth);
+            }
+
             VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits, needDepth);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
@@ -916,7 +942,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
     VkPipeline activePipeline = VK_NULL_HANDLE;
     // Track depth bias so we only call vkCmdSetDepthBias when it changes.
     // Initialise to a sentinel that won't match any real value.
-    float activeBiasConstant = 1e30f;
+    float activeBiasConstant = 1000000.0f;
 
     for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
     {

@@ -899,6 +899,9 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
         // (same as the interaction and depth-prepass pipelines).
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        // Depth bias for MF_POLYGONOFFSET decals/overlays — mirrors GL qglPolygonOffset
+        // in RB_STD_T_RenderShaderPasses.  Values are set dynamically per-draw.
+        rasterizer.depthBiasEnable = VK_TRUE;
     }
     else
     {
@@ -951,10 +954,13 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    // 3D pipelines add DEPTH_BIAS so MF_POLYGONOFFSET decals can use vkCmdSetDepthBias,
+    // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                   VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 2;
+    dynamicState.dynamicStateCount = depthTest ? 3 : 2;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
