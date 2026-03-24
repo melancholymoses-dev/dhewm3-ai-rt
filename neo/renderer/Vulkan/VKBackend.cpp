@@ -123,5 +123,6 @@ void VKBackend::DrawView(const drawSurfsCommand_t *cmd)
 }
 
 void VKBackend::CopyRender(const copyRenderCommand_t &cmd)
-{ // no op
+{
+    VK_RB_CopyRender((const void *)&cmd);
 }

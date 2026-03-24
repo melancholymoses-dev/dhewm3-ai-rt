@@ -180,7 +180,7 @@ static void VK_GetInteractionVertexInput(VkVertexInputBindingDescription *bindin
 // ---------------------------------------------------------------------------
 
 static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool enableStencil = true,
-                                                VkCompareOp depthOp = VK_COMPARE_OP_EQUAL)
+                                               VkCompareOp depthOp = VK_COMPARE_OP_EQUAL)
 {
     // Load SPIR-V shaders compiled from the GLSL files
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/interaction.vert.spv");
@@ -288,8 +288,8 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     blendState.pAttachments = &colorBlend;
 
     // Dynamic state: viewport, scissor, depth bias (polygon offset), and cull mode (two-sided materials).
-    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                                   VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE_EXT};
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                   VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = 4;
@@ -620,7 +620,7 @@ static VkDescriptorSetLayout VK_CreateGuiDescLayout(void)
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     // Binding 1: combined image sampler (diffuse texture)
     bindings[1].binding = 1;
@@ -729,8 +729,7 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                                   VK_DYNAMIC_STATE_DEPTH_BIAS};
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = 3;
@@ -838,8 +837,7 @@ static int s_blendCacheCount = 0;
 // blendEnable=false overrides all blend factor args (fully opaque).
 static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnable, VkBlendFactor srcColor,
                                          VkBlendFactor dstColor, VkBlendFactor srcAlpha, VkBlendFactor dstAlpha,
-                                         bool depthTest = false,
-                                         VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL)
+                                         bool depthTest = false, VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
@@ -956,8 +954,7 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
 
     // 3D pipelines add DEPTH_BIAS so MF_POLYGONOFFSET decals can use vkCmdSetDepthBias,
     // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
-    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                                   VK_DYNAMIC_STATE_DEPTH_BIAS};
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = depthTest ? 3 : 2;
@@ -1294,10 +1291,9 @@ void VK_InitPipelines(void)
     }
     // Opaque interactions: EQUAL matches GL (backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL).
     // Translucent interactions: LEQUAL since translucent surfaces skip the depth prepass.
-    vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true,
-                                                               VK_COMPARE_OP_EQUAL);
-    vkPipes.interactionPipelineNoStencil = VK_CreateInteractionPipeline(vkPipes.interactionLayout, false,
-                                                                        VK_COMPARE_OP_LESS_OR_EQUAL);
+    vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_EQUAL);
+    vkPipes.interactionPipelineNoStencil =
+        VK_CreateInteractionPipeline(vkPipes.interactionLayout, false, VK_COMPARE_OP_LESS_OR_EQUAL);
 
     // --- Shadow pipeline ---
     vkPipes.shadowDescLayout = VK_CreateShadowDescLayout();

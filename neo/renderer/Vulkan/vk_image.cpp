@@ -956,3 +956,13 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
     out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return true;
 }
+
+bool VK_Image_GetHandle(idImage *img, VkImage *out)
+{
+    if (!img || !img->backendData || !out)
+        return false;
+
+    vkImageData_t *vkd = (vkImageData_t *)img->backendData;
+    *out = vkd->image;
+    return true;
+}

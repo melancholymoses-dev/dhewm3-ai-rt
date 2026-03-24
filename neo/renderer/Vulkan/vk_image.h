@@ -9,3 +9,7 @@ void VK_Image_Purge(idImage *img);
 // cmd must be a recording command buffer outside any render pass.
 bool VK_Image_UpdateCinematic(VkCommandBuffer cmd, const byte *rgba, int w, int h);
 void VK_Image_GetCinematicDescriptorInfo(VkDescriptorImageInfo *out);
+
+// Returns the underlying VkImage for a backend-uploaded idImage.
+// Returns false when img is null or has no Vulkan backend data yet.
+bool VK_Image_GetHandle(idImage *img, VkImage *out);

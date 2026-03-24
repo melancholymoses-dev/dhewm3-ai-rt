@@ -44,6 +44,14 @@ void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryProper
     allocInfo.allocationSize = memReqs.size;
     allocInfo.memoryTypeIndex = VK_FindMemoryType(memReqs.memoryTypeBits, memProps);
 
+    VkMemoryAllocateFlagsInfo flagsInfo = {};
+    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    {
+        flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        allocInfo.pNext = &flagsInfo;
+    }
+
     VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, outMemory));
     VK_CHECK(vkBindBufferMemory(vk.device, *outBuffer, *outMemory, 0));
 }

@@ -443,7 +443,7 @@ idCVar pm_modelView("pm_modelView", "0", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_INT
 idCVar pm_airTics("pm_air", "1800", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_INTEGER,
                   "how long in milliseconds the player can go without air before he starts taking damage");
 
-idCVar g_showPlayerShadow("g_showPlayerShadow", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+idCVar g_showPlayerShadow("g_showPlayerShadow", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
                           "enables shadow of player model");
 idCVar g_showHud("g_showHud", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL, "");
 idCVar g_showProjectilePct("g_showProjectilePct", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
