@@ -237,6 +237,7 @@ class idImage
     void UploadPrecompressedImage(byte *data, int len);
     void ActuallyLoadImage(bool checkForPrecompressed, bool fromBackEnd);
     void StartBackgroundImageLoad();
+    bool IsHighPriorityFrontendImage() const;
     int BitsForInternalFormat(int internalFormat) const;
     void UploadCompressedNormalMap(int width, int height, const byte *rgba, int mipLevel);
     GLenum SelectInternalFormat(const byte **dataPtrs, int numDataPtrs, int width, int height,
