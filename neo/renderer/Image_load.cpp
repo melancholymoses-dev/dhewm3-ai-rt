@@ -58,6 +58,32 @@ int MakePowerOfTwo(int num)
     return pot;
 }
 
+bool idImage::IsHighPriorityFrontendImage() const
+{
+    if (imgName.IsEmpty())
+    {
+        return false;
+    }
+
+    idStr normalized = imgName;
+    normalized.BackSlashesToSlashes();
+    normalized.ToLower();
+
+    if (normalized.Icmpn("levelshots/", 11) == 0 || normalized.Find("/levelshots/") >= 0)
+    {
+        return true;
+    }
+
+    if (normalized.Icmpn("guis/", 5) != 0)
+    {
+        return false;
+    }
+
+    return normalized.Find("loading") >= 0 || normalized.Find("loadscreen") >= 0 || normalized.Find("splash") >= 0 ||
+           normalized.Find("intro") >= 0 || normalized.Find("transition") >= 0 || normalized.Find("wipe") >= 0 ||
+           normalized.Find("briefing") >= 0 || normalized.Find("levelshot") >= 0;
+}
+
 /*
 ================
 BitsForInternalFormat
@@ -1794,15 +1820,22 @@ void idImage::Bind()
     {
         if (partialImage)
         {
-            // if we have a partial image, go ahead and use that
-            this->partialImage->Bind();
-
-            // start a background load of the full thing if it isn't already in the queue
-            if (!backgroundLoadInProgress)
+            if (IsHighPriorityFrontendImage())
             {
-                StartBackgroundImageLoad();
+                ActuallyLoadImage(true, true);
             }
-            return;
+            else
+            {
+                // if we have a partial image, go ahead and use that
+                this->partialImage->Bind();
+
+                // start a background load of the full thing if it isn't already in the queue
+                if (!backgroundLoadInProgress)
+                {
+                    StartBackgroundImageLoad();
+                }
+                return;
+            }
         }
 
         // load the image on demand here, which isn't our normal game operating mode
@@ -1911,15 +1944,22 @@ void idImage::BindFragment()
     {
         if (partialImage)
         {
-            // if we have a partial image, go ahead and use that
-            this->partialImage->BindFragment();
-
-            // start a background load of the full thing if it isn't already in the queue
-            if (!backgroundLoadInProgress)
+            if (IsHighPriorityFrontendImage())
             {
-                StartBackgroundImageLoad();
+                ActuallyLoadImage(true, true);
             }
-            return;
+            else
+            {
+                // if we have a partial image, go ahead and use that
+                this->partialImage->BindFragment();
+
+                // start a background load of the full thing if it isn't already in the queue
+                if (!backgroundLoadInProgress)
+                {
+                    StartBackgroundImageLoad();
+                }
+                return;
+            }
         }
 
         // load the image on demand here, which isn't our normal game operating mode

@@ -2340,7 +2340,7 @@ void idImageManager::EndLevelLoad()
         }
     }
 
-    // load the ones we do need, if we are preloading
+    // load front-end critical images first so loading/intro/transition visuals don't pop in late
     for (int i = 0; i < images.Num(); i++)
     {
         idImage *image = images[i];
@@ -2349,7 +2349,30 @@ void idImageManager::EndLevelLoad()
             continue;
         }
 
-        if (image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED && !image->partialImage)
+        if (image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED &&
+            image->IsHighPriorityFrontendImage())
+        {
+            loadCount++;
+            image->ActuallyLoadImage(true, false);
+
+            if ((loadCount & 15) == 0)
+            {
+                session->PacifierUpdate();
+            }
+        }
+    }
+
+    // load the remaining images we do need, if we are preloading
+    for (int i = 0; i < images.Num(); i++)
+    {
+        idImage *image = images[i];
+        if (image->generatorFunction)
+        {
+            continue;
+        }
+
+        if (image->levelLoadReferenced && image->texnum == idImage::TEXTURE_NOT_LOADED && !image->partialImage &&
+            !image->IsHighPriorityFrontendImage())
         {
             //			common->Printf( "Loading %s\n", image->imgName.c_str() );
             loadCount++;
