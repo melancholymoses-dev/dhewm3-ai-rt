@@ -1123,16 +1123,17 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
             // Match GL per-material cull behavior for 3D shader passes.
-            VkCullModeFlags shaderCull = VK_CULL_MODE_NONE;
+            // Only set dynamic cull mode on depth-tested (3D) pipelines — 2D GUI
+            // pipelines are created without VK_DYNAMIC_STATE_CULL_MODE.
             if (needDepth)
             {
-                shaderCull = VK_CULL_MODE_BACK_BIT;
+                VkCullModeFlags shaderCull = VK_CULL_MODE_BACK_BIT;
                 if (mat->GetCullType() == CT_TWO_SIDED)
                     shaderCull = VK_CULL_MODE_NONE;
                 else if (mat->GetCullType() == CT_BACK_SIDED)
                     shaderCull = VK_CULL_MODE_FRONT_BIT;
+                vkCmdSetCullMode(cmd, shaderCull);
             }
-            vkCmdSetCullMode(cmd, shaderCull);
 
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
@@ -1236,8 +1237,9 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             memcpy(ubo->modelViewProjection, mvp, 64);
             if (useClipPipeline)
             {
-                // depth_clip.frag uses texture alpha * vary_Color.a.  Match GL's
-                // qglColor4fv(color) in RB_T_FillDepthBuffer by forcing vary alpha to stage alpha.
+                // depth_clip.frag scales sampled texture alpha by u_ColorModulate.w.
+                // Match GL's qglColor4fv(color) in RB_T_FillDepthBuffer by writing the stage
+                // alpha into colorModulate[3] (alphaScale) for the perforated depth test.
                 ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = 0.f;
                 ubo->colorModulate[3] = alphaScale;
                 ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
