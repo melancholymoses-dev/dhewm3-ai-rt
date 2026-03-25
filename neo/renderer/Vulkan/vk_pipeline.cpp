@@ -1345,8 +1345,16 @@ void VK_InitPipelines(void)
         VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.interactionLayout));
     }
     // Opaque interactions: EQUAL matches GL (backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL).
+    // Opaque weapon-depthhack interactions: LEQUAL to tolerate depth interpolation
+    // mismatch between depth prepass and interaction shaders in Vulkan.
+    // If that still rejects valid fragments, a stencil+ALWAYS variant is available
+    // as a targeted fallback for weapon/viewmodel surfaces.
     // Translucent interactions: LEQUAL since translucent surfaces skip the depth prepass.
     vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_EQUAL);
+    vkPipes.interactionPipelineStencilLEqual =
+        VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_LESS_OR_EQUAL);
+    vkPipes.interactionPipelineStencilAlways =
+        VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_ALWAYS);
     vkPipes.interactionPipelineNoStencil =
         VK_CreateInteractionPipeline(vkPipes.interactionLayout, false, VK_COMPARE_OP_LESS_OR_EQUAL);
 
@@ -1454,6 +1462,10 @@ void VK_ShutdownPipelines(void)
     }
     if (vkPipes.interactionPipeline)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipeline, NULL);
+    if (vkPipes.interactionPipelineStencilLEqual)
+        vkDestroyPipeline(vk.device, vkPipes.interactionPipelineStencilLEqual, NULL);
+    if (vkPipes.interactionPipelineStencilAlways)
+        vkDestroyPipeline(vk.device, vkPipes.interactionPipelineStencilAlways, NULL);
     if (vkPipes.interactionPipelineNoStencil)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipelineNoStencil, NULL);
     if (vkPipes.interactionLayout)
