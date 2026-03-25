@@ -6,6 +6,22 @@ This document tracks GL features that were absent from `VK_RB_DrawView` at the s
 Vulkan refactor, and the current implementation status of each.
 
 ---
+## Rendering Correctness Status (Phase 2 carry-overs)
+
+Updates: 2026-03-25
+Most previously listed raster correctness gaps are now implemented. Current quick status:
+
+| # | Item | Status | Note |
+|---|------|--------|------|
+| 1 | Multiple blend modes | Fixed | Shader-pass pipelines are selected from `drawStateBits` blend factors (`GLS_SRCBLEND_BITS`/`GLS_DSTBLEND_BITS`) |
+| 2 | Depth prepass parity | Fixed | Current path uses depth prepass + interaction depth equality behavior consistent with Doom 3 flow |
+| 3 | Texture coordinate transforms | Fixed | Stage texture matrices are applied for shader/depth-clip paths |
+| 4 | LightScale / brightness parity | Fixed | Brightness mismatch was traced to formatting/read-in behavior in prior Vulkan handling; current path applies the expected scale flow |
+| 5 | Two-sided cull selection | Fixed | Material cull mode (`CT_TWO_SIDED`, `CT_BACK_SIDED`) is selected dynamically per draw |
+| 6 | Fog/blend lights | Fixed | `VK_RB_FogAllLights` + fog and blend-light passes are present in frame execution |
+
+Residual risk is now mostly regression risk across maps/content, not known missing feature blocks.
+
 
 ## Status Summary
 
