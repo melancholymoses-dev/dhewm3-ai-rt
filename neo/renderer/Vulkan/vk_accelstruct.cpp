@@ -59,6 +59,44 @@ struct blasGarbageEntry_t
 static blasGarbageEntry_t s_blasGarbage[BLAS_GARBAGE_MAX];
 static int s_blasGarbageCount = 0;
 
+// Lightweight per-frame BLAS source stats for Optimization 1 validation.
+// These counters help track zero-copy adoption (GPU cache buffers) vs CPU fallback.
+struct vkRTBlasBuildStats_t
+{
+    int frameCount;
+    int gpuGeomCount;
+    int cpuGeomCount;
+    int singleBuildCount;
+    int modelBuildCount;
+    int summaryLoggedFrameCount;
+};
+
+static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1};
+
+static void VK_RT_ResetBLASBuildStatsIfNewFrame()
+{
+    if (s_blasBuildStats.frameCount != tr.frameCount)
+    {
+        s_blasBuildStats.frameCount = tr.frameCount;
+        s_blasBuildStats.gpuGeomCount = 0;
+        s_blasBuildStats.cpuGeomCount = 0;
+        s_blasBuildStats.singleBuildCount = 0;
+        s_blasBuildStats.modelBuildCount = 0;
+        s_blasBuildStats.summaryLoggedFrameCount = -1;
+    }
+}
+
+static void VK_RT_AccumulateBLASBuildStats(int gpuGeoms, int cpuGeoms, bool modelBuild)
+{
+    VK_RT_ResetBLASBuildStatsIfNewFrame();
+    s_blasBuildStats.gpuGeomCount += gpuGeoms;
+    s_blasBuildStats.cpuGeomCount += cpuGeoms;
+    if (modelBuild)
+        s_blasBuildStats.modelBuildCount++;
+    else
+        s_blasBuildStats.singleBuildCount++;
+}
+
 // Actually free a BLAS's GPU resources and memory.
 static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
 {
@@ -76,11 +114,17 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
         vkFreeMemory(vk.device, blas->scratchMem, NULL);
     for (uint32_t i = 0; i < blas->geomCount; i++)
     {
-        if (blas->geomVertBufs && blas->geomVertBufs[i] != VK_NULL_HANDLE)
+        // Geometry buffers can be either:
+        // 1) Owned staging/upload buffers allocated by BLAS build (mem != NULL), or
+        // 2) External vertex-cache buffers (mem == NULL) owned elsewhere.
+        // Only destroy/free owned buffers here.
+        if (blas->geomVertBufs && blas->geomVertMems && blas->geomVertMems[i] != VK_NULL_HANDLE &&
+            blas->geomVertBufs[i] != VK_NULL_HANDLE)
             vkDestroyBuffer(vk.device, blas->geomVertBufs[i], NULL);
         if (blas->geomVertMems && blas->geomVertMems[i] != VK_NULL_HANDLE)
             vkFreeMemory(vk.device, blas->geomVertMems[i], NULL);
-        if (blas->geomIdxBufs && blas->geomIdxBufs[i] != VK_NULL_HANDLE)
+        if (blas->geomIdxBufs && blas->geomIdxMems && blas->geomIdxMems[i] != VK_NULL_HANDLE &&
+            blas->geomIdxBufs[i] != VK_NULL_HANDLE)
             vkDestroyBuffer(vk.device, blas->geomIdxBufs[i], NULL);
         if (blas->geomIdxMems && blas->geomIdxMems[i] != VK_NULL_HANDLE)
             vkFreeMemory(vk.device, blas->geomIdxMems[i], NULL);
@@ -188,14 +232,25 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
 
 vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated)
 {
+    extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
+
     if (!tri || tri->numVerts == 0 || tri->numIndexes == 0)
         return NULL;
 
-    if (!tri->ambientCache)
-        return NULL;
+    // Preferred path: use GPU cache buffers directly as AS build inputs.
+    // Fallback path: build from CPU-visible pointers when cache buffers are unavailable.
+    VkBuffer vertSrcBuf = VK_NULL_HANDLE;
+    VkBuffer idxSrcBuf = VK_NULL_HANDLE;
+    VkDeviceSize vertSrcOffset = 0;
+    VkDeviceSize idxSrcOffset = 0;
+    const bool haveGpuVerts =
+        tri->ambientCache && VK_VertexCache_GetBuffer(tri->ambientCache, &vertSrcBuf, &vertSrcOffset);
+    const bool haveGpuIdx = tri->indexCache && VK_VertexCache_GetBuffer(tri->indexCache, &idxSrcBuf, &idxSrcOffset);
+    const bool useGpuBuffers = haveGpuVerts && haveGpuIdx;
 
-    // CPU-side data may have been freed after GPU upload.
-    if (!tri->verts || !tri->indexes)
+    VK_RT_AccumulateBLASBuildStats(useGpuBuffers ? 1 : 0, useGpuBuffers ? 0 : 1, false);
+
+    if (!useGpuBuffers && (!tri->verts || !tri->indexes))
         return NULL;
 
     VkDeviceSize vertexDataSize = (VkDeviceSize)tri->numVerts * sizeof(idDrawVert);
@@ -216,11 +271,18 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     blas->geomIdxBufs = new VkBuffer[1]();
     blas->geomIdxMems = new VkDeviceMemory[1]();
 
-    // Allocate host-visible geometry buffers.
-    // HOST_VISIBLE is valid for AS build input per the Vulkan spec; no staging copy needed.
-    // Buffers are kept alive in the BLAS struct until VK_RT_DestroyBLAS because they must
-    // outlive the command buffer submission in which the build is recorded.
+    if (useGpuBuffers)
     {
+        // Zero-copy path: reference persistent vertex-cache/index-cache buffers.
+        // Do not own/destroy these buffers from BLAS lifetime management.
+        blas->geomVertBufs[0] = vertSrcBuf;
+        blas->geomVertMems[0] = VK_NULL_HANDLE;
+        blas->geomIdxBufs[0] = idxSrcBuf;
+        blas->geomIdxMems[0] = VK_NULL_HANDLE;
+    }
+    else
+    {
+        // Fallback path: allocate host-visible geometry buffers for AS build input.
         VkBufferCreateInfo bi = {};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bi.usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
@@ -268,11 +330,11 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     VkAccelerationStructureGeometryTrianglesDataKHR triData = {};
     triData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     triData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT; // xyz at offset 0 of idDrawVert
-    triData.vertexData.deviceAddress = GetBufferDeviceAddress(blas->geomVertBufs[0]);
+    triData.vertexData.deviceAddress = GetBufferDeviceAddress(blas->geomVertBufs[0]) + vertSrcOffset;
     triData.vertexStride = sizeof(idDrawVert);
     triData.maxVertex = (uint32_t)tri->numVerts - 1;
     triData.indexType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[0]);
+    triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[0]) + idxSrcOffset;
     triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
 
     VkAccelerationStructureGeometryKHR asGeom = {};
@@ -339,6 +401,8 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
 
 vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
 {
+    extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
+
     if (!model || model->NumSurfaces() == 0)
         return NULL;
 
@@ -350,6 +414,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     };
     static const int MAX_BLAS_SURFACES = 512;
     static SurfEntry validSurfs[MAX_BLAS_SURFACES];
+    static bool validSurfUseGpu[MAX_BLAS_SURFACES];
     int validCount = 0;
     int droppedByCap = 0;
     const int numSurfaces = model->NumSurfaces();
@@ -368,28 +433,52 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         const srfTriangles_t *geo = surf->geometry;
         if (geo->numVerts == 0 || geo->numIndexes == 0)
             continue;
+        VkBuffer gpuVertBuf = VK_NULL_HANDLE, gpuIdxBuf = VK_NULL_HANDLE;
+        VkDeviceSize gpuVertOff = 0, gpuIdxOff = 0;
+        const bool haveGpuVerts =
+            geo->ambientCache && VK_VertexCache_GetBuffer(geo->ambientCache, &gpuVertBuf, &gpuVertOff);
+        const bool haveGpuIdx = geo->indexCache && VK_VertexCache_GetBuffer(geo->indexCache, &gpuIdxBuf, &gpuIdxOff);
+        const bool haveGpuGeom = haveGpuVerts && haveGpuIdx;
+
         const void *cpuVerts = geo->verts ? (const void *)geo->verts
                                           : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
         const void *cpuIdx = geo->indexes ? (const void *)geo->indexes
                                           : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
-        if (!cpuVerts || !cpuIdx)
+        const bool haveCpuGeom = (cpuVerts != NULL) && (cpuIdx != NULL);
+
+        if (!haveGpuGeom && !haveCpuGeom)
             continue;
         // Translucent surfaces never cast shadows — same rule as GL stencil path.
         if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT)
             continue;
         validSurfs[validCount].geo = geo;
         validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
+        validSurfUseGpu[validCount] = haveGpuGeom;
         validCount++;
     }
 
     if (droppedByCap > 0)
     {
-        common->Printf("VK RT BLAS WARNING: model '%s' exceeded %d surfaces; truncated %d surface(s) (numSurfaces=%d).\n",
-                       model->Name(), MAX_BLAS_SURFACES, droppedByCap, numSurfaces);
+        common->Printf(
+            "VK RT BLAS WARNING: model '%s' exceeded %d surfaces; truncated %d surface(s) (numSurfaces=%d).\n",
+            model->Name(), MAX_BLAS_SURFACES, droppedByCap, numSurfaces);
     }
 
     if (validCount == 0)
         return NULL;
+
+    {
+        int gpuGeomCount = 0;
+        int cpuGeomCount = 0;
+        for (int i = 0; i < validCount; i++)
+        {
+            if (validSurfUseGpu[i])
+                gpuGeomCount++;
+            else
+                cpuGeomCount++;
+        }
+        VK_RT_AccumulateBLASBuildStats(gpuGeomCount, cpuGeomCount, true);
+    }
 
     vkBLAS_t *blas = new vkBLAS_t();
     blas->handle = VK_NULL_HANDLE;
@@ -409,6 +498,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     // Build geometry descriptors — one per valid surface
     static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
     static uint32_t primCounts[MAX_BLAS_SURFACES];
+    static VkDeviceSize vertOffsets[MAX_BLAS_SURFACES];
+    static VkDeviceSize idxOffsets[MAX_BLAS_SURFACES];
 
     VkBufferCreateInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -426,51 +517,73 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     for (int i = 0; i < validCount; i++)
     {
         const srfTriangles_t *geo = validSurfs[i].geo;
+        VkBuffer gpuVertBuf = VK_NULL_HANDLE, gpuIdxBuf = VK_NULL_HANDLE;
+        VkDeviceSize gpuVertOff = 0, gpuIdxOff = 0;
+        const bool haveGpuVerts =
+            geo->ambientCache && VK_VertexCache_GetBuffer(geo->ambientCache, &gpuVertBuf, &gpuVertOff);
+        const bool haveGpuIdx = geo->indexCache && VK_VertexCache_GetBuffer(geo->indexCache, &gpuIdxBuf, &gpuIdxOff);
+        const bool useGpuBuffers = haveGpuVerts && haveGpuIdx;
+
         const void *cpuVerts = geo->verts ? (const void *)geo->verts
                                           : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
         const void *cpuIdx = geo->indexes ? (const void *)geo->indexes
                                           : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
-        // cpuVerts/cpuIdx were validated in the gather loop above.
+        // Source was validated in gather loop above.
 
         VkDeviceSize vertSize = (VkDeviceSize)geo->numVerts * sizeof(idDrawVert);
         VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
-        VkMemoryRequirements mr;
-        void *ptr;
+        if (useGpuBuffers)
+        {
+            // Zero-copy geometry path: use cache buffers directly.
+            blas->geomVertBufs[i] = gpuVertBuf;
+            blas->geomVertMems[i] = VK_NULL_HANDLE;
+            blas->geomIdxBufs[i] = gpuIdxBuf;
+            blas->geomIdxMems[i] = VK_NULL_HANDLE;
+            vertOffsets[i] = gpuVertOff;
+            idxOffsets[i] = gpuIdxOff;
+        }
+        else
+        {
+            VkMemoryRequirements mr;
+            void *ptr;
 
-        // Vertex buffer
-        bi.size = vertSize;
-        VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &blas->geomVertBufs[i]));
-        vkGetBufferMemoryRequirements(vk.device, blas->geomVertBufs[i], &mr);
-        ai.allocationSize = mr.size;
-        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomVertMems[i]));
-        VK_CHECK(vkBindBufferMemory(vk.device, blas->geomVertBufs[i], blas->geomVertMems[i], 0));
-        VK_CHECK(vkMapMemory(vk.device, blas->geomVertMems[i], 0, vertSize, 0, &ptr));
-        memcpy(ptr, cpuVerts, (size_t)vertSize);
-        vkUnmapMemory(vk.device, blas->geomVertMems[i]);
+            // Fallback: build AS input geometry from CPU-visible pointers.
+            bi.size = vertSize;
+            VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &blas->geomVertBufs[i]));
+            vkGetBufferMemoryRequirements(vk.device, blas->geomVertBufs[i], &mr);
+            ai.allocationSize = mr.size;
+            ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomVertMems[i]));
+            VK_CHECK(vkBindBufferMemory(vk.device, blas->geomVertBufs[i], blas->geomVertMems[i], 0));
+            VK_CHECK(vkMapMemory(vk.device, blas->geomVertMems[i], 0, vertSize, 0, &ptr));
+            memcpy(ptr, cpuVerts, (size_t)vertSize);
+            vkUnmapMemory(vk.device, blas->geomVertMems[i]);
 
-        // Index buffer
-        bi.size = idxSize;
-        VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &blas->geomIdxBufs[i]));
-        vkGetBufferMemoryRequirements(vk.device, blas->geomIdxBufs[i], &mr);
-        ai.allocationSize = mr.size;
-        ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomIdxMems[i]));
-        VK_CHECK(vkBindBufferMemory(vk.device, blas->geomIdxBufs[i], blas->geomIdxMems[i], 0));
-        VK_CHECK(vkMapMemory(vk.device, blas->geomIdxMems[i], 0, idxSize, 0, &ptr));
-        memcpy(ptr, cpuIdx, (size_t)idxSize);
-        vkUnmapMemory(vk.device, blas->geomIdxMems[i]);
+            bi.size = idxSize;
+            VK_CHECK(vkCreateBuffer(vk.device, &bi, NULL, &blas->geomIdxBufs[i]));
+            vkGetBufferMemoryRequirements(vk.device, blas->geomIdxBufs[i], &mr);
+            ai.allocationSize = mr.size;
+            ai.memoryTypeIndex = VK_FindMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomIdxMems[i]));
+            VK_CHECK(vkBindBufferMemory(vk.device, blas->geomIdxBufs[i], blas->geomIdxMems[i], 0));
+            VK_CHECK(vkMapMemory(vk.device, blas->geomIdxMems[i], 0, idxSize, 0, &ptr));
+            memcpy(ptr, cpuIdx, (size_t)idxSize);
+            vkUnmapMemory(vk.device, blas->geomIdxMems[i]);
+
+            vertOffsets[i] = 0;
+            idxOffsets[i] = 0;
+        }
 
         VkAccelerationStructureGeometryTrianglesDataKHR triData = {};
         triData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
         triData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT; // xyz at offset 0 of idDrawVert
-        triData.vertexData.deviceAddress = GetBufferDeviceAddress(blas->geomVertBufs[i]);
+        triData.vertexData.deviceAddress = GetBufferDeviceAddress(blas->geomVertBufs[i]) + vertOffsets[i];
         triData.vertexStride = sizeof(idDrawVert);
         triData.maxVertex = (uint32_t)geo->numVerts - 1;
         triData.indexType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-        triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[i]);
+        triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[i]) + idxOffsets[i];
         triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
 
         asGeoms[i] = {};
@@ -683,6 +796,21 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("VK RT TLAS: building — instances=%u blasBuiltThisFrame=%s\n", instanceCount,
                        anyBLASBuilt ? "yes" : "no");
         fflush(NULL);
+
+        // One lightweight summary line per frame: BLAS geometry source mix.
+        // Useful for confirming Optimization 1 rollout across real maps.
+        if (s_blasBuildStats.summaryLoggedFrameCount != tr.frameCount)
+        {
+            const int totalGeom = s_blasBuildStats.gpuGeomCount + s_blasBuildStats.cpuGeomCount;
+            const float gpuPct =
+                (totalGeom > 0) ? (100.0f * (float)s_blasBuildStats.gpuGeomCount / (float)totalGeom) : 0.0f;
+            common->Printf(
+                "VK RT BLAS SRC: frameCount=%d geoms(total=%d gpu=%d cpu=%d gpuPct=%.1f) builds(single=%d model=%d)\n",
+                tr.frameCount, totalGeom, s_blasBuildStats.gpuGeomCount, s_blasBuildStats.cpuGeomCount, gpuPct,
+                s_blasBuildStats.singleBuildCount, s_blasBuildStats.modelBuildCount);
+            fflush(NULL);
+            s_blasBuildStats.summaryLoggedFrameCount = tr.frameCount;
+        }
     }
 
     // One barrier for all BLAS builds recorded above.
@@ -700,19 +828,21 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkTLAS_t &tlas = vkRT.tlas[vk.currentFrame];
 
-    // (Re)create instance buffer if size changed
+    // (Re)create instance buffer only when capacity is insufficient.
     VkDeviceSize instBufSize = instanceCount * sizeof(VkAccelerationStructureInstanceKHR);
 
-    if (tlas.instanceBuffer != VK_NULL_HANDLE)
+    if (tlas.instanceBuffer == VK_NULL_HANDLE || tlas.instanceBufferSize < instBufSize)
     {
-        vkDestroyBuffer(vk.device, tlas.instanceBuffer, NULL);
-        vkFreeMemory(vk.device, tlas.instanceMemory, NULL);
-        tlas.instanceBuffer = VK_NULL_HANDLE;
-        tlas.instanceMemory = VK_NULL_HANDLE;
-    }
+        if (tlas.instanceBuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, tlas.instanceBuffer, NULL);
+            vkFreeMemory(vk.device, tlas.instanceMemory, NULL);
+            tlas.instanceBuffer = VK_NULL_HANDLE;
+            tlas.instanceMemory = VK_NULL_HANDLE;
+            tlas.instanceBufferSize = 0;
+        }
 
-    // Instance buffer must be host-visible so we can fill it each frame
-    {
+        // Instance buffer must be host-visible so we can fill it each frame
         VkBufferCreateInfo bi = {};
         bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bi.size = instBufSize;
@@ -733,6 +863,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                                                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &tlas.instanceMemory));
         VK_CHECK(vkBindBufferMemory(vk.device, tlas.instanceBuffer, tlas.instanceMemory, 0));
+        tlas.instanceBufferSize = instBufSize;
     }
 
     // Copy instance data
@@ -776,34 +907,47 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
                                             &instanceCount, &sizeInfo);
 
-    // Recreate TLAS storage if needed
-    bool needNewAS = (tlas.handle == VK_NULL_HANDLE);
-    // Simple policy: destroy and recreate if size grows
-    if (tlas.handle != VK_NULL_HANDLE)
+    // Recreate TLAS storage only if missing or too small for current build size.
+    if (tlas.handle == VK_NULL_HANDLE || tlas.bufferSize < sizeInfo.accelerationStructureSize)
     {
-        vkDestroyAccelerationStructureKHR(vk.device, tlas.handle, NULL);
-        vkDestroyBuffer(vk.device, tlas.buffer, NULL);
-        vkFreeMemory(vk.device, tlas.memory, NULL);
-        tlas.handle = VK_NULL_HANDLE;
-        needNewAS = true;
-    }
-    if (tlas.scratchBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(vk.device, tlas.scratchBuffer, NULL);
-        vkFreeMemory(vk.device, tlas.scratchMemory, NULL);
-        tlas.scratchBuffer = VK_NULL_HANDLE;
+        if (tlas.handle != VK_NULL_HANDLE)
+        {
+            vkDestroyAccelerationStructureKHR(vk.device, tlas.handle, NULL);
+            vkDestroyBuffer(vk.device, tlas.buffer, NULL);
+            vkFreeMemory(vk.device, tlas.memory, NULL);
+            tlas.handle = VK_NULL_HANDLE;
+            tlas.buffer = VK_NULL_HANDLE;
+            tlas.memory = VK_NULL_HANDLE;
+            tlas.bufferSize = 0;
+        }
+
+        AllocASBuffer(sizeInfo.accelerationStructureSize, 0, &tlas.buffer, &tlas.memory);
+
+        VkAccelerationStructureCreateInfoKHR asInfo = {};
+        asInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        asInfo.buffer = tlas.buffer;
+        asInfo.size = sizeInfo.accelerationStructureSize;
+        asInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        VK_CHECK(vkCreateAccelerationStructureKHR(vk.device, &asInfo, NULL, &tlas.handle));
+
+        tlas.bufferSize = sizeInfo.accelerationStructureSize;
     }
 
-    AllocASBuffer(sizeInfo.accelerationStructureSize, 0, &tlas.buffer, &tlas.memory);
-    AllocASBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &tlas.scratchBuffer,
-                  &tlas.scratchMemory);
-
-    VkAccelerationStructureCreateInfoKHR asInfo = {};
-    asInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    asInfo.buffer = tlas.buffer;
-    asInfo.size = sizeInfo.accelerationStructureSize;
-    asInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    VK_CHECK(vkCreateAccelerationStructureKHR(vk.device, &asInfo, NULL, &tlas.handle));
+    // Recreate scratch buffer only if missing or too small.
+    if (tlas.scratchBuffer == VK_NULL_HANDLE || tlas.scratchBufferSize < sizeInfo.buildScratchSize)
+    {
+        if (tlas.scratchBuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, tlas.scratchBuffer, NULL);
+            vkFreeMemory(vk.device, tlas.scratchMemory, NULL);
+            tlas.scratchBuffer = VK_NULL_HANDLE;
+            tlas.scratchMemory = VK_NULL_HANDLE;
+            tlas.scratchBufferSize = 0;
+        }
+        AllocASBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &tlas.scratchBuffer,
+                      &tlas.scratchMemory);
+        tlas.scratchBufferSize = sizeInfo.buildScratchSize;
+    }
 
     buildInfo.dstAccelerationStructure = tlas.handle;
     buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(tlas.scratchBuffer);
