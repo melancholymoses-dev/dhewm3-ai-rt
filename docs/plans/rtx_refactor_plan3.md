@@ -201,6 +201,64 @@ These are lower priority but should be addressed before shipping:
 
 ---
 
+## Optimization Workstream (RT Performance)
+
+### Goal
+
+Minimize avoidable CPU work and CPU↔GPU data movement in the RT path.
+RT shadows (and later AO/reflections/GI) are already heavy; we should not add
+per-frame CPU staging cost on top.
+
+### Optimization 1: GPU-Side BLAS Geometry Inputs (Vertex/Index)
+
+#### Current Issue
+
+BLAS construction currently depends on CPU-side geometry pointers for many paths,
+and can stage/copy mesh data from CPU memory into temporary AS build input buffers.
+This causes extra CPU time, memory bandwidth, and synchronization pressure.
+
+#### Target Design
+
+Build BLAS directly from persistent GPU vertex/index buffers already owned by the
+renderer cache (`ambientCache` / index cache path), with device addresses used as
+AS build inputs.
+
+Required buffer usage flags on geometry buffers:
+
+```
+VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+```
+
+Implementation notes:
+
+1. Keep static BLAS persistent across frames and rebuild/refit only for dynamic entities.
+2. Remove per-build CPU mesh staging where GPU buffers are available.
+3. Restrict CPU-side work to instance list generation + transform updates for TLAS.
+4. Preserve a CPU fallback path only for debug/legacy corner cases.
+
+#### Why this matters
+
+This is likely to provide a meaningful performance win because it reduces:
+
+1. CPU memcpy/staging overhead for large meshes.
+2. CPU-side cache pressure and allocation churn.
+3. Synchronization points needed to hand staged data to GPU builds.
+
+In practice this improves frame-time stability and scalability as light count and
+RT effects increase.
+
+### Optimization 2: Keep TLAS Updates Lightweight
+
+Even with GPU-side BLAS geometry, TLAS still needs per-frame instance updates.
+Keep this path lean:
+
+1. Update only visible/casting instances.
+2. Avoid rebuilding unchanged static BLAS.
+3. Batch TLAS instance writes/builds and avoid queue-idle style sync points.
+
+---
+
 ## Rendering Correctness Gaps (Phase 2 carry-overs)
 
 These affect visual quality of the rasterized output that RT shadows are
