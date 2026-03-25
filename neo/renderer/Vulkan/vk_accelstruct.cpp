@@ -73,6 +73,29 @@ struct vkRTBlasBuildStats_t
 
 static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1};
 
+static const int VK_RT_MAX_TLAS_INSTANCES = 4096;
+
+struct vkRTStaticInstanceCache_t
+{
+    bool valid;
+    uint64_t signature;
+    uint32_t count;
+    VkAccelerationStructureInstanceKHR instances[VK_RT_MAX_TLAS_INSTANCES];
+};
+
+static vkRTStaticInstanceCache_t s_staticInstanceCache[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+static ID_INLINE uint64_t VK_RT_HashFnv1a64_Bytes(uint64_t h, const void *data, size_t bytes)
+{
+    const uint8_t *p = (const uint8_t *)data;
+    for (size_t i = 0; i < bytes; i++)
+    {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
 static void VK_RT_ResetBLASBuildStatsIfNewFrame()
 {
     if (s_blasBuildStats.frameCount != tr.frameCount)
@@ -704,13 +727,17 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         fflush(NULL);
     }
 
-    // Count and collect instances
-    static VkAccelerationStructureInstanceKHR instances[4096];
-    uint32_t instanceCount = 0;
+    // Count and collect instances in static/dynamic buckets.
+    // Static instances can be cached and skipped when unchanged.
+    static VkAccelerationStructureInstanceKHR staticInstances[VK_RT_MAX_TLAS_INSTANCES];
+    static VkAccelerationStructureInstanceKHR dynamicInstances[VK_RT_MAX_TLAS_INSTANCES];
+    uint32_t staticCount = 0;
+    uint32_t dynamicCount = 0;
+    uint64_t staticSignature = 1469598103934665603ull; // FNV-1a 64 offset basis
     bool anyBLASBuilt = false;
 
-    for (const viewEntity_t *vEntity = viewDef->viewEntitys; vEntity != NULL && instanceCount < 4096;
-         vEntity = vEntity->next)
+    for (const viewEntity_t *vEntity = viewDef->viewEntitys;
+         vEntity != NULL && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; vEntity = vEntity->next)
     {
         idRenderEntityLocal *ent = vEntity->entityDef;
         if (!ent)
@@ -753,8 +780,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (!ent->blas || !ent->blas->isValid)
             continue;
 
+        const bool isDynamicInstance = (ent->dynamicModel != NULL);
+        VkAccelerationStructureInstanceKHR *dst =
+            isDynamicInstance ? &dynamicInstances[dynamicCount++] : &staticInstances[staticCount++];
+
         // Fill VkAccelerationStructureInstanceKHR
-        VkAccelerationStructureInstanceKHR &inst = instances[instanceCount++];
+        VkAccelerationStructureInstanceKHR &inst = *dst;
         memset(&inst, 0, sizeof(inst));
 
         // 3x4 row-major transform from modelMatrix (column-major in GL)
@@ -773,13 +804,26 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         inst.transform.matrix[2][2] = m[10];
         inst.transform.matrix[2][3] = m[14];
 
-        inst.instanceCustomIndex = instanceCount - 1;
+        // instanceCustomIndex is patched after static/dynamic merge.
+        inst.instanceCustomIndex = 0;
         inst.mask = 0xFF;
         inst.instanceShaderBindingTableRecordOffset = 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
+
+        if (!isDynamicInstance)
+        {
+            const uintptr_t entTag = (uintptr_t)ent;
+            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &entTag, sizeof(entTag));
+            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &inst.accelerationStructureReference,
+                                                      sizeof(inst.accelerationStructureReference));
+            staticSignature =
+                VK_RT_HashFnv1a64_Bytes(staticSignature, &inst.transform.matrix[0][0], sizeof(inst.transform.matrix));
+        }
     }
+
+    const uint32_t instanceCount = staticCount + dynamicCount;
 
     if (instanceCount == 0)
     {
@@ -789,28 +833,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             fflush(NULL);
         }
         return;
-    }
-
-    if (r_vkLogRT.GetInteger() >= 1)
-    {
-        common->Printf("VK RT TLAS: building — instances=%u blasBuiltThisFrame=%s\n", instanceCount,
-                       anyBLASBuilt ? "yes" : "no");
-        fflush(NULL);
-
-        // One lightweight summary line per frame: BLAS geometry source mix.
-        // Useful for confirming Optimization 1 rollout across real maps.
-        if (s_blasBuildStats.summaryLoggedFrameCount != tr.frameCount)
-        {
-            const int totalGeom = s_blasBuildStats.gpuGeomCount + s_blasBuildStats.cpuGeomCount;
-            const float gpuPct =
-                (totalGeom > 0) ? (100.0f * (float)s_blasBuildStats.gpuGeomCount / (float)totalGeom) : 0.0f;
-            common->Printf(
-                "VK RT BLAS SRC: frameCount=%d geoms(total=%d gpu=%d cpu=%d gpuPct=%.1f) builds(single=%d model=%d)\n",
-                tr.frameCount, totalGeom, s_blasBuildStats.gpuGeomCount, s_blasBuildStats.cpuGeomCount, gpuPct,
-                s_blasBuildStats.singleBuildCount, s_blasBuildStats.modelBuildCount);
-            fflush(NULL);
-            s_blasBuildStats.summaryLoggedFrameCount = tr.frameCount;
-        }
     }
 
     // One barrier for all BLAS builds recorded above.
@@ -831,6 +853,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // (Re)create instance buffer only when capacity is insufficient.
     VkDeviceSize instBufSize = instanceCount * sizeof(VkAccelerationStructureInstanceKHR);
 
+    bool instanceBufferRecreated = false;
     if (tlas.instanceBuffer == VK_NULL_HANDLE || tlas.instanceBufferSize < instBufSize)
     {
         if (tlas.instanceBuffer != VK_NULL_HANDLE)
@@ -864,15 +887,77 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &tlas.instanceMemory));
         VK_CHECK(vkBindBufferMemory(vk.device, tlas.instanceBuffer, tlas.instanceMemory, 0));
         tlas.instanceBufferSize = instBufSize;
+        instanceBufferRecreated = true;
     }
 
-    // Copy instance data
+    vkRTStaticInstanceCache_t &staticCache = s_staticInstanceCache[vk.currentFrame];
+    const bool staticBlockChanged =
+        (!staticCache.valid || staticCache.count != staticCount || staticCache.signature != staticSignature);
+    const bool rewriteStatic = staticBlockChanged || instanceBufferRecreated;
+
+    // Copy instance data.
+    // Static block is copied only when changed; dynamic block is copied every frame.
     void *ptr;
     VK_CHECK(vkMapMemory(vk.device, tlas.instanceMemory, 0, instBufSize, 0, &ptr));
-    memcpy(ptr, instances, (size_t)instBufSize);
+    uint8_t *dstBytes = (uint8_t *)ptr;
+    const size_t staticBytes = (size_t)staticCount * sizeof(VkAccelerationStructureInstanceKHR);
+    const size_t dynamicBytes = (size_t)dynamicCount * sizeof(VkAccelerationStructureInstanceKHR);
+
+    if (rewriteStatic && staticCount > 0)
+    {
+        for (uint32_t i = 0; i < staticCount; i++)
+            staticInstances[i].instanceCustomIndex = i;
+
+        memcpy(dstBytes, staticInstances, staticBytes);
+        memcpy(staticCache.instances, staticInstances, staticBytes);
+        staticCache.valid = true;
+        staticCache.count = staticCount;
+        staticCache.signature = staticSignature;
+    }
+    else if (rewriteStatic)
+    {
+        staticCache.valid = true;
+        staticCache.count = 0;
+        staticCache.signature = staticSignature;
+    }
+
+    if (dynamicCount > 0)
+    {
+        for (uint32_t i = 0; i < dynamicCount; i++)
+            dynamicInstances[i].instanceCustomIndex = staticCount + i;
+        memcpy(dstBytes + staticBytes, dynamicInstances, dynamicBytes);
+    }
+
     vkUnmapMemory(vk.device, tlas.instanceMemory);
 
     tlas.instanceCount = instanceCount;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK RT TLAS: building — instances=%u (static=%u dynamic=%u) blasBuiltThisFrame=%s\n",
+                       instanceCount, staticCount, dynamicCount, anyBLASBuilt ? "yes" : "no");
+        fflush(NULL);
+
+        const size_t uploadedBytes = (rewriteStatic ? staticBytes : 0) + dynamicBytes;
+        common->Printf("VK RT TLAS UPLOAD: frameCount=%d staticRewritten=%s uploadedBytes=%u\n", tr.frameCount,
+                       rewriteStatic ? "yes" : "no", (unsigned int)uploadedBytes);
+        fflush(NULL);
+
+        // One lightweight summary line per frame: BLAS geometry source mix.
+        // Useful for confirming Optimization 1 rollout across real maps.
+        if (s_blasBuildStats.summaryLoggedFrameCount != tr.frameCount)
+        {
+            const int totalGeom = s_blasBuildStats.gpuGeomCount + s_blasBuildStats.cpuGeomCount;
+            const float gpuPct =
+                (totalGeom > 0) ? (100.0f * (float)s_blasBuildStats.gpuGeomCount / (float)totalGeom) : 0.0f;
+            common->Printf(
+                "VK RT BLAS SRC: frameCount=%d geoms(total=%d gpu=%d cpu=%d gpuPct=%.1f) builds(single=%d model=%d)\n",
+                tr.frameCount, totalGeom, s_blasBuildStats.gpuGeomCount, s_blasBuildStats.cpuGeomCount, gpuPct,
+                s_blasBuildStats.singleBuildCount, s_blasBuildStats.modelBuildCount);
+            fflush(NULL);
+            s_blasBuildStats.summaryLoggedFrameCount = tr.frameCount;
+        }
+    }
 
     // Barrier: ensure host-mapped instance writes are visible to AS build.
     // Instance data is written via vkMapMemory/memcpy (HOST writes), not transfer commands.

@@ -109,7 +109,7 @@ per-frame CPU staging cost on top.
 1. Per-light queue-idle stalls in RT shadow dispatch have been removed from the active path.
 2. Per-light shadow dispatch now uses ring-suballocated UBO data and persistent samplers.
 3. BLAS build now prefers zero-copy geometry input from `ambientCache`/`indexCache` Vulkan buffers, with CPU-copy fallback retained.
-4. TLAS rebuild and per-light dispatch sequencing are functionally correct; TLAS buffer reuse optimization is now in progress.
+4. TLAS rebuild and per-light dispatch sequencing are functionally correct; TLAS buffer reuse and static/dynamic instance upload split are implemented in first-pass form.
 
 ### Optimization 1: GPU-Side BLAS Geometry Inputs (Vertex/Index)
 
@@ -169,14 +169,15 @@ Keep this path lean:
 
 #### Status
 
-In progress. TLAS behavior is stable and synchronized correctly, and first-pass buffer
-churn reduction is implemented:
+Implemented (first-pass). TLAS behavior is stable and synchronized correctly, and
+first-pass churn/write reduction is implemented:
 
 1. Reuse instance buffer unless required size grows.
 2. Reuse TLAS AS storage buffer/handle unless required size grows.
 3. Reuse scratch buffer unless required size grows.
 
-Remaining work: further reduce host writes (static/dynamic instance update split from Optimization 3).
+Remaining work: improve static-change detection granularity and verify upload-byte
+reduction across representative gameplay scenes.
 
 ### Optimization 3: Static/Dynamic TLAS Update Efficiency
 
@@ -199,11 +200,14 @@ dynamic buckets, then minimizing update work for unchanged static content.
 
 #### Implementation Notes
 
-1. Add per-instance metadata cache (entity handle + BLAS handle + last transform hash +
-    visibility/caster bits) so unchanged static entries are detected quickly.
-2. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
-3. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
-4. Add debug counters for:
+1. First pass implemented: static-instance signature cache + static/dynamic split,
+  with static block rewritten only when signature changes.
+2. Next pass: add richer per-instance metadata cache (entity handle + BLAS handle +
+  last transform hash + visibility/caster bits) so unchanged static entries are
+  detected with finer granularity.
+3. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
+4. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
+5. Add debug counters for:
     static instances total,
     static instances rewritten,
     dynamic instances rewritten,
@@ -881,14 +885,14 @@ Detailed execution order with status:
      - Removed per-light queue-idle synchronization from RT shadow path.
      - Stabilized player/viewmodel shadow behavior and alpha-tested depth-prepass parity.
 
-2. Phase 4 optimization pass (next active focus)
+2. Phase 4 optimization pass (active)
      - 2.1 GPU-native BLAS input path (highest impact):
          - Consume ambient/index cache GPU buffers directly for AS build input.
          - Keep CPU fallback for edge/debug cases.
      - 2.2 TLAS instance upload efficiency:
-         - Reduce instance buffer churn and avoid unnecessary full rewrites.
+     - Reuse TLAS/instance/scratch allocations and avoid unnecessary full rewrites.
      - 2.3 Static/dynamic TLAS split:
-         - Introduce static block caching and dynamic-only per-frame rewrites.
+     - Static block caching + dynamic-only rewrites are implemented (first pass).
 
 3. Validation gate after Phase 4 optimization changes
      - Validate with `r_useRayTracing 1 r_rtShadows 1` across mixed-light maps.
@@ -924,7 +928,7 @@ Historical + current updates (implemented now) and planned extensions:
 | Implemented | `neo/renderer/Vulkan/vk_raytracing.h` | Declares per-light dispatch entry point; tracks per-frame shadow descriptor update state and samplers |
 | Implemented | `neo/renderer/Vulkan/vk_common.h` | Added `renderPassResume` use for post-dispatch resume and debug-only interaction pipeline variant support |
 | Implemented | `neo/renderer/Vulkan/vk_pipeline.cpp` | Blend-state mapping from Doom 3 draw-state bits; depth/depth-clip pipelines; fog/blend-light pipeline support; dynamic cull mode path |
-| Implemented | `neo/renderer/Vulkan/vk_accelstruct.cpp` | Multi-surface model BLAS build path; TLAS rebuild flow and instance filtering updates |
+| Implemented | `neo/renderer/Vulkan/vk_accelstruct.cpp` | Multi-surface model BLAS build path; GPU-buffer-preferred BLAS geometry input with CPU fallback; lightweight BLAS source logging; TLAS rebuild flow with buffer reuse and first-pass static/dynamic instance upload split |
 | Implemented | `neo/renderer/Vulkan/vk_instance.cpp` | depthClamp feature handling updated to capability-gated behavior |
 | Implemented | `neo/renderer/Vulkan/vk_swapchain.cpp` | swapchain format refresh updated in recreate path |
 | Implemented | `neo/renderer/glsl/depth_clip.frag` | Depth prepass alpha clip parity update using stage alpha scale + threshold wiring |
