@@ -257,6 +257,89 @@ Keep this path lean:
 2. Avoid rebuilding unchanged static BLAS.
 3. Batch TLAS instance writes/builds and avoid queue-idle style sync points.
 
+### Optimization 3: Static/Dynamic TLAS Update Efficiency
+
+#### Goal
+
+Reduce per-frame TLAS rebuild cost by splitting instance handling into static and
+dynamic buckets, then minimizing update work for unchanged static content.
+
+#### Design
+
+1. Track persistent static instances separately from dynamic instances.
+2. Keep a cached static-instance block in the TLAS instance buffer and only rewrite
+    it when static visibility/caster membership changes.
+3. Rewrite only the dynamic-instance region each frame (moving entities, animated
+    objects, and transform updates).
+4. Keep deterministic instance ordering (static block first, dynamic block second)
+    to simplify debug and reduce accidental churn in instance IDs/masks.
+5. Continue doing a single TLAS build per frame, but reduce CPU writes and host-to-device
+    transfer volume by shrinking the updated instance range.
+
+#### Implementation Notes
+
+1. Add per-instance metadata cache (entity handle + BLAS handle + last transform hash +
+    visibility/caster bits) so unchanged static entries are detected quickly.
+2. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
+3. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
+4. Add debug counters for:
+    static instances total,
+    static instances rewritten,
+    dynamic instances rewritten,
+    TLAS instance bytes uploaded per frame.
+
+#### Validation
+
+1. Compare baseline vs optimized logs in scenes with mostly static geometry and
+    a few moving actors.
+2. Confirm TLAS instance upload bytes/frame drop significantly in those scenes.
+3. Confirm no shadow popping/regressions when static visibility changes (doors opening,
+    streamed areas, map transitions).
+4. Verify mirrored/subview rendering still receives correct TLAS contents.
+
+#### Priority
+
+High for RT scalability. This complements GPU-side BLAS input optimization and is
+worth implementing even if other RT features are deferred.
+
+### Enhancement: Per-Light-Type RT Softness Controls
+
+#### Goal
+
+Allow separate shadow softness tuning for point lights vs projected lights,
+so lights like `lights/fanlightgrate` can be tuned independently from omni lights
+without compromising either look.
+
+#### Problem
+
+The current RT shadow path uses a single global softness/sample policy.
+Projected lights and point lights have different geometric behavior and usually
+need different sample counts and effective soft radius to avoid either noisy
+or over-blurry shadows.
+
+#### Implementation Outline
+
+1. Add separate cvars for point/projection sample count and soft radius.
+2. In `VK_RT_DispatchShadowRaysForLight`, classify by `renderLight_t::pointLight`
+    and compute per-light effective RT softness parameters.
+3. Extend the shadow UBO payload to pass these effective per-light values.
+4. Update `shadow_ray.rgen` to use per-light effective values instead of a
+    single global path.
+5. Keep safe fallback behavior so existing scenes preserve current visuals when
+    new cvars are left at defaults.
+
+#### Validation
+
+1. Test mixed scenes with at least one projected light and one point light.
+2. Verify projected-light penumbra can be softened without over-softening point lights.
+3. Confirm no regressions in hard-shadow mode (`samples=1`).
+4. Confirm no descriptor/UBO layout mismatch across CPU and shader builds.
+
+#### Priority
+
+Medium. This is a quality and control enhancement, not a correctness blocker,
+but it improves artistic tuning and reduces pressure to use one-size-fits-all settings.
+
 ---
 
 ## Rendering Correctness Gaps (Phase 2 carry-overs)
