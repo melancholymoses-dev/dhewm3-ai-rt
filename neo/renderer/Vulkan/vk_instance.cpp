@@ -63,11 +63,13 @@ static bool VK_CheckValidationLayerSupport(void)
 
 static const char *deviceExtensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
 };
-static const int numDeviceExtensions = 1;
+static const int numDeviceExtensions = 2;
 
 static const char *rtDeviceExtensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
     VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
     VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
@@ -76,7 +78,7 @@ static const char *rtDeviceExtensions[] = {
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
 };
-static const int numRTDeviceExtensions = 8;
+static const int numRTDeviceExtensions = 9;
 
 // ---------------------------------------------------------------------------
 // Queue family detection
@@ -286,7 +288,7 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceFeatures supportedFeatures = {};
     vkGetPhysicalDeviceFeatures(vk.physicalDevice, &supportedFeatures);
     if (!supportedFeatures.depthClamp)
-        common->Error("Vulkan: depthClamp is required for shadow volumes but is not supported by this GPU.");
+        common->Warning("Vulkan: depthClamp not supported by this GPU (not currently required).");
     if (!supportedFeatures.samplerAnisotropy)
         common->Error("Vulkan: samplerAnisotropy is required but is not supported by this GPU.");
 
@@ -294,7 +296,7 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.features.samplerAnisotropy = VK_TRUE;
-    features2.features.depthClamp       = VK_TRUE; // required for shadow volume back-cap clamping
+    features2.features.depthClamp       = supportedFeatures.depthClamp; // enable if available, not currently required
 
     // Extension list: base + optional RT extensions
     const char **exts;
@@ -316,7 +318,15 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
     VkPhysicalDeviceDescriptorIndexingFeatures diFeatures = {};
 
+    // Extended dynamic state (required for vkCmdSetCullMode)
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT edsFeatures = {};
+    edsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    edsFeatures.extendedDynamicState = VK_TRUE;
+
     void **nextChain = (void **)&features2.pNext;
+    *nextChain = &edsFeatures;
+    nextChain = (void **)&edsFeatures.pNext;
+
     if (vk.rayTracingSupported)
     {
         bufDevAddrFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
