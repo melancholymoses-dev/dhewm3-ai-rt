@@ -63,6 +63,23 @@ by running with `r_useRayTracing 1 r_rtShadows 1`.**
 
 ---
 
+## Rendering Correctness Status (Phase 2 carry-overs)
+
+Most previously listed raster correctness gaps are now implemented. Current quick status:
+
+| # | Item | Status | Note |
+|---|------|--------|------|
+| 1 | Multiple blend modes | Fixed | Shader-pass pipelines are selected from `drawStateBits` blend factors (`GLS_SRCBLEND_BITS`/`GLS_DSTBLEND_BITS`) |
+| 2 | Depth prepass parity | Fixed | Current path uses depth prepass + interaction depth equality behavior consistent with Doom 3 flow |
+| 3 | Texture coordinate transforms | Fixed | Stage texture matrices are applied for shader/depth-clip paths |
+| 4 | LightScale / brightness parity | Fixed | Brightness mismatch was traced to formatting/read-in behavior in prior Vulkan handling; current path applies the expected scale flow |
+| 5 | Two-sided cull selection | Fixed | Material cull mode (`CT_TWO_SIDED`, `CT_BACK_SIDED`) is selected dynamically per draw |
+| 6 | Fog/blend lights | Fixed | `VK_RB_FogAllLights` + fog and blend-light passes are present in frame execution |
+
+Residual risk is now mostly regression risk across maps/content, not known missing feature blocks.
+
+---
+
 ## Phase 4 — Fixes Required
 
 Short version (historical details removed; see your archived copy for full notes):
@@ -244,22 +261,7 @@ but it improves artistic tuning and reduces pressure to use one-size-fits-all se
 
 Planned. Current runtime softness tuning is still global.
 
----
 
-## Rendering Correctness Status (Phase 2 carry-overs)
-
-Most previously listed raster correctness gaps are now implemented. Current quick status:
-
-| # | Item | Status | Note |
-|---|------|--------|------|
-| 1 | Multiple blend modes | Fixed | Shader-pass pipelines are selected from `drawStateBits` blend factors (`GLS_SRCBLEND_BITS`/`GLS_DSTBLEND_BITS`) |
-| 2 | Depth prepass parity | Fixed | Current path uses depth prepass + interaction depth equality behavior consistent with Doom 3 flow |
-| 3 | Texture coordinate transforms | Fixed | Stage texture matrices are applied for shader/depth-clip paths |
-| 4 | LightScale / brightness parity | Fixed | Brightness mismatch was traced to formatting/read-in behavior in prior Vulkan handling; current path applies the expected scale flow |
-| 5 | Two-sided cull selection | Fixed | Material cull mode (`CT_TWO_SIDED`, `CT_BACK_SIDED`) is selected dynamically per draw |
-| 6 | Fog/blend lights | Fixed | `VK_RB_FogAllLights` + fog and blend-light passes are present in frame execution |
-
-Residual risk is now mostly regression risk across maps/content, not known missing feature blocks.
 
 ---
 
