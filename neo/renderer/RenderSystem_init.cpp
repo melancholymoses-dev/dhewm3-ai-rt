@@ -148,7 +148,7 @@ idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE 
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
 idCVar r_rtShadowBlur("r_rtShadowBlur", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                       "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
-idCVar r_rtFlashlightBias("r_rtFlashlightBias", "20", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtFlashlightBias("r_rtFlashlightBias", "17", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                           "units to push the flashlight shadow origin forward along the view axis "
                           "to reduce hand/weapon self-shadowing (0=off)");
 idCVar r_vkLogRT("r_vkLogRT", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -304,8 +304,8 @@ idCVar r_glLogTranslucent(
     0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkLogTranslucent(
     "r_vkLogTranslucent", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Vulkan translucent/glass diagnostics: 0=off, 1=log drawn translucent stages, 2=verbose (includes stage gating)",
-    0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+    "Vulkan translucent/glass diagnostics: 0=off, 1=log drawn translucent stages, 2=verbose (includes stage gating)", 0,
+    2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
                              "use the dmap generated static shadow volumes");
 idCVar r_useScissor("r_useScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor clip as portals and lights are processed");

@@ -564,20 +564,18 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         }
 
         // Flashlight bias: push shadow origin forward along the view axis to reduce
-        // weapon/hand self-shadowing.  Detect the flashlight by checking whether the
-        // light origin is very close to the player view origin (within 64 units).
+        // weapon/hand self-shadowing.  Identify the player's weapon light using
+        // allowLightInViewID — this is set on first-person weapon lights (flashlight,
+        // muzzle flash) and matches the player's viewID, so world lights are never affected.
         idVec3 shadowOrigin = light.origin;
         float flashlightBias = r_rtFlashlightBias.GetFloat();
-        if (flashlightBias > 0.0f)
+        if (flashlightBias > 0.0f &&
+            light.allowLightInViewID != 0 &&
+            light.allowLightInViewID == viewDef->renderView.viewID)
         {
-            const idVec3 &viewOrg = viewDef->renderView.vieworg;
-            float distToView = (light.origin - viewOrg).Length();
-            if (distToView < 64.0f)
-            {
-                // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
-                const idVec3 &fwd = viewDef->renderView.viewaxis[0];
-                shadowOrigin = light.origin + fwd * flashlightBias;
-            }
+            // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
+            const idVec3 &fwd = viewDef->renderView.viewaxis[0];
+            shadowOrigin = light.origin + fwd * flashlightBias;
         }
 
         ubo.lightOrigin[0] = shadowOrigin.x;
