@@ -34,6 +34,21 @@ static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 
+// Debug toggle: force the plasmagun body interaction surface to render two-sided
+// so we can isolate winding/front-face mismatches without affecting world rendering.
+static idCVar r_vkPlasmaForceTwoSided(
+    "r_vkPlasmaForceTwoSided", "0", CVAR_RENDERER,
+    "Force two-sided culling for models/weapons/plasmagun/plasmagun in Vulkan interaction pass (debug)");
+static idCVar r_vkPlasmaNoStencil(
+    "r_vkPlasmaNoStencil", "0", CVAR_RENDERER,
+    "Force no-stencil interaction pipeline for models/weapons/plasmagun/plasmagun (debug)");
+static idCVar r_vkWeaponDepthAlways(
+    "r_vkWeaponDepthAlways", "0", CVAR_RENDERER,
+    "Force weaponDepthHack interactions to use stencil+depth ALWAYS (debug isolation; can make weapons ghostly)");
+static idCVar r_vkPlasmaIgnoreDepthAlphaTest(
+    "r_vkPlasmaIgnoreDepthAlphaTest", "0", CVAR_RENDERER,
+    "Depth prepass debug: treat models/weapons/plasmagun/plasmagun as opaque (ignore alpha-test clip)");
+
 static bool VK_RTShadowsEnabled()
 {
     return vk.rayTracingSupported && vkRT.isInitialized && r_useRayTracing.GetBool() && r_rtShadows.GetBool();
@@ -319,15 +334,50 @@ bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMappe
 static VkCommandBuffer s_cmd = VK_NULL_HANDLE;
 static const char *s_shadowPhaseTag = "unknown";
 static int s_lightIdx = -1; // current light index (for per-interaction logging)
+static const char *s_interactionPipeTag = "opaque";
 
 static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 {
+    const bool isWeaponSurf = (din->surf && din->surf->space && din->surf->space->weaponDepthHack);
+    const idMaterial *mat = (din->surf && din->surf->material) ? din->surf->material : NULL;
+    const char *matName = mat ? mat->GetName() : "<null>";
+    const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
+
+    static bool s_loggedInteractionCullMapping = false;
+    if (!s_loggedInteractionCullMapping)
+    {
+        s_loggedInteractionCullMapping = true;
+
+        VkCullModeFlags firstCull = VK_CULL_MODE_BACK_BIT;
+        if (mat && mat->GetCullType() == CT_TWO_SIDED)
+            firstCull = VK_CULL_MODE_NONE;
+        else if (mat && mat->GetCullType() == CT_BACK_SIDED)
+            firstCull = VK_CULL_MODE_FRONT_BIT;
+
+        common->Printf("VK INTER CULL MAP(eval): enums CT_FRONT=%d CT_BACK=%d CT_TWO=%d; vk FRONT=0x%x BACK=0x%x "
+                       "NONE=0x%x; firstMat='%s' firstCullType=%d -> firstVkCull=0x%x\n",
+                       (int)CT_FRONT_SIDED, (int)CT_BACK_SIDED, (int)CT_TWO_SIDED, (unsigned)VK_CULL_MODE_FRONT_BIT,
+                       (unsigned)VK_CULL_MODE_BACK_BIT, (unsigned)VK_CULL_MODE_NONE, matName,
+                       mat ? (int)mat->GetCullType() : -1, (unsigned)firstCull);
+    }
+
     if (r_vkLogRT.GetInteger() >= 3)
     {
-        const char *matName = (din->surf && din->surf->material) ? din->surf->material->GetName() : "<null>";
         const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
         common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
                        geo ? geo->numIndexes : 0);
+    }
+
+    if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
+    {
+        const char *bumpName = din->bumpImage ? din->bumpImage->imgName.c_str() : "<null>";
+        const char *diffName = din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>";
+        const char *specName = din->specularImage ? din->specularImage->imgName.c_str() : "<null>";
+        common->Printf("VK INTER weapon plasma: light=%d phase=%s vtxColor=%d diffuse=(%.3f %.3f %.3f %.3f) spec=(%.3f "
+                       "%.3f %.3f %.3f) tex[b='%s' d='%s' s='%s']\n",
+                       s_lightIdx, s_shadowPhaseTag, (int)din->vertexColor, din->diffuseColor[0], din->diffuseColor[1],
+                       din->diffuseColor[2], din->diffuseColor[3], din->specularColor[0], din->specularColor[1],
+                       din->specularColor[2], din->specularColor[3], bumpName, diffName, specName);
     }
 
     vkUBORing_t &ring = uboRings[vk.currentFrame];
@@ -417,9 +467,15 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     fsz[0] = (float)vk.swapchainExtent.width;
     fsz[1] = (float)vk.swapchainExtent.height;
 
-    // useShadowMask: 1 when RT shadow mask is valid this frame
+    // useShadowMask: 1 when RT shadow mask is valid this frame.
+    // Weapon depth-hack surfaces are rendered in a different depth range and should
+    // not be shadowed by the world-space screen mask; this can make viewmodels look
+    // ghostly or intermittently dark.
     int *useSM = (int *)(fsz + 2);
-    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE) ? 1 : 0;
+    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE &&
+              !(din->surf && din->surf->space && din->surf->space->weaponDepthHack))
+                 ? 1
+                 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useSM + 1);
@@ -581,16 +637,65 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // Cull mode: CT_TWO_SIDED materials disable face culling (fences, grates, glass panes).
     {
-        const idMaterial *mat = din->surf->material;
         VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
         if (mat && mat->GetCullType() == CT_TWO_SIDED)
             cullMode = VK_CULL_MODE_NONE;
         else if (mat && mat->GetCullType() == CT_BACK_SIDED)
             cullMode = VK_CULL_MODE_FRONT_BIT; // inverted: back-sided in GL = cull front in VK
+
+        if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
+            cullMode = VK_CULL_MODE_NONE;
+
+        if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
+        {
+            common->Printf("VK INTER weapon plasma: cullType=%d -> vkCull=0x%x pipe=%s frontFace=0x%x (CW=0x%x "
+                           "CCW=0x%x) forceTwoSided=%d noStencil=%d\n",
+                           mat ? (int)mat->GetCullType() : -1, (unsigned)cullMode, s_interactionPipeTag,
+                           (unsigned)VK_FRONT_FACE_CLOCKWISE, (unsigned)VK_FRONT_FACE_CLOCKWISE,
+                           (unsigned)VK_FRONT_FACE_COUNTER_CLOCKWISE, r_vkPlasmaForceTwoSided.GetBool() ? 1 : 0,
+                           r_vkPlasmaNoStencil.GetBool() ? 1 : 0);
+        }
+
         vkCmdSetCullMode(s_cmd, cullMode);
     }
 
+    // Weapon depth-hack surfaces are prone to depth mismatch against the prepass.
+    // Keep stencil culling, but allow a weapon-only depth-ALWAYS fallback to isolate
+    // depth/prepass coupling from the rest of the interaction path.
+    const bool forceWeaponStencilAlways =
+        (r_vkWeaponDepthAlways.GetBool() && isWeaponSurf && idStr::Cmp(s_interactionPipeTag, "opaque") == 0 &&
+         vkPipes.interactionPipelineStencilAlways != VK_NULL_HANDLE);
+    const bool forceWeaponStencilLEqual =
+        (!forceWeaponStencilAlways && isWeaponSurf && idStr::Cmp(s_interactionPipeTag, "opaque") == 0 &&
+         vkPipes.interactionPipelineStencilLEqual != VK_NULL_HANDLE);
+    if (forceWeaponStencilAlways)
+    {
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilAlways);
+        if (r_vkLogRT.GetInteger() >= 2 && isPlasmaBody)
+        {
+            common->Printf("VK INTER weapon plasma: using pipe=opaque-stencil-always\n");
+        }
+    }
+    else if (forceWeaponStencilLEqual)
+    {
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilLEqual);
+        if (r_vkLogRT.GetInteger() >= 2 && isPlasmaBody)
+        {
+            common->Printf("VK INTER weapon plasma: using pipe=opaque-stencil-lequal\n");
+        }
+    }
+
+    // Debug isolation: force plasma body interactions through no-stencil path to
+    // detect stencil/prepass coupling issues without changing other materials.
+    const bool forceNoStencil = (isWeaponSurf && isPlasmaBody && r_vkPlasmaNoStencil.GetBool() &&
+                                 idStr::Cmp(s_interactionPipeTag, "opaque") == 0);
+    if (forceNoStencil)
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
+
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+
+    if (forceNoStencil || forceWeaponStencilLEqual || forceWeaponStencilAlways)
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +728,7 @@ static void VK_RB_UpdateCinematics(VkCommandBuffer cmd)
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
             if (!regs[pStage->conditionRegister])
                 continue;
             if (!pStage->texture.cinematic)
@@ -678,6 +784,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     // Sentinel for depth bias tracking — larger than any real bias value (which is
     // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
     float activeShaderBias = 1000000.0f;
+    int weaponPassLogCount = 0;
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
@@ -686,19 +793,47 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             continue;
 
         const idMaterial *mat = surf->material;
+        const bool isWeaponSurf = (surf->space && surf->space->weaponDepthHack);
+        const bool isPlasmaBody = (idStr::Cmp(mat->GetName(), "models/weapons/plasmagun/plasmagun") == 0);
+        int plasmaStageTotal = 0;
+        int plasmaStageCondOff = 0;
+        int plasmaStageNonAmbient = 0;
+        int plasmaStageDrawn = 0;
         if (mat->SuppressInSubview())
+        {
+            if (isWeaponSurf && r_vkLogRT.GetInteger() >= 2 && weaponPassLogCount < 12)
+            {
+                common->Printf("VK DrawShaderPasses: SKIP weapon surf (SuppressInSubview) mat='%s'\n", mat->GetName());
+                weaponPassLogCount++;
+            }
             continue;
+        }
 
         // Fog lights and blend lights have volume geometry in drawSurfs.
         // The GUI pipeline has no depth test, so these volumes would render
         // through floors/walls if not skipped here.  They will be handled
         // by a future VK_RB_FogAllLights pass.
         if (mat->IsFogLight() || mat->IsBlendLight())
+        {
+            if (isWeaponSurf && r_vkLogRT.GetInteger() >= 2 && weaponPassLogCount < 12)
+            {
+                common->Printf("VK DrawShaderPasses: SKIP weapon surf (Fog/Blend light) mat='%s' fog=%d blend=%d\n",
+                               mat->GetName(), (int)mat->IsFogLight(), (int)mat->IsBlendLight());
+                weaponPassLogCount++;
+            }
             continue;
+        }
 
         const srfTriangles_t *geo = surf->geo;
         if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
             continue;
+
+        if (isWeaponSurf && r_vkLogRT.GetInteger() >= 2 && weaponPassLogCount < 12)
+        {
+            common->Printf("VK DrawShaderPasses: DRAW weapon surf mat='%s' idx=%d verts=%d\n", mat->GetName(),
+                           geo->numIndexes, geo->numVerts);
+            weaponPassLogCount++;
+        }
 
         // Get vertex data (from cache or raw verts)
         VkBuffer vertBuf;
@@ -806,7 +941,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             // Skip lighting-specific stages (handled by interaction pass)
             if (pStage->lighting != SL_AMBIENT)
+            {
+                if (isPlasmaBody)
+                    plasmaStageNonAmbient++;
                 continue;
+            }
 
             // Log the stage that will actually be drawn
             if (vkTransLog >= 1 && translucentLike)
@@ -1063,10 +1202,38 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+            // Match GL per-material cull behavior for 3D shader passes.
+            VkCullModeFlags shaderCull = VK_CULL_MODE_NONE;
+            if (needDepth)
+            {
+                shaderCull = VK_CULL_MODE_BACK_BIT;
+                if (mat->GetCullType() == CT_TWO_SIDED)
+                    shaderCull = VK_CULL_MODE_NONE;
+                else if (mat->GetCullType() == CT_BACK_SIDED)
+                    shaderCull = VK_CULL_MODE_FRONT_BIT;
+            }
+            vkCmdSetCullMode(cmd, shaderCull);
+
+            if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
+            {
+                common->Printf("VK SHADER weapon plasma: stage=%d needDepth=%d cullType=%d -> vkCull=0x%x\n", stageIdx,
+                               needDepth ? 1 : 0, (int)mat->GetCullType(), (unsigned)shaderCull);
+            }
+
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+
+            if (isPlasmaBody)
+                plasmaStageDrawn++;
+        }
+
+        if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
+        {
+            common->Printf("VK SHADER weapon plasma: stages total=%d drawn=%d condOff=%d nonAmbient=%d\n",
+                           plasmaStageTotal, plasmaStageDrawn, plasmaStageCondOff, plasmaStageNonAmbient);
         }
     }
 }
@@ -1156,22 +1323,56 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         // imgInfo: texture to bind at binding 1.
         // alphaThreshold: value written to colorAdd[3]; 0 means no clip (opaque pipeline).
         // useClipPipeline: selects depthClipPipeline vs depthPipeline.
-        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline) {
+        // alphaStage/stageRegs/alphaScale are used to mirror GL perforated depth semantics:
+        // apply stage alpha scale and stage texture matrix before alpha test.
+        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline,
+                                 const shaderStage_t *alphaStage, const float *stageRegs, float alphaScale) {
             uint32_t uboOffset = VK_AllocUBO();
             VkGuiUBO *ubo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
             memcpy(ubo->modelViewProjection, mvp, 64);
-            ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
-            ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            if (useClipPipeline)
+            {
+                // depth_clip.frag uses texture alpha * vary_Color.a.  Match GL's
+                // qglColor4fv(color) in RB_T_FillDepthBuffer by forcing vary alpha to stage alpha.
+                ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = 0.f;
+                ubo->colorModulate[3] = alphaScale;
+                ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            }
+            else
+            {
+                ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
+                ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            }
             ubo->colorAdd[3] = alphaThreshold;
-            // Identity texture matrix — depth prepass doesn't need UV animation
-            ubo->texMatrixS[0] = 1.f;
-            ubo->texMatrixS[1] = 0.f;
-            ubo->texMatrixS[2] = 0.f;
-            ubo->texMatrixS[3] = 0.f;
-            ubo->texMatrixT[0] = 0.f;
-            ubo->texMatrixT[1] = 1.f;
-            ubo->texMatrixT[2] = 0.f;
-            ubo->texMatrixT[3] = 0.f;
+            if (useClipPipeline && alphaStage && stageRegs && alphaStage->texture.hasMatrix)
+            {
+                const textureStage_t &tex = alphaStage->texture;
+                float s2 = stageRegs[tex.matrix[0][2]];
+                if (s2 < -40.f || s2 > 40.f)
+                    s2 -= (float)(int)s2;
+                float t2 = stageRegs[tex.matrix[1][2]];
+                if (t2 < -40.f || t2 > 40.f)
+                    t2 -= (float)(int)t2;
+                ubo->texMatrixS[0] = stageRegs[tex.matrix[0][0]];
+                ubo->texMatrixS[1] = stageRegs[tex.matrix[0][1]];
+                ubo->texMatrixS[2] = 0.f;
+                ubo->texMatrixS[3] = s2;
+                ubo->texMatrixT[0] = stageRegs[tex.matrix[1][0]];
+                ubo->texMatrixT[1] = stageRegs[tex.matrix[1][1]];
+                ubo->texMatrixT[2] = 0.f;
+                ubo->texMatrixT[3] = t2;
+            }
+            else
+            {
+                ubo->texMatrixS[0] = 1.f;
+                ubo->texMatrixS[1] = 0.f;
+                ubo->texMatrixS[2] = 0.f;
+                ubo->texMatrixS[3] = 0.f;
+                ubo->texMatrixT[0] = 0.f;
+                ubo->texMatrixT[1] = 1.f;
+                ubo->texMatrixT[2] = 0.f;
+                ubo->texMatrixT[3] = 0.f;
+            }
 
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1233,10 +1434,24 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         {
             VkDescriptorImageInfo imgInfo = {};
             VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-            drawDepthSurf(imgInfo, 0.f, false);
+            drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
         }
         else // MC_PERFORATED
         {
+            const bool isPlasmaBody = (idStr::Cmp(mat->GetName(), "models/weapons/plasmagun/plasmagun") == 0);
+            const bool forcePlasmaOpaqueDepth = (isPlasmaBody && r_vkPlasmaIgnoreDepthAlphaTest.GetBool());
+            if (forcePlasmaOpaqueDepth)
+            {
+                VkDescriptorImageInfo imgInfo = {};
+                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+                if (r_vkLogRT.GetInteger() >= 2)
+                {
+                    common->Printf("VK DEPTH weapon plasma: ignore alpha-test in prepass (debug)\n");
+                }
+                continue;
+            }
+
             const float *regs = surf->shaderRegisters;
             bool didDraw = false;
             for (int si = 0; si < mat->GetNumStages(); si++)
@@ -1255,7 +1470,13 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                     VK_Image_GetFallbackDescriptorInfo(&imgInfo);
 
                 float threshold = regs[pStage->alphaTestRegister];
-                drawDepthSurf(imgInfo, threshold, true);
+                if (r_vkLogRT.GetInteger() >= 2 && isPlasmaBody)
+                {
+                    common->Printf(
+                        "VK DEPTH weapon plasma: alpha stage=%d alphaScale=%.3f threshold=%.3f texMatrix=%d\n", si,
+                        alphaScale, threshold, pStage->texture.hasMatrix ? 1 : 0);
+                }
+                drawDepthSurf(imgInfo, threshold, true, pStage, regs, alphaScale);
                 didDraw = true;
             }
             // If no alpha-test stage was active, fall back to opaque depth write.
@@ -1263,7 +1484,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             {
                 VkDescriptorImageInfo imgInfo = {};
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-                drawDepthSurf(imgInfo, 0.f, false);
+                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
             }
         }
     }
@@ -1942,6 +2163,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     RB_DetermineLightScale();
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+    s_interactionPipeTag = "opaque";
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
@@ -2134,6 +2356,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
         }
 
         // Clear stencil to 128 within this light's scissor rect before processing it.
@@ -2197,6 +2420,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             s_shadowPhaseTag = "localInteraction";
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
             for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
@@ -2216,6 +2440,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             s_shadowPhaseTag = "globalInteraction";
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
             for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
@@ -2241,10 +2466,12 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             // be at the same depth as opaque geometry.  Use a pipeline with stencil disabled
             // so shadow volumes don't incorrectly cull them (mirrors GL path: performStencilTest=false).
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
+            s_interactionPipeTag = "translucentNoStencil";
             for (const drawSurf_t *surf = vLight->translucentInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
             // Restore opaque interaction pipeline for next light
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
         }
     }
 
