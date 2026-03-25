@@ -360,7 +360,11 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         const srfTriangles_t *geo = surf->geometry;
         if (geo->numVerts == 0 || geo->numIndexes == 0)
             continue;
-        if (!geo->ambientCache || !geo->verts || !geo->indexes)
+        const void *cpuVerts = geo->verts ? (const void *)geo->verts
+                                          : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
+        const void *cpuIdx = geo->indexes ? (const void *)geo->indexes
+                                          : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
+        if (!cpuVerts || !cpuIdx)
             continue;
         // Translucent surfaces never cast shadows — same rule as GL stencil path.
         if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT)
@@ -408,6 +412,12 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     for (int i = 0; i < validCount; i++)
     {
         const srfTriangles_t *geo = validSurfs[i].geo;
+        const void *cpuVerts = geo->verts ? (const void *)geo->verts
+                                          : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
+        const void *cpuIdx = geo->indexes ? (const void *)geo->indexes
+                                          : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
+        // cpuVerts/cpuIdx were validated in the gather loop above.
+
         VkDeviceSize vertSize = (VkDeviceSize)geo->numVerts * sizeof(idDrawVert);
         VkDeviceSize idxSize = (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t);
         VkMemoryRequirements mr;
@@ -423,7 +433,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomVertMems[i]));
         VK_CHECK(vkBindBufferMemory(vk.device, blas->geomVertBufs[i], blas->geomVertMems[i], 0));
         VK_CHECK(vkMapMemory(vk.device, blas->geomVertMems[i], 0, vertSize, 0, &ptr));
-        memcpy(ptr, geo->verts, (size_t)vertSize);
+        memcpy(ptr, cpuVerts, (size_t)vertSize);
         vkUnmapMemory(vk.device, blas->geomVertMems[i]);
 
         // Index buffer
@@ -436,7 +446,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         VK_CHECK(vkAllocateMemory(vk.device, &ai, NULL, &blas->geomIdxMems[i]));
         VK_CHECK(vkBindBufferMemory(vk.device, blas->geomIdxBufs[i], blas->geomIdxMems[i], 0));
         VK_CHECK(vkMapMemory(vk.device, blas->geomIdxMems[i], 0, idxSize, 0, &ptr));
-        memcpy(ptr, geo->indexes, (size_t)idxSize);
+        memcpy(ptr, cpuIdx, (size_t)idxSize);
         vkUnmapMemory(vk.device, blas->geomIdxMems[i]);
 
         VkAccelerationStructureGeometryTrianglesDataKHR triData = {};
@@ -711,13 +721,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     tlas.instanceCount = instanceCount;
 
-    // Barrier: ensure instance writes are visible to AS build
+    // Barrier: ensure host-mapped instance writes are visible to AS build.
+    // Instance data is written via vkMapMemory/memcpy (HOST writes), not transfer commands.
     VkMemoryBarrier barrier = {};
     barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
-                         1, &barrier, 0, NULL, 0, NULL);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
+                         &barrier, 0, NULL, 0, NULL);
 
     // Describe TLAS geometry
     VkAccelerationStructureGeometryInstancesDataKHR instData = {};

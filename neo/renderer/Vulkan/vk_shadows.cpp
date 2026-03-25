@@ -429,10 +429,13 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         const renderLight_t &lp = vLight->lightDef->parms;
         common->Printf(
             "VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
+            "radius=(%.1f,%.1f,%.1f) falloff=%.1f samples=%d "
             "pipeline=%s tlas=%s tlasAddr=0x%llx "
             "shadowMask=%s %ux%u "
             "rgen=0x%llx miss=0x%llx hit=0x%llx\n",
-            frameIdx, lp.origin.x, lp.origin.y, lp.origin.z, (vkRT.shadowPipeline != VK_NULL_HANDLE) ? "OK" : "NULL",
+            frameIdx, lp.origin.x, lp.origin.y, lp.origin.z, lp.lightRadius.x, lp.lightRadius.y, lp.lightRadius.z,
+            lp.lightRadius.Length(), r_rtShadowSamples.GetInteger(),
+            (vkRT.shadowPipeline != VK_NULL_HANDLE) ? "OK" : "NULL",
             (vkRT.tlas[frameIdx].handle != VK_NULL_HANDLE) ? "OK" : "NULL",
             (unsigned long long)vkRT.tlas[frameIdx].deviceAddress, (sm.image != VK_NULL_HANDLE) ? "OK" : "NULL",
             sm.width, sm.height, (unsigned long long)vkRT.rgenRegion.deviceAddress,

@@ -272,7 +272,7 @@ idCVar r_vkShadowFlipOps(
     "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
     idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkShadowStableMode(
-    "r_vkShadowStableMode", "1", CVAR_RENDERER | CVAR_BOOL,
+    "r_vkShadowStableMode", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow stabilization: force full-volume Z-fail path to reduce view-dependent popping/flicker", 0, 1,
     idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkLogShadowGeom(

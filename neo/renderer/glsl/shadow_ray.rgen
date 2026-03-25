@@ -109,8 +109,9 @@ void main() {
     vec3  toLight = params.lightOrigin.xyz - worldPos;
     float dist    = length( toLight );
 
-    // Beyond light range — fully lit (the light interaction code handles attenuation)
-    if ( dist >= params.lightFalloffRadius ) {
+    // Beyond light range — fully lit (the light interaction code handles attenuation).
+    // For projected lights, lightFalloffRadius may be zero; treat that as "no cutoff".
+    if ( params.lightFalloffRadius > 0.0 && dist >= params.lightFalloffRadius ) {
         imageStore( shadowMask, coord, vec4(1.0) );
         return;
     }
