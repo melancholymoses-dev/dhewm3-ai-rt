@@ -61,10 +61,10 @@ struct vkBLAS_t
     // Per-surface geometry buffers for the AS build input.
     // Arrays of length geomCount — kept alive until VK_RT_DestroyBLAS because they
     // must outlive the command buffer submission in which the BLAS build was recorded.
-    uint32_t        geomCount;
-    VkBuffer       *geomVertBufs;
+    uint32_t geomCount;
+    VkBuffer *geomVertBufs;
     VkDeviceMemory *geomVertMems;
-    VkBuffer       *geomIdxBufs;
+    VkBuffer *geomIdxBufs;
     VkDeviceMemory *geomIdxMems;
     // Scratch buffer used during build (freed at destroy time).
     VkBuffer scratchBuf;
@@ -82,13 +82,16 @@ struct vkTLAS_t
     VkBuffer buffer;
     VkDeviceMemory memory;
     VkDeviceAddress deviceAddress;
+    VkDeviceSize bufferSize;
 
     VkBuffer instanceBuffer; // VkAccelerationStructureInstanceKHR array
     VkDeviceMemory instanceMemory;
     uint32_t instanceCount;
+    VkDeviceSize instanceBufferSize;
 
     VkBuffer scratchBuffer; // build scratch
     VkDeviceMemory scratchMemory;
+    VkDeviceSize scratchBufferSize;
 
     bool isValid;
     int lastBuiltFrameCount; // skip redundant rebuilds within same frame
