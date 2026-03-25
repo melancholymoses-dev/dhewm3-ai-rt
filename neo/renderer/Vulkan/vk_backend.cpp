@@ -34,6 +34,21 @@ static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 
+// Debug toggle: force the plasmagun body interaction surface to render two-sided
+// so we can isolate winding/front-face mismatches without affecting world rendering.
+static idCVar r_vkPlasmaForceTwoSided(
+    "r_vkPlasmaForceTwoSided", "0", CVAR_RENDERER,
+    "Force two-sided culling for models/weapons/plasmagun/plasmagun in Vulkan interaction pass (debug)");
+static idCVar r_vkPlasmaNoStencil(
+    "r_vkPlasmaNoStencil", "0", CVAR_RENDERER,
+    "Force no-stencil interaction pipeline for models/weapons/plasmagun/plasmagun (debug)");
+static idCVar r_vkWeaponDepthAlways(
+    "r_vkWeaponDepthAlways", "0", CVAR_RENDERER,
+    "Force weaponDepthHack interactions to use stencil+depth ALWAYS (debug isolation; can make weapons ghostly)");
+static idCVar r_vkPlasmaIgnoreDepthAlphaTest(
+    "r_vkPlasmaIgnoreDepthAlphaTest", "0", CVAR_RENDERER,
+    "Depth prepass debug: treat models/weapons/plasmagun/plasmagun as opaque (ignore alpha-test clip)");
+
 static bool VK_RTShadowsEnabled()
 {
     return vk.rayTracingSupported && vkRT.isInitialized && r_useRayTracing.GetBool() && r_rtShadows.GetBool();
@@ -318,9 +333,23 @@ bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMappe
 // We use a file-static to pass the command buffer through the callback
 static VkCommandBuffer s_cmd = VK_NULL_HANDLE;
 static const char *s_shadowPhaseTag = "unknown";
+static int s_lightIdx = -1; // current light index (for per-interaction logging)
+static const char *s_interactionPipeTag = "opaque";
 
 static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 {
+    const bool isWeaponSurf = (din->surf && din->surf->space && din->surf->space->weaponDepthHack);
+    const idMaterial *mat = (din->surf && din->surf->material) ? din->surf->material : NULL;
+    const char *matName = mat ? mat->GetName() : "<null>";
+    const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
+
+    if (r_vkLogRT.GetInteger() >= 3)
+    {
+        const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
+        common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
+                       geo ? geo->numIndexes : 0);
+    }
+
     vkUBORing_t &ring = uboRings[vk.currentFrame];
 
     // Allocate UBO slot
@@ -408,9 +437,15 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     fsz[0] = (float)vk.swapchainExtent.width;
     fsz[1] = (float)vk.swapchainExtent.height;
 
-    // useShadowMask: 1 when RT shadow mask is valid this frame
+    // useShadowMask: 1 when RT shadow mask is valid this frame.
+    // Weapon depth-hack surfaces are rendered in a different depth range and should
+    // not be shadowed by the world-space screen mask; this can make viewmodels look
+    // ghostly or intermittently dark.
     int *useSM = (int *)(fsz + 2);
-    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE) ? 1 : 0;
+    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE &&
+              !(din->surf && din->surf->space && din->surf->space->weaponDepthHack))
+                 ? 1
+                 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useSM + 1);
@@ -558,7 +593,61 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, geo->indexes, (size_t)idxSize);
     vkCmdBindIndexBuffer(s_cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
 
+    // --- Per-surface dynamic state ---
+    // Polygon offset: mirrors GL qglPolygonOffset in the interaction pass.
+    // Both depth prepass AND interaction pass must apply the same bias so the biased
+    // prepass depth (D-ε) matches the biased interaction fragment depth (D-ε) for LEQUAL.
+    {
+        const idMaterial *mat = din->surf->material;
+        float biasConstant = 0.0f;
+        if (mat && mat->TestMaterialFlag(MF_POLYGONOFFSET))
+            biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+        vkCmdSetDepthBias(s_cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+    }
+
+    // Cull mode: CT_TWO_SIDED materials disable face culling (fences, grates, glass panes).
+    {
+        VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
+        if (mat && mat->GetCullType() == CT_TWO_SIDED)
+            cullMode = VK_CULL_MODE_NONE;
+        else if (mat && mat->GetCullType() == CT_BACK_SIDED)
+            cullMode = VK_CULL_MODE_FRONT_BIT; // inverted: back-sided in GL = cull front in VK
+
+        if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
+            cullMode = VK_CULL_MODE_NONE;
+
+        vkCmdSetCullMode(s_cmd, cullMode);
+    }
+
+    // Weapon depth-hack surfaces are prone to depth mismatch against the prepass.
+    // Keep stencil culling, but allow a weapon-only depth-ALWAYS fallback to isolate
+    // depth/prepass coupling from the rest of the interaction path.
+    const bool forceWeaponStencilAlways =
+        (r_vkWeaponDepthAlways.GetBool() && isWeaponSurf && idStr::Cmp(s_interactionPipeTag, "opaque") == 0 &&
+         vkPipes.interactionPipelineStencilAlways != VK_NULL_HANDLE);
+    const bool forceWeaponStencilLEqual =
+        (!forceWeaponStencilAlways && isWeaponSurf && idStr::Cmp(s_interactionPipeTag, "opaque") == 0 &&
+         vkPipes.interactionPipelineStencilLEqual != VK_NULL_HANDLE);
+    if (forceWeaponStencilAlways)
+    {
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilAlways);
+    }
+    else if (forceWeaponStencilLEqual)
+    {
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilLEqual);
+    }
+
+    // Debug isolation: force plasma body interactions through no-stencil path to
+    // detect stencil/prepass coupling issues without changing other materials.
+    const bool forceNoStencil = (isWeaponSurf && isPlasmaBody && r_vkPlasmaNoStencil.GetBool() &&
+                                 idStr::Cmp(s_interactionPipeTag, "opaque") == 0);
+    if (forceNoStencil)
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
+
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+
+    if (forceNoStencil || forceWeaponStencilLEqual || forceWeaponStencilAlways)
+        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +680,7 @@ static void VK_RB_UpdateCinematics(VkCommandBuffer cmd)
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
             if (!regs[pStage->conditionRegister])
                 continue;
             if (!pStage->texture.cinematic)
@@ -631,7 +721,21 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
+    if (r_vkLogRT.GetInteger() >= 2)
+    {
+        common->Printf("VK DrawShaderPasses: ENTER numDrawSurfs=%d\n", backEnd.viewDef->numDrawSurfs);
+    }
+
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+
+    // Interaction pass leaves a per-light scissor active (often flashlight-sized).
+    // Shader passes are not per-light and must render with full-frame scissor.
+    const VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
+    vkCmdSetScissor(cmd, 0, 1, &fullScissor);
+
+    // Sentinel for depth bias tracking — larger than any real bias value (which is
+    // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
+    float activeShaderBias = 1000000.0f;
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
@@ -697,26 +801,161 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         const float *regs = surf->shaderRegisters;
 
+        // Polygon offset for co-planar decals/overlays, mirroring GL's qglPolygonOffset
+        // in RB_STD_T_RenderShaderPasses.  Only relevant for 3D surfaces (depthTest path);
+        // 2D GUI surfaces skip depth entirely so bias has no effect there.
+        {
+            float biasConstant = 0.0f;
+            if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
+                biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+            if (biasConstant != activeShaderBias)
+            {
+                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+                activeShaderBias = biasConstant;
+            }
+        }
+
+        if (r_vkLogRT.GetInteger() >= 2)
+        {
+            static idStrList s_loggedMats;
+            idStr matKey;
+            matKey.Format("%s", mat->GetName());
+            if (s_loggedMats.Find(matKey) < 0)
+            {
+                s_loggedMats.Append(matKey);
+                common->Printf("VK DrawShaderPasses: mat='%s' sort=%d numStages=%d\n", mat->GetName(),
+                               (int)mat->GetSort(), mat->GetNumStages());
+            }
+        }
+
+        // Log translucent material surfaces (same criteria as GL path)
+        const int vkTransLog = r_vkLogTranslucent.GetInteger();
+        const bool translucentLike = (mat->Coverage() == MC_TRANSLUCENT) || (mat->GetSort() >= SS_MEDIUM);
+        if (vkTransLog >= 1 && translucentLike)
+        {
+            common->Printf(
+                "VK TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d scissor=(%d,%d %d,%d)\n",
+                tr.frameCount, mat->GetName(), (int)mat->GetSort(), RB_CoverageName(mat->Coverage()),
+                mat->GetNumStages(), si, 0, 0, (int)vk.swapchainExtent.width, (int)vk.swapchainExtent.height);
+        }
+
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
+            // Log verbose stage gating checks when translucent logging is enabled
+            if (vkTransLog >= 2 && translucentLike && !regs[pStage->conditionRegister])
+            {
+                common->Printf("VK TRANSLUCENT STAGE-GATED: frame=%d mat='%s' stage=%d cond=%.3f (disabled)\n",
+                               tr.frameCount, mat->GetName(), stageIdx, regs[pStage->conditionRegister]);
+            }
 
             // Skip disabled stages
             if (!regs[pStage->conditionRegister])
                 continue;
 
+            // Log verbose stage type checks
+            if (vkTransLog >= 2 && translucentLike && pStage->lighting != SL_AMBIENT)
+            {
+                common->Printf(
+                    "VK TRANSLUCENT STAGE-TYPE: frame=%d mat='%s' stage=%d lighting=%d (skipped, not ambient)\n",
+                    tr.frameCount, mat->GetName(), stageIdx, pStage->lighting);
+            }
+
             // Skip lighting-specific stages (handled by interaction pass)
             if (pStage->lighting != SL_AMBIENT)
                 continue;
 
+            // Log the stage that will actually be drawn
+            if (vkTransLog >= 1 && translucentLike)
+            {
+                const char *texName =
+                    (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
+                common->Printf(
+                    "VK TRANSLUCENT STAGE-DRAW: frame=%d mat='%s' stage=%d blend=(%s,%s) texgen=%s image='%s'\n",
+                    tr.frameCount, mat->GetName(), stageIdx, RB_SrcBlendName(pStage->drawStateBits),
+                    RB_DstBlendName(pStage->drawStateBits), RB_TexgenName(pStage->texture.texgen), texName);
+            }
+
             idImage *img = pStage->texture.image;
             VkDescriptorImageInfo imgInfo = {};
+
+            // Log TG_SCREEN stages whether img is null or not — regardless of which
+            // branch handles them below, we want to see if they're being processed.
+            if (r_vkLogRT.GetInteger() >= 2 &&
+                (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2 ||
+                 pStage->texture.texgen == TG_GLASSWARP))
+            {
+                static idStrList s_loggedScreenStages;
+                idStr key;
+                key.Format("%s#%d#%d", mat->GetName(), stageIdx, (int)pStage->texture.texgen);
+                if (s_loggedScreenStages.Find(key) < 0)
+                {
+                    s_loggedScreenStages.Append(key);
+                    common->Printf("VK DrawShaderPasses: SCREEN STAGE mat='%s' stage=%d texgen=%d img=%s\n",
+                                   mat->GetName(), stageIdx, (int)pStage->texture.texgen,
+                                   img ? img->imgName.c_str() : "<null>");
+                }
+            }
             if (!img)
             {
                 if (pStage->texture.cinematic)
                 {
                     // Use the cinematic image uploaded by VK_RB_UpdateCinematics this frame.
                     VK_Image_GetCinematicDescriptorInfo(&imgInfo);
+                }
+                else if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2 ||
+                         pStage->texture.texgen == TG_GLASSWARP)
+                {
+                    // Dynamic screen-space stages often have no explicit texture image and
+                    // source from renderer-owned scratch/currentRender images.
+                    static idStrList s_loggedDynTexgenPaths;
+                    bool usedWhiteFallback = false;
+                    const char *chosenSource = "dyn";
+                    idImage *dynImg = (pStage->texture.texgen == TG_SCREEN) ? globalImages->currentRenderImage
+                                                                            : globalImages->scratchImage;
+                    if (!VK_Image_GetDescriptorInfo(dynImg, &imgInfo))
+                    {
+                        // Fallback chain for cases where scratch/currentRender has not been
+                        // uploaded yet in this run.
+                        const bool haveCurrentRender =
+                            VK_Image_GetDescriptorInfo(globalImages->currentRenderImage, &imgInfo);
+                        const bool haveScratch2 =
+                            !haveCurrentRender && VK_Image_GetDescriptorInfo(globalImages->scratchImage2, &imgInfo);
+                        if (haveCurrentRender)
+                        {
+                            chosenSource = "currentRender";
+                        }
+                        else if (haveScratch2)
+                        {
+                            chosenSource = "scratch2";
+                        }
+                        else
+                        {
+                            VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                            usedWhiteFallback = true;
+                            chosenSource = "white";
+                        }
+                    }
+
+                    if (r_vkLogRT.GetInteger() >= 2)
+                    {
+                        idStr key;
+                        key.Format("%s#%d#%d#%s", mat->GetName(), stageIdx, (int)pStage->texture.texgen, chosenSource);
+                        if (s_loggedDynTexgenPaths.Find(key) < 0)
+                        {
+                            s_loggedDynTexgenPaths.Append(key);
+                            common->Printf(
+                                "VK DrawShaderPasses: dynamic texgen path mat='%s' stage=%d texgen=%d source=%s "
+                                "dyn='%s' curRender='%s' scratch2='%s' whiteFallback=%d\n",
+                                mat->GetName(), stageIdx, (int)pStage->texture.texgen, chosenSource,
+                                dynImg ? dynImg->imgName.c_str() : "<null>",
+                                globalImages->currentRenderImage ? globalImages->currentRenderImage->imgName.c_str()
+                                                                 : "<null>",
+                                globalImages->scratchImage2 ? globalImages->scratchImage2->imgName.c_str() : "<null>",
+                                usedWhiteFallback ? 1 : 0);
+                        }
+                    }
                 }
                 else
                 {
@@ -861,8 +1100,41 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
             const bool needDepth = !(pStage->drawStateBits & GLS_DEPTHFUNC_ALWAYS);
+
+            if (r_vkLogRT.GetInteger() >= 3)
+            {
+                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
+                               mat->GetName(), stageIdx, pStage->drawStateBits, blendBits, (int)needDepth);
+            }
+
             VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits, needDepth);
+
+            // Log translucent material pipeline binding
+            if (vkTransLog >= 1 && translucentLike)
+            {
+                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                common->Printf("VK TRANSLUCENT BIND: frame=%d mat='%s' stage=%d pipeline=%p drawState=0x%08x "
+                               "blend=0x%x depthTest=%s\n",
+                               tr.frameCount, mat->GetName(), stageIdx, (void *)pipeline, pStage->drawStateBits,
+                               blendBits, needDepth ? "true" : "false");
+            }
+
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+            // Match GL per-material cull behavior for 3D shader passes.
+            // Only set dynamic cull mode on depth-tested (3D) pipelines — 2D GUI
+            // pipelines are created without VK_DYNAMIC_STATE_CULL_MODE.
+            if (needDepth)
+            {
+                VkCullModeFlags shaderCull = VK_CULL_MODE_BACK_BIT;
+                if (mat->GetCullType() == CT_TWO_SIDED)
+                    shaderCull = VK_CULL_MODE_NONE;
+                else if (mat->GetCullType() == CT_BACK_SIDED)
+                    shaderCull = VK_CULL_MODE_FRONT_BIT;
+                vkCmdSetCullMode(cmd, shaderCull);
+            }
+
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
@@ -891,6 +1163,9 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     // Bind the opaque depth pipeline up front; switch to depthClipPipeline per-draw for MC_PERFORATED.
     VkPipeline activePipeline = VK_NULL_HANDLE;
+    // Track depth bias so we only call vkCmdSetDepthBias when it changes.
+    // Initialise to a sentinel that won't match any real value.
+    float activeBiasConstant = 1000000.0f;
 
     for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
     {
@@ -953,22 +1228,57 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         // imgInfo: texture to bind at binding 1.
         // alphaThreshold: value written to colorAdd[3]; 0 means no clip (opaque pipeline).
         // useClipPipeline: selects depthClipPipeline vs depthPipeline.
-        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline) {
+        // alphaStage/stageRegs/alphaScale are used to mirror GL perforated depth semantics:
+        // apply stage alpha scale and stage texture matrix before alpha test.
+        auto drawDepthSurf = [&](VkDescriptorImageInfo imgInfo, float alphaThreshold, bool useClipPipeline,
+                                 const shaderStage_t *alphaStage, const float *stageRegs, float alphaScale) {
             uint32_t uboOffset = VK_AllocUBO();
             VkGuiUBO *ubo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
             memcpy(ubo->modelViewProjection, mvp, 64);
-            ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
-            ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            if (useClipPipeline)
+            {
+                // depth_clip.frag scales sampled texture alpha by u_ColorModulate.w.
+                // Match GL's qglColor4fv(color) in RB_T_FillDepthBuffer by writing the stage
+                // alpha into colorModulate[3] (alphaScale) for the perforated depth test.
+                ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = 0.f;
+                ubo->colorModulate[3] = alphaScale;
+                ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            }
+            else
+            {
+                ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 1.f;
+                ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = 0.f;
+            }
             ubo->colorAdd[3] = alphaThreshold;
-            // Identity texture matrix — depth prepass doesn't need UV animation
-            ubo->texMatrixS[0] = 1.f;
-            ubo->texMatrixS[1] = 0.f;
-            ubo->texMatrixS[2] = 0.f;
-            ubo->texMatrixS[3] = 0.f;
-            ubo->texMatrixT[0] = 0.f;
-            ubo->texMatrixT[1] = 1.f;
-            ubo->texMatrixT[2] = 0.f;
-            ubo->texMatrixT[3] = 0.f;
+            if (useClipPipeline && alphaStage && stageRegs && alphaStage->texture.hasMatrix)
+            {
+                const textureStage_t &tex = alphaStage->texture;
+                float s2 = stageRegs[tex.matrix[0][2]];
+                if (s2 < -40.f || s2 > 40.f)
+                    s2 -= (float)(int)s2;
+                float t2 = stageRegs[tex.matrix[1][2]];
+                if (t2 < -40.f || t2 > 40.f)
+                    t2 -= (float)(int)t2;
+                ubo->texMatrixS[0] = stageRegs[tex.matrix[0][0]];
+                ubo->texMatrixS[1] = stageRegs[tex.matrix[0][1]];
+                ubo->texMatrixS[2] = 0.f;
+                ubo->texMatrixS[3] = s2;
+                ubo->texMatrixT[0] = stageRegs[tex.matrix[1][0]];
+                ubo->texMatrixT[1] = stageRegs[tex.matrix[1][1]];
+                ubo->texMatrixT[2] = 0.f;
+                ubo->texMatrixT[3] = t2;
+            }
+            else
+            {
+                ubo->texMatrixS[0] = 1.f;
+                ubo->texMatrixS[1] = 0.f;
+                ubo->texMatrixS[2] = 0.f;
+                ubo->texMatrixS[3] = 0.f;
+                ubo->texMatrixT[0] = 0.f;
+                ubo->texMatrixT[1] = 1.f;
+                ubo->texMatrixT[2] = 0.f;
+                ubo->texMatrixT[3] = 0.f;
+            }
 
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1012,14 +1322,38 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
+        // Apply polygon offset for decal/overlay surfaces (mirrors GL qglPolygonOffset).
+        // r_offsetUnits (-600 by default) * material polygonOffset value pulls the depth
+        // toward the camera so co-planar decals pass the LEQUAL interaction test.
+        {
+            float biasConstant = 0.0f;
+            if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
+                biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+            if (biasConstant != activeBiasConstant)
+            {
+                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+                activeBiasConstant = biasConstant;
+            }
+        }
+
         if (coverage == MC_OPAQUE)
         {
             VkDescriptorImageInfo imgInfo = {};
             VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-            drawDepthSurf(imgInfo, 0.f, false);
+            drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
         }
         else // MC_PERFORATED
         {
+            const bool isPlasmaBody = (idStr::Cmp(mat->GetName(), "models/weapons/plasmagun/plasmagun") == 0);
+            const bool forcePlasmaOpaqueDepth = (isPlasmaBody && r_vkPlasmaIgnoreDepthAlphaTest.GetBool());
+            if (forcePlasmaOpaqueDepth)
+            {
+                VkDescriptorImageInfo imgInfo = {};
+                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+                continue;
+            }
+
             const float *regs = surf->shaderRegisters;
             bool didDraw = false;
             for (int si = 0; si < mat->GetNumStages(); si++)
@@ -1038,7 +1372,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                     VK_Image_GetFallbackDescriptorInfo(&imgInfo);
 
                 float threshold = regs[pStage->alphaTestRegister];
-                drawDepthSurf(imgInfo, threshold, true);
+                drawDepthSurf(imgInfo, threshold, true, pStage, regs, alphaScale);
                 didDraw = true;
             }
             // If no alpha-test stage was active, fall back to opaque depth write.
@@ -1046,7 +1380,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             {
                 VkDescriptorImageInfo imgInfo = {};
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-                drawDepthSurf(imgInfo, 0.f, false);
+                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
             }
         }
     }
@@ -1130,6 +1464,29 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     if (!tri || !tri->shadowCache || !tri->indexes || tri->numIndexes <= 0)
         return VK_NULL_HANDLE;
 
+    // Don't let weapon/viewmodel entities cast stencil shadows — they use
+    // weaponDepthHack and their shadow volumes project into the world incorrectly.
+    if (surf->space->weaponDepthHack)
+    {
+        if (r_vkLogRT.GetBool())
+            common->Printf("VK SHADOW SKIP weaponDepthHack: space=%p tri=%p\n", surf->space, tri);
+        return VK_NULL_HANDLE;
+    }
+    // Debug: log first few shadow surfaces per frame to see what's being drawn
+    static int s_shadowLogFrame = -1;
+    static int s_shadowLogCount = 0;
+    if (r_vkLogRT.GetBool() && tr.frameCount != s_shadowLogFrame)
+    {
+        s_shadowLogFrame = tr.frameCount;
+        s_shadowLogCount = 0;
+    }
+    if (r_vkLogRT.GetBool() && s_shadowLogCount < 8)
+    {
+        common->Printf("VK SHADOW DRAW: frame=%d space=%p wdh=%d mdh=%.2f tri=%p\n", tr.frameCount, surf->space,
+                       (int)surf->space->weaponDepthHack, surf->space->modelDepthHack, tri);
+        ++s_shadowLogCount;
+    }
+
     // Match GL's external-shadow logic so we choose the same index set and
     // stencil method (Z-fail when inside, Z-pass when external).
     int numDrawIndexes = 0;
@@ -1198,7 +1555,11 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     const bool mirrorView = backEnd.viewDef && backEnd.viewDef->isMirror;
     const bool flipShadowOps = r_vkShadowFlipOps.GetBool();
-    const bool effectiveMirrorOps = mirrorView ^ flipShadowOps;
+    // Vulkan face classification is opposite our original assumption for the
+    // current viewport/frontFace convention. Default to inverted selection so
+    // non-mirrored views pick the pipeline variant that matches GL stencil
+    // behavior; keep r_vkShadowFlipOps as an explicit debug override.
+    const bool effectiveMirrorOps = (!mirrorView) ^ flipShadowOps;
     VkPipeline shadowPipe;
     if (external)
         shadowPipe = effectiveMirrorOps ? vkPipes.shadowPipelineZPassMirror : vkPipes.shadowPipelineZPass;
@@ -1698,6 +2059,16 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     RB_DetermineLightScale();
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+    s_interactionPipeTag = "opaque";
+
+    if (r_vkLogRT.GetInteger() >= 2)
+    {
+        int totalLights = 0;
+        for (const viewLight_t *vl = backEnd.viewDef->viewLights; vl; vl = vl->next)
+            totalLights++;
+        common->Printf("VK INTERACTIONS: frame=%d totalViewLights=%d overBright=%.2f\n", tr.frameCount, totalLights,
+                       backEnd.overBright);
+    }
 
     int lightIdx = 0;
     for (viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next, lightIdx++)
@@ -1733,6 +2104,36 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
             lightScissor.extent.height = absY2 - absY1 + 1;
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+        }
+
+        // Set the file-static light index used by VK_RB_DrawInteraction logging
+        s_lightIdx = lightIdx;
+
+        if (r_vkLogRT.GetInteger() >= 2)
+        {
+            // Count surfaces per phase (cheap — lists are typically short)
+            int nLocal = 0, nGlobal = 0, nTrans = 0;
+            int nGlobalShadow = 0, nLocalShadow = 0;
+            for (const drawSurf_t *s = vLight->localInteractions; s; s = s->nextOnLight)
+                nLocal++;
+            for (const drawSurf_t *s = vLight->globalInteractions; s; s = s->nextOnLight)
+                nGlobal++;
+            for (const drawSurf_t *s = vLight->translucentInteractions; s; s = s->nextOnLight)
+                nTrans++;
+            for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
+                nGlobalShadow++;
+            for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
+                nLocalShadow++;
+            const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+            common->Printf("VK LIGHT[%d]: shader='%s' GLscissor=(%d,%d %d,%d) VKscissor=(%d,%d %u,%u) "
+                           "local=%d global=%d trans=%d gShadow=%d lShadow=%d rtShadows=%d\n",
+                           lightIdx, lName, backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1,
+                           backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1,
+                           backEnd.viewDef->viewport.x1 + vLight->scissorRect.x2,
+                           backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2, (int)lightScissor.offset.x,
+                           (int)lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                           (unsigned int)lightScissor.extent.height, nLocal, nGlobal, nTrans, nGlobalShadow,
+                           nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
         }
 
         if (r_vkLogShadowBranch.GetInteger() >= 5)
@@ -1851,6 +2252,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
         }
 
         // Clear stencil to 128 within this light's scissor rect before processing it.
@@ -1879,6 +2281,17 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
+        if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
+        {
+            common->Printf("VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
+                           "fullShadowScissor=%d useScissor=%d\n",
+                           lightIdx, lightScissor.offset.x, lightScissor.offset.y,
+                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
+                           shadowScissor.offset.x, shadowScissor.offset.y, (unsigned int)shadowScissor.extent.width,
+                           (unsigned int)shadowScissor.extent.height, lightScissor.offset.x, lightScissor.offset.y,
+                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
+                           useFullShadowScissor ? 1 : 0, r_useScissor.GetBool() ? 1 : 0);
+        }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -1900,8 +2313,10 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Step 2: local interactions — rebind interaction pipeline after shadow draws.
         if (!r_skipInteractions.GetBool())
         {
+            s_shadowPhaseTag = "localInteraction";
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
             for (const drawSurf_t *surf = vLight->localInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
@@ -1910,7 +2325,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (useStencilShadows && vLight->localShadows && !r_skipShadows.GetBool())
         {
             vkCmdSetScissor(cmd, 0, 1, &shadowScissor);
-            s_shadowPhaseTag = "local";
+            s_shadowPhaseTag = "localShadow";
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 VK_RB_DrawShadowSurface(cmd, s, shadowScissor);
         }
@@ -1918,23 +2333,41 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Step 4: global interactions — rebind interaction pipeline after shadow draws.
         if (!r_skipInteractions.GetBool())
         {
+            s_shadowPhaseTag = "globalInteraction";
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
             for (const drawSurf_t *surf = vLight->globalInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
         }
 
         if (!r_skipTranslucent.GetBool() && vLight->translucentInteractions)
         {
+            s_shadowPhaseTag = "translucentInteraction";
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+
+            // Log translucent interaction setup
+            if (r_vkLogTranslucent.GetInteger() >= 1)
+            {
+                int transCount = 0;
+                for (const drawSurf_t *s = vLight->translucentInteractions; s; s = s->nextOnLight)
+                    transCount++;
+                const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+                common->Printf("VK TRANSLUCENT LIGHT[%d]: light='%s' translucentSurfaces=%d depthFunc=LESS "
+                               "stencil=DISABLED\n",
+                               lightIdx, lName, transCount);
+            }
+
             // Translucent surfaces didn't write depth during the prepass, so they may not
             // be at the same depth as opaque geometry.  Use a pipeline with stencil disabled
             // so shadow volumes don't incorrectly cull them (mirrors GL path: performStencilTest=false).
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
+            s_interactionPipeTag = "translucentNoStencil";
             for (const drawSurf_t *surf = vLight->translucentInteractions; surf; surf = surf->nextOnLight)
                 RB_CreateSingleDrawInteractions(surf, VK_RB_DrawInteraction);
             // Restore opaque interaction pipeline for next light
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
+            s_interactionPipeTag = "opaque";
         }
     }
 
@@ -2369,8 +2802,7 @@ void VK_RB_DrawView(const void *data)
         // --- Wait for previous frame's fence ---
         if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK FRAME: fence wait — slot=%u frameCount=%d\n",
-                           vk.currentFrame, tr.frameCount);
+            common->Printf("VK FRAME: fence wait — slot=%u frameCount=%d\n", vk.currentFrame, tr.frameCount);
             fflush(NULL);
         }
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
@@ -2379,9 +2811,7 @@ void VK_RB_DrawView(const void *data)
             // VK_ERROR_DEVICE_LOST (-4): GPU crashed executing the previous frame's command buffer.
             // Enable r_vkLogRT 1 (or 2 for per-light detail) to see RT breadcrumbs before the crash.
             // Enable r_vkLogSubmitInfo 2 to see per-frame submit state.
-            common->Warning("VK: vkWaitForFences failed: %d (%s)%s",
-                            (int)fenceResult,
-                            VK_ResultToString(fenceResult),
+            common->Warning("VK: vkWaitForFences failed: %d (%s)%s", (int)fenceResult, VK_ResultToString(fenceResult),
                             (fenceResult == VK_ERROR_DEVICE_LOST)
                                 ? " — GPU DEVICE LOST: enable r_vkLogRT 2 to see RT breadcrumbs"
                                 : "");
@@ -2474,6 +2904,26 @@ void VK_RB_DrawView(const void *data)
     else
     {
         // === Subsequent RC_DRAW_VIEW: render pass already open; reset viewport/scissor ===
+        // Each view has its own projection matrix, so depth values from the previous view
+        // are meaningless (and harmful) here.  Clear depth+stencil so this view's depth
+        // prepass and EQUAL interaction tests work against a fresh buffer, matching GL's
+        // per-view depth state.  vkCmdClearAttachments is legal inside a render pass.
+        {
+            const bool hasStencil =
+                (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+                 vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT);
+            VkClearAttachment clearDepth = {};
+            clearDepth.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | (hasStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
+            clearDepth.clearValue.depthStencil = {1.0f, 128};
+
+            VkClearRect clearRect = {};
+            clearRect.rect = {{0, 0}, vk.swapchainExtent};
+            clearRect.baseArrayLayer = 0;
+            clearRect.layerCount = 1;
+
+            vkCmdClearAttachments(s_frameCmdBuf, 1, &clearDepth, 1, &clearRect);
+        }
+
         VkViewport viewport = {0,
                                (float)vk.swapchainExtent.height,
                                (float)vk.swapchainExtent.width,
@@ -2489,9 +2939,8 @@ void VK_RB_DrawView(const void *data)
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
-        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d\n",
-                       vk.currentFrame, vk.currentImageIdx, tr.frameCount,
-                       VK_RTShadowsEnabled() ? 1 : 0);
+        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d\n", vk.currentFrame,
+                       vk.currentImageIdx, tr.frameCount, VK_RTShadowsEnabled() ? 1 : 0);
         fflush(NULL);
     }
 
@@ -2519,16 +2968,15 @@ void VK_RB_DrawView(const void *data)
             vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];
             // Barrier: last frame's RT writes → transfer clear
             VkImageMemoryBarrier toTransfer = {};
-            toTransfer.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            toTransfer.srcAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
-            toTransfer.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toTransfer.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
-            toTransfer.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
-            toTransfer.image            = sm.image;
+            toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toTransfer.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toTransfer.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            toTransfer.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            toTransfer.image = sm.image;
             toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(cmdBuf,
-                VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                0, 0, NULL, 0, NULL, 1, &toTransfer);
+            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 0, NULL, 0, NULL, 1, &toTransfer);
 
             VkClearColorValue clearVal = {};
             clearVal.float32[0] = 1.0f; // fully lit
@@ -2542,9 +2990,8 @@ void VK_RB_DrawView(const void *data)
             VkImageMemoryBarrier toRT = toTransfer;
             toRT.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             toRT.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            vkCmdPipelineBarrier(cmdBuf,
-                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                0, 0, NULL, 0, NULL, 1, &toRT);
+            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 0, 0, NULL, 0, NULL, 1, &toRT);
         }
 
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
@@ -2573,8 +3020,7 @@ void VK_RB_DrawView(const void *data)
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
-        common->Printf("VK FRAME: interactions done — slot=%u frameCount=%d\n",
-                       vk.currentFrame, tr.frameCount);
+        common->Printf("VK FRAME: interactions done — slot=%u frameCount=%d\n", vk.currentFrame, tr.frameCount);
         fflush(NULL);
     }
 
@@ -2585,6 +3031,128 @@ void VK_RB_DrawView(const void *data)
         VK_RB_FogAllLights(cmdBuf);
 
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
+}
+
+void VK_RB_CopyRender(const void *data)
+{
+    const copyRenderCommand_t *cmd = (const copyRenderCommand_t *)data;
+    if (!cmd || !cmd->image)
+    {
+        return;
+    }
+
+    if (!s_frameActive || s_frameCmdBuf == VK_NULL_HANDLE)
+    {
+        // CaptureRenderToImage is expected during an active frame. If we receive it
+        // outside that scope, skip safely.
+        return;
+    }
+
+    // Ensure destination image can hold this capture. _currentRender starts tiny
+    // (e.g. 16x16 placeholder) and must be resized to the capture dimensions.
+    const int desiredW = idMath::CeilPowerOfTwo(cmd->imageWidth > 1 ? cmd->imageWidth : 1);
+    const int desiredH = idMath::CeilPowerOfTwo(cmd->imageHeight > 1 ? cmd->imageHeight : 1);
+    if (!cmd->image->backendData || cmd->image->uploadWidth != desiredW || cmd->image->uploadHeight != desiredH)
+    {
+        const size_t bytes = (size_t)desiredW * (size_t)desiredH * 4u;
+        byte *blank = (byte *)Mem_Alloc(bytes);
+        memset(blank, 0, bytes);
+        VK_Image_Upload(cmd->image, blank, desiredW, desiredH);
+        Mem_Free(blank);
+        cmd->image->uploadWidth = desiredW;
+        cmd->image->uploadHeight = desiredH;
+    }
+
+    VkImage dstImage = VK_NULL_HANDLE;
+    if (!VK_Image_GetHandle(cmd->image, &dstImage) || dstImage == VK_NULL_HANDLE)
+    {
+        return;
+    }
+
+    VkCommandBuffer cmdBuf = s_frameCmdBuf;
+
+    // Clamp capture rect to legal source/destination bounds.
+    const int srcX = cmd->x < 0 ? 0 : cmd->x;
+    const int srcY = cmd->y < 0 ? 0 : cmd->y;
+    const int srcMaxW = (int)vk.swapchainExtent.width - srcX;
+    const int srcMaxH = (int)vk.swapchainExtent.height - srcY;
+    const int dstW = cmd->image->uploadWidth;
+    const int dstH = cmd->image->uploadHeight;
+    int copyW = cmd->imageWidth;
+    int copyH = cmd->imageHeight;
+    if (copyW > srcMaxW)
+        copyW = srcMaxW;
+    if (copyH > srcMaxH)
+        copyH = srcMaxH;
+    if (copyW > dstW)
+        copyW = dstW;
+    if (copyH > dstH)
+        copyH = dstH;
+    if (copyW <= 0 || copyH <= 0)
+    {
+        return;
+    }
+
+    if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
+    {
+        common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u\n",
+                       cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH, copyW,
+                       copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height);
+    }
+
+    // Suspend active render pass to perform transfer operations.
+    vkCmdEndRenderPass(cmdBuf);
+
+    // Source: current swapchain image (rendered scene so far).
+    VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+    // Destination: capture texture sampled later by TG_SCREEN/window materials.
+    VK_TransitionImageLayout(cmdBuf, dstImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    VkImageBlit region = {};
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.mipLevel = 0;
+    region.srcSubresource.baseArrayLayer = 0;
+    region.srcSubresource.layerCount = 1;
+    region.srcOffsets[0] = {srcX, srcY, 0};
+    region.srcOffsets[1] = {srcX + copyW, srcY + copyH, 1};
+
+    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.dstSubresource.mipLevel = 0;
+    region.dstSubresource.baseArrayLayer = 0;
+    region.dstSubresource.layerCount = 1;
+    region.dstOffsets[0] = {0, 0, 0};
+    region.dstOffsets[1] = {copyW, copyH, 1};
+
+    vkCmdBlitImage(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstImage,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+
+    // Restore layouts expected by subsequent rendering and presentation.
+    VK_TransitionImageLayout(cmdBuf, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    // Resume render pass so the rest of the frame can continue.
+    VkRenderPassBeginInfo rpResume = {};
+    rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpResume.renderPass = vk.renderPassResume;
+    rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+    rpResume.renderArea.offset = {0, 0};
+    rpResume.renderArea.extent = vk.swapchainExtent;
+    rpResume.clearValueCount = 0;
+    rpResume.pClearValues = NULL;
+    vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Re-apply default viewport/scissor state (negative-height Y flip).
+    VkViewport viewport = {
+        0,   (float)vk.swapchainExtent.height, (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height, 0.0f,
+        1.0f};
+    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+    VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
+    vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
 }
 
 // ---------------------------------------------------------------------------

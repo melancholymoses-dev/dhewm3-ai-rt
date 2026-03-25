@@ -179,7 +179,8 @@ static void VK_GetInteractionVertexInput(VkVertexInputBindingDescription *bindin
 // enableStencil=false → stencil disabled (translucent interactions, no shadow culling)
 // ---------------------------------------------------------------------------
 
-static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool enableStencil = true)
+static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool enableStencil = true,
+                                               VkCompareOp depthOp = VK_COMPARE_OP_EQUAL)
 {
     // Load SPIR-V shaders compiled from the GLSL files
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/interaction.vert.spv");
@@ -235,18 +236,26 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     VkPipelineRasterizationStateCreateInfo rasterizer = {};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    // Cull mode is set dynamically (vkCmdSetCullModeEXT / VK_DYNAMIC_STATE_CULL_MODE_EXT)
+    // so CT_TWO_SIDED materials can disable culling per draw. Default BACK_BIT is overridden
+    // each draw call before vkCmdDrawIndexed, so this value is a no-op placeholder.
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
     // Y-flip viewport (negative height) inverts winding order in Vulkan window space.
     // OpenGL CCW front faces become CW after Y-flip, so we tell Vulkan CW = front.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
+    // Depth bias enabled for per-surface polygon offset (MF_POLYGONOFFSET decals/overlays).
+    // The actual bias values are set dynamically via vkCmdSetDepthBias before each draw.
+    rasterizer.depthBiasEnable = VK_TRUE;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    // Depth+stencil: LEQUAL depth test (depth prepass fills depth first with LESS).
-    // LEQUAL rather than EQUAL because MC_PERFORATED surfaces may not appear in the prepass.
+    // Depth+stencil: depth test with caller-supplied compare op (default EQUAL).
+    // Opaque interactions use EQUAL to match the GL path (backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL):
+    // only pixels that were written by the depth prepass get lit, preventing any double-drawing.
+    // Translucent interactions use LEQUAL since translucent surfaces skip the prepass.
     // Stencil: GEQUAL 128 — matches Doom3 GL path after shadow pass.
     // Lit pixels are >=128; shadowed pixels decrement below 128.
     // With no rasterised shadow pass this always passes; RT shadow mask is applied in-shader.
@@ -254,7 +263,7 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable = VK_TRUE;
     depthStencil.depthWriteEnable = VK_FALSE; // don't write depth in interaction pass
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.depthCompareOp = depthOp;
     depthStencil.stencilTestEnable = enableStencil ? VK_TRUE : VK_FALSE;
     depthStencil.front.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL; // draw where stencil >= 128 (lit area)
     depthStencil.front.compareMask = 255;
@@ -278,11 +287,12 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    // Dynamic state: viewport and scissor so we can resize
-    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    // Dynamic state: viewport, scissor, depth bias (polygon offset), and cull mode (two-sided materials).
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                   VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 2;
+    dynamicState.dynamicStateCount = 4;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
@@ -376,7 +386,11 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     // Y-flip viewport inverts winding — same correction as interaction pipeline.
     // Carmack's Reverse front/back stencil ops depend on correct face identification.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthClampEnable = VK_TRUE; // needed for infinite projection
+    rasterizer.depthClampEnable = VK_FALSE; // Doom 3 uses infinite-far-plane projection (z=-0.999),
+                                            // so shadow vertices at infinity stay within [0,1] — no clamping
+                                            // needed.  Disabling matches GL behavior: fragments outside the
+                                            // frustum are clipped rather than clamped, preventing spurious
+                                            // stencil marks from near-plane overflow.
     rasterizer.lineWidth = 1.0f;
     // Match GL shadow polygon offset behavior; values are set dynamically from cvars per draw.
     rasterizer.depthBiasEnable = VK_TRUE;
@@ -391,22 +405,22 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     // For a shadowed pixel (between near and far shadow caps):
     //   near cap (front face, faces camera): d_sv < d_scene → depth PASSES → no event
     //   far  cap (back  face, faces away  ): d_sv > d_scene → depth FAILS  → stencil fires
-    // Correct convention: front=DECR, back=INCR
-    //   non-mirror: front=DECR, back=INCR
-    //   mirror:     front=INCR, back=DECR (winding reversed in mirrored view)
+    // Correct convention (matching GL): front=INCR, back=DECR
+    //   non-mirror: front=INCR, back=DECR
+    //   mirror:     front=DECR, back=INCR (winding reversed in mirrored view)
     // In this Vulkan pipeline, front/back refer to post-viewport face classification
     // (with our Y-flipped viewport and frontFace=CLOCKWISE convention).
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = VK_STENCIL_OP_KEEP;
-    front.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    front.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
     front.compareOp = VK_COMPARE_OP_ALWAYS;
     front.compareMask = 0xFF;
     front.writeMask = 0xFF;
     front.reference = 0;
 
     VkStencilOpState back = front;
-    back.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    back.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -610,7 +624,7 @@ static VkDescriptorSetLayout VK_CreateGuiDescLayout(void)
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     // Binding 1: combined image sampler (diffuse texture)
     bindings[1].binding = 1;
@@ -694,6 +708,9 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     // Y-flip viewport inverts winding — same correction as interaction pipeline.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
+    // Enable depth bias so per-surface polygon offset can be applied dynamically
+    // via vkCmdSetDepthBias for surfaces with MF_POLYGONOFFSET (decals, overlays).
+    rasterizer.depthBiasEnable = VK_TRUE;
 
     VkPipelineMultisampleStateCreateInfo multisampling = {};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -716,10 +733,10 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 2;
+    dynamicState.dynamicStateCount = 3;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
@@ -820,11 +837,33 @@ static const int MAX_BLEND_PIPELINES = 32;
 static VkBlendPipelineEntry s_blendCache[MAX_BLEND_PIPELINES];
 static int s_blendCacheCount = 0;
 
+// Convert Doom3 inverse channel mask bits to Vulkan colorWriteMask bits.
+// In Doom3, GLS_*MASK means "disable writes" for that channel.
+// Important: stage drawState 0x00000f00 (breakyglass3_nvp stage 0) is alpha-only.
+// If this mapping is skipped and RGBA is always enabled, the glass pass turns white.
+static VkColorComponentFlags VK_GlsColorMaskToVk(int stateBits)
+{
+    VkColorComponentFlags mask = 0;
+    if ((stateBits & GLS_REDMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_R_BIT;
+    if ((stateBits & GLS_GREENMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_G_BIT;
+    if ((stateBits & GLS_BLUEMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_B_BIT;
+    if ((stateBits & GLS_ALPHAMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_A_BIT;
+    return mask;
+}
+
 // Core GUI pipeline builder — explicit blend control.
 // blendEnable=false overrides all blend factor args (fully opaque).
 static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnable, VkBlendFactor srcColor,
                                          VkBlendFactor dstColor, VkBlendFactor srcAlpha, VkBlendFactor dstAlpha,
-                                         bool depthTest = false)
+                                         bool depthTest = false, VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+                                         VkColorComponentFlags colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                                                                VK_COLOR_COMPONENT_G_BIT |
+                                                                                VK_COLOR_COMPONENT_B_BIT |
+                                                                                VK_COLOR_COMPONENT_A_BIT)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
@@ -884,6 +923,9 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
         // (same as the interaction and depth-prepass pipelines).
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        // Depth bias for MF_POLYGONOFFSET decals/overlays — mirrors GL qglPolygonOffset
+        // in RB_STD_T_RenderShaderPasses.  Values are set dynamically per-draw.
+        rasterizer.depthBiasEnable = VK_TRUE;
     }
     else
     {
@@ -901,11 +943,14 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     depthStencil.stencilTestEnable = VK_FALSE;
     if (depthTest)
     {
-        // 3D world surface: test against depth prepass, don't write depth
-        // (transparent/unlit surfaces render after opaque interactions).
+        // 3D world surface: test against depth prepass, don't write depth.
+        // depthOp comes from the material stage's drawStateBits:
+        //   GLS_DEPTHFUNC_EQUAL  → EQUAL   (opaque/perforated, must match prepass exactly)
+        //   GLS_DEPTHFUNC_LESS   → LEQUAL  (translucent, extends past prepass depth)
+        //   GLS_DEPTHFUNC_ALWAYS → ALWAYS  (post-process or depth-ignored)
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_FALSE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depthStencil.depthCompareOp = depthOp;
     }
     else
     {
@@ -915,8 +960,7 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     }
 
     VkPipelineColorBlendAttachmentState colorBlend = {};
-    colorBlend.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlend.colorWriteMask = colorWriteMask;
     if (blendEnable)
     {
         colorBlend.blendEnable = VK_TRUE;
@@ -933,10 +977,14 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    // 3D pipelines add DEPTH_BIAS so MF_POLYGONOFFSET decals can use vkCmdSetDepthBias,
+    // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
+    // CULL_MODE is dynamic so shader passes can honor per-material cull type.
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                   VK_DYNAMIC_STATE_CULL_MODE};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 2;
+    dynamicState.dynamicStateCount = depthTest ? 4 : 3;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
@@ -979,16 +1027,55 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
 VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
 {
     const uint32_t blendBits = (uint32_t)(drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
-    // Pack depth flag into the high bit of the key so 2D and 3D caches are separate.
-    const uint32_t key = blendBits | (depthTest ? 0x80000000u : 0u);
+    const VkColorComponentFlags colorMask = VK_GlsColorMaskToVk(drawStateBits);
+    const uint32_t colorMaskNibble = (uint32_t)(colorMask & 0xFu);
 
-    // Fast path: pre-built 2D pipelines (no depth test)
-    if (!depthTest)
+    // Determine depth compare op from the stage's drawStateBits, matching GL_State() in gl_backend.cpp.
+    // GLS_DEPTHFUNC_EQUAL (0x20000): opaque/perforated stages must match prepass exactly.
+    // GLS_DEPTHFUNC_ALWAYS (0x10000): depth test disabled (depth-ignored stages).
+    // Default (GLS_DEPTHFUNC_LESS = 0x0): translucent stages, use LEQUAL (extends past prepass).
+    VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    if (drawStateBits & GLS_DEPTHFUNC_EQUAL)
+        depthOp = VK_COMPARE_OP_EQUAL;
+    else if (drawStateBits & GLS_DEPTHFUNC_ALWAYS)
+        depthOp = VK_COMPARE_OP_ALWAYS;
+
+    // Convert blend factors early for cache key and enable logic.
+    // This must happen before cache key creation to avoid collisions when blendBits=0.
+    VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
+    VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
+
+    // Build cache key including blend factors and color mask to avoid collisions.
+    // Example: (ONE, ZERO) and (ZERO, ONE) both have blendBits=0 but need different pipelines.
+    // Bits[31]: depthTest. Bits[29:28]: depthOp. Bits[27:24]: src factor.
+    // Bits[23:20]: dst factor. Bits[19:16]: color write mask nibble.
+    uint32_t depthOpIdx = (depthOp == VK_COMPARE_OP_EQUAL) ? 1u : (depthOp == VK_COMPARE_OP_ALWAYS) ? 2u : 0u;
+    const uint32_t srcIdx = (uint32_t)src & 0xFu;
+    const uint32_t dstIdx = (uint32_t)dst & 0xFu;
+    const uint32_t key = blendBits | (depthTest ? 0x80000000u : 0u) | (depthOpIdx << 28) | (srcIdx << 24) |
+                         (dstIdx << 20) | (colorMaskNibble << 16);
+
+    // Log GUI blend pipeline creation only at verbose translucent logging level.
+    if (r_vkLogTranslucent.GetInteger() >= 2)
     {
-        if (blendBits == 0u)
+        common->Printf("VK GuiBlendPipeline: drawState=0x%08x blendBits=0x%x depthTest=%d depthOp=%d "
+                       "src=%d dst=%d colorMask=0x%x (ZERO=0,ONE=1,ALPHA=4,DST_ALPHA=9,...)\n",
+                       drawStateBits, blendBits, depthTest ? 1 : 0, depthOp, (int)src, (int)dst,
+                       (unsigned int)colorMask);
+    }
+
+    // Fast path: pre-built 2D pipelines (no depth test, LEQUAL default)
+    // Verify blend/factors/mask all match to avoid returning wrong pipeline
+    if (!depthTest && depthOpIdx == 0u)
+    {
+        const VkColorComponentFlags fullMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+        if (blendBits == 0u && src == VK_BLEND_FACTOR_ONE && dst == VK_BLEND_FACTOR_ZERO && colorMask == fullMask)
             return vkPipes.guiOpaquePipeline;
         const uint32_t alphaKey = (uint32_t)(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
-        if (blendBits == alphaKey)
+        if (blendBits == alphaKey && src == VK_BLEND_FACTOR_SRC_ALPHA && dst == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA &&
+            colorMask == fullMask)
             return vkPipes.guiAlphaPipeline;
     }
 
@@ -1006,10 +1093,12 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
         return vkPipes.guiAlphaPipeline;
     }
 
-    VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
-    VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
-    bool blend = (blendBits != 0u);
-    VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest);
+    // Determine if blending should be enabled.  Even if blendBits==0, we still enable blending
+    // if the converted factors are valid (non-default). A (ONE, ZERO) blend is valid and must
+    // be enabled, not treated as an opaque surface.
+    bool blend = (src != VK_BLEND_FACTOR_ONE || dst != VK_BLEND_FACTOR_ZERO);
+
+    VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest, depthOp, colorMask);
     if (p == VK_NULL_HANDLE)
         return vkPipes.guiAlphaPipeline;
 
@@ -1255,8 +1344,19 @@ void VK_InitPipelines(void)
         layoutInfo.pSetLayouts = &vkPipes.interactionDescLayout;
         VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.interactionLayout));
     }
-    vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true);
-    vkPipes.interactionPipelineNoStencil = VK_CreateInteractionPipeline(vkPipes.interactionLayout, false);
+    // Opaque interactions: EQUAL matches GL (backEnd.depthFunc = GLS_DEPTHFUNC_EQUAL).
+    // Opaque weapon-depthhack interactions: LEQUAL to tolerate depth interpolation
+    // mismatch between depth prepass and interaction shaders in Vulkan.
+    // If that still rejects valid fragments, a stencil+ALWAYS variant is available
+    // as a targeted fallback for weapon/viewmodel surfaces.
+    // Translucent interactions: LEQUAL since translucent surfaces skip the depth prepass.
+    vkPipes.interactionPipeline = VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_EQUAL);
+    vkPipes.interactionPipelineStencilLEqual =
+        VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_LESS_OR_EQUAL);
+    vkPipes.interactionPipelineStencilAlways =
+        VK_CreateInteractionPipeline(vkPipes.interactionLayout, true, VK_COMPARE_OP_ALWAYS);
+    vkPipes.interactionPipelineNoStencil =
+        VK_CreateInteractionPipeline(vkPipes.interactionLayout, false, VK_COMPARE_OP_LESS_OR_EQUAL);
 
     // --- Shadow pipeline ---
     vkPipes.shadowDescLayout = VK_CreateShadowDescLayout();
@@ -1362,6 +1462,10 @@ void VK_ShutdownPipelines(void)
     }
     if (vkPipes.interactionPipeline)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipeline, NULL);
+    if (vkPipes.interactionPipelineStencilLEqual)
+        vkDestroyPipeline(vk.device, vkPipes.interactionPipelineStencilLEqual, NULL);
+    if (vkPipes.interactionPipelineStencilAlways)
+        vkDestroyPipeline(vk.device, vkPipes.interactionPipelineStencilAlways, NULL);
     if (vkPipes.interactionPipelineNoStencil)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipelineNoStencil, NULL);
     if (vkPipes.interactionLayout)

@@ -1,8 +1,8 @@
-# RTX Refactor — Phase 4 Fix & Phase 5 Plan
+# RTX Refactor — Phase 4 Optimization, Phase 5 and Phase 6Plan
 
-**Document:** `rtx_refactor_plan3.md`
-**Date:** 2026-03-21
-**Branch:** `improve_vulkan_rt`
+**Document:** `rtx_refactor_plan4.md`
+**Date:** 2026-03-25
+**Branch:** `moar_shadow_depth_fixes`
 
 This document records what has been done, identifies the current gaps that
 must be fixed to make Phase 4 (RT shadows) actually correct, and lays out
@@ -15,11 +15,46 @@ the detailed steps for Phase 5 (RTAO + reflections).
 | Phase | Description | State |
 |-------|-------------|-------|
 | 1 | GLSL shaders (ARB → GLSL/SPIR-V) | **Done** |
-| 2 | Vulkan rasterization backend | **Done** (minor visual gaps remain — see §Rendering Gaps) |
+| 2 | Vulkan rasterization backend | **Done** (core lighting + alpha paths functioning) |
 | 3 | Acceleration structures (BLAS/TLAS) | **Done structurally; performance issues remain** |
-| 4 | RT shadow pass | **Structurally done; critical correctness bug; performance issues** |
+| 4 | RT shadow pass | **Done for correctness; optimization follow-ups remain** |
 | 5 | RTAO + RT reflections | **Not started** |
 | 6 | One-bounce global illumination | **Not started — scope expansion, see §Phase 6** |
+
+## Current State Snapshot (2026-03-25)
+
+Brief status for quick return-to-work context:
+
+- Phase 4 correctness is now in good shape:
+  - Per-light RT shadow mask dispatch is interleaved with per-light interaction drawing.
+  - RT shadow dispatch no longer uses per-light `vkQueueWaitIdle` stalls.
+  - Player/viewmodel shadow suppression is in place for first-person correctness.
+  - Recent alpha-path fixes landed (including perforated depth-prepass parity), and this also resolved related menu/logo alpha artifacts during testing.
+- Vulkan lighting/shadow behavior is now stable enough to treat Phase 4 as complete from a correctness perspective.
+- Remaining work is mostly optimization/cleanup, not a Phase 4 blocker.
+
+## Phase 4 Remaining Work (Brief)
+
+Only items still worth doing before calling this area fully polished:
+
+1. BLAS input path optimization:
+    - Current BLAS build still copies geometry into host-visible build-input buffers.
+    - Move to direct GPU cache buffer usage (`ambientCache`/index cache with device address + AS build flags) to cut CPU copy overhead.
+2. TLAS instance update efficiency:
+    - Instance upload/recreate path is still heavier than ideal.
+    - Keep reducing per-frame instance-buffer churn and host writes for mostly-static scenes.
+3. Optional cleanup:
+    - Trim debug-only cvars/log toggles once confidence is high and behavior is stable across maps.
+
+## Phase 4 Fix Checklist (Code Reality)
+
+- Fix 1 (per-light shadow mask design flaw): **Implemented**.
+- Fix 2 (remove per-light `vkQueueWaitIdle`): **Implemented**.
+- Fix 3 (CPU-vertex dependency gap): **Partially addressed**.
+  - Model BLAS path now has fallback access through cache-backed pointers where available.
+  - Full GPU-native BLAS input path is still an optimization target.
+- Fix 4 (batch/streamline BLAS build work): **Mostly addressed functionally**, further optimization still possible.
+- Fix 5 (minor review notes): **Mostly addressed** (depthClamp capability handling, swapchain format refresh, and related robustness fixes are present in current code).
 
 The Stencil shadow fallback path (`VK_RB_DrawShadowSurface`, z-fail / Carmack's Reverse)
 was a source of debugging pain but is now structurally complete. It can be left as-is for
@@ -30,174 +65,17 @@ by running with `r_useRayTracing 1 r_rtShadows 1`.**
 
 ## Phase 4 — Fixes Required
 
-### Fix 1 (Critical): Per-Light Shadow Mask — Design Flaw
+Short version (historical details removed; see your archived copy for full notes):
 
-**File:** `neo/renderer/Vulkan/vk_shadows.cpp` — `VK_RT_DispatchShadowRays()`
-**File:** `neo/renderer/Vulkan/vk_backend.cpp` — `VK_RB_DrawInteractions()`
+| Fix | Status | Current Note |
+|-----|--------|--------------|
+| Fix 1: Per-light RT shadow mask dispatch | Done | Interleaved dispatch in per-light interaction loop (`VK_RT_DispatchShadowRaysForLight`) |
+| Fix 2: Remove per-light queue idle | Done | Uses shadow UBO ring allocation + persistent depth sampler; no per-light idle stall |
+| Fix 3: CPU-only BLAS dependency | Partial | Multi-surface model BLAS path improved; full GPU-native BLAS input path still pending optimization |
+| Fix 4: BLAS build/upload efficiency | Partial | Functionally improved, but still more optimization headroom (especially CPU copy/staging reduction) |
+| Fix 5: Minor review-note hardening | Mostly done | depthClamp gating and swapchain format refresh are present; remaining items are polish-level |
 
-#### The Problem
-
-`VK_RT_DispatchShadowRays()` loops over `viewDef->viewLights` and for each
-light it dispatches shadow rays and **overwrites the same `vkRT.shadowMask`
-image**. At the end of the loop only the last light's shadows are in the
-texture.
-
-Then `VK_RB_DrawInteractions()` runs the per-light interaction pass inside a
-render pass, and every light samples `u_ShadowMask` — but the mask now only
-reflects the shadows of whichever light was processed last by the dispatch
-loop. The result: most lights have incorrect shadows (either all shadowed or
-all lit, depending on which light ended up last).
-
-This mirrors what stencil shadows do correctly: clear-and-fill stencil
-**per light**, then draw that light's interactions against that light's
-stencil state.
-
-#### The Fix — Interleaved Per-Light RT Dispatch
-
-Restructure `VK_RB_DrawInteractions` so that for each light:
-
-1. **End the current render pass** (`vkCmdEndRenderPass`)
-2. **Dispatch shadow rays for this light only** — call a new
-   `VK_RT_DispatchShadowRaysForLight(cmd, viewDef, vLight)` that only writes
-   the shadow mask for the given `viewLight_t *`.
-3. **Reopen the render pass** using the `renderPassResume` (LOAD_OP_LOAD so
-   prior colour/depth is preserved), restore viewport and scissor.
-4. **Draw this light's interactions** (local + global, as today).
-5. Before closing the render pass again: transition the shadow mask back to
-   `VK_IMAGE_LAYOUT_GENERAL` ready for the next light's dispatch.
-
-```
-for each vLight:
-  vkCmdEndRenderPass(cmd)
-  → VK_RT_DispatchShadowRaysForLight(cmd, vLight)   // writes shadow mask
-  → pipeline barrier: GENERAL→SHADER_READ_ONLY_OPTIMAL
-  vkCmdBeginRenderPass(cmd, renderPassResume, ...)
-  → restore viewport/scissor
-  → VK_RB_DrawShadowVolumes (stencil path, skipped when RT active)
-  → draw localInteractions / globalInteractions sampling shadow mask
-  → pipeline barrier: SHADER_READ_ONLY→GENERAL  (on shadow mask)
-```
-
-This exactly mirrors the stencil approach (clear stencil per light, draw
-shadow volumes per light, draw interactions per light) but with RT dispatch
-replacing the stencil steps.
-
-The outer TLAS rebuild (`VK_RT_RebuildTLAS`) stays where it is — called once
-before the first light, outside the render pass, before the loop starts.
-
-#### Refactoring `VK_RT_DispatchShadowRays`
-
-Extract the per-light work into a new internal function:
-
-```cpp
-// vk_shadows.cpp
-static void VK_RT_DispatchShadowRaysForLight(
-    VkCommandBuffer cmd,
-    const viewDef_t *viewDef,
-    const viewLight_t *vLight);
-```
-
-The public `VK_RT_DispatchShadowRays(cmd, viewDef)` can be removed or kept
-as a batch-all convenience (for debugging: verify the last-light shadow mask
-appears in the frame to confirm the RT pipeline is alive).
-
-Declare the new function in `vk_raytracing.h`:
-
-```cpp
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd,
-                                      const viewDef_t *viewDef,
-                                      const viewLight_t *vLight);
-```
-
----
-
-### Fix 2 (Performance): Remove `vkQueueWaitIdle` Inside Per-Light Loop
-
-**File:** `neo/renderer/Vulkan/vk_shadows.cpp` line ~450
-
-```cpp
-// CURRENT — catastrophically slow:
-vkQueueWaitIdle(vk.graphicsQueue);
-vkDestroySampler(vk.device, depthSampler, NULL);
-vkDestroyBuffer(vk.device, uboBuf, NULL);
-vkFreeMemory(vk.device, uboMem, NULL);
-```
-
-`vkQueueWaitIdle` serialises every light dispatch with CPU + GPU sync. With
-20+ lights per frame this makes the RT path effectively unusable.
-
-#### The Fix — UBO Ring Buffer for Shadow Params
-
-The shadow dispatch already uses a per-frame data ring for vertex/index data.
-Apply the same pattern here:
-
-1. Allocate a small host-visible ring buffer sized for
-   `MAX_LIGHTS_PER_FRAME * sizeof(ShadowParamsUBO)` (e.g. 256 lights × 80
-   bytes = 20 KB), one per frame-in-flight.  Call it `shadowUBORing`.
-2. At the start of each frame, reset the ring offset to 0.
-3. Each per-light dispatch suballocates `sizeof(ShadowParamsUBO)` from the
-   ring — no per-dispatch alloc/free needed.
-4. The depth sampler (`VkSampler`) is constant — create it once in
-   `VK_RT_InitShadows()` and store in `vkRTState_t`. No per-dispatch sampler
-   creation/destruction.
-5. Remove the `vkQueueWaitIdle` entirely. The UBO ring memory is only
-   reused next frame, by which time the fence for that frame-in-flight has
-   been signalled.
-
----
-
-### Fix 3 (Correctness): BLAS Only Built from CPU-Side Vertices
-
-**File:** `neo/renderer/Vulkan/vk_accelstruct.cpp` — `VK_RT_BuildBLAS()`
-
-`tri->verts` is only guaranteed non-NULL while the model data is loaded. If
-mesh data has been freed to GPU-only (possible after `ambientCache` upload),
-the BLAS build silently returns NULL and that geometry is absent from the
-TLAS, casting no shadow.
-
-#### The Fix
-
-Before the BLAS is built: check `tri->verts != NULL`. If the CPU data is
-gone, log a warning (once per unique mesh) and skip. Separately, hook the
-BLAS build at the point where `ambientCache` is populated in
-`VertexCache.cpp` (`R_CreateAmbientCache`) — at that moment `tri->verts` is
-still valid. Store the built `vkBLAS_t *` in `srfTriangles_t` (add a new
-field `vkBLAS_t *blasHandle = NULL`).
-
-Longer term: use the GPU vertex buffer already uploaded to
-`ambientCache` directly as the BLAS geometry source, eliminating the staging
-copy entirely. This requires the vertex cache buffer to be created with
-`VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
-VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT`.
-
----
-
-### Fix 4 (Performance): Batch BLAS Uploads
-
-**File:** `neo/renderer/Vulkan/vk_accelstruct.cpp`
-
-Currently each BLAS build does two `VK_BeginSingleTimeCommands()` calls
-(vertex upload + index upload), each submitting and waiting synchronously.
-This serialises every BLAS build at startup.
-
-**Fix:** Batch all BLAS uploads and builds into a single command buffer
-using `VK_CmdBuildAccelerationStructures` with an array of geometry
-descriptors. Record the full batch, submit once, wait once. This is a
-single-submission fence wait at level-load time, not per-BLAS.
-
----
-
-### Fix 5 (Minor): Review Notes from Code Review
-
-These are lower priority but should be addressed before shipping:
-
-| Issue | File | Fix |
-|-------|------|-----|
-| `depthClamp` enabled without checking support | `vk_instance.cpp:285` | Query `VkPhysicalDeviceFeatures` first; enable only if supported |
-| `vk.swapchainFormat` stale after `VK_RecreateSwapchain` | `vk_swapchain.cpp:400` | Assign `vk.swapchainFormat = surfaceFormat.format` in recreate path |
-| Depth prepass opaque variant samples `gui.frag` (has texture fetch) | `vk_pipeline.cpp:704` | Create a trivial no-output frag shader for the opaque depth variant |
-| Readback buffer not resized when swapchain grows | `vk_backend.cpp` | Track allocated size; destroy+recreate when `vk.swapchainExtent` is larger |
-| `vkDeviceWaitIdle` per vertex cache buffer free | `vk_buffer.cpp` | Defer destruction to per-frame garbage list; wait once on fence |
+Remaining blocker check: no known Phase 4 correctness blocker remains; remaining work is primarily performance/polish.
 
 ---
 
@@ -208,6 +86,13 @@ These are lower priority but should be addressed before shipping:
 Minimize avoidable CPU work and CPU↔GPU data movement in the RT path.
 RT shadows (and later AO/reflections/GI) are already heavy; we should not add
 per-frame CPU staging cost on top.
+
+### Current State (Verified)
+
+1. Per-light queue-idle stalls in RT shadow dispatch have been removed from the active path.
+2. Per-light shadow dispatch now uses ring-suballocated UBO data and persistent samplers.
+3. TLAS rebuild and per-light dispatch sequencing are functionally correct, but TLAS instance upload/recreate work is still heavier than ideal.
+4. BLAS build still relies on CPU-visible copies into AS build-input buffers, which is now the biggest remaining Phase 4 optimization target.
 
 ### Optimization 1: GPU-Side BLAS Geometry Inputs (Vertex/Index)
 
@@ -248,6 +133,12 @@ This is likely to provide a meaningful performance win because it reduces:
 In practice this improves frame-time stability and scalability as light count and
 RT effects increase.
 
+#### Status
+
+In progress. Current BLAS path is functional and supports multi-surface model coverage,
+but it still performs host-visible geometry copies instead of directly consuming
+persistent GPU cache buffers with device addresses.
+
 ### Optimization 2: Keep TLAS Updates Lightweight
 
 Even with GPU-side BLAS geometry, TLAS still needs per-frame instance updates.
@@ -256,6 +147,11 @@ Keep this path lean:
 1. Update only visible/casting instances.
 2. Avoid rebuilding unchanged static BLAS.
 3. Batch TLAS instance writes/builds and avoid queue-idle style sync points.
+
+#### Status
+
+Partially implemented. TLAS behavior is stable and synchronized correctly, but per-frame
+instance buffer lifecycle and host writes can still be reduced.
 
 ### Optimization 3: Static/Dynamic TLAS Update Efficiency
 
@@ -302,6 +198,10 @@ dynamic buckets, then minimizing update work for unchanged static content.
 High for RT scalability. This complements GPU-side BLAS input optimization and is
 worth implementing even if other RT features are deferred.
 
+#### Status
+
+Planned. The split/static cache design is not fully implemented yet.
+
 ### Enhancement: Per-Light-Type RT Softness Controls
 
 #### Goal
@@ -340,25 +240,26 @@ or over-blurry shadows.
 Medium. This is a quality and control enhancement, not a correctness blocker,
 but it improves artistic tuning and reduces pressure to use one-size-fits-all settings.
 
+#### Status
+
+Planned. Current runtime softness tuning is still global.
+
 ---
 
-## Rendering Correctness Gaps (Phase 2 carry-overs)
+## Rendering Correctness Status (Phase 2 carry-overs)
 
-These affect visual quality of the rasterized output that RT shadows are
-applied to. They do not block RT verification but affect correctness.
+Most previously listed raster correctness gaps are now implemented. Current quick status:
 
-| # | Gap | Impact | Plan ref |
-|---|-----|--------|----------|
-| 1 | Multiple blend modes | Particles, glows, muzzle flashes invisible | `missing_pieces.md §2` |
-| 2 | Depth prepass uses `LESS_OR_EQUAL` not `EQUAL` | No early-Z rejection savings | `missing_pieces.md §1` |
-| 3 | Texture coord transforms missing | Animated surfaces (water, fire) are static | `missing_pieces.md §3` |
-| 4 | LightScale not applied | Scene brightness wrong | `missing_pieces.md §6` |
-| 5 | Two-sided cull mode not selected | Vegetation/fences clipped | `missing_pieces.md §9` |
-| 6 | Fog/blend lights absent | No atmospheric effects | `missing_pieces.md §5` |
+| # | Item | Status | Note |
+|---|------|--------|------|
+| 1 | Multiple blend modes | Fixed | Shader-pass pipelines are selected from `drawStateBits` blend factors (`GLS_SRCBLEND_BITS`/`GLS_DSTBLEND_BITS`) |
+| 2 | Depth prepass parity | Fixed | Current path uses depth prepass + interaction depth equality behavior consistent with Doom 3 flow |
+| 3 | Texture coordinate transforms | Fixed | Stage texture matrices are applied for shader/depth-clip paths |
+| 4 | LightScale / brightness parity | Fixed | Brightness mismatch was traced to formatting/read-in behavior in prior Vulkan handling; current path applies the expected scale flow |
+| 5 | Two-sided cull selection | Fixed | Material cull mode (`CT_TWO_SIDED`, `CT_BACK_SIDED`) is selected dynamically per draw |
+| 6 | Fog/blend lights | Fixed | `VK_RB_FogAllLights` + fog and blend-light passes are present in frame execution |
 
-These are documented in detail in `missing_pieces.md`. They should be
-addressed in parallel with (or after) Phase 4 fixes to produce a visually
-correct rasterised base that RT is applied on top of.
+Residual risk is now mostly regression risk across maps/content, not known missing feature blocks.
 
 ---
 
@@ -963,64 +864,89 @@ intensity of the bounce contribution without recompiling.
 
 ## Implementation Order
 
-```
-Phase 4 fixes (do these first — they make RT shadows actually correct)
-  Fix 1: Per-light shadow mask — interleave dispatch with interaction loop
-  Fix 2: Remove vkQueueWaitIdle per light — use UBO ring
-  Fix 3: BLAS CPU-side vertex dependency
-  Fix 4: Batch BLAS uploads
+Detailed execution order with status:
 
-Verify RT shadows are working visually with r_useRayTracing 1 r_rtShadows 1
+1. Phase 4 correctness baseline (completed)
+     - Per-light shadow mask dispatch interleaved with per-light interactions.
+     - Removed per-light queue-idle synchronization from RT shadow path.
+     - Stabilized player/viewmodel shadow behavior and alpha-tested depth-prepass parity.
 
-Phase 5 steps
-  5.1: RTAO (ao_ray.rgen + vk_ao.cpp + interaction.frag binding)
-  5.2: Temporal denoising for shadows and AO
-  5.4: Material SSBO + bindless textures + vertex/index buffer tables
-       (promoted: prerequisite for alpha-test fix, GI, and reflections)
-  5.3: RT Reflections (reflect_ray.rgen + vk_reflections.cpp)
-       (uses 5.4 infrastructure for hit shading)
+2. Phase 4 optimization pass (next active focus)
+     - 2.1 GPU-native BLAS input path (highest impact):
+         - Consume ambient/index cache GPU buffers directly for AS build input.
+         - Keep CPU fallback for edge/debug cases.
+     - 2.2 TLAS instance upload efficiency:
+         - Reduce instance buffer churn and avoid unnecessary full rewrites.
+     - 2.3 Static/dynamic TLAS split:
+         - Introduce static block caching and dynamic-only per-frame rewrites.
 
-Phase 6 steps
-  6.1: (covered by 5.4 — no extra work if 5.4 is done first)
-  6.2: GI ray generation + closest-hit shaders + vk_gi.cpp
-  6.3: Temporal accumulation for GI (extend vk_temporal.cpp from 5.2)
-  6.4: GI binding in interaction.frag
+3. Validation gate after Phase 4 optimization changes
+     - Validate with `r_useRayTracing 1 r_rtShadows 1` across mixed-light maps.
+     - Compare frame-time stability in static-heavy and dynamic-heavy scenes.
 
-Deferred alpha-test fix (shadow_ray.rahit texture sampling)
-  - Implement once Step 5.4 is done; all infrastructure is already present
+4. Phase 5 enablement (after optimization baseline is stable)
+     - 4.1 Material SSBO + bindless texture/geometry metadata (`5.4` promoted prerequisite).
+     - 4.2 RTAO pipeline (`5.1`).
+     - 4.3 Temporal denoise/accumulation for shadow + AO (`5.2`).
+     - 4.4 RT reflections (`5.3`) using material metadata path.
 
-Rendering correctness (can be done in parallel with Phase 4 fixes)
-  - Multiple blend modes
-  - LightScale
-  - Texture coord transforms
-  - Fog/blend lights
-```
+5. Phase 6 expansion (post-Phase 5 baseline)
+     - GI raygen/hit path, temporal accumulation, and interaction integration.
+
+6. Deferred alpha-test in RT any-hit (carried from earlier plan)
+     - Implement once material metadata path is online.
+
+7. Rendering correctness carry-overs
+     - Now treated as regression checks (not missing feature blocks):
+         blend modes, depth-prepass parity, texture transforms, light scale, cull mode,
+         fog/blend-light passes.
 
 ---
 
 ## File Change Summary
 
-| File | Change |
-|------|--------|
-| `neo/renderer/Vulkan/vk_shadows.cpp` | Refactor `VK_RT_DispatchShadowRays` → add `VK_RT_DispatchShadowRaysForLight`; add shadow UBO ring; remove `vkQueueWaitIdle`; create depth sampler once at init |
-| `neo/renderer/Vulkan/vk_raytracing.h` | Declare `VK_RT_DispatchShadowRaysForLight`; add AO/history/reflection/GI image fields to `vkRTState_t`; add `shadowUBORing` |
-| `neo/renderer/Vulkan/vk_backend.cpp` | Move RT dispatch inside per-light loop in `VK_RB_DrawInteractions`: end RP → dispatch → reopen RP per light; call `VK_RT_DispatchAO` and `VK_RT_DispatchGI` before FillDepthBuffer |
-| `neo/renderer/Vulkan/vk_accelstruct.cpp` | Fix CPU-verts guard; batch BLAS submissions; expose `geomVtxBuf`/`geomIdxBuf` device addresses for vtx/idx buffer tables |
-| `neo/renderer/Vulkan/vk_material_table.cpp` | New: build and update MaterialEntry SSBO + bindless texture array + vtx/idx device-address tables; `VK_RT_BuildMaterialTable()` |
-| `neo/renderer/Vulkan/vk_ao.cpp` | New: AO pipeline init, dispatch, image lifecycle |
-| `neo/renderer/Vulkan/vk_temporal.cpp` | New: EMA resolve pipeline for shadow + AO + GI history |
-| `neo/renderer/Vulkan/vk_reflections.cpp` | New: reflection pipeline init and dispatch |
-| `neo/renderer/Vulkan/vk_gi.cpp` | New: GI pipeline init, dispatch, image lifecycle |
-| `neo/renderer/glsl/rt_material.glsl` | New: shared include — `MaterialEntry` struct, UV interpolation helper, bindless texture/vtx/idx bindings |
-| `neo/renderer/glsl/ao_ray.rgen` | New: AO ray generation shader |
-| `neo/renderer/glsl/temporal_resolve.comp` | New: compute EMA blend into history image |
-| `neo/renderer/glsl/reflect_ray.rgen` | New: reflection ray generation shader |
-| `neo/renderer/glsl/reflect_ray.rchit` | New: reflection closest-hit shader (uses rt_material.glsl) |
-| `neo/renderer/glsl/gi_ray.rgen` | New: GI bounce ray generation shader |
-| `neo/renderer/glsl/gi_ray.rchit` | New: GI closest-hit — albedo lookup + optional light evaluation (uses rt_material.glsl) |
-| `neo/renderer/glsl/gi_ray.rmiss` | New: GI miss — returns ambient sky colour |
-| `neo/renderer/glsl/shadow_ray.rahit` | Extend with alpha-test (MC_PERFORATED): UV interpolation + texture sample; `ignoreIntersectionEXT` if alpha < threshold |
-| `neo/renderer/glsl/interaction.frag` | Add AO (binding 8), reflection (binding 9), GI (binding 10); multiply AO into diffuse; add reflection to specular; add GI to diffuse |
-| `neo/renderer/glsl/interaction.vert` | No change |
-| `neo/renderer/Vulkan/vk_pipeline.cpp` | Add AO, reflection, temporal, GI pipeline descriptors; extend interaction desc layout to binding 10; add material table descriptors |
-| `neo/CMakeLists.txt` | Add new `.comp`/`.rgen`/`.rchit`/`.rmiss`/`.glsl` to GLSL_SHADER_SOURCES |
+Historical + current updates (implemented now) and planned extensions:
+
+| Status | File | Change |
+|--------|------|--------|
+| Implemented | `neo/renderer/Vulkan/vk_backend.cpp` | Per-light RT dispatch/resume integration in interactions; depth-prepass parity updates for perforated materials; shader-pass blend handling and dynamic cull behavior; fog/blend-light pass execution; light-scale handoff updates |
+| Implemented | `neo/renderer/Vulkan/vk_shadows.cpp` | `VK_RT_DispatchShadowRaysForLight` active path; per-light RT dispatch descriptors/UBO ring use; persistent depth-sampler usage |
+| Implemented | `neo/renderer/Vulkan/vk_raytracing.h` | Declares per-light dispatch entry point; tracks per-frame shadow descriptor update state and samplers |
+| Implemented | `neo/renderer/Vulkan/vk_common.h` | Added `renderPassResume` use for post-dispatch resume and debug-only interaction pipeline variant support |
+| Implemented | `neo/renderer/Vulkan/vk_pipeline.cpp` | Blend-state mapping from Doom 3 draw-state bits; depth/depth-clip pipelines; fog/blend-light pipeline support; dynamic cull mode path |
+| Implemented | `neo/renderer/Vulkan/vk_accelstruct.cpp` | Multi-surface model BLAS build path; TLAS rebuild flow and instance filtering updates |
+| Implemented | `neo/renderer/Vulkan/vk_instance.cpp` | depthClamp feature handling updated to capability-gated behavior |
+| Implemented | `neo/renderer/Vulkan/vk_swapchain.cpp` | swapchain format refresh updated in recreate path |
+| Implemented | `neo/renderer/glsl/depth_clip.frag` | Depth prepass alpha clip parity update using stage alpha scale + threshold wiring |
+| Implemented | `neo/renderer/glsl/interaction.frag` | Uses RT shadow mask modulation in active interaction path |
+| Planned | `neo/renderer/Vulkan/vk_material_table.cpp` | Material SSBO + bindless texture/geometry metadata infrastructure |
+| Planned | `neo/renderer/Vulkan/vk_ao.cpp` | RTAO pipeline lifecycle + dispatch |
+| Planned | `neo/renderer/Vulkan/vk_temporal.cpp` | Temporal denoise/accumulation for shadow/AO/GI buffers |
+| Planned | `neo/renderer/Vulkan/vk_reflections.cpp` | RT reflections pipeline + dispatch |
+| Planned | `neo/renderer/Vulkan/vk_gi.cpp` | One-bounce GI pipeline + dispatch |
+| Planned | `neo/renderer/glsl/rt_material.glsl` | Shared RT material/UV helper include for any-hit/closest-hit paths |
+| Planned | `neo/renderer/glsl/ao_ray.rgen` | AO ray generation shader |
+| Planned | `neo/renderer/glsl/temporal_resolve.comp` | Temporal resolve compute shader |
+| Planned | `neo/renderer/glsl/reflect_ray.rgen` | Reflection ray generation shader |
+| Planned | `neo/renderer/glsl/reflect_ray.rchit` | Reflection closest-hit shader |
+| Planned | `neo/renderer/glsl/gi_ray.rgen` | GI ray generation shader |
+| Planned | `neo/renderer/glsl/gi_ray.rchit` | GI closest-hit shader |
+| Planned | `neo/renderer/glsl/gi_ray.rmiss` | GI miss shader |
+| Planned | `neo/CMakeLists.txt` | Shader source list updates for new RT stages as they land |
+
+---
+
+## Changelog
+
+### 2026-03-25
+
+- Added current-state snapshot marking Phase 4 correctness as complete and clarifying that remaining work is optimization/polish.
+- Trimmed the old verbose Phase 4 fixes narrative into a compact status table for quick reference.
+- Updated rendering correctness section to current status (blend modes, depth-prepass parity, fog/blend lights, cull behavior, and light-scale parity).
+- Reworked Optimization Workstream with explicit status labels (implemented/partial/planned).
+- Rewrote Implementation Order into a detailed, status-driven execution sequence.
+- Reworked File Change Summary into implemented vs planned items, preserving historical planned work while reflecting current code reality.
+
+### 2026-03-21 (historical baseline)
+
+- Original Phase 4 and Phase 5 planning draft established detailed fix proposals for RT shadow correctness, performance follow-ups, and future AO/reflection/GI workstreams.

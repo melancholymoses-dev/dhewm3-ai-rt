@@ -76,8 +76,8 @@ struct vkState_t
     // Depth buffer
     VkImage depthImage;
     VkDeviceMemory depthMemory;
-    VkImageView depthView;         // combined depth+stencil view (framebuffer attachment)
-    VkImageView depthSampledView;  // depth-only view (for shader sampling — conformant)
+    VkImageView depthView;        // combined depth+stencil view (framebuffer attachment)
+    VkImageView depthSampledView; // depth-only view (for shader sampling — conformant)
     VkFormat depthFormat;
 
     // Render pass
@@ -116,8 +116,10 @@ struct vkPipelines_t
 {
     VkDescriptorSetLayout interactionDescLayout;
     VkPipelineLayout interactionLayout;
-    VkPipeline interactionPipeline;          // stencil EQUAL 128 (opaque/normal interactions)
-    VkPipeline interactionPipelineNoStencil; // stencil disabled (translucent interactions)
+    VkPipeline interactionPipeline;              // stencil EQUAL 128 (opaque/normal interactions)
+    VkPipeline interactionPipelineStencilLEqual; // stencil GEQUAL 128 + depth LEQUAL (weapon depth-hack interactions)
+    VkPipeline interactionPipelineStencilAlways; // stencil GEQUAL 128 + depth ALWAYS (weapon depth-hack fallback)
+    VkPipeline interactionPipelineNoStencil;     // stencil disabled (translucent interactions)
 
     VkDescriptorSetLayout shadowDescLayout;
     VkPipelineLayout shadowLayout;

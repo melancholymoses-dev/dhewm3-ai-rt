@@ -2440,9 +2440,16 @@ void idWeapon::PresentWeapon(bool showViewModel)
 
     // only show the surface in player view
     renderEntity.allowSurfaceInViewID = owner->entityNumber + 1;
+    renderEntity.suppressSurfaceInViewID = 0;
 
     // crunch the depth range so it never pokes into walls this breaks the machine gun gui
     renderEntity.weaponDepthHack = true;
+
+    // Defensive: avoid getting stuck hidden from stale script/entity state.
+    if (showViewModel && !hide && !disabled && IsHidden())
+    {
+        Show();
+    }
 
     // present the model
     if (showViewModel)
@@ -2458,7 +2465,7 @@ void idWeapon::PresentWeapon(bool showViewModel)
     {
         // deal with the third-person visible world model
         // don't show shadows of the world model in first person
-        if (gameLocal.isMultiplayer || g_showPlayerShadow.GetBool() || pm_thirdPerson.GetBool())
+        if (gameLocal.isMultiplayer || pm_thirdPerson.GetBool())
         {
             worldModel.GetEntity()->GetRenderEntity()->suppressShadowInViewID = 0;
         }

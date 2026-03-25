@@ -58,13 +58,14 @@ struct vkBLAS_t
     VkBuffer buffer;
     VkDeviceMemory memory;
     VkDeviceAddress deviceAddress;
-    // Host-visible geometry buffers for the AS build input.
-    // Kept alive until VK_RT_DestroyBLAS because they must outlive the
-    // command buffer submission in which the BLAS build was recorded.
-    VkBuffer geomVertBuf;
-    VkDeviceMemory geomVertMem;
-    VkBuffer geomIdxBuf;
-    VkDeviceMemory geomIdxMem;
+    // Per-surface geometry buffers for the AS build input.
+    // Arrays of length geomCount — kept alive until VK_RT_DestroyBLAS because they
+    // must outlive the command buffer submission in which the BLAS build was recorded.
+    uint32_t        geomCount;
+    VkBuffer       *geomVertBufs;
+    VkDeviceMemory *geomVertMems;
+    VkBuffer       *geomIdxBufs;
+    VkDeviceMemory *geomIdxMems;
     // Scratch buffer used during build (freed at destroy time).
     VkBuffer scratchBuf;
     VkDeviceMemory scratchMem;
@@ -121,14 +122,16 @@ struct vkRTState_t
     VkDescriptorSetLayout shadowDescLayout;
     VkDescriptorPool shadowDescPool;
     VkDescriptorSet shadowDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int shadowDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Shadow mask blur (compute pipeline)
     VkPipeline blurPipeline;
     VkPipelineLayout blurPipelineLayout;
     VkDescriptorSetLayout blurDescLayout;
     VkDescriptorPool blurDescPool;
-    VkDescriptorSet blurDescSetH; // horizontal pass: shadowMask→blurTemp
-    VkDescriptorSet blurDescSetV; // vertical pass: blurTemp→shadowMask
+    VkDescriptorSet blurDescSetH[VK_MAX_FRAMES_IN_FLIGHT]; // horizontal pass: shadowMask→blurTemp
+    VkDescriptorSet blurDescSetV[VK_MAX_FRAMES_IN_FLIGHT]; // vertical pass: blurTemp→shadowMask
+    int blurDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // SBT buffers
     VkBuffer sbtBuffer;
@@ -157,11 +160,15 @@ void VK_RT_Shutdown(void);
 // Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
 
-// Build/update BLAS for a mesh.  cmd must be a command buffer currently recording
-// outside a render pass.  All BLAS builds for a frame should share the same cmd so
-// a single barrier can synchronize them all before the TLAS build.
+// Build/update BLAS for a single mesh (single-surface, kept for external use).
+// cmd must be a command buffer currently recording outside a render pass.
 vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
+
+// Build a multi-geometry BLAS covering all non-translucent surfaces of a model.
+// Produces one TLAS instance per entity so shadow rays intersect every surface,
+// not just Surface(0).  Used by VK_RT_RebuildTLAS.
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd);
 
 // Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
 void VK_RT_DrainBLASGarbage(void);

@@ -148,6 +148,9 @@ idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE 
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
 idCVar r_rtShadowBlur("r_rtShadowBlur", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                       "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
+idCVar r_rtFlashlightBias("r_rtFlashlightBias", "17", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                          "units to push the flashlight shadow origin forward along the view axis "
+                          "to reduce hand/weapon self-shadowing (0=off)");
 idCVar r_vkLogRT("r_vkLogRT", "0", CVAR_RENDERER | CVAR_INTEGER,
                  "RT pipeline diagnostics: 0=off 1=per-frame TLAS+dispatch summary 2=per-light verbose (flushed)");
 idCVar r_rtAOSamples("r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel");
@@ -269,7 +272,7 @@ idCVar r_vkShadowFlipOps(
     "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
     idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkShadowStableMode(
-    "r_vkShadowStableMode", "1", CVAR_RENDERER | CVAR_BOOL,
+    "r_vkShadowStableMode", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow stabilization: force full-volume Z-fail path to reduce view-dependent popping/flicker", 0, 1,
     idCmdSystem::ArgCompletion_Integer<0, 1>);
 idCVar r_vkLogShadowGeom(
@@ -295,6 +298,14 @@ idCVar r_vkLogSubmitInfo(
     "r_vkLogSubmitInfo", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Vulkan submit diagnostics: 0=off, 1=one line per submitted frame, 2=verbose (adds fence status)", 0, 2,
     idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_glLogTranslucent(
+    "r_glLogTranslucent", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "OpenGL translucent/glass diagnostics: 0=off, 1=log drawn translucent stages, 2=verbose (includes skipped/depth)",
+    0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+idCVar r_vkLogTranslucent(
+    "r_vkLogTranslucent", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Vulkan translucent/glass diagnostics: 0=off, 1=log drawn translucent stages, 2=verbose (includes stage gating)", 0,
+    2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_useOptimizedShadows("r_useOptimizedShadows", "1", CVAR_RENDERER | CVAR_BOOL,
                              "use the dmap generated static shadow volumes");
 idCVar r_useScissor("r_useScissor", "1", CVAR_RENDERER | CVAR_BOOL, "scissor clip as portals and lights are processed");
