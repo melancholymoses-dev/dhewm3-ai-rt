@@ -386,7 +386,11 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     // Y-flip viewport inverts winding — same correction as interaction pipeline.
     // Carmack's Reverse front/back stencil ops depend on correct face identification.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    rasterizer.depthClampEnable = VK_TRUE; // needed for infinite projection
+    rasterizer.depthClampEnable = VK_FALSE; // Doom 3 uses infinite-far-plane projection (z=-0.999),
+                                              // so shadow vertices at infinity stay within [0,1] — no clamping
+                                              // needed.  Disabling matches GL behavior: fragments outside the
+                                              // frustum are clipped rather than clamped, preventing spurious
+                                              // stencil marks from near-plane overflow.
     rasterizer.lineWidth = 1.0f;
     // Match GL shadow polygon offset behavior; values are set dynamically from cvars per draw.
     rasterizer.depthBiasEnable = VK_TRUE;
@@ -401,22 +405,22 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     // For a shadowed pixel (between near and far shadow caps):
     //   near cap (front face, faces camera): d_sv < d_scene → depth PASSES → no event
     //   far  cap (back  face, faces away  ): d_sv > d_scene → depth FAILS  → stencil fires
-    // Correct convention: front=DECR, back=INCR
-    //   non-mirror: front=DECR, back=INCR
-    //   mirror:     front=INCR, back=DECR (winding reversed in mirrored view)
+    // Correct convention (matching GL): front=INCR, back=DECR
+    //   non-mirror: front=INCR, back=DECR
+    //   mirror:     front=DECR, back=INCR (winding reversed in mirrored view)
     // In this Vulkan pipeline, front/back refer to post-viewport face classification
     // (with our Y-flipped viewport and frontFace=CLOCKWISE convention).
     VkStencilOpState front = {};
     front.failOp = VK_STENCIL_OP_KEEP;
     front.passOp = VK_STENCIL_OP_KEEP;
-    front.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
+    front.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
     front.compareOp = VK_COMPARE_OP_ALWAYS;
     front.compareMask = 0xFF;
     front.writeMask = 0xFF;
     front.reference = 0;
 
     VkStencilOpState back = front;
-    back.depthFailOp = mirrorView ? VK_STENCIL_OP_DECREMENT_AND_WRAP : VK_STENCIL_OP_INCREMENT_AND_WRAP;
+    back.depthFailOp = mirrorView ? VK_STENCIL_OP_INCREMENT_AND_WRAP : VK_STENCIL_OP_DECREMENT_AND_WRAP;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
