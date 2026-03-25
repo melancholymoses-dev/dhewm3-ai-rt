@@ -27,7 +27,8 @@ layout(set=0, binding=1) uniform sampler2D u_Texture;
 layout(location = 0) out vec4 fragColor;
 
 void main() {
-    float alpha = texture(u_Texture, vary_TexCoord).a * vary_Color.a;
+    // Match GL perforated depth fill: stage alpha scale comes from current color.
+    float alpha = texture(u_Texture, vary_TexCoord).a * u_ColorModulate.w;
     if (alpha <= u_ColorAdd.w)
         discard;
     fragColor = vec4(0.0); // colour writes disabled in pipeline
