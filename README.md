@@ -5,7 +5,7 @@ This is hewing closely to the original Doom3, so no shoulder flashlight --- just
 
 ## Process
 
-I forked Dhewm3 at (commit goes here).  I have been using Claude Code Sonnet 4.5 and Github Copilot (GPT 5-3) to code this up as an experiment on refactoring a complex code base.  
+I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3.  I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3) to code this up as an experiment on refactoring a complex code base.  
 Have also been using the vkDoom3 Vulkan implementation as a reference, which was found after starting work on this.  
 
 ## Tips on working with LLMs
