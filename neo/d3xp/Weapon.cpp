@@ -2440,9 +2440,16 @@ void idWeapon::PresentWeapon(bool showViewModel)
 
     // only show the surface in player view
     renderEntity.allowSurfaceInViewID = owner->entityNumber + 1;
+    renderEntity.suppressSurfaceInViewID = 0;
 
     // crunch the depth range so it never pokes into walls this breaks the machine gun gui
     renderEntity.weaponDepthHack = true;
+
+    // Defensive: avoid getting stuck hidden from stale script/entity state.
+    if (showViewModel && !hide && !disabled && IsHidden())
+    {
+        Show();
+    }
 
     // present the model
     if (showViewModel)

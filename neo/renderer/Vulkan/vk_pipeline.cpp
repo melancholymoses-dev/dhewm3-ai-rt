@@ -979,10 +979,12 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
 
     // 3D pipelines add DEPTH_BIAS so MF_POLYGONOFFSET decals can use vkCmdSetDepthBias,
     // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
-    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
+    // CULL_MODE is dynamic so shader passes can honor per-material cull type.
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                   VK_DYNAMIC_STATE_CULL_MODE};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = depthTest ? 3 : 2;
+    dynamicState.dynamicStateCount = depthTest ? 4 : 3;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
@@ -1054,7 +1056,7 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
                          (dstIdx << 20) | (colorMaskNibble << 16);
 
     // Log GUI blend pipeline creation only at verbose translucent logging level.
-    if (r_vkLogTranslucent.GetInteger() >= 3)
+    if (r_vkLogTranslucent.GetInteger() >= 2)
     {
         common->Printf("VK GuiBlendPipeline: drawState=0x%08x blendBits=0x%x depthTest=%d depthOp=%d "
                        "src=%d dst=%d colorMask=0x%x (ZERO=0,ONE=1,ALPHA=4,DST_ALPHA=9,...)\n",

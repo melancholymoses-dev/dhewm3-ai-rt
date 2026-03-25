@@ -348,12 +348,20 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         const srfTriangles_t *geo;
         bool perforated;
     };
-    static SurfEntry validSurfs[512];
+    static const int MAX_BLAS_SURFACES = 512;
+    static SurfEntry validSurfs[MAX_BLAS_SURFACES];
     int validCount = 0;
+    int droppedByCap = 0;
     const int numSurfaces = model->NumSurfaces();
 
-    for (int s = 0; s < numSurfaces && validCount < 512; s++)
+    for (int s = 0; s < numSurfaces; s++)
     {
+        if (validCount >= MAX_BLAS_SURFACES)
+        {
+            droppedByCap++;
+            continue;
+        }
+
         const modelSurface_t *surf = model->Surface(s);
         if (!surf || !surf->geometry)
             continue;
@@ -372,6 +380,12 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         validSurfs[validCount].geo = geo;
         validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
         validCount++;
+    }
+
+    if (droppedByCap > 0)
+    {
+        common->Printf("VK RT BLAS WARNING: model '%s' exceeded %d surfaces; truncated %d surface(s) (numSurfaces=%d).\n",
+                       model->Name(), MAX_BLAS_SURFACES, droppedByCap, numSurfaces);
     }
 
     if (validCount == 0)
@@ -393,8 +407,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     blas->geomIdxMems = new VkDeviceMemory[validCount]();
 
     // Build geometry descriptors — one per valid surface
-    static VkAccelerationStructureGeometryKHR asGeoms[512];
-    static uint32_t primCounts[512];
+    static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
+    static uint32_t primCounts[MAX_BLAS_SURFACES];
 
     VkBufferCreateInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -498,7 +512,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
 
     // vkCmdBuildAccelerationStructuresKHR: for 1 buildInfo with N geometries,
     // ppBuildRangeInfos[0] must point to an array of N rangeInfos (one per geometry).
-    static VkAccelerationStructureBuildRangeInfoKHR ranges[512];
+    static VkAccelerationStructureBuildRangeInfoKHR ranges[MAX_BLAS_SURFACES];
     for (int i = 0; i < validCount; i++)
     {
         ranges[i] = {};

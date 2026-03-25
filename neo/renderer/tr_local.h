@@ -881,20 +881,17 @@ extern idCVar r_renderer; // arb2, etc
 extern idCVar r_useGLSL;  // use GLSL backend instead of ARB assembly programs
 
 // Vulkan / Ray Tracing backend
-extern idCVar r_backend;         // "opengl" or "vulkan"
-extern idCVar r_useRayTracing;   // enable hardware ray tracing
-extern idCVar r_rtShadows;       // ray traced shadows
-extern idCVar r_rtAO;            // ray traced ambient occlusion
-extern idCVar r_rtReflections;   // ray traced reflections
-extern idCVar r_rtShadowSamples; // shadow rays per pixel
-extern idCVar r_rtShadowBlur;        // shadow mask blur radius (0=off, 1-8=kernel half-width)
-extern idCVar r_rtFlashlightBias;   // units to push flashlight origin forward to avoid hand self-shadow
-extern idCVar r_vkLogRT;            // RT diagnostics verbosity (0=off,1=frame,2=per-light)
-extern idCVar r_rtAOSamples;     // AO rays per pixel
-extern idCVar r_rtDenoise;       // temporal denoising
-
-extern idCVar r_offsetFactor; // polygon offset factor (slope scale)
-extern idCVar r_offsetUnits;  // polygon offset units (constant bias, typically -600)
+extern idCVar r_backend;          // "opengl" or "vulkan"
+extern idCVar r_useRayTracing;    // enable hardware ray tracing
+extern idCVar r_rtShadows;        // ray traced shadows
+extern idCVar r_rtAO;             // ray traced ambient occlusion
+extern idCVar r_rtReflections;    // ray traced reflections
+extern idCVar r_rtShadowSamples;  // shadow rays per pixel
+extern idCVar r_rtShadowBlur;     // shadow mask blur radius (0=off, 1-8=kernel half-width)
+extern idCVar r_rtFlashlightBias; // units to push flashlight origin forward to avoid hand self-shadow
+extern idCVar r_vkLogRT;          // RT diagnostics verbosity (0=off,1=frame,2=per-light)
+extern idCVar r_rtAOSamples;      // AO rays per pixel
+extern idCVar r_rtDenoise;        // temporal denoising
 
 extern idCVar r_checkBounds; // compare all surface bounds with precalculated ones
 
@@ -938,22 +935,22 @@ extern const char *RB_TexgenName(int texgen);
 extern const char *RB_SrcBlendName(int bits);
 extern const char *RB_DstBlendName(int bits);
 
-extern idCVar r_useOptimizedShadows;          // 1 = use the dmap generated static shadow volumes
-extern idCVar r_useShadowVertexProgram;       // 1 = do the shadow projection in the vertex program on capable cards
-extern idCVar r_useShadowProjectedCull;       // 1 = discard triangles outside light volume before shadowing
-extern idCVar r_useDeferredTangents;          // 1 = don't always calc tangents after deform
-extern idCVar r_useCachedDynamicModels;       // 1 = cache snapshots of dynamic models
-extern idCVar r_useTwoSidedStencil;           // 1 = do stencil shadows in one pass with different ops on each side
-extern idCVar r_useInfiniteFarZ;              // 1 = use the no-far-clip-plane trick
-extern idCVar r_useScissor;                   // 1 = scissor clip as portals and lights are processed
-extern idCVar r_usePortals;                   // 1 = use portals to perform area culling, otherwise draw everything
-extern idCVar r_useStateCaching;              // avoid redundant state changes in GL_*() calls
-extern idCVar r_useCombinerDisplayLists;      // if 1, put all nvidia register combiner programming in display lists
-extern idCVar r_useVertexBuffers;             // if 0, don't use ARB_vertex_buffer_object for vertexes
-extern idCVar r_useIndexBuffers;              // if 0, don't use ARB_vertex_buffer_object for indexes
-extern idCVar r_useEntityCallbacks; // if 0, issue the callback immediately at update time, rather than defering
-extern idCVar r_lightAllBackFaces;  // light all the back faces, even when they would be shadowed
-extern idCVar r_useDepthBoundsTest; // use depth bounds test to reduce shadow fill
+extern idCVar r_useOptimizedShadows;     // 1 = use the dmap generated static shadow volumes
+extern idCVar r_useShadowVertexProgram;  // 1 = do the shadow projection in the vertex program on capable cards
+extern idCVar r_useShadowProjectedCull;  // 1 = discard triangles outside light volume before shadowing
+extern idCVar r_useDeferredTangents;     // 1 = don't always calc tangents after deform
+extern idCVar r_useCachedDynamicModels;  // 1 = cache snapshots of dynamic models
+extern idCVar r_useTwoSidedStencil;      // 1 = do stencil shadows in one pass with different ops on each side
+extern idCVar r_useInfiniteFarZ;         // 1 = use the no-far-clip-plane trick
+extern idCVar r_useScissor;              // 1 = scissor clip as portals and lights are processed
+extern idCVar r_usePortals;              // 1 = use portals to perform area culling, otherwise draw everything
+extern idCVar r_useStateCaching;         // avoid redundant state changes in GL_*() calls
+extern idCVar r_useCombinerDisplayLists; // if 1, put all nvidia register combiner programming in display lists
+extern idCVar r_useVertexBuffers;        // if 0, don't use ARB_vertex_buffer_object for vertexes
+extern idCVar r_useIndexBuffers;         // if 0, don't use ARB_vertex_buffer_object for indexes
+extern idCVar r_useEntityCallbacks;      // if 0, issue the callback immediately at update time, rather than defering
+extern idCVar r_lightAllBackFaces;       // light all the back faces, even when they would be shadowed
+extern idCVar r_useDepthBoundsTest;      // use depth bounds test to reduce shadow fill
 
 extern idCVar r_supportNoSpecular; // support nospecular parm of lights
 
