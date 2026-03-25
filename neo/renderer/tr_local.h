@@ -372,6 +372,7 @@ typedef struct viewEntity_s
     // that it is in is visible, and still not be visible.
     idScreenRect scissorRect;
 
+    bool isGuiSurface;
     bool weaponDepthHack;
     float modelDepthHack;
 
@@ -928,6 +929,15 @@ extern idCVar r_vkLightFullScissor;   // Vulkan shadow debug: force full-frame s
 extern idCVar r_vkInsideLightHysteresisEnter; // Vulkan shadow stability: extra enter-inside margin below slop
 extern idCVar r_vkInsideLightHysteresisExit;  // Vulkan shadow stability: extra leave-inside margin above slop
 extern idCVar r_vkLogSubmitInfo;              // Vulkan submit diagnostics (0=off,1=per-frame,2=verbose)
+extern idCVar r_glLogTranslucent;             // GL translucent/glass diagnostics (0=off,1=drawn stages,2=verbose)
+extern idCVar r_vkLogTranslucent;             // Vulkan translucent/glass diagnostics (0=off,1=drawn stages,2=verbose)
+
+// Helper functions for readable enum-to-string conversion (used in GL and VK logging)
+extern const char *RB_CoverageName(materialCoverage_t coverage);
+extern const char *RB_TexgenName(int texgen);
+extern const char *RB_SrcBlendName(int bits);
+extern const char *RB_DstBlendName(int bits);
+
 extern idCVar r_useOptimizedShadows;          // 1 = use the dmap generated static shadow volumes
 extern idCVar r_useShadowVertexProgram;       // 1 = do the shadow projection in the vertex program on capable cards
 extern idCVar r_useShadowProjectedCull;       // 1 = discard triangles outside light volume before shadowing

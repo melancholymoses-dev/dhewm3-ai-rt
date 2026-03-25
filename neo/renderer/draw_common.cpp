@@ -37,6 +37,99 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 extern idCVar r_useCarmacksReverse;
 extern idCVar r_useStencilOpSeparate;
 
+// Helper functions for readable enum-to-string conversion (used in GL and VK logging)
+const char *RB_CoverageName(materialCoverage_t coverage)
+{
+    switch (coverage)
+    {
+    case MC_OPAQUE:
+        return "opaque";
+    case MC_PERFORATED:
+        return "perforated";
+    case MC_TRANSLUCENT:
+        return "translucent";
+    default:
+        return "unknown";
+    }
+}
+
+const char *RB_TexgenName(int texgen)
+{
+    switch (texgen)
+    {
+    case TG_EXPLICIT:
+        return "explicit";
+    case TG_DIFFUSE_CUBE:
+        return "diffuse_cube";
+    case TG_SKYBOX_CUBE:
+        return "skybox_cube";
+    case TG_WOBBLESKY_CUBE:
+        return "wobblesky_cube";
+    case TG_SCREEN:
+        return "screen";
+    case TG_SCREEN2:
+        return "screen2";
+    case TG_GLASSWARP:
+        return "glasswarp";
+    case TG_REFLECT_CUBE:
+        return "reflect_cube";
+    default:
+        return "other";
+    }
+}
+
+const char *RB_SrcBlendName(int bits)
+{
+    switch (bits & GLS_SRCBLEND_BITS)
+    {
+    case GLS_SRCBLEND_ZERO:
+        return "ZERO";
+    case GLS_SRCBLEND_ONE:
+        return "ONE";
+    case GLS_SRCBLEND_DST_COLOR:
+        return "DST_COLOR";
+    case GLS_SRCBLEND_ONE_MINUS_DST_COLOR:
+        return "ONE_MINUS_DST_COLOR";
+    case GLS_SRCBLEND_SRC_ALPHA:
+        return "SRC_ALPHA";
+    case GLS_SRCBLEND_ONE_MINUS_SRC_ALPHA:
+        return "ONE_MINUS_SRC_ALPHA";
+    case GLS_SRCBLEND_DST_ALPHA:
+        return "DST_ALPHA";
+    case GLS_SRCBLEND_ONE_MINUS_DST_ALPHA:
+        return "ONE_MINUS_DST_ALPHA";
+    case GLS_SRCBLEND_ALPHA_SATURATE:
+        return "ALPHA_SATURATE";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+const char *RB_DstBlendName(int bits)
+{
+    switch (bits & GLS_DSTBLEND_BITS)
+    {
+    case GLS_DSTBLEND_ZERO:
+        return "ZERO";
+    case GLS_DSTBLEND_ONE:
+        return "ONE";
+    case GLS_DSTBLEND_SRC_COLOR:
+        return "SRC_COLOR";
+    case GLS_DSTBLEND_ONE_MINUS_SRC_COLOR:
+        return "ONE_MINUS_SRC_COLOR";
+    case GLS_DSTBLEND_SRC_ALPHA:
+        return "SRC_ALPHA";
+    case GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA:
+        return "ONE_MINUS_SRC_ALPHA";
+    case GLS_DSTBLEND_DST_ALPHA:
+        return "DST_ALPHA";
+    case GLS_DSTBLEND_ONE_MINUS_DST_ALPHA:
+        return "ONE_MINUS_DST_ALPHA";
+    default:
+        return "UNKNOWN";
+    }
+}
+
 /*
 =====================
 RB_BakeTextureMatrixIntoTexgen
@@ -426,6 +519,11 @@ void RB_T_FillDepthBuffer(const drawSurf_t *surf)
     // test against it, which makes them fail the mirror clip plane operation
     if (shader->Coverage() == MC_TRANSLUCENT)
     {
+        if (r_glLogTranslucent.GetInteger() >= 2)
+        {
+            common->Printf("GL TRANSLUCENT DEPTH-SKIP: frame=%d mat='%s' sort=%d cov=%s\n", tr.frameCount,
+                           shader->GetName(), shader->GetSort(), RB_CoverageName(shader->Coverage()));
+        }
         return;
     }
 
@@ -866,6 +964,17 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
 
     // check whether we're drawing a soft particle surface #3878
     const bool soft_particle = (surf->dsFlags & DSF_SOFT_PARTICLE) != 0;
+    const int glTransLog = r_glLogTranslucent.GetInteger();
+    const bool translucentLike = (shader->Coverage() == MC_TRANSLUCENT) || (shader->GetSort() >= SS_MEDIUM);
+
+    if (glTransLog >= 1 && translucentLike)
+    {
+        common->Printf(
+            "GL TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d soft=%d scissor=(%d,%d %d,%d)\n",
+            tr.frameCount, shader->GetName(), shader->GetSort(), RB_CoverageName(shader->Coverage()),
+            shader->GetNumStages(), tri->numIndexes, soft_particle ? 1 : 0, surf->scissorRect.x1, surf->scissorRect.y1,
+            surf->scissorRect.x2, surf->scissorRect.y2);
+    }
 
     // get the expressions for conditionals / color / texcoords
     regs = surf->shaderRegisters;
@@ -898,6 +1007,18 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
     for (stage = 0; stage < shader->GetNumStages(); stage++)
     {
         pStage = shader->GetStage(stage);
+
+        if (glTransLog >= 2 && translucentLike)
+        {
+            const char *texName = (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
+            common->Printf(
+                "GL TRANSLUCENT STAGE-CHECK: frame=%d mat='%s' stage=%d cond=%.3f lighting=%d draw=0x%08x src=%s dst=%s "
+                "texgen=%s image='%s' alphaTest=%d new=%d\n",
+                tr.frameCount, shader->GetName(), stage, regs[pStage->conditionRegister], pStage->lighting,
+                pStage->drawStateBits, RB_SrcBlendName(pStage->drawStateBits), RB_DstBlendName(pStage->drawStateBits),
+                RB_TexgenName(pStage->texture.texgen), texName, pStage->hasAlphaTest ? 1 : 0,
+                pStage->newStage ? 1 : 0);
+        }
 
         // check the enable condition
         if (regs[pStage->conditionRegister] == 0)
@@ -983,6 +1104,15 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
             }
             qglBindProgramARB(GL_FRAGMENT_PROGRAM_ARB, newStage->fragmentProgram);
             qglEnable(GL_FRAGMENT_PROGRAM_ARB);
+
+            if (glTransLog >= 1 && translucentLike)
+            {
+                const char *texName = (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
+                common->Printf(
+                    "GL TRANSLUCENT STAGE-DRAW: frame=%d mat='%s' stage=%d path=newstage src=%s dst=%s texgen=%s image='%s'\n",
+                    tr.frameCount, shader->GetName(), stage, RB_SrcBlendName(pStage->drawStateBits),
+                    RB_DstBlendName(pStage->drawStateBits), RB_TexgenName(pStage->texture.texgen), texName);
+            }
 
             // draw it
             RB_DrawElementsWithCounters(tri);
@@ -1171,6 +1301,17 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
             }
             qglProgramEnvParameter4fvARB(GL_FRAGMENT_PROGRAM_ARB, PP_PARTICLE_COLCHAN_MASK, parm);
 
+            if (glTransLog >= 1 && translucentLike)
+            {
+                const char *texName = (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
+                common->Printf(
+                    "GL TRANSLUCENT STAGE-DRAW: frame=%d mat='%s' stage=%d path=softparticle src=%s dst=%s texgen=%s "
+                    "image='%s' radius=%.3f\n",
+                    tr.frameCount, shader->GetName(), stage, RB_SrcBlendName(pStage->drawStateBits),
+                    RB_DstBlendName(pStage->drawStateBits), RB_TexgenName(pStage->texture.texgen), texName,
+                    surf->particle_radius);
+            }
+
             // draw it
             RB_DrawElementsWithCounters(tri);
 
@@ -1273,6 +1414,17 @@ void RB_STD_T_RenderShaderPasses(const drawSurf_t *surf)
 
         // set the state
         GL_State(pStage->drawStateBits);
+
+        if (glTransLog >= 1 && translucentLike)
+        {
+            const char *texName = (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
+            common->Printf(
+                "GL TRANSLUCENT STAGE-DRAW: frame=%d mat='%s' stage=%d path=legacy src=%s dst=%s texgen=%s image='%s' "
+                "color=(%.3f,%.3f,%.3f,%.3f)\n",
+                tr.frameCount, shader->GetName(), stage, RB_SrcBlendName(pStage->drawStateBits),
+                RB_DstBlendName(pStage->drawStateBits), RB_TexgenName(pStage->texture.texgen), texName, color[0],
+                color[1], color[2], color[3]);
+        }
 
         RB_PrepareStageTexturing(pStage, surf, ac);
 
