@@ -387,10 +387,10 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     // Carmack's Reverse front/back stencil ops depend on correct face identification.
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthClampEnable = VK_FALSE; // Doom 3 uses infinite-far-plane projection (z=-0.999),
-                                              // so shadow vertices at infinity stay within [0,1] — no clamping
-                                              // needed.  Disabling matches GL behavior: fragments outside the
-                                              // frustum are clipped rather than clamped, preventing spurious
-                                              // stencil marks from near-plane overflow.
+                                            // so shadow vertices at infinity stay within [0,1] — no clamping
+                                            // needed.  Disabling matches GL behavior: fragments outside the
+                                            // frustum are clipped rather than clamped, preventing spurious
+                                            // stencil marks from near-plane overflow.
     rasterizer.lineWidth = 1.0f;
     // Match GL shadow polygon offset behavior; values are set dynamically from cvars per draw.
     rasterizer.depthBiasEnable = VK_TRUE;
@@ -1020,6 +1020,16 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     uint32_t depthOpIdx = (depthOp == VK_COMPARE_OP_EQUAL) ? 1u : (depthOp == VK_COMPARE_OP_ALWAYS) ? 2u : 0u;
     const uint32_t key = blendBits | (depthTest ? 0x80000000u : 0u) | (depthOpIdx << 28);
 
+    // Log GUI blend pipeline creation for translucent debugging (r_vkLogTranslucent >= 2)
+    if (r_vkLogTranslucent.GetInteger() >= 2 && blendBits != 0u)
+    {
+        VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
+        VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
+        common->Printf("VK GuiBlendPipeline: drawState=0x%08x blendBits=0x%x depthTest=%d depthOp=%d "
+                       "src=%d dst=%d (ZERO=0,ONE=1,ALPHA=4,DST_ALPHA=9,...)\n",
+                       drawStateBits, blendBits, depthTest ? 1 : 0, depthOp, (int)src, (int)dst);
+    }
+
     // Fast path: pre-built 2D pipelines (no depth test, LEQUAL default)
     if (!depthTest && depthOpIdx == 0u)
     {
@@ -1044,9 +1054,18 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
         return vkPipes.guiAlphaPipeline;
     }
 
+    // Always convert blend factors (even if blendBits extracted to 0, we need explicit ONE/ZERO factors).
+    // The blend factors are determined from the drawStateBits regardless of whether the bit
+    // masks extract to non-zero values.  renderPass attachments require explicit enable + factors
+    // to properly handle stages like makealpha (ONE, ZERO) that reconstruct alpha.
     VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
     VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
-    bool blend = (blendBits != 0u);
+
+    // Determine if blending should be enabled.  Even if blendBits==0, we still enable blending
+    // if the converted factors are valid (non-default). A (ONE, ZERO) blend is valid and must
+    // be enabled, not treated as an opaque surface.
+    bool blend = (src != VK_BLEND_FACTOR_ONE || dst != VK_BLEND_FACTOR_ZERO);
+
     VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest, depthOp);
     if (p == VK_NULL_HANDLE)
         return vkPipes.guiAlphaPipeline;

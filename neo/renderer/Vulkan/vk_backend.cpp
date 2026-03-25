@@ -770,17 +770,54 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
         }
 
+        // Log translucent material surfaces (same criteria as GL path)
+        const int vkTransLog = r_vkLogTranslucent.GetInteger();
+        const bool translucentLike = (mat->Coverage() == MC_TRANSLUCENT) || (mat->GetSort() >= SS_MEDIUM);
+        if (vkTransLog >= 1 && translucentLike)
+        {
+            common->Printf(
+                "VK TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d scissor=(%d,%d %d,%d)\n",
+                tr.frameCount, mat->GetName(), (int)mat->GetSort(), RB_CoverageName(mat->Coverage()),
+                mat->GetNumStages(), si, 0, 0, (int)vk.swapchainExtent.width, (int)vk.swapchainExtent.height);
+        }
+
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
+            // Log verbose stage gating checks when translucent logging is enabled
+            if (vkTransLog >= 2 && translucentLike && !regs[pStage->conditionRegister])
+            {
+                common->Printf("VK TRANSLUCENT STAGE-GATED: frame=%d mat='%s' stage=%d cond=%.3f (disabled)\n",
+                               tr.frameCount, mat->GetName(), stageIdx, regs[pStage->conditionRegister]);
+            }
 
             // Skip disabled stages
             if (!regs[pStage->conditionRegister])
                 continue;
 
+            // Log verbose stage type checks
+            if (vkTransLog >= 2 && translucentLike && pStage->lighting != SL_AMBIENT)
+            {
+                common->Printf(
+                    "VK TRANSLUCENT STAGE-TYPE: frame=%d mat='%s' stage=%d lighting=%d (skipped, not ambient)\n",
+                    tr.frameCount, mat->GetName(), stageIdx, pStage->lighting);
+            }
+
             // Skip lighting-specific stages (handled by interaction pass)
             if (pStage->lighting != SL_AMBIENT)
                 continue;
+
+            // Log the stage that will actually be drawn
+            if (vkTransLog >= 1 && translucentLike)
+            {
+                const char *texName =
+                    (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
+                common->Printf(
+                    "VK TRANSLUCENT STAGE-DRAW: frame=%d mat='%s' stage=%d blend=(%s,%s) texgen=%s image='%s'\n",
+                    tr.frameCount, mat->GetName(), stageIdx, RB_SrcBlendName(pStage->drawStateBits),
+                    RB_DstBlendName(pStage->drawStateBits), RB_TexgenName(pStage->texture.texgen), texName);
+            }
 
             idImage *img = pStage->texture.image;
             VkDescriptorImageInfo imgInfo = {};
@@ -1014,6 +1051,17 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
 
             VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits, needDepth);
+
+            // Log translucent material pipeline binding
+            if (vkTransLog >= 1 && translucentLike)
+            {
+                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                common->Printf("VK TRANSLUCENT BIND: frame=%d mat='%s' stage=%d pipeline=%p drawState=0x%08x "
+                               "blend=0x%x depthTest=%s\n",
+                               tr.frameCount, mat->GetName(), stageIdx, (void *)pipeline, pStage->drawStateBits,
+                               blendBits, needDepth ? "true" : "false");
+            }
+
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
@@ -1966,9 +2014,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
                            backEnd.viewDef->viewport.x1 + vLight->scissorRect.x2,
                            backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2, (int)lightScissor.offset.x,
                            (int)lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                           (unsigned int)lightScissor.extent.height, nLocal, nGlobal, nTrans,
-                           nGlobalShadow, nLocalShadow,
-                           VK_RTShadowsEnabled() ? 1 : 0);
+                           (unsigned int)lightScissor.extent.height, nLocal, nGlobal, nTrans, nGlobalShadow,
+                           nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
         }
 
         if (r_vkLogShadowBranch.GetInteger() >= 5)
@@ -2117,15 +2164,14 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
         if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
         {
-            common->Printf(
-                "VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
-                "fullShadowScissor=%d useScissor=%d\n",
-                lightIdx, lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                (unsigned int)lightScissor.extent.height, shadowScissor.offset.x, shadowScissor.offset.y,
-                (unsigned int)shadowScissor.extent.width, (unsigned int)shadowScissor.extent.height,
-                lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                (unsigned int)lightScissor.extent.height, useFullShadowScissor ? 1 : 0,
-                r_useScissor.GetBool() ? 1 : 0);
+            common->Printf("VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
+                           "fullShadowScissor=%d useScissor=%d\n",
+                           lightIdx, lightScissor.offset.x, lightScissor.offset.y,
+                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
+                           shadowScissor.offset.x, shadowScissor.offset.y, (unsigned int)shadowScissor.extent.width,
+                           (unsigned int)shadowScissor.extent.height, lightScissor.offset.x, lightScissor.offset.y,
+                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
+                           useFullShadowScissor ? 1 : 0, r_useScissor.GetBool() ? 1 : 0);
         }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
@@ -2178,6 +2224,19 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             s_shadowPhaseTag = "translucentInteraction";
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+
+            // Log translucent interaction setup
+            if (r_vkLogTranslucent.GetInteger() >= 1)
+            {
+                int transCount = 0;
+                for (const drawSurf_t *s = vLight->translucentInteractions; s; s = s->nextOnLight)
+                    transCount++;
+                const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+                common->Printf("VK TRANSLUCENT LIGHT[%d]: light='%s' translucentSurfaces=%d depthFunc=LESS "
+                               "stencil=DISABLED\n",
+                               lightIdx, lName, transCount);
+            }
+
             // Translucent surfaces didn't write depth during the prepass, so they may not
             // be at the same depth as opaque geometry.  Use a pipeline with stencil disabled
             // so shadow volumes don't incorrectly cull them (mirrors GL path: performStencilTest=false).
