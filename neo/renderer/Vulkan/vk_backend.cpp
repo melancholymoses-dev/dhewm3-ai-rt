@@ -343,41 +343,11 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const char *matName = mat ? mat->GetName() : "<null>";
     const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
 
-    static bool s_loggedInteractionCullMapping = false;
-    if (!s_loggedInteractionCullMapping)
-    {
-        s_loggedInteractionCullMapping = true;
-
-        VkCullModeFlags firstCull = VK_CULL_MODE_BACK_BIT;
-        if (mat && mat->GetCullType() == CT_TWO_SIDED)
-            firstCull = VK_CULL_MODE_NONE;
-        else if (mat && mat->GetCullType() == CT_BACK_SIDED)
-            firstCull = VK_CULL_MODE_FRONT_BIT;
-
-        common->Printf("VK INTER CULL MAP(eval): enums CT_FRONT=%d CT_BACK=%d CT_TWO=%d; vk FRONT=0x%x BACK=0x%x "
-                       "NONE=0x%x; firstMat='%s' firstCullType=%d -> firstVkCull=0x%x\n",
-                       (int)CT_FRONT_SIDED, (int)CT_BACK_SIDED, (int)CT_TWO_SIDED, (unsigned)VK_CULL_MODE_FRONT_BIT,
-                       (unsigned)VK_CULL_MODE_BACK_BIT, (unsigned)VK_CULL_MODE_NONE, matName,
-                       mat ? (int)mat->GetCullType() : -1, (unsigned)firstCull);
-    }
-
     if (r_vkLogRT.GetInteger() >= 3)
     {
         const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
         common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
                        geo ? geo->numIndexes : 0);
-    }
-
-    if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
-    {
-        const char *bumpName = din->bumpImage ? din->bumpImage->imgName.c_str() : "<null>";
-        const char *diffName = din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>";
-        const char *specName = din->specularImage ? din->specularImage->imgName.c_str() : "<null>";
-        common->Printf("VK INTER weapon plasma: light=%d phase=%s vtxColor=%d diffuse=(%.3f %.3f %.3f %.3f) spec=(%.3f "
-                       "%.3f %.3f %.3f) tex[b='%s' d='%s' s='%s']\n",
-                       s_lightIdx, s_shadowPhaseTag, (int)din->vertexColor, din->diffuseColor[0], din->diffuseColor[1],
-                       din->diffuseColor[2], din->diffuseColor[3], din->specularColor[0], din->specularColor[1],
-                       din->specularColor[2], din->specularColor[3], bumpName, diffName, specName);
     }
 
     vkUBORing_t &ring = uboRings[vk.currentFrame];
@@ -646,16 +616,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
             cullMode = VK_CULL_MODE_NONE;
 
-        if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
-        {
-            common->Printf("VK INTER weapon plasma: cullType=%d -> vkCull=0x%x pipe=%s frontFace=0x%x (CW=0x%x "
-                           "CCW=0x%x) forceTwoSided=%d noStencil=%d\n",
-                           mat ? (int)mat->GetCullType() : -1, (unsigned)cullMode, s_interactionPipeTag,
-                           (unsigned)VK_FRONT_FACE_CLOCKWISE, (unsigned)VK_FRONT_FACE_CLOCKWISE,
-                           (unsigned)VK_FRONT_FACE_COUNTER_CLOCKWISE, r_vkPlasmaForceTwoSided.GetBool() ? 1 : 0,
-                           r_vkPlasmaNoStencil.GetBool() ? 1 : 0);
-        }
-
         vkCmdSetCullMode(s_cmd, cullMode);
     }
 
@@ -671,18 +631,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     if (forceWeaponStencilAlways)
     {
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilAlways);
-        if (r_vkLogRT.GetInteger() >= 2 && isPlasmaBody)
-        {
-            common->Printf("VK INTER weapon plasma: using pipe=opaque-stencil-always\n");
-        }
     }
     else if (forceWeaponStencilLEqual)
     {
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilLEqual);
-        if (r_vkLogRT.GetInteger() >= 2 && isPlasmaBody)
-        {
-            common->Printf("VK INTER weapon plasma: using pipe=opaque-stencil-lequal\n");
-        }
     }
 
     // Debug isolation: force plasma body interactions through no-stencil path to
@@ -784,7 +736,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     // Sentinel for depth bias tracking — larger than any real bias value (which is
     // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
     float activeShaderBias = 1000000.0f;
-    int weaponPassLogCount = 0;
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
@@ -793,47 +744,19 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             continue;
 
         const idMaterial *mat = surf->material;
-        const bool isWeaponSurf = (surf->space && surf->space->weaponDepthHack);
-        const bool isPlasmaBody = (idStr::Cmp(mat->GetName(), "models/weapons/plasmagun/plasmagun") == 0);
-        int plasmaStageTotal = 0;
-        int plasmaStageCondOff = 0;
-        int plasmaStageNonAmbient = 0;
-        int plasmaStageDrawn = 0;
         if (mat->SuppressInSubview())
-        {
-            if (isWeaponSurf && r_vkLogRT.GetInteger() >= 2 && weaponPassLogCount < 12)
-            {
-                common->Printf("VK DrawShaderPasses: SKIP weapon surf (SuppressInSubview) mat='%s'\n", mat->GetName());
-                weaponPassLogCount++;
-            }
             continue;
-        }
 
         // Fog lights and blend lights have volume geometry in drawSurfs.
         // The GUI pipeline has no depth test, so these volumes would render
         // through floors/walls if not skipped here.  They will be handled
         // by a future VK_RB_FogAllLights pass.
         if (mat->IsFogLight() || mat->IsBlendLight())
-        {
-            if (isWeaponSurf && r_vkLogRT.GetInteger() >= 2 && weaponPassLogCount < 12)
-            {
-                common->Printf("VK DrawShaderPasses: SKIP weapon surf (Fog/Blend light) mat='%s' fog=%d blend=%d\n",
-                               mat->GetName(), (int)mat->IsFogLight(), (int)mat->IsBlendLight());
-                weaponPassLogCount++;
-            }
             continue;
-        }
 
         const srfTriangles_t *geo = surf->geo;
         if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
             continue;
-
-        if (isWeaponSurf && r_vkLogRT.GetInteger() >= 2 && weaponPassLogCount < 12)
-        {
-            common->Printf("VK DrawShaderPasses: DRAW weapon surf mat='%s' idx=%d verts=%d\n", mat->GetName(),
-                           geo->numIndexes, geo->numVerts);
-            weaponPassLogCount++;
-        }
 
         // Get vertex data (from cache or raw verts)
         VkBuffer vertBuf;
@@ -941,11 +864,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             // Skip lighting-specific stages (handled by interaction pass)
             if (pStage->lighting != SL_AMBIENT)
-            {
-                if (isPlasmaBody)
-                    plasmaStageNonAmbient++;
                 continue;
-            }
 
             // Log the stage that will actually be drawn
             if (vkTransLog >= 1 && translucentLike)
@@ -1215,25 +1134,10 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
             vkCmdSetCullMode(cmd, shaderCull);
 
-            if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
-            {
-                common->Printf("VK SHADER weapon plasma: stage=%d needDepth=%d cullType=%d -> vkCull=0x%x\n", stageIdx,
-                               needDepth ? 1 : 0, (int)mat->GetCullType(), (unsigned)shaderCull);
-            }
-
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
-
-            if (isPlasmaBody)
-                plasmaStageDrawn++;
-        }
-
-        if (r_vkLogRT.GetInteger() >= 2 && isWeaponSurf && isPlasmaBody)
-        {
-            common->Printf("VK SHADER weapon plasma: stages total=%d drawn=%d condOff=%d nonAmbient=%d\n",
-                           plasmaStageTotal, plasmaStageDrawn, plasmaStageCondOff, plasmaStageNonAmbient);
         }
     }
 }
@@ -1445,10 +1349,6 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 VkDescriptorImageInfo imgInfo = {};
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
                 drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
-                if (r_vkLogRT.GetInteger() >= 2)
-                {
-                    common->Printf("VK DEPTH weapon plasma: ignore alpha-test in prepass (debug)\n");
-                }
                 continue;
             }
 
@@ -1470,12 +1370,6 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                     VK_Image_GetFallbackDescriptorInfo(&imgInfo);
 
                 float threshold = regs[pStage->alphaTestRegister];
-                if (r_vkLogRT.GetInteger() >= 2 && isPlasmaBody)
-                {
-                    common->Printf(
-                        "VK DEPTH weapon plasma: alpha stage=%d alphaScale=%.3f threshold=%.3f texMatrix=%d\n", si,
-                        alphaScale, threshold, pStage->texture.hasMatrix ? 1 : 0);
-                }
                 drawDepthSurf(imgInfo, threshold, true, pStage, regs, alphaScale);
                 didDraw = true;
             }
