@@ -837,11 +837,33 @@ static const int MAX_BLEND_PIPELINES = 32;
 static VkBlendPipelineEntry s_blendCache[MAX_BLEND_PIPELINES];
 static int s_blendCacheCount = 0;
 
+// Convert Doom3 inverse channel mask bits to Vulkan colorWriteMask bits.
+// In Doom3, GLS_*MASK means "disable writes" for that channel.
+// Important: stage drawState 0x00000f00 (breakyglass3_nvp stage 0) is alpha-only.
+// If this mapping is skipped and RGBA is always enabled, the glass pass turns white.
+static VkColorComponentFlags VK_GlsColorMaskToVk(int stateBits)
+{
+    VkColorComponentFlags mask = 0;
+    if ((stateBits & GLS_REDMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_R_BIT;
+    if ((stateBits & GLS_GREENMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_G_BIT;
+    if ((stateBits & GLS_BLUEMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_B_BIT;
+    if ((stateBits & GLS_ALPHAMASK) == 0)
+        mask |= VK_COLOR_COMPONENT_A_BIT;
+    return mask;
+}
+
 // Core GUI pipeline builder — explicit blend control.
 // blendEnable=false overrides all blend factor args (fully opaque).
 static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnable, VkBlendFactor srcColor,
                                          VkBlendFactor dstColor, VkBlendFactor srcAlpha, VkBlendFactor dstAlpha,
-                                         bool depthTest = false, VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL)
+                                         bool depthTest = false, VkCompareOp depthOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+                                         VkColorComponentFlags colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                                                                                VK_COLOR_COMPONENT_G_BIT |
+                                                                                VK_COLOR_COMPONENT_B_BIT |
+                                                                                VK_COLOR_COMPONENT_A_BIT)
 {
     VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
     VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/gui.frag.spv");
@@ -938,8 +960,7 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     }
 
     VkPipelineColorBlendAttachmentState colorBlend = {};
-    colorBlend.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlend.colorWriteMask = colorWriteMask;
     if (blendEnable)
     {
         colorBlend.blendEnable = VK_TRUE;
@@ -1004,6 +1025,8 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
 VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
 {
     const uint32_t blendBits = (uint32_t)(drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+    const VkColorComponentFlags colorMask = VK_GlsColorMaskToVk(drawStateBits);
+    const uint32_t colorMaskNibble = (uint32_t)(colorMask & 0xFu);
 
     // Determine depth compare op from the stage's drawStateBits, matching GL_State() in gl_backend.cpp.
     // GLS_DEPTHFUNC_EQUAL (0x20000): opaque/perforated stages must match prepass exactly.
@@ -1015,28 +1038,42 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
     else if (drawStateBits & GLS_DEPTHFUNC_ALWAYS)
         depthOp = VK_COMPARE_OP_ALWAYS;
 
-    // Pack depth flag and depth-op into the high bits of the cache key.
-    // Bits[31]: depthTest on/off. Bits[29:28]: depthOp index (0=LEQUAL,1=EQUAL,2=ALWAYS).
-    uint32_t depthOpIdx = (depthOp == VK_COMPARE_OP_EQUAL) ? 1u : (depthOp == VK_COMPARE_OP_ALWAYS) ? 2u : 0u;
-    const uint32_t key = blendBits | (depthTest ? 0x80000000u : 0u) | (depthOpIdx << 28);
+    // Convert blend factors early for cache key and enable logic.
+    // This must happen before cache key creation to avoid collisions when blendBits=0.
+    VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
+    VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
 
-    // Log GUI blend pipeline creation for translucent debugging (r_vkLogTranslucent >= 2)
-    if (r_vkLogTranslucent.GetInteger() >= 2 && blendBits != 0u)
+    // Build cache key including blend factors and color mask to avoid collisions.
+    // Example: (ONE, ZERO) and (ZERO, ONE) both have blendBits=0 but need different pipelines.
+    // Bits[31]: depthTest. Bits[29:28]: depthOp. Bits[27:24]: src factor.
+    // Bits[23:20]: dst factor. Bits[19:16]: color write mask nibble.
+    uint32_t depthOpIdx = (depthOp == VK_COMPARE_OP_EQUAL) ? 1u : (depthOp == VK_COMPARE_OP_ALWAYS) ? 2u : 0u;
+    const uint32_t srcIdx = (uint32_t)src & 0xFu;
+    const uint32_t dstIdx = (uint32_t)dst & 0xFu;
+    const uint32_t key = blendBits | (depthTest ? 0x80000000u : 0u) | (depthOpIdx << 28) | (srcIdx << 24) |
+                         (dstIdx << 20) | (colorMaskNibble << 16);
+
+    // Log GUI blend pipeline creation only at verbose translucent logging level.
+    if (r_vkLogTranslucent.GetInteger() >= 3)
     {
-        VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
-        VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
         common->Printf("VK GuiBlendPipeline: drawState=0x%08x blendBits=0x%x depthTest=%d depthOp=%d "
-                       "src=%d dst=%d (ZERO=0,ONE=1,ALPHA=4,DST_ALPHA=9,...)\n",
-                       drawStateBits, blendBits, depthTest ? 1 : 0, depthOp, (int)src, (int)dst);
+                       "src=%d dst=%d colorMask=0x%x (ZERO=0,ONE=1,ALPHA=4,DST_ALPHA=9,...)\n",
+                       drawStateBits, blendBits, depthTest ? 1 : 0, depthOp, (int)src, (int)dst,
+                       (unsigned int)colorMask);
     }
 
     // Fast path: pre-built 2D pipelines (no depth test, LEQUAL default)
+    // Verify blend/factors/mask all match to avoid returning wrong pipeline
     if (!depthTest && depthOpIdx == 0u)
     {
-        if (blendBits == 0u)
+        const VkColorComponentFlags fullMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+        if (blendBits == 0u && src == VK_BLEND_FACTOR_ONE && dst == VK_BLEND_FACTOR_ZERO && colorMask == fullMask)
             return vkPipes.guiOpaquePipeline;
         const uint32_t alphaKey = (uint32_t)(GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA);
-        if (blendBits == alphaKey)
+        if (blendBits == alphaKey && src == VK_BLEND_FACTOR_SRC_ALPHA && dst == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA &&
+            colorMask == fullMask)
             return vkPipes.guiAlphaPipeline;
     }
 
@@ -1054,19 +1091,12 @@ VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest)
         return vkPipes.guiAlphaPipeline;
     }
 
-    // Always convert blend factors (even if blendBits extracted to 0, we need explicit ONE/ZERO factors).
-    // The blend factors are determined from the drawStateBits regardless of whether the bit
-    // masks extract to non-zero values.  renderPass attachments require explicit enable + factors
-    // to properly handle stages like makealpha (ONE, ZERO) that reconstruct alpha.
-    VkBlendFactor src = VK_GlsSrcBlendToVk(drawStateBits);
-    VkBlendFactor dst = VK_GlsDstBlendToVk(drawStateBits);
-
     // Determine if blending should be enabled.  Even if blendBits==0, we still enable blending
     // if the converted factors are valid (non-default). A (ONE, ZERO) blend is valid and must
     // be enabled, not treated as an opaque surface.
     bool blend = (src != VK_BLEND_FACTOR_ONE || dst != VK_BLEND_FACTOR_ZERO);
 
-    VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest, depthOp);
+    VkPipeline p = VK_CreateGuiPipelineEx(vkPipes.guiLayout, blend, src, dst, src, dst, depthTest, depthOp, colorMask);
     if (p == VK_NULL_HANDLE)
         return vkPipes.guiAlphaPipeline;
 

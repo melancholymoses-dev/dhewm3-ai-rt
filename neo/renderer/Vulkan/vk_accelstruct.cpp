@@ -589,6 +589,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (!ent)
             continue;
 
+        // Match classic shadow suppression semantics for RT shadows.
+        // Without this, first-person world weapon/viewmodel entities can still
+        // contribute to the TLAS and cast disembodied RT shadows.
+        if (ent->parms.suppressShadowInViewID && ent->parms.suppressShadowInViewID == viewDef->renderView.viewID)
+            continue;
+        if (ent->parms.weaponDepthHack)
+            continue;
+
         // Build or rebuild BLAS for this entity if needed
         idRenderModel *model = ent->dynamicModel ? ent->dynamicModel : ent->parms.hModel;
         if (!model)
