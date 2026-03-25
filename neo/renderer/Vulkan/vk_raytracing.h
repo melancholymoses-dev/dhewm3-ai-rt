@@ -122,14 +122,16 @@ struct vkRTState_t
     VkDescriptorSetLayout shadowDescLayout;
     VkDescriptorPool shadowDescPool;
     VkDescriptorSet shadowDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int shadowDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Shadow mask blur (compute pipeline)
     VkPipeline blurPipeline;
     VkPipelineLayout blurPipelineLayout;
     VkDescriptorSetLayout blurDescLayout;
     VkDescriptorPool blurDescPool;
-    VkDescriptorSet blurDescSetH; // horizontal pass: shadowMask→blurTemp
-    VkDescriptorSet blurDescSetV; // vertical pass: blurTemp→shadowMask
+    VkDescriptorSet blurDescSetH[VK_MAX_FRAMES_IN_FLIGHT]; // horizontal pass: shadowMask→blurTemp
+    VkDescriptorSet blurDescSetV[VK_MAX_FRAMES_IN_FLIGHT]; // vertical pass: blurTemp→shadowMask
+    int blurDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // SBT buffers
     VkBuffer sbtBuffer;
