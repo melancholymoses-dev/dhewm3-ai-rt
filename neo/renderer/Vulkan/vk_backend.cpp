@@ -663,6 +663,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
+    if (r_vkLogRT.GetInteger() >= 2)
+    {
+        common->Printf("VK DrawShaderPasses: ENTER numDrawSurfs=%d\n", backEnd.viewDef->numDrawSurfs);
+    }
+
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
     // Interaction pass leaves a per-light scissor active (often flashlight-sized).
@@ -752,6 +757,19 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
         }
 
+        if (r_vkLogRT.GetInteger() >= 2)
+        {
+            static idStrList s_loggedMats;
+            idStr matKey;
+            matKey.Format("%s", mat->GetName());
+            if (s_loggedMats.Find(matKey) < 0)
+            {
+                s_loggedMats.Append(matKey);
+                common->Printf("VK DrawShaderPasses: mat='%s' sort=%d numStages=%d\n", mat->GetName(),
+                               (int)mat->GetSort(), mat->GetNumStages());
+            }
+        }
+
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
@@ -766,6 +784,24 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             idImage *img = pStage->texture.image;
             VkDescriptorImageInfo imgInfo = {};
+
+            // Log TG_SCREEN stages whether img is null or not — regardless of which
+            // branch handles them below, we want to see if they're being processed.
+            if (r_vkLogRT.GetInteger() >= 2 &&
+                (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2 ||
+                 pStage->texture.texgen == TG_GLASSWARP))
+            {
+                static idStrList s_loggedScreenStages;
+                idStr key;
+                key.Format("%s#%d#%d", mat->GetName(), stageIdx, (int)pStage->texture.texgen);
+                if (s_loggedScreenStages.Find(key) < 0)
+                {
+                    s_loggedScreenStages.Append(key);
+                    common->Printf("VK DrawShaderPasses: SCREEN STAGE mat='%s' stage=%d texgen=%d img=%s\n",
+                                   mat->GetName(), stageIdx, (int)pStage->texture.texgen,
+                                   img ? img->imgName.c_str() : "<null>");
+                }
+            }
             if (!img)
             {
                 if (pStage->texture.cinematic)
@@ -778,16 +814,51 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 {
                     // Dynamic screen-space stages often have no explicit texture image and
                     // source from renderer-owned scratch/currentRender images.
+                    static idStrList s_loggedDynTexgenPaths;
+                    bool usedWhiteFallback = false;
+                    const char *chosenSource = "dyn";
                     idImage *dynImg = (pStage->texture.texgen == TG_SCREEN) ? globalImages->currentRenderImage
                                                                             : globalImages->scratchImage;
                     if (!VK_Image_GetDescriptorInfo(dynImg, &imgInfo))
                     {
                         // Fallback chain for cases where scratch/currentRender has not been
                         // uploaded yet in this run.
-                        if (!VK_Image_GetDescriptorInfo(globalImages->currentRenderImage, &imgInfo) &&
-                            !VK_Image_GetDescriptorInfo(globalImages->scratchImage2, &imgInfo))
+                        const bool haveCurrentRender =
+                            VK_Image_GetDescriptorInfo(globalImages->currentRenderImage, &imgInfo);
+                        const bool haveScratch2 =
+                            !haveCurrentRender && VK_Image_GetDescriptorInfo(globalImages->scratchImage2, &imgInfo);
+                        if (haveCurrentRender)
+                        {
+                            chosenSource = "currentRender";
+                        }
+                        else if (haveScratch2)
+                        {
+                            chosenSource = "scratch2";
+                        }
+                        else
                         {
                             VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                            usedWhiteFallback = true;
+                            chosenSource = "white";
+                        }
+                    }
+
+                    if (r_vkLogRT.GetInteger() >= 2)
+                    {
+                        idStr key;
+                        key.Format("%s#%d#%d#%s", mat->GetName(), stageIdx, (int)pStage->texture.texgen, chosenSource);
+                        if (s_loggedDynTexgenPaths.Find(key) < 0)
+                        {
+                            s_loggedDynTexgenPaths.Append(key);
+                            common->Printf(
+                                "VK DrawShaderPasses: dynamic texgen path mat='%s' stage=%d texgen=%d source=%s "
+                                "dyn='%s' curRender='%s' scratch2='%s' whiteFallback=%d\n",
+                                mat->GetName(), stageIdx, (int)pStage->texture.texgen, chosenSource,
+                                dynImg ? dynImg->imgName.c_str() : "<null>",
+                                globalImages->currentRenderImage ? globalImages->currentRenderImage->imgName.c_str()
+                                                                 : "<null>",
+                                globalImages->scratchImage2 ? globalImages->scratchImage2->imgName.c_str() : "<null>",
+                                usedWhiteFallback ? 1 : 0);
                         }
                     }
                 }
@@ -1319,7 +1390,11 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     const bool mirrorView = backEnd.viewDef && backEnd.viewDef->isMirror;
     const bool flipShadowOps = r_vkShadowFlipOps.GetBool();
-    const bool effectiveMirrorOps = mirrorView ^ flipShadowOps;
+    // Vulkan face classification is opposite our original assumption for the
+    // current viewport/frontFace convention. Default to inverted selection so
+    // non-mirrored views pick the pipeline variant that matches GL stencil
+    // behavior; keep r_vkShadowFlipOps as an explicit debug override.
+    const bool effectiveMirrorOps = (!mirrorView) ^ flipShadowOps;
     VkPipeline shadowPipe;
     if (external)
         shadowPipe = effectiveMirrorOps ? vkPipes.shadowPipelineZPassMirror : vkPipes.shadowPipelineZPass;
@@ -1872,21 +1947,27 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             // Count surfaces per phase (cheap — lists are typically short)
             int nLocal = 0, nGlobal = 0, nTrans = 0;
+            int nGlobalShadow = 0, nLocalShadow = 0;
             for (const drawSurf_t *s = vLight->localInteractions; s; s = s->nextOnLight)
                 nLocal++;
             for (const drawSurf_t *s = vLight->globalInteractions; s; s = s->nextOnLight)
                 nGlobal++;
             for (const drawSurf_t *s = vLight->translucentInteractions; s; s = s->nextOnLight)
                 nTrans++;
+            for (const drawSurf_t *s = vLight->globalShadows; s; s = s->nextOnLight)
+                nGlobalShadow++;
+            for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
+                nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
             common->Printf("VK LIGHT[%d]: shader='%s' GLscissor=(%d,%d %d,%d) VKscissor=(%d,%d %u,%u) "
-                           "local=%d global=%d trans=%d rtShadows=%d\n",
+                           "local=%d global=%d trans=%d gShadow=%d lShadow=%d rtShadows=%d\n",
                            lightIdx, lName, backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1,
                            backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1,
                            backEnd.viewDef->viewport.x1 + vLight->scissorRect.x2,
                            backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2, (int)lightScissor.offset.x,
                            (int)lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
                            (unsigned int)lightScissor.extent.height, nLocal, nGlobal, nTrans,
+                           nGlobalShadow, nLocalShadow,
                            VK_RTShadowsEnabled() ? 1 : 0);
         }
 
@@ -2034,6 +2115,18 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
+        if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
+        {
+            common->Printf(
+                "VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
+                "fullShadowScissor=%d useScissor=%d\n",
+                lightIdx, lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                (unsigned int)lightScissor.extent.height, shadowScissor.offset.x, shadowScissor.offset.y,
+                (unsigned int)shadowScissor.extent.width, (unsigned int)shadowScissor.extent.height,
+                lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                (unsigned int)lightScissor.extent.height, useFullShadowScissor ? 1 : 0,
+                r_useScissor.GetBool() ? 1 : 0);
+        }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -2816,6 +2909,13 @@ void VK_RB_CopyRender(const void *data)
     if (copyW <= 0 || copyH <= 0)
     {
         return;
+    }
+
+    if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
+    {
+        common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u\n",
+                       cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH, copyW,
+                       copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height);
     }
 
     // Suspend active render pass to perform transfer operations.

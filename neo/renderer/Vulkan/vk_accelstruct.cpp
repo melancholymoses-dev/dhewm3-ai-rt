@@ -996,5 +996,7 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
 
         sm.width = width;
         sm.height = height;
+        vkRT.shadowDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.blurDescSetLastUpdatedFrameCount[i] = -1;
     }
 }

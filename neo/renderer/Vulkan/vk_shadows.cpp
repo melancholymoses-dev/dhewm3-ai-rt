@@ -228,14 +228,14 @@ static void VK_RT_InitShadowPipeline(void)
 
     vkRT.rgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.missRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.hitRegion  = {sbtBase + 2 * stride, stride, stride};
+    vkRT.hitRegion = {sbtBase + 2 * stride, stride, stride};
     vkRT.callRegion = {0, 0, 0};
 
-    if (r_vkLogRT.GetInteger() >= 1) {
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
         common->Printf("VK RT SBT: handleSize=%u handleAlignment=%u baseAlignment=%u stride=%u sbtTotalBytes=%u\n",
                        handleSize, handleAlignment, baseAlignment, stride, sbtSize);
-        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n",
-                       (unsigned long long)sbtBase,
+        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n", (unsigned long long)sbtBase,
                        (unsigned long long)vkRT.rgenRegion.deviceAddress,
                        (unsigned long long)vkRT.missRegion.deviceAddress,
                        (unsigned long long)vkRT.hitRegion.deviceAddress);
@@ -268,6 +268,10 @@ static void VK_RT_InitShadowPipeline(void)
     dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
     dsAlloc.pSetLayouts = layouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.shadowDescSets));
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkRT.shadowDescSetLastUpdatedFrameCount[i] = -1;
+    }
 
     // --- Shadow mask sampler (used by the lighting pass to read the shadow mask) ---
     {
@@ -359,25 +363,33 @@ static void VK_RT_InitBlurPipeline(void)
 
     vkDestroyShaderModule(vk.device, compModule, NULL);
 
-    // --- Descriptor pool and sets (2 sets: H pass and V pass) ---
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4}; // 2 images × 2 sets
+    // --- Descriptor pool and sets (2 sets per frame slot: H pass and V pass) ---
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * VK_MAX_FRAMES_IN_FLIGHT};
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets = 2;
+    poolInfo.maxSets = 2 * VK_MAX_FRAMES_IN_FLIGHT;
     poolInfo.poolSizeCount = 1;
     poolInfo.pPoolSizes = &poolSize;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.blurDescPool));
 
-    VkDescriptorSetLayout layouts[2] = {vkRT.blurDescLayout, vkRT.blurDescLayout};
+    VkDescriptorSetLayout layouts[2 * VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < 2 * VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        layouts[i] = vkRT.blurDescLayout;
+    }
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     dsAlloc.descriptorPool = vkRT.blurDescPool;
-    dsAlloc.descriptorSetCount = 2;
+    dsAlloc.descriptorSetCount = 2 * VK_MAX_FRAMES_IN_FLIGHT;
     dsAlloc.pSetLayouts = layouts;
-    VkDescriptorSet sets[2];
+    VkDescriptorSet sets[2 * VK_MAX_FRAMES_IN_FLIGHT];
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, sets));
-    vkRT.blurDescSetH = sets[0];
-    vkRT.blurDescSetV = sets[1];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkRT.blurDescSetH[i] = sets[i * 2 + 0];
+        vkRT.blurDescSetV[i] = sets[i * 2 + 1];
+        vkRT.blurDescSetLastUpdatedFrameCount[i] = -1;
+    }
 
     common->Printf("VK RT: shadow blur compute pipeline initialized\n");
 }
@@ -415,20 +427,16 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     if (r_vkLogRT.GetInteger() >= 2)
     {
         const renderLight_t &lp = vLight->lightDef->parms;
-        common->Printf("VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
-                       "pipeline=%s tlas=%s tlasAddr=0x%llx "
-                       "shadowMask=%s %ux%u "
-                       "rgen=0x%llx miss=0x%llx hit=0x%llx\n",
-                       frameIdx,
-                       lp.origin.x, lp.origin.y, lp.origin.z,
-                       (vkRT.shadowPipeline  != VK_NULL_HANDLE) ? "OK" : "NULL",
-                       (vkRT.tlas[frameIdx].handle     != VK_NULL_HANDLE) ? "OK" : "NULL",
-                       (unsigned long long)vkRT.tlas[frameIdx].deviceAddress,
-                       (sm.image             != VK_NULL_HANDLE) ? "OK" : "NULL",
-                       sm.width, sm.height,
-                       (unsigned long long)vkRT.rgenRegion.deviceAddress,
-                       (unsigned long long)vkRT.missRegion.deviceAddress,
-                       (unsigned long long)vkRT.hitRegion.deviceAddress);
+        common->Printf(
+            "VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
+            "pipeline=%s tlas=%s tlasAddr=0x%llx "
+            "shadowMask=%s %ux%u "
+            "rgen=0x%llx miss=0x%llx hit=0x%llx\n",
+            frameIdx, lp.origin.x, lp.origin.y, lp.origin.z, (vkRT.shadowPipeline != VK_NULL_HANDLE) ? "OK" : "NULL",
+            (vkRT.tlas[frameIdx].handle != VK_NULL_HANDLE) ? "OK" : "NULL",
+            (unsigned long long)vkRT.tlas[frameIdx].deviceAddress, (sm.image != VK_NULL_HANDLE) ? "OK" : "NULL",
+            sm.width, sm.height, (unsigned long long)vkRT.rgenRegion.deviceAddress,
+            (unsigned long long)vkRT.missRegion.deviceAddress, (unsigned long long)vkRT.hitRegion.deviceAddress);
         fflush(NULL);
     }
 
@@ -451,74 +459,81 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     // --- Update frame-level descriptor set (TLAS, shadow mask, depth sampler, UBO base) ---
     // The UBO binding is DYNAMIC: the descriptor stores the ring buffer base; the per-light
     // offset is supplied at vkCmdBindDescriptorSets time, so this update only needs to happen
-    // once per frame slot (when the ring buffer handle changes, which is never after init).
-    // We update unconditionally for safety; it's idempotent.
+    // once per frame slot per frameCount. Updating a descriptor set after it has already been
+    // used by recorded commands in the same in-flight command buffer invalidates that command
+    // buffer unless UPDATE_AFTER_BIND was explicitly enabled (it is not here).
     {
         VkDescriptorSet ds = vkRT.shadowDescSets[frameIdx];
+        bool refreshShadowSet = (vkRT.shadowDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
 
-        // Binding 0: TLAS
-        VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
-        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
-        tlasWrite.accelerationStructureCount = 1;
-        tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
-
-        VkWriteDescriptorSet writes[4] = {};
-
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].pNext = &tlasWrite;
-        writes[0].dstSet = ds;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-
-        // Binding 1: shadow mask storage image (always GENERAL)
-        VkDescriptorImageInfo smImgInfo = {};
-        smImgInfo.imageView = sm.view;
-        smImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = ds;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &smImgInfo;
-
-        // Binding 2: depth sampler (cached, created once at init)
-        VkDescriptorImageInfo depthImgInfo = {};
-        depthImgInfo.sampler = vkRT.depthSampler;
-        depthImgInfo.imageView = vk.depthSampledView;  // depth-only view (conformant for sampling)
-        depthImgInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet = ds;
-        writes[2].dstBinding = 2;
-        writes[2].descriptorCount = 1;
-        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo = &depthImgInfo;
-
-        // Binding 3: UBO (DYNAMIC) — stores the ring buffer base; per-light offset at bind time.
-        // VK_AllocUBOForShadow is called below to get the per-light slot, but the buffer
-        // handle is the same for all lights in this frame slot, so we always use slot 0 offset
-        // here as the base; the dynamic offset passed to vkCmdBindDescriptorSets is the real one.
         extern bool VK_AllocUBOForShadow(VkBuffer * outBuf, uint32_t *outOffset, void **outMapped);
         VkBuffer uboBuf;
         uint32_t uboOff;
         void *uboMapped;
         VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
 
-        VkDescriptorBufferInfo uboInfo = {};
-        uboInfo.buffer = uboBuf;
-        uboInfo.offset = 0; // base 0; dynamic offset added at bind time
-        uboInfo.range = sizeof(ShadowParamsUBO);
+        if (refreshShadowSet)
+        {
 
-        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet = ds;
-        writes[3].dstBinding = 3;
-        writes[3].descriptorCount = 1;
-        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        writes[3].pBufferInfo = &uboInfo;
+            // Binding 0: TLAS
+            VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
+            tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+            tlasWrite.accelerationStructureCount = 1;
+            tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+            VkWriteDescriptorSet writes[4] = {};
+
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].pNext = &tlasWrite;
+            writes[0].dstSet = ds;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+
+            // Binding 1: shadow mask storage image (always GENERAL)
+            VkDescriptorImageInfo smImgInfo = {};
+            smImgInfo.imageView = sm.view;
+            smImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = ds;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[1].pImageInfo = &smImgInfo;
+
+            // Binding 2: depth sampler (cached, created once at init)
+            VkDescriptorImageInfo depthImgInfo = {};
+            depthImgInfo.sampler = vkRT.depthSampler;
+            depthImgInfo.imageView = vk.depthSampledView; // depth-only view (conformant for sampling)
+            depthImgInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstSet = ds;
+            writes[2].dstBinding = 2;
+            writes[2].descriptorCount = 1;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].pImageInfo = &depthImgInfo;
+
+            // Binding 3: UBO (DYNAMIC) — stores the ring buffer base; per-light offset at bind time.
+            // The underlying VkBuffer is stable for a frame slot, so this descriptor only needs
+            // to be refreshed once per frame count for this slot.
+
+            VkDescriptorBufferInfo uboInfo = {};
+            uboInfo.buffer = uboBuf;
+            uboInfo.offset = 0; // base 0; dynamic offset added at bind time
+            uboInfo.range = sizeof(ShadowParamsUBO);
+
+            writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[3].dstSet = ds;
+            writes[3].dstBinding = 3;
+            writes[3].descriptorCount = 1;
+            writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+            writes[3].pBufferInfo = &uboInfo;
+
+            vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+            vkRT.shadowDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        }
 
         // --- Build per-light UBO data into the allocated ring slot ---
         const renderLight_t &light = vLight->lightDef->parms;
@@ -580,8 +595,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 
         if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u\n",
-                           frameIdx, uboOff, sm.width, sm.height);
+            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u\n", frameIdx, uboOff, sm.width, sm.height);
             fflush(NULL);
         }
 
@@ -597,7 +611,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         if (blurRadius > 8)
             blurRadius = 8;
 
-        uint32_t groupsX = (sm.width  + 7) / 8;
+        uint32_t groupsX = (sm.width + 7) / 8;
         uint32_t groupsY = (sm.height + 7) / 8;
 
         // Barrier: RT write → compute read
@@ -605,69 +619,82 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             1, &barrier, 0, NULL, 0, NULL);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipeline);
 
-        // Update H-pass descriptors: input=shadowMask, output=blurTemp
-        VkDescriptorImageInfo hInput  = { VK_NULL_HANDLE, sm.view,        VK_IMAGE_LAYOUT_GENERAL };
-        VkDescriptorImageInfo hOutput = { VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL };
-        VkWriteDescriptorSet hWrites[2] = {};
-        hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        hWrites[0].dstSet = vkRT.blurDescSetH;
-        hWrites[0].dstBinding = 0;
-        hWrites[0].descriptorCount = 1;
-        hWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        hWrites[0].pImageInfo = &hInput;
-        hWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        hWrites[1].dstSet = vkRT.blurDescSetH;
-        hWrites[1].dstBinding = 1;
-        hWrites[1].descriptorCount = 1;
-        hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        hWrites[1].pImageInfo = &hOutput;
-        vkUpdateDescriptorSets(vk.device, 2, hWrites, 0, NULL);
+        VkDescriptorSet blurSetH = vkRT.blurDescSetH[frameIdx];
+        VkDescriptorSet blurSetV = vkRT.blurDescSetV[frameIdx];
+        bool refreshBlurSet = (vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
+
+        // Update H/V pass descriptors once per frame slot before first blur dispatch.
+        if (refreshBlurSet)
+        {
+            // Update H-pass descriptors: input=shadowMask, output=blurTemp
+            VkDescriptorImageInfo hInput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
+            VkDescriptorImageInfo hOutput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet hWrites[2] = {};
+            hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            hWrites[0].dstSet = blurSetH;
+            hWrites[0].dstBinding = 0;
+            hWrites[0].descriptorCount = 1;
+            hWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            hWrites[0].pImageInfo = &hInput;
+            hWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            hWrites[1].dstSet = blurSetH;
+            hWrites[1].dstBinding = 1;
+            hWrites[1].descriptorCount = 1;
+            hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            hWrites[1].pImageInfo = &hOutput;
+            vkUpdateDescriptorSets(vk.device, 2, hWrites, 0, NULL);
+
+            // Update V-pass descriptors: input=blurTemp, output=shadowMask
+            VkDescriptorImageInfo vInput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
+            VkDescriptorImageInfo vOutput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
+            VkWriteDescriptorSet vWrites[2] = {};
+            vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            vWrites[0].dstSet = blurSetV;
+            vWrites[0].dstBinding = 0;
+            vWrites[0].descriptorCount = 1;
+            vWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            vWrites[0].pImageInfo = &vInput;
+            vWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            vWrites[1].dstSet = blurSetV;
+            vWrites[1].dstBinding = 1;
+            vWrites[1].descriptorCount = 1;
+            vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            vWrites[1].pImageInfo = &vOutput;
+            vkUpdateDescriptorSets(vk.device, 2, vWrites, 0, NULL);
+            vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        }
 
         // Push constants: direction=0 (horizontal), radius
-        struct { int direction; int radius; float pad0; float pad1; } pc;
+        struct
+        {
+            int direction;
+            int radius;
+            float pad0;
+            float pad1;
+        } pc;
         pc.direction = 0;
         pc.radius = blurRadius;
         pc.pad0 = 0.f;
         pc.pad1 = 0.f;
         vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1,
-                                &vkRT.blurDescSetH, 0, NULL);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetH, 0, NULL);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         // Barrier: compute H-pass write → compute V-pass read
         barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, NULL, 0, NULL);
-
-        // Update V-pass descriptors: input=blurTemp, output=shadowMask
-        VkDescriptorImageInfo vInput  = { VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL };
-        VkDescriptorImageInfo vOutput = { VK_NULL_HANDLE, sm.view,         VK_IMAGE_LAYOUT_GENERAL };
-        VkWriteDescriptorSet vWrites[2] = {};
-        vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        vWrites[0].dstSet = vkRT.blurDescSetV;
-        vWrites[0].dstBinding = 0;
-        vWrites[0].descriptorCount = 1;
-        vWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        vWrites[0].pImageInfo = &vInput;
-        vWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        vWrites[1].dstSet = vkRT.blurDescSetV;
-        vWrites[1].dstBinding = 1;
-        vWrites[1].descriptorCount = 1;
-        vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        vWrites[1].pImageInfo = &vOutput;
-        vkUpdateDescriptorSets(vk.device, 2, vWrites, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &barrier, 0, NULL, 0, NULL);
 
         // Push constants: direction=1 (vertical), same radius
         pc.direction = 1;
         vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1,
-                                &vkRT.blurDescSetV, 0, NULL);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetV, 0, NULL);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         didBlur = true;
@@ -679,10 +706,9 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        VkPipelineStageFlags srcStage = didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                                                : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
-        vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 1, &memBarrier, 0, NULL, 0, NULL);
+        VkPipelineStageFlags srcStage =
+            didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+        vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
     // --- Depth barrier: restore to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for render pass resume ---
@@ -695,10 +721,10 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     depthRestore.image = vk.depthImage;
     depthRestore.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
-    VkPipelineStageFlags depthSrcStage = didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                                                 : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
-    vkCmdPipelineBarrier(cmd, depthSrcStage, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-                         0, 0, NULL, 0, NULL, 1, &depthRestore);
+    VkPipelineStageFlags depthSrcStage =
+        didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+    vkCmdPipelineBarrier(cmd, depthSrcStage, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1,
+                         &depthRestore);
 }
 
 // ---------------------------------------------------------------------------
