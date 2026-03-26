@@ -570,21 +570,36 @@ bool R_GenerateSurfaceSubview(drawSurf_t *drawSurf)
         for (int i = 0; i < shader->GetNumStages(); i++)
         {
             const shaderStage_t *stage = shader->GetStage(i);
+            if (r_vkLogRT.GetInteger() >= 1 && stage->texture.dynamic != DI_STATIC)
+            {
+                common->Printf("SUBVIEW: mat='%s' stage=%d dynamic=%d sort=%.1f\n",
+                    shader->GetName(), i, (int)stage->texture.dynamic, shader->GetSort());
+            }
             switch (stage->texture.dynamic)
             {
             case DI_REMOTE_RENDER:
+                if (r_vkLogRT.GetInteger() >= 1)
+                    common->Printf("SUBVIEW: dispatching R_RemoteRender for '%s'\n", shader->GetName());
                 R_RemoteRender(drawSurf, const_cast<textureStage_t *>(&stage->texture));
                 break;
             case DI_MIRROR_RENDER:
+                if (r_vkLogRT.GetInteger() >= 1)
+                    common->Printf("SUBVIEW: dispatching R_MirrorRender for '%s'\n", shader->GetName());
                 R_MirrorRender(drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor);
                 break;
             case DI_XRAY_RENDER:
+                if (r_vkLogRT.GetInteger() >= 1)
+                    common->Printf("SUBVIEW: dispatching R_XrayRender for '%s'\n", shader->GetName());
                 R_XrayRender(drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor);
                 break;
             }
         }
         return true;
     }
+
+    // SS_SUBVIEW sort — this is a pure mirror surface
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("SUBVIEW: SS_SUBVIEW mirror surface '%s', calling R_MirrorViewBySurface\n", shader->GetName());
 
     // issue a new view command
     parms = R_MirrorViewBySurface(drawSurf);
