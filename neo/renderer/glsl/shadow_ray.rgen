@@ -118,9 +118,9 @@ void main() {
 
     vec3 lightDir = toLight / dist;
 
-    // Offset origin slightly along the normal to avoid self-intersection.
-    // Without a dedicated normal buffer we use a fixed epsilon.
-    const float tMin    = 0.5;      // 0.5 units (Doom 3 units ≈ 2.54 cm)
+    // Offset origin slightly along the ray direction to avoid self-intersection.
+    // UBO pad carries a runtime-tunable bias so problematic scenes/lights can be tuned.
+    float tMin    = clamp(params.pad, 0.01, 8.0);
     const float tMax    = dist - tMin;
 
     if ( tMax <= 0.0 ) {
