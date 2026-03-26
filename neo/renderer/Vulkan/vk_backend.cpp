@@ -48,6 +48,20 @@ static idCVar r_vkWeaponDepthAlways(
 static idCVar r_vkPlasmaIgnoreDepthAlphaTest(
     "r_vkPlasmaIgnoreDepthAlphaTest", "0", CVAR_RENDERER,
     "Depth prepass debug: treat models/weapons/plasmagun/plasmagun as opaque (ignore alpha-test clip)");
+static idCVar r_vkPolyOffsetSlopeMin(
+    "r_vkPolyOffsetSlopeMin", "0.0", CVAR_RENDERER | CVAR_FLOAT,
+    "Vulkan-only minimum slope depth bias for polygonOffset materials when r_offsetFactor is 0");
+static idCVar r_rtShadowMaskProjected(
+    "r_rtShadowMaskProjected", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "apply RT shadow mask to projected lights (0 keeps RT shadows for point lights only)");
+
+static ID_INLINE float VK_GetPolyOffsetSlope(bool isPolyOffset)
+{
+    float slope = r_offsetFactor.GetFloat();
+    if (isPolyOffset && slope == 0.0f)
+        slope = r_vkPolyOffsetSlopeMin.GetFloat();
+    return slope;
+}
 
 static bool VK_RTShadowsEnabled()
 {
@@ -442,10 +456,12 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // not be shadowed by the world-space screen mask; this can make viewmodels look
     // ghostly or intermittently dark.
     int *useSM = (int *)(fsz + 2);
-    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE &&
-              !(din->surf && din->surf->space && din->surf->space->weaponDepthHack))
-                 ? 1
-                 : 0;
+    const bool hasShadowMask = VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    const bool isWeaponDepthHack = (din->surf && din->surf->space && din->surf->space->weaponDepthHack);
+    const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
+    const bool isProjectedLight = (lightDef != NULL) ? !lightDef->parms.pointLight : false;
+    const bool allowProjectedMask = r_rtShadowMaskProjected.GetBool() || !isProjectedLight;
+    *useSM = (hasShadowMask && !isWeaponDepthHack && allowProjectedMask) ? 1 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useSM + 1);
@@ -600,9 +616,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     {
         const idMaterial *mat = din->surf->material;
         float biasConstant = 0.0f;
+        const bool isPolyOffset = (mat && mat->TestMaterialFlag(MF_POLYGONOFFSET));
         if (mat && mat->TestMaterialFlag(MF_POLYGONOFFSET))
             biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
-        vkCmdSetDepthBias(s_cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+        vkCmdSetDepthBias(s_cmd, biasConstant, 0.0f, VK_GetPolyOffsetSlope(isPolyOffset));
     }
 
     // Cull mode: CT_TWO_SIDED materials disable face culling (fences, grates, glass panes).
@@ -801,20 +818,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         const float *regs = surf->shaderRegisters;
 
-        // Polygon offset for co-planar decals/overlays, mirroring GL's qglPolygonOffset
-        // in RB_STD_T_RenderShaderPasses.  Only relevant for 3D surfaces (depthTest path);
-        // 2D GUI surfaces skip depth entirely so bias has no effect there.
-        {
-            float biasConstant = 0.0f;
-            if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
-                biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
-            if (biasConstant != activeShaderBias)
-            {
-                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
-                activeShaderBias = biasConstant;
-            }
-        }
-
         if (r_vkLogRT.GetInteger() >= 2)
         {
             static idStrList s_loggedMats;
@@ -842,6 +845,27 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
+            // GL parity: per-stage privatePolygonOffset overrides material polygon offset.
+            // This is important for decal-like stages that need a different depth bias than
+            // the rest of the material stages.
+            float stageBiasConstant = 0.0f;
+            bool stageUsesPolyOffset = false;
+            if (pStage->privatePolygonOffset != 0.0f)
+            {
+                stageBiasConstant = r_offsetUnits.GetFloat() * pStage->privatePolygonOffset;
+                stageUsesPolyOffset = true;
+            }
+            else if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
+            {
+                stageBiasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+                stageUsesPolyOffset = true;
+            }
+            if (stageBiasConstant != activeShaderBias)
+            {
+                vkCmdSetDepthBias(cmd, stageBiasConstant, 0.0f, VK_GetPolyOffsetSlope(stageUsesPolyOffset));
+                activeShaderBias = stageBiasConstant;
+            }
 
             // Log verbose stage gating checks when translucent logging is enabled
             if (vkTransLog >= 2 && translucentLike && !regs[pStage->conditionRegister])
@@ -960,6 +984,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 else
                 {
                     // Portal/mirror/other dynamic texture — not yet supported, skip.
+                    if (r_vkLogRT.GetInteger() >= 1)
+                    {
+                        common->Printf("VK DrawShaderPasses: SKIPPING dynamic=%d mat='%s' stage=%d\n",
+                                       (int)pStage->texture.dynamic, mat->GetName(), stageIdx);
+                    }
                     continue;
                 }
             }
@@ -1139,6 +1168,17 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+
+            // Mirror/subview surface draw logging
+            if (r_vkLogRT.GetInteger() >= 1 && mat->GetSort() == SS_SUBVIEW)
+            {
+                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                common->Printf("VK MIRROR DRAW: mat='%s' stage=%d blend=0x%x img='%s' depthTest=%d "
+                               "isSubview=%d isMirror=%d idxCount=%d\n",
+                               mat->GetName(), stageIdx, blendBits, img ? img->imgName.c_str() : "<null>",
+                               needDepth ? 1 : 0, backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                               geo->numIndexes);
+            }
         }
     }
 }
@@ -1327,11 +1367,12 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         // toward the camera so co-planar decals pass the LEQUAL interaction test.
         {
             float biasConstant = 0.0f;
+            const bool isPolyOffset = mat->TestMaterialFlag(MF_POLYGONOFFSET);
             if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
                 biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
             if (biasConstant != activeBiasConstant)
             {
-                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, VK_GetPolyOffsetSlope(isPolyOffset));
                 activeBiasConstant = biasConstant;
             }
         }
@@ -2939,8 +2980,12 @@ void VK_RB_DrawView(const void *data)
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
-        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d\n", vk.currentFrame,
-                       vk.currentImageIdx, tr.frameCount, VK_RTShadowsEnabled() ? 1 : 0);
+        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d isSubview=%d isMirror=%d "
+                       "scissor=(%d,%d %d,%d)\n",
+                       vk.currentFrame, vk.currentImageIdx, tr.frameCount, VK_RTShadowsEnabled() ? 1 : 0,
+                       backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                       backEnd.viewDef->scissor.x1, backEnd.viewDef->scissor.y1, backEnd.viewDef->scissor.x2,
+                       backEnd.viewDef->scissor.y2);
         fflush(NULL);
     }
 
@@ -3041,10 +3086,19 @@ void VK_RB_CopyRender(const void *data)
         return;
     }
 
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK COPYRENDER: entry img='%s' req=%dx%d frameActive=%d cmdBuf=%s\n",
+                       cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, (int)s_frameActive,
+                       s_frameCmdBuf != VK_NULL_HANDLE ? "valid" : "NULL");
+    }
+
     if (!s_frameActive || s_frameCmdBuf == VK_NULL_HANDLE)
     {
         // CaptureRenderToImage is expected during an active frame. If we receive it
         // outside that scope, skip safely.
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK COPYRENDER: skipping — frame not active\n");
         return;
     }
 
@@ -3052,7 +3106,10 @@ void VK_RB_CopyRender(const void *data)
     // (e.g. 16x16 placeholder) and must be resized to the capture dimensions.
     const int desiredW = idMath::CeilPowerOfTwo(cmd->imageWidth > 1 ? cmd->imageWidth : 1);
     const int desiredH = idMath::CeilPowerOfTwo(cmd->imageHeight > 1 ? cmd->imageHeight : 1);
-    if (!cmd->image->backendData || cmd->image->uploadWidth != desiredW || cmd->image->uploadHeight != desiredH)
+    int dstActualW = 0;
+    int dstActualH = 0;
+    const bool haveDstExtent = VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH);
+    if (!cmd->image->backendData || !haveDstExtent || dstActualW < desiredW || dstActualH < desiredH)
     {
         const size_t bytes = (size_t)desiredW * (size_t)desiredH * 4u;
         byte *blank = (byte *)Mem_Alloc(bytes);
@@ -3061,6 +3118,10 @@ void VK_RB_CopyRender(const void *data)
         Mem_Free(blank);
         cmd->image->uploadWidth = desiredW;
         cmd->image->uploadHeight = desiredH;
+
+        // Refresh actual backend extent after upload; if still unavailable, bail safely.
+        if (!VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH))
+            return;
     }
 
     VkImage dstImage = VK_NULL_HANDLE;
@@ -3076,8 +3137,8 @@ void VK_RB_CopyRender(const void *data)
     const int srcY = cmd->y < 0 ? 0 : cmd->y;
     const int srcMaxW = (int)vk.swapchainExtent.width - srcX;
     const int srcMaxH = (int)vk.swapchainExtent.height - srcY;
-    const int dstW = cmd->image->uploadWidth;
-    const int dstH = cmd->image->uploadHeight;
+    const int dstW = dstActualW;
+    const int dstH = dstActualH;
     int copyW = cmd->imageWidth;
     int copyH = cmd->imageHeight;
     if (copyW > srcMaxW)

@@ -231,6 +231,13 @@ void SetScale(float scale)
 static bool imgui_initialized = false;
 static bool s_imguiVulkanReady = false;
 
+static ID_INLINE bool ImGui_VulkanHandlesReady()
+{
+    return vk.isInitialized && vk.instance != VK_NULL_HANDLE && vk.physicalDevice != VK_NULL_HANDLE &&
+           vk.device != VK_NULL_HANDLE && vk.graphicsQueue != VK_NULL_HANDLE && vk.renderPass != VK_NULL_HANDLE &&
+           vk.swapchainImageCount > 0;
+}
+
 // using void* instead of SDL_Window and SDL_GLContext to avoid dragging SDL headers into sys_imgui.h
 bool Init(void *_sdlWindow, void *sdlGlContext)
 {
@@ -270,7 +277,8 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
     imgui_scale.SetModified(); // so NewFrame() will load the scaled font
 
     // Setup Platform/Renderer backends
-    if (glConfig.isVulkan)
+    const bool wantVulkanBackend = glConfig.isVulkan && ImGui_VulkanHandlesReady();
+    if (wantVulkanBackend)
     {
         if (!ImGui_ImplSDLx_InitForVulkan(sdlWindow))
         {
@@ -315,6 +323,12 @@ bool Init(void *_sdlWindow, void *sdlGlContext)
     }
     else
     {
+        if (glConfig.isVulkan && !ImGui_VulkanHandlesReady())
+        {
+            common->Printf("ImGui: Vulkan backend requested but handles not ready yet; using OpenGL backend until "
+                           "InitVulkan()\n");
+        }
+
         common->Printf("ImGui: OpenGL backend initialized (isVulkan=%d)\n", (int)glConfig.isVulkan);
         if (!ImGui_ImplSDLx_InitForOpenGL(sdlWindow, sdlGlContext))
         {
@@ -379,6 +393,12 @@ void InitVulkan()
     if (!imgui_initialized || s_imguiVulkanReady)
         return;
 
+    if (!ImGui_VulkanHandlesReady())
+    {
+        common->Warning("ImGui: InitVulkan called before Vulkan handles were ready; deferring\n");
+        return;
+    }
+
     common->Printf("ImGui: switching to Vulkan backend (imageCount=%u)\n", vk.swapchainImageCount);
 
     // Tear down the OpenGL sub-backend that was installed during GLimp_Init.
@@ -393,16 +413,16 @@ void InitVulkan()
     }
 
     ImGui_ImplVulkan_InitInfo vkInfo = {};
-    vkInfo.Instance        = vk.instance;
-    vkInfo.PhysicalDevice  = vk.physicalDevice;
-    vkInfo.Device          = vk.device;
-    vkInfo.QueueFamily     = vk.graphicsFamily;
-    vkInfo.Queue           = vk.graphicsQueue;
+    vkInfo.Instance = vk.instance;
+    vkInfo.PhysicalDevice = vk.physicalDevice;
+    vkInfo.Device = vk.device;
+    vkInfo.QueueFamily = vk.graphicsFamily;
+    vkInfo.Queue = vk.graphicsQueue;
     vkInfo.DescriptorPoolSize = 2;
-    vkInfo.RenderPass      = vk.renderPass;
-    vkInfo.MinImageCount   = 2;
-    vkInfo.ImageCount      = vk.swapchainImageCount;
-    vkInfo.MSAASamples     = VK_SAMPLE_COUNT_1_BIT;
+    vkInfo.RenderPass = vk.renderPass;
+    vkInfo.MinImageCount = 2;
+    vkInfo.ImageCount = vk.swapchainImageCount;
+    vkInfo.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 
     if (!ImGui_ImplVulkan_Init(&vkInfo))
     {
@@ -432,7 +452,8 @@ void Shutdown()
 
         if (s_imguiVulkanReady)
         {
-            vkDeviceWaitIdle(vk.device);
+            if (vk.isInitialized && vk.device != VK_NULL_HANDLE)
+                vkDeviceWaitIdle(vk.device);
             ImGui_ImplVulkan_Shutdown();
             ImGui_ImplSDLx_Shutdown();
             s_imguiVulkanReady = false;

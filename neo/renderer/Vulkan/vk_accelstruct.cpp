@@ -16,6 +16,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
+#include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
@@ -58,6 +59,16 @@ struct blasGarbageEntry_t
 
 static blasGarbageEntry_t s_blasGarbage[BLAS_GARBAGE_MAX];
 static int s_blasGarbageCount = 0;
+
+static ID_INLINE bool VK_RT_IsBLASQueuedForDeferredFree(vkBLAS_t *blas)
+{
+    for (int i = 0; i < s_blasGarbageCount; i++)
+    {
+        if (s_blasGarbage[i].blas == blas)
+            return true;
+    }
+    return false;
+}
 
 // Lightweight per-frame BLAS source stats for Optimization 1 validation.
 // These counters help track zero-copy adoption (GPU cache buffers) vs CPU fallback.
@@ -157,6 +168,33 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
     delete[] blas->geomIdxBufs;
     delete[] blas->geomIdxMems;
     delete blas;
+}
+
+// Clear per-entity BLAS pointers across all render worlds.
+// If destroyGpuResources is true, BLAS not already in deferred queue are destroyed immediately.
+static void VK_RT_ClearWorldEntityBLASPointers(bool destroyGpuResources)
+{
+    for (int w = 0; w < tr.worlds.Num(); w++)
+    {
+        idRenderWorldLocal *world = tr.worlds[w];
+        if (!world)
+            continue;
+
+        for (int e = 0; e < world->entityDefs.Num(); e++)
+        {
+            idRenderEntityLocal *ent = world->entityDefs[e];
+            if (!ent || !ent->blas)
+                continue;
+
+            if (destroyGpuResources && !VK_RT_IsBLASQueuedForDeferredFree(ent->blas))
+            {
+                VK_RT_FreeBLASImmediate(ent->blas);
+            }
+
+            ent->blas = NULL;
+            ent->blasFrameCount = 0;
+        }
+    }
 }
 
 // Drain BLAS garbage entries that are safe to free (called after fence wait).
@@ -1067,6 +1105,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 void VK_RT_Init(void)
 {
     memset(&vkRT, 0, sizeof(vkRT));
+    // Defensive reset for restart/crash-recovery paths: old deferred queue entries
+    // belong to a previous device lifetime and must never be reused.
+    memset(s_blasGarbage, 0, sizeof(s_blasGarbage));
+    s_blasGarbageCount = 0;
+    // Clear any stale per-entity BLAS pointers that may have survived a failed restart.
+    VK_RT_ClearWorldEntityBLASPointers(false);
     VK_RT_LoadFunctionPointers();
     common->Printf("VK RT: acceleration structure support initialized\n");
 }
@@ -1075,9 +1119,14 @@ void VK_RT_Shutdown(void)
 {
     vkDeviceWaitIdle(vk.device);
 
+    // Destroy live per-entity BLAS objects that are not in the deferred queue,
+    // then clear all entity pointers so the next device lifetime starts clean.
+    VK_RT_ClearWorldEntityBLASPointers(true);
+
     // Flush deferred BLAS deletions (device is idle, all are safe to free)
     for (int i = 0; i < s_blasGarbageCount; i++)
         VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
+    memset(s_blasGarbage, 0, sizeof(s_blasGarbage));
     s_blasGarbageCount = 0;
 
     // Destroy TLAS (one per frame-in-flight slot)
