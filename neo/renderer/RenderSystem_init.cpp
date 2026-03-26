@@ -146,7 +146,7 @@ idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CV
                        "ray traced reflections (expensive)");
 idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
-idCVar r_rtShadowBlur("r_rtShadowBlur", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+idCVar r_rtShadowBlur("r_rtShadowBlur", "6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                       "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
 idCVar r_rtFlashlightBias("r_rtFlashlightBias", "17", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                           "units to push the flashlight shadow origin forward along the view axis "
