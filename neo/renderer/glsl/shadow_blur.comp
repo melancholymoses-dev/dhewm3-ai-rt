@@ -11,12 +11,13 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, r8) uniform readonly  image2D inputImage;
 layout(set = 0, binding = 1, r8) uniform writeonly image2D outputImage;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 
 layout(push_constant) uniform BlurParams {
     int   direction;   // 0 = horizontal, 1 = vertical
     int   radius;      // kernel half-width in pixels (e.g. 3 means 7-tap)
-    float pad0;
-    float pad1;
+    float depthThreshold;
+    float depthAware;  // >0.5 enables depth-aware weighting
 };
 
 void main() {
@@ -33,6 +34,7 @@ void main() {
     float sum   = 0.0;
     float total = 0.0;
     int r = max(radius, 0);
+    float centerDepth = texelFetch(depthSampler, coord, 0).r;
 
     ivec2 step = (direction == 0) ? ivec2(1, 0) : ivec2(0, 1);
 
@@ -43,11 +45,19 @@ void main() {
         sampleCoord = clamp(sampleCoord, ivec2(0), size - 1);
 
         float w = float(r + 1 - abs(i));
+        if (depthAware > 0.5) {
+            float sampleDepth = texelFetch(depthSampler, sampleCoord, 0).r;
+            float dz = abs(sampleDepth - centerDepth);
+            if (dz > depthThreshold) {
+                continue;
+            }
+        }
         float val = imageLoad(inputImage, sampleCoord).r;
         sum   += val * w;
         total += w;
     }
 
-    float result = sum / total;
+    float centerVal = imageLoad(inputImage, coord).r;
+    float result = (total > 0.0) ? (sum / total) : centerVal;
     imageStore(outputImage, coord, vec4(result));
 }

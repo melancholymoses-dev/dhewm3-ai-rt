@@ -36,8 +36,21 @@ struct ShadowParamsUBO
     float lightFalloffRadius;
     int numSamples;
     uint32_t frameIndex;
-    float pad;
+    float rayBias;
 };
+
+static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
+static idCVar r_rtShadowDistanceCutoff("r_rtShadowDistanceCutoff", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                       "apply RT spherical distance cutoff for point lights (diagnostic: 0 disables cutoff)");
+static idCVar r_rtShadowTemporalJitter("r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                       "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
+static idCVar r_rtShadowBlurEnable("r_rtShadowBlurEnable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                   "enable RT shadow blur pass (diagnostic: 0 bypasses blur)");
+static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                       "depth-aware RT shadow blur to reduce halo/ring artifacts at edges");
+static idCVar r_rtShadowBlurDepthThreshold("r_rtShadowBlurDepthThreshold", "0.003", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                           "depth threshold for depth-aware RT shadow blur (smaller preserves edges more)");
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in vk_buffer.cpp)
@@ -310,8 +323,8 @@ static void VK_RT_InitShadowPipeline(void)
 
 static void VK_RT_InitBlurPipeline(void)
 {
-    // --- Descriptor set layout: 2 storage images (input, output) ---
-    VkDescriptorSetLayoutBinding bindings[2] = {};
+    // --- Descriptor set layout: 2 storage images + depth sampler ---
+    VkDescriptorSetLayoutBinding bindings[3] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
@@ -320,10 +333,14 @@ static void VK_RT_InitBlurPipeline(void)
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 2;
+    layoutInfo.bindingCount = 3;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.blurDescLayout));
 
@@ -364,12 +381,15 @@ static void VK_RT_InitBlurPipeline(void)
     vkDestroyShaderModule(vk.device, compModule, NULL);
 
     // --- Descriptor pool and sets (2 sets per frame slot: H pass and V pass) ---
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolSize poolSizes[2] = {
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * VK_MAX_FRAMES_IN_FLIGHT},
+    };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 2 * VK_MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.blurDescPool));
 
     VkDescriptorSetLayout layouts[2 * VK_MAX_FRAMES_IN_FLIGHT];
@@ -431,8 +451,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             "VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
             "radius=(%.1f,%.1f,%.1f) falloff=%.1f samples=%d "
             "pipeline=%s tlas=%s tlasAddr=0x%llx "
-            "shadowMask=%s %ux%u "
-            "rgen=0x%llx miss=0x%llx hit=0x%llx\n",
+            "shadowMask=%s %ux%u ",
             frameIdx, lp.origin.x, lp.origin.y, lp.origin.z, lp.lightRadius.x, lp.lightRadius.y, lp.lightRadius.z,
             lp.lightRadius.Length(), r_rtShadowSamples.GetInteger(),
             (vkRT.shadowPipeline != VK_NULL_HANDLE) ? "OK" : "NULL",
@@ -569,8 +588,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         // muzzle flash) and matches the player's viewID, so world lights are never affected.
         idVec3 shadowOrigin = light.origin;
         float flashlightBias = r_rtFlashlightBias.GetFloat();
-        if (flashlightBias > 0.0f &&
-            light.allowLightInViewID != 0 &&
+        if (flashlightBias > 0.0f && light.allowLightInViewID != 0 &&
             light.allowLightInViewID == viewDef->renderView.viewID)
         {
             // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
@@ -582,10 +600,15 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         ubo.lightOrigin[1] = shadowOrigin.y;
         ubo.lightOrigin[2] = shadowOrigin.z;
         ubo.lightOrigin[3] = light.lightRadius.x;
-        ubo.lightFalloffRadius = light.lightRadius.Length();
+        // Projected lights are not spherical; their attenuation is handled by light projection/falloff textures
+        // in the interaction shader, so RT shadow rays should not early-out by distance for them.
+        if (r_rtShadowDistanceCutoff.GetBool() && light.pointLight)
+            ubo.lightFalloffRadius = light.lightRadius.Length();
+        else
+            ubo.lightFalloffRadius = 0.0f;
         ubo.numSamples = r_rtShadowSamples.GetInteger();
-        ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
-        ubo.pad = 0.0f;
+        ubo.frameIndex = r_rtShadowTemporalJitter.GetBool() ? (uint32_t)(vk.currentFrame * 100 + tr.frameCount) : 0u;
+        ubo.rayBias = r_rtShadowRayBias.GetFloat();
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
 
@@ -607,7 +630,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---
     int blurRadius = r_rtShadowBlur.GetInteger();
     bool didBlur = false;
-    if (blurRadius > 0 && vkRT.blurPipeline != VK_NULL_HANDLE && sm.blurTempImage != VK_NULL_HANDLE)
+    if (r_rtShadowBlurEnable.GetBool() && blurRadius > 0 && vkRT.blurPipeline != VK_NULL_HANDLE &&
+        sm.blurTempImage != VK_NULL_HANDLE)
     {
         if (blurRadius > 8)
             blurRadius = 8;
@@ -635,7 +659,12 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             // Update H-pass descriptors: input=shadowMask, output=blurTemp
             VkDescriptorImageInfo hInput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
             VkDescriptorImageInfo hOutput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
-            VkWriteDescriptorSet hWrites[2] = {};
+            VkDescriptorImageInfo blurDepthInfo = {};
+            blurDepthInfo.sampler = vkRT.depthSampler;
+            blurDepthInfo.imageView = vk.depthSampledView;
+            blurDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet hWrites[3] = {};
             hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             hWrites[0].dstSet = blurSetH;
             hWrites[0].dstBinding = 0;
@@ -648,12 +677,18 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             hWrites[1].descriptorCount = 1;
             hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             hWrites[1].pImageInfo = &hOutput;
-            vkUpdateDescriptorSets(vk.device, 2, hWrites, 0, NULL);
+            hWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            hWrites[2].dstSet = blurSetH;
+            hWrites[2].dstBinding = 2;
+            hWrites[2].descriptorCount = 1;
+            hWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            hWrites[2].pImageInfo = &blurDepthInfo;
+            vkUpdateDescriptorSets(vk.device, 3, hWrites, 0, NULL);
 
             // Update V-pass descriptors: input=blurTemp, output=shadowMask
             VkDescriptorImageInfo vInput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
             VkDescriptorImageInfo vOutput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
-            VkWriteDescriptorSet vWrites[2] = {};
+            VkWriteDescriptorSet vWrites[3] = {};
             vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             vWrites[0].dstSet = blurSetV;
             vWrites[0].dstBinding = 0;
@@ -666,7 +701,13 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             vWrites[1].descriptorCount = 1;
             vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             vWrites[1].pImageInfo = &vOutput;
-            vkUpdateDescriptorSets(vk.device, 2, vWrites, 0, NULL);
+            vWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            vWrites[2].dstSet = blurSetV;
+            vWrites[2].dstBinding = 2;
+            vWrites[2].descriptorCount = 1;
+            vWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            vWrites[2].pImageInfo = &blurDepthInfo;
+            vkUpdateDescriptorSets(vk.device, 3, vWrites, 0, NULL);
             vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         }
 
@@ -680,8 +721,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         } pc;
         pc.direction = 0;
         pc.radius = blurRadius;
-        pc.pad0 = 0.f;
-        pc.pad1 = 0.f;
+        pc.pad0 = Max(0.0f, r_rtShadowBlurDepthThreshold.GetFloat());
+        pc.pad1 = r_rtShadowBlurDepthAware.GetBool() ? 1.0f : 0.0f;
         vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetH, 0, NULL);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);

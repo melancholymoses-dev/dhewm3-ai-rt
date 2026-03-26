@@ -13,3 +13,7 @@ void VK_Image_GetCinematicDescriptorInfo(VkDescriptorImageInfo *out);
 // Returns the underlying VkImage for a backend-uploaded idImage.
 // Returns false when img is null or has no Vulkan backend data yet.
 bool VK_Image_GetHandle(idImage *img, VkImage *out);
+
+// Returns the actual Vulkan image extent for a backend-uploaded idImage.
+// Returns false when img is null or has no Vulkan backend data yet.
+bool VK_Image_GetExtent(idImage *img, int *outW, int *outH);
