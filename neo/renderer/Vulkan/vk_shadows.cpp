@@ -41,16 +41,87 @@ struct ShadowParamsUBO
 
 static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
-static idCVar r_rtShadowDistanceCutoff("r_rtShadowDistanceCutoff", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-                                       "apply RT spherical distance cutoff for point lights (diagnostic: 0 disables cutoff)");
-static idCVar r_rtShadowTemporalJitter("r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-                                       "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
+static idCVar r_rtShadowSoftRadiusScale(
+    "r_rtShadowSoftRadiusScale", "0.08", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "scale factor from point-light radius to RT soft-shadow source radius (smaller avoids washed-out shadows)");
+static idCVar r_rtShadowSoftRadiusMin(
+    "r_rtShadowSoftRadiusMin", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "minimum RT soft-shadow source radius after scaling");
+static idCVar r_rtShadowSoftRadiusMax(
+    "r_rtShadowSoftRadiusMax", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "maximum RT soft-shadow source radius after scaling");
+static idCVar r_rtShadowMinSamples(
+    "r_rtShadowMinSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "minimum RT shadow rays per pixel (default 1 keeps baseline behavior; raise only for diagnostics)");
+static idCVar r_rtShadowDistanceCutoff(
+    "r_rtShadowDistanceCutoff", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "apply RT spherical distance cutoff for point lights (diagnostic: keep 0 unless debugging)");
+static idCVar r_rtShadowTemporalJitter(
+    "r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
+static idCVar r_rtShadowTemporalJitterMinSamples(
+    "r_rtShadowTemporalJitterMinSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "minimum effective RT shadow samples required before enabling per-frame temporal jitter");
 static idCVar r_rtShadowBlurEnable("r_rtShadowBlurEnable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                                    "enable RT shadow blur pass (diagnostic: 0 bypasses blur)");
-static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1",
+                                       CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                                        "depth-aware RT shadow blur to reduce halo/ring artifacts at edges");
-static idCVar r_rtShadowBlurDepthThreshold("r_rtShadowBlurDepthThreshold", "0.003", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-                                           "depth threshold for depth-aware RT shadow blur (smaller preserves edges more)");
+static idCVar r_rtShadowBlurDepthThreshold(
+    "r_rtShadowBlurDepthThreshold", "0.003", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "depth threshold for depth-aware RT shadow blur (smaller preserves edges more)");
+static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
+static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
+                              "limit Vulkan RT light debug logging to N frames after enable (0 = unlimited)");
+static idCVar r_vkRTDebugLightFilter(
+    "r_vkRTDebugLightFilter", "", CVAR_RENDERER | CVAR_ARCHIVE,
+    "substring filter for r_vkRTDebugLights using light shader name (empty = all lights)");
+
+extern idCVar r_vkRTLogCaptureReset;
+
+static bool VK_RTDebugLightMatch(const viewLight_t *vLight)
+{
+    const char *filter = r_vkRTDebugLightFilter.GetString();
+    if (!filter || !filter[0])
+        return true;
+    const char *lightName = (vLight && vLight->lightShader) ? vLight->lightShader->GetName() : "";
+    return idStr::FindText(lightName, filter, false) >= 0;
+}
+
+static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
+{
+    static bool s_wasEnabled = false;
+    static int s_startFrame = -1;
+    static int s_lastResetToken = -1;
+
+    const int resetToken = r_vkRTLogCaptureReset.GetInteger();
+    if (s_lastResetToken != resetToken)
+    {
+        s_lastResetToken = resetToken;
+        s_wasEnabled = false;
+        s_startFrame = -1;
+    }
+
+    if (!debugEnabled)
+    {
+        s_wasEnabled = false;
+        s_startFrame = -1;
+        return false;
+    }
+
+    if (!s_wasEnabled)
+    {
+        s_wasEnabled = true;
+        s_startFrame = tr.frameCount;
+    }
+
+    const int frameBudget = Max(0, r_vkRTLightLogN.GetInteger());
+    if (frameBudget <= 0)
+        return true;
+
+    return (tr.frameCount - s_startFrame) < frameBudget;
+}
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in vk_buffer.cpp)
@@ -599,16 +670,50 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         ubo.lightOrigin[0] = shadowOrigin.x;
         ubo.lightOrigin[1] = shadowOrigin.y;
         ubo.lightOrigin[2] = shadowOrigin.z;
-        ubo.lightOrigin[3] = light.lightRadius.x;
+
+        // Soft-shadow jitter radius must be much smaller than the light volume extents;
+        // using full radii creates huge cones and can wash out/shimmer shadows.
+        float softRadius = 0.0f;
+        if (light.pointLight)
+        {
+            const float minLightRadius = Min(light.lightRadius.x, Min(light.lightRadius.y, light.lightRadius.z));
+            const float scaledRadius = minLightRadius * Max(0.0f, r_rtShadowSoftRadiusScale.GetFloat());
+            const float softRadiusMin = Max(0.0f, r_rtShadowSoftRadiusMin.GetFloat());
+            const float softRadiusMax = Max(softRadiusMin, r_rtShadowSoftRadiusMax.GetFloat());
+            softRadius = idMath::ClampFloat(softRadiusMin, softRadiusMax, scaledRadius);
+        }
+        ubo.lightOrigin[3] = softRadius;
         // Projected lights are not spherical; their attenuation is handled by light projection/falloff textures
         // in the interaction shader, so RT shadow rays should not early-out by distance for them.
         if (r_rtShadowDistanceCutoff.GetBool() && light.pointLight)
             ubo.lightFalloffRadius = light.lightRadius.Length();
         else
             ubo.lightFalloffRadius = 0.0f;
-        ubo.numSamples = r_rtShadowSamples.GetInteger();
-        ubo.frameIndex = r_rtShadowTemporalJitter.GetBool() ? (uint32_t)(vk.currentFrame * 100 + tr.frameCount) : 0u;
+        const int requestedSamples = Max(1, r_rtShadowSamples.GetInteger());
+        const int minSamples = Max(1, r_rtShadowMinSamples.GetInteger());
+        ubo.numSamples = requestedSamples;
+        const int jitterMinSamples = Max(1, r_rtShadowTemporalJitterMinSamples.GetInteger());
+        const bool allowTemporalJitter = r_rtShadowTemporalJitter.GetBool() &&
+                                         (ubo.numSamples >= jitterMinSamples || r_rtShadowBlur.GetInteger() > 0);
+        ubo.frameIndex = allowTemporalJitter ? (uint32_t)(vk.currentFrame * 100 + tr.frameCount) : 0u;
         ubo.rayBias = r_rtShadowRayBias.GetFloat();
+
+        if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0))
+        {
+            const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+            common->Printf("VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
+                           "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
+                           "jitterMinSamples=%d softRadius=%.3f blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
+                           "mask=%ux%u\n",
+                           tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y,
+                           shadowOrigin.z, light.lightRadius.x, light.lightRadius.y, light.lightRadius.z,
+                           ubo.lightFalloffRadius, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
+                           r_rtShadowTemporalJitter.GetBool() ? 1 : 0, allowTemporalJitter ? 1 : 0, jitterMinSamples,
+                           softRadius,
+                           r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
+                           r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(),
+                           sm.width, sm.height);
+        }
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
 
