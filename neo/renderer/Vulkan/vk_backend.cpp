@@ -54,6 +54,62 @@ static idCVar r_vkPolyOffsetSlopeMin(
 static idCVar r_rtShadowMaskProjected(
     "r_rtShadowMaskProjected", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
     "apply RT shadow mask to projected lights (0 keeps RT shadows for point lights only)");
+static idCVar r_vkRTDebugInteractions("r_vkRTDebugInteractions", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                      "log Vulkan RT interaction mask decisions (0=off, 1=filtered surfaces)");
+static idCVar r_vkRTDebugSurface("r_vkRTDebugSurface", "", CVAR_RENDERER | CVAR_ARCHIVE,
+                                 "substring filter for r_vkRTDebugInteractions material name (empty = all materials)");
+static idCVar r_vkRTDebugMaxLogsPerFrame("r_vkRTDebugMaxLogsPerFrame", "64", CVAR_RENDERER | CVAR_INTEGER,
+                                         "max Vulkan RT debug interaction logs per frame");
+static idCVar r_vkRTInterLogN(
+    "r_vkRTInterLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "limit Vulkan RT interaction/texture debug logging to N frames after enable (0 = unlimited)");
+idCVar r_vkRTLogCaptureReset(
+    "r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
+static idCVar r_vkRTDebugLightTextures("r_vkRTDebugLightTextures", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                       "log Vulkan interaction texture sources for filtered surfaces (0=off, 1=on)");
+
+static bool VK_RTDebugMatMatch(const char *matName)
+{
+    const char *filter = r_vkRTDebugSurface.GetString();
+    if (!filter || !filter[0])
+        return true;
+    return idStr::FindText(matName ? matName : "", filter, false) >= 0;
+}
+
+static bool VK_RTDebugInteractionFrameAllowed(bool debugEnabled)
+{
+    static bool s_wasEnabled = false;
+    static int s_startFrame = -1;
+    static int s_lastResetToken = -1;
+
+    const int resetToken = r_vkRTLogCaptureReset.GetInteger();
+    if (s_lastResetToken != resetToken)
+    {
+        s_lastResetToken = resetToken;
+        s_wasEnabled = false;
+        s_startFrame = -1;
+    }
+
+    if (!debugEnabled)
+    {
+        s_wasEnabled = false;
+        s_startFrame = -1;
+        return false;
+    }
+
+    if (!s_wasEnabled)
+    {
+        s_wasEnabled = true;
+        s_startFrame = tr.frameCount;
+    }
+
+    const int frameBudget = Max(0, r_vkRTInterLogN.GetInteger());
+    if (frameBudget <= 0)
+        return true;
+
+    return (tr.frameCount - s_startFrame) < frameBudget;
+}
 
 static ID_INLINE float VK_GetPolyOffsetSlope(bool isPolyOffset)
 {
@@ -462,6 +518,46 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const bool isProjectedLight = (lightDef != NULL) ? !lightDef->parms.pointLight : false;
     const bool allowProjectedMask = r_rtShadowMaskProjected.GetBool() || !isProjectedLight;
     *useSM = (hasShadowMask && !isWeaponDepthHack && allowProjectedMask) ? 1 : 0;
+
+    const bool rtDbgEnabled = (r_vkRTDebugInteractions.GetInteger() > 0 || r_vkRTDebugLightTextures.GetInteger() > 0);
+    if (VK_RTDebugInteractionFrameAllowed(rtDbgEnabled))
+    {
+        static int s_rtDbgFrame = -1;
+        static int s_rtDbgCount = 0;
+        if (s_rtDbgFrame != tr.frameCount)
+        {
+            s_rtDbgFrame = tr.frameCount;
+            s_rtDbgCount = 0;
+        }
+
+        const int maxLogs = Max(1, r_vkRTDebugMaxLogsPerFrame.GetInteger());
+        if (s_rtDbgCount < maxLogs)
+        {
+            const char *lightName =
+                (backEnd.vLight && backEnd.vLight->lightShader) ? backEnd.vLight->lightShader->GetName() : "<null>";
+            const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
+            if (r_vkRTDebugInteractions.GetInteger() > 0)
+            {
+                common->Printf("VK RT INTER DBG: frame=%d lightIdx=%d light='%s' point=%d mat='%s' idx=%d useSM=%d "
+                               "hasSM=%d weaponHack=%d overBright=%.3f blur=%d\n",
+                               tr.frameCount, s_lightIdx, lightName, (lightDef && lightDef->parms.pointLight) ? 1 : 0,
+                               matName, geo ? geo->numIndexes : 0, *useSM, hasShadowMask ? 1 : 0,
+                               isWeaponDepthHack ? 1 : 0, backEnd.overBright, r_rtShadowBlur.GetInteger());
+            }
+            if (r_vkRTDebugLightTextures.GetInteger() > 0)
+            {
+                common->Printf("VK RT TEX DBG: frame=%d light='%s' mat='%s' lightProj='%s' lightFalloff='%s' "
+                               "bump='%s' diffuse='%s' spec='%s'\n",
+                               tr.frameCount, lightName, matName,
+                               din->lightImage ? din->lightImage->imgName.c_str() : "<null>",
+                               din->lightFalloffImage ? din->lightFalloffImage->imgName.c_str() : "<null>",
+                               din->bumpImage ? din->bumpImage->imgName.c_str() : "<null>",
+                               din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>",
+                               din->specularImage ? din->specularImage->imgName.c_str() : "<null>");
+            }
+            s_rtDbgCount++;
+        }
+    }
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useSM + 1);
@@ -1221,6 +1317,14 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             continue;
         // Only opaque and alpha-tested surfaces.
         if (coverage != MC_OPAQUE && coverage != MC_PERFORATED)
+            continue;
+
+        // Mirror/subview surfaces must not write depth when rendering their own
+        // reflected subview — the mirror quad sits between the reflected camera
+        // and the reflected scene, so its depth would occlude the reflection.
+        // The GL path clips these via glTexGenfv clip planes; for now we simply
+        // skip them in mirror views.
+        if (backEnd.viewDef->numClipPlanes > 0 && mat->GetSort() == SS_SUBVIEW)
             continue;
 
         const srfTriangles_t *geo = surf->geo;

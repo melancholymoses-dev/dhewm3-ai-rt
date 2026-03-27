@@ -1041,6 +1041,48 @@ void R_SetupProjection(viewDef_t *viewDef)
 }
 
 /*
+===============
+R_ObliqueProjection
+
+Modifies the projection matrix so the near clip plane aligns with the
+mirror/portal clip plane (Eric Lengyel's oblique frustum technique).
+This clips all geometry behind the mirror surface without requiring
+per-vertex gl_ClipDistance support in the shaders.
+===============
+*/
+static void R_ObliqueProjection(viewDef_t *viewDef)
+{
+    // Transform clip plane from world space to eye space
+    idPlane eyePlane;
+    R_GlobalPlaneToLocal(viewDef->worldSpace.modelViewMatrix, viewDef->clipPlanes[0], eyePlane);
+
+    float *P = viewDef->projectionMatrix; // column-major: P[row + col*4]
+
+    // Corner of the frustum on the same side as the clip plane
+    float sgn_x = (eyePlane[0] >= 0.0f) ? 1.0f : -1.0f;
+    float sgn_y = (eyePlane[1] >= 0.0f) ? 1.0f : -1.0f;
+
+    idVec4 q;
+    q.x = (sgn_x + P[8])  / P[0];   // (sgn + P(0,2)) / P(0,0)
+    q.y = (sgn_y + P[9])  / P[5];   // (sgn + P(1,2)) / P(1,1)
+    q.z = -1.0f;
+    q.w = (1.0f  + P[10]) / P[14];  // (1 + P(2,2))   / P(2,3)
+
+    idVec4 c(eyePlane[0], eyePlane[1], eyePlane[2], eyePlane[3]);
+    float dot = c.x * q.x + c.y * q.y + c.z * q.z + c.w * q.w;
+    if (idMath::Fabs(dot) < 1e-6f)
+        return; // degenerate — don't modify
+
+    float scale = 2.0f / dot;
+
+    // Replace the third row of the projection matrix
+    P[2]  = c.x * scale - P[3];
+    P[6]  = c.y * scale - P[7];
+    P[10] = c.z * scale - P[11];
+    P[14] = c.w * scale - P[15];
+}
+
+/*
 =================
 R_SetupViewFrustum
 
@@ -1207,6 +1249,14 @@ void R_RenderView(viewDef_t *parms)
     // we need to set the projection matrix before doing
     // portal-to-screen scissor box calculations
     R_SetupProjection(tr.viewDef);
+
+    // For mirror/portal subviews, modify the projection matrix so the near
+    // plane aligns with the clip plane.  This clips geometry behind the
+    // mirror surface (including the wall the mirror is mounted on).
+    if (tr.viewDef->numClipPlanes > 0)
+    {
+        R_ObliqueProjection(tr.viewDef);
+    }
 
     // identify all the visible portalAreas, and the entityDefs and
     // lightDefs that are in them and pass culling.
