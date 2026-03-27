@@ -24,7 +24,8 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     float lightFalloffRadius;   // point light falloff range
     int   numSamples;           // shadow rays per pixel (1 = hard, 4+ = soft)
     uint  frameIndex;           // for temporal jitter
-    float pad;
+    float rayBias;              // ray origin bias (world units)
+    uint  rayCullMask;          // instance mask for traceRayEXT (0xFE excludes player body)
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -120,7 +121,7 @@ void main() {
 
     // Offset origin slightly along the ray direction to avoid self-intersection.
     // UBO pad carries a runtime-tunable bias so problematic scenes/lights can be tuned.
-    float tMin    = clamp(params.pad, 0.01, 8.0);
+    float tMin    = clamp(params.rayBias, 0.01, 8.0);
     const float tMax    = dist - tMin;
 
     if ( tMax <= 0.0 ) {
@@ -147,7 +148,7 @@ void main() {
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-            0xFF,   // cull mask
+            params.rayCullMask, // cull mask (0xFE excludes player body near lights)
             0,      // SBT offset
             0,      // SBT stride
             0,      // miss index

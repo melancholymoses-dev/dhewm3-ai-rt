@@ -844,7 +844,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         // instanceCustomIndex is patched after static/dynamic merge.
         inst.instanceCustomIndex = 0;
-        inst.mask = 0xFF;
+        // Player body entities get mask bit 0x01 so shadow rays can optionally
+        // exclude them (e.g. when the player is directly under a light).
+        // World geometry keeps all bits set (0xFF) so it is always intersected.
+        inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
         inst.instanceShaderBindingTableRecordOffset = 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.

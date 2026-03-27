@@ -533,10 +533,11 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         const int maxLogs = Max(1, r_vkRTDebugMaxLogsPerFrame.GetInteger());
         if (s_rtDbgCount < maxLogs)
         {
+            const bool matMatch = VK_RTDebugMatMatch(matName);
             const char *lightName =
                 (backEnd.vLight && backEnd.vLight->lightShader) ? backEnd.vLight->lightShader->GetName() : "<null>";
             const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
-            if (r_vkRTDebugInteractions.GetInteger() > 0)
+            if (matMatch && r_vkRTDebugInteractions.GetInteger() > 0)
             {
                 common->Printf("VK RT INTER DBG: frame=%d lightIdx=%d light='%s' point=%d mat='%s' idx=%d useSM=%d "
                                "hasSM=%d weaponHack=%d overBright=%.3f blur=%d\n",
@@ -544,7 +545,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                matName, geo ? geo->numIndexes : 0, *useSM, hasShadowMask ? 1 : 0,
                                isWeaponDepthHack ? 1 : 0, backEnd.overBright, r_rtShadowBlur.GetInteger());
             }
-            if (r_vkRTDebugLightTextures.GetInteger() > 0)
+            if (matMatch && r_vkRTDebugLightTextures.GetInteger() > 0)
             {
                 common->Printf("VK RT TEX DBG: frame=%d light='%s' mat='%s' lightProj='%s' lightFalloff='%s' "
                                "bump='%s' diffuse='%s' spec='%s'\n",
@@ -555,7 +556,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>",
                                din->specularImage ? din->specularImage->imgName.c_str() : "<null>");
             }
-            s_rtDbgCount++;
+            if (matMatch)
+                s_rtDbgCount++;
         }
     }
 
