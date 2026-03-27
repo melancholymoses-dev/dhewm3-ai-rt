@@ -61,6 +61,10 @@ static vkImageData_t *s_imageGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_IMAGE_GARBAGE_M
 static int s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static uint32_t s_imageGarbageOverflowCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
+static float s_cachedMaxSamplerAnisotropy = 1.0f;
+static float s_cachedMaxSamplerLodBias = 0.0f;
+static bool s_samplerQualityLimitsCached = false;
+
 static void VK_DestroyImageData(vkImageData_t *vkd)
 {
     if (vkd->sampler != VK_NULL_HANDLE)
@@ -152,13 +156,19 @@ static VkSamplerMipmapMode MapMipmapMode(textureFilter_t f)
 
 static void VK_GetSamplerQualityLimits(float *outMaxAnisotropy, float *outMaxLodBias)
 {
-    VkPhysicalDeviceProperties props = {};
-    vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
+    if (!s_samplerQualityLimitsCached)
+    {
+        VkPhysicalDeviceProperties props = {};
+        vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
+        s_cachedMaxSamplerAnisotropy = props.limits.maxSamplerAnisotropy;
+        s_cachedMaxSamplerLodBias = props.limits.maxSamplerLodBias;
+        s_samplerQualityLimitsCached = true;
+    }
 
     if (outMaxAnisotropy)
-        *outMaxAnisotropy = props.limits.maxSamplerAnisotropy;
+        *outMaxAnisotropy = s_cachedMaxSamplerAnisotropy;
     if (outMaxLodBias)
-        *outMaxLodBias = props.limits.maxSamplerLodBias;
+        *outMaxLodBias = s_cachedMaxSamplerLodBias;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +312,7 @@ static void VK_DestroyCinematicImage(void)
 void VK_Image_Shutdown(void)
 {
     VK_DestroyCinematicImage();
+    s_samplerQualityLimitsCached = false;
 
     if (!s_fallbackValid)
         return;
