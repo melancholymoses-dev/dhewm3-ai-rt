@@ -529,7 +529,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             "VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
             "radius=(%.1f,%.1f,%.1f) falloff=%.1f samples=%d "
             "pipeline=%s tlas=%s tlasAddr=0x%llx "
-            "shadowMask=%s %ux%u ",
+            "shadowMask=%s %ux%u rgen=0x%llx miss=0x%llx hit=0x%llx\n",
             frameIdx, lp.origin.x, lp.origin.y, lp.origin.z, lp.lightRadius.x, lp.lightRadius.y, lp.lightRadius.z,
             lp.lightRadius.Length(), r_rtShadowSamples.GetInteger(),
             (vkRT.shadowPipeline != VK_NULL_HANDLE) ? "OK" : "NULL",
@@ -701,7 +701,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         ubo.numSamples = requestedSamples;
         const int jitterMinSamples = Max(1, r_rtShadowTemporalJitterMinSamples.GetInteger());
         const bool allowTemporalJitter = r_rtShadowTemporalJitter.GetBool() &&
-                                         (ubo.numSamples >= jitterMinSamples || r_rtShadowBlur.GetInteger() > 0);
+                                         (ubo.numSamples >= jitterMinSamples ||
+                                          (r_rtShadowBlurEnable.GetBool() && r_rtShadowBlur.GetInteger() > 0));
         if (allowTemporalJitter)
         {
             if (r_rtShadowStablePattern.GetBool())
