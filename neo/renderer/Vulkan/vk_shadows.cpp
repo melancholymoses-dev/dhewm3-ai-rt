@@ -44,12 +44,10 @@ static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVA
 static idCVar r_rtShadowSoftRadiusScale(
     "r_rtShadowSoftRadiusScale", "0.08", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "scale factor from point-light radius to RT soft-shadow source radius (smaller avoids washed-out shadows)");
-static idCVar r_rtShadowSoftRadiusMin(
-    "r_rtShadowSoftRadiusMin", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-    "minimum RT soft-shadow source radius after scaling");
-static idCVar r_rtShadowSoftRadiusMax(
-    "r_rtShadowSoftRadiusMax", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-    "maximum RT soft-shadow source radius after scaling");
+static idCVar r_rtShadowSoftRadiusMin("r_rtShadowSoftRadiusMin", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                      "minimum RT soft-shadow source radius after scaling");
+static idCVar r_rtShadowSoftRadiusMax("r_rtShadowSoftRadiusMax", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                      "maximum RT soft-shadow source radius after scaling");
 static idCVar r_rtShadowMinSamples(
     "r_rtShadowMinSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "minimum RT shadow rays per pixel (default 1 keeps baseline behavior; raise only for diagnostics)");
@@ -709,8 +707,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
                            shadowOrigin.z, light.lightRadius.x, light.lightRadius.y, light.lightRadius.z,
                            ubo.lightFalloffRadius, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
                            r_rtShadowTemporalJitter.GetBool() ? 1 : 0, allowTemporalJitter ? 1 : 0, jitterMinSamples,
-                           softRadius,
-                           r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
+                           softRadius, r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
                            r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(),
                            sm.width, sm.height);
         }
