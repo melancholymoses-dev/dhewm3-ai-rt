@@ -1198,6 +1198,10 @@ void VK_RT_Shutdown(void)
     {
         vkDestroySampler(vk.device, vkRT.shadowMaskSampler, NULL);
     }
+    if (vkRT.depthSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(vk.device, vkRT.depthSampler, NULL);
+    }
 
     // Blur pipeline
     if (vkRT.blurPipeline != VK_NULL_HANDLE)

@@ -63,9 +63,8 @@ static idCVar r_vkRTDebugMaxLogsPerFrame("r_vkRTDebugMaxLogsPerFrame", "64", CVA
 static idCVar r_vkRTInterLogN(
     "r_vkRTInterLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
     "limit Vulkan RT interaction/texture debug logging to N frames after enable (0 = unlimited)");
-idCVar r_vkRTLogCaptureReset(
-    "r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
+idCVar r_vkRTLogCaptureReset("r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_INTEGER,
+                             "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
 static idCVar r_vkRTDebugLightTextures("r_vkRTDebugLightTextures", "0", CVAR_RENDERER | CVAR_INTEGER,
                                        "log Vulkan interaction texture sources for filtered surfaces (0=off, 1=on)");
 
@@ -824,9 +823,12 @@ struct VkGuiUBO
     float modelViewProjection[16]; // 64 bytes
     float colorModulate[4];        // 16 bytes
     float colorAdd[4];             // 16 bytes
-    float texMatrixS[4];           // 16 bytes — row 0 of 2D affine UV transform
+    float texMatrixS[4];           // 16 bytes — row 0 of 2D affine UV transform; [2] = texgen flag
     float texMatrixT[4];           // 16 bytes — row 1
-}; // 128 bytes total
+    float texGenS[4];              // 16 bytes — TG_SCREEN S plane (0.5 scale+bias baked in)
+    float texGenT[4];              // 16 bytes — TG_SCREEN T plane (0.5 scale+bias baked in)
+    float texGenQ[4];              // 16 bytes — TG_SCREEN Q plane (MVP row 3)
+}; // 176 bytes total
 
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
@@ -839,6 +841,34 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     if (r_vkLogRT.GetInteger() >= 2)
     {
         common->Printf("VK DrawShaderPasses: ENTER numDrawSurfs=%d\n", backEnd.viewDef->numDrawSurfs);
+    }
+
+    // Mirror draw-order analysis: log sequence of weapon, mirror, and world surfaces
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        static int s_drawOrderLog = 0;
+        if (s_drawOrderLog < 5)
+        {
+            s_drawOrderLog++;
+            common->Printf("VK MIRROR DRAW-ORDER: isSubview=%d isMirror=%d clipPlanes=%d numSurfs=%d\n",
+                           backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                           backEnd.viewDef->numClipPlanes, backEnd.viewDef->numDrawSurfs);
+            for (int oi = 0; oi < backEnd.viewDef->numDrawSurfs && oi < 40; oi++)
+            {
+                const drawSurf_t *os = backEnd.viewDef->drawSurfs[oi];
+                if (!os || !os->material)
+                    continue;
+                const char *tag = "world";
+                if (os->space && os->space->weaponDepthHack)
+                    tag = "WEAPON";
+                else if (os->material->GetSort() == SS_SUBVIEW)
+                    tag = "MIRROR";
+                else if (os->material->Coverage() == MC_TRANSLUCENT)
+                    tag = "trans";
+                common->Printf("  [%d] %s sort=%d mat='%s' cov=%d\n", oi, tag, (int)os->material->GetSort(),
+                               os->material->GetName(), (int)os->material->Coverage());
+            }
+        }
     }
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
@@ -1147,6 +1177,23 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 colorAdd[3] = color[3];
             }
 
+            // SS_SUBVIEW override (GL parity: draw_common.cpp:562-566)
+            // The `mirror` keyword renders the reflected scene directly into the
+            // framebuffer via a subview, then the mirror quad draws with multiplicative
+            // blend to darken it by 1/overBright.  GL forces DEPTHFUNC_LESS (not EQUAL)
+            // so the quad overwrites the subview's depth, and sets color to 1/overBright.
+            int drawBitsOverride = pStage->drawStateBits;
+            if (mat->GetSort() == SS_SUBVIEW)
+            {
+                drawBitsOverride = GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO | GLS_DEPTHFUNC_LESS;
+                float ob = 1.0f / backEnd.overBright;
+                colorModulate[0] = colorModulate[1] = colorModulate[2] = colorModulate[3] = 0.0f;
+                colorAdd[0] = ob;
+                colorAdd[1] = ob;
+                colorAdd[2] = ob;
+                colorAdd[3] = 1.0f;
+            }
+
             float mvp[16];
             VK_BuildSurfMVP(surf->space, mvp);
 
@@ -1157,8 +1204,58 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             memcpy(guiUbo->colorModulate, colorModulate, 16);
             memcpy(guiUbo->colorAdd, colorAdd, 16);
 
-            // Texture coordinate transform
-            if (pStage->texture.hasMatrix)
+            // Texture coordinate transform & TG_SCREEN texgen
+            if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+            {
+                // Projective screen-space texgen for mirrors / screen captures.
+                // Compute MVP using GL projection (column-major). Rows 0,1,3 are
+                // unaffected by the VK Z-remap so either projection works.
+                float texgenMat[16];
+                myGlMultMatrix(surf->space->modelViewMatrix, backEnd.viewDef->projectionMatrix, texgenMat);
+
+                // Extract MVP rows and apply 0.5 scale + 0.5 bias so that after
+                // the projective divide the texcoords map from NDC [-1,1] → [0,1].
+                //   Row 0 (S): texgenMat[c*4+0]
+                //   Row 1 (T): texgenMat[c*4+1]   (Y flipped for VK neg-viewport)
+                //   Row 3 (Q): texgenMat[c*4+3]
+                for (int c = 0; c < 4; c++)
+                {
+                    float r0 = texgenMat[c * 4 + 0]; // row 0
+                    float r1 = texgenMat[c * 4 + 1]; // row 1
+                    float r3 = texgenMat[c * 4 + 3]; // row 3
+                    guiUbo->texGenS[c] = 0.5f * r0 + 0.5f * r3;
+                    guiUbo->texGenT[c] = -0.5f * r1 + 0.5f * r3; // neg = VK Y flip
+                    guiUbo->texGenQ[c] = r3;
+                }
+
+                // Signal texgen mode via texMatrixS[2] (normally always 0).
+                guiUbo->texMatrixS[0] = 1.f;
+                guiUbo->texMatrixS[1] = 0.f;
+                guiUbo->texMatrixS[2] = 1.f; // <-- texgen flag
+                guiUbo->texMatrixS[3] = 0.f;
+                guiUbo->texMatrixT[0] = 0.f;
+                guiUbo->texMatrixT[1] = 1.f;
+                guiUbo->texMatrixT[2] = 0.f;
+                guiUbo->texMatrixT[3] = 0.f;
+
+                if (r_vkLogRT.GetInteger() >= 1)
+                {
+                    static int s_texgenLogCount = 0;
+                    if (s_texgenLogCount < 20)
+                    {
+                        s_texgenLogCount++;
+                        common->Printf("VK TEXGEN: mat='%s' tg=%d "
+                                       "S=[%.3f %.3f %.3f %.3f] "
+                                       "T=[%.3f %.3f %.3f %.3f] "
+                                       "Q=[%.3f %.3f %.3f %.3f]\n",
+                                       mat->GetName(), (int)pStage->texture.texgen, guiUbo->texGenS[0],
+                                       guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3], guiUbo->texGenT[0],
+                                       guiUbo->texGenT[1], guiUbo->texGenT[2], guiUbo->texGenT[3], guiUbo->texGenQ[0],
+                                       guiUbo->texGenQ[1], guiUbo->texGenQ[2], guiUbo->texGenQ[3]);
+                    }
+                }
+            }
+            else if (pStage->texture.hasMatrix)
             {
                 const textureStage_t &tex = pStage->texture;
                 float s2 = regs[tex.matrix[0][2]];
@@ -1175,6 +1272,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
                 guiUbo->texMatrixT[2] = 0.f;
                 guiUbo->texMatrixT[3] = t2;
+                memset(guiUbo->texGenS, 0, 16);
+                memset(guiUbo->texGenT, 0, 16);
+                memset(guiUbo->texGenQ, 0, 16);
             }
             else
             {
@@ -1186,6 +1286,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 guiUbo->texMatrixT[1] = 1.f;
                 guiUbo->texMatrixT[2] = 0.f;
                 guiUbo->texMatrixT[3] = 0.f;
+                memset(guiUbo->texGenS, 0, 16);
+                memset(guiUbo->texGenT, 0, 16);
+                memset(guiUbo->texGenQ, 0, 16);
             }
 
             // Allocate GUI descriptor set
@@ -1226,16 +1329,16 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // they respect the depth prepass and don't render through occluders or from
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
-            const bool needDepth = !(pStage->drawStateBits & GLS_DEPTHFUNC_ALWAYS);
+            const bool needDepth = !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
             if (r_vkLogRT.GetInteger() >= 3)
             {
-                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                const uint32_t blendBits = (uint32_t)(drawBitsOverride & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
                 common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
-                               mat->GetName(), stageIdx, pStage->drawStateBits, blendBits, (int)needDepth);
+                               mat->GetName(), stageIdx, drawBitsOverride, blendBits, (int)needDepth);
             }
 
-            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits, needDepth);
+            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
 
             // Log translucent material pipeline binding
             if (vkTransLog >= 1 && translucentLike)
@@ -1267,15 +1370,72 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 
-            // Mirror/subview surface draw logging
+            // Comprehensive mirror/subview surface draw logging
             if (r_vkLogRT.GetInteger() >= 1 && mat->GetSort() == SS_SUBVIEW)
             {
-                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
-                common->Printf("VK MIRROR DRAW: mat='%s' stage=%d blend=0x%x img='%s' depthTest=%d "
-                               "isSubview=%d isMirror=%d idxCount=%d\n",
-                               mat->GetName(), stageIdx, blendBits, img ? img->imgName.c_str() : "<null>",
-                               needDepth ? 1 : 0, backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
-                               geo->numIndexes);
+                static int s_mirrorDrawLog = 0;
+                if (s_mirrorDrawLog < 30)
+                {
+                    s_mirrorDrawLog++;
+                    const uint32_t blendBits =
+                        (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                    const bool isWeaponHack = (surf->space && surf->space->weaponDepthHack);
+
+                    // Compute NDC Z of first vertex for depth analysis
+                    float ndcZ = 0.f, clipW = 0.f;
+                    if (geo->verts && geo->numVerts > 0)
+                    {
+                        float tmvp[16];
+                        VK_BuildSurfMVP(surf->space, tmvp);
+                        const idVec3 &v = geo->verts[0].xyz;
+                        clipW = tmvp[3] * v.x + tmvp[7] * v.y + tmvp[11] * v.z + tmvp[15];
+                        float cz = tmvp[2] * v.x + tmvp[6] * v.y + tmvp[10] * v.z + tmvp[14];
+                        ndcZ = (clipW != 0.f) ? cz / clipW : 0.f;
+                    }
+
+                    common->Printf(
+                        "VK MIRROR DRAW: mat='%s' stage=%d blend=0x%x drawState=0x%x(override=0x%x) depthTest=%d "
+                        "depthFunc=%s img='%s' texgen=%d coverage=%d "
+                        "isSubview=%d isMirror=%d clipPlanes=%d weaponHack=%d "
+                        "ndcZ=%.4f clipW=%.2f verts=%d idx=%d "
+                        "colorMod=[%.2f,%.2f,%.2f,%.2f] colorAdd=[%.2f,%.2f,%.2f,%.2f] "
+                        "vertColor=%d cullType=%d sort=%d polyOffset=%.1f overBright=%.2f\n",
+                        mat->GetName(), stageIdx, blendBits, pStage->drawStateBits, drawBitsOverride, needDepth ? 1 : 0,
+                        (drawBitsOverride & GLS_DEPTHFUNC_ALWAYS)  ? "ALWAYS"
+                        : (drawBitsOverride & GLS_DEPTHFUNC_EQUAL) ? "EQUAL"
+                                                                   : "LESS",
+                        img ? img->imgName.c_str() : "<null>", (int)pStage->texture.texgen, (int)mat->Coverage(),
+                        backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                        backEnd.viewDef->numClipPlanes, isWeaponHack ? 1 : 0, ndcZ, clipW, geo->numVerts,
+                        geo->numIndexes, guiUbo->colorModulate[0], guiUbo->colorModulate[1], guiUbo->colorModulate[2],
+                        guiUbo->colorModulate[3], guiUbo->colorAdd[0], guiUbo->colorAdd[1], guiUbo->colorAdd[2],
+                        guiUbo->colorAdd[3], (int)pStage->vertexColor, (int)mat->GetCullType(), (int)mat->GetSort(),
+                        mat->GetPolygonOffset(), backEnd.overBright);
+
+                    // Log texgen planes if TG_SCREEN
+                    if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+                    {
+                        common->Printf("  MIRROR TEXGEN: S=[%.4f,%.4f,%.4f,%.4f] T=[%.4f,%.4f,%.4f,%.4f] "
+                                       "Q=[%.4f,%.4f,%.4f,%.4f] texMatFlag=%.1f\n",
+                                       guiUbo->texGenS[0], guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3],
+                                       guiUbo->texGenT[0], guiUbo->texGenT[1], guiUbo->texGenT[2], guiUbo->texGenT[3],
+                                       guiUbo->texGenQ[0], guiUbo->texGenQ[1], guiUbo->texGenQ[2], guiUbo->texGenQ[3],
+                                       guiUbo->texMatrixS[2]);
+                    }
+
+                    // Log first few vertex positions for geometry analysis
+                    if (geo->verts && geo->numVerts > 0)
+                    {
+                        int logVerts = (geo->numVerts < 4) ? geo->numVerts : 4;
+                        for (int vi = 0; vi < logVerts; vi++)
+                        {
+                            const idVec3 &v = geo->verts[vi].xyz;
+                            const idVec2 &st = geo->verts[vi].st;
+                            common->Printf("  MIRROR VERT[%d]: pos=(%.2f,%.2f,%.2f) uv=(%.4f,%.4f)\n", vi, v.x, v.y,
+                                           v.z, st.x, st.y);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1327,9 +1487,69 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         // The GL path clips these via glTexGenfv clip planes; for now we simply
         // skip them in mirror views.
         if (backEnd.viewDef->numClipPlanes > 0 && mat->GetSort() == SS_SUBVIEW)
+        {
+            if (r_vkLogRT.GetInteger() >= 1)
+            {
+                static int s_mirrorDepthSkipLog = 0;
+                if (s_mirrorDepthSkipLog < 10)
+                {
+                    s_mirrorDepthSkipLog++;
+                    common->Printf(
+                        "VK MIRROR DEPTH-SKIP: mat='%s' clipPlanes=%d (mirror subview, skipping depth fill)\n",
+                        mat->GetName(), backEnd.viewDef->numClipPlanes);
+                }
+            }
             continue;
+        }
 
         const srfTriangles_t *geo = surf->geo;
+
+        // Log mirror surfaces that ARE being depth-filled (main view)
+        if (r_vkLogRT.GetInteger() >= 1 && mat->GetSort() == SS_SUBVIEW)
+        {
+            static int s_mirrorDepthFillLog = 0;
+            if (s_mirrorDepthFillLog < 10)
+            {
+                s_mirrorDepthFillLog++;
+                const bool isWeaponView = (surf->space && surf->space->weaponDepthHack);
+                float ndcZ = 0.f;
+                if (geo->verts && geo->numVerts > 0)
+                {
+                    float tmvp[16];
+                    VK_BuildSurfMVP(surf->space, tmvp);
+                    const idVec3 &v = geo->verts[0].xyz;
+                    float cw = tmvp[3] * v.x + tmvp[7] * v.y + tmvp[11] * v.z + tmvp[15];
+                    float cz = tmvp[2] * v.x + tmvp[6] * v.y + tmvp[10] * v.z + tmvp[14];
+                    ndcZ = (cw != 0.f) ? cz / cw : 0.f;
+                }
+                common->Printf("VK MIRROR DEPTH-FILL: mat='%s' coverage=%d sort=%d weaponHack=%d "
+                               "isSubview=%d ndcZ=%.4f numVerts=%d numIdx=%d\n",
+                               mat->GetName(), (int)coverage, (int)mat->GetSort(), isWeaponView ? 1 : 0,
+                               backEnd.viewDef->isSubview ? 1 : 0, ndcZ, geo->numVerts, geo->numIndexes);
+            }
+        }
+
+        // Log weapon surfaces in depth prepass for depth comparison with mirror
+        if (r_vkLogRT.GetInteger() >= 1 && surf->space && surf->space->weaponDepthHack)
+        {
+            static int s_weaponDepthLog = 0;
+            if (s_weaponDepthLog < 10)
+            {
+                s_weaponDepthLog++;
+                float ndcZ = 0.f;
+                if (geo->verts && geo->numVerts > 0)
+                {
+                    float tmvp[16];
+                    VK_BuildSurfMVP(surf->space, tmvp);
+                    const idVec3 &v = geo->verts[0].xyz;
+                    float cw = tmvp[3] * v.x + tmvp[7] * v.y + tmvp[11] * v.z + tmvp[15];
+                    float cz = tmvp[2] * v.x + tmvp[6] * v.y + tmvp[10] * v.z + tmvp[14];
+                    ndcZ = (cw != 0.f) ? cz / cw : 0.f;
+                }
+                common->Printf("VK WEAPON DEPTH-FILL: mat='%s' ndcZ=%.4f sort=%d verts=%d\n", mat->GetName(), ndcZ,
+                               (int)mat->GetSort(), geo->numVerts);
+            }
+        }
         if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
             continue;
 
@@ -1425,6 +1645,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 ubo->texMatrixT[2] = 0.f;
                 ubo->texMatrixT[3] = 0.f;
             }
+            // Depth never uses texgen.
+            memset(ubo->texGenS, 0, 16);
+            memset(ubo->texGenT, 0, 16);
+            memset(ubo->texGenQ, 0, 16);
 
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -3086,10 +3310,42 @@ void VK_RB_DrawView(const void *data)
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
+        // Count weapon/mirror/subview surfaces for diagnostic summary
+        int weaponSurfCount = 0, mirrorSurfCount = 0;
+        float mirrorMinDepth = 1e9f, mirrorMaxDepth = -1e9f;
+        for (int di = 0; di < backEnd.viewDef->numDrawSurfs; di++)
+        {
+            const drawSurf_t *ds = backEnd.viewDef->drawSurfs[di];
+            if (!ds || !ds->material)
+                continue;
+            if (ds->space && ds->space->weaponDepthHack)
+                weaponSurfCount++;
+            if (ds->material->GetSort() == SS_SUBVIEW)
+            {
+                mirrorSurfCount++;
+                // Estimate mirror quad depth from first vertex
+                if (ds->geo && ds->geo->verts && ds->geo->numVerts > 0)
+                {
+                    float mvp[16];
+                    VK_BuildSurfMVP(ds->space, mvp);
+                    const idVec3 &v = ds->geo->verts[0].xyz;
+                    float clipW = mvp[3] * v.x + mvp[7] * v.y + mvp[11] * v.z + mvp[15];
+                    float clipZ = mvp[2] * v.x + mvp[6] * v.y + mvp[10] * v.z + mvp[14];
+                    float ndcZ = (clipW != 0.f) ? clipZ / clipW : 0.f;
+                    if (ndcZ < mirrorMinDepth)
+                        mirrorMinDepth = ndcZ;
+                    if (ndcZ > mirrorMaxDepth)
+                        mirrorMaxDepth = ndcZ;
+                }
+            }
+        }
         common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d isSubview=%d isMirror=%d "
+                       "clipPlanes=%d weaponSurfs=%d mirrorSurfs=%d mirrorDepth=[%.4f,%.4f] "
                        "scissor=(%d,%d %d,%d)\n",
                        vk.currentFrame, vk.currentImageIdx, tr.frameCount, VK_RTShadowsEnabled() ? 1 : 0,
                        backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                       backEnd.viewDef->numClipPlanes, weaponSurfCount, mirrorSurfCount,
+                       mirrorSurfCount > 0 ? mirrorMinDepth : 0.f, mirrorSurfCount > 0 ? mirrorMaxDepth : 0.f,
                        backEnd.viewDef->scissor.x1, backEnd.viewDef->scissor.y1, backEnd.viewDef->scissor.x2,
                        backEnd.viewDef->scissor.y2);
         fflush(NULL);
@@ -3260,11 +3516,20 @@ void VK_RB_CopyRender(const void *data)
         return;
     }
 
-    if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
+    if (r_vkLogRT.GetInteger() >= 1 || r_vkLogSubmitInfo.GetInteger() >= 2)
     {
-        common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u\n",
-                       cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH, copyW,
-                       copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height);
+        static int s_copyRenderLog = 0;
+        if (s_copyRenderLog < 20)
+        {
+            s_copyRenderLog++;
+            common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u "
+                           "isSubview=%d isMirror=%d clipPlanes=%d\n",
+                           cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH,
+                           copyW, copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height,
+                           backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
+                           backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
+                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1);
+        }
     }
 
     // Suspend active render pass to perform transfer operations.
