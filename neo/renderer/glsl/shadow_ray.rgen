@@ -120,7 +120,7 @@ void main() {
     vec3 lightDir = toLight / dist;
 
     // Offset origin slightly along the ray direction to avoid self-intersection.
-    // UBO pad carries a runtime-tunable bias so problematic scenes/lights can be tuned.
+    // The rayBias uniform provides a runtime-tunable bias so problematic scenes/lights can be tuned.
     float tMin    = clamp(params.rayBias, 0.01, 8.0);
     const float tMax    = dist - tMin;
 
