@@ -482,6 +482,14 @@ whatever the ray hits. Blend the reflected colour into the specular term.
 This is optional and expensive. Only enable for highly-specular surfaces
 (metal floors, mirrors, polished panels).
 
+**Mirror replacement:** Once RT reflections are working, the rasterized
+mirror subview path (`R_MirrorViewBySurface`, oblique clip plane, dual
+`R_RenderView` passes) can be retired entirely. Mirrors become a degenerate
+case of perfect specular reflection (roughness = 0). The closest-hit shader
+checks for the `mirror` material flag, reflects the ray, and traces again —
+no clip planes, no subview, no second full-scene render. This eliminates
+roughly 1.5x per-frame cost when a mirror is visible.
+
 #### New Files
 
 ```
