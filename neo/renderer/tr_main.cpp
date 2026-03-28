@@ -1052,9 +1052,19 @@ per-vertex gl_ClipDistance support in the shaders.
 */
 static void R_ObliqueProjection(viewDef_t *viewDef)
 {
-    // Transform clip plane from world space to eye space
+    // Transform clip plane from world space to GL eye space.
+    // NOTE: R_GlobalPlaneToLocal expects a local→world matrix and applies M^T,
+    // but modelViewMatrix is world→eye, so we must transform directly using
+    // the modelViewMatrix rows (forward multiply) for the normal, and compute
+    // d as the signed distance from the camera to the plane in world space.
     idPlane eyePlane;
-    R_GlobalPlaneToLocal(viewDef->worldSpace.modelViewMatrix, viewDef->clipPlanes[0], eyePlane);
+    const float *mv = viewDef->worldSpace.modelViewMatrix;
+    const idPlane &wp = viewDef->clipPlanes[0];
+    eyePlane[0] = mv[0] * wp[0] + mv[4] * wp[1] + mv[8]  * wp[2];
+    eyePlane[1] = mv[1] * wp[0] + mv[5] * wp[1] + mv[9]  * wp[2];
+    eyePlane[2] = mv[2] * wp[0] + mv[6] * wp[1] + mv[10] * wp[2];
+    const idVec3 &org = viewDef->renderView.vieworg;
+    eyePlane[3] = wp[3] + wp[0] * org.x + wp[1] * org.y + wp[2] * org.z;
 
     float *P = viewDef->projectionMatrix; // column-major: P[row + col*4]
 
@@ -1071,15 +1081,43 @@ static void R_ObliqueProjection(viewDef_t *viewDef)
     idVec4 c(eyePlane[0], eyePlane[1], eyePlane[2], eyePlane[3]);
     float dot = c.x * q.x + c.y * q.y + c.z * q.z + c.w * q.w;
     if (idMath::Fabs(dot) < 1e-6f)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("OBLIQUE PROJ: DEGENERATE dot=%.8f — skipping!\n", dot);
         return; // degenerate — don't modify
+    }
 
     float scale = 2.0f / dot;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("OBLIQUE PROJ: worldClip=(%.4f,%.4f,%.4f,%.4f) eyeClip=(%.4f,%.4f,%.4f,%.4f)\n",
+            viewDef->clipPlanes[0][0], viewDef->clipPlanes[0][1], viewDef->clipPlanes[0][2], viewDef->clipPlanes[0][3],
+            eyePlane[0], eyePlane[1], eyePlane[2], eyePlane[3]);
+        common->Printf("OBLIQUE PROJ: q=(%.4f,%.4f,%.4f,%.4f) dot=%.6f scale=%.6f\n",
+            q.x, q.y, q.z, q.w, dot, scale);
+        common->Printf("OBLIQUE PROJ: before row2: P[2]=%.6f P[6]=%.6f P[10]=%.6f P[14]=%.6f\n",
+            P[2], P[6], P[10], P[14]);
+    }
 
     // Replace the third row of the projection matrix
     P[2]  = c.x * scale - P[3];
     P[6]  = c.y * scale - P[7];
     P[10] = c.z * scale - P[11];
     P[14] = c.w * scale - P[15];
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("OBLIQUE PROJ: after  row2: P[2]=%.6f P[6]=%.6f P[10]=%.6f P[14]=%.6f\n",
+            P[2], P[6], P[10], P[14]);
+        common->Printf("OBLIQUE PROJ: row3: P[3]=%.6f P[7]=%.6f P[11]=%.6f P[15]=%.6f\n",
+            P[3], P[7], P[11], P[15]);
+        // Verify: for a point on the clip plane, row2+row3 should be ~0
+        // near plane = row2 + row3 (GL convention), should equal k*c
+        float nr0 = P[2]+P[3], nr1 = P[6]+P[7], nr2 = P[10]+P[11], nr3 = P[14]+P[15];
+        common->Printf("OBLIQUE PROJ: nearPlane(row2+row3)=(%.4f,%.4f,%.4f,%.4f) should be proportional to eyeClip\n",
+            nr0, nr1, nr2, nr3);
+    }
 }
 
 /*

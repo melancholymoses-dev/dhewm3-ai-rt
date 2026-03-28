@@ -272,11 +272,47 @@ static viewDef_t *R_MirrorViewBySurface(drawSurf_t *drawSurf)
 
     R_LocalPointToGlobal(drawSurf->space->modelMatrix, viewOrigin, parms->initialViewAreaOrigin);
 
-    // set the mirror clip plane
+    // set the mirror clip plane — must point toward the SCENE (visible side),
+    // not toward the reflected camera.  -camera.axis[0] points from mirror
+    // toward the scene, which maps to -Z in GL eye space — required by the
+    // Lengyel oblique projection (positive half-space = visible).
     parms->numClipPlanes = 1;
     parms->clipPlanes[0] = -camera.axis[0];
 
     parms->clipPlanes[0][3] = -(camera.origin * parms->clipPlanes[0].Normal());
+
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("MIRROR SETUP: originalPlane=(%.3f,%.3f,%.3f,%.3f) worldPlane=(%.3f,%.3f,%.3f,%.3f)\n",
+            originalPlane[0], originalPlane[1], originalPlane[2], originalPlane[3],
+            plane[0], plane[1], plane[2], plane[3]);
+        common->Printf("MIRROR SETUP: surfOrigin=(%.1f,%.1f,%.1f) surfAxis0=(%.3f,%.3f,%.3f)\n",
+            surface.origin.x, surface.origin.y, surface.origin.z,
+            surface.axis[0].x, surface.axis[0].y, surface.axis[0].z);
+        common->Printf("MIRROR SETUP: camOrigin=(%.1f,%.1f,%.1f) camAxis0=(%.3f,%.3f,%.3f)\n",
+            camera.origin.x, camera.origin.y, camera.origin.z,
+            camera.axis[0].x, camera.axis[0].y, camera.axis[0].z);
+        common->Printf("MIRROR SETUP: parentVieworg=(%.1f,%.1f,%.1f) parentAxis0=(%.3f,%.3f,%.3f)\n",
+            tr.viewDef->renderView.vieworg.x, tr.viewDef->renderView.vieworg.y, tr.viewDef->renderView.vieworg.z,
+            tr.viewDef->renderView.viewaxis[0].x, tr.viewDef->renderView.viewaxis[0].y, tr.viewDef->renderView.viewaxis[0].z);
+        common->Printf("MIRROR SETUP: reflectedVieworg=(%.1f,%.1f,%.1f) reflectedAxis0=(%.3f,%.3f,%.3f)\n",
+            parms->renderView.vieworg.x, parms->renderView.vieworg.y, parms->renderView.vieworg.z,
+            parms->renderView.viewaxis[0].x, parms->renderView.viewaxis[0].y, parms->renderView.viewaxis[0].z);
+        common->Printf("MIRROR SETUP: clipPlane=(%.4f,%.4f,%.4f,%.4f)\n",
+            parms->clipPlanes[0][0], parms->clipPlanes[0][1], parms->clipPlanes[0][2], parms->clipPlanes[0][3]);
+        // Verify: camera should be on the visible side of the clip plane (dot > 0)
+        float camDot = parms->renderView.vieworg.x * parms->clipPlanes[0][0]
+                     + parms->renderView.vieworg.y * parms->clipPlanes[0][1]
+                     + parms->renderView.vieworg.z * parms->clipPlanes[0][2]
+                     + parms->clipPlanes[0][3];
+        // Also test the parent camera against the clip plane
+        float parentDot = tr.viewDef->renderView.vieworg.x * parms->clipPlanes[0][0]
+                        + tr.viewDef->renderView.vieworg.y * parms->clipPlanes[0][1]
+                        + tr.viewDef->renderView.vieworg.z * parms->clipPlanes[0][2]
+                        + parms->clipPlanes[0][3];
+        common->Printf("MIRROR SETUP: camDotClip=%.4f (should be <0, clipped side) parentDotClip=%.4f (should be >0, visible side)\n",
+            camDot, parentDot);
+    }
 
     return parms;
 }
