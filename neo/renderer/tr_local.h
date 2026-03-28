@@ -916,8 +916,7 @@ extern idCVar
     r_usePreciseTriangleInteractions; // 1 = do winding clipping to determine if each ambiguous tri should be lit
 extern idCVar r_useTurboShadow;       // 1 = use the infinite projection with W technique for dynamic shadows
 extern idCVar r_useExternalShadows;   // 1 = skip drawing caps when outside the light volume
-extern idCVar r_vkLogShadowBranch;    // Vulkan shadow branch logging (0=off,1=per-light,2=per-surface,3=signature
-                                      // changes,4=+inside-light flip diagnostics,5=+verbose pass/list churn)
+extern idCVar r_vkLogShadowBranch;    // Vulkan shadow branch logging (0=off,1=basic,2=detailed)
 extern idCVar r_vkShadowFlipOps;      // Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection
 extern idCVar r_vkShadowStableMode;   // Vulkan shadow stabilization: force full-volume Z-fail path
 extern idCVar r_vkLogShadowGeom;      // Vulkan shadow geometry logging (source path and geometry signature)
