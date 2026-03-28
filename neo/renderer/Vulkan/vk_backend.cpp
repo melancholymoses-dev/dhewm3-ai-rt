@@ -331,6 +331,39 @@ static VkRect2D VK_IntersectRect(VkRect2D a, VkRect2D b)
     return r;
 }
 
+// Convert drawSurf->scissorRect (viewport-local GL coordinates) to a Vulkan scissor
+// in absolute framebuffer coordinates and clamp to the current view scissor.
+static VkRect2D VK_ComputeDrawSurfScissor(const drawSurf_t *surf)
+{
+    if (!surf || !backEnd.viewDef)
+        return s_viewScissor;
+
+    const idScreenRect &s = surf->scissorRect;
+    if (s.IsEmpty())
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    const int w = (int)vk.swapchainExtent.width;
+    const int h = (int)vk.swapchainExtent.height;
+
+    const int absX1 = backEnd.viewDef->viewport.x1 + s.x1;
+    const int absY1 = backEnd.viewDef->viewport.y1 + s.y1; // GL bottom edge
+    const int absY2 = backEnd.viewDef->viewport.y1 + s.y2; // GL top edge
+
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, w - 1, absX1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - absY2); // GL top -> VK top
+
+    const int rw = s.x2 - s.x1 + 1;
+    const int rh = absY2 - absY1 + 1;
+    if (rw <= 0 || rh <= 0)
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
+
+    return VK_IntersectRect(r, s_viewScissor);
+}
+
 // ---------------------------------------------------------------------------
 // VK_BuildSurfMVP
 // Build a model-view-projection matrix for a surface, applying weaponDepthHack
@@ -443,6 +476,7 @@ static VkCommandBuffer s_cmd = VK_NULL_HANDLE;
 static const char *s_shadowPhaseTag = "unknown";
 static int s_lightIdx = -1; // current light index (for per-interaction logging)
 static const char *s_interactionPipeTag = "opaque";
+static VkRect2D s_interactionLightScissor = {{0, 0}, {0, 0}};
 
 static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 {
@@ -716,6 +750,17 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         return;
     }
 
+    // Constrain interaction rasterization to the surface scissor, then to the
+    // active light scissor. This prevents reflected subview content from bleeding
+    // outside mirror coverage due to view-level scissor rectangles.
+    {
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(din->surf);
+        surfScissor = VK_IntersectRect(surfScissor, s_interactionLightScissor);
+        if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
+            return;
+        vkCmdSetScissor(s_cmd, 0, 1, &surfScissor);
+    }
+
     // --- Vertex buffer ---
     VkBuffer vertBuf;
     VkDeviceSize vertOffset;
@@ -931,6 +976,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
         if (!surf || !surf->material || !surf->geo)
             continue;
+
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(surf);
+        if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
+            continue;
+        vkCmdSetScissor(cmd, 0, 1, &surfScissor);
 
         const idMaterial *mat = surf->material;
         if (mat->SuppressInSubview())
@@ -1506,6 +1556,23 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
+    // GL parity: when the current (non-subview) view contains mirror surfaces,
+    // the depth fill pass must also guard the color buffer so previously rendered
+    // mirror subview color does not leak through unrelated geometry.
+    bool guardSubviewColor = false;
+    if (!backEnd.viewDef->isSubview)
+    {
+        for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
+        {
+            const drawSurf_t *s = backEnd.viewDef->drawSurfs[i];
+            if (s && s->material && s->material->GetSort() == SS_SUBVIEW)
+            {
+                guardSubviewColor = true;
+                break;
+            }
+        }
+    }
+
     // Bind the opaque depth pipeline up front; switch to depthClipPipeline per-draw for MC_PERFORATED.
     VkPipeline activePipeline = VK_NULL_HANDLE;
     // Track depth bias so we only call vkCmdSetDepthBias when it changes.
@@ -1517,6 +1584,11 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[i];
         if (!surf || !surf->material || !surf->geo)
             continue;
+
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(surf);
+        if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
+            continue;
+        vkCmdSetScissor(cmd, 0, 1, &surfScissor);
 
         const idMaterial *mat = surf->material;
         const materialCoverage_t coverage = mat->Coverage();
@@ -1739,6 +1811,73 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
+        auto drawSubviewGuardBlack = [&]() {
+            extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
+
+            uint32_t uboOffset = VK_AllocUBO();
+            VkGuiUBO *ubo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+            memcpy(ubo->modelViewProjection, mvp, 64);
+            // Output constant black regardless of bound texture.
+            ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 0.f;
+            ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = ubo->colorAdd[3] = 0.f;
+            ubo->texMatrixS[0] = 1.f;
+            ubo->texMatrixS[1] = 0.f;
+            ubo->texMatrixS[2] = 0.f;
+            ubo->texMatrixS[3] = 0.f;
+            ubo->texMatrixT[0] = 0.f;
+            ubo->texMatrixT[1] = 1.f;
+            ubo->texMatrixT[2] = 0.f;
+            ubo->texMatrixT[3] = 0.f;
+            memset(ubo->texGenS, 0, 16);
+            memset(ubo->texGenT, 0, 16);
+            memset(ubo->texGenQ, 0, 16);
+
+            VkDescriptorSetAllocateInfo dsAlloc = {};
+            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
+            dsAlloc.descriptorSetCount = 1;
+            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
+
+            VkDescriptorSet ds;
+            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+                return;
+
+            VkDescriptorImageInfo imgInfo = {};
+            VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+
+            VkDescriptorBufferInfo bufInfo = {};
+            bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            bufInfo.offset = uboOffset;
+            bufInfo.range = sizeof(VkGuiUBO);
+
+            VkWriteDescriptorSet writes[2] = {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = ds;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfo;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = ds;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo = &imgInfo;
+            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+
+            // Depth EQUAL confines black-out to surfaces that won the depth prepass.
+            VkPipeline pipe = VK_GetOrCreateGuiBlendPipeline(GLS_DEPTHFUNC_EQUAL, true);
+            if (pipe != activePipeline)
+            {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+                activePipeline = pipe;
+            }
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+        };
+
         // Apply polygon offset for decal/overlay surfaces (mirrors GL qglPolygonOffset).
         // r_offsetUnits (-600 by default) * material polygonOffset value pulls the depth
         // toward the camera so co-planar decals pass the LEQUAL interaction test.
@@ -1771,6 +1910,11 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             VkDescriptorImageInfo imgInfo = {};
             VK_Image_GetFallbackDescriptorInfo(&imgInfo);
             drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+
+            // GL parity guard: black out non-mirror opaque surfaces so prior subview
+            // color only remains visible through mirror geometry.
+            if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
+                drawSubviewGuardBlack();
         }
         else // MC_PERFORATED
         {
@@ -2538,6 +2682,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             lightScissor = VK_IntersectRect(lightScissor, s_viewScissor);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
         }
+
+        // Per-interaction draws further intersect this with drawSurf->scissorRect.
+        s_interactionLightScissor = lightScissor;
 
         // Set the file-static light index used by VK_RB_DrawInteraction logging
         s_lightIdx = lightIdx;
