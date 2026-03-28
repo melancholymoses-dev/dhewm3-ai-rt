@@ -627,7 +627,7 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
         }
     }
 
-    if (r_vkLogShadowBranch.GetInteger() >= 4)
+    if (r_vkLogShadowBranch.GetInteger() >= 2)
     {
         float shadowDMin = idMath::INFINITY;
         float shadowDMax = -idMath::INFINITY;
@@ -652,19 +652,12 @@ viewLight_t *R_SetLightDefViewLight(idRenderLightLocal *light)
         const bool changed = !firstSeen && (track.viewInsideLight != vLight->viewInsideLight);
         if (changed && track.lastLoggedFrame != tr.frameCount)
         {
-            const float marginNow = INSIDE_LIGHT_FRUSTUM_SLOP - maxD;
-            const float marginPrev = INSIDE_LIGHT_FRUSTUM_SLOP - track.maxD;
             common->Printf(
-                "VK LIGHT INSIDE CHANGE: lightDef=%p frame=%d prev=%d new=%d outsideMask=0x%02X "
-                "maxPlane=%d maxD=%.3f slop=%.3f seesBits=0x%X numShadowFrustums=%d shadowD[min=%.3f max=%.3f] "
-                "marginNow=%.3f marginPrev=%.3f dMaxD=%.3f prevOutsideMask=0x%02X prevSeesBits=0x%X "
-                "hyst=(%.3f,%.3f) rawInside=%d frustumD=[%.3f %.3f %.3f %.3f %.3f %.3f] vieworg=(%.2f %.2f %.2f)\n",
+                "VK LIGHT INSIDE CHANGE: lightDef=%p frame=%d %d->%d outsideMask=0x%02X maxPlane=%d maxD=%.3f "
+                "seesBits=0x%X frustums=%d shadowD=[%.3f,%.3f] hyst=[%.3f,%.3f] rawInside=%d\n",
                 light, tr.frameCount, track.viewInsideLight ? 1 : 0, vLight->viewInsideLight ? 1 : 0, outsideMask,
-                maxPlane, maxD, INSIDE_LIGHT_FRUSTUM_SLOP, vLight->viewSeesShadowPlaneBits, light->numShadowFrustums,
-                shadowDMin, shadowDMax, marginNow, marginPrev, maxD - track.maxD, track.outsideMask, track.seesBits,
-                hystEnter, hystExit, rawInside ? 1 : 0, frustumD[0], frustumD[1], frustumD[2], frustumD[3], frustumD[4],
-                frustumD[5], tr.viewDef->renderView.vieworg.x, tr.viewDef->renderView.vieworg.y,
-                tr.viewDef->renderView.vieworg.z);
+                maxPlane, maxD, vLight->viewSeesShadowPlaneBits, light->numShadowFrustums, shadowDMin, shadowDMax,
+                hystEnter, hystExit, rawInside ? 1 : 0);
             track.lastLoggedFrame = tr.frameCount;
         }
     }
