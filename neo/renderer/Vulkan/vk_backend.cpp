@@ -292,6 +292,45 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
+// Current view's scissor rect in VK coordinates (Y-down).
+// Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
+// Used to confine all rendering (depth prepass, interactions, shader passes)
+// to the view's visible area — critical for subviews (mirrors) to prevent
+// reflected content from bleeding outside the mirror surface's screen bounds.
+static VkRect2D s_viewScissor;
+
+// Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down).
+static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
+{
+    int h = (int)vk.swapchainExtent.height;
+    const idScreenRect &s = viewDef->scissor;
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, (int)vk.swapchainExtent.width - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top edge → VK top
+    int w2 = s.x2 - s.x1 + 1;
+    int h2 = s.y2 - s.y1 + 1;
+    r.extent.width = (uint32_t)idMath::ClampInt(1, (int)vk.swapchainExtent.width - r.offset.x, w2);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, h2);
+    return r;
+}
+
+// Intersect two VkRect2D rects. Returns a zero-area rect if no overlap.
+static VkRect2D VK_IntersectRect(VkRect2D a, VkRect2D b)
+{
+    int ax2 = a.offset.x + (int)a.extent.width;
+    int ay2 = a.offset.y + (int)a.extent.height;
+    int bx2 = b.offset.x + (int)b.extent.width;
+    int by2 = b.offset.y + (int)b.extent.height;
+    VkRect2D r;
+    r.offset.x = (a.offset.x > b.offset.x) ? a.offset.x : b.offset.x;
+    r.offset.y = (a.offset.y > b.offset.y) ? a.offset.y : b.offset.y;
+    int rx2 = (ax2 < bx2) ? ax2 : bx2;
+    int ry2 = (ay2 < by2) ? ay2 : by2;
+    r.extent.width = (uint32_t)((rx2 > r.offset.x) ? (rx2 - r.offset.x) : 0);
+    r.extent.height = (uint32_t)((ry2 > r.offset.y) ? (ry2 - r.offset.y) : 0);
+    return r;
+}
+
 // ---------------------------------------------------------------------------
 // VK_BuildSurfMVP
 // Build a model-view-projection matrix for a surface, applying weaponDepthHack
@@ -720,12 +759,17 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     }
 
     // Cull mode: CT_TWO_SIDED materials disable face culling (fences, grates, glass panes).
+    // Mirror views flip front/back to match GL's GL_Cull() isMirror swap.
     {
         VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
         if (mat && mat->GetCullType() == CT_TWO_SIDED)
             cullMode = VK_CULL_MODE_NONE;
         else if (mat && mat->GetCullType() == CT_BACK_SIDED)
             cullMode = VK_CULL_MODE_FRONT_BIT; // inverted: back-sided in GL = cull front in VK
+
+        // Mirror reflection inverts winding — swap cull face (GL does this in GL_Cull).
+        if (backEnd.viewDef && backEnd.viewDef->isMirror && cullMode != VK_CULL_MODE_NONE)
+            cullMode = (cullMode == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
 
         if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
             cullMode = VK_CULL_MODE_NONE;
@@ -874,9 +918,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
     // Interaction pass leaves a per-light scissor active (often flashlight-sized).
-    // Shader passes are not per-light and must render with full-frame scissor.
-    const VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-    vkCmdSetScissor(cmd, 0, 1, &fullScissor);
+    // Shader passes are not per-light — use the view scissor (full-screen for the main
+    // view, mirror bounds for subviews).
+    vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
 
     // Sentinel for depth bias tracking — larger than any real bias value (which is
     // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
@@ -1362,6 +1406,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     shaderCull = VK_CULL_MODE_NONE;
                 else if (mat->GetCullType() == CT_BACK_SIDED)
                     shaderCull = VK_CULL_MODE_FRONT_BIT;
+                // Mirror reflection inverts winding — swap cull face.
+                if (backEnd.viewDef && backEnd.viewDef->isMirror && shaderCull != VK_CULL_MODE_NONE)
+                    shaderCull = (shaderCull == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
                 vkCmdSetCullMode(cmd, shaderCull);
             }
 
@@ -1705,6 +1752,18 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 vkCmdSetDepthBias(cmd, biasConstant, 0.0f, VK_GetPolyOffsetSlope(isPolyOffset));
                 activeBiasConstant = biasConstant;
             }
+        }
+
+        // Set cull mode per-surface: flip for mirror views (matches GL's GL_Cull isMirror swap).
+        {
+            VkCullModeFlags depthCull = VK_CULL_MODE_BACK_BIT;
+            if (mat->GetCullType() == CT_TWO_SIDED)
+                depthCull = VK_CULL_MODE_NONE;
+            else if (mat->GetCullType() == CT_BACK_SIDED)
+                depthCull = VK_CULL_MODE_FRONT_BIT;
+            if (backEnd.viewDef->isMirror && depthCull != VK_CULL_MODE_NONE)
+                depthCull = (depthCull == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+            vkCmdSetCullMode(cmd, depthCull);
         }
 
         if (coverage == MC_OPAQUE)
@@ -2474,6 +2533,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
             lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
             lightScissor.extent.height = absY2 - absY1 + 1;
+            // Intersect with the view scissor so subview (mirror) rendering stays
+            // confined to the mirror surface's screen bounds.
+            lightScissor = VK_IntersectRect(lightScissor, s_viewScissor);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
         }
 
@@ -2651,7 +2713,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // via shadowMaskSampler. Running both would produce double-shadowing.
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
-        const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
+        const VkRect2D shadowScissor =
+            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
         if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
         {
             common->Printf("VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
@@ -3164,6 +3227,20 @@ void VK_RB_DrawView(const void *data)
         {
             s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
         }
+        if (r_vkLogRT.GetInteger() >= 1 && backEnd.viewDef->numClipPlanes > 0)
+        {
+            common->Printf("VK PROJ REMAP: isSubview=%d isMirror=%d clipPlanes=%d\n",
+                           backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                           backEnd.viewDef->numClipPlanes);
+            common->Printf("VK PROJ REMAP: GL row2: [%.6f, %.6f, %.6f, %.6f]\n", src[2], src[6], src[10], src[14]);
+            common->Printf("VK PROJ REMAP: GL row3: [%.6f, %.6f, %.6f, %.6f]\n", src[3], src[7], src[11], src[15]);
+            common->Printf("VK PROJ REMAP: VK row2: [%.6f, %.6f, %.6f, %.6f]\n", s_projVk[2], s_projVk[6], s_projVk[10],
+                           s_projVk[14]);
+            common->Printf("VK PROJ REMAP: vieworg=(%.1f,%.1f,%.1f) viewaxis0=(%.3f,%.3f,%.3f)\n",
+                           backEnd.viewDef->renderView.vieworg.x, backEnd.viewDef->renderView.vieworg.y,
+                           backEnd.viewDef->renderView.vieworg.z, backEnd.viewDef->renderView.viewaxis[0].x,
+                           backEnd.viewDef->renderView.viewaxis[0].y, backEnd.viewDef->renderView.viewaxis[0].z);
+        }
     }
 
     if (!s_frameActive)
@@ -3266,8 +3343,9 @@ void VK_RB_DrawView(const void *data)
                                0.0f,
                                1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+        // Set scissor from viewDef to confine subview rendering to mirror bounds.
+        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
@@ -3302,8 +3380,10 @@ void VK_RB_DrawView(const void *data)
                                0.0f,
                                1.0f};
         vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
-        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-        vkCmdSetScissor(s_frameCmdBuf, 0, 1, &fullScissor);
+        // Set scissor from viewDef — for the main view this is typically full-screen;
+        // for subviews it confines rendering to the mirror surface's screen bounds.
+        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
+        vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
     }
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
@@ -3418,8 +3498,7 @@ void VK_RB_DrawView(const void *data)
                                0.0f,
                                1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
     }
 
     if (!r_skipInteractions.GetBool())
@@ -3583,8 +3662,7 @@ void VK_RB_CopyRender(const void *data)
         0,   (float)vk.swapchainExtent.height, (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height, 0.0f,
         1.0f};
     vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-    VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-    vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+    vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 }
 
 // ---------------------------------------------------------------------------
