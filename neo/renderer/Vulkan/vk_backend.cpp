@@ -58,7 +58,7 @@ static idCVar r_vkRTDebugInteractions("r_vkRTDebugInteractions", "0", CVAR_RENDE
                                       "log Vulkan RT interaction mask decisions (0=off, 1=filtered surfaces)");
 static idCVar r_vkRTDebugSurface("r_vkRTDebugSurface", "", CVAR_RENDERER | CVAR_ARCHIVE,
                                  "substring filter for r_vkRTDebugInteractions material name (empty = all materials)");
-static idCVar r_vkRTDebugMaxLogsPerFrame("r_vkRTDebugMaxLogsPerFrame", "64", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_vkRTDebugMaxLogsPerFrame("r_vkRTDebugMaxLogsPerFrame", "24", CVAR_RENDERER | CVAR_INTEGER,
                                          "max Vulkan RT debug interaction logs per frame");
 static idCVar r_vkRTInterLogN(
     "r_vkRTInterLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -485,7 +485,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const char *matName = mat ? mat->GetName() : "<null>";
     const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
 
-    if (r_vkLogRT.GetInteger() >= 3)
+    if (r_vkLogRT.GetInteger() >= 2)
     {
         const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
         common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
@@ -611,22 +611,16 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
             const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
             if (matMatch && r_vkRTDebugInteractions.GetInteger() > 0)
             {
-                common->Printf("VK RT INTER DBG: frame=%d lightIdx=%d light='%s' point=%d mat='%s' idx=%d useSM=%d "
-                               "hasSM=%d weaponHack=%d overBright=%.3f blur=%d\n",
-                               tr.frameCount, s_lightIdx, lightName, (lightDef && lightDef->parms.pointLight) ? 1 : 0,
-                               matName, geo ? geo->numIndexes : 0, *useSM, hasShadowMask ? 1 : 0,
-                               isWeaponDepthHack ? 1 : 0, backEnd.overBright, r_rtShadowBlur.GetInteger());
+                common->Printf("VK RT INTER: f=%d li=%d point=%d mat='%s' idx=%d sm=%d/%d weapon=%d\n", tr.frameCount,
+                               s_lightIdx, lightName, (lightDef && lightDef->parms.pointLight) ? 1 : 0, matName,
+                               geo ? geo->numIndexes : 0, *useSM, hasShadowMask ? 1 : 0, isWeaponDepthHack ? 1 : 0);
             }
             if (matMatch && r_vkRTDebugLightTextures.GetInteger() > 0)
             {
-                common->Printf("VK RT TEX DBG: frame=%d light='%s' mat='%s' lightProj='%s' lightFalloff='%s' "
-                               "bump='%s' diffuse='%s' spec='%s'\n",
-                               tr.frameCount, lightName, matName,
-                               din->lightImage ? din->lightImage->imgName.c_str() : "<null>",
-                               din->lightFalloffImage ? din->lightFalloffImage->imgName.c_str() : "<null>",
+                common->Printf("VK RT TEX: f=%d light='%s' mat='%s' proj='%s' bump='%s' diff='%s'\n", tr.frameCount,
+                               lightName, matName, din->lightImage ? din->lightImage->imgName.c_str() : "<null>",
                                din->bumpImage ? din->bumpImage->imgName.c_str() : "<null>",
-                               din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>",
-                               din->specularImage ? din->specularImage->imgName.c_str() : "<null>");
+                               din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>");
             }
             if (matMatch)
                 s_rtDbgCount++;
@@ -932,34 +926,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         common->Printf("VK DrawShaderPasses: ENTER numDrawSurfs=%d\n", backEnd.viewDef->numDrawSurfs);
     }
 
-    // Mirror draw-order analysis: log sequence of weapon, mirror, and world surfaces
-    if (r_vkLogRT.GetInteger() >= 1)
-    {
-        static int s_drawOrderLog = 0;
-        if (s_drawOrderLog < 5)
-        {
-            s_drawOrderLog++;
-            common->Printf("VK MIRROR DRAW-ORDER: isSubview=%d isMirror=%d clipPlanes=%d numSurfs=%d\n",
-                           backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
-                           backEnd.viewDef->numClipPlanes, backEnd.viewDef->numDrawSurfs);
-            for (int oi = 0; oi < backEnd.viewDef->numDrawSurfs && oi < 40; oi++)
-            {
-                const drawSurf_t *os = backEnd.viewDef->drawSurfs[oi];
-                if (!os || !os->material)
-                    continue;
-                const char *tag = "world";
-                if (os->space && os->space->weaponDepthHack)
-                    tag = "WEAPON";
-                else if (os->material->GetSort() == SS_SUBVIEW)
-                    tag = "MIRROR";
-                else if (os->material->Coverage() == MC_TRANSLUCENT)
-                    tag = "trans";
-                common->Printf("  [%d] %s sort=%d mat='%s' cov=%d\n", oi, tag, (int)os->material->GetSort(),
-                               os->material->GetName(), (int)os->material->Coverage());
-            }
-        }
-    }
-
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
     // Interaction pass leaves a per-light scissor active (often flashlight-sized).
@@ -1056,12 +1022,24 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         // Log translucent material surfaces (same criteria as GL path)
         const int vkTransLog = r_vkLogTranslucent.GetInteger();
         const bool translucentLike = (mat->Coverage() == MC_TRANSLUCENT) || (mat->GetSort() >= SS_MEDIUM);
-        if (vkTransLog >= 1 && translucentLike)
+        if (vkTransLog >= 2 && translucentLike)
         {
-            common->Printf(
-                "VK TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d scissor=(%d,%d %d,%d)\n",
-                tr.frameCount, mat->GetName(), (int)mat->GetSort(), RB_CoverageName(mat->Coverage()),
-                mat->GetNumStages(), si, 0, 0, (int)vk.swapchainExtent.width, (int)vk.swapchainExtent.height);
+            static int s_transSurfLogFrame = -1;
+            static int s_transSurfLogCount = 0;
+            if (s_transSurfLogFrame != tr.frameCount)
+            {
+                s_transSurfLogFrame = tr.frameCount;
+                s_transSurfLogCount = 0;
+            }
+            if (s_transSurfLogCount < 24)
+            {
+                s_transSurfLogCount++;
+                common->Printf(
+                    "VK TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d scissor=(%d,%d %d,%d)\n",
+                    tr.frameCount, mat->GetName(), (int)mat->GetSort(), RB_CoverageName(mat->Coverage()),
+                    mat->GetNumStages(), si, surfScissor.offset.x, surfScissor.offset.y, (int)surfScissor.extent.width,
+                    (int)surfScissor.extent.height);
+            }
         }
 
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
@@ -1113,7 +1091,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 continue;
 
             // Log the stage that will actually be drawn
-            if (vkTransLog >= 1 && translucentLike)
+            if (vkTransLog >= 2 && translucentLike)
             {
                 const char *texName =
                     (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
@@ -1425,7 +1403,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
             const bool needDepth = !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
-            if (r_vkLogRT.GetInteger() >= 3)
+            if (r_vkLogRT.GetInteger() >= 2)
             {
                 const uint32_t blendBits = (uint32_t)(drawBitsOverride & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
                 common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
@@ -1435,7 +1413,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
 
             // Log translucent material pipeline binding
-            if (vkTransLog >= 1 && translucentLike)
+            if (vkTransLog >= 2 && translucentLike)
             {
                 const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
                 common->Printf("VK TRANSLUCENT BIND: frame=%d mat='%s' stage=%d pipeline=%p drawState=0x%08x "
@@ -1467,11 +1445,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 
-            // Comprehensive mirror/subview surface draw logging
-            if (r_vkLogRT.GetInteger() >= 1 && mat->GetSort() == SS_SUBVIEW)
+            // Keep mirror draw diagnostics concise and at higher verbosity.
+            if (r_vkLogRT.GetInteger() >= 2 && mat->GetSort() == SS_SUBVIEW)
             {
                 static int s_mirrorDrawLog = 0;
-                if (s_mirrorDrawLog < 30)
+                if (s_mirrorDrawLog < 8)
                 {
                     s_mirrorDrawLog++;
                     const uint32_t blendBits =
@@ -1490,48 +1468,15 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                         ndcZ = (clipW != 0.f) ? cz / clipW : 0.f;
                     }
 
-                    common->Printf(
-                        "VK MIRROR DRAW: mat='%s' stage=%d blend=0x%x drawState=0x%x(override=0x%x) depthTest=%d "
-                        "depthFunc=%s img='%s' texgen=%d coverage=%d "
-                        "isSubview=%d isMirror=%d clipPlanes=%d weaponHack=%d "
-                        "ndcZ=%.4f clipW=%.2f verts=%d idx=%d "
-                        "colorMod=[%.2f,%.2f,%.2f,%.2f] colorAdd=[%.2f,%.2f,%.2f,%.2f] "
-                        "vertColor=%d cullType=%d sort=%d polyOffset=%.1f overBright=%.2f\n",
-                        mat->GetName(), stageIdx, blendBits, pStage->drawStateBits, drawBitsOverride, needDepth ? 1 : 0,
-                        (drawBitsOverride & GLS_DEPTHFUNC_ALWAYS)  ? "ALWAYS"
-                        : (drawBitsOverride & GLS_DEPTHFUNC_EQUAL) ? "EQUAL"
-                                                                   : "LESS",
-                        img ? img->imgName.c_str() : "<null>", (int)pStage->texture.texgen, (int)mat->Coverage(),
-                        backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
-                        backEnd.viewDef->numClipPlanes, isWeaponHack ? 1 : 0, ndcZ, clipW, geo->numVerts,
-                        geo->numIndexes, guiUbo->colorModulate[0], guiUbo->colorModulate[1], guiUbo->colorModulate[2],
-                        guiUbo->colorModulate[3], guiUbo->colorAdd[0], guiUbo->colorAdd[1], guiUbo->colorAdd[2],
-                        guiUbo->colorAdd[3], (int)pStage->vertexColor, (int)mat->GetCullType(), (int)mat->GetSort(),
-                        mat->GetPolygonOffset(), backEnd.overBright);
-
-                    // Log texgen planes if TG_SCREEN
-                    if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
-                    {
-                        common->Printf("  MIRROR TEXGEN: S=[%.4f,%.4f,%.4f,%.4f] T=[%.4f,%.4f,%.4f,%.4f] "
-                                       "Q=[%.4f,%.4f,%.4f,%.4f] texMatFlag=%.1f\n",
-                                       guiUbo->texGenS[0], guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3],
-                                       guiUbo->texGenT[0], guiUbo->texGenT[1], guiUbo->texGenT[2], guiUbo->texGenT[3],
-                                       guiUbo->texGenQ[0], guiUbo->texGenQ[1], guiUbo->texGenQ[2], guiUbo->texGenQ[3],
-                                       guiUbo->texMatrixS[2]);
-                    }
-
-                    // Log first few vertex positions for geometry analysis
-                    if (geo->verts && geo->numVerts > 0)
-                    {
-                        int logVerts = (geo->numVerts < 4) ? geo->numVerts : 4;
-                        for (int vi = 0; vi < logVerts; vi++)
-                        {
-                            const idVec3 &v = geo->verts[vi].xyz;
-                            const idVec2 &st = geo->verts[vi].st;
-                            common->Printf("  MIRROR VERT[%d]: pos=(%.2f,%.2f,%.2f) uv=(%.4f,%.4f)\n", vi, v.x, v.y,
-                                           v.z, st.x, st.y);
-                        }
-                    }
+                    common->Printf("VK MIRROR DRAW: mat='%s' stage=%d blend=0x%x depth=%s ndcZ=%.4f clipW=%.2f "
+                                   "verts=%d idx=%d isSubview=%d isMirror=%d clipPlanes=%d weaponHack=%d\n",
+                                   mat->GetName(), stageIdx, blendBits,
+                                   (drawBitsOverride & GLS_DEPTHFUNC_ALWAYS)  ? "ALWAYS"
+                                   : (drawBitsOverride & GLS_DEPTHFUNC_EQUAL) ? "EQUAL"
+                                                                              : "LESS",
+                                   ndcZ, clipW, geo->numVerts, geo->numIndexes, backEnd.viewDef->isSubview ? 1 : 0,
+                                   backEnd.viewDef->isMirror ? 1 : 0, backEnd.viewDef->numClipPlanes,
+                                   isWeaponHack ? 1 : 0);
                 }
             }
         }
@@ -2158,7 +2103,8 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     branchSig |= (uint32_t)(indexSetId & 0x3) << 6;
     branchSig |= (uint32_t)(numDrawIndexes & 0xFFFF) << 8;
 
-    const int logMode = r_vkLogShadowBranch.GetInteger();
+    const int rawShadowLogMode = r_vkLogShadowBranch.GetInteger();
+    const int logMode = (rawShadowLogMode <= 0) ? 0 : ((rawShadowLogMode == 1) ? 1 : 2);
     bool branchChangedThisDraw = false;
     if (logMode > 0)
     {
@@ -2182,7 +2128,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
             s_loggedLight = backEnd.vLight;
         }
 
-        // mode 3: only log when this light+surface branch/signature changes between frames.
+        // Higher legacy shadow log modes are folded into level 2.
         if (logMode >= 3)
         {
 
@@ -2635,7 +2581,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
     s_interactionPipeTag = "opaque";
 
-    if (r_vkLogRT.GetInteger() >= 2)
+    if (r_vkLogRT.GetInteger() >= 1)
     {
         int totalLights = 0;
         for (const viewLight_t *vl = backEnd.viewDef->viewLights; vl; vl = vl->next)
@@ -2689,7 +2635,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // Set the file-static light index used by VK_RB_DrawInteraction logging
         s_lightIdx = lightIdx;
 
-        if (r_vkLogRT.GetInteger() >= 2)
+        if (r_vkLogRT.GetInteger() >= 1)
         {
             // Count surfaces per phase (cheap — lists are typically short)
             int nLocal = 0, nGlobal = 0, nTrans = 0;
@@ -2705,18 +2651,13 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
-            common->Printf("VK LIGHT[%d]: shader='%s' GLscissor=(%d,%d %d,%d) VKscissor=(%d,%d %u,%u) "
-                           "local=%d global=%d trans=%d gShadow=%d lShadow=%d rtShadows=%d\n",
-                           lightIdx, lName, backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1,
-                           backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1,
-                           backEnd.viewDef->viewport.x1 + vLight->scissorRect.x2,
-                           backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2, (int)lightScissor.offset.x,
-                           (int)lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                           (unsigned int)lightScissor.extent.height, nLocal, nGlobal, nTrans, nGlobalShadow,
-                           nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
+            common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d\n",
+                           lightIdx, lName, (int)lightScissor.offset.x, (int)lightScissor.offset.y,
+                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
+                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
         }
 
-        if (r_vkLogShadowBranch.GetInteger() >= 5)
+        if (r_vkLogShadowBranch.GetInteger() >= 2)
         {
             int countGS = 0, countLS = 0, countGI = 0, countLI = 0, countTI = 0;
             uint32_t hashGS = 0, hashLS = 0, hashGI = 0, hashLI = 0, hashTI = 0;
@@ -2864,14 +2805,11 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
         if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
         {
-            common->Printf("VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
-                           "fullShadowScissor=%d useScissor=%d\n",
-                           lightIdx, lightScissor.offset.x, lightScissor.offset.y,
-                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
-                           shadowScissor.offset.x, shadowScissor.offset.y, (unsigned int)shadowScissor.extent.width,
-                           (unsigned int)shadowScissor.extent.height, lightScissor.offset.x, lightScissor.offset.y,
-                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
-                           useFullShadowScissor ? 1 : 0, r_useScissor.GetBool() ? 1 : 0);
+            common->Printf("VK STENCIL[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) fullShadow=%d\n", lightIdx,
+                           lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                           (unsigned int)lightScissor.extent.height, shadowScissor.offset.x, shadowScissor.offset.y,
+                           (unsigned int)shadowScissor.extent.width, (unsigned int)shadowScissor.extent.height,
+                           useFullShadowScissor ? 1 : 0);
         }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
@@ -3374,19 +3312,13 @@ void VK_RB_DrawView(const void *data)
         {
             s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
         }
-        if (r_vkLogRT.GetInteger() >= 1 && backEnd.viewDef->numClipPlanes > 0)
+        if (r_vkLogRT.GetInteger() >= 2 && backEnd.viewDef->numClipPlanes > 0)
         {
             common->Printf("VK PROJ REMAP: isSubview=%d isMirror=%d clipPlanes=%d\n",
                            backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
                            backEnd.viewDef->numClipPlanes);
-            common->Printf("VK PROJ REMAP: GL row2: [%.6f, %.6f, %.6f, %.6f]\n", src[2], src[6], src[10], src[14]);
-            common->Printf("VK PROJ REMAP: GL row3: [%.6f, %.6f, %.6f, %.6f]\n", src[3], src[7], src[11], src[15]);
-            common->Printf("VK PROJ REMAP: VK row2: [%.6f, %.6f, %.6f, %.6f]\n", s_projVk[2], s_projVk[6], s_projVk[10],
-                           s_projVk[14]);
-            common->Printf("VK PROJ REMAP: vieworg=(%.1f,%.1f,%.1f) viewaxis0=(%.3f,%.3f,%.3f)\n",
-                           backEnd.viewDef->renderView.vieworg.x, backEnd.viewDef->renderView.vieworg.y,
-                           backEnd.viewDef->renderView.vieworg.z, backEnd.viewDef->renderView.viewaxis[0].x,
-                           backEnd.viewDef->renderView.viewaxis[0].y, backEnd.viewDef->renderView.viewaxis[0].z);
+            common->Printf("VK PROJ REMAP: GL row2[%.6f %.6f %.6f %.6f] -> VK row2[%.6f %.6f %.6f %.6f]\n", src[2],
+                           src[6], src[10], src[14], s_projVk[2], s_projVk[6], s_projVk[10], s_projVk[14]);
         }
     }
 
@@ -3397,7 +3329,7 @@ void VK_RB_DrawView(const void *data)
         // --- Wait for previous frame's fence ---
         if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK FRAME: fence wait — slot=%u frameCount=%d\n", vk.currentFrame, tr.frameCount);
+            common->Printf("VK FRAME: fence-wait slot=%u frame=%d\n", vk.currentFrame, tr.frameCount);
             fflush(NULL);
         }
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
@@ -3535,7 +3467,7 @@ void VK_RB_DrawView(const void *data)
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
-    if (r_vkLogRT.GetInteger() >= 1)
+    if (r_vkLogRT.GetInteger() >= 2)
     {
         // Count weapon/mirror/subview surfaces for diagnostic summary
         int weaponSurfCount = 0, mirrorSurfCount = 0;
@@ -3941,8 +3873,12 @@ void VK_RB_SwapBuffers()
     if (s_readbackSubmitted)
     {
         VkResult rbFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
-        common->Printf("VK: readback fence wait result=%d (frame=%u)\n", (int)rbFence, submittedFrame);
-        fflush(NULL);
+        if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
+        {
+            common->Printf("VK READBACK: fence=%d (%s) frame=%u\n", (int)rbFence, VK_ResultToString(rbFence),
+                           submittedFrame);
+            fflush(NULL);
+        }
         s_readbackDone = true;
         s_readbackSubmitted = false;
     }

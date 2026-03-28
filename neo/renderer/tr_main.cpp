@@ -1060,8 +1060,8 @@ static void R_ObliqueProjection(viewDef_t *viewDef)
     idPlane eyePlane;
     const float *mv = viewDef->worldSpace.modelViewMatrix;
     const idPlane &wp = viewDef->clipPlanes[0];
-    eyePlane[0] = mv[0] * wp[0] + mv[4] * wp[1] + mv[8]  * wp[2];
-    eyePlane[1] = mv[1] * wp[0] + mv[5] * wp[1] + mv[9]  * wp[2];
+    eyePlane[0] = mv[0] * wp[0] + mv[4] * wp[1] + mv[8] * wp[2];
+    eyePlane[1] = mv[1] * wp[0] + mv[5] * wp[1] + mv[9] * wp[2];
     eyePlane[2] = mv[2] * wp[0] + mv[6] * wp[1] + mv[10] * wp[2];
     const idVec3 &org = viewDef->renderView.vieworg;
     eyePlane[3] = wp[3] + wp[0] * org.x + wp[1] * org.y + wp[2] * org.z;
@@ -1073,10 +1073,10 @@ static void R_ObliqueProjection(viewDef_t *viewDef)
     float sgn_y = (eyePlane[1] >= 0.0f) ? 1.0f : -1.0f;
 
     idVec4 q;
-    q.x = (sgn_x + P[8])  / P[0];   // (sgn + P(0,2)) / P(0,0)
-    q.y = (sgn_y + P[9])  / P[5];   // (sgn + P(1,2)) / P(1,1)
+    q.x = (sgn_x + P[8]) / P[0]; // (sgn + P(0,2)) / P(0,0)
+    q.y = (sgn_y + P[9]) / P[5]; // (sgn + P(1,2)) / P(1,1)
     q.z = -1.0f;
-    q.w = (1.0f  + P[10]) / P[14];  // (1 + P(2,2))   / P(2,3)
+    q.w = (1.0f + P[10]) / P[14]; // (1 + P(2,2))   / P(2,3)
 
     idVec4 c(eyePlane[0], eyePlane[1], eyePlane[2], eyePlane[3]);
     float dot = c.x * q.x + c.y * q.y + c.z * q.z + c.w * q.w;
@@ -1089,34 +1089,21 @@ static void R_ObliqueProjection(viewDef_t *viewDef)
 
     float scale = 2.0f / dot;
 
-    if (r_vkLogRT.GetInteger() >= 1)
+    if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("OBLIQUE PROJ: worldClip=(%.4f,%.4f,%.4f,%.4f) eyeClip=(%.4f,%.4f,%.4f,%.4f)\n",
-            viewDef->clipPlanes[0][0], viewDef->clipPlanes[0][1], viewDef->clipPlanes[0][2], viewDef->clipPlanes[0][3],
-            eyePlane[0], eyePlane[1], eyePlane[2], eyePlane[3]);
-        common->Printf("OBLIQUE PROJ: q=(%.4f,%.4f,%.4f,%.4f) dot=%.6f scale=%.6f\n",
-            q.x, q.y, q.z, q.w, dot, scale);
-        common->Printf("OBLIQUE PROJ: before row2: P[2]=%.6f P[6]=%.6f P[10]=%.6f P[14]=%.6f\n",
-            P[2], P[6], P[10], P[14]);
+        common->Printf("OBLIQUE PROJ: dot=%.6f scale=%.6f eyeClip=(%.4f,%.4f,%.4f,%.4f)\n", dot, scale, eyePlane[0],
+                       eyePlane[1], eyePlane[2], eyePlane[3]);
     }
 
     // Replace the third row of the projection matrix
-    P[2]  = c.x * scale - P[3];
-    P[6]  = c.y * scale - P[7];
+    P[2] = c.x * scale - P[3];
+    P[6] = c.y * scale - P[7];
     P[10] = c.z * scale - P[11];
     P[14] = c.w * scale - P[15];
 
-    if (r_vkLogRT.GetInteger() >= 1)
+    if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("OBLIQUE PROJ: after  row2: P[2]=%.6f P[6]=%.6f P[10]=%.6f P[14]=%.6f\n",
-            P[2], P[6], P[10], P[14]);
-        common->Printf("OBLIQUE PROJ: row3: P[3]=%.6f P[7]=%.6f P[11]=%.6f P[15]=%.6f\n",
-            P[3], P[7], P[11], P[15]);
-        // Verify: for a point on the clip plane, row2+row3 should be ~0
-        // near plane = row2 + row3 (GL convention), should equal k*c
-        float nr0 = P[2]+P[3], nr1 = P[6]+P[7], nr2 = P[10]+P[11], nr3 = P[14]+P[15];
-        common->Printf("OBLIQUE PROJ: nearPlane(row2+row3)=(%.4f,%.4f,%.4f,%.4f) should be proportional to eyeClip\n",
-            nr0, nr1, nr2, nr3);
+        common->Printf("OBLIQUE PROJ: row2=(%.6f,%.6f,%.6f,%.6f)\n", P[2], P[6], P[10], P[14]);
     }
 }
 
