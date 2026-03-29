@@ -146,7 +146,7 @@ idCVar r_rtReflections("r_rtReflections", "0", CVAR_RENDERER | CVAR_ARCHIVE | CV
                        "ray traced reflections (expensive)");
 idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
-idCVar r_rtShadowBlur("r_rtShadowBlur", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+idCVar r_rtShadowBlur("r_rtShadowBlur", "6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                       "shadow mask blur radius in pixels (0=off, 1-8=kernel half-width)");
 idCVar r_rtFlashlightBias("r_rtFlashlightBias", "17", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                           "units to push the flashlight shadow origin forward along the view axis "
@@ -262,11 +262,8 @@ idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_IN
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkLogShadowBranch("r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
-                           "Vulkan shadow branch debug: 0=off, 1=log first shadow surface per light, 2=log every "
-                           "shadow surface, 3=log only per-surface branch/signature changes, 4=also log "
-                           "viewInsideLight classification flips with plane-distance diagnostics, 5=verbose "
-                           "(includes light pass/list churn and index/draw-only branch deltas)",
-                           0, 5, idCmdSystem::ArgCompletion_Integer<0, 5>);
+                           "Vulkan shadow branch debug: 0=off, 1=basic per-light, 2=detailed per-surface",
+                           0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkShadowFlipOps(
     "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,

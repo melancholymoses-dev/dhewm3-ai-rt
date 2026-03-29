@@ -36,8 +36,99 @@ struct ShadowParamsUBO
     float lightFalloffRadius;
     int numSamples;
     uint32_t frameIndex;
-    float pad;
+    float rayBias;
+    uint32_t rayCullMask; // instance mask for traceRayEXT (0xFE excludes player body)
+    float _pad[3];        // align to 16 bytes
 };
+
+static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
+static idCVar r_rtShadowSoftRadiusScale(
+    "r_rtShadowSoftRadiusScale", "0.08", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "scale factor from point-light radius to RT soft-shadow source radius (smaller avoids washed-out shadows)");
+static idCVar r_rtShadowSoftRadiusMin("r_rtShadowSoftRadiusMin", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                      "minimum RT soft-shadow source radius after scaling");
+static idCVar r_rtShadowSoftRadiusMax("r_rtShadowSoftRadiusMax", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                      "maximum RT soft-shadow source radius after scaling");
+static idCVar r_rtShadowMinSamples(
+    "r_rtShadowMinSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "minimum RT shadow rays per pixel (default 1 keeps baseline behavior; raise only for diagnostics)");
+static idCVar r_rtShadowDistanceCutoff(
+    "r_rtShadowDistanceCutoff", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "apply RT spherical distance cutoff for point lights (diagnostic: keep 0 unless debugging)");
+static idCVar r_rtShadowTemporalJitter(
+    "r_rtShadowTemporalJitter", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "vary RT shadow sampling pattern per frame (0 = stable pattern for shimmer diagnostics)");
+static idCVar r_rtShadowStablePattern(
+    "r_rtShadowStablePattern", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "use stable per-light spatial jitter seed (reduces temporal shimmer; can retain static speckle)");
+static idCVar r_rtShadowTemporalJitterMinSamples(
+    "r_rtShadowTemporalJitterMinSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "minimum effective RT shadow samples required before enabling per-frame temporal jitter");
+static idCVar r_rtShadowBlurEnable("r_rtShadowBlurEnable", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                   "enable RT shadow blur pass (diagnostic: 0 bypasses blur)");
+static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1",
+                                       CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                       "depth-aware RT shadow blur to reduce halo/ring artifacts at edges");
+static idCVar r_rtShadowBlurDepthThreshold(
+    "r_rtShadowBlurDepthThreshold", "0.003", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "depth threshold for depth-aware RT shadow blur (smaller preserves edges more)");
+static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
+static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
+                              "limit Vulkan RT light debug logging to N frames after enable (0 = unlimited)");
+static idCVar r_vkRTDebugLightFilter(
+    "r_vkRTDebugLightFilter", "", CVAR_RENDERER | CVAR_ARCHIVE,
+    "substring filter for r_vkRTDebugLights using light shader name (empty = all lights)");
+
+static idCVar r_rtShadowPlayerExcludeDist(
+    "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
+
+extern idCVar r_vkRTLogCaptureReset;
+
+static bool VK_RTDebugLightMatch(const viewLight_t *vLight)
+{
+    const char *filter = r_vkRTDebugLightFilter.GetString();
+    if (!filter || !filter[0])
+        return true;
+    const char *lightName = (vLight && vLight->lightShader) ? vLight->lightShader->GetName() : "";
+    return idStr::FindText(lightName, filter, false) >= 0;
+}
+
+static bool VK_RTDebugLightFrameAllowed(bool debugEnabled)
+{
+    static bool s_wasEnabled = false;
+    static int s_startFrame = -1;
+    static int s_lastResetToken = -1;
+
+    const int resetToken = r_vkRTLogCaptureReset.GetInteger();
+    if (s_lastResetToken != resetToken)
+    {
+        s_lastResetToken = resetToken;
+        s_wasEnabled = false;
+        s_startFrame = -1;
+    }
+
+    if (!debugEnabled)
+    {
+        s_wasEnabled = false;
+        s_startFrame = -1;
+        return false;
+    }
+
+    if (!s_wasEnabled)
+    {
+        s_wasEnabled = true;
+        s_startFrame = tr.frameCount;
+    }
+
+    const int frameBudget = Max(0, r_vkRTLightLogN.GetInteger());
+    if (frameBudget <= 0)
+        return true;
+
+    return (tr.frameCount - s_startFrame) < frameBudget;
+}
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in vk_buffer.cpp)
@@ -310,8 +401,8 @@ static void VK_RT_InitShadowPipeline(void)
 
 static void VK_RT_InitBlurPipeline(void)
 {
-    // --- Descriptor set layout: 2 storage images (input, output) ---
-    VkDescriptorSetLayoutBinding bindings[2] = {};
+    // --- Descriptor set layout: 2 storage images + depth sampler ---
+    VkDescriptorSetLayoutBinding bindings[3] = {};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
@@ -320,10 +411,14 @@ static void VK_RT_InitBlurPipeline(void)
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 2;
+    layoutInfo.bindingCount = 3;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.blurDescLayout));
 
@@ -364,12 +459,15 @@ static void VK_RT_InitBlurPipeline(void)
     vkDestroyShaderModule(vk.device, compModule, NULL);
 
     // --- Descriptor pool and sets (2 sets per frame slot: H pass and V pass) ---
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolSize poolSizes[2] = {
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4 * VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * VK_MAX_FRAMES_IN_FLIGHT},
+    };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = 2 * VK_MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.blurDescPool));
 
     VkDescriptorSetLayout layouts[2 * VK_MAX_FRAMES_IN_FLIGHT];
@@ -431,8 +529,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             "VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
             "radius=(%.1f,%.1f,%.1f) falloff=%.1f samples=%d "
             "pipeline=%s tlas=%s tlasAddr=0x%llx "
-            "shadowMask=%s %ux%u "
-            "rgen=0x%llx miss=0x%llx hit=0x%llx\n",
+            "shadowMask=%s %ux%u rgen=0x%llx miss=0x%llx hit=0x%llx\n",
             frameIdx, lp.origin.x, lp.origin.y, lp.origin.z, lp.lightRadius.x, lp.lightRadius.y, lp.lightRadius.z,
             lp.lightRadius.Length(), r_rtShadowSamples.GetInteger(),
             (vkRT.shadowPipeline != VK_NULL_HANDLE) ? "OK" : "NULL",
@@ -569,8 +666,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         // muzzle flash) and matches the player's viewID, so world lights are never affected.
         idVec3 shadowOrigin = light.origin;
         float flashlightBias = r_rtFlashlightBias.GetFloat();
-        if (flashlightBias > 0.0f &&
-            light.allowLightInViewID != 0 &&
+        if (flashlightBias > 0.0f && light.allowLightInViewID != 0 &&
             light.allowLightInViewID == viewDef->renderView.viewID)
         {
             // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
@@ -581,11 +677,85 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         ubo.lightOrigin[0] = shadowOrigin.x;
         ubo.lightOrigin[1] = shadowOrigin.y;
         ubo.lightOrigin[2] = shadowOrigin.z;
-        ubo.lightOrigin[3] = light.lightRadius.x;
-        ubo.lightFalloffRadius = light.lightRadius.Length();
-        ubo.numSamples = r_rtShadowSamples.GetInteger();
-        ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
-        ubo.pad = 0.0f;
+
+        // Soft-shadow jitter radius must be much smaller than the light volume extents;
+        // using full radii creates huge cones and can wash out/shimmer shadows.
+        float softRadius = 0.0f;
+        if (light.pointLight)
+        {
+            const float minLightRadius = Min(light.lightRadius.x, Min(light.lightRadius.y, light.lightRadius.z));
+            const float scaledRadius = minLightRadius * Max(0.0f, r_rtShadowSoftRadiusScale.GetFloat());
+            const float softRadiusMin = Max(0.0f, r_rtShadowSoftRadiusMin.GetFloat());
+            const float softRadiusMax = Max(softRadiusMin, r_rtShadowSoftRadiusMax.GetFloat());
+            softRadius = idMath::ClampFloat(softRadiusMin, softRadiusMax, scaledRadius);
+        }
+        ubo.lightOrigin[3] = softRadius;
+        // Projected lights are not spherical; their attenuation is handled by light projection/falloff textures
+        // in the interaction shader, so RT shadow rays should not early-out by distance for them.
+        if (r_rtShadowDistanceCutoff.GetBool() && light.pointLight)
+            ubo.lightFalloffRadius = light.lightRadius.Length();
+        else
+            ubo.lightFalloffRadius = 0.0f;
+        const int requestedSamples = Max(1, r_rtShadowSamples.GetInteger());
+        const int minSamples = Max(1, r_rtShadowMinSamples.GetInteger());
+        ubo.numSamples = requestedSamples;
+        const int jitterMinSamples = Max(1, r_rtShadowTemporalJitterMinSamples.GetInteger());
+        const bool allowTemporalJitter = r_rtShadowTemporalJitter.GetBool() &&
+                                         (ubo.numSamples >= jitterMinSamples ||
+                                          (r_rtShadowBlurEnable.GetBool() && r_rtShadowBlur.GetInteger() > 0));
+        if (allowTemporalJitter)
+        {
+            if (r_rtShadowStablePattern.GetBool())
+            {
+                // Stable per-light seed derived from quantized light origin.
+                const int sx = idMath::FtoiFast(shadowOrigin.x * 16.0f);
+                const int sy = idMath::FtoiFast(shadowOrigin.y * 16.0f);
+                const int sz = idMath::FtoiFast(shadowOrigin.z * 16.0f);
+                ubo.frameIndex = (uint32_t)(sx * 73856093) ^ (uint32_t)(sy * 19349663) ^ (uint32_t)(sz * 83492791) ^
+                                 (uint32_t)(light.pointLight ? 0x9e3779b9u : 0x85ebca6bu);
+            }
+            else
+            {
+                ubo.frameIndex = (uint32_t)(vk.currentFrame * 100 + tr.frameCount);
+            }
+        }
+        else
+        {
+            ubo.frameIndex = 0u;
+        }
+        ubo.rayBias = r_rtShadowRayBias.GetFloat();
+
+        // Exclude player body from shadow rays when player is very close to the light.
+        // Player body TLAS instances use mask 0x01; world geometry uses 0xFF.
+        // Using 0xFE excludes only the player body bit.
+        const float playerExcludeDist = r_rtShadowPlayerExcludeDist.GetFloat();
+        if (playerExcludeDist > 0.0f)
+        {
+            const idVec3 &camPos = viewDef->renderView.vieworg;
+            const float distToLight = (shadowOrigin - camPos).Length();
+            ubo.rayCullMask = (distToLight < playerExcludeDist) ? 0xFEu : 0xFFu;
+        }
+        else
+        {
+            ubo.rayCullMask = 0xFFu;
+        }
+
+        if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
+        {
+            const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
+            common->Printf(
+                "VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
+                "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
+                "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
+                "mask=%ux%u\n",
+                tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y, shadowOrigin.z,
+                light.lightRadius.x, light.lightRadius.y, light.lightRadius.z, ubo.lightFalloffRadius, ubo.numSamples,
+                requestedSamples, minSamples, ubo.rayBias, r_rtShadowTemporalJitter.GetBool() ? 1 : 0,
+                allowTemporalJitter ? 1 : 0, jitterMinSamples, r_rtShadowStablePattern.GetBool() ? 1 : 0,
+                ubo.frameIndex, softRadius, r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
+                r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(), sm.width,
+                sm.height);
+        }
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
 
@@ -607,7 +777,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---
     int blurRadius = r_rtShadowBlur.GetInteger();
     bool didBlur = false;
-    if (blurRadius > 0 && vkRT.blurPipeline != VK_NULL_HANDLE && sm.blurTempImage != VK_NULL_HANDLE)
+    if (r_rtShadowBlurEnable.GetBool() && blurRadius > 0 && vkRT.blurPipeline != VK_NULL_HANDLE &&
+        sm.blurTempImage != VK_NULL_HANDLE)
     {
         if (blurRadius > 8)
             blurRadius = 8;
@@ -635,7 +806,12 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             // Update H-pass descriptors: input=shadowMask, output=blurTemp
             VkDescriptorImageInfo hInput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
             VkDescriptorImageInfo hOutput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
-            VkWriteDescriptorSet hWrites[2] = {};
+            VkDescriptorImageInfo blurDepthInfo = {};
+            blurDepthInfo.sampler = vkRT.depthSampler;
+            blurDepthInfo.imageView = vk.depthSampledView;
+            blurDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet hWrites[3] = {};
             hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             hWrites[0].dstSet = blurSetH;
             hWrites[0].dstBinding = 0;
@@ -648,12 +824,18 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             hWrites[1].descriptorCount = 1;
             hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             hWrites[1].pImageInfo = &hOutput;
-            vkUpdateDescriptorSets(vk.device, 2, hWrites, 0, NULL);
+            hWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            hWrites[2].dstSet = blurSetH;
+            hWrites[2].dstBinding = 2;
+            hWrites[2].descriptorCount = 1;
+            hWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            hWrites[2].pImageInfo = &blurDepthInfo;
+            vkUpdateDescriptorSets(vk.device, 3, hWrites, 0, NULL);
 
             // Update V-pass descriptors: input=blurTemp, output=shadowMask
             VkDescriptorImageInfo vInput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
             VkDescriptorImageInfo vOutput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
-            VkWriteDescriptorSet vWrites[2] = {};
+            VkWriteDescriptorSet vWrites[3] = {};
             vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             vWrites[0].dstSet = blurSetV;
             vWrites[0].dstBinding = 0;
@@ -666,7 +848,13 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             vWrites[1].descriptorCount = 1;
             vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             vWrites[1].pImageInfo = &vOutput;
-            vkUpdateDescriptorSets(vk.device, 2, vWrites, 0, NULL);
+            vWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            vWrites[2].dstSet = blurSetV;
+            vWrites[2].dstBinding = 2;
+            vWrites[2].descriptorCount = 1;
+            vWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            vWrites[2].pImageInfo = &blurDepthInfo;
+            vkUpdateDescriptorSets(vk.device, 3, vWrites, 0, NULL);
             vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         }
 
@@ -680,8 +868,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         } pc;
         pc.direction = 0;
         pc.radius = blurRadius;
-        pc.pad0 = 0.f;
-        pc.pad1 = 0.f;
+        pc.pad0 = Max(0.0f, r_rtShadowBlurDepthThreshold.GetFloat());
+        pc.pad1 = r_rtShadowBlurDepthAware.GetBool() ? 1.0f : 0.0f;
         vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetH, 0, NULL);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);

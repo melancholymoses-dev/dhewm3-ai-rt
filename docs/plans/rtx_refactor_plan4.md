@@ -63,6 +63,23 @@ by running with `r_useRayTracing 1 r_rtShadows 1`.**
 
 ---
 
+## Rendering Correctness Status (Phase 2 carry-overs)
+
+Most previously listed raster correctness gaps are now implemented. Current quick status:
+
+| # | Item | Status | Note |
+|---|------|--------|------|
+| 1 | Multiple blend modes | Fixed | Shader-pass pipelines are selected from `drawStateBits` blend factors (`GLS_SRCBLEND_BITS`/`GLS_DSTBLEND_BITS`) |
+| 2 | Depth prepass parity | Fixed | Current path uses depth prepass + interaction depth equality behavior consistent with Doom 3 flow |
+| 3 | Texture coordinate transforms | Fixed | Stage texture matrices are applied for shader/depth-clip paths |
+| 4 | LightScale / brightness parity | Fixed | Brightness mismatch was traced to formatting/read-in behavior in prior Vulkan handling; current path applies the expected scale flow |
+| 5 | Two-sided cull selection | Fixed | Material cull mode (`CT_TWO_SIDED`, `CT_BACK_SIDED`) is selected dynamically per draw |
+| 6 | Fog/blend lights | Fixed | `VK_RB_FogAllLights` + fog and blend-light passes are present in frame execution |
+
+Residual risk is now mostly regression risk across maps/content, not known missing feature blocks.
+
+---
+
 ## Phase 4 — Fixes Required
 
 Short version (historical details removed; see your archived copy for full notes):
@@ -91,8 +108,8 @@ per-frame CPU staging cost on top.
 
 1. Per-light queue-idle stalls in RT shadow dispatch have been removed from the active path.
 2. Per-light shadow dispatch now uses ring-suballocated UBO data and persistent samplers.
-3. TLAS rebuild and per-light dispatch sequencing are functionally correct, but TLAS instance upload/recreate work is still heavier than ideal.
-4. BLAS build still relies on CPU-visible copies into AS build-input buffers, which is now the biggest remaining Phase 4 optimization target.
+3. BLAS build now prefers zero-copy geometry input from `ambientCache`/`indexCache` Vulkan buffers, with CPU-copy fallback retained.
+4. TLAS rebuild and per-light dispatch sequencing are functionally correct; TLAS buffer reuse and static/dynamic instance upload split are implemented in first-pass form.
 
 ### Optimization 1: GPU-Side BLAS Geometry Inputs (Vertex/Index)
 
@@ -135,9 +152,11 @@ RT effects increase.
 
 #### Status
 
-In progress. Current BLAS path is functional and supports multi-surface model coverage,
-but it still performs host-visible geometry copies instead of directly consuming
-persistent GPU cache buffers with device addresses.
+Implemented (with fallback). BLAS now consumes persistent GPU cache buffers directly
+when available, and falls back to CPU-copy AS build inputs only when required.
+
+Validation support added: per-frame lightweight counters/log summary for zero-copy
+adoption (`VK RT BLAS SRC` in RT log output).
 
 ### Optimization 2: Keep TLAS Updates Lightweight
 
@@ -150,8 +169,15 @@ Keep this path lean:
 
 #### Status
 
-Partially implemented. TLAS behavior is stable and synchronized correctly, but per-frame
-instance buffer lifecycle and host writes can still be reduced.
+Implemented (first-pass). TLAS behavior is stable and synchronized correctly, and
+first-pass churn/write reduction is implemented:
+
+1. Reuse instance buffer unless required size grows.
+2. Reuse TLAS AS storage buffer/handle unless required size grows.
+3. Reuse scratch buffer unless required size grows.
+
+Remaining work: improve static-change detection granularity and verify upload-byte
+reduction across representative gameplay scenes.
 
 ### Optimization 3: Static/Dynamic TLAS Update Efficiency
 
@@ -174,11 +200,14 @@ dynamic buckets, then minimizing update work for unchanged static content.
 
 #### Implementation Notes
 
-1. Add per-instance metadata cache (entity handle + BLAS handle + last transform hash +
-    visibility/caster bits) so unchanged static entries are detected quickly.
-2. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
-3. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
-4. Add debug counters for:
+1. First pass implemented: static-instance signature cache + static/dynamic split,
+  with static block rewritten only when signature changes.
+2. Next pass: add richer per-instance metadata cache (entity handle + BLAS handle +
+  last transform hash + visibility/caster bits) so unchanged static entries are
+  detected with finer granularity.
+3. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
+4. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
+5. Add debug counters for:
     static instances total,
     static instances rewritten,
     dynamic instances rewritten,
@@ -244,22 +273,7 @@ but it improves artistic tuning and reduces pressure to use one-size-fits-all se
 
 Planned. Current runtime softness tuning is still global.
 
----
 
-## Rendering Correctness Status (Phase 2 carry-overs)
-
-Most previously listed raster correctness gaps are now implemented. Current quick status:
-
-| # | Item | Status | Note |
-|---|------|--------|------|
-| 1 | Multiple blend modes | Fixed | Shader-pass pipelines are selected from `drawStateBits` blend factors (`GLS_SRCBLEND_BITS`/`GLS_DSTBLEND_BITS`) |
-| 2 | Depth prepass parity | Fixed | Current path uses depth prepass + interaction depth equality behavior consistent with Doom 3 flow |
-| 3 | Texture coordinate transforms | Fixed | Stage texture matrices are applied for shader/depth-clip paths |
-| 4 | LightScale / brightness parity | Fixed | Brightness mismatch was traced to formatting/read-in behavior in prior Vulkan handling; current path applies the expected scale flow |
-| 5 | Two-sided cull selection | Fixed | Material cull mode (`CT_TWO_SIDED`, `CT_BACK_SIDED`) is selected dynamically per draw |
-| 6 | Fog/blend lights | Fixed | `VK_RB_FogAllLights` + fog and blend-light passes are present in frame execution |
-
-Residual risk is now mostly regression risk across maps/content, not known missing feature blocks.
 
 ---
 
@@ -467,6 +481,14 @@ whatever the ray hits. Blend the reflected colour into the specular term.
 
 This is optional and expensive. Only enable for highly-specular surfaces
 (metal floors, mirrors, polished panels).
+
+**Mirror replacement:** Once RT reflections are working, the rasterized
+mirror subview path (`R_MirrorViewBySurface`, oblique clip plane, dual
+`R_RenderView` passes) can be retired entirely. Mirrors become a degenerate
+case of perfect specular reflection (roughness = 0). The closest-hit shader
+checks for the `mirror` material flag, reflects the ray, and traces again —
+no clip planes, no subview, no second full-scene render. This eliminates
+roughly 1.5x per-frame cost when a mirror is visible.
 
 #### New Files
 
@@ -871,14 +893,14 @@ Detailed execution order with status:
      - Removed per-light queue-idle synchronization from RT shadow path.
      - Stabilized player/viewmodel shadow behavior and alpha-tested depth-prepass parity.
 
-2. Phase 4 optimization pass (next active focus)
+2. Phase 4 optimization pass (active)
      - 2.1 GPU-native BLAS input path (highest impact):
          - Consume ambient/index cache GPU buffers directly for AS build input.
          - Keep CPU fallback for edge/debug cases.
      - 2.2 TLAS instance upload efficiency:
-         - Reduce instance buffer churn and avoid unnecessary full rewrites.
+     - Reuse TLAS/instance/scratch allocations and avoid unnecessary full rewrites.
      - 2.3 Static/dynamic TLAS split:
-         - Introduce static block caching and dynamic-only per-frame rewrites.
+     - Static block caching + dynamic-only rewrites are implemented (first pass).
 
 3. Validation gate after Phase 4 optimization changes
      - Validate with `r_useRayTracing 1 r_rtShadows 1` across mixed-light maps.
@@ -914,7 +936,7 @@ Historical + current updates (implemented now) and planned extensions:
 | Implemented | `neo/renderer/Vulkan/vk_raytracing.h` | Declares per-light dispatch entry point; tracks per-frame shadow descriptor update state and samplers |
 | Implemented | `neo/renderer/Vulkan/vk_common.h` | Added `renderPassResume` use for post-dispatch resume and debug-only interaction pipeline variant support |
 | Implemented | `neo/renderer/Vulkan/vk_pipeline.cpp` | Blend-state mapping from Doom 3 draw-state bits; depth/depth-clip pipelines; fog/blend-light pipeline support; dynamic cull mode path |
-| Implemented | `neo/renderer/Vulkan/vk_accelstruct.cpp` | Multi-surface model BLAS build path; TLAS rebuild flow and instance filtering updates |
+| Implemented | `neo/renderer/Vulkan/vk_accelstruct.cpp` | Multi-surface model BLAS build path; GPU-buffer-preferred BLAS geometry input with CPU fallback; lightweight BLAS source logging; TLAS rebuild flow with buffer reuse and first-pass static/dynamic instance upload split |
 | Implemented | `neo/renderer/Vulkan/vk_instance.cpp` | depthClamp feature handling updated to capability-gated behavior |
 | Implemented | `neo/renderer/Vulkan/vk_swapchain.cpp` | swapchain format refresh updated in recreate path |
 | Implemented | `neo/renderer/glsl/depth_clip.frag` | Depth prepass alpha clip parity update using stage alpha scale + threshold wiring |
@@ -933,6 +955,193 @@ Historical + current updates (implemented now) and planned extensions:
 | Planned | `neo/renderer/glsl/gi_ray.rchit` | GI closest-hit shader |
 | Planned | `neo/renderer/glsl/gi_ray.rmiss` | GI miss shader |
 | Planned | `neo/CMakeLists.txt` | Shader source list updates for new RT stages as they land |
+
+---
+
+## Rendering Bug Investigations
+
+### Bug A: Mirrors/Portals Render as Black
+
+#### Symptom
+
+Mirror surfaces (e.g. the bathroom mirror in Mars City) render as solid black rectangles.
+Portal/remote-render textures similarly show nothing.
+
+#### Root Cause Analysis
+
+The Vulkan backend explicitly skips mirror/portal dynamic textures at
+`vk_backend.cpp:962`:
+
+```cpp
+else {
+    // Portal/mirror/other dynamic texture — not yet supported, skip.
+    continue;
+}
+```
+
+When `VK_RB_DrawShaderPasses` encounters a shader stage with
+`dynamic == DI_MIRROR_RENDER` (or `DI_REMOTE_RENDER` / `DI_XRAY_RENDER`),
+it falls through to this branch and skips the entire draw. The surface
+renders with whatever was previously bound (typically black/nothing).
+
+The GL path works because:
+
+1. **Frontend:** `R_GenerateSubViews()` (called from `tr_main.cpp:1234`) scans all
+   draw surfaces for subview materials and dispatches to `R_MirrorRender()` /
+   `R_RemoteRender()` / `R_XrayRender()` in `tr_subview.cpp`.
+2. **Mirror camera:** `R_MirrorViewBySurface()` creates a reflected `viewDef_t`
+   (mirrored origin/axis, clip plane, `isMirror=true` for culling flip).
+3. **Render + capture:** The mirrored view is rendered via `R_RenderView()`,
+   then `CaptureRenderToImage()` copies the framebuffer into `scratchImage`.
+4. **Main pass:** The mirror surface samples `scratchImage` via `TG_SCREEN` texgen.
+
+The frontend code (`tr_subview.cpp`) is **shared** between GL and Vulkan, so the
+subview generation pipeline *should* run. The issue is that either:
+- The subview render never executes on the Vulkan backend (the `RC_COPY_RENDER`
+  command never fires or `VK_RB_CopyRender` fails silently), or
+- The resulting texture is never bound when the mirror surface draws (the skip
+  at line 962 prevents it).
+
+#### Investigation Plan
+
+1. **Add logging to confirm subview dispatch:**
+   - In `R_GenerateSubViews()` / `R_GenerateSurfaceSubview()`, log when a
+     mirror surface is detected and when `R_MirrorRender()` is called.
+   - In `VK_RB_CopyRender()`, log entry with image name, dimensions, and
+     whether `s_frameActive` / `s_frameCmdBuf` are valid.
+   - This tells us whether the frontend is generating subviews and whether
+     the copy command reaches the Vulkan backend.
+
+2. **Confirm `CropRenderSize` / `UnCrop` work in Vulkan:**
+   - GL uses `CropRenderSize` to render the mirror view at reduced resolution.
+   - Verify that Vulkan's render pass / framebuffer handles the cropped viewport
+     correctly (or whether it needs a secondary render pass / offscreen target).
+
+3. **Remove the skip at line 962:**
+   - Replace the `continue` with code that binds `scratchImage` (for mirrors)
+     or `scratchImage2` (for xray) as the texture for that stage.
+   - The image should already contain the captured mirror view if step 1 confirms
+     the subview rendered.
+
+4. **Validate face culling flip:**
+   - `vk_backend.cpp:1556` checks `backEnd.viewDef->isMirror` — confirm this
+     flag is set during the mirror subview render and that the Vulkan pipeline
+     flips winding order correctly.
+
+5. **Test with the bathroom mirror in Mars City (`maps/game/mc_underground`):**
+   - Stand in front of the mirror and confirm the reflection appears.
+   - Check for correct orientation (not upside-down or mirrored incorrectly).
+   - Check that the crosshair/HUD is not rendered in the reflection.
+
+6. **Reference vkDOOM3 implementation:**
+   - `../vkDOOM3/neo/renderer/tr_frontend_subview.cpp` has a working Vulkan
+     mirror path — compare its dispatch and copy logic if our approach stalls.
+
+#### Key Files
+
+| File | Relevance |
+|------|-----------|
+| `neo/renderer/tr_subview.cpp` | Shared frontend: mirror/portal subview generation |
+| `neo/renderer/Vulkan/vk_backend.cpp:962` | **Smoking gun** — skips mirror stages |
+| `neo/renderer/Vulkan/vk_backend.cpp:3036` | `VK_RB_CopyRender` — framebuffer blit |
+| `neo/renderer/Vulkan/vk_backend.cpp:907-959` | `TG_SCREEN` texgen binding |
+| `neo/renderer/RenderSystem.cpp:994` | `CaptureRenderToImage` command creation |
+| `neo/renderer/Image_init.cpp:2237` | `scratchImage` / `currentRenderImage` creation |
+| `neo/renderer/Material.cpp:1349` | `mirrorRenderMap` material keyword parsing |
+| `neo/renderer/tr_local.h:386` | `viewDef_t` — `isMirror`, `isSubview` flags |
+
+#### Priority
+
+Medium-high. Mirrors are visible and expected in early levels. This is a
+user-facing visual gap that should be addressed before Phase 5.
+
+---
+
+### Bug B: Texture Aliasing / Z-Fighting on Slight Camera Tilt
+
+#### Symptom
+
+When tilting the camera by very small angles, certain textures (visible in the
+Monorail Station / Central Access corridor screenshots) show rapid flickering
+or shimmer — as if competing surfaces are fighting for the same depth, or
+mipmap levels are oscillating rapidly.
+
+#### Possible Causes
+
+1. **Zero slope factor in depth bias:**
+   `vk_backend.cpp` calls `vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat())`
+   where the second argument (clamp) is 0 and the third is the slope factor
+   from `r_offsetFactor` (default 0). The GL path uses
+   `glPolygonOffset(r_offsetFactor, r_offsetUnits * polygonOffset)` where the
+   first arg is the slope factor. With no slope-dependent bias, co-planar
+   decals at steep viewing angles get insufficient offset and z-fight.
+
+2. **Mipmap selection instability (no anisotropic filtering):**
+   `vk_image.cpp` sets `anisotropyEnable = VK_FALSE` with `mipLodBias = 0.0f`.
+   At oblique angles the texture footprint becomes highly anisotropic, causing
+   the mip selector to oscillate between levels frame-to-frame, producing
+   visible shimmer. Anisotropic filtering smooths this significantly.
+
+3. **Depth format precision:**
+   `vk_swapchain.cpp:78` prefers `D32_SFLOAT_S8_UINT` but falls back to
+   `D24_UNORM_S8_UINT`. If 24-bit is selected, depth precision at medium
+   distances is marginal for the infinite-far-plane projection Doom 3 uses.
+
+4. **Projection matrix precision distribution:**
+   `tr_main.cpp:973` uses `projectionMatrix[10] = -0.999f` for the infinite
+   far-plane trick. This concentrates precision near the near plane and leaves
+   mid-to-far distances with less depth resolution, exacerbating z-fighting on
+   co-planar surfaces.
+
+#### Investigation Plan
+
+1. **Identify the specific surfaces:**
+   - Use `r_showSurfaceInfo 1` or similar debug cvar to identify the material
+     names on the flickering surfaces.
+   - Determine whether they are decals, overlays, or genuinely co-planar geometry.
+
+2. **Log depth format at startup:**
+   - In `VK_CreateDepthBuffer` / format selection, log which depth format was
+     actually selected. If it's `D24_UNORM_S8_UINT`, that's a contributing factor.
+
+3. **Test slope-based depth bias:**
+   - Set `r_offsetFactor` to a nonzero value at runtime (e.g. `r_offsetFactor 2`)
+     and check whether decal z-fighting improves.
+   - If it helps, verify the Vulkan `vkCmdSetDepthBias` argument mapping matches
+     GL's `glPolygonOffset` semantics (GL: `factor, units`; VK: `constant, clamp, slope`).
+   - The current Vulkan call may have `constant` and `slope` swapped relative to
+     GL intent — verify and fix if needed.
+
+4. **Test anisotropic filtering:**
+   - Set `r_useAnisotropicFiltering 1` or `image_anisotropy 8` and check
+     whether the mip-shimmer on oblique surfaces resolves.
+   - If it does, consider enabling anisotropic filtering by default for
+     non-nearest samplers.
+
+5. **Test mipmap LOD bias:**
+   - Try a small negative `mipLodBias` (e.g. -0.25) to bias toward sharper
+     mip levels. This can reduce shimmer on surfaces near mip boundaries.
+
+6. **Compare with GL renderer:**
+   - Run the same scene with the GL renderer and note whether the same
+     surfaces show aliasing. If GL is clean, diff the depth/filtering setup.
+
+#### Key Files
+
+| File | Relevance |
+|------|-----------|
+| `neo/renderer/Vulkan/vk_backend.cpp:598-815` | Depth bias application |
+| `neo/renderer/Vulkan/vk_pipeline.cpp:248-249` | Pipeline depth bias enable |
+| `neo/renderer/Vulkan/vk_image.cpp:135-144, 675` | Sampler/mipmap/anisotropy config |
+| `neo/renderer/Vulkan/vk_swapchain.cpp:78-92` | Depth format selection |
+| `neo/renderer/tr_main.cpp:973-1041` | Projection matrix setup |
+| `neo/renderer/RenderSystem_init.cpp:232-233` | `r_offsetUnits` / `r_offsetFactor` defaults |
+
+#### Priority
+
+Medium. This is a visual quality issue, not a correctness blocker. The fix
+is likely a combination of correct depth-bias argument mapping and enabling
+anisotropic filtering, both of which are low-risk changes.
 
 ---
 

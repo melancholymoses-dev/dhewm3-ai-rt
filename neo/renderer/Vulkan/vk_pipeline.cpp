@@ -733,10 +733,11 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                    VK_DYNAMIC_STATE_CULL_MODE};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamicState.dynamicStateCount = 3;
+    dynamicState.dynamicStateCount = 4;
     dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};

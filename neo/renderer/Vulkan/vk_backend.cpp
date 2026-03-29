@@ -48,6 +48,75 @@ static idCVar r_vkWeaponDepthAlways(
 static idCVar r_vkPlasmaIgnoreDepthAlphaTest(
     "r_vkPlasmaIgnoreDepthAlphaTest", "0", CVAR_RENDERER,
     "Depth prepass debug: treat models/weapons/plasmagun/plasmagun as opaque (ignore alpha-test clip)");
+static idCVar r_vkPolyOffsetSlopeMin(
+    "r_vkPolyOffsetSlopeMin", "0.0", CVAR_RENDERER | CVAR_FLOAT,
+    "Vulkan-only minimum slope depth bias for polygonOffset materials when r_offsetFactor is 0");
+static idCVar r_rtShadowMaskProjected(
+    "r_rtShadowMaskProjected", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "apply RT shadow mask to projected lights (0 keeps RT shadows for point lights only)");
+static idCVar r_vkRTDebugInteractions("r_vkRTDebugInteractions", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                      "log Vulkan RT interaction mask decisions (0=off, 1=filtered surfaces)");
+static idCVar r_vkRTDebugSurface("r_vkRTDebugSurface", "", CVAR_RENDERER | CVAR_ARCHIVE,
+                                 "substring filter for r_vkRTDebugInteractions material name (empty = all materials)");
+static idCVar r_vkRTDebugMaxLogsPerFrame("r_vkRTDebugMaxLogsPerFrame", "24", CVAR_RENDERER | CVAR_INTEGER,
+                                         "max Vulkan RT debug interaction logs per frame");
+static idCVar r_vkRTInterLogN(
+    "r_vkRTInterLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "limit Vulkan RT interaction/texture debug logging to N frames after enable (0 = unlimited)");
+idCVar r_vkRTLogCaptureReset("r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_INTEGER,
+                             "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
+static idCVar r_vkRTDebugLightTextures("r_vkRTDebugLightTextures", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                       "log Vulkan interaction texture sources for filtered surfaces (0=off, 1=on)");
+
+static bool VK_RTDebugMatMatch(const char *matName)
+{
+    const char *filter = r_vkRTDebugSurface.GetString();
+    if (!filter || !filter[0])
+        return true;
+    return idStr::FindText(matName ? matName : "", filter, false) >= 0;
+}
+
+static bool VK_RTDebugInteractionFrameAllowed(bool debugEnabled)
+{
+    static bool s_wasEnabled = false;
+    static int s_startFrame = -1;
+    static int s_lastResetToken = -1;
+
+    const int resetToken = r_vkRTLogCaptureReset.GetInteger();
+    if (s_lastResetToken != resetToken)
+    {
+        s_lastResetToken = resetToken;
+        s_wasEnabled = false;
+        s_startFrame = -1;
+    }
+
+    if (!debugEnabled)
+    {
+        s_wasEnabled = false;
+        s_startFrame = -1;
+        return false;
+    }
+
+    if (!s_wasEnabled)
+    {
+        s_wasEnabled = true;
+        s_startFrame = tr.frameCount;
+    }
+
+    const int frameBudget = Max(0, r_vkRTInterLogN.GetInteger());
+    if (frameBudget <= 0)
+        return true;
+
+    return (tr.frameCount - s_startFrame) < frameBudget;
+}
+
+static ID_INLINE float VK_GetPolyOffsetSlope(bool isPolyOffset)
+{
+    float slope = r_offsetFactor.GetFloat();
+    if (isPolyOffset && slope == 0.0f)
+        slope = r_vkPolyOffsetSlopeMin.GetFloat();
+    return slope;
+}
 
 static bool VK_RTShadowsEnabled()
 {
@@ -223,6 +292,78 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
+// Current view's scissor rect in VK coordinates (Y-down).
+// Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
+// Used to confine all rendering (depth prepass, interactions, shader passes)
+// to the view's visible area — critical for subviews (mirrors) to prevent
+// reflected content from bleeding outside the mirror surface's screen bounds.
+static VkRect2D s_viewScissor;
+
+// Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down).
+static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
+{
+    int h = (int)vk.swapchainExtent.height;
+    const idScreenRect &s = viewDef->scissor;
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, (int)vk.swapchainExtent.width - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top edge → VK top
+    int w2 = s.x2 - s.x1 + 1;
+    int h2 = s.y2 - s.y1 + 1;
+    r.extent.width = (uint32_t)idMath::ClampInt(1, (int)vk.swapchainExtent.width - r.offset.x, w2);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, h2);
+    return r;
+}
+
+// Intersect two VkRect2D rects. Returns a zero-area rect if no overlap.
+static VkRect2D VK_IntersectRect(VkRect2D a, VkRect2D b)
+{
+    int ax2 = a.offset.x + (int)a.extent.width;
+    int ay2 = a.offset.y + (int)a.extent.height;
+    int bx2 = b.offset.x + (int)b.extent.width;
+    int by2 = b.offset.y + (int)b.extent.height;
+    VkRect2D r;
+    r.offset.x = (a.offset.x > b.offset.x) ? a.offset.x : b.offset.x;
+    r.offset.y = (a.offset.y > b.offset.y) ? a.offset.y : b.offset.y;
+    int rx2 = (ax2 < bx2) ? ax2 : bx2;
+    int ry2 = (ay2 < by2) ? ay2 : by2;
+    r.extent.width = (uint32_t)((rx2 > r.offset.x) ? (rx2 - r.offset.x) : 0);
+    r.extent.height = (uint32_t)((ry2 > r.offset.y) ? (ry2 - r.offset.y) : 0);
+    return r;
+}
+
+// Convert drawSurf->scissorRect (viewport-local GL coordinates) to a Vulkan scissor
+// in absolute framebuffer coordinates and clamp to the current view scissor.
+static VkRect2D VK_ComputeDrawSurfScissor(const drawSurf_t *surf)
+{
+    if (!surf || !backEnd.viewDef)
+        return s_viewScissor;
+
+    const idScreenRect &s = surf->scissorRect;
+    if (s.IsEmpty())
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    const int w = (int)vk.swapchainExtent.width;
+    const int h = (int)vk.swapchainExtent.height;
+
+    const int absX1 = backEnd.viewDef->viewport.x1 + s.x1;
+    const int absY1 = backEnd.viewDef->viewport.y1 + s.y1; // GL bottom edge
+    const int absY2 = backEnd.viewDef->viewport.y1 + s.y2; // GL top edge
+
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, w - 1, absX1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - absY2); // GL top -> VK top
+
+    const int rw = s.x2 - s.x1 + 1;
+    const int rh = absY2 - absY1 + 1;
+    if (rw <= 0 || rh <= 0)
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
+
+    return VK_IntersectRect(r, s_viewScissor);
+}
+
 // ---------------------------------------------------------------------------
 // VK_BuildSurfMVP
 // Build a model-view-projection matrix for a surface, applying weaponDepthHack
@@ -335,6 +476,7 @@ static VkCommandBuffer s_cmd = VK_NULL_HANDLE;
 static const char *s_shadowPhaseTag = "unknown";
 static int s_lightIdx = -1; // current light index (for per-interaction logging)
 static const char *s_interactionPipeTag = "opaque";
+static VkRect2D s_interactionLightScissor = {{0, 0}, {0, 0}};
 
 static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 {
@@ -343,7 +485,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const char *matName = mat ? mat->GetName() : "<null>";
     const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
 
-    if (r_vkLogRT.GetInteger() >= 3)
+    if (r_vkLogRT.GetInteger() >= 2)
     {
         const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
         common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
@@ -442,10 +584,48 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // not be shadowed by the world-space screen mask; this can make viewmodels look
     // ghostly or intermittently dark.
     int *useSM = (int *)(fsz + 2);
-    *useSM = (VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE &&
-              !(din->surf && din->surf->space && din->surf->space->weaponDepthHack))
-                 ? 1
-                 : 0;
+    const bool hasShadowMask = VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    const bool isWeaponDepthHack = (din->surf && din->surf->space && din->surf->space->weaponDepthHack);
+    const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
+    const bool isProjectedLight = (lightDef != NULL) ? !lightDef->parms.pointLight : false;
+    const bool allowProjectedMask = r_rtShadowMaskProjected.GetBool() || !isProjectedLight;
+    *useSM = (hasShadowMask && !isWeaponDepthHack && allowProjectedMask) ? 1 : 0;
+
+    const bool rtDbgEnabled = (r_vkRTDebugInteractions.GetInteger() > 0 || r_vkRTDebugLightTextures.GetInteger() > 0);
+    if (VK_RTDebugInteractionFrameAllowed(rtDbgEnabled))
+    {
+        static int s_rtDbgFrame = -1;
+        static int s_rtDbgCount = 0;
+        if (s_rtDbgFrame != tr.frameCount)
+        {
+            s_rtDbgFrame = tr.frameCount;
+            s_rtDbgCount = 0;
+        }
+
+        const int maxLogs = Max(1, r_vkRTDebugMaxLogsPerFrame.GetInteger());
+        if (s_rtDbgCount < maxLogs)
+        {
+            const bool matMatch = VK_RTDebugMatMatch(matName);
+            const char *lightName =
+                (backEnd.vLight && backEnd.vLight->lightShader) ? backEnd.vLight->lightShader->GetName() : "<null>";
+            const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
+            if (matMatch && r_vkRTDebugInteractions.GetInteger() > 0)
+            {
+                common->Printf("VK RT INTER: f=%d li=%d point=%d mat='%s' idx=%d sm=%d/%d weapon=%d\n", tr.frameCount,
+                               s_lightIdx, lightName, (lightDef && lightDef->parms.pointLight) ? 1 : 0, matName,
+                               geo ? geo->numIndexes : 0, *useSM, hasShadowMask ? 1 : 0, isWeaponDepthHack ? 1 : 0);
+            }
+            if (matMatch && r_vkRTDebugLightTextures.GetInteger() > 0)
+            {
+                common->Printf("VK RT TEX: f=%d light='%s' mat='%s' proj='%s' bump='%s' diff='%s'\n", tr.frameCount,
+                               lightName, matName, din->lightImage ? din->lightImage->imgName.c_str() : "<null>",
+                               din->bumpImage ? din->bumpImage->imgName.c_str() : "<null>",
+                               din->diffuseImage ? din->diffuseImage->imgName.c_str() : "<null>");
+            }
+            if (matMatch)
+                s_rtDbgCount++;
+        }
+    }
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useSM + 1);
@@ -564,6 +744,17 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         return;
     }
 
+    // Constrain interaction rasterization to the surface scissor, then to the
+    // active light scissor. This prevents reflected subview content from bleeding
+    // outside mirror coverage due to view-level scissor rectangles.
+    {
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(din->surf);
+        surfScissor = VK_IntersectRect(surfScissor, s_interactionLightScissor);
+        if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
+            return;
+        vkCmdSetScissor(s_cmd, 0, 1, &surfScissor);
+    }
+
     // --- Vertex buffer ---
     VkBuffer vertBuf;
     VkDeviceSize vertOffset;
@@ -600,18 +791,24 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     {
         const idMaterial *mat = din->surf->material;
         float biasConstant = 0.0f;
+        const bool isPolyOffset = (mat && mat->TestMaterialFlag(MF_POLYGONOFFSET));
         if (mat && mat->TestMaterialFlag(MF_POLYGONOFFSET))
             biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
-        vkCmdSetDepthBias(s_cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+        vkCmdSetDepthBias(s_cmd, biasConstant, 0.0f, VK_GetPolyOffsetSlope(isPolyOffset));
     }
 
     // Cull mode: CT_TWO_SIDED materials disable face culling (fences, grates, glass panes).
+    // Mirror views flip front/back to match GL's GL_Cull() isMirror swap.
     {
         VkCullModeFlags cullMode = VK_CULL_MODE_BACK_BIT;
         if (mat && mat->GetCullType() == CT_TWO_SIDED)
             cullMode = VK_CULL_MODE_NONE;
         else if (mat && mat->GetCullType() == CT_BACK_SIDED)
             cullMode = VK_CULL_MODE_FRONT_BIT; // inverted: back-sided in GL = cull front in VK
+
+        // Mirror reflection inverts winding — swap cull face (GL does this in GL_Cull).
+        if (backEnd.viewDef && backEnd.viewDef->isMirror && cullMode != VK_CULL_MODE_NONE)
+            cullMode = (cullMode == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
 
         if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
             cullMode = VK_CULL_MODE_NONE;
@@ -709,9 +906,12 @@ struct VkGuiUBO
     float modelViewProjection[16]; // 64 bytes
     float colorModulate[4];        // 16 bytes
     float colorAdd[4];             // 16 bytes
-    float texMatrixS[4];           // 16 bytes — row 0 of 2D affine UV transform
+    float texMatrixS[4];           // 16 bytes — row 0 of 2D affine UV transform; [2] = texgen flag
     float texMatrixT[4];           // 16 bytes — row 1
-}; // 128 bytes total
+    float texGenS[4];              // 16 bytes — TG_SCREEN S plane (0.5 scale+bias baked in)
+    float texGenT[4];              // 16 bytes — TG_SCREEN T plane (0.5 scale+bias baked in)
+    float texGenQ[4];              // 16 bytes — TG_SCREEN Q plane (MVP row 3)
+}; // 176 bytes total
 
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
@@ -729,9 +929,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
     // Interaction pass leaves a per-light scissor active (often flashlight-sized).
-    // Shader passes are not per-light and must render with full-frame scissor.
-    const VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-    vkCmdSetScissor(cmd, 0, 1, &fullScissor);
+    // Shader passes are not per-light — use the view scissor (full-screen for the main
+    // view, mirror bounds for subviews).
+    vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
 
     // Sentinel for depth bias tracking — larger than any real bias value (which is
     // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
@@ -742,6 +942,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
         if (!surf || !surf->material || !surf->geo)
             continue;
+
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(surf);
+        if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
+            continue;
+        vkCmdSetScissor(cmd, 0, 1, &surfScissor);
 
         const idMaterial *mat = surf->material;
         if (mat->SuppressInSubview())
@@ -801,20 +1006,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
         const float *regs = surf->shaderRegisters;
 
-        // Polygon offset for co-planar decals/overlays, mirroring GL's qglPolygonOffset
-        // in RB_STD_T_RenderShaderPasses.  Only relevant for 3D surfaces (depthTest path);
-        // 2D GUI surfaces skip depth entirely so bias has no effect there.
-        {
-            float biasConstant = 0.0f;
-            if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
-                biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
-            if (biasConstant != activeShaderBias)
-            {
-                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
-                activeShaderBias = biasConstant;
-            }
-        }
-
         if (r_vkLogRT.GetInteger() >= 2)
         {
             static idStrList s_loggedMats;
@@ -831,17 +1022,50 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         // Log translucent material surfaces (same criteria as GL path)
         const int vkTransLog = r_vkLogTranslucent.GetInteger();
         const bool translucentLike = (mat->Coverage() == MC_TRANSLUCENT) || (mat->GetSort() >= SS_MEDIUM);
-        if (vkTransLog >= 1 && translucentLike)
+        if (vkTransLog >= 2 && translucentLike)
         {
-            common->Printf(
-                "VK TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d scissor=(%d,%d %d,%d)\n",
-                tr.frameCount, mat->GetName(), (int)mat->GetSort(), RB_CoverageName(mat->Coverage()),
-                mat->GetNumStages(), si, 0, 0, (int)vk.swapchainExtent.width, (int)vk.swapchainExtent.height);
+            static int s_transSurfLogFrame = -1;
+            static int s_transSurfLogCount = 0;
+            if (s_transSurfLogFrame != tr.frameCount)
+            {
+                s_transSurfLogFrame = tr.frameCount;
+                s_transSurfLogCount = 0;
+            }
+            if (s_transSurfLogCount < 24)
+            {
+                s_transSurfLogCount++;
+                common->Printf(
+                    "VK TRANSLUCENT SURF: frame=%d mat='%s' sort=%d cov=%s stages=%d idx=%d scissor=(%d,%d %d,%d)\n",
+                    tr.frameCount, mat->GetName(), (int)mat->GetSort(), RB_CoverageName(mat->Coverage()),
+                    mat->GetNumStages(), si, surfScissor.offset.x, surfScissor.offset.y, (int)surfScissor.extent.width,
+                    (int)surfScissor.extent.height);
+            }
         }
 
         for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
         {
             const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
+            // GL parity: per-stage privatePolygonOffset overrides material polygon offset.
+            // This is important for decal-like stages that need a different depth bias than
+            // the rest of the material stages.
+            float stageBiasConstant = 0.0f;
+            bool stageUsesPolyOffset = false;
+            if (pStage->privatePolygonOffset != 0.0f)
+            {
+                stageBiasConstant = r_offsetUnits.GetFloat() * pStage->privatePolygonOffset;
+                stageUsesPolyOffset = true;
+            }
+            else if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
+            {
+                stageBiasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
+                stageUsesPolyOffset = true;
+            }
+            if (stageBiasConstant != activeShaderBias)
+            {
+                vkCmdSetDepthBias(cmd, stageBiasConstant, 0.0f, VK_GetPolyOffsetSlope(stageUsesPolyOffset));
+                activeShaderBias = stageBiasConstant;
+            }
 
             // Log verbose stage gating checks when translucent logging is enabled
             if (vkTransLog >= 2 && translucentLike && !regs[pStage->conditionRegister])
@@ -867,7 +1091,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 continue;
 
             // Log the stage that will actually be drawn
-            if (vkTransLog >= 1 && translucentLike)
+            if (vkTransLog >= 2 && translucentLike)
             {
                 const char *texName =
                     (pStage->texture.image != NULL) ? pStage->texture.image->imgName.c_str() : "<null>";
@@ -960,6 +1184,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 else
                 {
                     // Portal/mirror/other dynamic texture — not yet supported, skip.
+                    if (r_vkLogRT.GetInteger() >= 1)
+                    {
+                        common->Printf("VK DrawShaderPasses: SKIPPING dynamic=%d mat='%s' stage=%d\n",
+                                       (int)pStage->texture.dynamic, mat->GetName(), stageIdx);
+                    }
                     continue;
                 }
             }
@@ -1020,6 +1249,23 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 colorAdd[3] = color[3];
             }
 
+            // SS_SUBVIEW override (GL parity: draw_common.cpp:562-566)
+            // The `mirror` keyword renders the reflected scene directly into the
+            // framebuffer via a subview, then the mirror quad draws with multiplicative
+            // blend to darken it by 1/overBright.  GL forces DEPTHFUNC_LESS (not EQUAL)
+            // so the quad overwrites the subview's depth, and sets color to 1/overBright.
+            int drawBitsOverride = pStage->drawStateBits;
+            if (mat->GetSort() == SS_SUBVIEW)
+            {
+                drawBitsOverride = GLS_SRCBLEND_DST_COLOR | GLS_DSTBLEND_ZERO | GLS_DEPTHFUNC_LESS;
+                float ob = 1.0f / backEnd.overBright;
+                colorModulate[0] = colorModulate[1] = colorModulate[2] = colorModulate[3] = 0.0f;
+                colorAdd[0] = ob;
+                colorAdd[1] = ob;
+                colorAdd[2] = ob;
+                colorAdd[3] = 1.0f;
+            }
+
             float mvp[16];
             VK_BuildSurfMVP(surf->space, mvp);
 
@@ -1030,8 +1276,58 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             memcpy(guiUbo->colorModulate, colorModulate, 16);
             memcpy(guiUbo->colorAdd, colorAdd, 16);
 
-            // Texture coordinate transform
-            if (pStage->texture.hasMatrix)
+            // Texture coordinate transform & TG_SCREEN texgen
+            if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+            {
+                // Projective screen-space texgen for mirrors / screen captures.
+                // Compute MVP using GL projection (column-major). Rows 0,1,3 are
+                // unaffected by the VK Z-remap so either projection works.
+                float texgenMat[16];
+                myGlMultMatrix(surf->space->modelViewMatrix, backEnd.viewDef->projectionMatrix, texgenMat);
+
+                // Extract MVP rows and apply 0.5 scale + 0.5 bias so that after
+                // the projective divide the texcoords map from NDC [-1,1] → [0,1].
+                //   Row 0 (S): texgenMat[c*4+0]
+                //   Row 1 (T): texgenMat[c*4+1]   (Y flipped for VK neg-viewport)
+                //   Row 3 (Q): texgenMat[c*4+3]
+                for (int c = 0; c < 4; c++)
+                {
+                    float r0 = texgenMat[c * 4 + 0]; // row 0
+                    float r1 = texgenMat[c * 4 + 1]; // row 1
+                    float r3 = texgenMat[c * 4 + 3]; // row 3
+                    guiUbo->texGenS[c] = 0.5f * r0 + 0.5f * r3;
+                    guiUbo->texGenT[c] = -0.5f * r1 + 0.5f * r3; // neg = VK Y flip
+                    guiUbo->texGenQ[c] = r3;
+                }
+
+                // Signal texgen mode via texMatrixS[2] (normally always 0).
+                guiUbo->texMatrixS[0] = 1.f;
+                guiUbo->texMatrixS[1] = 0.f;
+                guiUbo->texMatrixS[2] = 1.f; // <-- texgen flag
+                guiUbo->texMatrixS[3] = 0.f;
+                guiUbo->texMatrixT[0] = 0.f;
+                guiUbo->texMatrixT[1] = 1.f;
+                guiUbo->texMatrixT[2] = 0.f;
+                guiUbo->texMatrixT[3] = 0.f;
+
+                if (r_vkLogRT.GetInteger() >= 1)
+                {
+                    static int s_texgenLogCount = 0;
+                    if (s_texgenLogCount < 20)
+                    {
+                        s_texgenLogCount++;
+                        common->Printf("VK TEXGEN: mat='%s' tg=%d "
+                                       "S=[%.3f %.3f %.3f %.3f] "
+                                       "T=[%.3f %.3f %.3f %.3f] "
+                                       "Q=[%.3f %.3f %.3f %.3f]\n",
+                                       mat->GetName(), (int)pStage->texture.texgen, guiUbo->texGenS[0],
+                                       guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3], guiUbo->texGenT[0],
+                                       guiUbo->texGenT[1], guiUbo->texGenT[2], guiUbo->texGenT[3], guiUbo->texGenQ[0],
+                                       guiUbo->texGenQ[1], guiUbo->texGenQ[2], guiUbo->texGenQ[3]);
+                    }
+                }
+            }
+            else if (pStage->texture.hasMatrix)
             {
                 const textureStage_t &tex = pStage->texture;
                 float s2 = regs[tex.matrix[0][2]];
@@ -1048,6 +1344,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
                 guiUbo->texMatrixT[2] = 0.f;
                 guiUbo->texMatrixT[3] = t2;
+                memset(guiUbo->texGenS, 0, 16);
+                memset(guiUbo->texGenT, 0, 16);
+                memset(guiUbo->texGenQ, 0, 16);
             }
             else
             {
@@ -1059,6 +1358,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 guiUbo->texMatrixT[1] = 1.f;
                 guiUbo->texMatrixT[2] = 0.f;
                 guiUbo->texMatrixT[3] = 0.f;
+                memset(guiUbo->texGenS, 0, 16);
+                memset(guiUbo->texGenT, 0, 16);
+                memset(guiUbo->texGenQ, 0, 16);
             }
 
             // Allocate GUI descriptor set
@@ -1099,19 +1401,19 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // they respect the depth prepass and don't render through occluders or from
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
-            const bool needDepth = !(pStage->drawStateBits & GLS_DEPTHFUNC_ALWAYS);
+            const bool needDepth = !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
-            if (r_vkLogRT.GetInteger() >= 3)
+            if (r_vkLogRT.GetInteger() >= 2)
             {
-                const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                const uint32_t blendBits = (uint32_t)(drawBitsOverride & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
                 common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
-                               mat->GetName(), stageIdx, pStage->drawStateBits, blendBits, (int)needDepth);
+                               mat->GetName(), stageIdx, drawBitsOverride, blendBits, (int)needDepth);
             }
 
-            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(pStage->drawStateBits, needDepth);
+            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
 
             // Log translucent material pipeline binding
-            if (vkTransLog >= 1 && translucentLike)
+            if (vkTransLog >= 2 && translucentLike)
             {
                 const uint32_t blendBits = (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
                 common->Printf("VK TRANSLUCENT BIND: frame=%d mat='%s' stage=%d pipeline=%p drawState=0x%08x "
@@ -1132,6 +1434,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     shaderCull = VK_CULL_MODE_NONE;
                 else if (mat->GetCullType() == CT_BACK_SIDED)
                     shaderCull = VK_CULL_MODE_FRONT_BIT;
+                // Mirror reflection inverts winding — swap cull face.
+                if (backEnd.viewDef && backEnd.viewDef->isMirror && shaderCull != VK_CULL_MODE_NONE)
+                    shaderCull = (shaderCull == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
                 vkCmdSetCullMode(cmd, shaderCull);
             }
 
@@ -1139,6 +1444,41 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+
+            // Keep mirror draw diagnostics concise and at higher verbosity.
+            if (r_vkLogRT.GetInteger() >= 2 && mat->GetSort() == SS_SUBVIEW)
+            {
+                static int s_mirrorDrawLog = 0;
+                if (s_mirrorDrawLog < 8)
+                {
+                    s_mirrorDrawLog++;
+                    const uint32_t blendBits =
+                        (uint32_t)(pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                    const bool isWeaponHack = (surf->space && surf->space->weaponDepthHack);
+
+                    // Compute NDC Z of first vertex for depth analysis
+                    float ndcZ = 0.f, clipW = 0.f;
+                    if (geo->verts && geo->numVerts > 0)
+                    {
+                        float tmvp[16];
+                        VK_BuildSurfMVP(surf->space, tmvp);
+                        const idVec3 &v = geo->verts[0].xyz;
+                        clipW = tmvp[3] * v.x + tmvp[7] * v.y + tmvp[11] * v.z + tmvp[15];
+                        float cz = tmvp[2] * v.x + tmvp[6] * v.y + tmvp[10] * v.z + tmvp[14];
+                        ndcZ = (clipW != 0.f) ? cz / clipW : 0.f;
+                    }
+
+                    common->Printf("VK MIRROR DRAW: mat='%s' stage=%d blend=0x%x depth=%s ndcZ=%.4f clipW=%.2f "
+                                   "verts=%d idx=%d isSubview=%d isMirror=%d clipPlanes=%d weaponHack=%d\n",
+                                   mat->GetName(), stageIdx, blendBits,
+                                   (drawBitsOverride & GLS_DEPTHFUNC_ALWAYS)  ? "ALWAYS"
+                                   : (drawBitsOverride & GLS_DEPTHFUNC_EQUAL) ? "EQUAL"
+                                                                              : "LESS",
+                                   ndcZ, clipW, geo->numVerts, geo->numIndexes, backEnd.viewDef->isSubview ? 1 : 0,
+                                   backEnd.viewDef->isMirror ? 1 : 0, backEnd.viewDef->numClipPlanes,
+                                   isWeaponHack ? 1 : 0);
+                }
+            }
         }
     }
 }
@@ -1161,6 +1501,23 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
+    // GL parity: when the current (non-subview) view contains mirror surfaces,
+    // the depth fill pass must also guard the color buffer so previously rendered
+    // mirror subview color does not leak through unrelated geometry.
+    bool guardSubviewColor = false;
+    if (!backEnd.viewDef->isSubview)
+    {
+        for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
+        {
+            const drawSurf_t *s = backEnd.viewDef->drawSurfs[i];
+            if (s && s->material && s->material->GetSort() == SS_SUBVIEW)
+            {
+                guardSubviewColor = true;
+                break;
+            }
+        }
+    }
+
     // Bind the opaque depth pipeline up front; switch to depthClipPipeline per-draw for MC_PERFORATED.
     VkPipeline activePipeline = VK_NULL_HANDLE;
     // Track depth bias so we only call vkCmdSetDepthBias when it changes.
@@ -1173,6 +1530,11 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         if (!surf || !surf->material || !surf->geo)
             continue;
 
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(surf);
+        if (surfScissor.extent.width == 0 || surfScissor.extent.height == 0)
+            continue;
+        vkCmdSetScissor(cmd, 0, 1, &surfScissor);
+
         const idMaterial *mat = surf->material;
         const materialCoverage_t coverage = mat->Coverage();
 
@@ -1183,7 +1545,75 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         if (coverage != MC_OPAQUE && coverage != MC_PERFORATED)
             continue;
 
+        // Mirror/subview surfaces must not write depth when rendering their own
+        // reflected subview — the mirror quad sits between the reflected camera
+        // and the reflected scene, so its depth would occlude the reflection.
+        // The GL path clips these via glTexGenfv clip planes; for now we simply
+        // skip them in mirror views.
+        if (backEnd.viewDef->numClipPlanes > 0 && mat->GetSort() == SS_SUBVIEW)
+        {
+            if (r_vkLogRT.GetInteger() >= 1)
+            {
+                static int s_mirrorDepthSkipLog = 0;
+                if (s_mirrorDepthSkipLog < 10)
+                {
+                    s_mirrorDepthSkipLog++;
+                    common->Printf(
+                        "VK MIRROR DEPTH-SKIP: mat='%s' clipPlanes=%d (mirror subview, skipping depth fill)\n",
+                        mat->GetName(), backEnd.viewDef->numClipPlanes);
+                }
+            }
+            continue;
+        }
+
         const srfTriangles_t *geo = surf->geo;
+
+        // Log mirror surfaces that ARE being depth-filled (main view)
+        if (r_vkLogRT.GetInteger() >= 1 && mat->GetSort() == SS_SUBVIEW)
+        {
+            static int s_mirrorDepthFillLog = 0;
+            if (s_mirrorDepthFillLog < 10)
+            {
+                s_mirrorDepthFillLog++;
+                const bool isWeaponView = (surf->space && surf->space->weaponDepthHack);
+                float ndcZ = 0.f;
+                if (geo->verts && geo->numVerts > 0)
+                {
+                    float tmvp[16];
+                    VK_BuildSurfMVP(surf->space, tmvp);
+                    const idVec3 &v = geo->verts[0].xyz;
+                    float cw = tmvp[3] * v.x + tmvp[7] * v.y + tmvp[11] * v.z + tmvp[15];
+                    float cz = tmvp[2] * v.x + tmvp[6] * v.y + tmvp[10] * v.z + tmvp[14];
+                    ndcZ = (cw != 0.f) ? cz / cw : 0.f;
+                }
+                common->Printf("VK MIRROR DEPTH-FILL: mat='%s' coverage=%d sort=%d weaponHack=%d "
+                               "isSubview=%d ndcZ=%.4f numVerts=%d numIdx=%d\n",
+                               mat->GetName(), (int)coverage, (int)mat->GetSort(), isWeaponView ? 1 : 0,
+                               backEnd.viewDef->isSubview ? 1 : 0, ndcZ, geo->numVerts, geo->numIndexes);
+            }
+        }
+
+        // Log weapon surfaces in depth prepass for depth comparison with mirror
+        if (r_vkLogRT.GetInteger() >= 1 && surf->space && surf->space->weaponDepthHack)
+        {
+            static int s_weaponDepthLog = 0;
+            if (s_weaponDepthLog < 10)
+            {
+                s_weaponDepthLog++;
+                float ndcZ = 0.f;
+                if (geo->verts && geo->numVerts > 0)
+                {
+                    float tmvp[16];
+                    VK_BuildSurfMVP(surf->space, tmvp);
+                    const idVec3 &v = geo->verts[0].xyz;
+                    float cw = tmvp[3] * v.x + tmvp[7] * v.y + tmvp[11] * v.z + tmvp[15];
+                    float cz = tmvp[2] * v.x + tmvp[6] * v.y + tmvp[10] * v.z + tmvp[14];
+                    ndcZ = (cw != 0.f) ? cz / cw : 0.f;
+                }
+                common->Printf("VK WEAPON DEPTH-FILL: mat='%s' ndcZ=%.4f sort=%d verts=%d\n", mat->GetName(), ndcZ,
+                               (int)mat->GetSort(), geo->numVerts);
+            }
+        }
         if (!geo->indexes || geo->numIndexes <= 0 || geo->numVerts <= 0)
             continue;
 
@@ -1279,6 +1709,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 ubo->texMatrixT[2] = 0.f;
                 ubo->texMatrixT[3] = 0.f;
             }
+            // Depth never uses texgen.
+            memset(ubo->texGenS, 0, 16);
+            memset(ubo->texGenT, 0, 16);
+            memset(ubo->texGenQ, 0, 16);
 
             VkDescriptorSetAllocateInfo dsAlloc = {};
             dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -1322,18 +1756,98 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
+        auto drawSubviewGuardBlack = [&]() {
+            extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
+
+            uint32_t uboOffset = VK_AllocUBO();
+            VkGuiUBO *ubo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+            memcpy(ubo->modelViewProjection, mvp, 64);
+            // Output constant black regardless of bound texture.
+            ubo->colorModulate[0] = ubo->colorModulate[1] = ubo->colorModulate[2] = ubo->colorModulate[3] = 0.f;
+            ubo->colorAdd[0] = ubo->colorAdd[1] = ubo->colorAdd[2] = ubo->colorAdd[3] = 0.f;
+            ubo->texMatrixS[0] = 1.f;
+            ubo->texMatrixS[1] = 0.f;
+            ubo->texMatrixS[2] = 0.f;
+            ubo->texMatrixS[3] = 0.f;
+            ubo->texMatrixT[0] = 0.f;
+            ubo->texMatrixT[1] = 1.f;
+            ubo->texMatrixT[2] = 0.f;
+            ubo->texMatrixT[3] = 0.f;
+            memset(ubo->texGenS, 0, 16);
+            memset(ubo->texGenT, 0, 16);
+            memset(ubo->texGenQ, 0, 16);
+
+            VkDescriptorSetAllocateInfo dsAlloc = {};
+            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
+            dsAlloc.descriptorSetCount = 1;
+            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
+
+            VkDescriptorSet ds;
+            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
+                return;
+
+            VkDescriptorImageInfo imgInfo = {};
+            VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+
+            VkDescriptorBufferInfo bufInfo = {};
+            bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            bufInfo.offset = uboOffset;
+            bufInfo.range = sizeof(VkGuiUBO);
+
+            VkWriteDescriptorSet writes[2] = {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = ds;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfo;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = ds;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo = &imgInfo;
+            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+
+            // Depth EQUAL confines black-out to surfaces that won the depth prepass.
+            VkPipeline pipe = VK_GetOrCreateGuiBlendPipeline(GLS_DEPTHFUNC_EQUAL, true);
+            if (pipe != activePipeline)
+            {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+                activePipeline = pipe;
+            }
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+        };
+
         // Apply polygon offset for decal/overlay surfaces (mirrors GL qglPolygonOffset).
         // r_offsetUnits (-600 by default) * material polygonOffset value pulls the depth
         // toward the camera so co-planar decals pass the LEQUAL interaction test.
         {
             float biasConstant = 0.0f;
+            const bool isPolyOffset = mat->TestMaterialFlag(MF_POLYGONOFFSET);
             if (mat->TestMaterialFlag(MF_POLYGONOFFSET))
                 biasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
             if (biasConstant != activeBiasConstant)
             {
-                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, r_offsetFactor.GetFloat());
+                vkCmdSetDepthBias(cmd, biasConstant, 0.0f, VK_GetPolyOffsetSlope(isPolyOffset));
                 activeBiasConstant = biasConstant;
             }
+        }
+
+        // Set cull mode per-surface: flip for mirror views (matches GL's GL_Cull isMirror swap).
+        {
+            VkCullModeFlags depthCull = VK_CULL_MODE_BACK_BIT;
+            if (mat->GetCullType() == CT_TWO_SIDED)
+                depthCull = VK_CULL_MODE_NONE;
+            else if (mat->GetCullType() == CT_BACK_SIDED)
+                depthCull = VK_CULL_MODE_FRONT_BIT;
+            if (backEnd.viewDef->isMirror && depthCull != VK_CULL_MODE_NONE)
+                depthCull = (depthCull == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
+            vkCmdSetCullMode(cmd, depthCull);
         }
 
         if (coverage == MC_OPAQUE)
@@ -1341,6 +1855,11 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             VkDescriptorImageInfo imgInfo = {};
             VK_Image_GetFallbackDescriptorInfo(&imgInfo);
             drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+
+            // GL parity guard: black out non-mirror opaque surfaces so prior subview
+            // color only remains visible through mirror geometry.
+            if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
+                drawSubviewGuardBlack();
         }
         else // MC_PERFORATED
         {
@@ -1584,7 +2103,8 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     branchSig |= (uint32_t)(indexSetId & 0x3) << 6;
     branchSig |= (uint32_t)(numDrawIndexes & 0xFFFF) << 8;
 
-    const int logMode = r_vkLogShadowBranch.GetInteger();
+    const int rawShadowLogMode = r_vkLogShadowBranch.GetInteger();
+    const int logMode = (rawShadowLogMode <= 0) ? 0 : ((rawShadowLogMode == 1) ? 1 : 2);
     bool branchChangedThisDraw = false;
     if (logMode > 0)
     {
@@ -1608,7 +2128,7 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
             s_loggedLight = backEnd.vLight;
         }
 
-        // mode 3: only log when this light+surface branch/signature changes between frames.
+        // Higher legacy shadow log modes are folded into level 2.
         if (logMode >= 3)
         {
 
@@ -2061,7 +2581,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
     s_interactionPipeTag = "opaque";
 
-    if (r_vkLogRT.GetInteger() >= 2)
+    if (r_vkLogRT.GetInteger() >= 1)
     {
         int totalLights = 0;
         for (const viewLight_t *vl = backEnd.viewDef->viewLights; vl; vl = vl->next)
@@ -2103,13 +2623,19 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
             lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
             lightScissor.extent.height = absY2 - absY1 + 1;
+            // Intersect with the view scissor so subview (mirror) rendering stays
+            // confined to the mirror surface's screen bounds.
+            lightScissor = VK_IntersectRect(lightScissor, s_viewScissor);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
         }
+
+        // Per-interaction draws further intersect this with drawSurf->scissorRect.
+        s_interactionLightScissor = lightScissor;
 
         // Set the file-static light index used by VK_RB_DrawInteraction logging
         s_lightIdx = lightIdx;
 
-        if (r_vkLogRT.GetInteger() >= 2)
+        if (r_vkLogRT.GetInteger() >= 1)
         {
             // Count surfaces per phase (cheap — lists are typically short)
             int nLocal = 0, nGlobal = 0, nTrans = 0;
@@ -2125,18 +2651,13 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
-            common->Printf("VK LIGHT[%d]: shader='%s' GLscissor=(%d,%d %d,%d) VKscissor=(%d,%d %u,%u) "
-                           "local=%d global=%d trans=%d gShadow=%d lShadow=%d rtShadows=%d\n",
-                           lightIdx, lName, backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1,
-                           backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1,
-                           backEnd.viewDef->viewport.x1 + vLight->scissorRect.x2,
-                           backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2, (int)lightScissor.offset.x,
-                           (int)lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                           (unsigned int)lightScissor.extent.height, nLocal, nGlobal, nTrans, nGlobalShadow,
-                           nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
+            common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d\n",
+                           lightIdx, lName, (int)lightScissor.offset.x, (int)lightScissor.offset.y,
+                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
+                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
         }
 
-        if (r_vkLogShadowBranch.GetInteger() >= 5)
+        if (r_vkLogShadowBranch.GetInteger() >= 2)
         {
             int countGS = 0, countLS = 0, countGI = 0, countLI = 0, countTI = 0;
             uint32_t hashGS = 0, hashLS = 0, hashGI = 0, hashLI = 0, hashTI = 0;
@@ -2280,17 +2801,15 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // via shadowMaskSampler. Running both would produce double-shadowing.
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
-        const VkRect2D shadowScissor = useFullShadowScissor ? VkRect2D{{0, 0}, vk.swapchainExtent} : lightScissor;
+        const VkRect2D shadowScissor =
+            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
         if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
         {
-            common->Printf("VK STENCIL SETUP[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) light=(%d,%d %u,%u) "
-                           "fullShadowScissor=%d useScissor=%d\n",
-                           lightIdx, lightScissor.offset.x, lightScissor.offset.y,
-                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
-                           shadowScissor.offset.x, shadowScissor.offset.y, (unsigned int)shadowScissor.extent.width,
-                           (unsigned int)shadowScissor.extent.height, lightScissor.offset.x, lightScissor.offset.y,
-                           (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height,
-                           useFullShadowScissor ? 1 : 0, r_useScissor.GetBool() ? 1 : 0);
+            common->Printf("VK STENCIL[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) fullShadow=%d\n", lightIdx,
+                           lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
+                           (unsigned int)lightScissor.extent.height, shadowScissor.offset.x, shadowScissor.offset.y,
+                           (unsigned int)shadowScissor.extent.width, (unsigned int)shadowScissor.extent.height,
+                           useFullShadowScissor ? 1 : 0);
         }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
@@ -2793,6 +3312,14 @@ void VK_RB_DrawView(const void *data)
         {
             s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
         }
+        if (r_vkLogRT.GetInteger() >= 2 && backEnd.viewDef->numClipPlanes > 0)
+        {
+            common->Printf("VK PROJ REMAP: isSubview=%d isMirror=%d clipPlanes=%d\n",
+                           backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                           backEnd.viewDef->numClipPlanes);
+            common->Printf("VK PROJ REMAP: GL row2[%.6f %.6f %.6f %.6f] -> VK row2[%.6f %.6f %.6f %.6f]\n", src[2],
+                           src[6], src[10], src[14], s_projVk[2], s_projVk[6], s_projVk[10], s_projVk[14]);
+        }
     }
 
     if (!s_frameActive)
@@ -2802,7 +3329,7 @@ void VK_RB_DrawView(const void *data)
         // --- Wait for previous frame's fence ---
         if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK FRAME: fence wait — slot=%u frameCount=%d\n", vk.currentFrame, tr.frameCount);
+            common->Printf("VK FRAME: fence-wait slot=%u frame=%d\n", vk.currentFrame, tr.frameCount);
             fflush(NULL);
         }
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
@@ -2895,8 +3422,9 @@ void VK_RB_DrawView(const void *data)
                                0.0f,
                                1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+        // Set scissor from viewDef to confine subview rendering to mirror bounds.
+        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
@@ -2931,16 +3459,54 @@ void VK_RB_DrawView(const void *data)
                                0.0f,
                                1.0f};
         vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
-        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-        vkCmdSetScissor(s_frameCmdBuf, 0, 1, &fullScissor);
+        // Set scissor from viewDef — for the main view this is typically full-screen;
+        // for subviews it confines rendering to the mirror surface's screen bounds.
+        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
+        vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
     }
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
-    if (r_vkLogRT.GetInteger() >= 1)
+    if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d\n", vk.currentFrame,
-                       vk.currentImageIdx, tr.frameCount, VK_RTShadowsEnabled() ? 1 : 0);
+        // Count weapon/mirror/subview surfaces for diagnostic summary
+        int weaponSurfCount = 0, mirrorSurfCount = 0;
+        float mirrorMinDepth = 1e9f, mirrorMaxDepth = -1e9f;
+        for (int di = 0; di < backEnd.viewDef->numDrawSurfs; di++)
+        {
+            const drawSurf_t *ds = backEnd.viewDef->drawSurfs[di];
+            if (!ds || !ds->material)
+                continue;
+            if (ds->space && ds->space->weaponDepthHack)
+                weaponSurfCount++;
+            if (ds->material->GetSort() == SS_SUBVIEW)
+            {
+                mirrorSurfCount++;
+                // Estimate mirror quad depth from first vertex
+                if (ds->geo && ds->geo->verts && ds->geo->numVerts > 0)
+                {
+                    float mvp[16];
+                    VK_BuildSurfMVP(ds->space, mvp);
+                    const idVec3 &v = ds->geo->verts[0].xyz;
+                    float clipW = mvp[3] * v.x + mvp[7] * v.y + mvp[11] * v.z + mvp[15];
+                    float clipZ = mvp[2] * v.x + mvp[6] * v.y + mvp[10] * v.z + mvp[14];
+                    float ndcZ = (clipW != 0.f) ? clipZ / clipW : 0.f;
+                    if (ndcZ < mirrorMinDepth)
+                        mirrorMinDepth = ndcZ;
+                    if (ndcZ > mirrorMaxDepth)
+                        mirrorMaxDepth = ndcZ;
+                }
+            }
+        }
+        common->Printf("VK FRAME: DrawView begin — slot=%u image=%u frameCount=%d rt=%d isSubview=%d isMirror=%d "
+                       "clipPlanes=%d weaponSurfs=%d mirrorSurfs=%d mirrorDepth=[%.4f,%.4f] "
+                       "scissor=(%d,%d %d,%d)\n",
+                       vk.currentFrame, vk.currentImageIdx, tr.frameCount, VK_RTShadowsEnabled() ? 1 : 0,
+                       backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0,
+                       backEnd.viewDef->numClipPlanes, weaponSurfCount, mirrorSurfCount,
+                       mirrorSurfCount > 0 ? mirrorMinDepth : 0.f, mirrorSurfCount > 0 ? mirrorMaxDepth : 0.f,
+                       backEnd.viewDef->scissor.x1, backEnd.viewDef->scissor.y1, backEnd.viewDef->scissor.x2,
+                       backEnd.viewDef->scissor.y2);
         fflush(NULL);
     }
 
@@ -3011,8 +3577,7 @@ void VK_RB_DrawView(const void *data)
                                0.0f,
                                1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-        vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
     }
 
     if (!r_skipInteractions.GetBool())
@@ -3041,10 +3606,19 @@ void VK_RB_CopyRender(const void *data)
         return;
     }
 
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK COPYRENDER: entry img='%s' req=%dx%d frameActive=%d cmdBuf=%s\n",
+                       cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, (int)s_frameActive,
+                       s_frameCmdBuf != VK_NULL_HANDLE ? "valid" : "NULL");
+    }
+
     if (!s_frameActive || s_frameCmdBuf == VK_NULL_HANDLE)
     {
         // CaptureRenderToImage is expected during an active frame. If we receive it
         // outside that scope, skip safely.
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK COPYRENDER: skipping — frame not active\n");
         return;
     }
 
@@ -3052,7 +3626,10 @@ void VK_RB_CopyRender(const void *data)
     // (e.g. 16x16 placeholder) and must be resized to the capture dimensions.
     const int desiredW = idMath::CeilPowerOfTwo(cmd->imageWidth > 1 ? cmd->imageWidth : 1);
     const int desiredH = idMath::CeilPowerOfTwo(cmd->imageHeight > 1 ? cmd->imageHeight : 1);
-    if (!cmd->image->backendData || cmd->image->uploadWidth != desiredW || cmd->image->uploadHeight != desiredH)
+    int dstActualW = 0;
+    int dstActualH = 0;
+    const bool haveDstExtent = VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH);
+    if (!cmd->image->backendData || !haveDstExtent || dstActualW < desiredW || dstActualH < desiredH)
     {
         const size_t bytes = (size_t)desiredW * (size_t)desiredH * 4u;
         byte *blank = (byte *)Mem_Alloc(bytes);
@@ -3061,6 +3638,10 @@ void VK_RB_CopyRender(const void *data)
         Mem_Free(blank);
         cmd->image->uploadWidth = desiredW;
         cmd->image->uploadHeight = desiredH;
+
+        // Refresh actual backend extent after upload; if still unavailable, bail safely.
+        if (!VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH))
+            return;
     }
 
     VkImage dstImage = VK_NULL_HANDLE;
@@ -3076,8 +3657,8 @@ void VK_RB_CopyRender(const void *data)
     const int srcY = cmd->y < 0 ? 0 : cmd->y;
     const int srcMaxW = (int)vk.swapchainExtent.width - srcX;
     const int srcMaxH = (int)vk.swapchainExtent.height - srcY;
-    const int dstW = cmd->image->uploadWidth;
-    const int dstH = cmd->image->uploadHeight;
+    const int dstW = dstActualW;
+    const int dstH = dstActualH;
     int copyW = cmd->imageWidth;
     int copyH = cmd->imageHeight;
     if (copyW > srcMaxW)
@@ -3093,11 +3674,20 @@ void VK_RB_CopyRender(const void *data)
         return;
     }
 
-    if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
+    if (r_vkLogRT.GetInteger() >= 1 || r_vkLogSubmitInfo.GetInteger() >= 2)
     {
-        common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u\n",
-                       cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH, copyW,
-                       copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height);
+        static int s_copyRenderLog = 0;
+        if (s_copyRenderLog < 20)
+        {
+            s_copyRenderLog++;
+            common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u "
+                           "isSubview=%d isMirror=%d clipPlanes=%d\n",
+                           cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH,
+                           copyW, copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height,
+                           backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
+                           backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
+                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1);
+        }
     }
 
     // Suspend active render pass to perform transfer operations.
@@ -3151,8 +3741,7 @@ void VK_RB_CopyRender(const void *data)
         0,   (float)vk.swapchainExtent.height, (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height, 0.0f,
         1.0f};
     vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-    VkRect2D fullScissor = {{0, 0}, vk.swapchainExtent};
-    vkCmdSetScissor(cmdBuf, 0, 1, &fullScissor);
+    vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 }
 
 // ---------------------------------------------------------------------------
@@ -3284,8 +3873,12 @@ void VK_RB_SwapBuffers()
     if (s_readbackSubmitted)
     {
         VkResult rbFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
-        common->Printf("VK: readback fence wait result=%d (frame=%u)\n", (int)rbFence, submittedFrame);
-        fflush(NULL);
+        if (r_vkLogRT.GetInteger() >= 2 || r_vkLogSubmitInfo.GetInteger() >= 2)
+        {
+            common->Printf("VK READBACK: fence=%d (%s) frame=%u\n", (int)rbFence, VK_ResultToString(rbFence),
+                           submittedFrame);
+            fflush(NULL);
+        }
         s_readbackDone = true;
         s_readbackSubmitted = false;
     }

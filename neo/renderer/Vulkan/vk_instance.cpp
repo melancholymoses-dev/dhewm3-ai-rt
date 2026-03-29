@@ -251,6 +251,7 @@ static void VKimp_SelectPhysicalDevice(void)
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
+    glConfig.maxTextureAnisotropy = props.limits.maxSamplerAnisotropy;
     common->Printf("VK: Selected GPU: %s (RT=%s)\n", props.deviceName, vk.rayTracingSupported ? "yes" : "no");
 
     vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &vk.memProperties);

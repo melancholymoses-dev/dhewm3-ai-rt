@@ -24,7 +24,8 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     float lightFalloffRadius;   // point light falloff range
     int   numSamples;           // shadow rays per pixel (1 = hard, 4+ = soft)
     uint  frameIndex;           // for temporal jitter
-    float pad;
+    float rayBias;              // ray origin bias (world units)
+    uint  rayCullMask;          // instance mask for traceRayEXT (0xFE excludes player body)
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -118,9 +119,9 @@ void main() {
 
     vec3 lightDir = toLight / dist;
 
-    // Offset origin slightly along the normal to avoid self-intersection.
-    // Without a dedicated normal buffer we use a fixed epsilon.
-    const float tMin    = 0.5;      // 0.5 units (Doom 3 units ≈ 2.54 cm)
+    // Offset origin slightly along the ray direction to avoid self-intersection.
+    // The rayBias uniform provides a runtime-tunable bias so problematic scenes/lights can be tuned.
+    float tMin    = clamp(params.rayBias, 0.01, 8.0);
     const float tMax    = dist - tMin;
 
     if ( tMax <= 0.0 ) {
@@ -147,7 +148,7 @@ void main() {
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-            0xFF,   // cull mask
+            params.rayCullMask, // cull mask (0xFE excludes player body near lights)
             0,      // SBT offset
             0,      // SBT stride
             0,      // miss index

@@ -272,11 +272,31 @@ static viewDef_t *R_MirrorViewBySurface(drawSurf_t *drawSurf)
 
     R_LocalPointToGlobal(drawSurf->space->modelMatrix, viewOrigin, parms->initialViewAreaOrigin);
 
-    // set the mirror clip plane
+    // set the mirror clip plane — must point toward the SCENE (visible side),
+    // not toward the reflected camera.  -camera.axis[0] points from mirror
+    // toward the scene, which maps to -Z in GL eye space — required by the
+    // Lengyel oblique projection (positive half-space = visible).
     parms->numClipPlanes = 1;
     parms->clipPlanes[0] = -camera.axis[0];
 
     parms->clipPlanes[0][3] = -(camera.origin * parms->clipPlanes[0].Normal());
+
+    if (r_vkLogRT.GetInteger() >= 2)
+    {
+        // Verify: camera should be on the visible side of the clip plane (dot > 0)
+        float camDot = parms->renderView.vieworg.x * parms->clipPlanes[0][0]
+                     + parms->renderView.vieworg.y * parms->clipPlanes[0][1]
+                     + parms->renderView.vieworg.z * parms->clipPlanes[0][2]
+                     + parms->clipPlanes[0][3];
+        // Also test the parent camera against the clip plane
+        float parentDot = tr.viewDef->renderView.vieworg.x * parms->clipPlanes[0][0]
+                        + tr.viewDef->renderView.vieworg.y * parms->clipPlanes[0][1]
+                        + tr.viewDef->renderView.vieworg.z * parms->clipPlanes[0][2]
+                        + parms->clipPlanes[0][3];
+        common->Printf("MIRROR SETUP: clip=(%.4f,%.4f,%.4f,%.4f) camDot=%.4f parentDot=%.4f\n",
+            parms->clipPlanes[0][0], parms->clipPlanes[0][1], parms->clipPlanes[0][2], parms->clipPlanes[0][3],
+            camDot, parentDot);
+    }
 
     return parms;
 }
@@ -570,21 +590,36 @@ bool R_GenerateSurfaceSubview(drawSurf_t *drawSurf)
         for (int i = 0; i < shader->GetNumStages(); i++)
         {
             const shaderStage_t *stage = shader->GetStage(i);
+            if (r_vkLogRT.GetInteger() >= 1 && stage->texture.dynamic != DI_STATIC)
+            {
+                common->Printf("SUBVIEW: mat='%s' stage=%d dynamic=%d sort=%.1f\n",
+                    shader->GetName(), i, (int)stage->texture.dynamic, shader->GetSort());
+            }
             switch (stage->texture.dynamic)
             {
             case DI_REMOTE_RENDER:
+                if (r_vkLogRT.GetInteger() >= 1)
+                    common->Printf("SUBVIEW: dispatching R_RemoteRender for '%s'\n", shader->GetName());
                 R_RemoteRender(drawSurf, const_cast<textureStage_t *>(&stage->texture));
                 break;
             case DI_MIRROR_RENDER:
+                if (r_vkLogRT.GetInteger() >= 1)
+                    common->Printf("SUBVIEW: dispatching R_MirrorRender for '%s'\n", shader->GetName());
                 R_MirrorRender(drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor);
                 break;
             case DI_XRAY_RENDER:
+                if (r_vkLogRT.GetInteger() >= 1)
+                    common->Printf("SUBVIEW: dispatching R_XrayRender for '%s'\n", shader->GetName());
                 R_XrayRender(drawSurf, const_cast<textureStage_t *>(&stage->texture), scissor);
                 break;
             }
         }
         return true;
     }
+
+    // SS_SUBVIEW sort — this is a pure mirror surface
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("SUBVIEW: SS_SUBVIEW mirror surface '%s', calling R_MirrorViewBySurface\n", shader->GetName());
 
     // issue a new view command
     parms = R_MirrorViewBySurface(drawSurf);

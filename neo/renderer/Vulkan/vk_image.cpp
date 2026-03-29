@@ -29,6 +29,11 @@ the Free Software Foundation, either version 3 of the License, or
 #include <math.h> // log2, floor
 #include <string.h>
 
+// Positive LOD bias on bump maps reduces high-frequency normal aliasing
+// (black/white moire shimmer) on grazing-angle lit surfaces.
+static idCVar r_vkBumpMipBias("r_vkBumpMipBias", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "Extra positive mip LOD bias for Vulkan bump-map samplers");
+
 // ---------------------------------------------------------------------------
 // vkImageData_t — private Vulkan resources per idImage
 // The idImage stores only an opaque "struct vkImageData_t *vkData" pointer.
@@ -40,6 +45,8 @@ struct vkImageData_t
     VkDeviceMemory memory;
     VkImageView view;
     VkSampler sampler;
+    uint32_t width;
+    uint32_t height;
 };
 
 // ---------------------------------------------------------------------------
@@ -53,6 +60,10 @@ static const int VK_IMAGE_GARBAGE_MAX = 512; // max purges per frame slot
 static vkImageData_t *s_imageGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_IMAGE_GARBAGE_MAX];
 static int s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static uint32_t s_imageGarbageOverflowCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+static float s_cachedMaxSamplerAnisotropy = 1.0f;
+static float s_cachedMaxSamplerLodBias = 0.0f;
+static bool s_samplerQualityLimitsCached = false;
 
 static void VK_DestroyImageData(vkImageData_t *vkd)
 {
@@ -141,6 +152,23 @@ static VkSamplerMipmapMode MapMipmapMode(textureFilter_t f)
     default:
         return VK_SAMPLER_MIPMAP_MODE_LINEAR;
     }
+}
+
+static void VK_GetSamplerQualityLimits(float *outMaxAnisotropy, float *outMaxLodBias)
+{
+    if (!s_samplerQualityLimitsCached)
+    {
+        VkPhysicalDeviceProperties props = {};
+        vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
+        s_cachedMaxSamplerAnisotropy = props.limits.maxSamplerAnisotropy;
+        s_cachedMaxSamplerLodBias = props.limits.maxSamplerLodBias;
+        s_samplerQualityLimitsCached = true;
+    }
+
+    if (outMaxAnisotropy)
+        *outMaxAnisotropy = s_cachedMaxSamplerAnisotropy;
+    if (outMaxLodBias)
+        *outMaxLodBias = s_cachedMaxSamplerLodBias;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +312,7 @@ static void VK_DestroyCinematicImage(void)
 void VK_Image_Shutdown(void)
 {
     VK_DestroyCinematicImage();
+    s_samplerQualityLimitsCached = false;
 
     if (!s_fallbackValid)
         return;
@@ -686,8 +715,28 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     samplerInfo.addressModeU = addrMode;
     samplerInfo.addressModeV = addrMode;
     samplerInfo.addressModeW = addrMode;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.anisotropyEnable = VK_FALSE; // enable later via r_useAnisotropicFiltering
+    float maxAniso = 1.0f;
+    float maxLodBias = 0.0f;
+    VK_GetSamplerQualityLimits(&maxAniso, &maxLodBias);
+
+    float lodBias = idImageManager::image_lodbias.GetFloat();
+    if (img->depth == TD_BUMP)
+        lodBias += r_vkBumpMipBias.GetFloat();
+    if (lodBias > maxLodBias)
+        lodBias = maxLodBias;
+    if (lodBias < -maxLodBias)
+        lodBias = -maxLodBias;
+    samplerInfo.mipLodBias = lodBias;
+
+    float requestedAniso = idImageManager::image_anisotropy.GetFloat();
+    if (requestedAniso < 1.0f)
+        requestedAniso = 1.0f;
+    if (requestedAniso > maxAniso)
+        requestedAniso = maxAniso;
+
+    const bool canUseAniso = (img->filter != TF_NEAREST && mipLevels > 1 && requestedAniso > 1.0f);
+    samplerInfo.anisotropyEnable = canUseAniso ? VK_TRUE : VK_FALSE;
+    samplerInfo.maxAnisotropy = canUseAniso ? requestedAniso : 1.0f;
     samplerInfo.compareEnable = VK_FALSE;
     samplerInfo.minLod = 0.0f;
     samplerInfo.maxLod = (float)(mipLevels - 1);
@@ -701,6 +750,9 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
         delete vkd;
         return;
     }
+
+    vkd->width = (uint32_t)width;
+    vkd->height = (uint32_t)height;
 
     img->backendData = vkd;
 }
@@ -892,6 +944,9 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
         return;
     }
 
+    vkd->width = (uint32_t)size;
+    vkd->height = (uint32_t)size;
+
     img->backendData = vkd;
 }
 
@@ -964,5 +1019,16 @@ bool VK_Image_GetHandle(idImage *img, VkImage *out)
 
     vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     *out = vkd->image;
+    return true;
+}
+
+bool VK_Image_GetExtent(idImage *img, int *outW, int *outH)
+{
+    if (!img || !img->backendData || !outW || !outH)
+        return false;
+
+    vkImageData_t *vkd = (vkImageData_t *)img->backendData;
+    *outW = (int)vkd->width;
+    *outH = (int)vkd->height;
     return true;
 }
