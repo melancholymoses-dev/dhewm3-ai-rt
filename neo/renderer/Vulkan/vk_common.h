@@ -138,6 +138,7 @@ struct vkPipelines_t
     VkPipelineLayout guiLayout;
     VkPipeline guiOpaquePipeline; // blend disabled (opaque stages)
     VkPipeline guiAlphaPipeline;  // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+    VkPipeline skyboxPipeline;    // samplerCube skybox path (TG_SKYBOX_CUBE)
 
     // Fog light pipeline (FogAllLights pass)
     // Shared descriptor layout: binding0=UBO, binding1=samp0, binding2=samp1
