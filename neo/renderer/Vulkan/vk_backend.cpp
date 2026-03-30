@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3 Vulkan backend - main render loop.
 
 Mirrors the structure of tr_backend.cpp / draw_common.cpp for the Vulkan path.
@@ -28,6 +27,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/Vulkan/vk_buffer.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
+#include <cmath>
 
 // Per-EndFrame state shared across multiple RC_DRAW_VIEW calls.
 static bool s_frameActive = false;
@@ -67,6 +67,9 @@ idCVar r_vkRTLogCaptureReset("r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_
                              "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
 static idCVar r_vkRTDebugLightTextures("r_vkRTDebugLightTextures", "0", CVAR_RENDERER | CVAR_INTEGER,
                                        "log Vulkan interaction texture sources for filtered surfaces (0=off, 1=on)");
+static idCVar r_vkSkyboxCubePath(
+    "r_vkSkyboxCubePath", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Enable Vulkan samplerCube skybox path (TG_SKYBOX_CUBE). 0 = legacy sampler2D shader-pass path");
 
 static bool VK_RTDebugMatMatch(const char *matName)
 {
@@ -396,6 +399,25 @@ static void VK_BuildSurfMVP(const viewEntity_t *space, float mvpOut[16])
     {
         VK_MultiplyMatrix4(s_projVk, space->modelViewMatrix, mvpOut);
     }
+}
+
+// Compute camera origin in object-local coordinates from local->eye modelViewMatrix.
+// For rigid transforms, inverse(M) * [0,0,0,1] equals -R^T * t.
+static bool VK_ComputeLocalViewOriginFromModelView(const viewEntity_t *space, float outLocal[3])
+{
+    if (!space)
+        return false;
+
+    const float *mv = space->modelViewMatrix;
+    const float tx = mv[12];
+    const float ty = mv[13];
+    const float tz = mv[14];
+
+    outLocal[0] = -(tx * mv[0] + ty * mv[1] + tz * mv[2]);
+    outLocal[1] = -(tx * mv[4] + ty * mv[5] + tz * mv[6]);
+    outLocal[2] = -(tx * mv[8] + ty * mv[9] + tz * mv[10]);
+
+    return std::isfinite(outLocal[0]) && std::isfinite(outLocal[1]) && std::isfinite(outLocal[2]);
 }
 
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
@@ -913,12 +935,21 @@ struct VkGuiUBO
     float texGenQ[4];              // 16 bytes — TG_SCREEN Q plane (MVP row 3)
 }; // 176 bytes total
 
+struct VkSkyboxUBO
+{
+    float modelViewProjection[16]; // 64 bytes
+    float localViewOrigin[4];      // 16 bytes
+    float colorModulate[4];        // 16 bytes
+    float colorAdd[4];             // 16 bytes
+}; // 112 bytes total
+
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
     if (!backEnd.viewDef || backEnd.viewDef->numDrawSurfs == 0)
         return;
 
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
+    extern bool VK_Image_GetDescriptorInfoCube(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
     if (r_vkLogRT.GetInteger() >= 2)
@@ -932,10 +963,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     // Shader passes are not per-light — use the view scissor (full-screen for the main
     // view, mirror bounds for subviews).
     vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
-
-    // Sentinel for depth bias tracking — larger than any real bias value (which is
-    // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
-    float activeShaderBias = 1000000.0f;
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
@@ -1061,11 +1088,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 stageBiasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
                 stageUsesPolyOffset = true;
             }
-            if (stageBiasConstant != activeShaderBias)
-            {
-                vkCmdSetDepthBias(cmd, stageBiasConstant, 0.0f, VK_GetPolyOffsetSlope(stageUsesPolyOffset));
-                activeShaderBias = stageBiasConstant;
-            }
+            // Always set per-stage depth bias. Binding pipelines that do not expose
+            // VK_DYNAMIC_STATE_DEPTH_BIAS can invalidate previous dynamic-bias state.
+            vkCmdSetDepthBias(cmd, stageBiasConstant, 0.0f, VK_GetPolyOffsetSlope(stageUsesPolyOffset));
 
             // Log verbose stage gating checks when translucent logging is enabled
             if (vkTransLog >= 2 && translucentLike && !regs[pStage->conditionRegister])
@@ -1102,7 +1127,38 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
 
             idImage *img = pStage->texture.image;
+            const bool isSkyboxStage = (pStage->texture.texgen == TG_SKYBOX_CUBE);
+            const bool useSkyboxCubePath = isSkyboxStage && r_vkSkyboxCubePath.GetBool();
             VkDescriptorImageInfo imgInfo = {};
+
+            // Some drawSurfs used by sky stages can arrive without a valid space pointer.
+            // The legacy path tolerates this, but the cube path needs model-space transforms.
+            if (useSkyboxCubePath && !surf->space)
+            {
+                static idStrList s_loggedSkyboxNoSpace;
+                idStr matName(mat->GetName());
+                if (s_loggedSkyboxNoSpace.Find(matName) < 0)
+                {
+                    s_loggedSkyboxNoSpace.Append(matName);
+                    common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d (surf->space is null)\n",
+                                   mat->GetName(), stageIdx);
+                }
+                continue;
+            }
+
+            if (useSkyboxCubePath && vkPipes.skyboxPipeline == VK_NULL_HANDLE)
+            {
+                static idStrList s_loggedSkyboxPipelineMissing;
+                idStr matName(mat->GetName());
+                if (s_loggedSkyboxPipelineMissing.Find(matName) < 0)
+                {
+                    s_loggedSkyboxPipelineMissing.Append(matName);
+                    common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d (skybox pipeline "
+                                   "unavailable)\n",
+                                   mat->GetName(), stageIdx);
+                }
+                continue;
+            }
 
             // Log TG_SCREEN stages whether img is null or not — regardless of which
             // branch handles them below, we want to see if they're being processed.
@@ -1123,7 +1179,12 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
             if (!img)
             {
-                if (pStage->texture.cinematic)
+                if (useSkyboxCubePath)
+                {
+                    // Skybox stages require a real cubemap image.
+                    continue;
+                }
+                else if (pStage->texture.cinematic)
                 {
                     // Use the cinematic image uploaded by VK_RB_UpdateCinematics this frame.
                     VK_Image_GetCinematicDescriptorInfo(&imgInfo);
@@ -1192,21 +1253,40 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     continue;
                 }
             }
-            else if (!VK_Image_GetDescriptorInfo(img, &imgInfo))
+            else
             {
-                // Image not yet on GPU (e.g. cubemap pending upload).
-                // Log once per material to avoid per-frame spam, then use white fallback.
-                static idStrList s_loggedFallbacks;
-                idStr matName(mat->GetName());
-                if (s_loggedFallbacks.Find(matName) < 0)
+                const bool imageOk = useSkyboxCubePath ? VK_Image_GetDescriptorInfoCube(img, &imgInfo)
+                                                       : VK_Image_GetDescriptorInfo(img, &imgInfo);
+                if (!imageOk)
                 {
-                    s_loggedFallbacks.Append(matName);
-                    common->Printf(
-                        "VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' lighting=%d blend=0x%x\n",
-                        mat->GetName(), stageIdx, img->imgName.c_str(), (int)pStage->lighting,
-                        pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                    // Skybox path must bind a cube image view; skip if unavailable.
+                    if (useSkyboxCubePath)
+                    {
+                        static idStrList s_loggedSkyboxFallbacks;
+                        idStr matName(mat->GetName());
+                        if (s_loggedSkyboxFallbacks.Find(matName) < 0)
+                        {
+                            s_loggedSkyboxFallbacks.Append(matName);
+                            common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d img='%s' (cube "
+                                           "descriptor unavailable)\n",
+                                           mat->GetName(), stageIdx, img->imgName.c_str());
+                        }
+                        continue;
+                    }
+
+                    // Non-skybox path: use 1x1 fallback.
+                    static idStrList s_loggedFallbacks;
+                    idStr matName(mat->GetName());
+                    if (s_loggedFallbacks.Find(matName) < 0)
+                    {
+                        s_loggedFallbacks.Append(matName);
+                        common->Printf("VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' "
+                                       "lighting=%d blend=0x%x\n",
+                                       mat->GetName(), stageIdx, img->imgName.c_str(), (int)pStage->lighting,
+                                       pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                    }
+                    VK_Image_GetFallbackDescriptorInfo(&imgInfo);
                 }
-                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
             }
 
             // Build color modulate/add from stage vertex color mode
@@ -1271,96 +1351,134 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             uint32_t uboOffset = VK_AllocUBO();
             uint8_t *uboPtr = (uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset;
-            VkGuiUBO *guiUbo = (VkGuiUBO *)uboPtr;
-            memcpy(guiUbo->modelViewProjection, mvp, 64);
-            memcpy(guiUbo->colorModulate, colorModulate, 16);
-            memcpy(guiUbo->colorAdd, colorAdd, 16);
-
-            // Texture coordinate transform & TG_SCREEN texgen
-            if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+            if (useSkyboxCubePath)
             {
-                // Projective screen-space texgen for mirrors / screen captures.
-                // Compute MVP using GL projection (column-major). Rows 0,1,3 are
-                // unaffected by the VK Z-remap so either projection works.
-                float texgenMat[16];
-                myGlMultMatrix(surf->space->modelViewMatrix, backEnd.viewDef->projectionMatrix, texgenMat);
+                VkSkyboxUBO *skyUbo = (VkSkyboxUBO *)uboPtr;
+                memcpy(skyUbo->modelViewProjection, mvp, 64);
+                memcpy(skyUbo->colorModulate, colorModulate, 16);
+                memcpy(skyUbo->colorAdd, colorAdd, 16);
 
-                // Extract MVP rows and apply 0.5 scale + 0.5 bias so that after
-                // the projective divide the texcoords map from NDC [-1,1] → [0,1].
-                //   Row 0 (S): texgenMat[c*4+0]
-                //   Row 1 (T): texgenMat[c*4+1]   (Y flipped for VK neg-viewport)
-                //   Row 3 (Q): texgenMat[c*4+3]
-                for (int c = 0; c < 4; c++)
+                float localViewOrigin[3];
+                if (VK_ComputeLocalViewOriginFromModelView(surf->space, localViewOrigin))
                 {
-                    float r0 = texgenMat[c * 4 + 0]; // row 0
-                    float r1 = texgenMat[c * 4 + 1]; // row 1
-                    float r3 = texgenMat[c * 4 + 3]; // row 3
-                    guiUbo->texGenS[c] = 0.5f * r0 + 0.5f * r3;
-                    guiUbo->texGenT[c] = -0.5f * r1 + 0.5f * r3; // neg = VK Y flip
-                    guiUbo->texGenQ[c] = r3;
+                    skyUbo->localViewOrigin[0] = localViewOrigin[0];
+                    skyUbo->localViewOrigin[1] = localViewOrigin[1];
+                    skyUbo->localViewOrigin[2] = localViewOrigin[2];
                 }
-
-                // Signal texgen mode via texMatrixS[2] (normally always 0).
-                guiUbo->texMatrixS[0] = 1.f;
-                guiUbo->texMatrixS[1] = 0.f;
-                guiUbo->texMatrixS[2] = 1.f; // <-- texgen flag
-                guiUbo->texMatrixS[3] = 0.f;
-                guiUbo->texMatrixT[0] = 0.f;
-                guiUbo->texMatrixT[1] = 1.f;
-                guiUbo->texMatrixT[2] = 0.f;
-                guiUbo->texMatrixT[3] = 0.f;
-
-                if (r_vkLogRT.GetInteger() >= 1)
+                else
                 {
-                    static int s_texgenLogCount = 0;
-                    if (s_texgenLogCount < 20)
+                    // Safety fallback: avoid unstable matrix transforms for problematic sky drawSurfs.
+                    const idVec3 &viewOrigin = tr.viewDef->renderView.vieworg;
+                    skyUbo->localViewOrigin[0] = viewOrigin[0];
+                    skyUbo->localViewOrigin[1] = viewOrigin[1];
+                    skyUbo->localViewOrigin[2] = viewOrigin[2];
+
+                    static idStrList s_loggedSkyboxLocalFallback;
+                    idStr matName(mat->GetName());
+                    if (s_loggedSkyboxLocalFallback.Find(matName) < 0)
                     {
-                        s_texgenLogCount++;
-                        common->Printf("VK TEXGEN: mat='%s' tg=%d "
-                                       "S=[%.3f %.3f %.3f %.3f] "
-                                       "T=[%.3f %.3f %.3f %.3f] "
-                                       "Q=[%.3f %.3f %.3f %.3f]\n",
-                                       mat->GetName(), (int)pStage->texture.texgen, guiUbo->texGenS[0],
-                                       guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3], guiUbo->texGenT[0],
-                                       guiUbo->texGenT[1], guiUbo->texGenT[2], guiUbo->texGenT[3], guiUbo->texGenQ[0],
-                                       guiUbo->texGenQ[1], guiUbo->texGenQ[2], guiUbo->texGenQ[3]);
+                        s_loggedSkyboxLocalFallback.Append(matName);
+                        common->Printf("VK DrawShaderPasses: skybox local-view fallback mat='%s' stage=%d "
+                                       "(invalid modelView-derived local origin)\n",
+                                       mat->GetName(), stageIdx);
                     }
                 }
-            }
-            else if (pStage->texture.hasMatrix)
-            {
-                const textureStage_t &tex = pStage->texture;
-                float s2 = regs[tex.matrix[0][2]];
-                if (s2 < -40.f || s2 > 40.f)
-                    s2 -= (float)(int)s2;
-                float t2 = regs[tex.matrix[1][2]];
-                if (t2 < -40.f || t2 > 40.f)
-                    t2 -= (float)(int)t2;
-                guiUbo->texMatrixS[0] = regs[tex.matrix[0][0]];
-                guiUbo->texMatrixS[1] = regs[tex.matrix[0][1]];
-                guiUbo->texMatrixS[2] = 0.f;
-                guiUbo->texMatrixS[3] = s2;
-                guiUbo->texMatrixT[0] = regs[tex.matrix[1][0]];
-                guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
-                guiUbo->texMatrixT[2] = 0.f;
-                guiUbo->texMatrixT[3] = t2;
-                memset(guiUbo->texGenS, 0, 16);
-                memset(guiUbo->texGenT, 0, 16);
-                memset(guiUbo->texGenQ, 0, 16);
+                skyUbo->localViewOrigin[3] = 1.0f;
             }
             else
             {
-                guiUbo->texMatrixS[0] = 1.f;
-                guiUbo->texMatrixS[1] = 0.f;
-                guiUbo->texMatrixS[2] = 0.f;
-                guiUbo->texMatrixS[3] = 0.f;
-                guiUbo->texMatrixT[0] = 0.f;
-                guiUbo->texMatrixT[1] = 1.f;
-                guiUbo->texMatrixT[2] = 0.f;
-                guiUbo->texMatrixT[3] = 0.f;
-                memset(guiUbo->texGenS, 0, 16);
-                memset(guiUbo->texGenT, 0, 16);
-                memset(guiUbo->texGenQ, 0, 16);
+                VkGuiUBO *guiUbo = (VkGuiUBO *)uboPtr;
+                memcpy(guiUbo->modelViewProjection, mvp, 64);
+                memcpy(guiUbo->colorModulate, colorModulate, 16);
+                memcpy(guiUbo->colorAdd, colorAdd, 16);
+
+                // Texture coordinate transform & TG_SCREEN texgen
+                if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+                {
+                    // Projective screen-space texgen for mirrors / screen captures.
+                    // Compute MVP using GL projection (column-major). Rows 0,1,3 are
+                    // unaffected by the VK Z-remap so either projection works.
+                    float texgenMat[16];
+                    myGlMultMatrix(surf->space->modelViewMatrix, backEnd.viewDef->projectionMatrix, texgenMat);
+
+                    // Extract MVP rows and apply 0.5 scale + 0.5 bias so that after
+                    // the projective divide the texcoords map from NDC [-1,1] → [0,1].
+                    //   Row 0 (S): texgenMat[c*4+0]
+                    //   Row 1 (T): texgenMat[c*4+1]   (Y flipped for VK neg-viewport)
+                    //   Row 3 (Q): texgenMat[c*4+3]
+                    for (int c = 0; c < 4; c++)
+                    {
+                        float r0 = texgenMat[c * 4 + 0]; // row 0
+                        float r1 = texgenMat[c * 4 + 1]; // row 1
+                        float r3 = texgenMat[c * 4 + 3]; // row 3
+                        guiUbo->texGenS[c] = 0.5f * r0 + 0.5f * r3;
+                        guiUbo->texGenT[c] = -0.5f * r1 + 0.5f * r3; // neg = VK Y flip
+                        guiUbo->texGenQ[c] = r3;
+                    }
+
+                    // Signal texgen mode via texMatrixS[2] (normally always 0).
+                    guiUbo->texMatrixS[0] = 1.f;
+                    guiUbo->texMatrixS[1] = 0.f;
+                    guiUbo->texMatrixS[2] = 1.f; // <-- texgen flag
+                    guiUbo->texMatrixS[3] = 0.f;
+                    guiUbo->texMatrixT[0] = 0.f;
+                    guiUbo->texMatrixT[1] = 1.f;
+                    guiUbo->texMatrixT[2] = 0.f;
+                    guiUbo->texMatrixT[3] = 0.f;
+
+                    if (r_vkLogRT.GetInteger() >= 1)
+                    {
+                        static int s_texgenLogCount = 0;
+                        if (s_texgenLogCount < 20)
+                        {
+                            s_texgenLogCount++;
+                            common->Printf("VK TEXGEN: mat='%s' tg=%d "
+                                           "S=[%.3f %.3f %.3f %.3f] "
+                                           "T=[%.3f %.3f %.3f %.3f] "
+                                           "Q=[%.3f %.3f %.3f %.3f]\n",
+                                           mat->GetName(), (int)pStage->texture.texgen, guiUbo->texGenS[0],
+                                           guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3],
+                                           guiUbo->texGenT[0], guiUbo->texGenT[1], guiUbo->texGenT[2],
+                                           guiUbo->texGenT[3], guiUbo->texGenQ[0], guiUbo->texGenQ[1],
+                                           guiUbo->texGenQ[2], guiUbo->texGenQ[3]);
+                        }
+                    }
+                }
+                else if (pStage->texture.hasMatrix)
+                {
+                    const textureStage_t &tex = pStage->texture;
+                    float s2 = regs[tex.matrix[0][2]];
+                    if (s2 < -40.f || s2 > 40.f)
+                        s2 -= (float)(int)s2;
+                    float t2 = regs[tex.matrix[1][2]];
+                    if (t2 < -40.f || t2 > 40.f)
+                        t2 -= (float)(int)t2;
+                    guiUbo->texMatrixS[0] = regs[tex.matrix[0][0]];
+                    guiUbo->texMatrixS[1] = regs[tex.matrix[0][1]];
+                    guiUbo->texMatrixS[2] = 0.f;
+                    guiUbo->texMatrixS[3] = s2;
+                    guiUbo->texMatrixT[0] = regs[tex.matrix[1][0]];
+                    guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
+                    guiUbo->texMatrixT[2] = 0.f;
+                    guiUbo->texMatrixT[3] = t2;
+                    memset(guiUbo->texGenS, 0, 16);
+                    memset(guiUbo->texGenT, 0, 16);
+                    memset(guiUbo->texGenQ, 0, 16);
+                }
+                else
+                {
+                    guiUbo->texMatrixS[0] = 1.f;
+                    guiUbo->texMatrixS[1] = 0.f;
+                    guiUbo->texMatrixS[2] = 0.f;
+                    guiUbo->texMatrixS[3] = 0.f;
+                    guiUbo->texMatrixT[0] = 0.f;
+                    guiUbo->texMatrixT[1] = 1.f;
+                    guiUbo->texMatrixT[2] = 0.f;
+                    guiUbo->texMatrixT[3] = 0.f;
+                    memset(guiUbo->texGenS, 0, 16);
+                    memset(guiUbo->texGenT, 0, 16);
+                    memset(guiUbo->texGenQ, 0, 16);
+                }
             }
 
             // Allocate GUI descriptor set
@@ -1377,7 +1495,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             VkDescriptorBufferInfo bufInfo = {};
             bufInfo.buffer = uboRings[vk.currentFrame].buffer;
             bufInfo.offset = uboOffset;
-            bufInfo.range = sizeof(VkGuiUBO);
+            bufInfo.range = useSkyboxCubePath ? sizeof(VkSkyboxUBO) : sizeof(VkGuiUBO);
 
             VkWriteDescriptorSet writes[2] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1401,7 +1519,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // they respect the depth prepass and don't render through occluders or from
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
-            const bool needDepth = !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
+            const bool needDepth = useSkyboxCubePath ? true : !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
             if (r_vkLogRT.GetInteger() >= 2)
             {
@@ -1410,7 +1528,15 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                                mat->GetName(), stageIdx, drawBitsOverride, blendBits, (int)needDepth);
             }
 
-            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            if (useSkyboxCubePath)
+            {
+                pipeline = vkPipes.skyboxPipeline;
+            }
+            else
+            {
+                pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
+            }
 
             // Log translucent material pipeline binding
             if (vkTransLog >= 2 && translucentLike)
@@ -1427,7 +1553,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // Match GL per-material cull behavior for 3D shader passes.
             // Only set dynamic cull mode on depth-tested (3D) pipelines — 2D GUI
             // pipelines are created without VK_DYNAMIC_STATE_CULL_MODE.
-            if (needDepth)
+            if (useSkyboxCubePath || needDepth)
             {
                 VkCullModeFlags shaderCull = VK_CULL_MODE_BACK_BIT;
                 if (mat->GetCullType() == CT_TWO_SIDED)
