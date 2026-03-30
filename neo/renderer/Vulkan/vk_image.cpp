@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3 Vulkan backend - texture/image management.
 
 Wraps idImage for Vulkan: uploads RGBA8 pixel data to a VkImage with a full
@@ -44,6 +43,7 @@ struct vkImageData_t
     VkImage image;
     VkDeviceMemory memory;
     VkImageView view;
+    VkImageView cubeView;
     VkSampler sampler;
     uint32_t width;
     uint32_t height;
@@ -69,6 +69,8 @@ static void VK_DestroyImageData(vkImageData_t *vkd)
 {
     if (vkd->sampler != VK_NULL_HANDLE)
         vkDestroySampler(vk.device, vkd->sampler, NULL);
+    if (vkd->cubeView != VK_NULL_HANDLE)
+        vkDestroyImageView(vk.device, vkd->cubeView, NULL);
     if (vkd->view != VK_NULL_HANDLE)
         vkDestroyImageView(vk.device, vkd->view, NULL);
     if (vkd->image != VK_NULL_HANDLE)
@@ -762,8 +764,8 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
 //
 // Called from idImage::GenerateCubeImage() on the Vulkan path.
 // Uploads all 6 RGBA8 faces (each size x size) as a VkImage cube array.
-// Creates a 2D view of face 0 for use with the current sampler2D binding;
-// a proper samplerCube pipeline can be added later.
+// Creates both a cube view (for samplerCube stages) and a 2D view of face 0
+// for legacy sampler2D paths.
 // ---------------------------------------------------------------------------
 
 void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
@@ -902,20 +904,33 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     vkDestroyBuffer(vk.device, stagingBuf, NULL);
     vkFreeMemory(vk.device, stagingMem, NULL);
 
-    // --- 2D view of face 0 (for sampler2D binding; cube view added when needed) ---
+    // --- Cube view (for samplerCube binding) ---
     VkImageViewCreateInfo viewInfo = {};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = vkd->image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
     viewInfo.format = format;
     viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 6;
+    if (vkCreateImageView(vk.device, &viewInfo, NULL, &vkd->cubeView) != VK_SUCCESS)
+    {
+        common->Warning("VK_Image_UploadCubemap: vkCreateImageView(cube) failed for '%s'", img->imgName.c_str());
+        vkDestroyImage(vk.device, vkd->image, NULL);
+        vkFreeMemory(vk.device, vkd->memory, NULL);
+        delete vkd;
+        return;
+    }
+
+    // --- 2D view of face 0 (for sampler2D compatibility paths) ---
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.subresourceRange.layerCount = 1;
     if (vkCreateImageView(vk.device, &viewInfo, NULL, &vkd->view) != VK_SUCCESS)
     {
-        common->Warning("VK_Image_UploadCubemap: vkCreateImageView failed for '%s'", img->imgName.c_str());
+        common->Warning("VK_Image_UploadCubemap: vkCreateImageView(2D) failed for '%s'", img->imgName.c_str());
+        vkDestroyImageView(vk.device, vkd->cubeView, NULL);
         vkDestroyImage(vk.device, vkd->image, NULL);
         vkFreeMemory(vk.device, vkd->memory, NULL);
         delete vkd;
@@ -937,6 +952,7 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     if (vkCreateSampler(vk.device, &samplerInfo, NULL, &vkd->sampler) != VK_SUCCESS)
     {
         common->Warning("VK_Image_UploadCubemap: vkCreateSampler failed for '%s'", img->imgName.c_str());
+        vkDestroyImageView(vk.device, vkd->cubeView, NULL);
         vkDestroyImageView(vk.device, vkd->view, NULL);
         vkDestroyImage(vk.device, vkd->image, NULL);
         vkFreeMemory(vk.device, vkd->memory, NULL);
@@ -1008,6 +1024,21 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
     vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     out->sampler = vkd->sampler;
     out->imageView = vkd->view;
+    out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    return true;
+}
+
+bool VK_Image_GetDescriptorInfoCube(idImage *img, VkDescriptorImageInfo *out)
+{
+    if (!img || !img->backendData)
+        return false;
+
+    vkImageData_t *vkd = (vkImageData_t *)img->backendData;
+    if (vkd->cubeView == VK_NULL_HANDLE)
+        return false;
+
+    out->sampler = vkd->sampler;
+    out->imageView = vkd->cubeView;
     out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     return true;
 }
