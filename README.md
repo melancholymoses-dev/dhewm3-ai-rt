@@ -1,12 +1,15 @@
-# ABOUT DHEWM3_RTX
+# ABOUT DHEWM3-RT
 
 This an attempt to implement Vulkan raytracing and eventually global illumination on top of Dhewm3.  Its a game that could sing with Raytracing, and cries out for an implementation, far more so than Quake 2 did, given the emphasis on dark shadows and light.
 This is hewing closely to the original Doom3, so no shoulder flashlight --- just a world lit only by shotgun fire.
 
+
 ## Process
 
-I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3.  I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3) to code this up as an experiment on refactoring a complex code base.  
-Have also been using the vkDoom3 Vulkan implementation as a reference, which was found after starting work on this.  
+I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  This project is not affiliated with Dhewm3. 
+
+I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3) to code this up as an experiment on refactoring a complex code base.  
+I have also been using the vkDoom3 Vulkan implementation as a reference, which was found after starting work on this.  (https://github.com/DustinHLand/vkDOOM3)
 
 ## Tips on working with LLMs
 - CLAUDE.md helped guide them towards the reference implementations to debug things.  
@@ -16,25 +19,28 @@ and spend many cycles repeating the same mistakes when a quick test can help pin
 - This is an old famous codebase on well-established technology (vulkan, OpenGL), so we'd expect the models to do
 reasonably given the vast number of examples they can riff on.
 - Asking for planning docs and updating them as I went was helpful for keeping things up to date.  This also helps with optimization ideas that were suggested in the middle of debugging runs.
-- I suspect without the polished GL and Vulkan implementations to riff on I would not have gotten as far.
-- When it got stuck it was deep in the complex weeds.  Having some programming experience with debugging/logging and a sense for 
-decent software was still useful in prodding them in the right direction.
+- I suspect without the extant polished GL and Vulkan implementations to riff on I would not have gotten as far.
+- When the LLMs got stuck it was deep in the complex weeds.  Having some programming experience with debugging/logging and a sense for 
+decent software was still useful in prodding them in the right direction, even if my C++ is rudimentary. 
 
-## Plans
-Plans live in docs/plans.
-ALso need compiled vulkan shaders.
+## Additional Files
 
-Currently the compiled shaders are put in base/glprogs/glsl relative to where the player's save data and config lives.
+This repo also includes the markdown plans used to steer the LLMs, which are in docs/plans.
+
+Part of this process requires compiling the vulkan shaders and copying them. 
+
+Currently the compiled shaders are compiled and copied in base/glprogs/glsl relative to where the player's save data and config lives.
 (e.g. ~/Documents/dhewm3/)
 
-Am also exploring editing some gun definitions to cast more light.  fireballs cast light, so should plasma.  (at least a little)
+I am also exploring editing some gun definitions to cast more light.  
 Updated Plasma rifle to shed blue light.
-Updated Rocket launcher also
+Updated Rocket launcher to show light.
 
 # ABOUT DHEWM3
 
 _dhewm 3 RTX_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.  The author can also test on Linux.
 
+Original Dhewm3 Links:
 
 **The official homepage is:** https://dhewm3.org
 
@@ -43,7 +49,7 @@ _dhewm 3 RTX_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ 
 **Download the latest release:** https://github.com/dhewm/dhewm3/releases/latest
 
 
-# RTX Changes
+# RT Changes
 
 - Vulkan rendering pipeline
 - Raytraced shadows
@@ -68,7 +74,7 @@ See [Changelog.md](./Changelog.md) for a more complete changelog.
 
 # GENERAL NOTES
 
-Follow the Dhewm3 Notes on patching.  Like that  you must have the original game data, purchased from your store of choice.  
+Follow the Dhewm3 Notes on patching.  Like that you must have the original game data, purchased from your store of choice.  
 
 ## Game data and patching
 
