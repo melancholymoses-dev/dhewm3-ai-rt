@@ -687,6 +687,8 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/depth.frag
 	renderer/glsl/gui.vert
 	renderer/glsl/gui.frag
+	renderer/glsl/skybox.vert
+	renderer/glsl/skybox.frag
 	renderer/glsl/fog.vert
 	renderer/glsl/fog.frag
 	renderer/glsl/blendlight.vert
