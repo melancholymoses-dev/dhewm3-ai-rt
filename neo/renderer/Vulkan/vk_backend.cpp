@@ -67,9 +67,6 @@ idCVar r_vkRTLogCaptureReset("r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_
                              "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
 static idCVar r_vkRTDebugLightTextures("r_vkRTDebugLightTextures", "0", CVAR_RENDERER | CVAR_INTEGER,
                                        "log Vulkan interaction texture sources for filtered surfaces (0=off, 1=on)");
-static idCVar r_vkSkyboxCubePath(
-    "r_vkSkyboxCubePath", "0", CVAR_RENDERER | CVAR_BOOL,
-    "Enable Vulkan samplerCube skybox path (TG_SKYBOX_CUBE). 0 = legacy sampler2D shader-pass path");
 
 static bool VK_RTDebugMatMatch(const char *matName)
 {
@@ -1128,12 +1125,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             idImage *img = pStage->texture.image;
             const bool isSkyboxStage = (pStage->texture.texgen == TG_SKYBOX_CUBE);
-            const bool useSkyboxCubePath = isSkyboxStage && r_vkSkyboxCubePath.GetBool();
             VkDescriptorImageInfo imgInfo = {};
 
             // Some drawSurfs used by sky stages can arrive without a valid space pointer.
             // The legacy path tolerates this, but the cube path needs model-space transforms.
-            if (useSkyboxCubePath && !surf->space)
+            if (isSkyboxStage && !surf->space)
             {
                 static idStrList s_loggedSkyboxNoSpace;
                 idStr matName(mat->GetName());
@@ -1146,7 +1142,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 continue;
             }
 
-            if (useSkyboxCubePath && vkPipes.skyboxPipeline == VK_NULL_HANDLE)
+            if (isSkyboxStage && vkPipes.skyboxPipeline == VK_NULL_HANDLE)
             {
                 static idStrList s_loggedSkyboxPipelineMissing;
                 idStr matName(mat->GetName());
@@ -1179,7 +1175,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
             if (!img)
             {
-                if (useSkyboxCubePath)
+                if (isSkyboxStage)
                 {
                     // Skybox stages require a real cubemap image.
                     continue;
@@ -1255,12 +1251,12 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
             else
             {
-                const bool imageOk = useSkyboxCubePath ? VK_Image_GetDescriptorInfoCube(img, &imgInfo)
-                                                       : VK_Image_GetDescriptorInfo(img, &imgInfo);
+                const bool imageOk = isSkyboxStage ? VK_Image_GetDescriptorInfoCube(img, &imgInfo)
+                                                   : VK_Image_GetDescriptorInfo(img, &imgInfo);
                 if (!imageOk)
                 {
                     // Skybox path must bind a cube image view; skip if unavailable.
-                    if (useSkyboxCubePath)
+                    if (isSkyboxStage)
                     {
                         static idStrList s_loggedSkyboxFallbacks;
                         idStr matName(mat->GetName());
@@ -1351,7 +1347,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             uint32_t uboOffset = VK_AllocUBO();
             uint8_t *uboPtr = (uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset;
-            if (useSkyboxCubePath)
+            if (isSkyboxStage)
             {
                 VkSkyboxUBO *skyUbo = (VkSkyboxUBO *)uboPtr;
                 memcpy(skyUbo->modelViewProjection, mvp, 64);
@@ -1495,7 +1491,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             VkDescriptorBufferInfo bufInfo = {};
             bufInfo.buffer = uboRings[vk.currentFrame].buffer;
             bufInfo.offset = uboOffset;
-            bufInfo.range = useSkyboxCubePath ? sizeof(VkSkyboxUBO) : sizeof(VkGuiUBO);
+            bufInfo.range = isSkyboxStage ? sizeof(VkSkyboxUBO) : sizeof(VkGuiUBO);
 
             VkWriteDescriptorSet writes[2] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1519,7 +1515,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // they respect the depth prepass and don't render through occluders or from
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
-            const bool needDepth = useSkyboxCubePath ? true : !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
+            const bool needDepth = isSkyboxStage ? true : !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
             if (r_vkLogRT.GetInteger() >= 2)
             {
@@ -1529,7 +1525,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
 
             VkPipeline pipeline = VK_NULL_HANDLE;
-            if (useSkyboxCubePath)
+            if (isSkyboxStage)
             {
                 pipeline = vkPipes.skyboxPipeline;
             }
@@ -1553,7 +1549,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // Match GL per-material cull behavior for 3D shader passes.
             // Only set dynamic cull mode on depth-tested (3D) pipelines — 2D GUI
             // pipelines are created without VK_DYNAMIC_STATE_CULL_MODE.
-            if (useSkyboxCubePath || needDepth)
+            if (isSkyboxStage || needDepth)
             {
                 VkCullModeFlags shaderCull = VK_CULL_MODE_BACK_BIT;
                 if (mat->GetCullType() == CT_TWO_SIDED)

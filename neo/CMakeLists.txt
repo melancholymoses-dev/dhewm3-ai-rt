@@ -1476,12 +1476,21 @@ endif()
 		COMMENT "Copying SPIR-V shaders next to executable"
 	)
 
-	# Copy compiled SPIR-V into <build_output>/base/glprogs/glsl/ so the
-	# game finds them at runtime (Sys_GetPath(PATH_BASE) checks <exe>/base/).
-	# Copy compiled SPIR-V to the user config base dir so the game finds them
-	# at runtime without affecting the game's basepath detection (which would
-	# be hijacked if we created <exe>/base/).  The user config path is always
-	# in the file-system search list ahead of the game installation.
+	# Also copy SPIR-V into <exe>/base/glprogs/glsl/ so a dev build is
+	# self-contained: shaders are found via the exe-relative base path
+	# without needing a separate Documents copy.  Saves still go to the
+	# user profile dir as usual — this only affects shader/asset lookup.
+	set(SPIRV_BASE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/glprogs/glsl")
+	add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+		COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPIRV_BASE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E copy_directory
+				"${CMAKE_BINARY_DIR}/glprogs/glsl"
+				"${SPIRV_BASE_DIR}"
+		COMMENT "Copying SPIR-V shaders to exe/base/ for self-contained dev builds"
+	)
+
+	# Also copy to the user config base dir for compatibility with installs
+	# that don't use the exe-relative base.
 	set(SPIRV_USER_DIR "$ENV{USERPROFILE}/Documents/My Games/dhewm3/base/glprogs/glsl")
 	if(WIN32 AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
 		add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
