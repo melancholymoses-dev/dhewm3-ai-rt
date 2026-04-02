@@ -2161,6 +2161,8 @@ void idSessionLocal::ScrubSaveGameFileName(idStr &saveFileName) const
 idSessionLocal::SaveGame
 ===============
 */
+extern int g_screenshotFormat;
+
 bool idSessionLocal::SaveGame(const char *saveName, bool autosave, const char *saveFileName)
 {
 #ifdef ID_DEDICATED
@@ -2262,10 +2264,18 @@ bool idSessionLocal::SaveGame(const char *saveName, bool autosave, const char *s
     // Write screenshot
     if (!autosave)
     {
-        renderSystem->CropRenderSize(320, 240, false);
-        game->Draw(0);
-        renderSystem->CaptureRenderToFile(previewFile, true);
-        renderSystem->UnCrop();
+        if (idStr::Icmp(cvarSystem->GetCVarString("r_backend"), "vulkan") == 0)
+        {
+            g_screenshotFormat = 0;
+            renderSystem->TakeScreenshot(320, 240, previewFile, 1, NULL);
+        }
+        else
+        {
+            renderSystem->CropRenderSize(320, 240, false);
+            game->Draw(0);
+            renderSystem->CaptureRenderToFile(previewFile, true);
+            renderSystem->UnCrop();
+        }
     }
 
     // Write description, which is just a text file with
