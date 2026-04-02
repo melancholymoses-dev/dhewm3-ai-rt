@@ -38,7 +38,6 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "renderer/GuiModel.h"
 #include "renderer/VertexCache.h"
 #include "renderer/RenderWorld_local.h"
-#include "renderer/Vulkan/VKbackend.h"
 
 #include "renderer/tr_local.h"
 
@@ -1043,33 +1042,28 @@ void idRenderSystemLocal::CaptureRenderToFile(const char *fileName, bool fixAlph
         return;
     }
 
+    // Vulkan render-to-file capture is not implemented via this path; use the Vulkan screenshot
+    // readback mechanism instead. Emit a warning so callers know this is unsupported.
+    if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
+    {
+        common->Printf("WARNING: CaptureRenderToFile is not supported for Vulkan backend (r_backend \"vulkan\").\n");
+        return;
+    }
+
     renderCrop_t *rc = &renderCrops[currentRenderCrop];
 
     guiModel->EmitFullScreen();
     guiModel->Clear();
 
+    R_IssueRenderCommands();
+
+    qglReadBuffer(GL_BACK);
+
     // include extra space for OpenGL padding to word boundaries
     int c = (rc->width + 3) * rc->height;
     byte *data = (byte *)R_StaticAlloc(c * 3);
-    memset(data, 0, c * 3);
 
-    if (glConfig.isVulkan)
-    {
-        VK_RequestReadback();
-
-        emptyCommand_t *swapCmd = (emptyCommand_t *)R_GetCommandBuffer(sizeof(*swapCmd));
-        swapCmd->commandId = RC_SWAP_BUFFERS;
-
-        R_IssueRenderCommands();
-        VK_ReadPixels(rc->x, rc->y, rc->width, rc->height, data);
-    }
-    else
-    {
-        R_IssueRenderCommands();
-
-        qglReadBuffer(GL_BACK);
-        qglReadPixels(rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data);
-    }
+    qglReadPixels(rc->x, rc->y, rc->width, rc->height, GL_RGB, GL_UNSIGNED_BYTE, data);
 
     byte *data2 = (byte *)R_StaticAlloc(c * 4);
 
@@ -1081,7 +1075,7 @@ void idRenderSystemLocal::CaptureRenderToFile(const char *fileName, bool fixAlph
         data2[i * 4 + 3] = 0xff;
     }
 
-    R_WriteTGA(fileName, data2, rc->width, rc->height, !glConfig.isVulkan);
+    R_WriteTGA(fileName, data2, rc->width, rc->height, true);
 
     R_StaticFree(data);
     R_StaticFree(data2);

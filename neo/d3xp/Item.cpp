@@ -1614,11 +1614,21 @@ void idObjective::Event_CamShot()
             }
 #endif
 
-            // draw a view to a texture
-            renderSystem->CropRenderSize(256, 256, true);
-            gameRenderWorld->RenderScene(&fullView);
-            renderSystem->CaptureRenderToFile(shotName);
-            renderSystem->UnCrop();
+            if (idStr::Icmp(cvarSystem->GetCVarString("r_backend"), "vulkan") == 0)
+            {
+                const int oldScreenshotFormat = cvarSystem->GetCVarInteger("r_screenshotFormat");
+                cvarSystem->SetCVarInteger("r_screenshotFormat", 0);
+                renderSystem->TakeScreenshot(256, 256, shotName, 1, &fullView);
+                cvarSystem->SetCVarInteger("r_screenshotFormat", oldScreenshotFormat);
+            }
+            else
+            {
+                // draw a view to a texture
+                renderSystem->CropRenderSize(256, 256, true);
+                gameRenderWorld->RenderScene(&fullView);
+                renderSystem->CaptureRenderToFile(shotName);
+                renderSystem->UnCrop();
+            }
         }
     }
 }

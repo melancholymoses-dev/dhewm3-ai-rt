@@ -262,8 +262,8 @@ idCVar r_useExternalShadows("r_useExternalShadows", "1", CVAR_RENDERER | CVAR_IN
                             "1 = skip drawing caps when outside the light volume, 2 = force to no caps for testing", 0,
                             2, idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkLogShadowBranch("r_vkLogShadowBranch", "0", CVAR_RENDERER | CVAR_INTEGER,
-                           "Vulkan shadow branch debug: 0=off, 1=basic per-light, 2=detailed per-surface",
-                           0, 2, idCmdSystem::ArgCompletion_Integer<0, 2>);
+                           "Vulkan shadow branch debug: 0=off, 1=basic per-light, 2=detailed per-surface", 0, 2,
+                           idCmdSystem::ArgCompletion_Integer<0, 2>);
 idCVar r_vkShadowFlipOps(
     "r_vkShadowFlipOps", "0", CVAR_RENDERER | CVAR_BOOL,
     "Vulkan shadow debug: swap non-mirror/mirror stencil-op pipeline selection to test face-op polarity", 0, 1,
@@ -1444,16 +1444,6 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
         }
     }
 
-    idFile *f;
-    if (strstr(fileName, "viewnote"))
-    {
-        f = fileSystem->OpenFileWrite(fileName, "fs_cdpath");
-    }
-    else
-    {
-        f = fileSystem->OpenFileWrite(fileName);
-    }
-
     // If no specific format is requested, default to using the CVar value.
     if (g_screenshotFormat == -1)
     {
@@ -1461,25 +1451,66 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
     }
     switch (g_screenshotFormat)
     {
-    default:
-        stbi_write_tga_to_func(WriteScreenshotForSTBIW, f, width, height, 3, buffer);
+    default: {
+        byte *rgbaBuffer = (byte *)R_StaticAlloc(width * height * 4);
+        for (i = 0; i < pix; i++)
+        {
+            rgbaBuffer[i * 4] = buffer[i * 3];
+            rgbaBuffer[i * 4 + 1] = buffer[i * 3 + 1];
+            rgbaBuffer[i * 4 + 2] = buffer[i * 3 + 2];
+            rgbaBuffer[i * 4 + 3] = 0xff;
+        }
+        R_WriteTGA(fileName, rgbaBuffer, width, height, false);
+        R_StaticFree(rgbaBuffer);
         break;
-    case 1:
+    }
+    case 1: {
+        idFile *f;
+        if (strstr(fileName, "viewnote"))
+        {
+            f = fileSystem->OpenFileWrite(fileName, "fs_cdpath");
+        }
+        else
+        {
+            f = fileSystem->OpenFileWrite(fileName);
+        }
         stbi_write_bmp_to_func(WriteScreenshotForSTBIW, f, width, height, 3, buffer);
+        fileSystem->CloseFile(f);
         break;
-    case 2:
+    }
+    case 2: {
+        idFile *f;
+        if (strstr(fileName, "viewnote"))
+        {
+            f = fileSystem->OpenFileWrite(fileName, "fs_cdpath");
+        }
+        else
+        {
+            f = fileSystem->OpenFileWrite(fileName);
+        }
         stbi_write_png_compression_level = idMath::ClampInt(0, 9, r_screenshotPngCompression.GetInteger());
         stbi_write_png_to_func(WriteScreenshotForSTBIW, f, width, height, 3, buffer, 3 * width);
+        fileSystem->CloseFile(f);
         break;
-    case 3:
+    }
+    case 3: {
+        idFile *f;
+        if (strstr(fileName, "viewnote"))
+        {
+            f = fileSystem->OpenFileWrite(fileName, "fs_cdpath");
+        }
+        else
+        {
+            f = fileSystem->OpenFileWrite(fileName);
+        }
         stbi_write_jpg_to_func(WriteScreenshotForSTBIW, f, width, height, 3, buffer,
                                idMath::ClampInt(1, 100, r_screenshotJpgQuality.GetInteger()));
+        fileSystem->CloseFile(f);
         break;
+    }
     }
 
     g_screenshotFormat = -1;
-
-    fileSystem->CloseFile(f);
 
     R_StaticFree(buffer);
     R_StaticFree(swapBuffer);

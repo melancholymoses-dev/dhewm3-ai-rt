@@ -2262,10 +2262,20 @@ bool idSessionLocal::SaveGame(const char *saveName, bool autosave, const char *s
     // Write screenshot
     if (!autosave)
     {
-        renderSystem->CropRenderSize(320, 240, false);
-        game->Draw(0);
-        renderSystem->CaptureRenderToFile(previewFile, true);
-        renderSystem->UnCrop();
+        if (idStr::Icmp(cvarSystem->GetCVarString("r_backend"), "vulkan") == 0)
+        {
+            const int oldScreenshotFormat = cvarSystem->GetCVarInteger("r_screenshotFormat");
+            cvarSystem->SetCVarInteger("r_screenshotFormat", 0);
+            renderSystem->TakeScreenshot(320, 240, previewFile, 1, NULL);
+            cvarSystem->SetCVarInteger("r_screenshotFormat", oldScreenshotFormat);
+        }
+        else
+        {
+            renderSystem->CropRenderSize(320, 240, false);
+            game->Draw(0);
+            renderSystem->CaptureRenderToFile(previewFile, true);
+            renderSystem->UnCrop();
+        }
     }
 
     // Write description, which is just a text file with
