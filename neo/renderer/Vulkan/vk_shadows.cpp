@@ -31,15 +31,18 @@ the Free Software Foundation, either version 3 of the License, or
 
 struct ShadowParamsUBO
 {
-    float invViewProj[16]; // column-major 4x4
-    float lightOrigin[4];  // xyz = pos, w = radius
-    float lightFalloffRadius;
-    int numSamples;
-    uint32_t frameIndex;
-    float rayBias;
-    uint32_t rayCullMask; // instance mask for traceRayEXT (0xFE excludes player body)
-    int debugMode;        // 0=normal 1=show normal.y 2=normal-valid coverage 3=dot(biasDir,lightDir)
-    float _pad[2];        // align to 16 bytes (debugMode consumed one pad slot, total unchanged)
+    float    invViewProj[16];  // column-major 4x4,  offset   0
+    float    lightOrigin[4];   // xyz = pos, w = radius, offset  64
+    float    lightFalloffRadius;                       // offset  80
+    int      numSamples;                               // offset  84
+    uint32_t frameIndex;                               // offset  88
+    float    rayBias;                                  // offset  92
+    uint32_t rayCullMask;  // 0xFE excludes player     // offset  96
+    int      debugMode;    // 0=normal 1..3=diag        // offset 100
+    int32_t  scissorOffsetX;  // dispatch rect origin X // offset 104
+    int32_t  scissorOffsetY;  // dispatch rect origin Y // offset 108
+    int32_t  screenWidth;     // full framebuffer width  // offset 112
+    int32_t  screenHeight;    // full framebuffer height // offset 116
 };
 
 static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -514,7 +517,7 @@ static void VK_RT_InitBlurPipeline(void)
 // alloc/free and no vkQueueWaitIdle.
 // ---------------------------------------------------------------------------
 
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight)
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight, VkRect2D dispatchRect)
 {
     if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
         return;
@@ -768,8 +771,12 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         {
             ubo.frameIndex = 0u;
         }
-        ubo.rayBias   = r_rtShadowRayBias.GetFloat();
-        ubo.debugMode = r_rtShadowDebugMode.GetInteger();
+        ubo.rayBias         = r_rtShadowRayBias.GetFloat();
+        ubo.debugMode       = r_rtShadowDebugMode.GetInteger();
+        ubo.scissorOffsetX  = (int32_t)dispatchRect.offset.x;
+        ubo.scissorOffsetY  = (int32_t)dispatchRect.offset.y;
+        ubo.screenWidth     = (int32_t)sm.width;
+        ubo.screenHeight    = (int32_t)sm.height;
 
         // Exclude player body from shadow rays when player is very close to the light.
         // Player body TLAS instances use mask 0x01; world geometry uses 0xFF.
@@ -810,16 +817,20 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 0, 1, &ds, 1,
                                 &uboOff);
 
+        const uint32_t dispatchW = dispatchRect.extent.width;
+        const uint32_t dispatchH = dispatchRect.extent.height;
+
         if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u bias=%.4f fIdx=%u samples=%d jitter=%d\n",
-                           frameIdx, uboOff, sm.width, sm.height,
+            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) bias=%.4f fIdx=%u samples=%d jitter=%d\n",
+                           frameIdx, uboOff, dispatchW, dispatchH,
+                           dispatchRect.offset.x, dispatchRect.offset.y,
                            ubo.rayBias, ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
             fflush(NULL);
         }
 
-        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, sm.width,
-                          sm.height, 1);
+        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion,
+                          dispatchW, dispatchH, 1);
     }
 
     // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---

@@ -2875,7 +2875,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (VK_RTShadowsEnabled())
         {
             vkCmdEndRenderPass(cmd);
-            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight);
+            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor);
             VkRenderPassBeginInfo rpResume = {};
             rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rpResume.renderPass = vk.renderPassResume;
