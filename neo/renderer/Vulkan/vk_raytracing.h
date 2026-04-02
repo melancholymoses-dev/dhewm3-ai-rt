@@ -183,7 +183,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
 // this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
 // The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight);
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight, VkRect2D dispatchRect);
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);

@@ -27,6 +27,8 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     float rayBias;              // ray origin bias (world units)
     uint  rayCullMask;          // instance mask for traceRayEXT (0xFE excludes player body)
     int   debugMode;            // 0=normal 1=biasDir.y 2=got-surface-normal 3=dot(biasDir,lightDir)
+    ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
+    ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -107,8 +109,10 @@ vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed, float phiOf
 // main
 // ---------------------------------------------------------------------------
 void main() {
-    ivec2 coord = ivec2( gl_LaunchIDEXT.xy );
-    ivec2 size  = ivec2( gl_LaunchSizeEXT.xy );
+    // gl_LaunchIDEXT is (0,0)-(dispatchW-1,dispatchH-1) within the sub-rect.
+    // Add the scissor offset to get the actual screen pixel coordinates.
+    ivec2 coord = ivec2( gl_LaunchIDEXT.xy ) + params.scissorOffset;
+    ivec2 size  = params.screenSize;
 
     // Reconstruct world position
     vec3 worldPos = reconstructWorldPos( coord, size );
