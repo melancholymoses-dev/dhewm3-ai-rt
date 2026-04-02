@@ -39,6 +39,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "Item.h"
 
+extern int g_screenshotFormat;
+
 /*
 ===============================================================================
 
@@ -1614,11 +1616,19 @@ void idObjective::Event_CamShot()
             }
 #endif
 
-            // draw a view to a texture
-            renderSystem->CropRenderSize(256, 256, true);
-            gameRenderWorld->RenderScene(&fullView);
-            renderSystem->CaptureRenderToFile(shotName);
-            renderSystem->UnCrop();
+            if (idStr::Icmp(cvarSystem->GetCVarString("r_backend"), "vulkan") == 0)
+            {
+                g_screenshotFormat = 0;
+                renderSystem->TakeScreenshot(256, 256, shotName, 1, &fullView);
+            }
+            else
+            {
+                // draw a view to a texture
+                renderSystem->CropRenderSize(256, 256, true);
+                gameRenderWorld->RenderScene(&fullView);
+                renderSystem->CaptureRenderToFile(shotName);
+                renderSystem->UnCrop();
+            }
         }
     }
 }
