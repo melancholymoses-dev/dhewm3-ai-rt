@@ -1,8 +1,8 @@
 # RTX Refactor — Phase 4 Optimization, Phase 5 and Phase 6Plan
 
 **Document:** `rtx_refactor_plan4.md`
-**Date:** 2026-03-25
-**Branch:** `moar_shadow_depth_fixes`
+**Date:** 2026-04-03
+**Branch:** `feature/rtao`
 
 This document records what has been done, identifies the current gaps that
 must be fixed to make Phase 4 (RT shadows) actually correct, and lays out
@@ -21,30 +21,43 @@ the detailed steps for Phase 5 (RTAO + reflections).
 | 5 | RTAO + RT reflections | **Not started** |
 | 6 | One-bounce global illumination | **Not started — scope expansion, see §Phase 6** |
 
-## Current State Snapshot (2026-03-25)
+## Current State Snapshot (2026-04-03)
 
 Brief status for quick return-to-work context:
 
-- Phase 4 correctness is now in good shape:
-  - Per-light RT shadow mask dispatch is interleaved with per-light interaction drawing.
-  - RT shadow dispatch no longer uses per-light `vkQueueWaitIdle` stalls.
-  - Player/viewmodel shadow suppression is in place for first-person correctness.
-  - Recent alpha-path fixes landed (including perforated depth-prepass parity), and this also resolved related menu/logo alpha artifacts during testing.
-- Vulkan lighting/shadow behavior is now stable enough to treat Phase 4 as complete from a correctness perspective.
-- Remaining work is mostly optimization/cleanup, not a Phase 4 blocker.
+- Phase 4 correctness is solid. Optimization work has continued since the last snapshot.
+- **Profiling finding:** Frame time was bottlenecked by the frontend (RF ~43ms), not the
+  backend (BK ~30ms). They run concurrently; total ≈ max(RF, BK). The primary frontend
+  cost was CPU shadow volume extrusion happening even when RT shadows were active.
+- The following optimizations have been implemented since 2026-03-25:
+
+### Completed Since Last Snapshot
+
+1. **Push descriptors (VK_KHR_push_descriptor)**
+
+2. **Model-keyed BLAS cache** (`vk_accelstruct.cpp`)
+
+3. **Frontend shadow volume extrusion skip** (`Interaction.cpp`)
+   - `R_CreateShadowVolume()` is now skipped when `r_useRayTracing && r_rtShadows` are both set.
+   - The backend was already discarding stencil volumes when RT is active; this eliminates the
+     wasted O(lights × shadow surfaces × silhouette edges) CPU work on the frontend.
+   - Expected to bring RF down significantly from the ~43ms baseline.
+
+4. **Batched upload (replace N × vkQueueWaitIdle)** (`vk_instance.cpp`, `vk_buffer.cpp`, `vk_image.cpp`, `vk_backend.cpp`)
+   - All `VK_BeginSingleTimeCommands` / `VK_EndSingleTimeCommands` calls accumulate into
+     one command buffer per frame instead of submitting and stalling per upload.
+
+5. **RT log trimming** (`vk_accelstruct.cpp`, `vk_backend.cpp`)
 
 ## Phase 4 Remaining Work (Brief)
 
 Only items still worth doing before calling this area fully polished:
 
-1. BLAS input path optimization:
-    - Current BLAS build still copies geometry into host-visible build-input buffers.
-    - Move to direct GPU cache buffer usage (`ambientCache`/index cache with device address + AS build flags) to cut CPU copy overhead.
-2. TLAS instance update efficiency:
+1. TLAS instance update efficiency:
     - Instance upload/recreate path is still heavier than ideal.
     - Keep reducing per-frame instance-buffer churn and host writes for mostly-static scenes.
-3. Optional cleanup:
-    - Trim debug-only cvars/log toggles once confidence is high and behavior is stable across maps.
+2. Optional cleanup:
+    - Trim any remaining debug-only cvars/log toggles once confidence is high.
 
 ## Phase 4 Fix Checklist (Code Reality)
 
@@ -202,16 +215,14 @@ dynamic buckets, then minimizing update work for unchanged static content.
 
 1. First pass implemented: static-instance signature cache + static/dynamic split,
   with static block rewritten only when signature changes.
-2. Next pass: add richer per-instance metadata cache (entity handle + BLAS handle +
+2. Model-keyed BLAS cache implemented: static entities sharing the same `hModel*` reuse
+  one BLAS, keeping device addresses stable and preventing signature churn from entity
+  pointer recycling (e.g. doors destroyed/recreated each frame).
+3. Next pass: add richer per-instance metadata cache (entity handle + BLAS handle +
   last transform hash + visibility/caster bits) so unchanged static entries are
   detected with finer granularity.
-3. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
-4. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
-5. Add debug counters for:
-    static instances total,
-    static instances rewritten,
-    dynamic instances rewritten,
-    TLAS instance bytes uploaded per frame.
+4. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
+5. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
 
 #### Validation
 
@@ -224,12 +235,13 @@ dynamic buckets, then minimizing update work for unchanged static content.
 
 #### Priority
 
-High for RT scalability. This complements GPU-side BLAS input optimization and is
-worth implementing even if other RT features are deferred.
+Medium. Model BLAS cache already eliminates the primary static churn source. Remaining
+gain is from reducing per-frame instance buffer writes for truly static scenes.
 
 #### Status
 
-Planned. The split/static cache design is not fully implemented yet.
+Partially implemented. Model-keyed BLAS cache done. Finer per-instance change detection
+not yet implemented.
 
 ### Enhancement: Per-Light-Type RT Softness Controls
 
