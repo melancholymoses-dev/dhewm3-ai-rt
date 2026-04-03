@@ -19,6 +19,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include "sys/platform.h"
 #include "renderer/VertexCache.h"
 #include "renderer/tr_local.h"
+#include "renderer/RenderWorld_local.h"
+#include "renderer/Interaction.h"
 #include "renderer/Cinematic.h"
 #include "idlib/containers/StrList.h"
 #include "renderer/Vulkan/vk_common.h"
@@ -660,8 +662,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
     extern idCVar r_rtAO;
     int *useAOPtr = useSM + 1;
-    const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool()
-                         && vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
+                           vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
     *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
@@ -723,8 +725,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     VkDescriptorImageInfo aoMaskInfo = {};
     if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE)
     {
-        aoMaskInfo.sampler     = vkRT.aoMaskSampler;
-        aoMaskInfo.imageView   = vkRT.aoMask[vk.currentFrame].view;
+        aoMaskInfo.sampler = vkRT.aoMaskSampler;
+        aoMaskInfo.imageView = vkRT.aoMask[vk.currentFrame].view;
         aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
     else
@@ -3342,6 +3344,30 @@ void VK_RB_DrawView(const void *data)
     {
         SDL_Delay(10); // yield so we don't spin at 100% CPU while iconified
         return;
+    }
+
+    // When RT shadows are toggled on or off, cached interactions may be missing
+    // stencil shadow volumes (skipped during creation when RT was on) or have
+    // stale ones (present when RT was off). Invalidate all interactions so they
+    // rebuild next frame with the correct shadow data for the new mode.
+    {
+        static bool s_lastRTShadows = false;
+        bool rtShadows = r_useRayTracing.GetBool() && r_rtShadows.GetBool();
+        if (rtShadows != s_lastRTShadows)
+        {
+            s_lastRTShadows = rtShadows;
+            if (tr.primaryWorld)
+            {
+                for (int i = 0; i < tr.primaryWorld->lightDefs.Num(); i++)
+                {
+                    idRenderLightLocal *ldef = tr.primaryWorld->lightDefs[i];
+                    if (!ldef)
+                        continue;
+                    for (idInteraction *inter = ldef->firstInteraction; inter != NULL; inter = inter->lightNext)
+                        inter->FreeSurfaces();
+                }
+            }
+        }
     }
 
     const drawSurfsCommand_t *cmd = (const drawSurfsCommand_t *)data;
