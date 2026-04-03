@@ -49,10 +49,10 @@ the Free Software Foundation, either version 3 of the License, or
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtTemporal("r_rtTemporal", "0", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtTemporal("r_rtTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
                     "Enable temporal EMA accumulation for AO (requires r_rtAO 1)");
 
-idCVar r_rtTemporalAlpha("r_rtTemporalAlpha", "0.1", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtTemporalAlpha("r_rtTemporalAlpha", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                          "EMA blend factor: 0=use only history, 1=use only current frame (reset). "
                          "Lower values are smoother but ghost more during movement.");
 
