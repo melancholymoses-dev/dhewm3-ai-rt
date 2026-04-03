@@ -26,6 +26,9 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     uint  frameIndex;           // for temporal jitter
     float rayBias;              // ray origin bias (world units)
     uint  rayCullMask;          // instance mask for traceRayEXT (0xFE excludes player body)
+    int   debugMode;            // 0=normal 1=biasDir.y 2=got-surface-normal 3=dot(biasDir,lightDir)
+    ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
+    ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -71,8 +74,12 @@ vec3 reconstructWorldPos( ivec2 coord, ivec2 size ) {
 // ---------------------------------------------------------------------------
 // Cosine-weighted hemisphere sample (not needed here; kept for RTAO reference)
 // For shadow rays we jitter within a cone around the light direction.
+//
+// phiOffset: per-pixel blue-noise phi rotation [0,1). Keeps world-anchored
+// seeds from making same-cell pixels identical, and gives low-discrepancy
+// frame-to-frame coverage when advanced by the golden ratio.
 // ---------------------------------------------------------------------------
-vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed ) {
+vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed, float phiOffset ) {
     if ( radius <= 0.0 || params.numSamples <= 1 ) return dir;
 
     float sinHalfAngle = clamp( radius / max( dist, 0.001 ), 0.0, 1.0 );
@@ -81,10 +88,12 @@ vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed ) {
     float r1 = randFloat( seed );
     float r2 = randFloat( seed + 1u );
 
-    // Sample a direction within the cone
+    // Sample a direction within the cone.
+    // phi is rotated by phiOffset so adjacent pixels (same world cell) sample
+    // different azimuthal directions — spreads error spatially (blue-noise-like).
     float cosTheta = mix( cosHalfAngle, 1.0, r1 );
     float sinTheta = sqrt( max( 0.0, 1.0 - cosTheta * cosTheta ) );
-    float phi      = r2 * 2.0 * 3.14159265;
+    float phi      = fract( r2 + phiOffset ) * 2.0 * 3.14159265;
 
     // Build local frame around `dir`
     vec3 up    = abs(dir.y) < 0.9 ? vec3(0,1,0) : vec3(1,0,0);
@@ -100,8 +109,10 @@ vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed ) {
 // main
 // ---------------------------------------------------------------------------
 void main() {
-    ivec2 coord = ivec2( gl_LaunchIDEXT.xy );
-    ivec2 size  = ivec2( gl_LaunchSizeEXT.xy );
+    // gl_LaunchIDEXT is (0,0)-(dispatchW-1,dispatchH-1) within the sub-rect.
+    // Add the scissor offset to get the actual screen pixel coordinates.
+    ivec2 coord = ivec2( gl_LaunchIDEXT.xy ) + params.scissorOffset;
+    ivec2 size  = params.screenSize;
 
     // Reconstruct world position
     vec3 worldPos = reconstructWorldPos( coord, size );
@@ -119,25 +130,141 @@ void main() {
 
     vec3 lightDir = toLight / dist;
 
-    // Offset origin slightly along the ray direction to avoid self-intersection.
-    // The rayBias uniform provides a runtime-tunable bias so problematic scenes/lights can be tuned.
-    float tMin    = clamp(params.rayBias, 0.01, 8.0);
-    const float tMax    = dist - tMin;
+    float tMin = clamp(params.rayBias, 0.01, 8.0);
+    float tMax = dist - tMin;
 
     if ( tMax <= 0.0 ) {
         imageStore( shadowMask, coord, vec4(1.0) );
         return;
     }
 
+    // ---------------------------------------------------------------------------
+    // Normal-based ray origin bias
+    //
+    // Biasing along the ray direction (toward the light) barely lifts the origin
+    // off surfaces that are nearly parallel to the light — causing them to
+    // immediately self-intersect and appear shadowed (the crosshatch artifact).
+    //
+    // Instead, reconstruct the surface normal from depth-buffer gradients and
+    // bias along that.  This lifts perpendicularly off the surface regardless of
+    // light angle.
+    //
+    // At depth discontinuities (the pixel's neighbours are on a different
+    // surface) the reconstructed normal is garbage, so fall back to lightDir.
+    // ---------------------------------------------------------------------------
+    // Camera world position recovered from invViewProj.
+    // In GL NDC the eye is at clip (0,0,-1,1) — the near plane centre.
+    // Moving the bias origin toward the camera is always a safe fallback:
+    // any surface visible in the depth buffer faces at least partly toward us.
+    vec4 camClip  = vec4( 0.0, 0.0, -1.0, 1.0 );
+    vec4 camWorld = params.invViewProj * camClip;
+    vec3 camPos   = camWorld.xyz / camWorld.w;
+    vec3 toCamera = normalize( camPos - worldPos ); // always points away from surface
+
+    // Reconstruct surface normal from depth-buffer gradients using central
+    // differences (more stable than forward differences on steep surfaces).
+    // Sample all four screen neighbours; use whichever pairs are on the same
+    // surface (small depth delta).  Fall back to the camera direction when
+    // the reconstruction is degenerate.
+    float depthC = texelFetch( depthSampler, coord,                 0 ).r;
+    float depthR = texelFetch( depthSampler, coord + ivec2( 1,  0), 0 ).r;
+    float depthL = texelFetch( depthSampler, coord + ivec2(-1,  0), 0 ).r;
+    float depthD = texelFetch( depthSampler, coord + ivec2( 0,  1), 0 ).r;
+    float depthU = texelFetch( depthSampler, coord + ivec2( 0, -1), 0 ).r;
+
+    // Build tangent vectors; prefer central differences, fall back to
+    // one-sided when the opposite neighbour is on a different surface.
+    const float kEdge = 0.01; // depth threshold — wider than before so steep
+                              // surfaces are not misclassified as edges
+    vec3 posR = reconstructWorldPos( coord + ivec2( 1,  0), size );
+    vec3 posL = reconstructWorldPos( coord + ivec2(-1,  0), size );
+    vec3 posD = reconstructWorldPos( coord + ivec2( 0,  1), size );
+    vec3 posU = reconstructWorldPos( coord + ivec2( 0, -1), size );
+
+    bool okR = abs(depthR - depthC) < kEdge;
+    bool okL = abs(depthL - depthC) < kEdge;
+    bool okD = abs(depthD - depthC) < kEdge;
+    bool okU = abs(depthU - depthC) < kEdge;
+
+    vec3 dX, dY;
+    if      ( okR && okL ) dX = posR - posL;          // central diff
+    else if ( okR )        dX = posR - worldPos;       // forward
+    else if ( okL )        dX = worldPos - posL;       // backward
+    else                   dX = vec3(0.0);             // no valid X neighbour
+
+    if      ( okD && okU ) dY = posD - posU;
+    else if ( okD )        dY = posD - worldPos;
+    else if ( okU )        dY = worldPos - posU;
+    else                   dY = vec3(0.0);
+
+    vec3  biasDir;
+    bool  gotSurfaceNormal;
+    vec3  crossed   = cross( dX, dY );
+    float crossLen  = length( crossed );
+    if ( crossLen > 1e-4 ) {
+        vec3 n = crossed / crossLen;
+        // Orient toward the light (surface lit side).
+        if ( dot(n, lightDir) < 0.0 ) n = -n;
+        biasDir          = n;
+        gotSurfaceNormal = true;
+    } else {
+        // Degenerate cross product — surface is edge-on or all neighbours are
+        // on different surfaces.  Camera direction is always safe (visible
+        // surfaces face the camera).
+        biasDir          = toCamera;
+        gotSurfaceNormal = false;
+    }
+
+    vec3 rayOrigin = worldPos + biasDir * tMin;
+
+    // ---------------------------------------------------------------------------
+    // Fix 1 — world-anchored seed
+    //   Seed from quantised world position so the same world point always gets
+    //   the same random sample regardless of where it projects on screen.
+    //   Camera movement no longer changes the seed → no temporal shimmer from
+    //   camera rotation.  Cell size 0.125 wu (factor 8) keeps the step smaller
+    //   than one pixel's projected footprint at typical game distances.
+    //
+    // Fix 2 — per-pixel blue-noise phi offset
+    //   Pixels that share a world cell (same wSeed) would otherwise fire
+    //   identical rays.  A screen-space golden-ratio offset rotates the
+    //   azimuthal angle of each pixel's cone sample independently.  Using the
+    //   golden ratio (0.618…) as the per-frame increment gives a
+    //   low-discrepancy sequence so successive frames cover the phi circle
+    //   evenly — making the temporal blur (or future TAA) maximally effective.
+    // ---------------------------------------------------------------------------
+
+    // Fix 1: world-space seed
+    ivec3 wCell   = ivec3( floor( worldPos * 8.0 ) );
+    uint  wSeed   = wang_hash( uint(wCell.x) * 2053u
+                  ^ wang_hash( uint(wCell.y) * 4099u
+                  ^ wang_hash( uint(wCell.z) * 8191u ) ) );
+    uint baseSeed = wang_hash( wSeed + params.frameIndex * 7919u );
+
+    // Fix 2: per-pixel phi rotation in [0,1)
+    // Screen-space hash (stable, no frameIndex) + golden-ratio frame advance.
+    float pixHash   = float( wang_hash( uint(coord.x) ^ wang_hash( uint(coord.y) ) ) )
+                    / 4294967296.0;
+    float phiOffset = fract( pixHash + float(params.frameIndex) * 0.6180339887 );
+
     // Accumulate shadow over multiple samples (soft shadows)
     float occluded = 0.0;
     int N = max( 1, params.numSamples );
-    uint baseSeed = wang_hash( uint(coord.x)
-                             + wang_hash( uint(coord.y) + params.frameIndex * 7919u ) );
 
     for ( int s = 0; s < N; s++ ) {
         uint seed = wang_hash( baseSeed + uint(s) * 1013u );
-        vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed );
+        vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed, phiOffset );
+
+        // Clamp jittered direction to the upper hemisphere relative to the
+        // surface normal.  For nearby lights the cone can be very wide (e.g.
+        // ±42° for dist=3, radius=2) and some sampled directions will point
+        // below the surface plane.  No origin bias prevents self-intersection
+        // when the ray direction itself aims into the surface.
+        // biasDir is the surface normal (or camera fallback) — always faces
+        // away from the surface toward the lit side.
+        if ( dot(rayDir, biasDir) < 0.01 ) {
+            rayDir = lightDir; // fall back to hard shadow direction for this sample
+        }
 
         // Initialize to 0.0 (shadowed). Opaque geometry bypasses the any-hit shader
         // via VK_GEOMETRY_OPAQUE_BIT_KHR so the payload stays 0.0 = shadowed.
@@ -152,7 +279,7 @@ void main() {
             0,      // SBT offset
             0,      // SBT stride
             0,      // miss index
-            worldPos + rayDir * tMin,
+            rayOrigin,
             0.0,
             rayDir,
             tMax,
@@ -162,5 +289,23 @@ void main() {
     }
 
     float shadow = 1.0 - (occluded / float(N));
+
+    // ---------------------------------------------------------------------------
+    // Debug visualisation (r_rtShadowDebugMode)
+    //   Writes a diagnostic value to the shadow mask instead of the real shadow.
+    //   1 = biasDir.y  (horizontal surface = 1.0, vertical wall = ~0.5, inverted = 0.0)
+    //   2 = gotSurfaceNormal  (white = reconstructed from depth, black = camera fallback)
+    //   3 = dot(biasDir, lightDir) mapped to [0,1]  (white = bias aligned with light)
+    // ---------------------------------------------------------------------------
+    if ( params.debugMode != 0 ) {
+        float dbg;
+        if      ( params.debugMode == 1 ) dbg = biasDir.y * 0.5 + 0.5;
+        else if ( params.debugMode == 2 ) dbg = gotSurfaceNormal ? 1.0 : 0.0;
+        else if ( params.debugMode == 3 ) dbg = dot( biasDir, lightDir ) * 0.5 + 0.5;
+        else                              dbg = shadow;
+        imageStore( shadowMask, coord, vec4(dbg) );
+        return;
+    }
+
     imageStore( shadowMask, coord, vec4(shadow) );
 }

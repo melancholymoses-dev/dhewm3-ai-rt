@@ -66,10 +66,20 @@ struct vkBLAS_t
     VkDeviceMemory *geomVertMems;
     VkBuffer *geomIdxBufs;
     VkDeviceMemory *geomIdxMems;
+    // Per-surface geometry sizes — used to validate reuse for BLAS update.
+    // NULL for GPU-cache-backed geometry (zero-copy path, no owned buffers).
+    VkDeviceSize *geomVertSizes;
+    VkDeviceSize *geomIdxSizes;
+    // Per-surface primitive counts — must match exactly for MODE_UPDATE to be valid.
+    uint32_t *geomPrimCounts;
     // Scratch buffer used during build (freed at destroy time).
     VkBuffer scratchBuf;
     VkDeviceMemory scratchMem;
     bool isValid;
+    // Set when the model BLAS cache owns this entry.
+    // VK_RT_DestroyBLAS is a no-op for cached BLASes; only the cache clear
+    // function frees them (after all in-flight references are gone).
+    bool cachedByModel;
 };
 
 // ---------------------------------------------------------------------------
@@ -171,7 +181,10 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 // Build a multi-geometry BLAS covering all non-translucent surfaces of a model.
 // Produces one TLAS instance per entity so shadow rays intersect every surface,
 // not just Surface(0).  Used by VK_RT_RebuildTLAS.
-vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd);
+// prevBlas: if non-NULL and geometry is compatible, performs an in-place update
+// (reuses geometry buffers and uses MODE_UPDATE) instead of a full rebuild.
+// Returns prevBlas on successful update, or a new vkBLAS_t on full rebuild.
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas = NULL);
 
 // Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
 void VK_RT_DrainBLASGarbage(void);
@@ -183,7 +196,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
 // this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
 // The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight);
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight, VkRect2D dispatchRect);
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);

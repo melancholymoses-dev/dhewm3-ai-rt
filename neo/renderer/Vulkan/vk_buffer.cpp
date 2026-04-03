@@ -82,8 +82,9 @@ void VK_UploadBuffer(VkBuffer dstBuffer, const void *data, VkDeviceSize size)
 
     VK_EndSingleTimeCommands(cmd);
 
-    vkDestroyBuffer(vk.device, staging, NULL);
-    vkFreeMemory(vk.device, stagingMem, NULL);
+    // Staging buffer must stay alive until the GPU copy completes.
+    // VK_FlushPendingUploads() will wait on the fence then free it.
+    VK_DeferStagingFree(staging, stagingMem);
 }
 
 // ---------------------------------------------------------------------------

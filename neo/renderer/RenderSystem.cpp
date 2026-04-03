@@ -1054,6 +1054,7 @@ void idRenderSystemLocal::CaptureRenderToFile(const char *fileName, bool fixAlph
 
     guiModel->EmitFullScreen();
     guiModel->Clear();
+
     R_IssueRenderCommands();
 
     qglReadBuffer(GL_BACK);

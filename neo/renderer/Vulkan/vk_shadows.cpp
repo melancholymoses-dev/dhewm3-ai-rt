@@ -31,14 +31,18 @@ the Free Software Foundation, either version 3 of the License, or
 
 struct ShadowParamsUBO
 {
-    float invViewProj[16]; // column-major 4x4
-    float lightOrigin[4];  // xyz = pos, w = radius
-    float lightFalloffRadius;
-    int numSamples;
-    uint32_t frameIndex;
-    float rayBias;
-    uint32_t rayCullMask; // instance mask for traceRayEXT (0xFE excludes player body)
-    float _pad[3];        // align to 16 bytes
+    float    invViewProj[16];  // column-major 4x4,  offset   0
+    float    lightOrigin[4];   // xyz = pos, w = radius, offset  64
+    float    lightFalloffRadius;                       // offset  80
+    int      numSamples;                               // offset  84
+    uint32_t frameIndex;                               // offset  88
+    float    rayBias;                                  // offset  92
+    uint32_t rayCullMask;  // 0xFE excludes player     // offset  96
+    int      debugMode;    // 0=normal 1..3=diag        // offset 100
+    int32_t  scissorOffsetX;  // dispatch rect origin X // offset 104
+    int32_t  scissorOffsetY;  // dispatch rect origin Y // offset 108
+    int32_t  screenWidth;     // full framebuffer width  // offset 112
+    int32_t  screenHeight;    // full framebuffer height // offset 116
 };
 
 static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -84,6 +88,11 @@ static idCVar r_vkRTDebugLightFilter(
 static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
+static idCVar r_rtShadowDebugMode(
+    "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "visualize RT shadow pass internals in the shadow mask: "
+    "0=normal, 1=biasDir.y (floor=white wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
+    "3=dot(biasDir,lightDir) mapped 0..1");
 
 extern idCVar r_vkRTLogCaptureReset;
 
@@ -508,7 +517,7 @@ static void VK_RT_InitBlurPipeline(void)
 // alloc/free and no vkQueueWaitIdle.
 // ---------------------------------------------------------------------------
 
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight)
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight, VkRect2D dispatchRect)
 {
     if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
         return;
@@ -522,9 +531,48 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     if (sm.image == VK_NULL_HANDLE)
         return;
 
+    // Respect the same no-shadow flags the stencil renderer uses.
+    // lightDef->parms.noShadows  — set per light entity (e.g. fill lights inside geometry)
+    // LightCastsShadows()        — set by the light material ("noShadows" keyword)
+    //
+    // IMPORTANT: we must NOT simply return — the lighting pass always samples the shadow
+    // mask for this light.  If we skip writing it the mask holds stale data from the
+    // previous light, causing wrong shadows to appear.  Clear to 1.0 (fully lit) instead.
+    const renderLight_t &lp = vLight->lightDef->parms;
+    if (lp.noShadows || !vLight->lightDef->lightShader->LightCastsShadows())
+    {
+        // barrier: wait for previous fragment-shader read of shadow mask
+        VkMemoryBarrier preClear = {};
+        preClear.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        preClear.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        preClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &preClear, 0, NULL, 0, NULL);
+
+        VkClearColorValue white = {};
+        white.float32[0] = 1.0f;
+        VkImageSubresourceRange range = {};
+        range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        range.levelCount = 1;
+        range.layerCount = 1;
+        vkCmdClearColorImage(cmd, sm.image, VK_IMAGE_LAYOUT_GENERAL, &white, 1, &range);
+
+        // barrier: make clear visible to the lighting fragment shader
+        VkMemoryBarrier postClear = {};
+        postClear.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        postClear.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        postClear.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 1, &postClear, 0, NULL, 0, NULL);
+        return;
+    }
+
     if (r_vkLogRT.GetInteger() >= 2)
     {
-        const renderLight_t &lp = vLight->lightDef->parms;
         common->Printf(
             "VK RT DISPATCH: frame=%u light=(%.1f,%.1f,%.1f) "
             "radius=(%.1f,%.1f,%.1f) falloff=%.1f samples=%d "
@@ -723,7 +771,12 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         {
             ubo.frameIndex = 0u;
         }
-        ubo.rayBias = r_rtShadowRayBias.GetFloat();
+        ubo.rayBias         = r_rtShadowRayBias.GetFloat();
+        ubo.debugMode       = r_rtShadowDebugMode.GetInteger();
+        ubo.scissorOffsetX  = (int32_t)dispatchRect.offset.x;
+        ubo.scissorOffsetY  = (int32_t)dispatchRect.offset.y;
+        ubo.screenWidth     = (int32_t)sm.width;
+        ubo.screenHeight    = (int32_t)sm.height;
 
         // Exclude player body from shadow rays when player is very close to the light.
         // Player body TLAS instances use mask 0x01; world geometry uses 0xFF.
@@ -764,14 +817,20 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 0, 1, &ds, 1,
                                 &uboOff);
 
+        const uint32_t dispatchW = dispatchRect.extent.width;
+        const uint32_t dispatchH = dispatchRect.extent.height;
+
         if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u\n", frameIdx, uboOff, sm.width, sm.height);
+            common->Printf("VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) bias=%.4f fIdx=%u samples=%d jitter=%d\n",
+                           frameIdx, uboOff, dispatchW, dispatchH,
+                           dispatchRect.offset.x, dispatchRect.offset.y,
+                           ubo.rayBias, ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
             fflush(NULL);
         }
 
-        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, sm.width,
-                          sm.height, 1);
+        vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion,
+                          dispatchW, dispatchH, 1);
     }
 
     // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---

@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3 Vulkan backend - graphics pipeline and descriptor set management.
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
@@ -18,6 +17,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "version.h"
+
+PFN_vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR = NULL;
 
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkShaderModule VK_LoadSPIRVFromMemory(const uint32_t *code, size_t codeSize);
@@ -109,6 +110,7 @@ static VkDescriptorSetLayout VK_CreateInteractionDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 8;
     info.pBindings = bindings;
 
@@ -128,6 +130,7 @@ static VkDescriptorSetLayout VK_CreateShadowDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 1;
     info.pBindings = &binding;
 
@@ -634,6 +637,7 @@ static VkDescriptorSetLayout VK_CreateGuiDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 2;
     info.pBindings = bindings;
 
@@ -734,7 +738,7 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     blendState.pAttachments = &colorBlend;
 
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
-                                    VK_DYNAMIC_STATE_CULL_MODE};
+                                   VK_DYNAMIC_STATE_CULL_MODE};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = 4;
@@ -1021,6 +1025,116 @@ static VkPipeline VK_CreateGuiPipeline(VkPipelineLayout layout, bool alphaBlend)
                                   VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA);
 }
 
+// Dedicated skybox pipeline (TG_SKYBOX_CUBE): samplerCube + per-vertex direction.
+// Uses the same descriptor layout as guiLayout:
+//   binding 0 = UBO, binding 1 = combined image sampler.
+static VkPipeline VK_CreateSkyboxPipeline(VkPipelineLayout layout)
+{
+    VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/skybox.vert.spv");
+    VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/skybox.frag.spv");
+    if (!vertModule || !fragModule)
+    {
+        common->Warning("VK: skybox shaders not found, skybox pipeline unavailable");
+        if (vertModule)
+            vkDestroyShaderModule(vk.device, vertModule, NULL);
+        if (fragModule)
+            vkDestroyShaderModule(vk.device, fragModule, NULL);
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription binding;
+    VkVertexInputAttributeDescription attrs[12];
+    uint32_t numAttrs = 0;
+    VK_GetInteractionVertexInput(&binding, attrs, &numAttrs);
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = numAttrs;
+    vertexInput.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.f, 1.f};
+    VkRect2D scissor = {{0, 0}, vk.swapchainExtent};
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.blendEnable = VK_FALSE;
+    colorBlend.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 1;
+    blendState.pAttachments = &colorBlend;
+
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 3;
+    dynamicState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &blendState;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = vk.renderPass;
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
+
+    vkDestroyShaderModule(vk.device, vertModule, NULL);
+    vkDestroyShaderModule(vk.device, fragModule, NULL);
+    return pipeline;
+}
+
 // Look up or create a GUI pipeline matching the given drawStateBits blend state.
 // depthTest=true is used for 3D world surfaces (GLS_DEPTHFUNC_ALWAYS not set);
 // depthTest=false for 2D GUI overlays (GLS_DEPTHFUNC_ALWAYS set, or explicit 2D call).
@@ -1143,6 +1257,7 @@ static VkDescriptorSetLayout VK_CreateFogDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 3;
     info.pBindings = bindings;
 
@@ -1387,6 +1502,7 @@ void VK_InitPipelines(void)
     }
     vkPipes.guiOpaquePipeline = VK_CreateGuiPipeline(vkPipes.guiLayout, false);
     vkPipes.guiAlphaPipeline = VK_CreateGuiPipeline(vkPipes.guiLayout, true);
+    vkPipes.skyboxPipeline = VK_CreateSkyboxPipeline(vkPipes.guiLayout);
 
     // --- Depth prepass pipelines (created after guiLayout is ready) ---
     vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
@@ -1414,37 +1530,24 @@ void VK_InitPipelines(void)
         vkPipes.fogLayout, "glprogs/glsl/blendlight.vert.spv", "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_EQUAL,
         VK_CULL_MODE_FRONT_BIT, VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
 
-    // --- Per-frame descriptor pools ---
-    // Reset at the start of each frame (after fence wait) so descriptor sets don't accumulate.
-    // Sized to hold one frame's worth of interaction + GUI descriptor sets.
-    for (int fi = 0; fi < VK_MAX_FRAMES_IN_FLIGHT; fi++)
-    {
-        VkDescriptorPoolSize poolSizes[2] = {};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = 4096;
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = 4096 * 8; // 7 interaction + 1 GUI per draw
-
-        VkDescriptorPoolCreateInfo poolInfo = {};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = 4096;
-        poolInfo.poolSizeCount = 2;
-        poolInfo.pPoolSizes = poolSizes;
-
-        VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkPipes.descPools[fi]));
-    }
+    // Load push descriptor function pointer (KHR extension, not in static lib).
+    pfn_vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)
+        vkGetDeviceProcAddr(vk.device, "vkCmdPushDescriptorSetKHR");
+    if (!pfn_vkCmdPushDescriptorSetKHR)
+        common->FatalError("VK: vkCmdPushDescriptorSetKHR not available — driver does not support VK_KHR_push_descriptor");
 
     vkPipes.isValid =
         (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipelineZFail != VK_NULL_HANDLE &&
          vkPipes.shadowPipelineZFailMirror != VK_NULL_HANDLE && vkPipes.shadowPipelineZPass != VK_NULL_HANDLE &&
          vkPipes.shadowPipelineZPassMirror != VK_NULL_HANDLE);
 
-    common->Printf(
-        "VK: Pipelines initialized (interaction=%s, shadow-zfail=%s/%s, shadow-zpass=%s/%s, depth=%s, gui=%s/%s)\n",
-        vkPipes.interactionPipeline ? "OK" : "FAIL", vkPipes.shadowPipelineZFail ? "OK" : "FAIL",
-        vkPipes.shadowPipelineZFailMirror ? "OK" : "FAIL", vkPipes.shadowPipelineZPass ? "OK" : "FAIL",
-        vkPipes.shadowPipelineZPassMirror ? "OK" : "FAIL", vkPipes.depthPipeline ? "OK" : "FAIL",
-        vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL");
+    common->Printf("VK: Pipelines initialized (interaction=%s, shadow-zfail=%s/%s, shadow-zpass=%s/%s, depth=%s, "
+                   "gui=%s/%s, skybox=%s)\n",
+                   vkPipes.interactionPipeline ? "OK" : "FAIL", vkPipes.shadowPipelineZFail ? "OK" : "FAIL",
+                   vkPipes.shadowPipelineZFailMirror ? "OK" : "FAIL", vkPipes.shadowPipelineZPass ? "OK" : "FAIL",
+                   vkPipes.shadowPipelineZPassMirror ? "OK" : "FAIL", vkPipes.depthPipeline ? "OK" : "FAIL",
+                   vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL",
+                   vkPipes.skyboxPipeline ? "OK" : "FAIL");
 }
 
 // ---------------------------------------------------------------------------
@@ -1456,11 +1559,6 @@ void VK_ShutdownPipelines(void)
     VK_DestroyBlendPipelineCache();
     VK_DestroyBlendlightPipelineCache();
 
-    for (int fi = 0; fi < VK_MAX_FRAMES_IN_FLIGHT; fi++)
-    {
-        if (vkPipes.descPools[fi])
-            vkDestroyDescriptorPool(vk.device, vkPipes.descPools[fi], NULL);
-    }
     if (vkPipes.interactionPipeline)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipeline, NULL);
     if (vkPipes.interactionPipelineStencilLEqual)
@@ -1493,6 +1591,8 @@ void VK_ShutdownPipelines(void)
         vkDestroyPipeline(vk.device, vkPipes.guiOpaquePipeline, NULL);
     if (vkPipes.guiAlphaPipeline)
         vkDestroyPipeline(vk.device, vkPipes.guiAlphaPipeline, NULL);
+    if (vkPipes.skyboxPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.skyboxPipeline, NULL);
     if (vkPipes.guiLayout)
         vkDestroyPipelineLayout(vk.device, vkPipes.guiLayout, NULL);
     if (vkPipes.guiDescLayout)

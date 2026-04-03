@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3 Vulkan backend - main render loop.
 
 Mirrors the structure of tr_backend.cpp / draw_common.cpp for the Vulkan path.
@@ -28,6 +27,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/Vulkan/vk_buffer.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
+#include <cmath>
 
 // Per-EndFrame state shared across multiple RC_DRAW_VIEW calls.
 static bool s_frameActive = false;
@@ -398,6 +398,25 @@ static void VK_BuildSurfMVP(const viewEntity_t *space, float mvpOut[16])
     }
 }
 
+// Compute camera origin in object-local coordinates from local->eye modelViewMatrix.
+// For rigid transforms, inverse(M) * [0,0,0,1] equals -R^T * t.
+static bool VK_ComputeLocalViewOriginFromModelView(const viewEntity_t *space, float outLocal[3])
+{
+    if (!space)
+        return false;
+
+    const float *mv = space->modelViewMatrix;
+    const float tx = mv[12];
+    const float ty = mv[13];
+    const float tz = mv[14];
+
+    outLocal[0] = -(tx * mv[0] + ty * mv[1] + tz * mv[2]);
+    outLocal[1] = -(tx * mv[4] + ty * mv[5] + tz * mv[6]);
+    outLocal[2] = -(tx * mv[8] + ty * mv[9] + tz * mv[10]);
+
+    return std::isfinite(outLocal[0]) && std::isfinite(outLocal[1]) && std::isfinite(outLocal[2]);
+}
+
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
 // + screenSize vec2 + useShadowMask int + pad = 356 bytes -> round to 384.
@@ -485,12 +504,12 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const char *matName = mat ? mat->GetName() : "<null>";
     const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
 
-    if (r_vkLogRT.GetInteger() >= 2)
+    /*if (r_vkLogRT.GetInteger() >= 2)
     {
         const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
         common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
                        geo ? geo->numIndexes : 0);
-    }
+    }*/
 
     vkUBORing_t &ring = uboRings[vk.currentFrame];
 
@@ -631,21 +650,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     float *lightScalePtr = (float *)(useSM + 1);
     *lightScalePtr = backEnd.overBright;
 
-    // Allocate descriptor set from the current frame's pool (pool is reset each frame)
-    VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
-    dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts = &vkPipes.interactionDescLayout;
-
-    VkDescriptorSet ds;
-    VkResult dsResult = vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds);
-    if (dsResult != VK_SUCCESS)
-    {
-        common->Warning("VK: descriptor set allocation failed");
-        return;
-    }
-
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
@@ -701,7 +705,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // Binding 0: UBO
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = ds;
     writes[0].dstBinding = 0;
     writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[0].descriptorCount = 1;
@@ -711,7 +714,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     for (int i = 0; i < 6; i++)
     {
         writes[1 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1 + i].dstSet = ds;
         writes[1 + i].dstBinding = (uint32_t)(1 + i);
         writes[1 + i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[1 + i].descriptorCount = 1;
@@ -720,16 +722,12 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // Binding 7: shadow mask
     writes[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[7].dstSet = ds;
     writes[7].dstBinding = 7;
     writes[7].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[7].descriptorCount = 1;
     writes[7].pImageInfo = &shadowMaskInfo;
 
-    vkUpdateDescriptorSets(vk.device, 8, writes, 0, NULL);
-
-    // Bind descriptor set
-    vkCmdBindDescriptorSets(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 1, &ds, 0, NULL);
+    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 8, writes);
 
     // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
@@ -913,12 +911,21 @@ struct VkGuiUBO
     float texGenQ[4];              // 16 bytes — TG_SCREEN Q plane (MVP row 3)
 }; // 176 bytes total
 
+struct VkSkyboxUBO
+{
+    float modelViewProjection[16]; // 64 bytes
+    float localViewOrigin[4];      // 16 bytes
+    float colorModulate[4];        // 16 bytes
+    float colorAdd[4];             // 16 bytes
+}; // 112 bytes total
+
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
     if (!backEnd.viewDef || backEnd.viewDef->numDrawSurfs == 0)
         return;
 
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
+    extern bool VK_Image_GetDescriptorInfoCube(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
     if (r_vkLogRT.GetInteger() >= 2)
@@ -932,10 +939,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     // Shader passes are not per-light — use the view scissor (full-screen for the main
     // view, mirror bounds for subviews).
     vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
-
-    // Sentinel for depth bias tracking — larger than any real bias value (which is
-    // r_offsetUnits * polygonOffset, typically up to a few thousand at most).
-    float activeShaderBias = 1000000.0f;
 
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
@@ -1061,11 +1064,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 stageBiasConstant = r_offsetUnits.GetFloat() * mat->GetPolygonOffset();
                 stageUsesPolyOffset = true;
             }
-            if (stageBiasConstant != activeShaderBias)
-            {
-                vkCmdSetDepthBias(cmd, stageBiasConstant, 0.0f, VK_GetPolyOffsetSlope(stageUsesPolyOffset));
-                activeShaderBias = stageBiasConstant;
-            }
+            // Always set per-stage depth bias. Binding pipelines that do not expose
+            // VK_DYNAMIC_STATE_DEPTH_BIAS can invalidate previous dynamic-bias state.
+            vkCmdSetDepthBias(cmd, stageBiasConstant, 0.0f, VK_GetPolyOffsetSlope(stageUsesPolyOffset));
 
             // Log verbose stage gating checks when translucent logging is enabled
             if (vkTransLog >= 2 && translucentLike && !regs[pStage->conditionRegister])
@@ -1102,7 +1103,37 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
 
             idImage *img = pStage->texture.image;
+            const bool isSkyboxStage = (pStage->texture.texgen == TG_SKYBOX_CUBE);
             VkDescriptorImageInfo imgInfo = {};
+
+            // Some drawSurfs used by sky stages can arrive without a valid space pointer.
+            // The legacy path tolerates this, but the cube path needs model-space transforms.
+            if (isSkyboxStage && !surf->space)
+            {
+                static idStrList s_loggedSkyboxNoSpace;
+                idStr matName(mat->GetName());
+                if (s_loggedSkyboxNoSpace.Find(matName) < 0)
+                {
+                    s_loggedSkyboxNoSpace.Append(matName);
+                    common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d (surf->space is null)\n",
+                                   mat->GetName(), stageIdx);
+                }
+                continue;
+            }
+
+            if (isSkyboxStage && vkPipes.skyboxPipeline == VK_NULL_HANDLE)
+            {
+                static idStrList s_loggedSkyboxPipelineMissing;
+                idStr matName(mat->GetName());
+                if (s_loggedSkyboxPipelineMissing.Find(matName) < 0)
+                {
+                    s_loggedSkyboxPipelineMissing.Append(matName);
+                    common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d (skybox pipeline "
+                                   "unavailable)\n",
+                                   mat->GetName(), stageIdx);
+                }
+                continue;
+            }
 
             // Log TG_SCREEN stages whether img is null or not — regardless of which
             // branch handles them below, we want to see if they're being processed.
@@ -1123,7 +1154,12 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
             if (!img)
             {
-                if (pStage->texture.cinematic)
+                if (isSkyboxStage)
+                {
+                    // Skybox stages require a real cubemap image.
+                    continue;
+                }
+                else if (pStage->texture.cinematic)
                 {
                     // Use the cinematic image uploaded by VK_RB_UpdateCinematics this frame.
                     VK_Image_GetCinematicDescriptorInfo(&imgInfo);
@@ -1192,21 +1228,40 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     continue;
                 }
             }
-            else if (!VK_Image_GetDescriptorInfo(img, &imgInfo))
+            else
             {
-                // Image not yet on GPU (e.g. cubemap pending upload).
-                // Log once per material to avoid per-frame spam, then use white fallback.
-                static idStrList s_loggedFallbacks;
-                idStr matName(mat->GetName());
-                if (s_loggedFallbacks.Find(matName) < 0)
+                const bool imageOk = isSkyboxStage ? VK_Image_GetDescriptorInfoCube(img, &imgInfo)
+                                                   : VK_Image_GetDescriptorInfo(img, &imgInfo);
+                if (!imageOk)
                 {
-                    s_loggedFallbacks.Append(matName);
-                    common->Printf(
-                        "VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' lighting=%d blend=0x%x\n",
-                        mat->GetName(), stageIdx, img->imgName.c_str(), (int)pStage->lighting,
-                        pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                    // Skybox path must bind a cube image view; skip if unavailable.
+                    if (isSkyboxStage)
+                    {
+                        static idStrList s_loggedSkyboxFallbacks;
+                        idStr matName(mat->GetName());
+                        if (s_loggedSkyboxFallbacks.Find(matName) < 0)
+                        {
+                            s_loggedSkyboxFallbacks.Append(matName);
+                            common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d img='%s' (cube "
+                                           "descriptor unavailable)\n",
+                                           mat->GetName(), stageIdx, img->imgName.c_str());
+                        }
+                        continue;
+                    }
+
+                    // Non-skybox path: use 1x1 fallback.
+                    static idStrList s_loggedFallbacks;
+                    idStr matName(mat->GetName());
+                    if (s_loggedFallbacks.Find(matName) < 0)
+                    {
+                        s_loggedFallbacks.Append(matName);
+                        common->Printf("VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' "
+                                       "lighting=%d blend=0x%x\n",
+                                       mat->GetName(), stageIdx, img->imgName.c_str(), (int)pStage->lighting,
+                                       pStage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
+                    }
+                    VK_Image_GetFallbackDescriptorInfo(&imgInfo);
                 }
-                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
             }
 
             // Build color modulate/add from stage vertex color mode
@@ -1271,146 +1326,170 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
             uint32_t uboOffset = VK_AllocUBO();
             uint8_t *uboPtr = (uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset;
-            VkGuiUBO *guiUbo = (VkGuiUBO *)uboPtr;
-            memcpy(guiUbo->modelViewProjection, mvp, 64);
-            memcpy(guiUbo->colorModulate, colorModulate, 16);
-            memcpy(guiUbo->colorAdd, colorAdd, 16);
-
-            // Texture coordinate transform & TG_SCREEN texgen
-            if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+            if (isSkyboxStage)
             {
-                // Projective screen-space texgen for mirrors / screen captures.
-                // Compute MVP using GL projection (column-major). Rows 0,1,3 are
-                // unaffected by the VK Z-remap so either projection works.
-                float texgenMat[16];
-                myGlMultMatrix(surf->space->modelViewMatrix, backEnd.viewDef->projectionMatrix, texgenMat);
+                VkSkyboxUBO *skyUbo = (VkSkyboxUBO *)uboPtr;
+                memcpy(skyUbo->modelViewProjection, mvp, 64);
+                memcpy(skyUbo->colorModulate, colorModulate, 16);
+                memcpy(skyUbo->colorAdd, colorAdd, 16);
 
-                // Extract MVP rows and apply 0.5 scale + 0.5 bias so that after
-                // the projective divide the texcoords map from NDC [-1,1] → [0,1].
-                //   Row 0 (S): texgenMat[c*4+0]
-                //   Row 1 (T): texgenMat[c*4+1]   (Y flipped for VK neg-viewport)
-                //   Row 3 (Q): texgenMat[c*4+3]
-                for (int c = 0; c < 4; c++)
+                float localViewOrigin[3];
+                if (VK_ComputeLocalViewOriginFromModelView(surf->space, localViewOrigin))
                 {
-                    float r0 = texgenMat[c * 4 + 0]; // row 0
-                    float r1 = texgenMat[c * 4 + 1]; // row 1
-                    float r3 = texgenMat[c * 4 + 3]; // row 3
-                    guiUbo->texGenS[c] = 0.5f * r0 + 0.5f * r3;
-                    guiUbo->texGenT[c] = -0.5f * r1 + 0.5f * r3; // neg = VK Y flip
-                    guiUbo->texGenQ[c] = r3;
+                    skyUbo->localViewOrigin[0] = localViewOrigin[0];
+                    skyUbo->localViewOrigin[1] = localViewOrigin[1];
+                    skyUbo->localViewOrigin[2] = localViewOrigin[2];
                 }
-
-                // Signal texgen mode via texMatrixS[2] (normally always 0).
-                guiUbo->texMatrixS[0] = 1.f;
-                guiUbo->texMatrixS[1] = 0.f;
-                guiUbo->texMatrixS[2] = 1.f; // <-- texgen flag
-                guiUbo->texMatrixS[3] = 0.f;
-                guiUbo->texMatrixT[0] = 0.f;
-                guiUbo->texMatrixT[1] = 1.f;
-                guiUbo->texMatrixT[2] = 0.f;
-                guiUbo->texMatrixT[3] = 0.f;
-
-                if (r_vkLogRT.GetInteger() >= 1)
+                else
                 {
-                    static int s_texgenLogCount = 0;
-                    if (s_texgenLogCount < 20)
+                    // Safety fallback: avoid unstable matrix transforms for problematic sky drawSurfs.
+                    const idVec3 &viewOrigin = tr.viewDef->renderView.vieworg;
+                    skyUbo->localViewOrigin[0] = viewOrigin[0];
+                    skyUbo->localViewOrigin[1] = viewOrigin[1];
+                    skyUbo->localViewOrigin[2] = viewOrigin[2];
+
+                    static idStrList s_loggedSkyboxLocalFallback;
+                    idStr matName(mat->GetName());
+                    if (s_loggedSkyboxLocalFallback.Find(matName) < 0)
                     {
-                        s_texgenLogCount++;
-                        common->Printf("VK TEXGEN: mat='%s' tg=%d "
-                                       "S=[%.3f %.3f %.3f %.3f] "
-                                       "T=[%.3f %.3f %.3f %.3f] "
-                                       "Q=[%.3f %.3f %.3f %.3f]\n",
-                                       mat->GetName(), (int)pStage->texture.texgen, guiUbo->texGenS[0],
-                                       guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3], guiUbo->texGenT[0],
-                                       guiUbo->texGenT[1], guiUbo->texGenT[2], guiUbo->texGenT[3], guiUbo->texGenQ[0],
-                                       guiUbo->texGenQ[1], guiUbo->texGenQ[2], guiUbo->texGenQ[3]);
+                        s_loggedSkyboxLocalFallback.Append(matName);
+                        common->Printf("VK DrawShaderPasses: skybox local-view fallback mat='%s' stage=%d "
+                                       "(invalid modelView-derived local origin)\n",
+                                       mat->GetName(), stageIdx);
                     }
                 }
-            }
-            else if (pStage->texture.hasMatrix)
-            {
-                const textureStage_t &tex = pStage->texture;
-                float s2 = regs[tex.matrix[0][2]];
-                if (s2 < -40.f || s2 > 40.f)
-                    s2 -= (float)(int)s2;
-                float t2 = regs[tex.matrix[1][2]];
-                if (t2 < -40.f || t2 > 40.f)
-                    t2 -= (float)(int)t2;
-                guiUbo->texMatrixS[0] = regs[tex.matrix[0][0]];
-                guiUbo->texMatrixS[1] = regs[tex.matrix[0][1]];
-                guiUbo->texMatrixS[2] = 0.f;
-                guiUbo->texMatrixS[3] = s2;
-                guiUbo->texMatrixT[0] = regs[tex.matrix[1][0]];
-                guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
-                guiUbo->texMatrixT[2] = 0.f;
-                guiUbo->texMatrixT[3] = t2;
-                memset(guiUbo->texGenS, 0, 16);
-                memset(guiUbo->texGenT, 0, 16);
-                memset(guiUbo->texGenQ, 0, 16);
+                skyUbo->localViewOrigin[3] = 1.0f;
             }
             else
             {
-                guiUbo->texMatrixS[0] = 1.f;
-                guiUbo->texMatrixS[1] = 0.f;
-                guiUbo->texMatrixS[2] = 0.f;
-                guiUbo->texMatrixS[3] = 0.f;
-                guiUbo->texMatrixT[0] = 0.f;
-                guiUbo->texMatrixT[1] = 1.f;
-                guiUbo->texMatrixT[2] = 0.f;
-                guiUbo->texMatrixT[3] = 0.f;
-                memset(guiUbo->texGenS, 0, 16);
-                memset(guiUbo->texGenT, 0, 16);
-                memset(guiUbo->texGenQ, 0, 16);
+                VkGuiUBO *guiUbo = (VkGuiUBO *)uboPtr;
+                memcpy(guiUbo->modelViewProjection, mvp, 64);
+                memcpy(guiUbo->colorModulate, colorModulate, 16);
+                memcpy(guiUbo->colorAdd, colorAdd, 16);
+
+                // Texture coordinate transform & TG_SCREEN texgen
+                if (pStage->texture.texgen == TG_SCREEN || pStage->texture.texgen == TG_SCREEN2)
+                {
+                    // Projective screen-space texgen for mirrors / screen captures.
+                    // Compute MVP using GL projection (column-major). Rows 0,1,3 are
+                    // unaffected by the VK Z-remap so either projection works.
+                    float texgenMat[16];
+                    myGlMultMatrix(surf->space->modelViewMatrix, backEnd.viewDef->projectionMatrix, texgenMat);
+
+                    // Extract MVP rows and apply 0.5 scale + 0.5 bias so that after
+                    // the projective divide the texcoords map from NDC [-1,1] → [0,1].
+                    //   Row 0 (S): texgenMat[c*4+0]
+                    //   Row 1 (T): texgenMat[c*4+1]   (Y flipped for VK neg-viewport)
+                    //   Row 3 (Q): texgenMat[c*4+3]
+                    for (int c = 0; c < 4; c++)
+                    {
+                        float r0 = texgenMat[c * 4 + 0]; // row 0
+                        float r1 = texgenMat[c * 4 + 1]; // row 1
+                        float r3 = texgenMat[c * 4 + 3]; // row 3
+                        guiUbo->texGenS[c] = 0.5f * r0 + 0.5f * r3;
+                        guiUbo->texGenT[c] = -0.5f * r1 + 0.5f * r3; // neg = VK Y flip
+                        guiUbo->texGenQ[c] = r3;
+                    }
+
+                    // Signal texgen mode via texMatrixS[2] (normally always 0).
+                    guiUbo->texMatrixS[0] = 1.f;
+                    guiUbo->texMatrixS[1] = 0.f;
+                    guiUbo->texMatrixS[2] = 1.f; // <-- texgen flag
+                    guiUbo->texMatrixS[3] = 0.f;
+                    guiUbo->texMatrixT[0] = 0.f;
+                    guiUbo->texMatrixT[1] = 1.f;
+                    guiUbo->texMatrixT[2] = 0.f;
+                    guiUbo->texMatrixT[3] = 0.f;
+
+                    if (r_vkLogRT.GetInteger() >= 1)
+                    {
+                        static int s_texgenLogCount = 0;
+                        if (s_texgenLogCount < 20)
+                        {
+                            s_texgenLogCount++;
+                            common->Printf("VK TEXGEN: mat='%s' tg=%d "
+                                           "S=[%.3f %.3f %.3f %.3f] "
+                                           "T=[%.3f %.3f %.3f %.3f] "
+                                           "Q=[%.3f %.3f %.3f %.3f]\n",
+                                           mat->GetName(), (int)pStage->texture.texgen, guiUbo->texGenS[0],
+                                           guiUbo->texGenS[1], guiUbo->texGenS[2], guiUbo->texGenS[3],
+                                           guiUbo->texGenT[0], guiUbo->texGenT[1], guiUbo->texGenT[2],
+                                           guiUbo->texGenT[3], guiUbo->texGenQ[0], guiUbo->texGenQ[1],
+                                           guiUbo->texGenQ[2], guiUbo->texGenQ[3]);
+                        }
+                    }
+                }
+                else if (pStage->texture.hasMatrix)
+                {
+                    const textureStage_t &tex = pStage->texture;
+                    float s2 = regs[tex.matrix[0][2]];
+                    if (s2 < -40.f || s2 > 40.f)
+                        s2 -= (float)(int)s2;
+                    float t2 = regs[tex.matrix[1][2]];
+                    if (t2 < -40.f || t2 > 40.f)
+                        t2 -= (float)(int)t2;
+                    guiUbo->texMatrixS[0] = regs[tex.matrix[0][0]];
+                    guiUbo->texMatrixS[1] = regs[tex.matrix[0][1]];
+                    guiUbo->texMatrixS[2] = 0.f;
+                    guiUbo->texMatrixS[3] = s2;
+                    guiUbo->texMatrixT[0] = regs[tex.matrix[1][0]];
+                    guiUbo->texMatrixT[1] = regs[tex.matrix[1][1]];
+                    guiUbo->texMatrixT[2] = 0.f;
+                    guiUbo->texMatrixT[3] = t2;
+                    memset(guiUbo->texGenS, 0, 16);
+                    memset(guiUbo->texGenT, 0, 16);
+                    memset(guiUbo->texGenQ, 0, 16);
+                }
+                else
+                {
+                    guiUbo->texMatrixS[0] = 1.f;
+                    guiUbo->texMatrixS[1] = 0.f;
+                    guiUbo->texMatrixS[2] = 0.f;
+                    guiUbo->texMatrixS[3] = 0.f;
+                    guiUbo->texMatrixT[0] = 0.f;
+                    guiUbo->texMatrixT[1] = 1.f;
+                    guiUbo->texMatrixT[2] = 0.f;
+                    guiUbo->texMatrixT[3] = 0.f;
+                    memset(guiUbo->texGenS, 0, 16);
+                    memset(guiUbo->texGenT, 0, 16);
+                    memset(guiUbo->texGenQ, 0, 16);
+                }
             }
-
-            // Allocate GUI descriptor set
-            VkDescriptorSetAllocateInfo dsAlloc = {};
-            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
-            dsAlloc.descriptorSetCount = 1;
-            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
-
-            VkDescriptorSet ds;
-            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-                continue;
 
             VkDescriptorBufferInfo bufInfo = {};
             bufInfo.buffer = uboRings[vk.currentFrame].buffer;
             bufInfo.offset = uboOffset;
-            bufInfo.range = sizeof(VkGuiUBO);
+            bufInfo.range = isSkyboxStage ? sizeof(VkSkyboxUBO) : sizeof(VkGuiUBO);
 
             VkWriteDescriptorSet writes[2] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = ds;
             writes[0].dstBinding = 0;
             writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[0].descriptorCount = 1;
             writes[0].pBufferInfo = &bufInfo;
 
             writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet = ds;
             writes[1].dstBinding = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[1].descriptorCount = 1;
             writes[1].pImageInfo = &imgInfo;
-
-            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
             // Select (or lazily create) a pipeline matching the blend state.
             // 3D world surfaces (GLS_DEPTHFUNC_ALWAYS not set) need depth testing so
             // they respect the depth prepass and don't render through occluders or from
             // behind the camera.  2D GUI surfaces (GLS_DEPTHFUNC_ALWAYS) skip depth.
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
-            const bool needDepth = !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
+            const bool needDepth = isSkyboxStage ? true : !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
-            if (r_vkLogRT.GetInteger() >= 2)
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            if (isSkyboxStage)
             {
-                const uint32_t blendBits = (uint32_t)(drawBitsOverride & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
-                common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
-                               mat->GetName(), stageIdx, drawBitsOverride, blendBits, (int)needDepth);
+                pipeline = vkPipes.skyboxPipeline;
             }
-
-            VkPipeline pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
+            else
+            {
+                pipeline = VK_GetOrCreateGuiBlendPipeline(drawBitsOverride, needDepth);
+            }
 
             // Log translucent material pipeline binding
             if (vkTransLog >= 2 && translucentLike)
@@ -1427,7 +1506,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             // Match GL per-material cull behavior for 3D shader passes.
             // Only set dynamic cull mode on depth-tested (3D) pipelines — 2D GUI
             // pipelines are created without VK_DYNAMIC_STATE_CULL_MODE.
-            if (needDepth)
+            if (isSkyboxStage || needDepth)
             {
                 VkCullModeFlags shaderCull = VK_CULL_MODE_BACK_BIT;
                 if (mat->GetCullType() == CT_TWO_SIDED)
@@ -1440,7 +1519,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 vkCmdSetCullMode(cmd, shaderCull);
             }
 
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 2, writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
@@ -1714,16 +1793,6 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             memset(ubo->texGenT, 0, 16);
             memset(ubo->texGenQ, 0, 16);
 
-            VkDescriptorSetAllocateInfo dsAlloc = {};
-            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
-            dsAlloc.descriptorSetCount = 1;
-            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
-
-            VkDescriptorSet ds;
-            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-                return;
-
             VkDescriptorBufferInfo bufInfo = {};
             bufInfo.buffer = uboRings[vk.currentFrame].buffer;
             bufInfo.offset = uboOffset;
@@ -1731,18 +1800,15 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
             VkWriteDescriptorSet writes[2] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = ds;
             writes[0].dstBinding = 0;
             writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[0].descriptorCount = 1;
             writes[0].pBufferInfo = &bufInfo;
             writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet = ds;
             writes[1].dstBinding = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[1].descriptorCount = 1;
             writes[1].pImageInfo = &imgInfo;
-            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
             VkPipeline pipe = useClipPipeline ? vkPipes.depthClipPipeline : vkPipes.depthPipeline;
             if (pipe != activePipeline)
@@ -1750,7 +1816,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
                 activePipeline = pipe;
             }
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 2, writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
@@ -1777,16 +1843,6 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             memset(ubo->texGenT, 0, 16);
             memset(ubo->texGenQ, 0, 16);
 
-            VkDescriptorSetAllocateInfo dsAlloc = {};
-            dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
-            dsAlloc.descriptorSetCount = 1;
-            dsAlloc.pSetLayouts = &vkPipes.guiDescLayout;
-
-            VkDescriptorSet ds;
-            if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-                return;
-
             VkDescriptorImageInfo imgInfo = {};
             VK_Image_GetFallbackDescriptorInfo(&imgInfo);
 
@@ -1797,18 +1853,15 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
             VkWriteDescriptorSet writes[2] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[0].dstSet = ds;
             writes[0].dstBinding = 0;
             writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[0].descriptorCount = 1;
             writes[0].pBufferInfo = &bufInfo;
             writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[1].dstSet = ds;
             writes[1].dstBinding = 1;
             writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             writes[1].descriptorCount = 1;
             writes[1].pImageInfo = &imgInfo;
-            vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
 
             // Depth EQUAL confines black-out to surfaces that won the depth prepass.
             VkPipeline pipe = VK_GetOrCreateGuiBlendPipeline(GLS_DEPTHFUNC_EQUAL, true);
@@ -1817,7 +1870,7 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
                 activePipeline = pipe;
             }
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 1, &ds, 0, NULL);
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.guiLayout, 0, 2, writes);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
@@ -2367,25 +2420,17 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     if (!haveVerts)
         return VK_NULL_HANDLE;
 
-    // Index data: if we forced CPU shadow vertices, keep indices on the same source
-    // (CPU) for consistency. Otherwise prefer resident index cache.
+    // Index data: use CPU upload for shadow indexes.
+    // This matches the stable pre-optimization Vulkan behavior and avoids
+    // cache/source thrash on dynamic shadow geometry.
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
-    VkBuffer idxBuf = VK_NULL_HANDLE;
-    VkDeviceSize idxOffset = 0;
-    if (!forceCpuShadowUpload && VK_VertexCache_GetBuffer(tri->indexCache, &idxBuf, &idxOffset))
-    {
-        // Use resident cache buffer.
-    }
-    else
-    {
-        VkDeviceSize idxSize = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
-        idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
-        if (idxOffset == VK_WHOLE_SIZE)
-            return VK_NULL_HANDLE;
-        memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
-        idxBuf = dataRings[vk.currentFrame].buffer;
-        usingCpuIdx = true;
-    }
+    VkDeviceSize idxSize = (VkDeviceSize)numDrawIndexes * sizeof(glIndex_t);
+    VkDeviceSize idxOffset = VK_AllocDataRing(idxSize, sizeof(glIndex_t));
+    if (idxOffset == VK_WHOLE_SIZE)
+        return VK_NULL_HANDLE;
+    memcpy((byte *)dataRings[vk.currentFrame].mapped + idxOffset, tri->indexes, (size_t)idxSize);
+    VkBuffer idxBuf = dataRings[vk.currentFrame].buffer;
+    usingCpuIdx = true;
 
     // Sampled index-content hash: catches index mutation even when draw counts stay constant.
     uint32_t sampledIndexHash = 2166136261u;
@@ -2500,17 +2545,6 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
     ubo->lightOrigin[3] = 0.f;
     memcpy(ubo->mvp, mvp, 64);
 
-    // Descriptor set (shadowDescLayout: binding 0 = UBO only)
-    VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
-    dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts = &vkPipes.shadowDescLayout;
-
-    VkDescriptorSet ds;
-    if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-        return VK_NULL_HANDLE;
-
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = uboRings[vk.currentFrame].buffer;
     bufInfo.offset = uboOffset;
@@ -2518,14 +2552,12 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
     VkWriteDescriptorSet write = {};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = ds;
     write.dstBinding = 0;
     write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write.descriptorCount = 1;
     write.pBufferInfo = &bufInfo;
-    vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowLayout, 0, 1, &ds, 0, NULL);
+    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.shadowLayout, 0, 1, &write);
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
     vkCmdBindIndexBuffer(cmd, idxBuf, idxOffset, idxType);
 
@@ -2753,7 +2785,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         if (VK_RTShadowsEnabled())
         {
             vkCmdEndRenderPass(cmd);
-            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight);
+            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor);
             VkRenderPassBeginInfo rpResume = {};
             rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rpResume.renderPass = vk.renderPassResume;
@@ -2803,14 +2835,6 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor =
             useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
-        if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
-        {
-            common->Printf("VK STENCIL[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) fullShadow=%d\n", lightIdx,
-                           lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                           (unsigned int)lightScissor.extent.height, shadowScissor.offset.x, shadowScissor.offset.y,
-                           (unsigned int)shadowScissor.extent.width, (unsigned int)shadowScissor.extent.height,
-                           useFullShadowScissor ? 1 : 0);
-        }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -2959,17 +2983,6 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf, co
     uint32_t uboOffset = VK_AllocUBO();
     memcpy((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset, uboData, sizeof(VkFogUBO));
 
-    // Descriptor set
-    VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkPipes.descPools[vk.currentFrame];
-    dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts = &vkPipes.fogDescLayout;
-
-    VkDescriptorSet ds;
-    if (vkAllocateDescriptorSets(vk.device, &dsAlloc, &ds) != VK_SUCCESS)
-        return;
-
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = uboRings[vk.currentFrame].buffer;
     bufInfo.offset = uboOffset;
@@ -2983,29 +2996,24 @@ static void VK_RB_DrawFogSurface(VkCommandBuffer cmd, const drawSurf_t *surf, co
 
     VkWriteDescriptorSet writes[3] = {};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = ds;
     writes[0].dstBinding = 0;
     writes[0].descriptorCount = 1;
     writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[0].pBufferInfo = &bufInfo;
 
     writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = ds;
     writes[1].dstBinding = 1;
     writes[1].descriptorCount = 1;
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[1].pImageInfo = &imgInfo0;
 
     writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet = ds;
     writes[2].dstBinding = 2;
     writes[2].descriptorCount = 1;
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[2].pImageInfo = &imgInfo1;
 
-    vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
-    // fog/blendlight UBO is a regular uniform buffer; offset is set in VkDescriptorBufferInfo.
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogLayout, 0, 1, &ds, 0, NULL);
+    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.fogLayout, 0, 3, writes);
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
@@ -3377,10 +3385,14 @@ void VK_RB_DrawView(const void *data)
         if (vk.rayTracingSupported)
             VK_RT_DrainBLASGarbage();
 
+        // Flush any texture/buffer uploads queued since the last frame.
+        // Submits one command buffer + one fence wait, replacing the previous
+        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
+        VK_FlushPendingUploads();
+
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
         dataRings[vk.currentFrame].offset = 0;
-        vkResetDescriptorPool(vk.device, vkPipes.descPools[vk.currentFrame], 0);
 
         // Begin command buffer
         VkCommandBuffer cmdBuf = vk.commandBuffers[vk.currentFrame];
@@ -4021,6 +4033,7 @@ void VKimp_PreShutdown(void)
 {
     if (!vk.isInitialized)
         return;
+    VK_ShutdownUploadBatch(); // flush + free any pending uploads before device idle
     vkDeviceWaitIdle(vk.device);
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {

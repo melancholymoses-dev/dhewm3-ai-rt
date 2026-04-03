@@ -138,6 +138,7 @@ struct vkPipelines_t
     VkPipelineLayout guiLayout;
     VkPipeline guiOpaquePipeline; // blend disabled (opaque stages)
     VkPipeline guiAlphaPipeline;  // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
+    VkPipeline skyboxPipeline;    // samplerCube skybox path (TG_SKYBOX_CUBE)
 
     // Fog light pipeline (FogAllLights pass)
     // Shared descriptor layout: binding0=UBO, binding1=samp0, binding2=samp1
@@ -147,13 +148,19 @@ struct vkPipelines_t
     VkPipeline fogFrustumPipeline; // depth LESS,  SRC_ALPHA/ONE_MINUS_SRC_ALPHA, back-cull (fog cap)
     VkPipeline blendlightPipeline; // depth EQUAL, DST_COLOR/ZERO (modulate) — most common blend light
 
-    // Per-frame descriptor pools (reset each frame after fence wait)
-    VkDescriptorPool descPools[VK_MAX_FRAMES_IN_FLIGHT];
-
     bool isValid;
 };
 
 extern vkPipelines_t vkPipes;
+
+// ---------------------------------------------------------------------------
+// Push descriptor function pointer
+// Loaded at device creation time in VK_InitPipelines.
+// Used instead of vkAllocateDescriptorSets+vkUpdateDescriptorSets per draw.
+// ---------------------------------------------------------------------------
+
+extern PFN_vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR;
+#define vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR
 
 // ---------------------------------------------------------------------------
 // Buffer helper — defined in vk_buffer.cpp
@@ -180,11 +187,20 @@ static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlag
 }
 
 // ---------------------------------------------------------------------------
-// Single-shot command buffer helper
+// Batched upload helpers
+//
+// VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands accumulate all upload
+// commands into one command buffer per batch.  VK_EndSingleTimeCommands is a
+// no-op; call VK_FlushPendingUploads() once at frame start to submit the
+// batch with a single fence wait.  Register staging buffers that must stay
+// alive until the flush via VK_DeferStagingFree().
 // ---------------------------------------------------------------------------
 
 VkCommandBuffer VK_BeginSingleTimeCommands(void);
-void VK_EndSingleTimeCommands(VkCommandBuffer cmd);
+void VK_EndSingleTimeCommands(VkCommandBuffer cmd); // no-op; kept for call-site compatibility
+void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem);
+void VK_FlushPendingUploads(void);
+void VK_ShutdownUploadBatch(void);
 
 // ---------------------------------------------------------------------------
 // Image layout transition helper
