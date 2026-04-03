@@ -661,6 +661,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
     extern idCVar r_rtAO;
+    extern idCVar r_rtTemporal;
     int *useAOPtr = useSM + 1;
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
                            vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
@@ -721,17 +722,27 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         VK_Image_GetFallbackDescriptorInfo(&shadowMaskInfo);
     }
 
-    // Binding 8: AO mask
+    // Binding 8: AO mask (or temporal history when temporal accumulation is active)
+    // When temporal EMA is enabled, the history image holds the accumulated blended result
+    // and is what should be sampled in the interaction shader.  The raw aoMask is intermediate.
     VkDescriptorImageInfo aoMaskInfo = {};
-    if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE)
     {
-        aoMaskInfo.sampler = vkRT.aoMaskSampler;
-        aoMaskInfo.imageView = vkRT.aoMask[vk.currentFrame].view;
-        aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    }
-    else
-    {
-        VK_Image_GetFallbackDescriptorInfo(&aoMaskInfo);
+        const int frameIdx = vk.currentFrame;
+        const bool useHistory = r_rtTemporal.GetBool() &&
+                                vkRT.aoHistory[frameIdx].image != VK_NULL_HANDLE &&
+                                vkRT.aoHistoryValid[frameIdx];
+        if (vk.rayTracingSupported && vkRT.isInitialized &&
+            (useHistory ? vkRT.aoHistory[frameIdx].image : vkRT.aoMask[frameIdx].image) != VK_NULL_HANDLE)
+        {
+            aoMaskInfo.sampler     = vkRT.aoMaskSampler;
+            aoMaskInfo.imageView   = useHistory ? vkRT.aoHistory[frameIdx].view
+                                                : vkRT.aoMask[frameIdx].view;
+            aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+        else
+        {
+            VK_Image_GetFallbackDescriptorInfo(&aoMaskInfo);
+        }
     }
 
     VkWriteDescriptorSet writes[9] = {};

@@ -413,6 +413,8 @@ void VK_RT_InitAO(void)
 {
     VK_RT_InitAOPipeline();
     VK_RT_ResizeAOMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    // Temporal history images and EMA pipeline (Step 5.2)
+    VK_RT_InitTemporal();
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +634,9 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: traceRaysKHR recorded\n");
 
-    // --- Barrier: AO write → fragment shader read ---
+    // --- Barrier: AO write → fragment shader read (and compute when temporal is active) ---
+    // Include COMPUTE_SHADER in the dst stage so the temporal resolve pass (if enabled)
+    // can read aoMask[] without an additional barrier.
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType          = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -640,7 +644,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         memBarrier.dstAccessMask  = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cmd,
             VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
@@ -668,4 +672,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: dispatch complete\n");
+
+    // --- Temporal EMA resolve (Step 5.2) ---
+    // Called after depth is restored so it's ready for the render pass that follows.
+    // The temporal pass uses only the AO images (not depth), so ordering with the
+    // depth restore is not important for correctness.
+    VK_RT_DispatchTemporalResolveAO(cmd, viewDef);
 }

@@ -1446,6 +1446,35 @@ void VK_RT_Shutdown(void)
     if (vkRT.blurDescPool != VK_NULL_HANDLE)
         vkDestroyDescriptorPool(vk.device, vkRT.blurDescPool, NULL);
 
+    // AO mask images
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkAOMask_t &ao = vkRT.aoMask[i];
+        if (ao.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, ao.view,   NULL); ao.view   = VK_NULL_HANDLE; }
+        if (ao.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, ao.image,  NULL); ao.image  = VK_NULL_HANDLE; }
+        if (ao.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, ao.memory, NULL); ao.memory = VK_NULL_HANDLE; }
+    }
+
+    // AO pipeline + SBT
+    if (vkRT.aoPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(vk.device, vkRT.aoPipeline, NULL);
+    if (vkRT.aoPipelineLayout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(vk.device, vkRT.aoPipelineLayout, NULL);
+    if (vkRT.aoDescLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.aoDescLayout, NULL);
+    if (vkRT.aoDescPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(vk.device, vkRT.aoDescPool, NULL);
+    if (vkRT.sbtAOBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(vk.device, vkRT.sbtAOBuffer, NULL);
+        vkFreeMemory(vk.device, vkRT.sbtAOMemory, NULL);
+    }
+    if (vkRT.aoMaskSampler != VK_NULL_HANDLE)
+        vkDestroySampler(vk.device, vkRT.aoMaskSampler, NULL);
+
+    // Temporal resolve pipeline + history images
+    VK_RT_ShutdownTemporal();
+
     memset(&vkRT, 0, sizeof(vkRT));
 }
 
