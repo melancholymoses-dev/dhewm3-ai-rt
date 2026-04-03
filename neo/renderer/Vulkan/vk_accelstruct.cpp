@@ -644,7 +644,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             const srfTriangles_t *geo = validSurfs[i].geo;
             if (prevBlas->geomPrimCounts[i] != (uint32_t)(geo->numIndexes / 3) ||
                 prevBlas->geomVertSizes[i] != (VkDeviceSize)geo->numVerts * sizeof(idDrawVert) ||
-                prevBlas->geomVertMems[i] == VK_NULL_HANDLE)
+                prevBlas->geomVertMems[i] == VK_NULL_HANDLE ||
+                prevBlas->geomIdxMems[i] == VK_NULL_HANDLE ||
+                prevBlas->geomIdxSizes[i] != (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t))
             {
                 compatible = false;
             }
@@ -660,10 +662,17 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                 const void *cpuVerts = geo->verts
                                            ? (const void *)geo->verts
                                            : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
+                const void *cpuIdx = geo->indexes
+                                         ? (const void *)geo->indexes
+                                         : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
                 void *ptr;
                 VK_CHECK(vkMapMemory(vk.device, prevBlas->geomVertMems[i], 0, prevBlas->geomVertSizes[i], 0, &ptr));
                 memcpy(ptr, cpuVerts, (size_t)prevBlas->geomVertSizes[i]);
                 vkUnmapMemory(vk.device, prevBlas->geomVertMems[i]);
+
+                VK_CHECK(vkMapMemory(vk.device, prevBlas->geomIdxMems[i], 0, prevBlas->geomIdxSizes[i], 0, &ptr));
+                memcpy(ptr, cpuIdx, (size_t)prevBlas->geomIdxSizes[i]);
+                vkUnmapMemory(vk.device, prevBlas->geomIdxMems[i]);
 
                 VkAccelerationStructureGeometryTrianglesDataKHR triData = {};
                 triData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
