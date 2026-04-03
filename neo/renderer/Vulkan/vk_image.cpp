@@ -679,9 +679,8 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
 
     VK_EndSingleTimeCommands(cmd);
 
-    // Free staging buffer
-    vkDestroyBuffer(vk.device, stagingBuf, NULL);
-    vkFreeMemory(vk.device, stagingMem, NULL);
+    // Staging buffer must stay alive until the GPU copy completes.
+    VK_DeferStagingFree(stagingBuf, stagingMem);
 
     // --- VkImageView ---
     VkImageViewCreateInfo viewInfo = {};
@@ -901,8 +900,8 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 
     VK_EndSingleTimeCommands(cmd);
 
-    vkDestroyBuffer(vk.device, stagingBuf, NULL);
-    vkFreeMemory(vk.device, stagingMem, NULL);
+    // Staging buffer must stay alive until the GPU copy completes.
+    VK_DeferStagingFree(stagingBuf, stagingMem);
 
     // --- Cube view (for samplerCube binding) ---
     VkImageViewCreateInfo viewInfo = {};
