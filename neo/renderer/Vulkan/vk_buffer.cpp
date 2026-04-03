@@ -134,7 +134,9 @@ static void VK_DestroyBufferData(vkBufferData_t *bd)
 void VK_Buffer_DrainGarbage(uint32_t frameIdx)
 {
     for (int i = 0; i < s_bufferGarbageCount[frameIdx]; i++)
+    {
         VK_DestroyBufferData(s_bufferGarbage[frameIdx][i]);
+    }
     s_bufferGarbageCount[frameIdx] = 0;
 }
 
@@ -178,9 +180,12 @@ void VK_VertexCache_Free(vertCache_t *block)
     if (!bd)
         return;
 
-    // Defer destruction until the frame fence has fired for this slot,
-    // avoiding a full GPU stall on every buffer free during map/model unloads.
-    uint32_t frameIdx = vk.currentFrame;
+    // Defer destruction until the frame fence has fired for the slot that last
+    // rendered with this buffer. vk.currentFrame is already incremented after
+    // submit, so the slot that just rendered is (currentFrame - 1). Queuing
+    // into that slot means the drain waits for its fence before destroying,
+    // which covers the command buffer that referenced this buffer.
+    uint32_t frameIdx = (vk.currentFrame + VK_MAX_FRAMES_IN_FLIGHT - 1) % VK_MAX_FRAMES_IN_FLIGHT;
     if (s_bufferGarbageCount[frameIdx] < VK_BUFFER_GARBAGE_MAX)
     {
         s_bufferGarbage[frameIdx][s_bufferGarbageCount[frameIdx]++] = bd;

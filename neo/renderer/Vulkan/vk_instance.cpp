@@ -299,7 +299,7 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.features.samplerAnisotropy = VK_TRUE;
-    features2.features.depthClamp       = supportedFeatures.depthClamp; // enable if available, not currently required
+    features2.features.depthClamp = supportedFeatures.depthClamp; // enable if available, not currently required
 
     // Extension list: base + optional RT extensions
     const char **exts;
@@ -416,13 +416,17 @@ static void VKimp_CreateSyncObjects(void)
 // (one per texture/buffer upload) with a single wait at frame start.
 // ---------------------------------------------------------------------------
 
-static VkCommandBuffer s_uploadCmdBuf  = VK_NULL_HANDLE;
-static VkFence         s_uploadFence   = VK_NULL_HANDLE;
+static VkCommandBuffer s_uploadCmdBuf = VK_NULL_HANDLE;
+static VkFence s_uploadFence = VK_NULL_HANDLE;
 
-struct vkStagingEntry_t { VkBuffer buf; VkDeviceMemory mem; };
+struct vkStagingEntry_t
+{
+    VkBuffer buf;
+    VkDeviceMemory mem;
+};
 static const int VK_MAX_PENDING_STAGING = 512;
 static vkStagingEntry_t s_pendingStaging[VK_MAX_PENDING_STAGING];
-static int              s_pendingStagingCount = 0;
+static int s_pendingStagingCount = 0;
 
 VkCommandBuffer VK_BeginSingleTimeCommands(void)
 {
@@ -437,9 +441,9 @@ VkCommandBuffer VK_BeginSingleTimeCommands(void)
     }
 
     VkCommandBufferAllocateInfo allocInfo = {};
-    allocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool        = vk.commandPool;
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = vk.commandPool;
     allocInfo.commandBufferCount = 1;
     VK_CHECK(vkAllocateCommandBuffers(vk.device, &allocInfo, &s_uploadCmdBuf));
 
@@ -479,9 +483,9 @@ void VK_FlushPendingUploads(void)
     VK_CHECK(vkResetFences(vk.device, 1, &s_uploadFence));
 
     VkSubmitInfo si = {};
-    si.sType               = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.commandBufferCount  = 1;
-    si.pCommandBuffers     = &s_uploadCmdBuf;
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &s_uploadCmdBuf;
     VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence));
     VK_CHECK(vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX));
 

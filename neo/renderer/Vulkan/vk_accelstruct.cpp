@@ -116,11 +116,11 @@ static const int VK_RT_MODEL_BLAS_CACHE_MAX = 512;
 struct vkModelBLASCacheEntry_t
 {
     idRenderModel *model;
-    vkBLAS_t      *blas;
+    vkBLAS_t *blas;
 };
 
 static vkModelBLASCacheEntry_t s_modelBLASCache[VK_RT_MODEL_BLAS_CACHE_MAX];
-static int                     s_modelBLASCacheCount = 0;
+static int s_modelBLASCacheCount = 0;
 
 static vkBLAS_t *VK_RT_ModelBLASCacheLookup(const idRenderModel *model)
 {
@@ -145,7 +145,7 @@ static void VK_RT_ModelBLASCacheInsert(idRenderModel *model, vkBLAS_t *blas)
 
     blas->cachedByModel = true;
     s_modelBLASCache[s_modelBLASCacheCount].model = model;
-    s_modelBLASCache[s_modelBLASCacheCount].blas  = blas;
+    s_modelBLASCache[s_modelBLASCacheCount].blas = blas;
     s_modelBLASCacheCount++;
 }
 
@@ -160,7 +160,7 @@ static void VK_RT_ModelBLASCacheClear(void)
         {
             s_modelBLASCache[i].blas->cachedByModel = false;
             VK_RT_FreeBLASImmediate(s_modelBLASCache[i].blas);
-            s_modelBLASCache[i].blas  = NULL;
+            s_modelBLASCache[i].blas = NULL;
             s_modelBLASCache[i].model = NULL;
         }
     }
@@ -210,11 +210,15 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
     if (blas->handle != VK_NULL_HANDLE)
         vkDestroyAccelerationStructureKHR(vk.device, blas->handle, NULL);
     if (blas->buffer != VK_NULL_HANDLE)
+    {
         vkDestroyBuffer(vk.device, blas->buffer, NULL);
+    }
     if (blas->memory != VK_NULL_HANDLE)
         vkFreeMemory(vk.device, blas->memory, NULL);
     if (blas->scratchBuf != VK_NULL_HANDLE)
+    {
         vkDestroyBuffer(vk.device, blas->scratchBuf, NULL);
+    }
     if (blas->scratchMem != VK_NULL_HANDLE)
         vkFreeMemory(vk.device, blas->scratchMem, NULL);
     for (uint32_t i = 0; i < blas->geomCount; i++)
@@ -225,12 +229,16 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
         // Only destroy/free owned buffers here.
         if (blas->geomVertBufs && blas->geomVertMems && blas->geomVertMems[i] != VK_NULL_HANDLE &&
             blas->geomVertBufs[i] != VK_NULL_HANDLE)
+        {
             vkDestroyBuffer(vk.device, blas->geomVertBufs[i], NULL);
+        }
         if (blas->geomVertMems && blas->geomVertMems[i] != VK_NULL_HANDLE)
             vkFreeMemory(vk.device, blas->geomVertMems[i], NULL);
         if (blas->geomIdxBufs && blas->geomIdxMems && blas->geomIdxMems[i] != VK_NULL_HANDLE &&
             blas->geomIdxBufs[i] != VK_NULL_HANDLE)
+        {
             vkDestroyBuffer(vk.device, blas->geomIdxBufs[i], NULL);
+        }
         if (blas->geomIdxMems && blas->geomIdxMems[i] != VK_NULL_HANDLE)
             vkFreeMemory(vk.device, blas->geomIdxMems[i], NULL);
     }
@@ -262,8 +270,7 @@ static void VK_RT_ClearWorldEntityBLASPointers(bool destroyGpuResources)
 
             // Cached BLASes are owned by the model cache — don't destroy them
             // here; VK_RT_ModelBLASCacheClear() handles that below.
-            if (destroyGpuResources && !ent->blas->cachedByModel &&
-                !VK_RT_IsBLASQueuedForDeferredFree(ent->blas))
+            if (destroyGpuResources && !ent->blas->cachedByModel && !VK_RT_IsBLASQueuedForDeferredFree(ent->blas))
             {
                 VK_RT_FreeBLASImmediate(ent->blas);
             }
@@ -628,17 +635,16 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     // Only valid for CPU-path (owned) buffers; GPU-cache buffers are managed
     // externally and have stable addresses already.
     // ---------------------------------------------------------------------------
-    if (prevBlas && prevBlas->isValid &&
-        prevBlas->geomCount == (uint32_t)validCount &&
-        prevBlas->geomPrimCounts && prevBlas->geomVertSizes && prevBlas->geomVertMems)
+    if (prevBlas && prevBlas->isValid && prevBlas->geomCount == (uint32_t)validCount && prevBlas->geomPrimCounts &&
+        prevBlas->geomVertSizes && prevBlas->geomVertMems)
     {
         bool compatible = true;
         for (int i = 0; i < validCount && compatible; i++)
         {
             const srfTriangles_t *geo = validSurfs[i].geo;
             if (prevBlas->geomPrimCounts[i] != (uint32_t)(geo->numIndexes / 3) ||
-                prevBlas->geomVertSizes[i]   != (VkDeviceSize)geo->numVerts * sizeof(idDrawVert) ||
-                prevBlas->geomVertMems[i]    == VK_NULL_HANDLE)
+                prevBlas->geomVertSizes[i] != (VkDeviceSize)geo->numVerts * sizeof(idDrawVert) ||
+                prevBlas->geomVertMems[i] == VK_NULL_HANDLE)
             {
                 compatible = false;
             }
@@ -651,8 +657,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             for (int i = 0; i < validCount; i++)
             {
                 const srfTriangles_t *geo = validSurfs[i].geo;
-                const void *cpuVerts = geo->verts ? (const void *)geo->verts
-                                                  : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
+                const void *cpuVerts = geo->verts
+                                           ? (const void *)geo->verts
+                                           : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
                 void *ptr;
                 VK_CHECK(vkMapMemory(vk.device, prevBlas->geomVertMems[i], 0, prevBlas->geomVertSizes[i], 0, &ptr));
                 memcpy(ptr, cpuVerts, (size_t)prevBlas->geomVertSizes[i]);
@@ -712,8 +719,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     blas->geomVertMems = new VkDeviceMemory[validCount]();
     blas->geomIdxBufs = new VkBuffer[validCount]();
     blas->geomIdxMems = new VkDeviceMemory[validCount]();
-    blas->geomVertSizes  = new VkDeviceSize[validCount]();
-    blas->geomIdxSizes   = new VkDeviceSize[validCount]();
+    blas->geomVertSizes = new VkDeviceSize[validCount]();
+    blas->geomIdxSizes = new VkDeviceSize[validCount]();
     blas->geomPrimCounts = new uint32_t[validCount]();
 
     // Build geometry descriptors — one per valid surface
@@ -814,8 +821,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         asGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
         primCounts[i] = (uint32_t)geo->numIndexes / 3;
-        blas->geomVertSizes[i]  = vertSize;
-        blas->geomIdxSizes[i]   = idxSize;
+        blas->geomVertSizes[i] = vertSize;
+        blas->geomIdxSizes[i] = idxSize;
         blas->geomPrimCounts[i] = primCounts[i];
     }
 
@@ -841,7 +848,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                                             primCounts, &updateSizeInfo);
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     VkDeviceSize scratchSize = sizeInfo.buildScratchSize > updateSizeInfo.updateScratchSize
-                             ? sizeInfo.buildScratchSize : updateSizeInfo.updateScratchSize;
+                                   ? sizeInfo.buildScratchSize
+                                   : updateSizeInfo.updateScratchSize;
 
     AllocASBuffer(sizeInfo.accelerationStructureSize, 0, &blas->buffer, &blas->memory);
 
@@ -1068,11 +1076,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         {
             const uintptr_t entTag = (uintptr_t)ent;
             const uint64_t prevSig = staticSignature;
-            uint64_t sigAfterEnt  = VK_RT_HashFnv1a64_Bytes(prevSig,    &entTag,                               sizeof(entTag));
-            uint64_t sigAfterAddr = VK_RT_HashFnv1a64_Bytes(sigAfterEnt, &inst.accelerationStructureReference, sizeof(inst.accelerationStructureReference));
-            uint64_t sigAfterXfm  = VK_RT_HashFnv1a64_Bytes(sigAfterAddr,&inst.transform.matrix[0][0],         sizeof(inst.transform.matrix));
+            uint64_t sigAfterEnt = VK_RT_HashFnv1a64_Bytes(prevSig, &entTag, sizeof(entTag));
+            uint64_t sigAfterAddr = VK_RT_HashFnv1a64_Bytes(sigAfterEnt, &inst.accelerationStructureReference,
+                                                            sizeof(inst.accelerationStructureReference));
+            uint64_t sigAfterXfm =
+                VK_RT_HashFnv1a64_Bytes(sigAfterAddr, &inst.transform.matrix[0][0], sizeof(inst.transform.matrix));
             staticSignature = sigAfterXfm;
-
         }
     }
 

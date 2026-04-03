@@ -29,13 +29,9 @@ the Free Software Foundation, either version 3 of the License, or
 // CVars
 // ---------------------------------------------------------------------------
 
-static idCVar r_rtAO(
-    "r_rtAO", "0", CVAR_RENDERER | CVAR_BOOL,
-    "Enable ray-traced ambient occlusion (requires r_useRayTracing 1)");
-
-static idCVar r_rtAOSamples(
-    "r_rtAOSamples", "4", CVAR_RENDERER | CVAR_INTEGER,
-    "AO hemisphere rays per pixel (1-16); more = less noise but slower");
+// r_rtAO and r_rtAOSamples declared in RenderSystem_init.cpp — use extern here.
+extern idCVar r_rtAO;
+extern idCVar r_rtAOSamples;
 
 static idCVar r_rtAORadius(
     "r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
@@ -443,18 +439,49 @@ void VK_RT_ResizeAOMask(uint32_t width, uint32_t height)
 
 void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
-    if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
+    if (!vkRT.isInitialized)
+    {
+        common->Printf("VK RT AO: skip — RT not initialized\n");
         return;
+    }
+    if (!vkRT.tlas[vk.currentFrame].isValid)
+    {
+        common->Printf("VK RT AO: skip — TLAS[%d] not valid\n", vk.currentFrame);
+        return;
+    }
     if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool())
         return;
     if (vkRT.aoPipeline == VK_NULL_HANDLE)
+    {
+        common->Printf("VK RT AO: skip — pipeline is NULL\n");
         return;
+    }
 
     const int frameIdx = vk.currentFrame;
+
+    // AO is a full-screen pass — dispatch once per frame slot, not once per view.
+    // Doom 3 calls RB_DrawView for each subview (weapon, mirrors) in the same frame;
+    // a second dispatch would run inside an active render pass → device lost.
+    static int s_lastAODispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastAODispatchFrame[frameIdx] == tr.frameCount)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT AO: skip duplicate dispatch frame=%d slot=%d\n", tr.frameCount, frameIdx);
+        return;
+    }
+    s_lastAODispatchFrame[frameIdx] = tr.frameCount;
+
     vkAOMask_t &ao = vkRT.aoMask[frameIdx];
 
     if (ao.image == VK_NULL_HANDLE)
+    {
+        common->Printf("VK RT AO: skip — AO image[%d] is NULL\n", frameIdx);
         return;
+    }
+
+    common->Printf("VK RT AO: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n",
+                   tr.frameCount, frameIdx, ao.width, ao.height,
+                   (void*)vkRT.tlas[frameIdx].handle, (void*)vkRT.aoPipeline);
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     {
@@ -513,6 +540,18 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenHeight = (int32_t)ao.height;
 
     memcpy(uboMapped, &ubo, sizeof(AOParamsUBO));
+
+    // Sanity-check the matrix for NaN (a singular VP matrix produces NaN and crashes the rgen)
+    {
+        bool hasNaN = false;
+        for (int i = 0; i < 16; i++)
+            if (ubo.invViewProj[i] != ubo.invViewProj[i]) { hasNaN = true; break; }
+        common->Printf("VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d matNaN=%d uboOff=%u\n",
+                       ubo.aoRadius, ubo.numSamples, ubo.screenWidth, ubo.screenHeight,
+                       hasNaN ? 1 : 0, uboOff);
+        if (hasNaN)
+            common->Warning("VK RT AO: invViewProj contains NaN — ray directions will be degenerate!");
+    }
 
     // --- Update descriptor set (once per frame slot when frameCount changes) ---
     bool refreshSet = (vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
@@ -588,6 +627,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
                       ao.width, ao.height, 1);
+    common->Printf("VK RT AO: traceRaysKHR recorded\n");
 
     // --- Barrier: AO write → fragment shader read ---
     {
@@ -602,7 +642,13 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL for render pass resume ---
+    // Use the same conditional aspect mask as the initial barrier.
     {
+        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
         VkImageMemoryBarrier depthRestore = {};
         depthRestore.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         depthRestore.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT;
@@ -611,10 +657,11 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthRestore.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         depthRestore.newLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthRestore.image               = vk.depthImage;
-        depthRestore.subresourceRange    = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+        depthRestore.subresourceRange    = {depthAspect, 0, 1, 0, 1};
         vkCmdPipelineBarrier(cmd,
             VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
             0, 0, NULL, 0, NULL, 1, &depthRestore);
     }
+    common->Printf("VK RT AO: dispatch complete\n");
 }
