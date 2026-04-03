@@ -64,12 +64,14 @@ static bool VK_CheckValidationLayerSupport(void)
 static const char *deviceExtensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
+    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
 };
-static const int numDeviceExtensions = 2;
+static const int numDeviceExtensions = 3;
 
 static const char *rtDeviceExtensions[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
+    VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
     VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
     VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
@@ -78,7 +80,7 @@ static const char *rtDeviceExtensions[] = {
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
 };
-static const int numRTDeviceExtensions = 9;
+static const int numRTDeviceExtensions = 10;
 
 // ---------------------------------------------------------------------------
 // Queue family detection

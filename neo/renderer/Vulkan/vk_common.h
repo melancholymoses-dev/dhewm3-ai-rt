@@ -148,13 +148,19 @@ struct vkPipelines_t
     VkPipeline fogFrustumPipeline; // depth LESS,  SRC_ALPHA/ONE_MINUS_SRC_ALPHA, back-cull (fog cap)
     VkPipeline blendlightPipeline; // depth EQUAL, DST_COLOR/ZERO (modulate) — most common blend light
 
-    // Per-frame descriptor pools (reset each frame after fence wait)
-    VkDescriptorPool descPools[VK_MAX_FRAMES_IN_FLIGHT];
-
     bool isValid;
 };
 
 extern vkPipelines_t vkPipes;
+
+// ---------------------------------------------------------------------------
+// Push descriptor function pointer
+// Loaded at device creation time in VK_InitPipelines.
+// Used instead of vkAllocateDescriptorSets+vkUpdateDescriptorSets per draw.
+// ---------------------------------------------------------------------------
+
+extern PFN_vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR;
+#define vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR
 
 // ---------------------------------------------------------------------------
 // Buffer helper — defined in vk_buffer.cpp
