@@ -175,6 +175,29 @@ struct vkRTState_t
     VkDescriptorSet blurDescSetV[VK_MAX_FRAMES_IN_FLIGHT]; // vertical pass: blurTemp→shadowMask
     int blurDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // Temporal EMA resolve (Step 5.2)
+    //
+    // One history image per frame-in-flight slot — safe because the per-slot fence
+    // guarantees the previous use of the same slot is complete before we start the
+    // next frame using that slot.  Never share history images between slots.
+    // --------------------------------------------------------------------------
+    vkAOMask_t aoHistory[VK_MAX_FRAMES_IN_FLIGHT]; // accumulated EMA history, R8_UNORM
+
+    // Temporal compute pipeline (temporal_resolve.comp)
+    VkPipeline           temporalPipeline;
+    VkPipelineLayout     temporalPipelineLayout;
+    VkDescriptorSetLayout temporalDescLayout;
+    VkDescriptorPool     temporalDescPool;
+    // One descriptor set per frame slot: binding 0=aoMask (readonly), binding 1=aoHistory (rw)
+    VkDescriptorSet      temporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                  temporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Per-slot history validity and camera-state cache for cut detection.
+    // Reset to false when the slot's images are recreated or the pipeline is (re)initialised.
+    bool  aoHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
+    float aoPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -212,6 +235,30 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Resize AO mask when resolution changes
 void VK_RT_ResizeAOMask(uint32_t width, uint32_t height);
+
+// ---------------------------------------------------------------------------
+// Temporal EMA resolve (Step 5.2)
+// ---------------------------------------------------------------------------
+
+// Initialize temporal history images and compute pipeline.
+// Called from VK_RT_InitAO after AO pipeline is ready.
+void VK_RT_InitTemporal(void);
+
+// Destroy all temporal resources.  Device must be idle before calling.
+void VK_RT_ShutdownTemporal(void);
+
+// Resize history images when the render resolution changes.
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeTemporal(uint32_t width, uint32_t height);
+
+// Dispatch the temporal EMA blend for AO.
+// Called from VK_RT_DispatchAO after the AO ray dispatch ends.
+// On entry aoMask[currentFrame] has been written and a memory barrier
+// (RAY_TRACING → COMPUTE|FRAGMENT) has already been issued by the AO dispatch.
+// On exit aoHistory[currentFrame] contains the blended result and a
+// (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued so the interaction pass
+// can sample the history directly.
+void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.

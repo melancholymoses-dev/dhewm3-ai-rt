@@ -665,6 +665,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_accelstruct.cpp
 	renderer/Vulkan/vk_shadows.cpp
 	renderer/Vulkan/vk_ao.cpp
+	renderer/Vulkan/vk_temporal.cpp
 )
 
 
@@ -704,6 +705,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rgen
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
+	renderer/glsl/temporal_resolve.comp
 )
 
 
