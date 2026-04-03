@@ -406,39 +406,104 @@ static void VKimp_CreateSyncObjects(void)
 }
 
 // ---------------------------------------------------------------------------
-// Single-time command buffer helpers (used by vk_buffer.cpp, vk_image.cpp)
+// Batched upload command buffer
+//
+// All VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands calls within a
+// frame accumulate into ONE command buffer.  VK_EndSingleTimeCommands is a
+// no-op; staging memory is registered via VK_DeferStagingFree and kept alive
+// until VK_FlushPendingUploads() submits the batch, waits on a fence, then
+// frees everything at once.  This replaces N serial vkQueueWaitIdle calls
+// (one per texture/buffer upload) with a single wait at frame start.
 // ---------------------------------------------------------------------------
+
+static VkCommandBuffer s_uploadCmdBuf  = VK_NULL_HANDLE;
+static VkFence         s_uploadFence   = VK_NULL_HANDLE;
+
+struct vkStagingEntry_t { VkBuffer buf; VkDeviceMemory mem; };
+static const int VK_MAX_PENDING_STAGING = 512;
+static vkStagingEntry_t s_pendingStaging[VK_MAX_PENDING_STAGING];
+static int              s_pendingStagingCount = 0;
 
 VkCommandBuffer VK_BeginSingleTimeCommands(void)
 {
-    VkCommandBufferAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = vk.commandPool;
-    allocInfo.commandBufferCount = 1;
+    if (s_uploadCmdBuf != VK_NULL_HANDLE)
+        return s_uploadCmdBuf; // accumulate into open batch
 
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(vk.device, &allocInfo, &cmd);
+    if (s_uploadFence == VK_NULL_HANDLE)
+    {
+        VkFenceCreateInfo fi = {};
+        fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VK_CHECK(vkCreateFence(vk.device, &fi, NULL, &s_uploadFence));
+    }
+
+    VkCommandBufferAllocateInfo allocInfo = {};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool        = vk.commandPool;
+    allocInfo.commandBufferCount = 1;
+    VK_CHECK(vkAllocateCommandBuffers(vk.device, &allocInfo, &s_uploadCmdBuf));
 
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-    return cmd;
+    VK_CHECK(vkBeginCommandBuffer(s_uploadCmdBuf, &beginInfo));
+    return s_uploadCmdBuf;
 }
 
-void VK_EndSingleTimeCommands(VkCommandBuffer cmd)
+void VK_EndSingleTimeCommands(VkCommandBuffer /*cmd*/)
 {
-    vkEndCommandBuffer(cmd);
+    // No-op: the batch stays open until VK_FlushPendingUploads().
+}
 
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
+void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem)
+{
+    if (s_pendingStagingCount < VK_MAX_PENDING_STAGING)
+    {
+        s_pendingStaging[s_pendingStagingCount++] = {buf, mem};
+    }
+    else
+    {
+        // Overflow: flush now to make room (rare, only if > 512 uploads in one batch).
+        VK_FlushPendingUploads();
+        s_pendingStaging[s_pendingStagingCount++] = {buf, mem};
+    }
+}
 
-    vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vk.graphicsQueue);
-    vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &cmd);
+void VK_FlushPendingUploads(void)
+{
+    if (s_uploadCmdBuf == VK_NULL_HANDLE)
+        return;
+
+    VK_CHECK(vkEndCommandBuffer(s_uploadCmdBuf));
+
+    VK_CHECK(vkResetFences(vk.device, 1, &s_uploadFence));
+
+    VkSubmitInfo si = {};
+    si.sType               = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount  = 1;
+    si.pCommandBuffers     = &s_uploadCmdBuf;
+    VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence));
+    VK_CHECK(vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX));
+
+    for (int i = 0; i < s_pendingStagingCount; i++)
+    {
+        vkDestroyBuffer(vk.device, s_pendingStaging[i].buf, NULL);
+        vkFreeMemory(vk.device, s_pendingStaging[i].mem, NULL);
+    }
+    s_pendingStagingCount = 0;
+
+    vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &s_uploadCmdBuf);
+    s_uploadCmdBuf = VK_NULL_HANDLE;
+}
+
+void VK_ShutdownUploadBatch(void)
+{
+    VK_FlushPendingUploads();
+    if (s_uploadFence != VK_NULL_HANDLE)
+    {
+        vkDestroyFence(vk.device, s_uploadFence, NULL);
+        s_uploadFence = VK_NULL_HANDLE;
+    }
 }
 
 // ---------------------------------------------------------------------------
