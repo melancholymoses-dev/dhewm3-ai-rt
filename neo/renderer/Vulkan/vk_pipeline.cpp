@@ -18,6 +18,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include "renderer/Vulkan/vk_common.h"
 #include "version.h"
 
+PFN_vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR = NULL;
+
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkShaderModule VK_LoadSPIRVFromMemory(const uint32_t *code, size_t codeSize);
 
@@ -108,6 +110,7 @@ static VkDescriptorSetLayout VK_CreateInteractionDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 8;
     info.pBindings = bindings;
 
@@ -127,6 +130,7 @@ static VkDescriptorSetLayout VK_CreateShadowDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 1;
     info.pBindings = &binding;
 
@@ -633,6 +637,7 @@ static VkDescriptorSetLayout VK_CreateGuiDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 2;
     info.pBindings = bindings;
 
@@ -1252,6 +1257,7 @@ static VkDescriptorSetLayout VK_CreateFogDescLayout(void)
 
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
     info.bindingCount = 3;
     info.pBindings = bindings;
 
@@ -1524,25 +1530,11 @@ void VK_InitPipelines(void)
         vkPipes.fogLayout, "glprogs/glsl/blendlight.vert.spv", "glprogs/glsl/blendlight.frag.spv", VK_COMPARE_OP_EQUAL,
         VK_CULL_MODE_FRONT_BIT, VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
 
-    // --- Per-frame descriptor pools ---
-    // Reset at the start of each frame (after fence wait) so descriptor sets don't accumulate.
-    // Sized to hold one frame's worth of interaction + GUI descriptor sets.
-    for (int fi = 0; fi < VK_MAX_FRAMES_IN_FLIGHT; fi++)
-    {
-        VkDescriptorPoolSize poolSizes[2] = {};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSizes[0].descriptorCount = 4096;
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[1].descriptorCount = 4096 * 8; // 7 interaction + 1 GUI per draw
-
-        VkDescriptorPoolCreateInfo poolInfo = {};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        poolInfo.maxSets = 4096;
-        poolInfo.poolSizeCount = 2;
-        poolInfo.pPoolSizes = poolSizes;
-
-        VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkPipes.descPools[fi]));
-    }
+    // Load push descriptor function pointer (KHR extension, not in static lib).
+    pfn_vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)
+        vkGetDeviceProcAddr(vk.device, "vkCmdPushDescriptorSetKHR");
+    if (!pfn_vkCmdPushDescriptorSetKHR)
+        common->FatalError("VK: vkCmdPushDescriptorSetKHR not available — driver does not support VK_KHR_push_descriptor");
 
     vkPipes.isValid =
         (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipelineZFail != VK_NULL_HANDLE &&
@@ -1567,11 +1559,6 @@ void VK_ShutdownPipelines(void)
     VK_DestroyBlendPipelineCache();
     VK_DestroyBlendlightPipelineCache();
 
-    for (int fi = 0; fi < VK_MAX_FRAMES_IN_FLIGHT; fi++)
-    {
-        if (vkPipes.descPools[fi])
-            vkDestroyDescriptorPool(vk.device, vkPipes.descPools[fi], NULL);
-    }
     if (vkPipes.interactionPipeline)
         vkDestroyPipeline(vk.device, vkPipes.interactionPipeline, NULL);
     if (vkPipes.interactionPipelineStencilLEqual)
