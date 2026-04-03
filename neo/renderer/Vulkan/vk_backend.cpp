@@ -1481,13 +1481,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             extern VkPipeline VK_GetOrCreateGuiBlendPipeline(int drawStateBits, bool depthTest);
             const bool needDepth = isSkyboxStage ? true : !(drawBitsOverride & GLS_DEPTHFUNC_ALWAYS);
 
-            if (r_vkLogRT.GetInteger() >= 2)
-            {
-                const uint32_t blendBits = (uint32_t)(drawBitsOverride & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS));
-                common->Printf("VK ShaderPass: mat='%s' stage=%d drawState=0x%x blendBits=0x%x needDepth=%d\n",
-                               mat->GetName(), stageIdx, drawBitsOverride, blendBits, (int)needDepth);
-            }
-
             VkPipeline pipeline = VK_NULL_HANDLE;
             if (isSkyboxStage)
             {
@@ -2842,14 +2835,6 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor =
             useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
-        if (r_vkLogRT.GetInteger() >= 2 && useStencilShadows)
-        {
-            common->Printf("VK STENCIL[%d]: clear=(%d,%d %u,%u) shadow=(%d,%d %u,%u) fullShadow=%d\n", lightIdx,
-                           lightScissor.offset.x, lightScissor.offset.y, (unsigned int)lightScissor.extent.width,
-                           (unsigned int)lightScissor.extent.height, shadowScissor.offset.x, shadowScissor.offset.y,
-                           (unsigned int)shadowScissor.extent.width, (unsigned int)shadowScissor.extent.height,
-                           useFullShadowScissor ? 1 : 0);
-        }
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)

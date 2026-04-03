@@ -1073,16 +1073,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             uint64_t sigAfterXfm  = VK_RT_HashFnv1a64_Bytes(sigAfterAddr,&inst.transform.matrix[0][0],         sizeof(inst.transform.matrix));
             staticSignature = sigAfterXfm;
 
-            if (r_vkLogRT.GetInteger() >= 2)
-            {
-                common->Printf(
-                    "VK RT STATIC ENT: ent=%p blasAddr=%llx xfm=[%.4f %.4f %.4f %.4f] sigEnt=%llx sigAddr=%llx sigXfm=%llx\n",
-                    (void*)ent, (unsigned long long)inst.accelerationStructureReference,
-                    inst.transform.matrix[0][0], inst.transform.matrix[0][1],
-                    inst.transform.matrix[0][2], inst.transform.matrix[0][3],
-                    (unsigned long long)sigAfterEnt, (unsigned long long)sigAfterAddr, (unsigned long long)sigAfterXfm);
-                fflush(NULL);
-            }
         }
     }
 
