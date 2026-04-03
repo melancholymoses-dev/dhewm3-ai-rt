@@ -36,7 +36,7 @@ The pipeline and ray-tracing can be enabled/disabled at the terminal in game or 
 | Flag | Values | Action  |
 |------|--------|-----------|
 | r_backend         | openGL, vulkan | Switch backend.  Needs restart.|
-| r_rtuseraytracing | 0, 1 | Master toggle for all ray-tracing effects|
+| r_rtuseraytracing | 0, 1 | Toggle for all ray-tracing vs rasterization.  |
 | r_rtshadows       | 0, 1 | Toggle Ray-Traced Shadows  |
 | r_rtao            | 0, 1 | Toggle Ambient Occlusion |
 
