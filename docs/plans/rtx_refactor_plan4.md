@@ -535,6 +535,86 @@ render pass opens (so the interaction shader sees the blended result).
 
 ---
 
+### Step 5.2b — Atrous Spatial Filter (Post-EMA Quality Pass)
+
+**Status:** Planned. Implement after EMA is stable, before GI.
+
+EMA-only denoising reduces temporal noise but cannot eliminate spatial grain
+within a single frame. At 4 rays/pixel the AO result is visibly noisy between
+camera movements. An Atrous wavelet filter adds a spatial denoise pass on top
+of the EMA history image, dramatically improving per-frame quality with no
+additional ray cost.
+
+#### Why Before Phase 6
+
+GI at 1 sample/pixel is substantially noisier than AO at 4 samples/pixel.
+EMA without any spatial filtering will produce unacceptable GI quality.
+Adding Atrous here, while the infrastructure is simple (depth + depth-derived
+normals), avoids retrofitting a spatial pass after GI is integrated.
+
+#### Design
+
+Run a series of 4–5 compute passes after the EMA resolve, each doubling the
+filter kernel step width (`1, 2, 4, 8, 16` pixels — the "à trous" pattern):
+
+```glsl
+// Edge-stopping weights (preserve detail at depth/normal discontinuities)
+float wDepth  = exp(-abs(depthCenter - depthSample) / sigmaDepth);
+float wNormal = pow(max(0.0, dot(normalCenter, normalSample)), sigmaNormal);
+float w = wDepth * wNormal;
+```
+
+Inputs required:
+- Depth buffer (already available)
+- World-space normals (depth-derived, same as AO/GI rgen path)
+- No motion vectors required
+
+#### New File
+
+```
+neo/renderer/glsl/atrous_filter.comp   — Atrous wavelet filter compute shader
+```
+
+The existing `vk_temporal.cpp` can host the Atrous dispatch passes, or they
+can be a separate second section of the same file.
+
+#### New CVars
+
+| CVar | Default | Description |
+|------|---------|-------------|
+| `r_rtAtrousIterations` | `0` | Atrous filter passes (0 = disabled, 4–5 = typical) |
+| `r_rtAtrousSigmaDepth` | `1.0` | Depth edge-stop sensitivity |
+| `r_rtAtrousSigmaNormal` | `128.0` | Normal edge-stop power |
+
+---
+
+### Future Extension — NRD (NVIDIA RayTracingDenoiser)
+
+**Status:** Post-Phase-6. Depends on G-buffer prerequisites.
+
+NVIDIA's [RayTracingDenoiser (NRD)](https://github.com/NVIDIAGameWorks/RayTracingDenoiser)
+(MIT license) is a production-grade spatial-temporal denoiser used in shipped
+titles. It produces superior quality to EMA + Atrous, but requires infrastructure
+that is not yet in place:
+
+| Prerequisite | Status |
+|---|---|
+| Screen-space motion/velocity buffer (`RG16F`) | Not yet — requires a G-buffer pass |
+| Geometric normals as a proper G-buffer target | Not yet — depth-derived only |
+| Hit-distance packed into AO/shadow signal | Minor shader change, low cost |
+| CMake subproject integration | Not yet |
+
+Without motion vectors, NRD's REBLUR temporal component ghosts as badly as
+naive EMA and offers no meaningful advantage. The right time to evaluate NRD
+integration is after the G-buffer normal pass and motion-vector pass are added
+(those are already flagged as upgrade paths in Steps 5.1 and 5.2).
+
+At that point NRD can replace both the EMA pass and the Atrous passes entirely
+with a single SDK dispatch call, and the result is significantly better on
+fast-moving geometry and camera panning.
+
+---
+
 ### Step 5.3 — RT Reflections
 
 #### Goal
