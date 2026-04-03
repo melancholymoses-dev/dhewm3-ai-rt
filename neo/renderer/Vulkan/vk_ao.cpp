@@ -678,4 +678,5 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // The temporal pass uses only the AO images (not depth), so ordering with the
     // depth restore is not important for correctness.
     VK_RT_DispatchTemporalResolveAO(cmd, viewDef);
+    VK_RT_DispatchAtrousAO(cmd);
 }

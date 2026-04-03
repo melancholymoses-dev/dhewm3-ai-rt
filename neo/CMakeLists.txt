@@ -706,6 +706,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
 	renderer/glsl/temporal_resolve.comp
+	renderer/glsl/atrous_filter.comp
 )
 
 
