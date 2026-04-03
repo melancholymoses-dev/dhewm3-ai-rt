@@ -298,9 +298,21 @@ Apply the AO factor to the ambient lighting stage (surfaces lit by
 #### New Files
 
 ```
-neo/renderer/glsl/ao_ray.rgen      — ray generation shader
-neo/renderer/Vulkan/vk_ao.cpp      — AO pipeline, dispatch, and AO buffer lifecycle
+neo/renderer/glsl/ao_ray.rgen        — ray generation shader
+neo/renderer/glsl/rt_indirect.glsl   — shared include: cosine hemisphere sampling,
+                                        world position reconstruction, seed helpers.
+                                        Included by both ao_ray.rgen and gi_ray.rgen
+                                        to avoid duplicated code when GI is added.
+neo/renderer/Vulkan/vk_ao.cpp        — AO pipeline, dispatch, and AO buffer lifecycle
 ```
+
+**Design note — shared code with GI:** `ao_ray.rgen` and the later `gi_ray.rgen`
+are nearly identical: both shoot cosine-weighted hemisphere rays from the same
+reconstructed world position using the same seed/noise helpers. Factor the common
+code into `rt_indirect.glsl` from the start. The AO rgen shader then becomes a
+thin wrapper that calls `traceRayEXT` with `gl_RayFlagsTerminateOnFirstHitEXT`
+and writes an `R8` scalar result. The GI upgrade later replaces the hit logic and
+image format (`RGBA16F`) without rewriting the sampling infrastructure.
 
 #### AO Image
 
@@ -378,6 +390,17 @@ AO requires surface normals at each pixel. Options (in order of difficulty):
 **Recommended start:** depth-derived normals (option 2). Add a dedicated
 G-buffer normal pass later when it becomes important for quality.
 
+**Known artifact — edge halos:** Depth-derived normals break down at depth
+discontinuities (object silhouette edges), where the finite-difference cross-
+product spans two surfaces at different depths. This produces incorrect
+hemisphere orientations at edges and causes visible AO halos around objects.
+The effect is mild at low sample counts but becomes more obvious with temporal
+accumulation, which locks in the wrong normal value each frame.
+
+**Upgrade path:** A dedicated G-buffer normal render target (option 1) cleanly
+fixes this and also benefits GI secondary-hit sampling. It is worth adding once
+basic AO is stable and the artifacts become the primary quality complaint.
+
 Depth-derived normal in the rgen shader:
 ```glsl
 vec3 p0 = reconstructWorldPos(coord, size);
@@ -415,6 +438,13 @@ diffuseLight *= ao;
 
 Also add binding 8 to `VK_CreateInteractionDescLayout()` in `vk_pipeline.cpp`
 and upload the AO sampler/view in `VK_UpdateInteractionDescriptors()`.
+
+**Note on Doom 3's ambient term:** Doom 3's ambient is intentionally nearly zero
+— the game is designed to be dark. Applying AO only to a near-black ambient
+term would be nearly invisible. The `diffuseLight *= ao` integration above is
+therefore the correct and important choice: it produces contact darkening
+(corners, surface-object contact, crevices) that is visible regardless of
+ambient brightness. This is the primary visual payoff of RTAO in Doom 3.
 
 #### New CVars
 
@@ -458,6 +488,28 @@ This can be tracked in `vkRTState_t`:
 float prevInvViewProj[16];
 bool historyValid;
 ```
+
+#### EMA Ghosting During Camera Movement
+
+**Known limitation:** Camera-cut detection handles hard cuts but not continuous
+movement. During any pan, tilt, or strafe, the EMA blends the current frame's
+pixel against history from a *different world position*, causing:
+
+- Ghosting/streaking on moving objects (shadows/AO "drag" behind them).
+- Smearing of AO/GI at screen edges when panning.
+
+The `alpha` value directly controls the noise/ghosting tradeoff:
+- Low alpha (0.05–0.1): smooth but heavy ghosting during movement.
+- High alpha (0.2–0.3): less ghosting but noisier result.
+
+**Acceptable for a first pass.** The effect is tolerable at Doom 3 camera
+speeds. Start with alpha ≈ 0.1 and tune from play.
+
+**Upgrade path:** A per-pixel velocity/motion-vector buffer would allow proper
+reprojection — reproject each pixel's world position into the previous frame's
+screen space and sample history there. This eliminates ghosting at the cost
+of one additional G-buffer pass (screen-space velocity `RG16F`). Add this
+alongside the G-buffer normal pass if ghosting becomes the primary complaint.
 
 #### New Files
 
@@ -652,7 +704,7 @@ Doom3's material system already contains everything needed:
 | GI Property | Doom3 Source | Notes |
 |-------------|-------------|-------|
 | Albedo | `diffuse` stage texture (`diffuseTexIndex` in MaterialEntry) | Exactly what GI needs — base colour at secondary hit |
-| Roughness | `specularExponent` on the specular stage | Map to GGX roughness: `roughness = sqrt(2.0 / (specExp + 2.0))`. Store the result in `MaterialEntry.roughness` at SSBO build time. |
+| Roughness | `specularExponent` on the specular stage | Map to GGX roughness: `roughness = sqrt(2.0 / (specExp + 2.0))`. Store the result in `MaterialEntry.roughness` at SSBO build time. **Default to `1.0` (fully diffuse) when no specular stage is present** — many Doom 3 materials omit specular entirely. |
 | Emissive | Materials with a `blend add` stage and no `diffuse` | These are lights/glows; their contribution naturally appears as GI source geometry |
 | Alpha mask | `MC_PERFORATED` + `alphaTestRegister` | Already in `MaterialEntry.flags` + `alphaThreshold` |
 
@@ -907,10 +959,15 @@ Detailed execution order with status:
      - Compare frame-time stability in static-heavy and dynamic-heavy scenes.
 
 4. Phase 5 enablement (after optimization baseline is stable)
-     - 4.1 Material SSBO + bindless texture/geometry metadata (`5.4` promoted prerequisite).
-     - 4.2 RTAO pipeline (`5.1`).
-     - 4.3 Temporal denoise/accumulation for shadow + AO (`5.2`).
+     - 4.1 RTAO pipeline (`5.1`) — no material data required; can ship early as a quick win.
+     - 4.2 Temporal denoise/accumulation for shadow + AO (`5.2`).
+     - 4.3 Material SSBO + bindless texture/geometry metadata (`5.4` promoted prerequisite).
      - 4.4 RT reflections (`5.3`) using material metadata path.
+
+     **Note on ordering:** RTAO (4.1) needs zero material infrastructure — it
+     only needs a binary hit/miss result. Moving it before the material SSBO work
+     gets visible results faster and validates the AO pipeline (descriptor layout,
+     image lifecycle, temporal pass) in isolation before adding material complexity.
 
 5. Phase 6 expansion (post-Phase 5 baseline)
      - GI raygen/hit path, temporal accumulation, and interaction integration.
@@ -947,6 +1004,7 @@ Historical + current updates (implemented now) and planned extensions:
 | Planned | `neo/renderer/Vulkan/vk_reflections.cpp` | RT reflections pipeline + dispatch |
 | Planned | `neo/renderer/Vulkan/vk_gi.cpp` | One-bounce GI pipeline + dispatch |
 | Planned | `neo/renderer/glsl/rt_material.glsl` | Shared RT material/UV helper include for any-hit/closest-hit paths |
+| Planned | `neo/renderer/glsl/rt_indirect.glsl` | Shared include: cosine hemisphere sampling + world-pos reconstruction; used by both AO and GI rgen shaders |
 | Planned | `neo/renderer/glsl/ao_ray.rgen` | AO ray generation shader |
 | Planned | `neo/renderer/glsl/temporal_resolve.comp` | Temporal resolve compute shader |
 | Planned | `neo/renderer/glsl/reflect_ray.rgen` | Reflection ray generation shader |
