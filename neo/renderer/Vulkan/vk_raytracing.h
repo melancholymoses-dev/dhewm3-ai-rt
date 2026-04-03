@@ -198,6 +198,34 @@ struct vkRTState_t
     bool  aoHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
     float aoPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
 
+    // --------------------------------------------------------------------------
+    // Atrous spatial filter (Step 5.2b)
+    //
+    // Ping-pong between aoHistory and aoScratch.  Descriptor set index alternates
+    // per pass: [frameIdx][0] reads history → writes scratch (odd pass outputs);
+    //           [frameIdx][1] reads scratch → writes history (even pass outputs).
+    // aoReadView[i] is updated after each Atrous dispatch to point at whichever
+    // image holds the final result.  The backend always samples aoReadView[i].
+    //
+    // Requires r_rtTemporal 1 (EMA must run first to supply a reasonable  input).
+    // --------------------------------------------------------------------------
+    vkAOMask_t            aoScratch[VK_MAX_FRAMES_IN_FLIGHT]; // ping-pong scratch, R8_UNORM, GENERAL
+
+    VkPipeline            atrousPipeline;
+    VkPipelineLayout      atrousPipelineLayout;
+    VkDescriptorSetLayout atrousDescLayout;
+    VkDescriptorPool      atrousDescPool;
+    // [frameIdx][0]: binding0=aoHistory(in), binding1=aoScratch(out), binding2=depth
+    // [frameIdx][1]: binding0=aoScratch(in), binding1=aoHistory(out), binding2=depth
+    VkDescriptorSet       atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][2];
+    int                   atrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // View sampled by the interaction pass.  Initialised to aoHistory[i].view at
+    // CreateHistoryImages; updated at end of each DispatchAtrousAO to whichever
+    // image holds the final Atrous output (history if even pass count, scratch if odd).
+    // Falls back to aoHistory[i].view when Atrous is disabled (r_rtAtrousIterations 0).
+    VkImageView           aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -256,9 +284,31 @@ void VK_RT_ResizeTemporal(uint32_t width, uint32_t height);
 // On entry aoMask[currentFrame] has been written and a memory barrier
 // (RAY_TRACING → COMPUTE|FRAGMENT) has already been issued by the AO dispatch.
 // On exit aoHistory[currentFrame] contains the blended result and a
-// (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued so the interaction pass
-// can sample the history directly.
+// (COMPUTE_WRITE → COMPUTE|FRAGMENT_READ) barrier is issued so either Atrous
+// or the interaction pass can consume it.
 void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// Atrous spatial filter (Step 5.2b)
+// ---------------------------------------------------------------------------
+
+// Initialize Atrous scratch images and filter pipeline.
+// Called internally from VK_RT_InitTemporal.
+void VK_RT_InitAtrous(void);
+
+// Destroy all Atrous resources.  Device must be idle before calling.
+void VK_RT_ShutdownAtrous(void);
+
+// Resize Atrous scratch images when render resolution changes.
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeAtrous(uint32_t width, uint32_t height);
+
+// Run the edge-stopped À-trous spatial filter on the EMA history image.
+// Called from VK_RT_DispatchAO after VK_RT_DispatchTemporalResolveAO.
+// On exit aoReadView[currentFrame] points to the final denoised image and
+// a (COMPUTE_WRITE → FRAGMENT_READ) barrier has been issued.
+// If r_rtAtrousIterations == 0, returns early after setting aoReadView to aoHistory.
+void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
