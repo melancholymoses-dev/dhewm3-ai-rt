@@ -96,6 +96,77 @@ struct vkRTStaticInstanceCache_t
 
 static vkRTStaticInstanceCache_t s_staticInstanceCache[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
+static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas); // forward decl for model cache
+
+// ---------------------------------------------------------------------------
+// Model-keyed BLAS cache for static (non-deforming) entities
+//
+// Entities with dynamicModel=NULL share the same mesh every frame. Keying by
+// hModel* avoids rebuilding the BLAS when the entity pointer churns (e.g.
+// doors destroyed and recreated each frame by the game) and keeps the device
+// address stable so the static TLAS signature stops churning.
+//
+// The cache owns the BLASes; ent->blas is a borrowed pointer for static
+// entities. VK_RT_DestroyBLAS is a no-op for cached entries. The cache is
+// cleared (and all GPU resources freed) on shutdown and map transitions.
+// ---------------------------------------------------------------------------
+
+static const int VK_RT_MODEL_BLAS_CACHE_MAX = 512;
+
+struct vkModelBLASCacheEntry_t
+{
+    idRenderModel *model;
+    vkBLAS_t      *blas;
+};
+
+static vkModelBLASCacheEntry_t s_modelBLASCache[VK_RT_MODEL_BLAS_CACHE_MAX];
+static int                     s_modelBLASCacheCount = 0;
+
+static vkBLAS_t *VK_RT_ModelBLASCacheLookup(const idRenderModel *model)
+{
+    for (int i = 0; i < s_modelBLASCacheCount; i++)
+        if (s_modelBLASCache[i].model == model)
+            return s_modelBLASCache[i].blas;
+    return NULL;
+}
+
+static void VK_RT_ModelBLASCacheInsert(idRenderModel *model, vkBLAS_t *blas)
+{
+    // Guard against duplicate insertion (model may appear in multiple worlds).
+    for (int i = 0; i < s_modelBLASCacheCount; i++)
+        if (s_modelBLASCache[i].model == model)
+            return;
+
+    if (s_modelBLASCacheCount >= VK_RT_MODEL_BLAS_CACHE_MAX)
+    {
+        common->Warning("VK RT: model BLAS cache full (%d entries)\n", VK_RT_MODEL_BLAS_CACHE_MAX);
+        return;
+    }
+
+    blas->cachedByModel = true;
+    s_modelBLASCache[s_modelBLASCacheCount].model = model;
+    s_modelBLASCache[s_modelBLASCacheCount].blas  = blas;
+    s_modelBLASCacheCount++;
+}
+
+// Destroy all cached BLASes and reset the cache.
+// Must be called when no in-flight GPU work references the TLAS (e.g. after
+// vkDeviceWaitIdle on shutdown, or after fence wait on map transition).
+static void VK_RT_ModelBLASCacheClear(void)
+{
+    for (int i = 0; i < s_modelBLASCacheCount; i++)
+    {
+        if (s_modelBLASCache[i].blas)
+        {
+            s_modelBLASCache[i].blas->cachedByModel = false;
+            VK_RT_FreeBLASImmediate(s_modelBLASCache[i].blas);
+            s_modelBLASCache[i].blas  = NULL;
+            s_modelBLASCache[i].model = NULL;
+        }
+    }
+    s_modelBLASCacheCount = 0;
+}
+
 static ID_INLINE uint64_t VK_RT_HashFnv1a64_Bytes(uint64_t h, const void *data, size_t bytes)
 {
     const uint8_t *p = (const uint8_t *)data;
@@ -167,6 +238,9 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
     delete[] blas->geomVertMems;
     delete[] blas->geomIdxBufs;
     delete[] blas->geomIdxMems;
+    delete[] blas->geomVertSizes;
+    delete[] blas->geomIdxSizes;
+    delete[] blas->geomPrimCounts;
     delete blas;
 }
 
@@ -186,7 +260,10 @@ static void VK_RT_ClearWorldEntityBLASPointers(bool destroyGpuResources)
             if (!ent || !ent->blas)
                 continue;
 
-            if (destroyGpuResources && !VK_RT_IsBLASQueuedForDeferredFree(ent->blas))
+            // Cached BLASes are owned by the model cache — don't destroy them
+            // here; VK_RT_ModelBLASCacheClear() handles that below.
+            if (destroyGpuResources && !ent->blas->cachedByModel &&
+                !VK_RT_IsBLASQueuedForDeferredFree(ent->blas))
             {
                 VK_RT_FreeBLASImmediate(ent->blas);
             }
@@ -195,6 +272,9 @@ static void VK_RT_ClearWorldEntityBLASPointers(bool destroyGpuResources)
             ent->blasFrameCount = 0;
         }
     }
+
+    if (destroyGpuResources)
+        VK_RT_ModelBLASCacheClear();
 }
 
 // Drain BLAS garbage entries that are safe to free (called after fence wait).
@@ -460,7 +540,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
 // rather than only Surface(0).  Used by VK_RT_RebuildTLAS.
 // ---------------------------------------------------------------------------
 
-vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
 
@@ -541,6 +621,83 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         VK_RT_AccumulateBLASBuildStats(gpuGeomCount, cpuGeomCount, true);
     }
 
+    // ---------------------------------------------------------------------------
+    // BLAS update path: reuse existing buffers and AS when geometry is compatible.
+    // Avoids per-frame alloc/free cycle and keeps device address stable so the
+    // static TLAS signature does not churn on dynamic entity BLASes.
+    // Only valid for CPU-path (owned) buffers; GPU-cache buffers are managed
+    // externally and have stable addresses already.
+    // ---------------------------------------------------------------------------
+    if (prevBlas && prevBlas->isValid &&
+        prevBlas->geomCount == (uint32_t)validCount &&
+        prevBlas->geomPrimCounts && prevBlas->geomVertSizes && prevBlas->geomVertMems)
+    {
+        bool compatible = true;
+        for (int i = 0; i < validCount && compatible; i++)
+        {
+            const srfTriangles_t *geo = validSurfs[i].geo;
+            if (prevBlas->geomPrimCounts[i] != (uint32_t)(geo->numIndexes / 3) ||
+                prevBlas->geomVertSizes[i]   != (VkDeviceSize)geo->numVerts * sizeof(idDrawVert) ||
+                prevBlas->geomVertMems[i]    == VK_NULL_HANDLE)
+            {
+                compatible = false;
+            }
+        }
+
+        if (compatible)
+        {
+            static VkAccelerationStructureGeometryKHR updateGeoms[MAX_BLAS_SURFACES];
+            static VkAccelerationStructureBuildRangeInfoKHR updateRanges[MAX_BLAS_SURFACES];
+            for (int i = 0; i < validCount; i++)
+            {
+                const srfTriangles_t *geo = validSurfs[i].geo;
+                const void *cpuVerts = geo->verts ? (const void *)geo->verts
+                                                  : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
+                void *ptr;
+                VK_CHECK(vkMapMemory(vk.device, prevBlas->geomVertMems[i], 0, prevBlas->geomVertSizes[i], 0, &ptr));
+                memcpy(ptr, cpuVerts, (size_t)prevBlas->geomVertSizes[i]);
+                vkUnmapMemory(vk.device, prevBlas->geomVertMems[i]);
+
+                VkAccelerationStructureGeometryTrianglesDataKHR triData = {};
+                triData.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+                triData.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+                triData.vertexData.deviceAddress = GetBufferDeviceAddress(prevBlas->geomVertBufs[i]);
+                triData.vertexStride = sizeof(idDrawVert);
+                triData.maxVertex = (uint32_t)geo->numVerts - 1;
+                triData.indexType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+                triData.indexData.deviceAddress = GetBufferDeviceAddress(prevBlas->geomIdxBufs[i]);
+                triData.transformData.deviceAddress = 0;
+
+                updateGeoms[i] = {};
+                updateGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+                updateGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                updateGeoms[i].geometry.triangles = triData;
+                updateGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+
+                updateRanges[i] = {};
+                updateRanges[i].primitiveCount = prevBlas->geomPrimCounts[i];
+            }
+
+            VkAccelerationStructureBuildGeometryInfoKHR updateInfo = {};
+            updateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+            updateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            updateInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                               VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+            updateInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+            updateInfo.srcAccelerationStructure = prevBlas->handle;
+            updateInfo.dstAccelerationStructure = prevBlas->handle;
+            updateInfo.geometryCount = (uint32_t)validCount;
+            updateInfo.pGeometries = updateGeoms;
+            updateInfo.scratchData.deviceAddress = GetBufferDeviceAddress(prevBlas->scratchBuf);
+
+            const VkAccelerationStructureBuildRangeInfoKHR *pRanges = updateRanges;
+            vkCmdBuildAccelerationStructuresKHR(cmd, 1, &updateInfo, &pRanges);
+
+            VK_RT_AccumulateBLASBuildStats(0, validCount, true);
+            return prevBlas; // device address unchanged — TLAS signature stable
+        }
+    }
+
     vkBLAS_t *blas = new vkBLAS_t();
     blas->handle = VK_NULL_HANDLE;
     blas->buffer = VK_NULL_HANDLE;
@@ -555,6 +712,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     blas->geomVertMems = new VkDeviceMemory[validCount]();
     blas->geomIdxBufs = new VkBuffer[validCount]();
     blas->geomIdxMems = new VkDeviceMemory[validCount]();
+    blas->geomVertSizes  = new VkDeviceSize[validCount]();
+    blas->geomIdxSizes   = new VkDeviceSize[validCount]();
+    blas->geomPrimCounts = new uint32_t[validCount]();
 
     // Build geometry descriptors — one per valid surface
     static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
@@ -654,6 +814,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
         asGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
         primCounts[i] = (uint32_t)geo->numIndexes / 3;
+        blas->geomVertSizes[i]  = vertSize;
+        blas->geomIdxSizes[i]   = idxSize;
+        blas->geomPrimCounts[i] = primCounts[i];
     }
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
@@ -670,6 +833,16 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
                                             primCounts, &sizeInfo);
 
+    // Query update scratch too — updateScratchSize can exceed buildScratchSize on some drivers.
+    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    VkAccelerationStructureBuildSizesInfoKHR updateSizeInfo = {};
+    updateSizeInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    vkGetAccelerationStructureBuildSizesKHR(vk.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &buildInfo,
+                                            primCounts, &updateSizeInfo);
+    buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    VkDeviceSize scratchSize = sizeInfo.buildScratchSize > updateSizeInfo.updateScratchSize
+                             ? sizeInfo.buildScratchSize : updateSizeInfo.updateScratchSize;
+
     AllocASBuffer(sizeInfo.accelerationStructureSize, 0, &blas->buffer, &blas->memory);
 
     VkAccelerationStructureCreateInfoKHR asInfo = {};
@@ -679,7 +852,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
     asInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     VK_CHECK(vkCreateAccelerationStructureKHR(vk.device, &asInfo, NULL, &blas->handle));
 
-    AllocASBuffer(sizeInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &blas->scratchBuf, &blas->scratchMem);
+    AllocASBuffer(scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &blas->scratchBuf, &blas->scratchMem);
 
     buildInfo.dstAccelerationStructure = blas->handle;
     buildInfo.scratchData.deviceAddress = GetBufferDeviceAddress(blas->scratchBuf);
@@ -711,6 +884,11 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd)
 void VK_RT_DestroyBLAS(vkBLAS_t *blas)
 {
     if (!blas)
+        return;
+
+    // Cached BLASes are owned by the model cache, not by individual entities.
+    // VK_RT_ModelBLASCacheClear handles their destruction.
+    if (blas->cachedByModel)
         return;
 
     // Defer destruction: in-flight command buffers may still reference this
@@ -803,13 +981,46 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (ent->dynamicModel)
             needRebuild = true;
 
+        // For static entities, check the model BLAS cache before building.
+        // If the same hModel was already built this session, reuse that BLAS:
+        // avoids BLAS rebuilds when the entity pointer churns (e.g. doors
+        // destroyed/recreated each frame) and keeps the device address stable
+        // so the static TLAS signature stops churning.
+        if (needRebuild && !ent->dynamicModel)
+        {
+            idRenderModel *staticModel = ent->parms.hModel;
+            vkBLAS_t *cached = staticModel ? VK_RT_ModelBLASCacheLookup(staticModel) : NULL;
+            if (cached && cached->isValid)
+            {
+                ent->blas = cached;
+                ent->blasFrameCount = tr.frameCount;
+                needRebuild = false;
+            }
+        }
+
         if (needRebuild)
         {
-            if (ent->blas)
-                VK_RT_DestroyBLAS(ent->blas);
-            // Build multi-geometry BLAS covering all non-translucent surfaces.
-            // A single TLAS instance per entity, one geometry per surface.
-            ent->blas = VK_RT_BuildBLASForModel(model, cmd);
+            if (ent->dynamicModel && ent->blas)
+            {
+                // Try in-place BLAS update: reuses buffers and keeps device address
+                // stable, avoiding static TLAS signature churn each frame.
+                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas);
+                if (updated != ent->blas)
+                    VK_RT_DestroyBLAS(ent->blas);
+                ent->blas = updated;
+            }
+            else
+            {
+                if (ent->blas)
+                    VK_RT_DestroyBLAS(ent->blas); // no-op for cached; safe to call
+                // Build multi-geometry BLAS covering all non-translucent surfaces.
+                // A single TLAS instance per entity, one geometry per surface.
+                ent->blas = VK_RT_BuildBLASForModel(model, cmd);
+                // Cache newly built BLAS for static entities so future entity
+                // pointer churn reuses it without a rebuild.
+                if (!ent->dynamicModel && ent->blas)
+                    VK_RT_ModelBLASCacheInsert(ent->parms.hModel, ent->blas);
+            }
             ent->blasFrameCount = tr.frameCount;
             if (ent->blas)
                 anyBLASBuilt = true;
@@ -856,11 +1067,22 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (!isDynamicInstance)
         {
             const uintptr_t entTag = (uintptr_t)ent;
-            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &entTag, sizeof(entTag));
-            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &inst.accelerationStructureReference,
-                                                      sizeof(inst.accelerationStructureReference));
-            staticSignature =
-                VK_RT_HashFnv1a64_Bytes(staticSignature, &inst.transform.matrix[0][0], sizeof(inst.transform.matrix));
+            const uint64_t prevSig = staticSignature;
+            uint64_t sigAfterEnt  = VK_RT_HashFnv1a64_Bytes(prevSig,    &entTag,                               sizeof(entTag));
+            uint64_t sigAfterAddr = VK_RT_HashFnv1a64_Bytes(sigAfterEnt, &inst.accelerationStructureReference, sizeof(inst.accelerationStructureReference));
+            uint64_t sigAfterXfm  = VK_RT_HashFnv1a64_Bytes(sigAfterAddr,&inst.transform.matrix[0][0],         sizeof(inst.transform.matrix));
+            staticSignature = sigAfterXfm;
+
+            if (r_vkLogRT.GetInteger() >= 2)
+            {
+                common->Printf(
+                    "VK RT STATIC ENT: ent=%p blasAddr=%llx xfm=[%.4f %.4f %.4f %.4f] sigEnt=%llx sigAddr=%llx sigXfm=%llx\n",
+                    (void*)ent, (unsigned long long)inst.accelerationStructureReference,
+                    inst.transform.matrix[0][0], inst.transform.matrix[0][1],
+                    inst.transform.matrix[0][2], inst.transform.matrix[0][3],
+                    (unsigned long long)sigAfterEnt, (unsigned long long)sigAfterAddr, (unsigned long long)sigAfterXfm);
+                fflush(NULL);
+            }
         }
     }
 
@@ -1112,6 +1334,9 @@ void VK_RT_Init(void)
     // belong to a previous device lifetime and must never be reused.
     memset(s_blasGarbage, 0, sizeof(s_blasGarbage));
     s_blasGarbageCount = 0;
+    // Reset model BLAS cache without freeing — old device handles are invalid.
+    memset(s_modelBLASCache, 0, sizeof(s_modelBLASCache));
+    s_modelBLASCacheCount = 0;
     // Clear any stale per-entity BLAS pointers that may have survived a failed restart.
     VK_RT_ClearWorldEntityBLASPointers(false);
     VK_RT_LoadFunctionPointers();
