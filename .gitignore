@@ -15,5 +15,6 @@
 
 /neo/CMakeSettings.json
 /neo/CMakeUserPresets.json
-
+tools/*
 mailmap.txt
+.claude/settings.local.json
