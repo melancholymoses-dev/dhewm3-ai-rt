@@ -38,6 +38,7 @@ layout(set=0, binding=4) uniform sampler2D u_DiffuseMap;      // diffuse albedo
 layout(set=0, binding=5) uniform sampler2D u_SpecularMap;     // specular intensity/color
 layout(set=0, binding=6) uniform sampler2D u_SpecularTable;   // NdotH -> specular power
 layout(set=0, binding=7) uniform sampler2D u_ShadowMask;      // RT shadow mask (1=lit, 0=shadowed)
+layout(set=0, binding=8) uniform sampler2D u_AOMap;           // RT AO mask (1=unoccluded, 0=occluded)
 
 // Shared UBO — binding 0, both vertex and fragment stages.
 // Field order matches VkInteractionUBO in vk_pipeline.cpp (std140).
@@ -66,6 +67,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     float u_ScreenWidth;
     float u_ScreenHeight;
     int   u_UseShadowMask;
+    int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
 };
 
@@ -112,8 +114,18 @@ void main() {
         shadow = texture(u_ShadowMask, shadowUV).r;
     }
 
+    // --- RT ambient occlusion ---
+    // Applied to diffuse light: contact darkening in corners and crevices.
+    // Not applied to specular; AO modulates surface-level indirect light, not
+    // direct specular reflections.
+    float ao = 1.0;
+    if (u_UseAO != 0) {
+        vec2 aoUV = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
+        ao = texture(u_AOMap, aoUV).r;
+    }
+
     // --- Combine ---
-    vec3 color = (diffuse + specular) * attenuation * shadow;
+    vec3 color = (diffuse * ao + specular) * attenuation * shadow;
     color *= vary_Color.rgb;
 
     color *= u_LightScale;

@@ -664,6 +664,7 @@ set(src_vulkan
 list(APPEND src_vulkan
 	renderer/Vulkan/vk_accelstruct.cpp
 	renderer/Vulkan/vk_shadows.cpp
+	renderer/Vulkan/vk_ao.cpp
 )
 
 
@@ -700,6 +701,9 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/shadow_ray.rmiss
 	renderer/glsl/shadow_ray.rahit
 	renderer/glsl/shadow_blur.comp
+	renderer/glsl/ao_ray.rgen
+	renderer/glsl/ao_ray.rmiss
+	renderer/glsl/ao_ray.rahit
 )
 
 

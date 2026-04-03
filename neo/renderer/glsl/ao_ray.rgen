@@ -1,0 +1,125 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+// ---------------------------------------------------------------------------
+// ao_ray.rgen  —  Ray Generation shader for Ray-Traced Ambient Occlusion
+//
+// For every screen pixel:
+//   1. Reconstruct world-space position from depth.
+//   2. Derive world-space normal from depth-buffer gradients.
+//   3. Shoot numSamples cosine-weighted hemisphere rays.
+//   4. Write fraction of unoccluded rays (1.0=clear, 0.0=fully occluded).
+//
+// The AO image is sampled by interaction.frag to darken diffuse light.
+// Requires TLAS and depth buffer to be ready before dispatch.
+// ---------------------------------------------------------------------------
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 1, r8) uniform image2D aoImage;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+layout(set = 0, binding = 3) uniform AOParams {
+    mat4  invViewProj;  // inverse view-projection for world position reconstruction
+    float aoRadius;     // max ray length (world units); default ~64
+    int   numSamples;   // rays per pixel (1-16); default 4
+    uint  frameIndex;   // for temporal seed variation
+    float pad;
+    ivec2 screenSize;   // full framebuffer (width, height)
+    ivec2 pad2;
+} params;
+
+layout(location = 0) rayPayloadEXT float aoPayload;
+
+// Shared helpers: wang_hash, randFloat, rt_ReconstructWorldPos,
+// rt_ReconstructNormal, rt_CosineSampleHemisphere,
+// rt_WorldAnchoredSeed, rt_PixelPhiOffset
+#include "rt_indirect.glsl"
+
+void main()
+{
+    ivec2 coord = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size  = params.screenSize;
+
+    // Skip sky / missing depth (depth == 1.0 at far plane with no geometry)
+    float depth = texelFetch(depthSampler, coord, 0).r;
+    if (depth >= 1.0)
+    {
+        imageStore(aoImage, coord, vec4(1.0));
+        return;
+    }
+
+    vec3 worldPos = rt_ReconstructWorldPos(coord, size, params.invViewProj);
+
+    // Camera position — used as orient reference for the normal so the
+    // hemisphere faces toward the viewer (always correct for visible surfaces).
+    vec4 camClip  = vec4(0.0, 0.0, -1.0, 1.0);
+    vec4 camWorld = params.invViewProj * camClip;
+    vec3 camPos   = camWorld.xyz / camWorld.w;
+    vec3 toCamera = normalize(camPos - worldPos);
+
+    vec3 normal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, toCamera);
+
+    // World-anchored seed + per-pixel phi for temporal stability
+    uint  baseSeed  = rt_WorldAnchoredSeed(worldPos, params.frameIndex);
+    float phiOffset = rt_PixelPhiOffset(coord, params.frameIndex);
+
+    float unoccluded = 0.0;
+    int   N = max(1, params.numSamples);
+
+    for (int s = 0; s < N; s++)
+    {
+        // Rotate seed per sample then add phi offset to azimuth implicitly via
+        // the global seed variation.  Use sample index and phi together.
+        uint sampleSeed = wang_hash(baseSeed + uint(s) * 1013u);
+
+        // Cosine-weighted direction in hemisphere of normal
+        vec3 dir = rt_CosineSampleHemisphere(normal, sampleSeed);
+
+        // Rotate azimuth by phiOffset for blue-noise-like frame coverage
+        // (approximate: re-derive from rotated phi)
+        {
+            float r1 = randFloat(sampleSeed);
+            float r2 = fract(randFloat(sampleSeed + 1u) + phiOffset + float(s) * 0.6180339887);
+
+            float r     = sqrt(r1);
+            float theta = 2.0 * 3.14159265358979 * r2;
+            float x = r * cos(theta);
+            float y = r * sin(theta);
+            float z = sqrt(max(0.0, 1.0 - r1));
+
+            vec3 up    = abs(normal.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            vec3 right = normalize(cross(up, normal));
+            vec3 fwd   = cross(normal, right);
+            dir = normalize(right * x + fwd * y + normal * z);
+        }
+
+        // Ensure direction is in the upper hemisphere (avoid surface self-intersection)
+        if (dot(dir, normal) < 0.01)
+            dir = normal;
+
+        // Origin bias: lift off surface along normal
+        const float bias = 0.5;
+        vec3 origin = worldPos + normal * bias;
+
+        // Miss shader sets aoPayload = 1.0 (unoccluded)
+        // Any-hit shader sets aoPayload = 0.0 (occluded) and terminates
+        aoPayload = 1.0;
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+            0xFF,               // cull mask (all instances)
+            0,                  // SBT offset
+            0,                  // SBT stride
+            0,                  // miss index
+            origin,
+            0.0,                // tMin (bias already applied to origin)
+            dir,
+            params.aoRadius,    // tMax
+            0                   // payload location
+        );
+        unoccluded += aoPayload;
+    }
+
+    float ao = unoccluded / float(N);
+    imageStore(aoImage, coord, vec4(ao));
+}

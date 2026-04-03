@@ -121,6 +121,16 @@ struct vkShadowMask_t
     uint32_t height;
 };
 
+// AO mask buffer (R8 UNORM, one pixel per screen pixel)
+struct vkAOMask_t
+{
+    VkImage image;
+    VkDeviceMemory memory;
+    VkImageView view;
+    uint32_t width;
+    uint32_t height;
+};
+
 // Global RT state
 struct vkRTState_t
 {
@@ -136,6 +146,25 @@ struct vkRTState_t
     VkDescriptorPool shadowDescPool;
     VkDescriptorSet shadowDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int shadowDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // AO image and pipeline
+    vkAOMask_t aoMask[VK_MAX_FRAMES_IN_FLIGHT];
+    VkSampler  aoMaskSampler; // nearest-clamp, used when sampling AO in the lighting pass
+
+    VkPipeline           aoPipeline;
+    VkPipelineLayout     aoPipelineLayout;
+    VkDescriptorSetLayout aoDescLayout;
+    VkDescriptorPool     aoDescPool;
+    VkDescriptorSet      aoDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                  aoDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // AO SBT (separate from shadow SBT)
+    VkBuffer sbtAOBuffer;
+    VkDeviceMemory sbtAOMemory;
+    VkStridedDeviceAddressRegionKHR aoRgenRegion;
+    VkStridedDeviceAddressRegionKHR aoMissRegion;
+    VkStridedDeviceAddressRegionKHR aoHitRegion;
+    VkStridedDeviceAddressRegionKHR aoCallRegion;
 
     // Shadow mask blur (compute pipeline)
     VkPipeline blurPipeline;
@@ -172,6 +201,17 @@ void VK_RT_Shutdown(void);
 
 // Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
+
+// Initialize the AO ray pipeline and AO mask images (called after swapchain creation)
+void VK_RT_InitAO(void);
+
+// Dispatch AO rays for the current view (once per frame, after TLAS rebuild, outside render pass).
+// Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry.
+// Transitions depth to READ_ONLY_OPTIMAL for the dispatch, then restores to ATTACHMENT_OPTIMAL.
+void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Resize AO mask when resolution changes
+void VK_RT_ResizeAOMask(uint32_t width, uint32_t height);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
