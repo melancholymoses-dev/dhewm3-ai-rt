@@ -1053,8 +1053,11 @@ void idInteraction::CreateInteraction(const idRenderModel *model)
             interactionGenerated = true;
         }
 
-        // if the interaction has shadows and this surface casts a shadow
-        if (HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL)
+        // if the interaction has shadows and this surface casts a shadow.
+        // Skip shadow volume extrusion when RT shadows are active — the backend
+        // discards stencil volumes anyway, so generating them is pure wasted CPU.
+        if (HasShadows() && shader->SurfaceCastsShadow() && tri->silEdges != NULL
+            && !(r_useRayTracing.GetBool() && r_rtShadows.GetBool()))
         {
 
             // if the light has an optimized shadow volume, don't create shadows for any models that are part of the
