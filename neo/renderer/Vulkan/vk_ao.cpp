@@ -479,9 +479,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     }
 
-    common->Printf("VK RT AO: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n",
-                   tr.frameCount, frameIdx, ao.width, ao.height,
-                   (void*)vkRT.tlas[frameIdx].handle, (void*)vkRT.aoPipeline);
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT AO: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n",
+                       tr.frameCount, frameIdx, ao.width, ao.height,
+                       (void*)vkRT.tlas[frameIdx].handle, (void*)vkRT.aoPipeline);
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     {
@@ -546,9 +547,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         bool hasNaN = false;
         for (int i = 0; i < 16; i++)
             if (ubo.invViewProj[i] != ubo.invViewProj[i]) { hasNaN = true; break; }
-        common->Printf("VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d matNaN=%d uboOff=%u\n",
-                       ubo.aoRadius, ubo.numSamples, ubo.screenWidth, ubo.screenHeight,
-                       hasNaN ? 1 : 0, uboOff);
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d matNaN=%d uboOff=%u\n",
+                           ubo.aoRadius, ubo.numSamples, ubo.screenWidth, ubo.screenHeight,
+                           hasNaN ? 1 : 0, uboOff);
         if (hasNaN)
             common->Warning("VK RT AO: invViewProj contains NaN — ray directions will be degenerate!");
     }
@@ -627,7 +629,8 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
                       ao.width, ao.height, 1);
-    common->Printf("VK RT AO: traceRaysKHR recorded\n");
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT AO: traceRaysKHR recorded\n");
 
     // --- Barrier: AO write → fragment shader read ---
     {
@@ -663,5 +666,6 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
             0, 0, NULL, 0, NULL, 1, &depthRestore);
     }
-    common->Printf("VK RT AO: dispatch complete\n");
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT AO: dispatch complete\n");
 }
