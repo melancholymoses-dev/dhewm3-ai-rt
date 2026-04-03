@@ -187,11 +187,20 @@ static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlag
 }
 
 // ---------------------------------------------------------------------------
-// Single-shot command buffer helper
+// Batched upload helpers
+//
+// VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands accumulate all upload
+// commands into one command buffer per batch.  VK_EndSingleTimeCommands is a
+// no-op; call VK_FlushPendingUploads() once at frame start to submit the
+// batch with a single fence wait.  Register staging buffers that must stay
+// alive until the flush via VK_DeferStagingFree().
 // ---------------------------------------------------------------------------
 
 VkCommandBuffer VK_BeginSingleTimeCommands(void);
-void VK_EndSingleTimeCommands(VkCommandBuffer cmd);
+void VK_EndSingleTimeCommands(VkCommandBuffer cmd); // no-op; kept for call-site compatibility
+void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem);
+void VK_FlushPendingUploads(void);
+void VK_ShutdownUploadBatch(void);
 
 // ---------------------------------------------------------------------------
 // Image layout transition helper

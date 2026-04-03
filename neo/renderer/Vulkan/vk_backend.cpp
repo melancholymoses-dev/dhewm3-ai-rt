@@ -3385,6 +3385,11 @@ void VK_RB_DrawView(const void *data)
         if (vk.rayTracingSupported)
             VK_RT_DrainBLASGarbage();
 
+        // Flush any texture/buffer uploads queued since the last frame.
+        // Submits one command buffer + one fence wait, replacing the previous
+        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
+        VK_FlushPendingUploads();
+
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
         dataRings[vk.currentFrame].offset = 0;
@@ -4028,6 +4033,7 @@ void VKimp_PreShutdown(void)
 {
     if (!vk.isInitialized)
         return;
+    VK_ShutdownUploadBatch(); // flush + free any pending uploads before device idle
     vkDeviceWaitIdle(vk.device);
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {
