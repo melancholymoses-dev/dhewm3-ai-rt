@@ -123,6 +123,17 @@ static bool VK_RTShadowsEnabled()
     return vk.rayTracingSupported && vkRT.isInitialized && r_useRayTracing.GetBool() && r_rtShadows.GetBool();
 }
 
+// Returns true if any RT effect that needs the TLAS is active.
+// Used to gate the TLAS rebuild / end-render-pass block.
+static bool VK_RTAnyEffectEnabled()
+{
+    if (!vk.rayTracingSupported || !vkRT.isInitialized || !r_useRayTracing.GetBool())
+        return false;
+    extern idCVar r_rtShadows;
+    extern idCVar r_rtAO;
+    return r_rtShadows.GetBool() || r_rtAO.GetBool();
+}
+
 // Forward declarations (defined in vk_pipeline.cpp)
 // vkPipelines_t and vkPipes are declared in vk_common.h
 void VK_InitPipelines(void);
@@ -419,7 +430,7 @@ static bool VK_ComputeLocalViewOriginFromModelView(const viewEntity_t *space, fl
 
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
-// + screenSize vec2 + useShadowMask int + pad = 356 bytes -> round to 384.
+// + screenSize vec2 + useShadowMask int + useAO int + lightScale float + pad float = 376 bytes -> round to 384.
 static const uint32_t INTERACTION_UBO_SIZE = 384;
 
 static void VK_CreateUBORings(void)
@@ -646,8 +657,15 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         }
     }
 
+    // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
+    extern idCVar r_rtAO;
+    int *useAOPtr = useSM + 1;
+    const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool()
+                         && vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
+
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
-    float *lightScalePtr = (float *)(useSM + 1);
+    float *lightScalePtr = (float *)(useAOPtr + 1);
     *lightScalePtr = backEnd.overBright;
 
     // Write UBO descriptor
@@ -701,7 +719,20 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         VK_Image_GetFallbackDescriptorInfo(&shadowMaskInfo);
     }
 
-    VkWriteDescriptorSet writes[8] = {};
+    // Binding 8: AO mask
+    VkDescriptorImageInfo aoMaskInfo = {};
+    if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE)
+    {
+        aoMaskInfo.sampler     = vkRT.aoMaskSampler;
+        aoMaskInfo.imageView   = vkRT.aoMask[vk.currentFrame].view;
+        aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    else
+    {
+        VK_Image_GetFallbackDescriptorInfo(&aoMaskInfo);
+    }
+
+    VkWriteDescriptorSet writes[9] = {};
 
     // Binding 0: UBO
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -727,7 +758,14 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     writes[7].descriptorCount = 1;
     writes[7].pImageInfo = &shadowMaskInfo;
 
-    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 8, writes);
+    // Binding 8: AO mask
+    writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[8].dstBinding = 8;
+    writes[8].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[8].descriptorCount = 1;
+    writes[8].pImageInfo = &aoMaskInfo;
+
+    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 9, writes);
 
     // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
@@ -3532,16 +3570,17 @@ void VK_RB_DrawView(const void *data)
         VK_RB_FillDepthBuffer(cmdBuf);
 
     // Rebuild TLAS after the depth prepass so that depth values are populated before any
-    // per-light shadow ray dispatches read from them.  The TLAS build must be outside a
-    // render pass, so we end/reopen here once; per-light dispatches do the same inside
-    // VK_RB_DrawInteractions.
-    if (VK_RTShadowsEnabled())
+    // RT dispatches (shadows per-light, AO once per frame) read from them.
+    // The TLAS build must be outside a render pass, so we end/reopen here once.
+    // Per-light shadow dispatches do the same inside VK_RB_DrawInteractions.
+    if (VK_RTAnyEffectEnabled())
     {
         vkCmdEndRenderPass(cmdBuf);
 
         // Clear shadow mask to 1.0 (fully lit) before any per-light dispatches.
         // Without this, pixels not covered by any light this frame retain stale shadow
         // values from the previous frame and appear as a stuck black afterimage.
+        if (VK_RTShadowsEnabled())
         {
             vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];
             // Barrier: last frame's RT writes → transfer clear
@@ -3573,6 +3612,7 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+        VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.renderPassResume;
@@ -4019,6 +4059,8 @@ void VKimp_PostInit(int width, int height)
         VK_RT_Init();
         common->Printf("VK: initializing RT shadows\n");
         VK_RT_InitShadows();
+        common->Printf("VK: initializing RT AO\n");
+        VK_RT_InitAO();
     }
 
     common->Printf("VK: Backend ready\n");
