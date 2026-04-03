@@ -1,8 +1,8 @@
 # RTX Refactor — Phase 4 Optimization, Phase 5 and Phase 6Plan
 
 **Document:** `rtx_refactor_plan4.md`
-**Date:** 2026-03-25
-**Branch:** `moar_shadow_depth_fixes`
+**Date:** 2026-04-03
+**Branch:** `feature/rtao`
 
 This document records what has been done, identifies the current gaps that
 must be fixed to make Phase 4 (RT shadows) actually correct, and lays out
@@ -21,30 +21,43 @@ the detailed steps for Phase 5 (RTAO + reflections).
 | 5 | RTAO + RT reflections | **Not started** |
 | 6 | One-bounce global illumination | **Not started — scope expansion, see §Phase 6** |
 
-## Current State Snapshot (2026-03-25)
+## Current State Snapshot (2026-04-03)
 
 Brief status for quick return-to-work context:
 
-- Phase 4 correctness is now in good shape:
-  - Per-light RT shadow mask dispatch is interleaved with per-light interaction drawing.
-  - RT shadow dispatch no longer uses per-light `vkQueueWaitIdle` stalls.
-  - Player/viewmodel shadow suppression is in place for first-person correctness.
-  - Recent alpha-path fixes landed (including perforated depth-prepass parity), and this also resolved related menu/logo alpha artifacts during testing.
-- Vulkan lighting/shadow behavior is now stable enough to treat Phase 4 as complete from a correctness perspective.
-- Remaining work is mostly optimization/cleanup, not a Phase 4 blocker.
+- Phase 4 correctness is solid. Optimization work has continued since the last snapshot.
+- **Profiling finding:** Frame time was bottlenecked by the frontend (RF ~43ms), not the
+  backend (BK ~30ms). They run concurrently; total ≈ max(RF, BK). The primary frontend
+  cost was CPU shadow volume extrusion happening even when RT shadows were active.
+- The following optimizations have been implemented since 2026-03-25:
+
+### Completed Since Last Snapshot
+
+1. **Push descriptors (VK_KHR_push_descriptor)**
+
+2. **Model-keyed BLAS cache** (`vk_accelstruct.cpp`)
+
+3. **Frontend shadow volume extrusion skip** (`Interaction.cpp`)
+   - `R_CreateShadowVolume()` is now skipped when `r_useRayTracing && r_rtShadows` are both set.
+   - The backend was already discarding stencil volumes when RT is active; this eliminates the
+     wasted O(lights × shadow surfaces × silhouette edges) CPU work on the frontend.
+   - Expected to bring RF down significantly from the ~43ms baseline.
+
+4. **Batched upload (replace N × vkQueueWaitIdle)** (`vk_instance.cpp`, `vk_buffer.cpp`, `vk_image.cpp`, `vk_backend.cpp`)
+   - All `VK_BeginSingleTimeCommands` / `VK_EndSingleTimeCommands` calls accumulate into
+     one command buffer per frame instead of submitting and stalling per upload.
+
+5. **RT log trimming** (`vk_accelstruct.cpp`, `vk_backend.cpp`)
 
 ## Phase 4 Remaining Work (Brief)
 
 Only items still worth doing before calling this area fully polished:
 
-1. BLAS input path optimization:
-    - Current BLAS build still copies geometry into host-visible build-input buffers.
-    - Move to direct GPU cache buffer usage (`ambientCache`/index cache with device address + AS build flags) to cut CPU copy overhead.
-2. TLAS instance update efficiency:
+1. TLAS instance update efficiency:
     - Instance upload/recreate path is still heavier than ideal.
     - Keep reducing per-frame instance-buffer churn and host writes for mostly-static scenes.
-3. Optional cleanup:
-    - Trim debug-only cvars/log toggles once confidence is high and behavior is stable across maps.
+2. Optional cleanup:
+    - Trim any remaining debug-only cvars/log toggles once confidence is high.
 
 ## Phase 4 Fix Checklist (Code Reality)
 
@@ -202,16 +215,14 @@ dynamic buckets, then minimizing update work for unchanged static content.
 
 1. First pass implemented: static-instance signature cache + static/dynamic split,
   with static block rewritten only when signature changes.
-2. Next pass: add richer per-instance metadata cache (entity handle + BLAS handle +
+2. Model-keyed BLAS cache implemented: static entities sharing the same `hModel*` reuse
+  one BLAS, keeping device addresses stable and preventing signature churn from entity
+  pointer recycling (e.g. doors destroyed/recreated each frame).
+3. Next pass: add richer per-instance metadata cache (entity handle + BLAS handle +
   last transform hash + visibility/caster bits) so unchanged static entries are
   detected with finer granularity.
-3. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
-4. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
-5. Add debug counters for:
-    static instances total,
-    static instances rewritten,
-    dynamic instances rewritten,
-    TLAS instance bytes uploaded per frame.
+4. Build per-frame dynamic list from visible interactions; avoid scanning unrelated entities.
+5. Keep static BLAS handles persistent; dynamic BLAS update policy remains independent.
 
 #### Validation
 
@@ -224,12 +235,13 @@ dynamic buckets, then minimizing update work for unchanged static content.
 
 #### Priority
 
-High for RT scalability. This complements GPU-side BLAS input optimization and is
-worth implementing even if other RT features are deferred.
+Medium. Model BLAS cache already eliminates the primary static churn source. Remaining
+gain is from reducing per-frame instance buffer writes for truly static scenes.
 
 #### Status
 
-Planned. The split/static cache design is not fully implemented yet.
+Partially implemented. Model-keyed BLAS cache done. Finer per-instance change detection
+not yet implemented.
 
 ### Enhancement: Per-Light-Type RT Softness Controls
 
@@ -298,9 +310,21 @@ Apply the AO factor to the ambient lighting stage (surfaces lit by
 #### New Files
 
 ```
-neo/renderer/glsl/ao_ray.rgen      — ray generation shader
-neo/renderer/Vulkan/vk_ao.cpp      — AO pipeline, dispatch, and AO buffer lifecycle
+neo/renderer/glsl/ao_ray.rgen        — ray generation shader
+neo/renderer/glsl/rt_indirect.glsl   — shared include: cosine hemisphere sampling,
+                                        world position reconstruction, seed helpers.
+                                        Included by both ao_ray.rgen and gi_ray.rgen
+                                        to avoid duplicated code when GI is added.
+neo/renderer/Vulkan/vk_ao.cpp        — AO pipeline, dispatch, and AO buffer lifecycle
 ```
+
+**Design note — shared code with GI:** `ao_ray.rgen` and the later `gi_ray.rgen`
+are nearly identical: both shoot cosine-weighted hemisphere rays from the same
+reconstructed world position using the same seed/noise helpers. Factor the common
+code into `rt_indirect.glsl` from the start. The AO rgen shader then becomes a
+thin wrapper that calls `traceRayEXT` with `gl_RayFlagsTerminateOnFirstHitEXT`
+and writes an `R8` scalar result. The GI upgrade later replaces the hit logic and
+image format (`RGBA16F`) without rewriting the sampling infrastructure.
 
 #### AO Image
 
@@ -378,6 +402,17 @@ AO requires surface normals at each pixel. Options (in order of difficulty):
 **Recommended start:** depth-derived normals (option 2). Add a dedicated
 G-buffer normal pass later when it becomes important for quality.
 
+**Known artifact — edge halos:** Depth-derived normals break down at depth
+discontinuities (object silhouette edges), where the finite-difference cross-
+product spans two surfaces at different depths. This produces incorrect
+hemisphere orientations at edges and causes visible AO halos around objects.
+The effect is mild at low sample counts but becomes more obvious with temporal
+accumulation, which locks in the wrong normal value each frame.
+
+**Upgrade path:** A dedicated G-buffer normal render target (option 1) cleanly
+fixes this and also benefits GI secondary-hit sampling. It is worth adding once
+basic AO is stable and the artifacts become the primary quality complaint.
+
 Depth-derived normal in the rgen shader:
 ```glsl
 vec3 p0 = reconstructWorldPos(coord, size);
@@ -415,6 +450,13 @@ diffuseLight *= ao;
 
 Also add binding 8 to `VK_CreateInteractionDescLayout()` in `vk_pipeline.cpp`
 and upload the AO sampler/view in `VK_UpdateInteractionDescriptors()`.
+
+**Note on Doom 3's ambient term:** Doom 3's ambient is intentionally nearly zero
+— the game is designed to be dark. Applying AO only to a near-black ambient
+term would be nearly invisible. The `diffuseLight *= ao` integration above is
+therefore the correct and important choice: it produces contact darkening
+(corners, surface-object contact, crevices) that is visible regardless of
+ambient brightness. This is the primary visual payoff of RTAO in Doom 3.
 
 #### New CVars
 
@@ -458,6 +500,28 @@ This can be tracked in `vkRTState_t`:
 float prevInvViewProj[16];
 bool historyValid;
 ```
+
+#### EMA Ghosting During Camera Movement
+
+**Known limitation:** Camera-cut detection handles hard cuts but not continuous
+movement. During any pan, tilt, or strafe, the EMA blends the current frame's
+pixel against history from a *different world position*, causing:
+
+- Ghosting/streaking on moving objects (shadows/AO "drag" behind them).
+- Smearing of AO/GI at screen edges when panning.
+
+The `alpha` value directly controls the noise/ghosting tradeoff:
+- Low alpha (0.05–0.1): smooth but heavy ghosting during movement.
+- High alpha (0.2–0.3): less ghosting but noisier result.
+
+**Acceptable for a first pass.** The effect is tolerable at Doom 3 camera
+speeds. Start with alpha ≈ 0.1 and tune from play.
+
+**Upgrade path:** A per-pixel velocity/motion-vector buffer would allow proper
+reprojection — reproject each pixel's world position into the previous frame's
+screen space and sample history there. This eliminates ghosting at the cost
+of one additional G-buffer pass (screen-space velocity `RG16F`). Add this
+alongside the G-buffer normal pass if ghosting becomes the primary complaint.
 
 #### New Files
 
@@ -652,7 +716,7 @@ Doom3's material system already contains everything needed:
 | GI Property | Doom3 Source | Notes |
 |-------------|-------------|-------|
 | Albedo | `diffuse` stage texture (`diffuseTexIndex` in MaterialEntry) | Exactly what GI needs — base colour at secondary hit |
-| Roughness | `specularExponent` on the specular stage | Map to GGX roughness: `roughness = sqrt(2.0 / (specExp + 2.0))`. Store the result in `MaterialEntry.roughness` at SSBO build time. |
+| Roughness | `specularExponent` on the specular stage | Map to GGX roughness: `roughness = sqrt(2.0 / (specExp + 2.0))`. Store the result in `MaterialEntry.roughness` at SSBO build time. **Default to `1.0` (fully diffuse) when no specular stage is present** — many Doom 3 materials omit specular entirely. |
 | Emissive | Materials with a `blend add` stage and no `diffuse` | These are lights/glows; their contribution naturally appears as GI source geometry |
 | Alpha mask | `MC_PERFORATED` + `alphaTestRegister` | Already in `MaterialEntry.flags` + `alphaThreshold` |
 
@@ -907,10 +971,15 @@ Detailed execution order with status:
      - Compare frame-time stability in static-heavy and dynamic-heavy scenes.
 
 4. Phase 5 enablement (after optimization baseline is stable)
-     - 4.1 Material SSBO + bindless texture/geometry metadata (`5.4` promoted prerequisite).
-     - 4.2 RTAO pipeline (`5.1`).
-     - 4.3 Temporal denoise/accumulation for shadow + AO (`5.2`).
+     - 4.1 RTAO pipeline (`5.1`) — no material data required; can ship early as a quick win.
+     - 4.2 Temporal denoise/accumulation for shadow + AO (`5.2`).
+     - 4.3 Material SSBO + bindless texture/geometry metadata (`5.4` promoted prerequisite).
      - 4.4 RT reflections (`5.3`) using material metadata path.
+
+     **Note on ordering:** RTAO (4.1) needs zero material infrastructure — it
+     only needs a binary hit/miss result. Moving it before the material SSBO work
+     gets visible results faster and validates the AO pipeline (descriptor layout,
+     image lifecycle, temporal pass) in isolation before adding material complexity.
 
 5. Phase 6 expansion (post-Phase 5 baseline)
      - GI raygen/hit path, temporal accumulation, and interaction integration.
@@ -947,6 +1016,7 @@ Historical + current updates (implemented now) and planned extensions:
 | Planned | `neo/renderer/Vulkan/vk_reflections.cpp` | RT reflections pipeline + dispatch |
 | Planned | `neo/renderer/Vulkan/vk_gi.cpp` | One-bounce GI pipeline + dispatch |
 | Planned | `neo/renderer/glsl/rt_material.glsl` | Shared RT material/UV helper include for any-hit/closest-hit paths |
+| Planned | `neo/renderer/glsl/rt_indirect.glsl` | Shared include: cosine hemisphere sampling + world-pos reconstruction; used by both AO and GI rgen shaders |
 | Planned | `neo/renderer/glsl/ao_ray.rgen` | AO ray generation shader |
 | Planned | `neo/renderer/glsl/temporal_resolve.comp` | Temporal resolve compute shader |
 | Planned | `neo/renderer/glsl/reflect_ray.rgen` | Reflection ray generation shader |

@@ -1,0 +1,13 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+// ao_ray.rahit — AO any-hit shader
+// Geometry was hit within aoRadius: the direction is occluded.
+// Terminates immediately (no alpha-test; same as shadow any-hit).
+layout(location = 0) rayPayloadInEXT float aoPayload;
+
+void main()
+{
+    aoPayload = 0.0; // occluded
+    terminateRayEXT;
+}
