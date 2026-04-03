@@ -729,13 +729,15 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     {
         const int frameIdx = vk.currentFrame;
         const bool useHistory = r_rtTemporal.GetBool() &&
-                                vkRT.aoHistory[frameIdx].image != VK_NULL_HANDLE &&
+                                vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE &&
                                 vkRT.aoHistoryValid[frameIdx];
-        if (vk.rayTracingSupported && vkRT.isInitialized &&
-            (useHistory ? vkRT.aoHistory[frameIdx].image : vkRT.aoMask[frameIdx].image) != VK_NULL_HANDLE)
+        const bool hasValidAOImage = useHistory
+                                   ? (vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE)
+                                   : (vkRT.aoMask[frameIdx].image != VK_NULL_HANDLE);
+        if (vk.rayTracingSupported && vkRT.isInitialized && hasValidAOImage)
         {
             aoMaskInfo.sampler     = vkRT.aoMaskSampler;
-            aoMaskInfo.imageView   = useHistory ? vkRT.aoHistory[frameIdx].view
+            aoMaskInfo.imageView   = useHistory ? vkRT.aoReadView[frameIdx]
                                                 : vkRT.aoMask[frameIdx].view;
             aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         }
