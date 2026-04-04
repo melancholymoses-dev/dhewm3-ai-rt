@@ -111,7 +111,7 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas); // forward decl for model c
 // cleared (and all GPU resources freed) on shutdown and map transitions.
 // ---------------------------------------------------------------------------
 
-static const int VK_RT_MODEL_BLAS_CACHE_MAX = 512;
+static const int VK_RT_MODEL_BLAS_CACHE_MAX = 2048;
 
 struct vkModelBLASCacheEntry_t
 {
@@ -1334,6 +1334,39 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // Called once after device creation (when rayTracingSupported is true).
 // The shadow pipeline and shadow mask are set up in vk_shadows.cpp.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// VK_RT_BeginLevelLoad (public)
+// Called from idRenderSystemLocal::BeginLevelLoad() before the render model
+// manager purges assets.  Worlds are still valid at this point.
+// Frees all per-entity and cached-model BLASes so that:  
+//   (a) model pointers in the BLAS cache don't dangle after model eviction, and
+//   (b) the cache starts empty for the new level.
+// vkDeviceWaitIdle is safe here — the game's main loop stops rendering during
+// level loads.
+// ---------------------------------------------------------------------------
+
+void VK_RT_BeginLevelLoad(void)
+{
+    if (!vkRT.isInitialized)
+        return;
+
+    vkDeviceWaitIdle(vk.device);
+
+    // Walk all worlds (still valid here) and free per-entity non-cached BLASes.
+    // Also clears the model BLAS cache.
+    VK_RT_ClearWorldEntityBLASPointers(true);
+
+    // Drain any remaining deferred garbage — all safe since device is now idle.
+    for (int i = 0; i < s_blasGarbageCount; i++)
+        VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
+    s_blasGarbageCount = 0;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries\n",
+                       s_modelBLASCacheCount);
+    // s_modelBLASCacheCount was already reset to 0 by VK_RT_ModelBLASCacheClear() above.
+}
 
 void VK_RT_Init(void)
 {

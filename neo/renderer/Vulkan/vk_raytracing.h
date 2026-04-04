@@ -275,6 +275,7 @@ void VK_RT_LoadFunctionPointers(void);
 // Initialize the RT pipeline (called once after device creation when RT is available)
 void VK_RT_Init(void);
 void VK_RT_Shutdown(void);
+void VK_RT_BeginLevelLoad(void);  // clears BLAS cache at level transitions
 
 // Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
