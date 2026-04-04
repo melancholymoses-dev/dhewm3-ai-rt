@@ -4127,14 +4127,16 @@ void VKimp_PostInit(int width, int height)
     {
         common->Printf("VK: initializing RT\n");
         VK_RT_Init();
+        // Material table first: matDescLayout must exist before any pipeline layout
+        // that references it (shadow / reflection pipelines) is created.
+        common->Printf("VK: initializing RT material table\n");
+        VK_RT_InitMaterialTable();
         common->Printf("VK: initializing RT shadows\n");
         VK_RT_InitShadows();
         common->Printf("VK: initializing RT AO\n");
         VK_RT_InitAO();
         common->Printf("VK: initializing RT reflections\n");
         VK_RT_InitReflections();
-        common->Printf("VK: initializing RT material table\n");
-        VK_RT_InitMaterialTable();
     }
 
     common->Printf("VK: Backend ready\n");

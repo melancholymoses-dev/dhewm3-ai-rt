@@ -1,43 +1,44 @@
 /*
 ===========================================================================
-Doom 3 GPL Source Code — dhewm3 Vulkan
-reflect_ray.rchit — closest-hit shader for reflection rays.
 
-Cheap approximation: returns a direction-based environment tint using the
-reflected ray direction rather than sampling any material texture.  The
-tint distinguishes "ceiling / open space above" from "wall / floor" hits
-while requiring no vertex-buffer or material-table access.
+Doom 3 GPL Source Code
+dhewm3 Vulkan — reflect_ray.rchit — closest-hit shader for reflection rays.
 
-Once Phase 5.4 (TLAS instance metadata) is in place, this shader can be
-upgraded to sample the actual hit surface's diffuse colour.
+Phase 5.4: samples the actual diffuse texture of the hit surface using the
+material table (set=1).  UVs are barycentrically interpolated from the hit
+triangle's vertex buffer via GL_EXT_buffer_reference.
+
+This replaces the Phase 5.3 direction-tint approximation.
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+
+Doom 3 Source Code is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
 ===========================================================================
 */
 
 #version 460
-#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_ray_tracing                              : require
+#extension GL_EXT_buffer_reference                         : require
+#extension GL_EXT_buffer_reference2                        : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
+#extension GL_EXT_nonuniform_qualifier                     : enable
+
+#include "rt_material.glsl"
 
 layout(location = 0) rayPayloadInEXT vec4 reflPayload;
 
+// Barycentric coordinates set by the built-in triangle intersection stage.
+// baryCoord.x = weight of vertex 1, baryCoord.y = weight of vertex 2.
+// Weight of vertex 0 = 1.0 - baryCoord.x - baryCoord.y.
+hitAttributeEXT vec2 baryCoord;
+
 void main()
 {
-    // Use the reflected ray's travel direction as an IBL-probe approximation.
-    // The ray direction is world-space; derive a simple sky/floor gradient.
-    vec3 dir = normalize(gl_WorldRayDirectionEXT);
-
-    // In Doom 3 world space the camera looks along -Y with Z up (game space),
-    // but the shaders use GL convention where Y is up after the camera transform.
-    // Use the Y component as the "up" axis for the gradient.
-    float up = dir.y * 0.5 + 0.5;   // remap [-1,1] → [0,1]
-
-    // Environment tint: dark reddish-brown for downward hits (floors/lower walls),
-    // warm dusty rust for upward hits (Martian ceiling/upper walls).
-    // Mars surface is iron-oxide red; no blue-sky light source exists indoors.
-    // Geometry hits are 60% as bright as open sky (miss shader) to distinguish.
-    vec3 floorTint  = vec3(0.10, 0.06, 0.04);  // dark red-brown dust
-    vec3 ceilTint   = vec3(0.18, 0.11, 0.07);  // warmer rust for upward-facing hits
-    vec3 color = mix(floorTint, ceilTint, up);
-
-    reflPayload = vec4(color, 1.0);
+    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
+    reflPayload = vec4(diffuse.rgb, 1.0);
 }
