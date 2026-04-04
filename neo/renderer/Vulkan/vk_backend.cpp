@@ -133,7 +133,8 @@ static bool VK_RTAnyEffectEnabled()
         return false;
     extern idCVar r_rtShadows;
     extern idCVar r_rtAO;
-    return r_rtShadows.GetBool() || r_rtAO.GetBool();
+    extern idCVar r_rtReflections;
+    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool();
 }
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -671,6 +672,13 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     float *lightScalePtr = (float *)(useAOPtr + 1);
     *lightScalePtr = backEnd.overBright;
 
+    // useReflections: 1 when RT reflection buffer is valid this frame
+    extern idCVar r_rtReflections;
+    int *useReflPtr = (int *)(lightScalePtr + 1);
+    const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
+                               vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+    *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
+
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
@@ -747,7 +755,21 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         }
     }
 
-    VkWriteDescriptorSet writes[9] = {};
+    // Binding 9: reflection map (or 1x1 black fallback when off)
+    VkDescriptorImageInfo reflMapInfo = {};
+    if (vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
+        vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
+    {
+        reflMapInfo.sampler     = vkRT.reflSampler;
+        reflMapInfo.imageView   = vkRT.reflBuffer[vk.currentFrame].view;
+        reflMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    else
+    {
+        VK_Image_GetFallbackDescriptorInfo(&reflMapInfo);
+    }
+
+    VkWriteDescriptorSet writes[10] = {};
 
     // Binding 0: UBO
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -780,7 +802,14 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     writes[8].descriptorCount = 1;
     writes[8].pImageInfo = &aoMaskInfo;
 
-    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 9, writes);
+    // Binding 9: reflection map
+    writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[9].dstBinding = 9;
+    writes[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[9].descriptorCount = 1;
+    writes[9].pImageInfo = &reflMapInfo;
+
+    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 10, writes);
 
     // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
@@ -3652,6 +3681,7 @@ void VK_RB_DrawView(const void *data)
 
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
         VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
+        VK_RT_DispatchReflections(cmdBuf, backEnd.viewDef);
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.renderPassResume;
@@ -4100,6 +4130,8 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitShadows();
         common->Printf("VK: initializing RT AO\n");
         VK_RT_InitAO();
+        common->Printf("VK: initializing RT reflections\n");
+        VK_RT_InitReflections();
     }
 
     common->Printf("VK: Backend ready\n");

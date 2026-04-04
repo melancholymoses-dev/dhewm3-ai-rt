@@ -131,6 +131,10 @@ struct vkAOMask_t
     uint32_t height;
 };
 
+// Reflection colour buffer: RGBA16F per frame-in-flight slot.
+// Same storage layout as vkAOMask_t; format baked at alloc time.
+typedef vkAOMask_t vkReflBuffer_t;
+
 // Global RT state
 struct vkRTState_t
 {
@@ -226,6 +230,28 @@ struct vkRTState_t
     // Falls back to aoHistory[i].view when Atrous is disabled (r_rtAtrousIterations 0).
     VkImageView           aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // RT Reflections (Step 5.3)
+    //
+    // One RGBA16F buffer per frame-in-flight slot.
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t reflBuffer[VK_MAX_FRAMES_IN_FLIGHT];  // RGBA16F reflection colour
+    VkSampler      reflSampler;                           // linear-clamp for interaction shader
+
+    VkPipeline            reflPipeline;
+    VkPipelineLayout      reflPipelineLayout;
+    VkDescriptorSetLayout reflDescLayout;
+    VkDescriptorPool      reflDescPool;
+    VkDescriptorSet       reflDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   reflDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkBuffer       sbtReflBuffer;
+    VkDeviceMemory sbtReflMemory;
+    VkStridedDeviceAddressRegionKHR reflRgenRegion;
+    VkStridedDeviceAddressRegionKHR reflMissRegion;
+    VkStridedDeviceAddressRegionKHR reflHitRegion;
+    VkStridedDeviceAddressRegionKHR reflCallRegion;
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -309,6 +335,27 @@ void VK_RT_ResizeAtrous(uint32_t width, uint32_t height);
 // a (COMPUTE_WRITE → FRAGMENT_READ) barrier has been issued.
 // If r_rtAtrousIterations == 0, returns early after setting aoReadView to aoHistory.
 void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd);
+
+// ---------------------------------------------------------------------------
+// RT Reflections (Step 5.3) — cheap environment approximation
+// ---------------------------------------------------------------------------
+
+// Create the RGBA16F reflection buffer, RT pipeline, and SBT.
+// Called once from VK_InitVulkan after VK_RT_InitAO.
+void VK_RT_InitReflections(void);
+
+// Destroy all reflection resources.  Device must be idle before calling.
+void VK_RT_ShutdownReflections(void);
+
+// Resize reflection buffer when render resolution changes.
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeReflections(uint32_t width, uint32_t height);
+
+// Dispatch reflection rays for the current view (once per frame).
+// Must be outside a render pass.  Depth must be in ATTACHMENT_OPTIMAL on entry;
+// this function transitions to READ_ONLY_OPTIMAL and back.
+// Output: reflBuffer[currentFrame] is ready for FRAGMENT sampling when this returns.
+void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
