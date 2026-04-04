@@ -39,6 +39,7 @@ layout(set=0, binding=5) uniform sampler2D u_SpecularMap;     // specular intens
 layout(set=0, binding=6) uniform sampler2D u_SpecularTable;   // NdotH -> specular power
 layout(set=0, binding=7) uniform sampler2D u_ShadowMask;      // RT shadow mask (1=lit, 0=shadowed)
 layout(set=0, binding=8) uniform sampler2D u_AOMap;           // RT AO mask (1=unoccluded, 0=occluded)
+layout(set=0, binding=9) uniform sampler2D u_ReflectionMap;   // RT reflection buffer (RGBA16F)
 
 // Shared UBO — binding 0, both vertex and fragment stages.
 // Field order matches VkInteractionUBO in vk_pipeline.cpp (std140).
@@ -69,6 +70,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseShadowMask;
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
+    int   u_UseReflections; // 1 when RT reflection buffer is valid this frame
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -124,8 +126,27 @@ void main() {
         ao = texture(u_AOMap, aoUV).r;
     }
 
+    // --- RT reflections (cheap approximation, Step 5.3) ---
+    // NOTE: this shader is called once per light, so reflColor is accumulated N
+    // times for N lights illuminating a pixel.  r_rtReflectionBlend (baked into
+    // the reflection buffer at dispatch time) keeps the result visually reasonable.
+    // Reflection is weighted by the per-pixel specular map value so matte surfaces
+    // show no reflection and metallic/shiny surfaces show a clear tint.
+    vec3 reflColor = vec3(0.0);
+    if (u_UseReflections != 0) {
+        vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
+        vec3 reflSample = texture(u_ReflectionMap, reflUV).rgb;
+        // Weight by specular-map luminance so only shiny surfaces reflect
+        float specWeight = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
+                               vec3(0.299, 0.587, 0.114));
+        reflColor = reflSample * specWeight;
+    }
+
     // --- Combine ---
-    vec3 color = (diffuse * ao + specular) * attenuation * shadow;
+    // Reflection is added independently of the light attenuation/shadow so that
+    // reflections remain visible even on surfaces in shadow (environment light,
+    // not per-source light).
+    vec3 color = (diffuse * ao + specular) * attenuation * shadow + reflColor;
     color *= vary_Color.rgb;
 
     color *= u_LightScale;

@@ -1,0 +1,97 @@
+/*
+===========================================================================
+
+Doom 3 GPL Source Code
+dhewm3 Vulkan — Reflection ray generation shader (cheap approximation).
+
+For every non-sky pixel:
+  1. Reconstruct world-space position and depth-derived normal.
+  2. Compute the mirror-reflected view direction.
+  3. Trace one ray.  The miss/closest-hit shaders return a directional
+     colour tint (sky gradient) — no per-material texture lookup needed.
+  4. Write vec4(rgb, 1.0) to the reflection RGBA16F buffer.
+
+The interaction fragment shader samples this buffer and blends the result
+into the specular contribution, weighted by the specular map value.
+This gives shiny/metallic surfaces plausible environment reflections at
+minimal cost.
+
+NOTE: This is the Phase 5.3 "cheap approximation" before the full
+material-table pass (Phase 5.4).  Once 5.4 is in, the closest-hit shader
+can look up the actual hit surface colour instead of a direction tint.
+
+This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+
+Doom 3 Source Code is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 1, rgba16f) uniform image2D reflImage;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+layout(set = 0, binding = 3) uniform ReflParams {
+    mat4   invViewProj;
+    float  maxDist;
+    uint   frameIndex;
+    ivec2  screenSize;
+} params;
+
+layout(location = 0) rayPayloadEXT vec4 reflPayload;
+
+#include "rt_indirect.glsl"
+
+void main()
+{
+    ivec2 coord = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size  = params.screenSize;
+
+    float depth = texelFetch(depthSampler, coord, 0).r;
+
+    // Sky / no geometry — no surface to reflect from
+    if (depth >= 1.0)
+    {
+        imageStore(reflImage, coord, vec4(0.0));
+        return;
+    }
+
+    vec3 worldPos = rt_ReconstructWorldPos(coord, size, params.invViewProj);
+
+    // Camera position
+    vec4 camClip  = vec4(0.0, 0.0, -1.0, 1.0);
+    vec4 camWorld = params.invViewProj * camClip;
+    vec3 camPos   = camWorld.xyz / camWorld.w;
+    vec3 viewDir  = normalize(worldPos - camPos);   // points away from camera
+
+    vec3 normal   = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, -viewDir);
+
+    // Mirror-reflect view direction around surface normal
+    vec3 reflDir  = reflect(viewDir, normal);
+
+    // Bias origin off surface to avoid self-intersection
+    vec3 origin = worldPos + normal * 0.5;
+
+    reflPayload = vec4(0.0);
+    traceRayEXT(
+        topLevelAS,
+        gl_RayFlagsNoneEXT,     // closest-hit needed for colour (no early-terminate)
+        0xFF,
+        0,                      // SBT hit offset: group 2 = hit group
+        0,                      // SBT stride
+        0,                      // miss index: group 1 = miss
+        origin,
+        0.01,                   // tMin (bias already baked into origin)
+        reflDir,
+        params.maxDist,
+        0                       // payload location
+    );
+
+    imageStore(reflImage, coord, reflPayload);
+}
