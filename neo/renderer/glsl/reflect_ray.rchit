@@ -8,7 +8,11 @@ Phase 5.4: samples the actual diffuse texture of the hit surface using the
 material table (set=1).  UVs are barycentrically interpolated from the hit
 triangle's vertex buffer via GL_EXT_buffer_reference.
 
-This replaces the Phase 5.3 direction-tint approximation.
+Phase 5.4b: glass branch.  Translucent surfaces (MC_TRANSLUCENT, flagged
+MAT_FLAG_GLASS) get a flat 4 % reflectance (F0 for real glass at normal
+incidence).  The remaining 96 % is passed through to the next bounce via
+reflPayload.transmittance + nextOrigin/nextDir.  rgen traces the continuation
+ray on the next loop iteration.
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
 
@@ -28,8 +32,9 @@ the Free Software Foundation, either version 3 of the License, or
 #extension GL_EXT_nonuniform_qualifier                     : enable
 
 #include "rt_material.glsl"
+#include "reflect_payload.glsl"
 
-layout(location = 0) rayPayloadInEXT vec4 reflPayload;
+layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 
 // Barycentric coordinates set by the built-in triangle intersection stage.
 // baryCoord.x = weight of vertex 1, baryCoord.y = weight of vertex 2.
@@ -39,6 +44,30 @@ hitAttributeEXT vec2 baryCoord;
 void main()
 {
     uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    MaterialEntry mat = materials[matIdx];
+
+    if ((mat.flags & MAT_FLAG_GLASS) != 0u)
+    {
+        // Thin-glass approximation: flat F0 = 0.04 (4 % reflectance at all angles).
+        // The reflected colour is tinted by the glass diffuse texture.
+        // The remaining 96 % continues straight through (no refraction).
+        const float F0      = 0.04;
+        const float transmit = 1.0 - F0;
+
+        vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
+
+        reflPayload.colour        = F0 * diffuse.rgb;
+        reflPayload.transmittance = transmit;
+        // Continuation ray: start just past the glass surface, same direction.
+        reflPayload.nextOrigin = gl_WorldRayOriginEXT
+                               + gl_WorldRayDirectionEXT * gl_HitTEXT
+                               + gl_WorldRayDirectionEXT * 0.01;
+        reflPayload.nextDir = gl_WorldRayDirectionEXT;
+        return;
+    }
+
+    // Opaque surface — sample diffuse, stop here.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
-    reflPayload = vec4(diffuse.rgb, 1.0);
+    reflPayload.colour        = diffuse.rgb;
+    reflPayload.transmittance = 0.0;
 }

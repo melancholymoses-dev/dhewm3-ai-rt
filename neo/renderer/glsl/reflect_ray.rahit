@@ -4,12 +4,24 @@
 Doom 3 GPL Source Code
 dhewm3 Vulkan — reflect_ray.rahit — any-hit shader for reflection rays.
 
-For alpha-tested (perforated) geometry: sample the diffuse texture at the
-hit point; if the texel alpha is below the material's threshold, call
-ignoreIntersectionEXT so the reflection ray continues through.
-
+Invoked for every non-opaque geometry intersection along a reflection ray.
 Opaque geometry is tagged VK_GEOMETRY_OPAQUE_BIT_KHR at BLAS build time
 and bypasses this shader entirely — the closest-hit runs directly.
+
+Handles three cases:
+
+  1. Alpha-tested (perforated) geometry — MAT_FLAG_ALPHA_TESTED:
+     Sample the diffuse texture; if alpha < threshold the surface is
+     transparent at this texel.  Call ignoreIntersectionEXT so the ray
+     continues through the hole.
+
+  2. Glass (translucent) geometry — MAT_FLAG_GLASS:
+     Accept the intersection without doing anything here.  rchit will
+     apply the Fresnel split (4 % reflect + 96 % straight-through).
+
+  3. Any other non-opaque geometry:
+     Accept and terminate traversal immediately (terminateRayEXT).
+     rchit will shade it as an opaque hit.
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
 
@@ -29,8 +41,9 @@ the Free Software Foundation, either version 3 of the License, or
 #extension GL_EXT_nonuniform_qualifier                     : enable
 
 #include "rt_material.glsl"
+#include "reflect_payload.glsl"
 
-layout(location = 0) rayPayloadInEXT vec4 reflPayload;
+layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 hitAttributeEXT vec2 baryCoord;
 
 void main()
@@ -48,5 +61,14 @@ void main()
             return;
         }
     }
-    // Opaque hit — let closest-hit handle shading; nothing to do here.
+    else if ((mat.flags & MAT_FLAG_GLASS) != 0u)
+    {
+        // Accept — rchit handles the Fresnel split.
+        return;
+    }
+    else
+    {
+        // Non-opaque but neither alpha-tested nor glass: accept and stop traversal.
+        terminateRayEXT;
+    }
 }

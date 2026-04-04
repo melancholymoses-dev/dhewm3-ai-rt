@@ -473,6 +473,9 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     if (shader->Coverage() == MC_PERFORATED)
         entry.flags |= VK_MAT_FLAG_ALPHA_TESTED;
 
+    if (shader->Coverage() == MC_TRANSLUCENT)
+        entry.flags |= VK_MAT_FLAG_GLASS;
+
     if (shader->GetCullType() == CT_TWO_SIDED)
         entry.flags |= VK_MAT_FLAG_TWO_SIDED;
 

@@ -380,7 +380,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
 // Geometry is read from the ambient vertex cache (already on GPU as a GL/Vk buffer).
 // ---------------------------------------------------------------------------
 
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated)
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated, bool isTranslucent)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
 
@@ -497,7 +497,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     asGeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     asGeom.geometry.triangles = triData;
-    asGeom.flags = isPerforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+    asGeom.flags = (isPerforated || isTranslucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -567,6 +567,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     {
         const srfTriangles_t *geo;
         bool perforated;
+        bool translucent;
     };
     static const int MAX_BLAS_SURFACES = 512;
     static SurfEntry validSurfs[MAX_BLAS_SURFACES];
@@ -604,11 +605,11 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
 
         if (!haveGpuGeom && !haveCpuGeom)
             continue;
-        // Translucent surfaces never cast shadows — same rule as GL stencil path.
-        if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT)
-            continue;
         validSurfs[validCount].geo = geo;
-        validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
+        validSurfs[validCount].perforated   = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
+        // Translucent (glass) surfaces: include in BLAS as non-opaque so rahit is invoked.
+        // shadow_ray.rahit passes through glass; reflect_ray.rchit applies the Fresnel split.
+        validSurfs[validCount].translucent  = surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT;
         validSurfUseGpu[validCount] = haveGpuGeom;
         validCount++;
     }
@@ -696,7 +697,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                 updateGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
                 updateGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
                 updateGeoms[i].geometry.triangles = triData;
-                updateGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+                updateGeoms[i].flags = (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
                 updateRanges[i] = {};
                 updateRanges[i].primitiveCount = prevBlas->geomPrimCounts[i];
@@ -841,7 +842,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         asGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
         asGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
         asGeoms[i].geometry.triangles = triData;
-        asGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+        asGeoms[i].flags = (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
         primCounts[i] = (uint32_t)geo->numIndexes / 3;
         blas->geomVertSizes[i] = vertSize;

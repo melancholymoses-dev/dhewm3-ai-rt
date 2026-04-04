@@ -4,8 +4,8 @@ Doom 3 GPL Source Code — dhewm3 Vulkan
 reflect_ray.rmiss — miss shader for reflection rays.
 
 Ray missed all geometry: the reflected direction points toward open space
-(sky, void, or far distance).  Return a brighter sky gradient than the
-closest-hit shader so open reflections look lighter than geometry hits.
+(sky, void, or far distance).  Return a sky gradient colour and set
+transmittance = 0 so the rgen bounce loop stops here.
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
 ===========================================================================
@@ -14,7 +14,8 @@ This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
 #version 460
 #extension GL_EXT_ray_tracing : require
 
-layout(location = 0) rayPayloadInEXT vec4 reflPayload;
+#include "reflect_payload.glsl"
+layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 
 void main()
 {
@@ -29,5 +30,6 @@ void main()
     vec3 skyColor    = vec3(0.38, 0.22, 0.14);  // hazy salmon-pink Mars sky
     vec3 color = mix(groundColor, skyColor, up);
 
-    reflPayload = vec4(color, 1.0);
+    reflPayload.colour        = color;
+    reflPayload.transmittance = 0.0;  // stop — sky has no continuation
 }
