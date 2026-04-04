@@ -1475,6 +1475,9 @@ void VK_RT_Shutdown(void)
     // Temporal resolve pipeline + history images
     VK_RT_ShutdownTemporal();
 
+    // Reflection pipeline, SBT, and buffers
+    VK_RT_ShutdownReflections();
+
     memset(&vkRT, 0, sizeof(vkRT));
 }
 
