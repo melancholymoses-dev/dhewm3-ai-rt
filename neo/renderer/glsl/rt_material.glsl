@@ -30,6 +30,7 @@ struct MaterialEntry {
 
 #define MAT_FLAG_ALPHA_TESTED 0x01u
 #define MAT_FLAG_TWO_SIDED    0x02u
+#define MAT_FLAG_GLASS        0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
 
 // ---------------------------------------------------------------------------
 // set=1 bindings
