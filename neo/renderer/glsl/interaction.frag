@@ -136,9 +136,12 @@ void main() {
     if (u_UseReflections != 0) {
         vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
         vec3 reflSample = texture(u_ReflectionMap, reflUV).rgb;
-        // Weight by specular-map luminance so only shiny surfaces reflect
-        float specWeight = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
+        // Modulate by specular map luminance: only surfaces with non-zero specular maps
+        // receive reflections.  Matte surfaces (specBase ~= 0) get no contribution.
+        // RGB weights are standard perceptual grayscale (BT.601).
+        float specBase   = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
                                vec3(0.299, 0.587, 0.114));
+        float specWeight = specBase;
         reflColor = reflSample * specWeight;
     }
 
