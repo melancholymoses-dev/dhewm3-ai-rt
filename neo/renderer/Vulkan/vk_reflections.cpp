@@ -256,10 +256,13 @@ static void VK_RT_InitReflPipeline(void)
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
     // --- Pipeline layout ---
+    // set=0: per-frame resources (TLAS, storage image, depth, UBO)
+    // set=1: material table (MatTable, VtxAddrTable, IdxAddrTable, bindless textures)
+    VkDescriptorSetLayout reflLayouts[2] = {vkRT.reflDescLayout, vkRT.matDescLayout};
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts = &vkRT.reflDescLayout;
+    plInfo.setLayoutCount = 2;
+    plInfo.pSetLayouts = reflLayouts;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.reflPipelineLayout));
 
     // --- Shader modules ---
@@ -658,6 +661,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipelineLayout, 0, 1,
                             &vkRT.reflDescSets[frameIdx], 1, &uboOff);
+    // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless textures)
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipelineLayout, 1, 1,
+                            &vkRT.matDescSet, 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Refl: dispatch %ux%u maxDist=%.1f\n", rb.width, rb.height, ubo.maxDist);
