@@ -57,6 +57,7 @@ static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
 #define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
 #define VK_MAT_FLAG_TWO_SIDED    0x02u // CT_TWO_SIDED — no back-face cull
+#define VK_MAT_FLAG_GLASS        0x04u // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
 
 // One entry per TLAS instance.  Indexed by gl_InstanceCustomIndexEXT in shaders.
 // std430-compatible: all fields are 4 bytes, total = 32 bytes.
@@ -421,7 +422,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false);
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false, bool isTranslucent = false);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 
 // Build a multi-geometry BLAS covering all non-translucent surfaces of a model.

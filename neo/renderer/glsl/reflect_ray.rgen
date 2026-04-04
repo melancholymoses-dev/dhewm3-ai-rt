@@ -2,23 +2,21 @@
 ===========================================================================
 
 Doom 3 GPL Source Code
-dhewm3 Vulkan — Reflection ray generation shader (cheap approximation).
+dhewm3 Vulkan — Reflection ray generation shader.
 
 For every non-sky pixel:
-  1. Reconstruct world-space position and depth-derived normal.
+  1. Reconstruct world-space position and normal.
   2. Compute the mirror-reflected view direction.
-  3. Trace one ray.  The miss/closest-hit shaders return a directional
-     colour tint (sky gradient) — no per-material texture lookup needed.
-  4. Write vec4(rgb, 1.0) to the reflection RGBA16F buffer.
+  3. Trace rays using a short bounce loop (max 2 iterations).
+     - On an opaque hit, rchit writes colour + transmittance=0 → stop.
+     - On a glass hit, rchit writes F0*tint + transmittance=0.96 + nextOrigin/Dir
+       so the loop fires a continuation ray straight through the glass.
+     - On a miss, rmiss writes sky colour + transmittance=0 → stop.
+  4. Accumulate colour weighted by per-segment transmittance, write to
+     the reflection RGBA16F buffer.
 
 The interaction fragment shader samples this buffer and blends the result
-into the specular contribution, weighted by the specular map value.
-This gives shiny/metallic surfaces plausible environment reflections at
-minimal cost.
-
-NOTE: This is the Phase 5.3 "cheap approximation" before the full
-material-table pass (Phase 5.4).  Once 5.4 is in, the closest-hit shader
-can look up the actual hit surface colour instead of a direction tint.
+into the specular contribution.
 
 This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
 
@@ -45,7 +43,8 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
 } params;
 
-layout(location = 0) rayPayloadEXT vec4 reflPayload;
+#include "reflect_payload.glsl"
+layout(location = 0) rayPayloadEXT ReflPayload reflPayload;
 
 #include "rt_indirect.glsl"
 
@@ -79,20 +78,36 @@ void main()
     // Bias origin off surface to avoid self-intersection
     vec3 origin = worldPos + normal * 0.5;
 
-    reflPayload = vec4(0.0);
-    traceRayEXT(
-        topLevelAS,
-        gl_RayFlagsNoneEXT,     // closest-hit needed for colour (no early-terminate)
-        0xFF,
-        0,                      // SBT hit offset: group 2 = hit group
-        0,                      // SBT stride
-        0,                      // miss index: group 1 = miss
-        origin,
-        0.01,                   // tMin (bias already baked into origin)
-        reflDir,
-        params.maxDist,
-        0                       // payload location
-    );
+    // Bounce loop: up to 2 iterations covers double-pane glass.
+    // Each glass hit contributes 4 % and passes 96 % to the next segment.
+    vec3  accum  = vec3(0.0);
+    float weight = 1.0;
+    vec3  dir    = reflDir;
 
-    imageStore(reflImage, coord, vec4(reflPayload.rgb * params.reflBlend, 1.0));
+    for (int i = 0; i < 2 && weight > 0.01; i++)
+    {
+        reflPayload.colour        = vec3(0.0);
+        reflPayload.transmittance = 0.0;
+
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsNoneEXT,
+            0xFF,
+            0,              // SBT hit offset: group 2 = hit group
+            0,              // SBT stride
+            0,              // miss index: group 1 = miss
+            origin,
+            0.01,           // tMin
+            dir,
+            params.maxDist,
+            0               // payload location
+        );
+
+        accum  += weight * reflPayload.colour;
+        weight *= reflPayload.transmittance;
+        origin  = reflPayload.nextOrigin;
+        dir     = reflPayload.nextDir;
+    }
+
+    imageStore(reflImage, coord, vec4(accum * params.reflBlend, 1.0));
 }
