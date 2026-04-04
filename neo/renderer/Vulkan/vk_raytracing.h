@@ -49,6 +49,31 @@ extern PFN_vkGetBufferDeviceAddressKHR pfn_vkGetBufferDeviceAddressKHR;
 #define vkGetBufferDeviceAddressKHR pfn_vkGetBufferDeviceAddressKHR
 
 // ---------------------------------------------------------------------------
+// Material table constants and types (Phase 5.4)
+// ---------------------------------------------------------------------------
+
+static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
+
+// Per-material-entry flags (must match GLSL definition in rt_material.glsl)
+#define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
+#define VK_MAT_FLAG_TWO_SIDED    0x02u // CT_TWO_SIDED — no back-face cull
+
+// One entry per TLAS instance.  Indexed by gl_InstanceCustomIndexEXT in shaders.
+// std430-compatible: all fields are 4 bytes, total = 32 bytes.
+struct VkMaterialEntry
+{
+    uint32_t diffuseTexIndex;  // index into bindless texture array (0 = white fallback)
+    uint32_t normalTexIndex;   // index into bindless texture array (0 = flat normal)
+    float    roughness;        // GGX roughness [0,1]; default 1.0 (fully diffuse)
+    uint32_t flags;            // VK_MAT_FLAG_*
+    uint32_t vtxBufInstance;   // = instanceCustomIndex → VtxAddrTable[vtxBufInstance]
+    uint32_t idxBufInstance;   // = instanceCustomIndex → IdxAddrTable[idxBufInstance]
+    float    alphaThreshold;   // alpha test cutoff (MC_PERFORATED); default 0.5
+    uint32_t pad;
+};
+static_assert(sizeof(VkMaterialEntry) == 32, "VkMaterialEntry size mismatch");
+
+// ---------------------------------------------------------------------------
 // BLAS (Bottom-Level Acceleration Structure) - one per unique mesh
 // ---------------------------------------------------------------------------
 
@@ -72,6 +97,11 @@ struct vkBLAS_t
     VkDeviceSize *geomIdxSizes;
     // Per-surface primitive counts — must match exactly for MODE_UPDATE to be valid.
     uint32_t *geomPrimCounts;
+    // Per-surface device addresses of vertex/index data (vertex 0 / index 0).
+    // Populated at BLAS build time; used by VK_RT_MakeMaterialEntry to fill
+    // the VtxAddrTable and IdxAddrTable SSBOs for UV interpolation in shaders.
+    VkDeviceAddress *geomVertAddrs; // [geomCount], NULL if geomCount == 0
+    VkDeviceAddress *geomIdxAddrs;  // [geomCount], NULL if geomCount == 0
     // Scratch buffer used during build (freed at destroy time).
     VkBuffer scratchBuf;
     VkDeviceMemory scratchMem;
@@ -260,6 +290,37 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR hitRegion;
     VkStridedDeviceAddressRegionKHR callRegion;
 
+    // --------------------------------------------------------------------------
+    // Material table (Phase 5.4) — set=2 in RT shaders
+    //
+    // Three persistently-mapped HOST_VISIBLE|HOST_COHERENT SSBOs:
+    //   matTableSSBO  — VkMaterialEntry[], indexed by gl_InstanceCustomIndexEXT
+    //   vtxAddrSSBO   — uint64_t[],        vertex buffer device address per instance
+    //   idxAddrSSBO   — uint64_t[],        index  buffer device address per instance
+    //
+    // One descriptor set (not per-frame) with a bindless sampler2D array at
+    // binding=3.  All VK_MAT_MAX_TEXTURES slots are initialised to the white
+    // fallback; slots are updated when new diffuse images appear in the scene.
+    // --------------------------------------------------------------------------
+    VkBuffer       matTableSSBO;
+    VkDeviceMemory matTableSSBOMemory;
+    void          *matTableMapped;      // persistently mapped
+
+    VkBuffer       vtxAddrSSBO;
+    VkDeviceMemory vtxAddrSSBOMemory;
+    void          *vtxAddrMapped;       // persistently mapped
+
+    VkBuffer       idxAddrSSBO;
+    VkDeviceMemory idxAddrSSBOMemory;
+    void          *idxAddrMapped;       // persistently mapped
+
+    VkDescriptorSetLayout matDescLayout; // set=2: mat SSBO + vtx/idx addr + bindless textures
+    VkDescriptorPool      matDescPool;
+    VkDescriptorSet       matDescSet;    // single set — textures stable between frames
+    VkSampler             matSampler;    // bilinear-clamp, used for all bindless slots
+
+    bool matTableInitialized;
+
     bool isInitialized;
 };
 
@@ -385,5 +446,37 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
+
+// ---------------------------------------------------------------------------
+// Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit
+// ---------------------------------------------------------------------------
+
+// Create persistently-mapped SSBOs (MatTable, VtxAddrTable, IdxAddrTable) and the
+// bindless sampler2D descriptor set.  Called once after VK_RT_InitReflections.
+void VK_RT_InitMaterialTable(void);
+
+// Destroy all material table GPU resources.  Device must be idle before calling.
+void VK_RT_ShutdownMaterialTable(void);
+
+// Build a VkMaterialEntry for one TLAS instance.
+// shader: the representative idMaterial for this instance (may be NULL — returns defaults).
+// blas:   the BLAS built for this entity; used to retrieve geomVertAddrs[0]/geomIdxAddrs[0].
+// instanceIndex: the gl_InstanceCustomIndexEXT that will be assigned to this instance.
+// outVtxAddr / outIdxAddr: receive the device address of surface-0 vertex/index data.
+// NOTE: internally assigns bindless texture slots; call once per instance per frame.
+VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas,
+                                         uint32_t instanceIndex,
+                                         uint64_t *outVtxAddr, uint64_t *outIdxAddr);
+
+// Upload the frame's material entries and address tables to the GPU SSBOs.
+// Mirrors the static/dynamic split of VK_RT_RebuildTLAS.
+// When rewriteStatic == false the static portion of the SSBO is left unchanged.
+// Also rebuilds the bindless texture descriptors if new images were encountered.
+// Called from vk_accelstruct.cpp at the end of VK_RT_RebuildTLAS.
+void VK_RT_UploadMatTableFrame(
+    const VkMaterialEntry *staticEntries,  uint32_t staticCount,  bool rewriteStatic,
+    const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount,
+    const uint64_t *staticVtx,  const uint64_t *staticIdx,
+    const uint64_t *dynamicVtx, const uint64_t *dynamicIdx);
 
 #endif // __VK_RAYTRACING_H__

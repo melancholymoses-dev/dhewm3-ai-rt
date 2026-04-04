@@ -249,6 +249,8 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
     delete[] blas->geomVertSizes;
     delete[] blas->geomIdxSizes;
     delete[] blas->geomPrimCounts;
+    delete[] blas->geomVertAddrs;
+    delete[] blas->geomIdxAddrs;
     delete blas;
 }
 
@@ -414,10 +416,12 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     blas->isValid = false;
 
     blas->geomCount = 1;
-    blas->geomVertBufs = new VkBuffer[1]();
-    blas->geomVertMems = new VkDeviceMemory[1]();
-    blas->geomIdxBufs = new VkBuffer[1]();
-    blas->geomIdxMems = new VkDeviceMemory[1]();
+    blas->geomVertBufs  = new VkBuffer[1]();
+    blas->geomVertMems  = new VkDeviceMemory[1]();
+    blas->geomIdxBufs   = new VkBuffer[1]();
+    blas->geomIdxMems   = new VkDeviceMemory[1]();
+    blas->geomVertAddrs = new VkDeviceAddress[1]();
+    blas->geomIdxAddrs  = new VkDeviceAddress[1]();
 
     if (useGpuBuffers)
     {
@@ -484,6 +488,10 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     triData.indexType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
     triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[0]) + idxSrcOffset;
     triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
+
+    // Store geometry device addresses for VK_RT_MakeMaterialEntry (Phase 5.4).
+    blas->geomVertAddrs[0] = triData.vertexData.deviceAddress;
+    blas->geomIdxAddrs[0]  = triData.indexData.deviceAddress;
 
     VkAccelerationStructureGeometryKHR asGeom = {};
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -724,13 +732,15 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     blas->isValid = false;
 
     blas->geomCount = (uint32_t)validCount;
-    blas->geomVertBufs = new VkBuffer[validCount]();
-    blas->geomVertMems = new VkDeviceMemory[validCount]();
-    blas->geomIdxBufs = new VkBuffer[validCount]();
-    blas->geomIdxMems = new VkDeviceMemory[validCount]();
+    blas->geomVertBufs  = new VkBuffer[validCount]();
+    blas->geomVertMems  = new VkDeviceMemory[validCount]();
+    blas->geomIdxBufs   = new VkBuffer[validCount]();
+    blas->geomIdxMems   = new VkDeviceMemory[validCount]();
     blas->geomVertSizes = new VkDeviceSize[validCount]();
-    blas->geomIdxSizes = new VkDeviceSize[validCount]();
+    blas->geomIdxSizes  = new VkDeviceSize[validCount]();
     blas->geomPrimCounts = new uint32_t[validCount]();
+    blas->geomVertAddrs = new VkDeviceAddress[validCount]();
+    blas->geomIdxAddrs  = new VkDeviceAddress[validCount]();
 
     // Build geometry descriptors — one per valid surface
     static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
@@ -822,6 +832,10 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         triData.indexType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
         triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[i]) + idxOffsets[i];
         triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
+
+        // Store per-geometry addresses for the material table (Phase 5.4).
+        blas->geomVertAddrs[i] = triData.vertexData.deviceAddress;
+        blas->geomIdxAddrs[i]  = triData.indexData.deviceAddress;
 
         asGeoms[i] = {};
         asGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -964,6 +978,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Static instances can be cached and skipped when unchanged.
     static VkAccelerationStructureInstanceKHR staticInstances[VK_RT_MAX_TLAS_INSTANCES];
     static VkAccelerationStructureInstanceKHR dynamicInstances[VK_RT_MAX_TLAS_INSTANCES];
+    // Parallel material-table entries for Phase 5.4.
+    static VkMaterialEntry staticMatEntries[VK_RT_MAX_TLAS_INSTANCES];
+    static VkMaterialEntry dynamicMatEntries[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t staticVtxAddrs[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t staticIdxAddrs[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t dynamicVtxAddrs[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t dynamicIdxAddrs[VK_RT_MAX_TLAS_INSTANCES];
     uint32_t staticCount = 0;
     uint32_t dynamicCount = 0;
     uint64_t staticSignature = 1469598103934665603ull; // FNV-1a 64 offset basis
@@ -1081,6 +1102,35 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
 
+        // Collect material entry for Phase 5.4.
+        // instanceCustomIndex = static index or (staticCount + dynamic index); patched below.
+        // We use the current bucket index as a provisional value — corrected at merge time.
+        {
+            const uint32_t provIndex = isDynamicInstance ? dynamicCount - 1 : staticCount - 1;
+            // Representative shader: Surface(0) of the current model (may be NULL).
+            const idMaterial *shader = NULL;
+            if (model->NumSurfaces() > 0)
+            {
+                const modelSurface_t *surf0 = model->Surface(0);
+                if (surf0)
+                    shader = surf0->shader;
+            }
+            uint64_t vtxA = 0, idxA = 0;
+            VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, provIndex, &vtxA, &idxA);
+            if (isDynamicInstance)
+            {
+                dynamicMatEntries[provIndex] = matEntry;
+                dynamicVtxAddrs[provIndex]   = vtxA;
+                dynamicIdxAddrs[provIndex]   = idxA;
+            }
+            else
+            {
+                staticMatEntries[provIndex] = matEntry;
+                staticVtxAddrs[provIndex]   = vtxA;
+                staticIdxAddrs[provIndex]   = idxA;
+            }
+        }
+
         if (!isDynamicInstance)
         {
             const uintptr_t entTag = (uintptr_t)ent;
@@ -1177,7 +1227,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (rewriteStatic && staticCount > 0)
     {
         for (uint32_t i = 0; i < staticCount; i++)
+        {
             staticInstances[i].instanceCustomIndex = i;
+            // Patch provisional instanceIndex in the material entry to match.
+            staticMatEntries[i].vtxBufInstance = i;
+            staticMatEntries[i].idxBufInstance = i;
+        }
 
         memcpy(dstBytes, staticInstances, staticBytes);
         memcpy(staticCache.instances, staticInstances, staticBytes);
@@ -1195,11 +1250,23 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (dynamicCount > 0)
     {
         for (uint32_t i = 0; i < dynamicCount; i++)
+        {
             dynamicInstances[i].instanceCustomIndex = staticCount + i;
+            // Patch provisional instanceIndex in the material entry to match.
+            dynamicMatEntries[i].vtxBufInstance = staticCount + i;
+            dynamicMatEntries[i].idxBufInstance = staticCount + i;
+        }
         memcpy(dstBytes + staticBytes, dynamicInstances, dynamicBytes);
     }
 
     vkUnmapMemory(vk.device, tlas.instanceMemory);
+
+    // Upload material table entries (Phase 5.4).
+    VK_RT_UploadMatTableFrame(
+        staticMatEntries,  staticCount,  rewriteStatic,
+        dynamicMatEntries, dynamicCount,
+        staticVtxAddrs, staticIdxAddrs,
+        dynamicVtxAddrs, dynamicIdxAddrs);
 
     tlas.instanceCount = instanceCount;
 
@@ -1510,6 +1577,9 @@ void VK_RT_Shutdown(void)
 
     // Reflection pipeline, SBT, and buffers
     VK_RT_ShutdownReflections();
+
+    // Material table SSBOs and bindless descriptor set (Phase 5.4)
+    VK_RT_ShutdownMaterialTable();
 
     memset(&vkRT, 0, sizeof(vkRT));
 }

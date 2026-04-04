@@ -667,6 +667,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_ao.cpp
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
+	renderer/Vulkan/vk_material_table.cpp
 )
 
 

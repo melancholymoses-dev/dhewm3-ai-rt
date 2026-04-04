@@ -4133,6 +4133,8 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitAO();
         common->Printf("VK: initializing RT reflections\n");
         VK_RT_InitReflections();
+        common->Printf("VK: initializing RT material table\n");
+        VK_RT_InitMaterialTable();
     }
 
     common->Printf("VK: Backend ready\n");
