@@ -210,12 +210,25 @@ void main() {
     } else {
         // Degenerate cross product — surface is edge-on or all neighbours are
         // on different surfaces.  Camera direction is always safe (visible
-        // surfaces face the camera).
-        biasDir          = toCamera;
+        // surfaces face the camera) — but MUST be oriented toward the light.
+        //
+        // Without the flip: a ceiling pixel (camera below → toCamera = up,
+        // light below → lightDir = down) gets biasDir = up, pushing the ray
+        // origin INTO the solid structure above the ceiling.  The ray
+        // immediately self-intersects the ceiling face and the tile appears
+        // falsely shadowed — producing the stable dark-square artifact.
+        biasDir = toCamera;
+        if ( dot(biasDir, lightDir) < 0.0 ) biasDir = -biasDir;
         gotSurfaceNormal = false;
     }
 
-    vec3 rayOrigin = worldPos + biasDir * tMin;
+    // Adaptive bias: scale up when the surface is at a grazing angle to the
+    // light (the ray travels mostly parallel to the surface, so a fixed normal
+    // offset provides less separation in the ray direction).
+    // nDotL is floored at 0.2 (≈78° grazing) to cap the factor at 5×.
+    float nDotL       = max( 0.2, dot( biasDir, lightDir ) );
+    float adaptBias   = tMin / nDotL;
+    vec3 rayOrigin = worldPos + biasDir * adaptBias;
 
     // ---------------------------------------------------------------------------
     // Fix 1 — world-anchored seed

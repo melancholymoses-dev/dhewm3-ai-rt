@@ -369,6 +369,10 @@ void idRenderWorldLocal::FreeEntityDef(qhandle_t entityHandle)
     def->parms.gui[1] = NULL;
     def->parms.gui[2] = NULL;
 
+    // Free any RT BLAS owned by this entity before deleting the struct.
+    // Must be done before delete because idRenderEntityLocal has no destructor.
+    def->FreeRenderEntity();
+
     delete def;
     entityDefs[entityHandle] = NULL;
 }

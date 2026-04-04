@@ -42,6 +42,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  maxDist;
     uint   frameIndex;
     ivec2  screenSize;
+    float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
 } params;
 
 layout(location = 0) rayPayloadEXT vec4 reflPayload;
@@ -93,5 +94,5 @@ void main()
         0                       // payload location
     );
 
-    imageStore(reflImage, coord, reflPayload);
+    imageStore(reflImage, coord, vec4(reflPayload.rgb * params.reflBlend, 1.0));
 }

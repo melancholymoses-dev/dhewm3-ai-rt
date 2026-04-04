@@ -47,10 +47,10 @@ extern idCVar r_rtReflections;
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.1", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection contribution in the interaction shader.\n"
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
-                                  "Default 0.1 targets scenes with 2-4 lights per pixel.");
+                                  "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -59,18 +59,20 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.1", CVAR_RENDERER | 
 //   float  maxDist      offset 64  size  4
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
-//   pad                 offset 80  size 16
+//   float  reflBlend    offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
+//   pad                 offset 84  size 12
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
 struct ReflParamsUBO
 {
-    float invViewProj[16];
-    float maxDist;
+    float    invViewProj[16];
+    float    maxDist;
     uint32_t frameIndex;
-    int32_t screenWidth;
-    int32_t screenHeight;
-    float pad[4];
+    int32_t  screenWidth;
+    int32_t  screenHeight;
+    float    reflBlend;   // r_rtReflectionBlend — baked into imageStore in rgen
+    float    pad[3];
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -590,8 +592,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.maxDist = Max(1.0f, r_rtReflectionDistance.GetFloat());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
     ubo.screenWidth = (int32_t)rb.width;
-    ubo.screenHeight = (int32_t)rb.height;
-
+    ubo.screenHeight = (int32_t)rb.height;    ubo.reflBlend    = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes) ---

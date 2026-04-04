@@ -2599,6 +2599,13 @@ idRenderSystemLocal::BeginLevelLoad
 */
 void idRenderSystemLocal::BeginLevelLoad(void)
 {
+    if (glConfig.isVulkan)
+    {
+        // Clear RT BLAS cache before the model manager purges assets.
+        // Worlds are still live at this point so entity pointers can be walked.
+        extern void VK_RT_BeginLevelLoad(void);
+        VK_RT_BeginLevelLoad();
+    }
     renderModelManager->BeginLevelLoad();
     globalImages->BeginLevelLoad();
 }

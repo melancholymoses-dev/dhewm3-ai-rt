@@ -672,11 +672,15 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     float *lightScalePtr = (float *)(useAOPtr + 1);
     *lightScalePtr = backEnd.overBright;
 
-    // useReflections: 1 when RT reflection buffer is valid this frame
+    // useReflections: 1 when RT reflection buffer is valid this frame.
+    // Disabled for portal/mirror subviews: the buffer was populated from the primary
+    // camera and sampling it in a different view produces a screen-space artifact
+    // (wrong geometry, rectangular footprint un-transformed by the portal projection).
     extern idCVar r_rtReflections;
     int *useReflPtr = (int *)(lightScalePtr + 1);
+    const bool isPrimaryView = (backEnd.viewDef == NULL || backEnd.viewDef->superView == NULL);
     const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
-                               vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+                               vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
     // Write UBO descriptor
@@ -736,17 +740,14 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     VkDescriptorImageInfo aoMaskInfo = {};
     {
         const int frameIdx = vk.currentFrame;
-        const bool useHistory = r_rtTemporal.GetBool() &&
-                                vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE &&
-                                vkRT.aoHistoryValid[frameIdx];
-        const bool hasValidAOImage = useHistory
-                                   ? (vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE)
-                                   : (vkRT.aoMask[frameIdx].image != VK_NULL_HANDLE);
+        const bool useHistory =
+            r_rtTemporal.GetBool() && vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE && vkRT.aoHistoryValid[frameIdx];
+        const bool hasValidAOImage = useHistory ? (vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE)
+                                                : (vkRT.aoMask[frameIdx].image != VK_NULL_HANDLE);
         if (vk.rayTracingSupported && vkRT.isInitialized && hasValidAOImage)
         {
-            aoMaskInfo.sampler     = vkRT.aoMaskSampler;
-            aoMaskInfo.imageView   = useHistory ? vkRT.aoReadView[frameIdx]
-                                                : vkRT.aoMask[frameIdx].view;
+            aoMaskInfo.sampler = vkRT.aoMaskSampler;
+            aoMaskInfo.imageView = useHistory ? vkRT.aoReadView[frameIdx] : vkRT.aoMask[frameIdx].view;
             aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         }
         else
@@ -760,8 +761,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     if (vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
         vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
     {
-        reflMapInfo.sampler     = vkRT.reflSampler;
-        reflMapInfo.imageView   = vkRT.reflBuffer[vk.currentFrame].view;
+        reflMapInfo.sampler = vkRT.reflSampler;
+        reflMapInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
         reflMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
     else
