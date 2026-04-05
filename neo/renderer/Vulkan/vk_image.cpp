@@ -246,8 +246,7 @@ void VK_Image_Init(void)
     VK_TransitionImageLayout(cmd, s_fallback.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT);
     VK_EndSingleTimeCommands(cmd);
-    vkDestroyBuffer(vk.device, stagingBuf, NULL);
-    vkFreeMemory(vk.device, stagingMem, NULL);
+    VK_DeferStagingFree(stagingBuf, stagingMem); // keep alive until VK_FlushPendingUploads()
 
     VkImageViewCreateInfo vci = {};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;

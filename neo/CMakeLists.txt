@@ -712,6 +712,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/reflect_ray.rgen
 	renderer/glsl/reflect_ray.rmiss
 	renderer/glsl/reflect_ray.rchit
+	renderer/glsl/reflect_ray.rahit
 )
 
 
