@@ -648,8 +648,15 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
             0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
+    // --- Temporal EMA resolve + atrous filter ---
+    // Both passes sample the depth image (READ_ONLY_OPTIMAL layout).
+    // Run them BEFORE restoring depth to ATTACHMENT_OPTIMAL so the layout matches.
+    VK_RT_DispatchTemporalResolveAO(cmd, viewDef);
+    VK_RT_DispatchAtrousAO(cmd);
+
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL for render pass resume ---
     // Use the same conditional aspect mask as the initial barrier.
+    // srcStageMask includes COMPUTE_SHADER since temporal/atrous just ran.
     {
         VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
@@ -666,17 +673,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthRestore.image               = vk.depthImage;
         depthRestore.subresourceRange    = {depthAspect, 0, 1, 0, 1};
         vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
             0, 0, NULL, 0, NULL, 1, &depthRestore);
     }
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: dispatch complete\n");
-
-    // --- Temporal EMA resolve (Step 5.2) ---
-    // Called after depth is restored so it's ready for the render pass that follows.
-    // The temporal pass uses only the AO images (not depth), so ordering with the
-    // depth restore is not important for correctness.
-    VK_RT_DispatchTemporalResolveAO(cmd, viewDef);
-    VK_RT_DispatchAtrousAO(cmd);
 }
