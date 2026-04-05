@@ -1,11 +1,13 @@
 # ABOUT DHEWM3-RT
 
-**This project is not affiliated with Dhewm3.**  But, it could not be done without their foundation.
+**This project is not affiliated with Dhewm3.  Do not bother that team with bug reports or feature requests.  They have made an understandable stance against AI.  Respect their choices.**  
+But, this project would be impossible without their foundation.
 
-This an attempt to implement Vulkan raytracing and eventually global illumination on top of Dhewm3 as an experiment in AI development on a complex code-base.  
+This an attempt to implement Raytracing in Vulkan om top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
 
-_dhewm 3 RTX_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.  
+_Dhewm 3 RT_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.   I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  
 
+### Original Source Links
 Original Dhewm3 Links:
 
 **The Dhewm3 homepage is:** https://dhewm3.org
@@ -16,17 +18,16 @@ I have also been using the _vkDoom3_ Vulkan implementation as a reference, which
 
 ## Process
 
-I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  
+I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  Given the well-established language and frameworks, famous code base, reference implementations, and quick build cycle this is about as well positioned for success as you can find. 
+I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear. 
 
-I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, and test it quickly.  I've been doing this as an experiment on refactoring a complex code base, and because I really wanted ray-tracing in Doom 3 and Quake 4.   
-
-Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
 
 # RayTracing Changes
 
 - Vulkan rendering pipeline.  This kept the original GL pipeline, and created a Vulkan pipeline in parallel.
 - Raytraced shadows and acceleration structures.
 - Ray-Traced Ambient Occlusion with temporal filtering 
+- working on Ray-traced reflections
 - Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
 
 ## Useful Cvars
@@ -41,23 +42,21 @@ The pipeline and ray-tracing can be enabled/disabled at the terminal in game or 
 | r_rtao            | 0, 1 | Toggle Ambient Occlusion |
 
 
-
 ## Additional Files
 
-Part of this process requires compiling the vulkan shaders and copying them. 
+Part of this process requires compiling the Vulkan shaders and copying them. 
 Currently the compiled shaders are compiled and copied in `base/glprogs/glsl` relative to where the player's save data and config lives.
 (e.g. ~/Documents/dhewm3/)
 
 I am also exploring editing some gun definitions to cast more light.  
-Those should be copied to `base/def` alongside the shaders to take effect
+Those should be copied to `base/def` alongside the shaders to take effect in game.
 Updated Plasma rifle particles to shed blue light on pulses.
 Updated Rockets to show light.
 
 
-
 # GENERAL NOTES
 
-Follow the Dhewm3 Notes on patching.  Like that you must have the original game data, purchased from your store of choice.  
+Follow the Dhewm3 Notes on patching.  As with Dhewm3, you must have the original game data, purchased from your store of choice.  
 
 
 ## Game data and patching
@@ -106,7 +105,7 @@ finally expired.
 
 ## MayaImport
 
-The code for our Maya export plugin is included, if you are a Maya licensee
+The code for the Maya export plugin is included, if you are a Maya licensee
 you can obtain the SDK from Autodesk.
 
 # LICENSE
