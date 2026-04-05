@@ -1,80 +1,63 @@
 # ABOUT DHEWM3-RT
 
-This an attempt to implement Vulkan raytracing and eventually global illumination on top of Dhewm3.  Its a game that could sing with Raytracing, and cries out for an implementation, far more so than Quake 2 did, given the emphasis on dark shadows and light.
-This is hewing closely to the original Doom3, so no shoulder flashlight --- just a world lit only by shotgun fire.
+**This project is not affiliated with Dhewm3.  Do not bother that team with bug reports or feature requests.  They have made an understandable stance against AI.  Respect their choices.**  
+But, this project would be impossible without their foundation.
 
+This an attempt to implement Raytracing in Vulkan om top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
+
+_Dhewm 3 RT_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.   I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  
+
+### Original Source Links
+Original Dhewm3 Links:
+
+**The Dhewm3 homepage is:** https://dhewm3.org
+
+**The Dhewm3 project is hosted at:** https://github.com/dhewm
+
+I have also been using the _vkDoom3_ Vulkan implementation as a reference, which I found after starting work on this.  (https://github.com/DustinHLand/vkDOOM3)
 
 ## Process
 
-I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  This project is not affiliated with Dhewm3. 
+I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  Given the well-established language and frameworks, famous code base, reference implementations, and quick build cycle this is about as well positioned for success as you can find. 
+I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear. 
 
-I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3) to code this up as an experiment on refactoring a complex code base.  
-I have also been using the vkDoom3 Vulkan implementation as a reference, which was found after starting work on this.  (https://github.com/DustinHLand/vkDOOM3)
 
-## Tips on working with LLMs
-- CLAUDE.md helped guide them towards the reference implementations to debug things.  
-- Where possible ask for help with logging defects.  They can get hung up on incorrect theoretical assumptions
-and spend many cycles repeating the same mistakes when a quick test can help pin the error path down.
-- Having two LLMs is helpful for making complementary mistakes.
-- This is an old famous codebase on well-established technology (vulkan, OpenGL), so we'd expect the models to do
-reasonably given the vast number of examples they can riff on.
-- Asking for planning docs and updating them as I went was helpful for keeping things up to date.  This also helps with optimization ideas that were suggested in the middle of debugging runs.
-- I suspect without the extant polished GL and Vulkan implementations to riff on I would not have gotten as far.
-- When the LLMs got stuck it was deep in the complex weeds.  Having some programming experience with debugging/logging and a sense for 
-decent software was still useful in prodding them in the right direction, even if my C++ is rudimentary. 
+# RayTracing Changes
+
+- Vulkan rendering pipeline.  This kept the original GL pipeline, and created a Vulkan pipeline in parallel.
+- Raytraced shadows and acceleration structures.
+- Ray-Traced Ambient Occlusion with temporal filtering 
+- working on Ray-traced reflections
+- Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
+
+## Useful Cvars
+
+The pipeline and ray-tracing can be enabled/disabled at the terminal in game or via CLI flags.
+
+| Flag | Values | Action  |
+|------|--------|-----------|
+| r_backend         | openGL, vulkan | Switch backend.  Needs restart.|
+| r_rtuseraytracing | 0, 1 | Toggle for all ray-tracing vs rasterization.  |
+| r_rtshadows       | 0, 1 | Toggle Ray-Traced Shadows  |
+| r_rtao            | 0, 1 | Toggle Ambient Occlusion |
+
 
 ## Additional Files
 
-This repo also includes the markdown plans used to steer the LLMs, which are in docs/plans.
-
-Part of this process requires compiling the vulkan shaders and copying them. 
-
-Currently the compiled shaders are compiled and copied in base/glprogs/glsl relative to where the player's save data and config lives.
+Part of this process requires compiling the Vulkan shaders and copying them. 
+Currently the compiled shaders are compiled and copied in `base/glprogs/glsl` relative to where the player's save data and config lives.
 (e.g. ~/Documents/dhewm3/)
 
 I am also exploring editing some gun definitions to cast more light.  
-Updated Plasma rifle to shed blue light.
-Updated Rocket launcher to show light.
-
-# ABOUT DHEWM3
-
-_dhewm 3 RTX_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.  The author can also test on Linux.
-
-Original Dhewm3 Links:
-
-**The official homepage is:** https://dhewm3.org
-
-**The project is hosted at:** https://github.com/dhewm
-
-**Download the latest release:** https://github.com/dhewm/dhewm3/releases/latest
-
-
-# RT Changes
-
-- Vulkan rendering pipeline
-- Raytraced shadows
-- Tweaked lighting on some weapons.
-
-# CHANGES
-
-Compared to the original _DOOM 3_, the changes of _dhewm 3_ worth mentioning are:
-
-- 64-bit port
-- SDL for low-level OS support, OpenGL and input handling
-- OpenAL for audio output, all OS-specific audio backends are gone
-- OpenAL EFX for EAX reverb effects (read: EAX-like sound effects on all platforms/hardware)
-- Gamepad support
-- Better support for widescreen (and arbitrary display resolutions)
-- A portable build system based on CMake
-- (Cross-)compilation with MinGW-w64
-- An advanced, mod-independent settings menu (opened with `F10` by default)
-
-See [Changelog.md](./Changelog.md) for a more complete changelog.
+Those should be copied to `base/def` alongside the shaders to take effect in game.
+Updated Plasma rifle particles to shed blue light on pulses.
+Updated Rockets to show light.
 
 
 # GENERAL NOTES
 
-Follow the Dhewm3 Notes on patching.  Like that you must have the original game data, purchased from your store of choice.  
+Follow the Dhewm3 Notes on patching.  As with Dhewm3, you must have the original game data, purchased from your store of choice.  
+
 
 ## Game data and patching
 
@@ -85,7 +68,7 @@ You must patch the game to the latest version (1.3.1). See the FAQ for details, 
 how to get the game data from Steam on Linux or OSX.
 
 Note that the original _Doom 3_ and _Doom 3: Resurrection of Evil_ (together with
-_DOOM 3: BFG Edition_, which is *not* supported by dhewm3) are available from the Steam Store at
+_DOOM 3: BFG Edition_, which is *not* supported by dhewm3-rt) are available from the Steam Store at
 
 https://store.steampowered.com/app/208200/DOOM_3/
 
@@ -102,7 +85,7 @@ The build system is based on CMake: http://cmake.org/
 
 Required libraries are not part of the tree. These are:
 
-- OpenAL (OpenAL Soft required, Creative's and Apple's versions are made of fail)
+- OpenAL (OpenAL Soft required)
 - SDL v1.2 or 2.0 (2.0 recommended)
 - libcurl (optional, required for server downloads)
 - Optionally, on non-Windows: libbacktrace (usually linked statically)
@@ -111,94 +94,19 @@ Required libraries are not part of the tree. These are:
   - If this is available, dhewm3 prints more useful backtraces if it crashes
 - Vulkan 1.4 (install the SDK)
 
-For **UNIX-like systems**, these libraries need to be installed (including the
-developer files). It is recommended to use the software management tools of
-your OS (apt, dnf, portage, BSD ports, [Homebrew for macOS](http://brew.sh), ...).
-
-For **Windows**, there are three options:
-
-- Use the provided binaries (recommended, see below)
-- Compile these libraries yourself
-- Use [vcpkg](https://vcpkg.io/) to install the dependencies
-    - Remember to set `CMAKE_TOOLCHAIN_FILE` as described in their [Getting Started Guide](https://vcpkg.io/en/getting-started.html)
-
-Create a distinct build folder outside of this source repository and issue
-the cmake command there, pointing it at the neo/ folder from this repository:
-
-`cmake /path/to/repository/neo`
-
-
-When all steps are done and no errors occurred, you should be able to run dhewm3 right there, like:  
-`./dhewm3 +set fs_basepath /path/to/your/doom3/`  
-*Replace `/path/to/your/doom3/` with the path to your Doom3 installation (that contains `base/` with
-`pak000.pk4` to `pak008.pk4`)*
-
-### Using the provided Windows binaries
-
-Get a clone of the latest binaries here: https://github.com/dhewm/dhewm3-libs
-
-There are two subfolders:
-
-- 32-bit binaries are located in `i686-w64-mingw32`
-- 64-bit binaries are located in `x86_64-w64-mingw32`
-
-Issue the appropriate command from the build folder, for example (for VS2019 and 32bit):
-
-`cmake -G "Visual Studio 16 2019" -A Win32 -DDHEWM3LIBS=/path/to/dhewm3-libs/i686-w64-mingw32 /path/to/repository/neo`
-
-For 64bit dhewm3 binaries, use `-A x64` and `/path/to/dhewm3-libs/x86_64-w64-mingw32` instead (note that the official dhewm3 binaries for Windows are 32bit).  
-For Visual Studio 2022 it's `"Visual Studio 17 2022"`.
-
-For 32bit MinGW use:
-`cmake -G "MinGW Makefiles" -DDHEWM3LIBS=/path/to/dhewm3-libs/i686-w64-mingw32 /path/to/repository/neo`
-
-The binaries are compatible with MinGW-w64 and all MSVC versions.
-
-### Cross-compiling
-
-For cross-compiling, a CMake Toolchain file is required.
-
-For the MinGW-w64 toolchain `i686-w64-mingw32` on Ubuntu 12.04, it looks like:
-
-```
-set(CMAKE_SYSTEM_NAME Windows)
-set(CMAKE_SYSTEM_PROCESSOR i686)
-
-set(CMAKE_C_COMPILER i686-w64-mingw32-gcc)
-set(CMAKE_CXX_COMPILER i686-w64-mingw32-g++)
-set(CMAKE_RC_COMPILER i686-w64-mingw32-windres)
-
-set(CMAKE_FIND_ROOT_PATH /usr/i686-w64-mingw32)
-
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-```
-
-Then point CMake at your toolchain file:
-`cmake -DCMAKE_TOOLCHAIN_FILE=/path/to/Toolchain.cmake -DDHEWM3LIBS=/path/to/dhewm3-libs/i686-w64-mingw32 /path/to/repository/neo`
-
-**NOTE:** The `DHEWM3LIBS` path must be an **absolute path**, i.e. it must start with `/`!
-
-If you want to build for x86_64 aka AMD64 aka x64, replace all instances of `i686`
-in the toolchain file with `x86_64`.
 
 ## Back End Rendering of Stencil Shadows
 
 The Doom 3 GPL source code release **did** not include functionality enabling rendering
 of stencil shadows via the "depth fail" method, a functionality commonly known as
 "Carmack's Reverse".  
-It has been restored in dhewm3 1.5.1 after Creative Labs' [patent](https://patents.google.com/patent/US6384822B1/en)
+It was been restored in dhewm3 1.5.1 after Creative Labs' [patent](https://patents.google.com/patent/US6384822B1/en)
 finally expired.
-
-Note that this did not change the visual appearance of the game, and didn't seem to
-make a noticeable performance difference (on halfway-recent hardware) either.
 
 ## MayaImport
 
-The code for our Maya export plugin is included, if you are a Maya licensee
+The code for the Maya export plugin is included, if you are a Maya licensee
 you can obtain the SDK from Autodesk.
-
 
 # LICENSE
 
