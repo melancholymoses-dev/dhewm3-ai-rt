@@ -79,6 +79,28 @@ extern idCVar r_vkLogRT;
 extern idCVar r_useRayTracing;
 extern idCVar r_rtAO;
 
+static VkRect2D s_temporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+static VkRect2D VK_RT_ComputeViewDispatchRect(const viewDef_t *viewDef)
+{
+    const int w = (int)vk.swapchainExtent.width;
+    const int h = (int)vk.swapchainExtent.height;
+    const idScreenRect &s = viewDef->scissor;
+
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2);
+
+    const int rw = s.x2 - s.x1 + 1;
+    const int rh = s.y2 - s.y1 + 1;
+    if (rw <= 0 || rh <= 0)
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
+    return r;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -266,11 +288,11 @@ static void VK_RT_InitTemporalPipeline(void)
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.temporalDescLayout));
 
-    // --- Push constant: 4 floats (alpha + 3 padding) = 16 bytes ---
+    // --- Push constant: alpha + dispatch rect = 32 bytes ---
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 16;
+    pushRange.size = 32;
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -399,6 +421,12 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
     }
 
     const int frameIdx = vk.currentFrame;
+    const VkRect2D dispatchRect = VK_RT_ComputeViewDispatchRect(viewDef);
+    s_temporalDispatchRect[frameIdx] = dispatchRect;
+
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
     vkAOMask_t &current = vkRT.aoMask[frameIdx];
     vkAOMask_t &history = vkRT.aoHistory[frameIdx];
 
@@ -495,23 +523,32 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
     {
         float alpha;
         float pad[3];
+        int32_t scissorOffsetX;
+        int32_t scissorOffsetY;
+        int32_t scissorExtentX;
+        int32_t scissorExtentY;
     } pc;
     pc.alpha = effectiveAlpha;
     pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
+    pc.scissorOffsetX = (int32_t)dispatchRect.offset.x;
+    pc.scissorOffsetY = (int32_t)dispatchRect.offset.y;
+    pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
+    pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
 
     // --- Dispatch ---
-    uint32_t groupsX = (current.width + 7) / 8;
-    uint32_t groupsY = (current.height + 7) / 8;
+    uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+    uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.temporalPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.temporalPipelineLayout, 0, 1,
                             &vkRT.temporalDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.temporalPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vkCmdPushConstants(cmd, vkRT.temporalPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
     vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Temporal: dispatch slot=%d alpha=%.3f size=%ux%u\n", frameIdx, effectiveAlpha,
-                       current.width, current.height);
+        common->Printf("VK RT Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n", frameIdx,
+                   effectiveAlpha, dispatchRect.offset.x, dispatchRect.offset.y,
+                   (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height);
 
     // --- Barrier: compute write to aoHistory → fragment and/or next compute read ---
     // Include COMPUTE_SHADER in dst so the Atrous pass (if enabled) can read
@@ -585,11 +622,11 @@ static void VK_RT_InitAtrousPipeline(void)
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.atrousDescLayout));
 
-    // Push constant: stepWidth(int) + sigmaDepth(float) + sigmaLuminance(float) + pad = 16 bytes
+    // Push constant: base params + dispatch rect = 32 bytes
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 16;
+    pushRange.size = 32;
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -712,6 +749,7 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
         return;
 
     const int frameIdx = vk.currentFrame;
+    const VkRect2D dispatchRect = s_temporalDispatchRect[frameIdx];
 
     int iters = idMath::ClampInt(0, 8, r_rtAtrousIterations.GetInteger());
     if (iters == 0)
@@ -737,6 +775,9 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
             common->Printf("VK RT Atrous: skip — images not ready (slot %d)\n", frameIdx);
         return;
     }
+
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
 
     // --- Update descriptor sets (once per tr.frameCount per slot) ---
     // Set [frameIdx][0]: binding0=aoHistory(in), binding1=aoScratch(out), binding2=depth
@@ -787,8 +828,8 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
 
     const float sigmaDepth = r_rtAtrousSigmaDepth.GetFloat();
     const float sigmaLum = r_rtAtrousSigmaLuminance.GetFloat();
-    const uint32_t groupsX = (history.width + 7) / 8;
-    const uint32_t groupsY = (history.height + 7) / 8;
+    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.atrousPipeline);
 
@@ -803,15 +844,23 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
             float sigmaDepth;
             float sigmaLuminance;
             float pad;
+            int32_t scissorOffsetX;
+            int32_t scissorOffsetY;
+            int32_t scissorExtentX;
+            int32_t scissorExtentY;
         } pc;
         pc.stepWidth = 1 << pass; // 1, 2, 4, 8, 16 ...
         pc.sigmaDepth = sigmaDepth;
         pc.sigmaLuminance = sigmaLum;
         pc.pad = 0.0f;
+        pc.scissorOffsetX = (int32_t)dispatchRect.offset.x;
+        pc.scissorOffsetY = (int32_t)dispatchRect.offset.y;
+        pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
+        pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.atrousPipelineLayout, 0, 1,
                                 &vkRT.atrousDescSets[frameIdx][descIdx], 0, NULL);
-        vkCmdPushConstants(cmd, vkRT.atrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdPushConstants(cmd, vkRT.atrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         // Barrier after each pass: output becomes input for the next pass (COMPUTE→COMPUTE),
