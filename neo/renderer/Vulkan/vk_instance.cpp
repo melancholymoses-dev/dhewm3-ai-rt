@@ -75,11 +75,10 @@ static const char *rtDeviceExtensions[] = {
     VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
-    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
 };
-static const int numRTDeviceExtensions = 10;
+static const int numRTDeviceExtensions = 9;
 
 // ---------------------------------------------------------------------------
 // Queue family detection
@@ -198,7 +197,7 @@ static void VKimp_CreateInstance(SDL_Window *window)
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 5, 1);
     appInfo.pEngineName = "dhewm3";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 5, 1);
-    appInfo.apiVersion = VK_API_VERSION_1_3;
+    appInfo.apiVersion = VK_API_VERSION_1_4;
 
     VkInstanceCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -287,18 +286,57 @@ static void VKimp_CreateDevice(void)
     }
 
     // Query supported features before enabling them.
-    VkPhysicalDeviceFeatures supportedFeatures = {};
-    vkGetPhysicalDeviceFeatures(vk.physicalDevice, &supportedFeatures);
-    if (!supportedFeatures.depthClamp)
+    VkPhysicalDeviceFeatures2 supportedFeatures2 = {};
+    supportedFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+
+    VkPhysicalDeviceVulkan12Features supportedVk12 = {};
+    supportedVk12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT supportedEds = {};
+    supportedEds.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR supportedAs = {};
+    supportedAs.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR supportedRtPipeline = {};
+    supportedRtPipeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+    supportedFeatures2.pNext = &supportedVk12;
+    supportedVk12.pNext = &supportedEds;
+    if (vk.rayTracingSupported)
+    {
+        supportedEds.pNext = &supportedAs;
+        supportedAs.pNext = &supportedRtPipeline;
+    }
+
+    vkGetPhysicalDeviceFeatures2(vk.physicalDevice, &supportedFeatures2);
+
+    if (!supportedFeatures2.features.depthClamp)
         common->Warning("Vulkan: depthClamp not supported by this GPU (not currently required).");
-    if (!supportedFeatures.samplerAnisotropy)
+    if (!supportedFeatures2.features.samplerAnisotropy)
         common->Error("Vulkan: samplerAnisotropy is required but is not supported by this GPU.");
+    if (vk.rayTracingSupported && !supportedFeatures2.features.shaderInt64)
+        common->Warning("Vulkan RT: shaderInt64 not supported; RT shader modules may fail.");
+    if (vk.rayTracingSupported && !supportedVk12.shaderSampledImageArrayNonUniformIndexing)
+        common->Warning(
+            "Vulkan RT: shaderSampledImageArrayNonUniformIndexing not supported; bindless indexing may fail.");
+    if (vk.rayTracingSupported && !supportedVk12.descriptorIndexing)
+        common->Warning("Vulkan RT: descriptorIndexing not supported; bindless descriptors may fail.");
 
     // Device features
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features2.features.samplerAnisotropy = VK_TRUE;
-    features2.features.depthClamp = supportedFeatures.depthClamp; // enable if available, not currently required
+    features2.features.depthClamp =
+        supportedFeatures2.features.depthClamp; // enable if available, not currently required
+    features2.features.shaderInt64 = vk.rayTracingSupported && supportedFeatures2.features.shaderInt64;
+
+    VkPhysicalDeviceVulkan12Features vk12Features = {};
+    vk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    vk12Features.bufferDeviceAddress = vk.rayTracingSupported && supportedVk12.bufferDeviceAddress;
+    vk12Features.descriptorIndexing = vk.rayTracingSupported && supportedVk12.descriptorIndexing;
+    vk12Features.shaderSampledImageArrayNonUniformIndexing =
+        vk.rayTracingSupported && supportedVk12.shaderSampledImageArrayNonUniformIndexing;
 
     // Extension list: base + optional RT extensions
     const char **exts;
@@ -315,34 +353,30 @@ static void VKimp_CreateDevice(void)
     }
 
     // Chain RT feature structs if RT is supported
-    VkPhysicalDeviceBufferDeviceAddressFeatures bufDevAddrFeatures = {};
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures = {};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
-    VkPhysicalDeviceDescriptorIndexingFeatures diFeatures = {};
 
     // Extended dynamic state (required for vkCmdSetCullMode)
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT edsFeatures = {};
     edsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
-    edsFeatures.extendedDynamicState = VK_TRUE;
+    edsFeatures.extendedDynamicState = supportedEds.extendedDynamicState;
 
     void **nextChain = (void **)&features2.pNext;
+    *nextChain = &vk12Features;
+    nextChain = (void **)&vk12Features.pNext;
+
     *nextChain = &edsFeatures;
     nextChain = (void **)&edsFeatures.pNext;
 
     if (vk.rayTracingSupported)
     {
-        bufDevAddrFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
-        bufDevAddrFeatures.bufferDeviceAddress = VK_TRUE;
-        *nextChain = &bufDevAddrFeatures;
-        nextChain = (void **)&bufDevAddrFeatures.pNext;
-
         asFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-        asFeatures.accelerationStructure = VK_TRUE;
+        asFeatures.accelerationStructure = supportedAs.accelerationStructure;
         *nextChain = &asFeatures;
         nextChain = (void **)&asFeatures.pNext;
 
         rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-        rtPipelineFeatures.rayTracingPipeline = VK_TRUE;
+        rtPipelineFeatures.rayTracingPipeline = supportedRtPipeline.rayTracingPipeline;
         *nextChain = &rtPipelineFeatures;
         nextChain = (void **)&rtPipelineFeatures.pNext;
     }
@@ -421,6 +455,8 @@ static void VKimp_CreateSyncObjects(void)
 
 static VkCommandBuffer s_uploadCmdBuf = VK_NULL_HANDLE;
 static VkFence s_uploadFence = VK_NULL_HANDLE;
+static bool s_uploadBatchPoisoned = false;
+static uint64_t s_uploadBatchSerial = 0;
 
 struct vkStagingEntry_t
 {
@@ -430,6 +466,27 @@ struct vkStagingEntry_t
 static const int VK_MAX_PENDING_STAGING = 512;
 static vkStagingEntry_t s_pendingStaging[VK_MAX_PENDING_STAGING];
 static int s_pendingStagingCount = 0;
+
+static void VK_ReleasePendingStagingUploads(void)
+{
+    for (int i = 0; i < s_pendingStagingCount; i++)
+    {
+        if (s_pendingStaging[i].buf != VK_NULL_HANDLE)
+            vkDestroyBuffer(vk.device, s_pendingStaging[i].buf, NULL);
+        if (s_pendingStaging[i].mem != VK_NULL_HANDLE)
+            vkFreeMemory(vk.device, s_pendingStaging[i].mem, NULL);
+    }
+    s_pendingStagingCount = 0;
+}
+
+static void VK_DiscardUploadBatchCmdBuf(void)
+{
+    if (s_uploadCmdBuf != VK_NULL_HANDLE)
+    {
+        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &s_uploadCmdBuf);
+        s_uploadCmdBuf = VK_NULL_HANDLE;
+    }
+}
 
 VkCommandBuffer VK_BeginSingleTimeCommands(void)
 {
@@ -481,36 +538,83 @@ void VK_FlushPendingUploads(void)
     if (s_uploadCmdBuf == VK_NULL_HANDLE)
         return;
 
-    VK_CHECK(vkEndCommandBuffer(s_uploadCmdBuf));
+    const uint64_t batchId = ++s_uploadBatchSerial;
+    const uint32_t pendingCount = s_pendingStagingCount;
 
-    VK_CHECK(vkResetFences(vk.device, 1, &s_uploadFence));
+    if (s_uploadBatchPoisoned)
+    {
+        // Previous upload submit failed (typically device lost). Avoid replaying
+        // a one-time command buffer during shutdown/fatal cleanup.
+        common->Warning("VK: upload batch #%llu skipped because batch state is poisoned", (unsigned long long)batchId);
+        fflush(NULL);
+        VK_ReleasePendingStagingUploads();
+        VK_DiscardUploadBatchCmdBuf();
+        return;
+    }
+
+    VkResult endResult = vkEndCommandBuffer(s_uploadCmdBuf);
+    if (endResult != VK_SUCCESS)
+    {
+        s_uploadBatchPoisoned = true;
+        VK_ReleasePendingStagingUploads();
+        VK_DiscardUploadBatchCmdBuf();
+        return;
+    }
+
+    VkResult resetResult = vkResetFences(vk.device, 1, &s_uploadFence);
+    if (resetResult != VK_SUCCESS)
+    {
+        s_uploadBatchPoisoned = true;
+        VK_ReleasePendingStagingUploads();
+        VK_DiscardUploadBatchCmdBuf();
+        return;
+    }
 
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &s_uploadCmdBuf;
-    VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence));
-    VK_CHECK(vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX));
-
-    for (int i = 0; i < s_pendingStagingCount; i++)
+    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence);
+    if (submitResult != VK_SUCCESS)
     {
-        vkDestroyBuffer(vk.device, s_pendingStaging[i].buf, NULL);
-        vkFreeMemory(vk.device, s_pendingStaging[i].mem, NULL);
+        s_uploadBatchPoisoned = true;
+        VK_ReleasePendingStagingUploads();
+        VK_DiscardUploadBatchCmdBuf();
+        return;
     }
-    s_pendingStagingCount = 0;
 
-    vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &s_uploadCmdBuf);
-    s_uploadCmdBuf = VK_NULL_HANDLE;
+    VkResult waitResult = vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX);
+    if (waitResult != VK_SUCCESS)
+    {
+        s_uploadBatchPoisoned = true;
+        VK_ReleasePendingStagingUploads();
+        VK_DiscardUploadBatchCmdBuf();
+        return;
+    }
+
+    VK_ReleasePendingStagingUploads();
+    VK_DiscardUploadBatchCmdBuf();
 }
 
 void VK_ShutdownUploadBatch(void)
 {
-    VK_FlushPendingUploads();
+    if (!s_uploadBatchPoisoned)
+    {
+        VK_FlushPendingUploads();
+    }
+    else
+    {
+        VK_ReleasePendingStagingUploads();
+        VK_DiscardUploadBatchCmdBuf();
+    }
+
     if (s_uploadFence != VK_NULL_HANDLE)
     {
         vkDestroyFence(vk.device, s_uploadFence, NULL);
         s_uploadFence = VK_NULL_HANDLE;
     }
+
+    s_uploadBatchPoisoned = false;
 }
 
 // ---------------------------------------------------------------------------

@@ -103,11 +103,19 @@ struct vkState_t
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index
+    bool deviceLost;          // latched after first VK_ERROR_DEVICE_LOST
 
     bool isInitialized;
 };
 
 extern vkState_t vk;
+
+// Latches vk.deviceLost and logs the first call site that observed it.
+void VK_LatchDeviceLost(VkResult result, const char *file, int line, const char *func);
+
+#define VK_LATCH_DEVICE_LOST(result) VK_LatchDeviceLost((result), __FILE__, __LINE__, __FUNCTION__)
+
+const char *VK_ResultToString(VkResult r);
 
 // ---------------------------------------------------------------------------
 // Graphics pipeline objects — defined in vk_pipeline.cpp
