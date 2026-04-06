@@ -2,14 +2,13 @@
 ===========================================================================
 
 Doom 3 GPL Source Code
-dhewm3 Vulkan ray tracing - types and declarations.
+dhewm3-rt Vulkan ray tracing - types and declarations.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
@@ -149,14 +148,14 @@ struct vkRTState_t
 
     // AO image and pipeline
     vkAOMask_t aoMask[VK_MAX_FRAMES_IN_FLIGHT];
-    VkSampler  aoMaskSampler; // nearest-clamp, used when sampling AO in the lighting pass
+    VkSampler aoMaskSampler; // nearest-clamp, used when sampling AO in the lighting pass
 
-    VkPipeline           aoPipeline;
-    VkPipelineLayout     aoPipelineLayout;
+    VkPipeline aoPipeline;
+    VkPipelineLayout aoPipelineLayout;
     VkDescriptorSetLayout aoDescLayout;
-    VkDescriptorPool     aoDescPool;
-    VkDescriptorSet      aoDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                  aoDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool aoDescPool;
+    VkDescriptorSet aoDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int aoDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // AO SBT (separate from shadow SBT)
     VkBuffer sbtAOBuffer;
@@ -236,7 +235,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
 // this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
 // The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight, VkRect2D dispatchRect);
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
+                                      VkRect2D dispatchRect);
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);

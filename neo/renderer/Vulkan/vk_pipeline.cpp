@@ -1,14 +1,13 @@
 /*
 ===========================================================================
 
-dhewm3 Vulkan backend - graphics pipeline and descriptor set management.
+dhewm3-rt Vulkan backend - graphics pipeline and descriptor set management.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
@@ -1540,10 +1539,11 @@ void VK_InitPipelines(void)
         VK_CULL_MODE_FRONT_BIT, VK_BLEND_FACTOR_DST_COLOR, VK_BLEND_FACTOR_ZERO);
 
     // Load push descriptor function pointer (KHR extension, not in static lib).
-    pfn_vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)
-        vkGetDeviceProcAddr(vk.device, "vkCmdPushDescriptorSetKHR");
+    pfn_vkCmdPushDescriptorSetKHR =
+        (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(vk.device, "vkCmdPushDescriptorSetKHR");
     if (!pfn_vkCmdPushDescriptorSetKHR)
-        common->FatalError("VK: vkCmdPushDescriptorSetKHR not available — driver does not support VK_KHR_push_descriptor");
+        common->FatalError(
+            "VK: vkCmdPushDescriptorSetKHR not available — driver does not support VK_KHR_push_descriptor");
 
     vkPipes.isValid =
         (vkPipes.interactionPipeline != VK_NULL_HANDLE && vkPipes.shadowPipelineZFail != VK_NULL_HANDLE &&

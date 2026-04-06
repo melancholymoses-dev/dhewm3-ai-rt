@@ -2,14 +2,13 @@
 ===========================================================================
 
 Doom 3 GPL Source Code
-dhewm3 Vulkan ray tracing - acceleration structure (BLAS/TLAS) management.
+dhewm3-rt Vulkan ray tracing - acceleration structure (BLAS/TLAS) management.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
@@ -644,8 +643,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             const srfTriangles_t *geo = validSurfs[i].geo;
             if (prevBlas->geomPrimCounts[i] != (uint32_t)(geo->numIndexes / 3) ||
                 prevBlas->geomVertSizes[i] != (VkDeviceSize)geo->numVerts * sizeof(idDrawVert) ||
-                prevBlas->geomVertMems[i] == VK_NULL_HANDLE ||
-                prevBlas->geomIdxMems[i] == VK_NULL_HANDLE ||
+                prevBlas->geomVertMems[i] == VK_NULL_HANDLE || prevBlas->geomIdxMems[i] == VK_NULL_HANDLE ||
                 prevBlas->geomIdxSizes[i] != (VkDeviceSize)geo->numIndexes * sizeof(glIndex_t))
             {
                 compatible = false;
@@ -662,9 +660,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                 const void *cpuVerts = geo->verts
                                            ? (const void *)geo->verts
                                            : (geo->ambientCache ? vertexCache.Position(geo->ambientCache) : NULL);
-                const void *cpuIdx = geo->indexes
-                                         ? (const void *)geo->indexes
-                                         : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
+                const void *cpuIdx = geo->indexes ? (const void *)geo->indexes
+                                                  : (geo->indexCache ? vertexCache.Position(geo->indexCache) : NULL);
                 void *ptr;
                 VK_CHECK(vkMapMemory(vk.device, prevBlas->geomVertMems[i], 0, prevBlas->geomVertSizes[i], 0, &ptr));
                 memcpy(ptr, cpuVerts, (size_t)prevBlas->geomVertSizes[i]);
