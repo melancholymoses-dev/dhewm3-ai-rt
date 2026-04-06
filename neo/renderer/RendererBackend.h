@@ -1,3 +1,16 @@
+/*
+
+Base class definition for abstract base class for swappable backend.
+Current implementations are OpenGL and Vulkan
+
+This file is a new addition.It was created with the aid of GenAI,
+and may reference the existing OpenGL and Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+*/
+
 #pragma once
 
 #include "framework/Common.h"
@@ -16,7 +29,9 @@ struct IBackend
     // Resource management
     virtual void Image_Upload(idImage *img, const byte *data, int w, int h, textureFilter_t filterParm,
                               bool allowDownSizeParm, textureRepeat_t repeatParm, textureDepth_t depthParm) = 0;
-    virtual void CubeImage_Upload(idImage *img, const byte *const pic[6], int size) {}
+    virtual void CubeImage_Upload(idImage *img, const byte *const pic[6], int size)
+    {
+    }
     virtual void Image_Purge(idImage *img) = 0;
     virtual void VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool indexBuffer) = 0;
     virtual void VertexCache_Free(vertCache_t *vc) = 0;
@@ -26,8 +41,8 @@ struct IBackend
     virtual void EndCommandBatch() = 0;   // post-loop: restore default texture bindings
 
     // Per-command handlers — dispatched from RB_ExecuteBackEndCommands
-    virtual void SetBuffer(const void *data) = 0;    // RC_SET_BUFFER
-    virtual void SwapBuffers(const void *data) = 0;  // RC_SWAP_BUFFERS
+    virtual void SetBuffer(const void *data) = 0;   // RC_SET_BUFFER
+    virtual void SwapBuffers(const void *data) = 0; // RC_SWAP_BUFFERS
 
     // Frame dispatch
     virtual void DrawView(const drawSurfsCommand_t *cmd) = 0;

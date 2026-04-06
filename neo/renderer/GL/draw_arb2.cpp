@@ -26,6 +26,15 @@ accompanied the Doom 3 Source Code.  If not, please request a copy in writing fr
 If you have questions concerning this license or the applicable additional terms, you may contact in writing id Software
 LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
+The vast majority of this code came from the original Dhewm3 OpenGL/ARB2 implementation and is refactored here.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
 ===========================================================================
 */
 
