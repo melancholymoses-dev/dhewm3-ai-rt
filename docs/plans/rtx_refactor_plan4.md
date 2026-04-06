@@ -535,6 +535,86 @@ render pass opens (so the interaction shader sees the blended result).
 
 ---
 
+### Step 5.2b — Atrous Spatial Filter (Post-EMA Quality Pass)
+
+**Status:** Planned. Implement after EMA is stable, before GI.
+
+EMA-only denoising reduces temporal noise but cannot eliminate spatial grain
+within a single frame. At 4 rays/pixel the AO result is visibly noisy between
+camera movements. An Atrous wavelet filter adds a spatial denoise pass on top
+of the EMA history image, dramatically improving per-frame quality with no
+additional ray cost.
+
+#### Why Before Phase 6
+
+GI at 1 sample/pixel is substantially noisier than AO at 4 samples/pixel.
+EMA without any spatial filtering will produce unacceptable GI quality.
+Adding Atrous here, while the infrastructure is simple (depth + depth-derived
+normals), avoids retrofitting a spatial pass after GI is integrated.
+
+#### Design
+
+Run a series of 4–5 compute passes after the EMA resolve, each doubling the
+filter kernel step width (`1, 2, 4, 8, 16` pixels — the "à trous" pattern):
+
+```glsl
+// Edge-stopping weights (preserve detail at depth/normal discontinuities)
+float wDepth  = exp(-abs(depthCenter - depthSample) / sigmaDepth);
+float wNormal = pow(max(0.0, dot(normalCenter, normalSample)), sigmaNormal);
+float w = wDepth * wNormal;
+```
+
+Inputs required:
+- Depth buffer (already available)
+- World-space normals (depth-derived, same as AO/GI rgen path)
+- No motion vectors required
+
+#### New File
+
+```
+neo/renderer/glsl/atrous_filter.comp   — Atrous wavelet filter compute shader
+```
+
+The existing `vk_temporal.cpp` can host the Atrous dispatch passes, or they
+can be a separate second section of the same file.
+
+#### New CVars
+
+| CVar | Default | Description |
+|------|---------|-------------|
+| `r_rtAtrousIterations` | `0` | Atrous filter passes (0 = disabled, 4–5 = typical) |
+| `r_rtAtrousSigmaDepth` | `1.0` | Depth edge-stop sensitivity |
+| `r_rtAtrousSigmaNormal` | `128.0` | Normal edge-stop power |
+
+---
+
+### Future Extension — NRD (NVIDIA RayTracingDenoiser)
+
+**Status:** Post-Phase-6. Depends on G-buffer prerequisites.
+
+NVIDIA's [RayTracingDenoiser (NRD)](https://github.com/NVIDIAGameWorks/RayTracingDenoiser)
+(MIT license) is a production-grade spatial-temporal denoiser used in shipped
+titles. It produces superior quality to EMA + Atrous, but requires infrastructure
+that is not yet in place:
+
+| Prerequisite | Status |
+|---|---|
+| Screen-space motion/velocity buffer (`RG16F`) | Not yet — requires a G-buffer pass |
+| Geometric normals as a proper G-buffer target | Not yet — depth-derived only |
+| Hit-distance packed into AO/shadow signal | Minor shader change, low cost |
+| CMake subproject integration | Not yet |
+
+Without motion vectors, NRD's REBLUR temporal component ghosts as badly as
+naive EMA and offers no meaningful advantage. The right time to evaluate NRD
+integration is after the G-buffer normal pass and motion-vector pass are added
+(those are already flagged as upgrade paths in Steps 5.1 and 5.2).
+
+At that point NRD can replace both the EMA pass and the Atrous passes entirely
+with a single SDK dispatch call, and the result is significantly better on
+fast-moving geometry and camera panning.
+
+---
+
 ### Step 5.3 — RT Reflections
 
 #### Goal
@@ -688,6 +768,163 @@ reflection hit shading or GI is needed. For AO (which only needs 0/1
 occlusion), no material data is required.
 
 ---
+
+### Step 5.4b — Basic Glass Reflections (Flat Fresnel)
+
+#### Goal
+
+Translucent surfaces (windows, viewports, bottles) currently let reflection
+rays pass straight through them because `MC_TRANSLUCENT` geometry does not
+write to the depth buffer — `rgen` reconstructs world position from the
+opaque surface *behind* the glass and fires the reflection ray from there.
+
+This step gives glass a cheap fixed 4 % reflectance (F0 for real glass is
+≈ 0.04) without angle dependency and without refraction.  The result is a
+visible specular highlight on glass panels at minimal extra cost — one
+additional `traceRayEXT` call only when a reflection ray hits glass, which
+is rare in most Doom 3 scenes.
+
+#### Why flat 4 % is enough for now
+
+- Real Fresnel ranges from ≈ 4 % at normal incidence to 100 % at grazing
+  angle.  Doom 3 glass is mostly seen at moderate angles where the
+  difference is small.
+- No refraction: the transmitted ray continues in the same direction
+  (straight-through thin-glass approximation), avoiding snell-law bending
+  which would require knowing the IOR and thickness.
+- Temporal filtering (EMA already in place) smooths the slight error.
+
+#### Implementation
+
+**1. New material flag and field in `VkMaterialEntry`**
+
+```cpp
+#define VK_MAT_FLAG_GLASS 0x04u   // MC_TRANSLUCENT — thin glass, F0 = 0.04
+```
+
+No new fields needed — `alphaThreshold` is unused for glass and can carry
+the transmittance (1.0 - reflectance = 0.96) if needed later.
+
+**2. Populate flag in `VK_RT_MakeMaterialEntry`**
+
+```cpp
+if (shader->Coverage() == MC_TRANSLUCENT)
+    entry.flags |= VK_MAT_FLAG_GLASS;
+```
+
+**3. Mark glass BLAS geometry as non-opaque**
+
+In `VK_RT_BuildBLAS` / `VK_RT_BuildBLASForModel`, translucent surfaces
+currently receive `VK_GEOMETRY_OPAQUE_BIT_KHR`.  Remove that flag when
+`isPerforated` is false but the material is translucent, so `rahit` is
+invoked for glass hits.
+
+The existing `isPerforated` parameter becomes a tri-state or a second bool
+`isTranslucent` is added alongside it.
+
+**4. Extend the reflection payload**
+
+```glsl
+// reflect_ray.rgen / reflect_ray.rchit — shared payload
+layout(location = 0) rayPayloadEXT struct ReflPayload {
+    vec3  colour;         // accumulated colour for this segment
+    float transmittance;  // fraction of weight to carry through (0 = stop)
+    vec3  nextOrigin;     // origin for the next ray (glass exit point)
+    vec3  nextDir;        // direction for the next ray (straight-through)
+} reflPayload;
+```
+
+**5. `reflect_ray.rchit` — glass branch**
+
+```glsl
+MaterialEntry mat = materials[uint(gl_InstanceCustomIndexEXT)];
+
+if ((mat.flags & MAT_FLAG_GLASS) != 0u) {
+    const float F0           = 0.04;
+    const float transmit     = 1.0 - F0;
+    vec4 diffuse             = rt_SampleDiffuse(...);  // tint the reflection
+    reflPayload.colour        = F0 * diffuse.rgb;
+    reflPayload.transmittance = transmit;
+    reflPayload.nextOrigin    = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT
+                                + gl_WorldRayDirectionEXT * 0.01; // bias past surface
+    reflPayload.nextDir       = gl_WorldRayDirectionEXT;           // straight-through
+    return;
+}
+
+// Opaque path — same as before
+vec4 diffuse  = rt_SampleDiffuse(...);
+reflPayload.colour        = diffuse.rgb;
+reflPayload.transmittance = 0.0;   // stop
+```
+
+**6. `reflect_ray.rgen` — bounce loop**
+
+Replace the single `traceRayEXT` call with a short loop (max 2 iterations
+covers double-pane windows):
+
+```glsl
+vec3  accum   = vec3(0.0);
+float weight  = 1.0;
+vec3  origin  = worldPos + normal * 0.5;
+vec3  dir     = reflDir;
+
+for (int i = 0; i < 2 && weight > 0.01; i++) {
+    reflPayload.transmittance = 0.0;
+    traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF,
+                0, 0, 0, origin, 0.01, dir, params.maxDist, 0);
+
+    accum  += weight * reflPayload.colour;
+    weight *= reflPayload.transmittance;
+    origin  = reflPayload.nextOrigin;
+    dir     = reflPayload.nextDir;
+}
+
+imageStore(reflImage, coord, vec4(accum * params.reflBlend, 1.0));
+```
+
+**7. `reflect_ray.rahit` — pass through glass**
+
+Glass is non-opaque so `rahit` is called.  Glass hits should be accepted
+(let `rchit` handle the Fresnel split), not discarded:
+
+```glsl
+MaterialEntry mat = materials[uint(gl_InstanceCustomIndexEXT)];
+
+if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u) {
+    // existing alpha-discard path
+} else if ((mat.flags & MAT_FLAG_GLASS) != 0u) {
+    // accept the intersection — rchit handles the Fresnel split
+    // (do nothing; rahit returning without ignoreIntersectionEXT accepts)
+} else {
+    terminateRayEXT;
+}
+```
+
+#### Files changed
+
+| File | Change |
+|------|--------|
+| `vk_raytracing.h` | `VK_MAT_FLAG_GLASS 0x04u` |
+| `vk_material_table.cpp` | Set `MAT_FLAG_GLASS` in `VK_RT_MakeMaterialEntry` |
+| `vk_accelstruct.cpp` | Remove opaque flag for translucent geometry |
+| `rt_material.glsl` | `MAT_FLAG_GLASS` constant |
+| `reflect_ray.rgen` | Replace single `traceRayEXT` with 2-iteration bounce loop |
+| `reflect_ray.rchit` | Glass branch: write F0 colour + set transmittance/nextDir |
+| `reflect_ray.rahit` | Accept glass hits (fall through to rchit) |
+
+#### Known limitations
+
+- No refraction (straight-through approximation).  Acceptable for Doom 3's
+  flat window panels; would look wrong for curved or thick glass.
+- Angle-independent reflectance.  At grazing angles real glass is much more
+  reflective; this can be added later by computing Schlick from
+  `dot(N, V)` in `rchit` at zero extra infrastructure cost.
+- One-sided: only the front face of the glass gets the Fresnel split.  The
+  back face is an opaque hit and terminates the ray.  For thin single-pane
+  glass this is imperceptible.
+- Multi-surface BLAS models use `geomVertAddrs[0]` only — same limitation
+  as Step 5.4; glass panes are typically single-surface world brushes so
+  this is not a practical issue.
 
 ---
 

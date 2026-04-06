@@ -1,12 +1,23 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
-dhewm3-rt Vulkan ray tracing - ambient occlusion ray pipeline and dispatch.
+dhewm3-rt Vulkan ray tracing - environment reflection ray pipeline and dispatch.
 
-Outputs a per-pixel AO factor (R8 UNORM, 1=unoccluded, 0=fully occluded)
-by shooting cosine-weighted hemisphere rays from each visible surface point.
-The AO mask is sampled in the lighting interaction pass to darken diffuse.
+Phase 5.3 "cheap approximation":
+  Traces one mirror-reflect ray per non-sky pixel.  The closest-hit and
+  miss shaders return a direction-based colour tint (no texture/material
+  lookup) so metallic/shiny surfaces get plausible environment reflections
+  at minimal GPU cost.
+
+The result is stored in an RGBA16F buffer that is sampled by the lighting
+interaction fragment shader and blended into the specular contribution,
+weighted by the specular map value.
+
+Known limitation: the interaction shader is called once per light, so the
+reflection contribution is accumulated N times for N lights illuminating a
+pixel.  r_rtReflectionBlend (default 0.1) keeps the result visually
+reasonable.  Moving reflections to a dedicated post-process pass is the
+correct fix (planned for a later step).
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -28,38 +39,40 @@ of the original Doom 3 GPL Source Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-// r_rtAO and r_rtAOSamples declared in RenderSystem_init.cpp — use extern here.
-extern idCVar r_rtAO;
-extern idCVar r_rtAOSamples;
+// r_rtReflections declared in RenderSystem_init.cpp
+extern idCVar r_rtReflections;
 
-static idCVar r_rtAORadius("r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
-                           "Max AO ray length in world units (default 64)");
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Max reflection ray travel distance in world units (default 2000)");
+
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+                                  "Scale factor for reflection contribution in the interaction shader.\n"
+                                  "Lower values compensate for the multi-light accumulation artifact.\n"
+                                  "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
 
 // ---------------------------------------------------------------------------
-// UBO layout matching ao_ray.rgen AOParams block (std140)
+// UBO layout matching reflect_ray.rgen ReflParams block
 //
-//   mat4  invViewProj   offset   0  size 64
-//   float aoRadius      offset  64  size  4
-//   int   numSamples    offset  68  size  4
-//   uint  frameIndex    offset  72  size  4
-//   float pad0          offset  76  size  4
-//   ivec2 screenSize    offset  80  size  8  (ivec2 std140 align=8)
-//   ivec2 pad2          offset  88  size  8
+//   mat4   invViewProj  offset  0  size 64
+//   float  maxDist      offset 64  size  4
+//   uint   frameIndex   offset 68  size  4
+//   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
+//   float  reflBlend    offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
+//   pad                 offset 84  size 12
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
-struct AOParamsUBO
+struct ReflParamsUBO
 {
-    float invViewProj[16]; // column-major 4x4
-    float aoRadius;
-    int32_t numSamples;
+    float invViewProj[16];
+    float maxDist;
     uint32_t frameIndex;
-    float pad0;
     int32_t screenWidth;
     int32_t screenHeight;
-    int32_t pad1[2];
+    float reflBlend; // r_rtReflectionBlend — baked into imageStore in rgen
+    float pad[3];
 };
-static_assert(sizeof(AOParamsUBO) == 96, "AOParamsUBO size mismatch");
+static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in other files)
@@ -74,22 +87,22 @@ extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 
 // ---------------------------------------------------------------------------
-// VK_RT_CreateAOMaskImages
-// Create per-frame R8_UNORM AO images at the given resolution.
+// VK_RT_CreateReflImages
+// Allocates per-frame RGBA16F reflection buffers at the given resolution.
 // ---------------------------------------------------------------------------
 
-static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
+static void VK_RT_CreateReflImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
-        ao.width = width;
-        ao.height = height;
+        vkReflBuffer_t &rb = vkRT.reflBuffer[i];
+        rb.width = width;
+        rb.height = height;
 
         VkImageCreateInfo imgInfo = {};
         imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imgInfo.imageType = VK_IMAGE_TYPE_2D;
-        imgInfo.format = VK_FORMAT_R8_UNORM;
+        imgInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         imgInfo.extent = {width, height, 1};
         imgInfo.mipLevels = 1;
         imgInfo.arrayLayers = 1;
@@ -97,10 +110,10 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
         imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imgInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &ao.image));
+        VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &rb.image));
 
         VkMemoryRequirements memReq;
-        vkGetImageMemoryRequirements(vk.device, ao.image, &memReq);
+        vkGetImageMemoryRequirements(vk.device, rb.image, &memReq);
 
         VkPhysicalDeviceMemoryProperties memProps;
         vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
@@ -116,7 +129,7 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
         }
         if (memTypeIdx == UINT32_MAX)
         {
-            common->Error("VK RT AO: no device-local memory type for AO image");
+            common->Error("VK RT Refl: no device-local memory type for reflection image");
             return;
         }
 
@@ -124,18 +137,18 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memReq.size;
         allocInfo.memoryTypeIndex = memTypeIdx;
-        VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &ao.memory));
-        VK_CHECK(vkBindImageMemory(vk.device, ao.image, ao.memory, 0));
+        VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &rb.memory));
+        VK_CHECK(vkBindImageMemory(vk.device, rb.image, rb.memory, 0));
 
         VkImageViewCreateInfo viewInfo = {};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image = ao.image;
+        viewInfo.image = rb.image;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = VK_FORMAT_R8_UNORM;
+        viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &ao.view));
+        VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &rb.view));
 
-        // Transition UNDEFINED → GENERAL so the rgen shader can imageStore immediately
+        // Transition UNDEFINED → GENERAL so rgen can imageStore on first dispatch
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         {
             VkCommandBufferAllocateInfo cbAlloc = {};
@@ -156,7 +169,7 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
             barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
             barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            barrier.image = ao.image;
+            barrier.image = rb.image;
             barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
             vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                  VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier);
@@ -174,43 +187,43 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
     }
 }
 
-static void VK_RT_DestroyAOMaskImages(void)
+static void VK_RT_DestroyReflImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
-        if (ao.view != VK_NULL_HANDLE)
+        vkReflBuffer_t &rb = vkRT.reflBuffer[i];
+        if (rb.view != VK_NULL_HANDLE)
         {
-            vkDestroyImageView(vk.device, ao.view, NULL);
-            ao.view = VK_NULL_HANDLE;
+            vkDestroyImageView(vk.device, rb.view, NULL);
+            rb.view = VK_NULL_HANDLE;
         }
-        if (ao.image != VK_NULL_HANDLE)
+        if (rb.image != VK_NULL_HANDLE)
         {
-            vkDestroyImage(vk.device, ao.image, NULL);
-            ao.image = VK_NULL_HANDLE;
+            vkDestroyImage(vk.device, rb.image, NULL);
+            rb.image = VK_NULL_HANDLE;
         }
-        if (ao.memory != VK_NULL_HANDLE)
+        if (rb.memory != VK_NULL_HANDLE)
         {
-            vkFreeMemory(vk.device, ao.memory, NULL);
-            ao.memory = VK_NULL_HANDLE;
+            vkFreeMemory(vk.device, rb.memory, NULL);
+            rb.memory = VK_NULL_HANDLE;
         }
-        ao.width = 0;
-        ao.height = 0;
+        rb.width = 0;
+        rb.height = 0;
     }
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitAOPipeline
-// Create the AO RT pipeline, SBT, descriptor sets, and samplers.
+// VK_RT_InitReflPipeline
+// Creates the reflection RT pipeline, SBT, descriptor sets, and sampler.
 // ---------------------------------------------------------------------------
 
-static void VK_RT_InitAOPipeline(void)
+static void VK_RT_InitReflPipeline(void)
 {
     // --- Descriptor set layout ---
     // binding 0: TLAS
-    // binding 1: AO mask storage image
-    // binding 2: depth sampler
-    // binding 3: AO params UBO (dynamic)
+    // binding 1: reflection RGBA16F storage image
+    // binding 2: depth sampler (COMBINED_IMAGE_SAMPLER)
+    // binding 3: reflection params UBO (dynamic)
 
     VkDescriptorSetLayoutBinding bindings[4] = {};
 
@@ -238,34 +251,42 @@ static void VK_RT_InitAOPipeline(void)
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = 4;
     layoutInfo.pBindings = bindings;
-    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.aoDescLayout));
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
     // --- Pipeline layout ---
+    // set=0: per-frame resources (TLAS, storage image, depth, UBO)
+    // set=1: material table (MatTable, VtxAddrTable, IdxAddrTable, bindless textures)
+    VkDescriptorSetLayout reflLayouts[2] = {vkRT.reflDescLayout, vkRT.matDescLayout};
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts = &vkRT.aoDescLayout;
-    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.aoPipelineLayout));
+    plInfo.setLayoutCount = 2;
+    plInfo.pSetLayouts = reflLayouts;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.reflPipelineLayout));
 
     // --- Shader modules ---
-    VkShaderModule rgenModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rgen.spv");
-    VkShaderModule rmissModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rmiss.spv");
-    VkShaderModule rahitModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rahit.spv");
+    VkShaderModule rgenModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rgen.spv");
+    VkShaderModule rmissModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rmiss.spv");
+    VkShaderModule rchitModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rchit.spv");
+    VkShaderModule rahitModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rahit.spv");
 
-    if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rahitModule == VK_NULL_HANDLE)
+    if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rchitModule == VK_NULL_HANDLE ||
+        rahitModule == VK_NULL_HANDLE)
     {
-        common->Warning("VK RT AO: failed to load AO ray shader modules — RTAO disabled");
+        common->Warning("VK RT Refl: failed to load reflection shader modules — reflections disabled");
         if (rgenModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, rgenModule, NULL);
         if (rmissModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, rmissModule, NULL);
+        if (rchitModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, rchitModule, NULL);
         if (rahitModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, rahitModule, NULL);
         return;
     }
 
     // --- Shader stages ---
-    VkPipelineShaderStageCreateInfo stages[3] = {};
+    // Stage 0: rgen  Stage 1: rmiss  Stage 2: rchit  Stage 3: rahit
+    VkPipelineShaderStageCreateInfo stages[4] = {};
 
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -278,14 +299,20 @@ static void VK_RT_InitAOPipeline(void)
     stages[1].pName = "main";
 
     stages[2].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[2].stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
-    stages[2].module = rahitModule;
+    stages[2].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    stages[2].module = rchitModule;
     stages[2].pName = "main";
+
+    stages[3].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[3].stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+    stages[3].module = rahitModule;
+    stages[3].pName = "main";
 
     // --- Shader groups ---
     // Group 0: ray gen
     // Group 1: miss
-    // Group 2: hit (any-hit only, no closest-hit — AO only needs binary occlusion)
+    // Group 2: triangles hit group — closest-hit shades the surface,
+    //          any-hit alpha-discards transparent (perforated) geometry.
     VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
 
     groups[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -305,25 +332,26 @@ static void VK_RT_InitAOPipeline(void)
     groups[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[2].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[2].closestHitShader = VK_SHADER_UNUSED_KHR;
-    groups[2].anyHitShader = 2;
+    groups[2].closestHitShader = 2; // rchit
+    groups[2].anyHitShader = 3;     // rahit — alpha-discard for perforated geometry
     groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     // --- RT pipeline ---
     VkRayTracingPipelineCreateInfoKHR rtPipeInfo = {};
     rtPipeInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipeInfo.stageCount = 3;
+    rtPipeInfo.stageCount = 4;
     rtPipeInfo.pStages = stages;
     rtPipeInfo.groupCount = 3;
     rtPipeInfo.pGroups = groups;
-    rtPipeInfo.maxPipelineRayRecursionDepth = 1; // AO rays don't recurse
-    rtPipeInfo.layout = vkRT.aoPipelineLayout;
+    rtPipeInfo.maxPipelineRayRecursionDepth = 1; // single-bounce reflection
+    rtPipeInfo.layout = vkRT.reflPipelineLayout;
 
     VK_CHECK(vkCreateRayTracingPipelinesKHR(vk.device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipeInfo, NULL,
-                                            &vkRT.aoPipeline));
+                                            &vkRT.reflPipeline));
 
     vkDestroyShaderModule(vk.device, rgenModule, NULL);
     vkDestroyShaderModule(vk.device, rmissModule, NULL);
+    vkDestroyShaderModule(vk.device, rchitModule, NULL);
     vkDestroyShaderModule(vk.device, rahitModule, NULL);
 
     // --- Shader Binding Table ---
@@ -346,30 +374,30 @@ static void VK_RT_InitAOPipeline(void)
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkRT.sbtAOBuffer,
-                    &vkRT.sbtAOMemory);
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkRT.sbtReflBuffer,
+                    &vkRT.sbtReflMemory);
 
     uint8_t *handles = (uint8_t *)alloca(3 * handleSize);
-    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.aoPipeline, 0, 3, 3 * handleSize, handles));
+    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.reflPipeline, 0, 3, 3 * handleSize, handles));
 
     uint8_t *sbtData;
-    VK_CHECK(vkMapMemory(vk.device, vkRT.sbtAOMemory, 0, sbtSize, 0, (void **)&sbtData));
+    VK_CHECK(vkMapMemory(vk.device, vkRT.sbtReflMemory, 0, sbtSize, 0, (void **)&sbtData));
     for (int i = 0; i < 3; i++)
         memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
-    vkUnmapMemory(vk.device, vkRT.sbtAOMemory);
+    vkUnmapMemory(vk.device, vkRT.sbtReflMemory);
 
     VkBufferDeviceAddressInfo addrInfo = {};
     addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    addrInfo.buffer = vkRT.sbtAOBuffer;
+    addrInfo.buffer = vkRT.sbtReflBuffer;
     VkDeviceAddress sbtBase = vkGetBufferDeviceAddressKHR(vk.device, &addrInfo);
 
-    vkRT.aoRgenRegion = {sbtBase + 0 * stride, stride, stride};
-    vkRT.aoMissRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.aoHitRegion = {sbtBase + 2 * stride, stride, stride};
-    vkRT.aoCallRegion = {0, 0, 0};
+    vkRT.reflRgenRegion = {sbtBase + 0 * stride, stride, stride};
+    vkRT.reflMissRegion = {sbtBase + 1 * stride, stride, stride};
+    vkRT.reflHitRegion = {sbtBase + 2 * stride, stride, stride};
+    vkRT.reflCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO SBT: stride=%u sbtBytes=%u base=0x%llx\n", stride, sbtSize,
+        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx\n", stride, sbtSize,
                        (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
@@ -384,118 +412,158 @@ static void VK_RT_InitAOPipeline(void)
     poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
     poolInfo.poolSizeCount = 4;
     poolInfo.pPoolSizes = poolSizes;
-    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.aoDescPool));
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.reflDescPool));
 
     VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        layouts[i] = vkRT.aoDescLayout;
+        layouts[i] = vkRT.reflDescLayout;
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool = vkRT.aoDescPool;
+    dsAlloc.descriptorPool = vkRT.reflDescPool;
     dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
     dsAlloc.pSetLayouts = layouts;
-    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.aoDescSets));
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.reflDescSets));
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.aoDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.reflDescSetLastUpdatedFrameCount[i] = -1;
 
-    // --- AO mask sampler (nearest-clamp, used by interaction shader) ---
-    if (vkRT.aoMaskSampler == VK_NULL_HANDLE)
+    // --- Reflection buffer sampler (linear-clamp, used by interaction shader) ---
+    if (vkRT.reflSampler == VK_NULL_HANDLE)
     {
         VkSamplerCreateInfo si = {};
         si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        si.magFilter = VK_FILTER_NEAREST;
-        si.minFilter = VK_FILTER_NEAREST;
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
         si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.aoMaskSampler));
+        VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.reflSampler));
     }
 
-    common->Printf("VK RT AO: pipeline initialized\n");
+    common->Printf("VK RT Refl: pipeline initialized\n");
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_InitAO (public entry)
+// VK_RT_InitReflections (public entry)
 // ---------------------------------------------------------------------------
 
-void VK_RT_InitAO(void)
+void VK_RT_InitReflections(void)
 {
-    VK_RT_InitAOPipeline();
-    VK_RT_ResizeAOMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    // Temporal history images and EMA pipeline (Step 5.2)
-    VK_RT_InitTemporal();
+    VK_RT_InitReflPipeline();
+    VK_RT_ResizeReflections(vk.swapchainExtent.width, vk.swapchainExtent.height);
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_ResizeAOMask
+// VK_RT_ShutdownReflections (public)
 // ---------------------------------------------------------------------------
 
-void VK_RT_ResizeAOMask(uint32_t width, uint32_t height)
+void VK_RT_ShutdownReflections(void)
+{
+    if (vkRT.reflDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.reflDescPool, NULL);
+        vkRT.reflDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.reflDescLayout, NULL);
+        vkRT.reflDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.reflPipeline, NULL);
+        vkRT.reflPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.reflPipelineLayout, NULL);
+        vkRT.reflPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.sbtReflBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(vk.device, vkRT.sbtReflBuffer, NULL);
+        vkRT.sbtReflBuffer = VK_NULL_HANDLE;
+    }
+    if (vkRT.sbtReflMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, vkRT.sbtReflMemory, NULL);
+        vkRT.sbtReflMemory = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(vk.device, vkRT.reflSampler, NULL);
+        vkRT.reflSampler = VK_NULL_HANDLE;
+    }
+    VK_RT_DestroyReflImages();
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_ResizeReflections (public)
+// ---------------------------------------------------------------------------
+
+void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
-    VK_RT_DestroyAOMaskImages();
-    VK_RT_CreateAOMaskImages(width, height);
+    VK_RT_DestroyReflImages();
+    VK_RT_CreateReflImages(width, height);
 
-    // Descriptor sets must be refreshed at the next dispatch (new image views)
+    // Force descriptor set refresh at next dispatch
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.aoDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.reflDescSetLastUpdatedFrameCount[i] = -1;
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_DispatchAO
-// Dispatch hemisphere AO rays for the full screen.
-// Called once per frame after TLAS rebuild, outside a render pass.
-// Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry.
+// VK_RT_DispatchReflections (public)
+// Dispatch reflection rays for the full screen.  Called once per frame.
+// Must be outside a render pass.  On entry depth is ATTACHMENT_OPTIMAL;
+// transitions to READ_ONLY_OPTIMAL for the dispatch, then restores.
+// On exit reflBuffer[currentFrame] is in GENERAL layout, readable by
+// the interaction fragment shader (barrier issued before returning).
 // ---------------------------------------------------------------------------
 
-void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
+void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     if (!vkRT.isInitialized)
-    {
-        common->Printf("VK RT AO: skip — RT not initialized\n");
         return;
-    }
     if (!vkRT.tlas[vk.currentFrame].isValid)
-    {
-        common->Printf("VK RT AO: skip — TLAS[%d] not valid\n", vk.currentFrame);
         return;
-    }
-    if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool())
+    if (!r_useRayTracing.GetBool() || !r_rtReflections.GetBool())
         return;
-    if (vkRT.aoPipeline == VK_NULL_HANDLE)
+    if (vkRT.reflPipeline == VK_NULL_HANDLE)
     {
-        common->Printf("VK RT AO: skip — pipeline is NULL\n");
+        common->Printf("VK RT Refl: skip — pipeline is NULL\n");
         return;
     }
 
     const int frameIdx = vk.currentFrame;
 
-    // AO is a full-screen pass — dispatch once per frame slot, not once per view.
-    // Doom 3 calls RB_DrawView for each subview (weapon, mirrors) in the same frame;
-    // a second dispatch would run inside an active render pass → device lost.
-    static int s_lastAODispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
-    if (s_lastAODispatchFrame[frameIdx] == tr.frameCount)
+    // Guard against duplicate dispatch in the same frame (weapon subview etc.)
+    static int s_lastReflDispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastReflDispatchFrame[frameIdx] == tr.frameCount)
     {
         if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT AO: skip duplicate dispatch frame=%d slot=%d\n", tr.frameCount, frameIdx);
+            common->Printf("VK RT Refl: skip duplicate dispatch frame=%d slot=%d\n", tr.frameCount, frameIdx);
         return;
     }
-    s_lastAODispatchFrame[frameIdx] = tr.frameCount;
+    s_lastReflDispatchFrame[frameIdx] = tr.frameCount;
 
-    vkAOMask_t &ao = vkRT.aoMask[frameIdx];
-
-    if (ao.image == VK_NULL_HANDLE)
+    vkReflBuffer_t &rb = vkRT.reflBuffer[frameIdx];
+    if (rb.image == VK_NULL_HANDLE)
     {
-        common->Printf("VK RT AO: skip — AO image[%d] is NULL\n", frameIdx);
+        common->Printf("VK RT Refl: skip — reflBuffer[%d] image is NULL\n", frameIdx);
         return;
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n", tr.frameCount, frameIdx, ao.width,
-                       ao.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.aoPipeline);
+        common->Printf("VK RT Refl: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n", tr.frameCount, frameIdx,
+                       rb.width, rb.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.reflPipeline);
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
     {
         VkImageMemoryBarrier depthToRead = {};
         depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -504,10 +572,6 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         depthToRead.image = vk.depthImage;
-        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
-            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
         depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                              VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &depthToRead);
@@ -519,11 +583,8 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     void *uboMapped;
     VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
 
-    AOParamsUBO ubo = {};
+    ReflParamsUBO ubo = {};
 
-    // Inverse view-projection (GL convention — same as shadow dispatch).
-    // The rgen shader remaps Vulkan depth [0,1] → GL NDC Z [-1,1] before applying this matrix.
-    // Use viewDef->projectionMatrix (GL convention, NOT the VK-remapped variant).
     {
         const float *proj = viewDef->projectionMatrix;
         const float *mv = viewDef->worldSpace.modelViewMatrix;
@@ -541,58 +602,37 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
     }
 
-    ubo.aoRadius = Max(1.0f, r_rtAORadius.GetFloat());
-    ubo.numSamples = idMath::ClampInt(1, 16, r_rtAOSamples.GetInteger());
+    ubo.maxDist = Max(1.0f, r_rtReflectionDistance.GetFloat());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
-    ubo.screenWidth = (int32_t)ao.width;
-    ubo.screenHeight = (int32_t)ao.height;
-
-    memcpy(uboMapped, &ubo, sizeof(AOParamsUBO));
-
-    // Sanity-check the matrix for NaN (a singular VP matrix produces NaN and crashes the rgen)
-    {
-        bool hasNaN = false;
-        for (int i = 0; i < 16; i++)
-            if (ubo.invViewProj[i] != ubo.invViewProj[i])
-            {
-                hasNaN = true;
-                break;
-            }
-        if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d matNaN=%d uboOff=%u\n", ubo.aoRadius,
-                           ubo.numSamples, ubo.screenWidth, ubo.screenHeight, hasNaN ? 1 : 0, uboOff);
-        if (hasNaN)
-            common->Warning("VK RT AO: invViewProj contains NaN — ray directions will be degenerate!");
-    }
+    ubo.screenWidth = (int32_t)rb.width;
+    ubo.screenHeight = (int32_t)rb.height;
+    ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
+    memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes) ---
-    bool refreshSet = (vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
+    bool refreshSet = (vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
     if (refreshSet)
     {
-        VkDescriptorSet ds = vkRT.aoDescSets[frameIdx];
+        VkDescriptorSet ds = vkRT.reflDescSets[frameIdx];
 
-        // Binding 0: TLAS
         VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
         tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
         tlasWrite.accelerationStructureCount = 1;
         tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
-        // Binding 1: AO image (storage)
-        VkDescriptorImageInfo aoImgInfo = {};
-        aoImgInfo.imageView = ao.view;
-        aoImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkDescriptorImageInfo reflImgInfo = {};
+        reflImgInfo.imageView = rb.view;
+        reflImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-        // Binding 2: depth sampler
         VkDescriptorImageInfo depthInfo = {};
         depthInfo.sampler = vkRT.depthSampler;
         depthInfo.imageView = vk.depthSampledView;
         depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
-        // Binding 3: UBO base (dynamic offset supplied at bind time)
         VkDescriptorBufferInfo uboInfo = {};
         uboInfo.buffer = uboBuf;
         uboInfo.offset = 0;
-        uboInfo.range = sizeof(AOParamsUBO);
+        uboInfo.range = sizeof(ReflParamsUBO);
 
         VkWriteDescriptorSet writes[4] = {};
 
@@ -608,7 +648,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[1].dstBinding = 1;
         writes[1].descriptorCount = 1;
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo = &aoImgInfo;
+        writes[1].pImageInfo = &reflImgInfo;
 
         writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[2].dstSet = ds;
@@ -625,51 +665,35 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[3].pBufferInfo = &uboInfo;
 
         vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
-        vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
     // --- Dispatch ---
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.aoPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.aoPipelineLayout, 0, 1,
-                            &vkRT.aoDescSets[frameIdx], 1, &uboOff);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipelineLayout, 0, 1,
+                            &vkRT.reflDescSets[frameIdx], 1, &uboOff);
+    // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless textures)
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipelineLayout, 1, 1,
+                            &vkRT.matDescSet, 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: dispatch %ux%u samples=%d radius=%.1f\n", ao.width, ao.height, ubo.numSamples,
-                       ubo.aoRadius);
+        common->Printf("VK RT Refl: dispatch %ux%u maxDist=%.1f\n", rb.width, rb.height, ubo.maxDist);
 
-    vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion, ao.width,
-                      ao.height, 1);
-    if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: traceRaysKHR recorded\n");
+    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
+                      rb.width, rb.height, 1);
 
-    // --- Barrier: AO write → fragment shader read (and compute when temporal is active) ---
-    // Include COMPUTE_SHADER in the dst stage so the temporal resolve pass (if enabled)
-    // can read aoMask[] without an additional barrier.
+    // --- Barrier: reflection write → fragment shader read ---
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-                             &memBarrier, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
-    // --- Temporal EMA resolve + atrous filter ---
-    // Both passes sample the depth image (READ_ONLY_OPTIMAL layout).
-    // Run them BEFORE restoring depth to ATTACHMENT_OPTIMAL so the layout matches.
-    VK_RT_DispatchTemporalResolveAO(cmd, viewDef);
-    VK_RT_DispatchAtrousAO(cmd);
-
-    // --- Depth barrier: restore ATTACHMENT_OPTIMAL for render pass resume ---
-    // Use the same conditional aspect mask as the initial barrier.
-    // srcStageMask includes COMPUTE_SHADER since temporal/atrous just ran.
+    // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---
     {
-        VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-        if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-            vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
-            depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
         VkImageMemoryBarrier depthRestore = {};
         depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -679,9 +703,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthRestore.image = vk.depthImage;
         depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1, &depthRestore);
     }
+
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: dispatch complete\n");
+        common->Printf("VK RT Refl: dispatch complete\n");
 }

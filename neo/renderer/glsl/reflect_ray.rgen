@@ -1,0 +1,114 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — Reflection ray generation shader.
+
+For every non-sky pixel:
+  1. Reconstruct world-space position and normal.
+  2. Compute the mirror-reflected view direction.
+  3. Trace rays using a short bounce loop (max 2 iterations).
+     - On an opaque hit, rchit writes colour + transmittance=0 → stop.
+     - On a glass hit, rchit writes F0*tint + transmittance=0.96 + nextOrigin/Dir
+       so the loop fires a continuation ray straight through the glass.
+     - On a miss, rmiss writes sky colour + transmittance=0 → stop.
+  4. Accumulate colour weighted by per-segment transmittance, write to
+     the reflection RGBA16F buffer.
+
+The interaction fragment shader samples this buffer and blends the result
+into the specular contribution.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 1, rgba16f) uniform image2D reflImage;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+layout(set = 0, binding = 3) uniform ReflParams {
+    mat4   invViewProj;
+    float  maxDist;
+    uint   frameIndex;
+    ivec2  screenSize;
+    float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
+} params;
+
+#include "reflect_payload.glsl"
+layout(location = 0) rayPayloadEXT ReflPayload reflPayload;
+
+#include "rt_indirect.glsl"
+
+void main()
+{
+    ivec2 coord = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size  = params.screenSize;
+
+    float depth = texelFetch(depthSampler, coord, 0).r;
+
+    // Sky / no geometry — no surface to reflect from
+    if (depth >= 1.0)
+    {
+        imageStore(reflImage, coord, vec4(0.0));
+        return;
+    }
+
+    vec3 worldPos = rt_ReconstructWorldPos(coord, size, params.invViewProj);
+
+    // Camera position
+    vec4 camClip  = vec4(0.0, 0.0, -1.0, 1.0);
+    vec4 camWorld = params.invViewProj * camClip;
+    vec3 camPos   = camWorld.xyz / camWorld.w;
+    vec3 viewDir  = normalize(worldPos - camPos);   // points away from camera
+
+    vec3 normal   = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, -viewDir);
+
+    // Mirror-reflect view direction around surface normal
+    vec3 reflDir  = reflect(viewDir, normal);
+
+    // Bias origin off surface to avoid self-intersection
+    vec3 origin = worldPos + normal * 0.5;
+
+    // Bounce loop: up to 2 iterations covers double-pane glass.
+    // Each glass hit contributes 4 % and passes 96 % to the next segment.
+    vec3  accum  = vec3(0.0);
+    float weight = 1.0;
+    vec3  dir    = reflDir;
+
+    for (int i = 0; i < 2 && weight > 0.01; i++)
+    {
+        reflPayload.colour        = vec3(0.0);
+        reflPayload.transmittance = 0.0;
+
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsNoneEXT,
+            0xFF,
+            0,              // SBT hit offset: group 2 = hit group
+            0,              // SBT stride
+            0,              // miss index: group 1 = miss
+            origin,
+            0.01,           // tMin
+            dir,
+            params.maxDist,
+            0               // payload location
+        );
+
+        accum  += weight * reflPayload.colour;
+        weight *= reflPayload.transmittance;
+        if (reflPayload.transmittance > 0.0)
+        {
+            origin = reflPayload.nextOrigin;
+            dir    = reflPayload.nextDir;
+        }
+    }
+
+    imageStore(reflImage, coord, vec4(accum * params.reflBlend, 1.0));
+}

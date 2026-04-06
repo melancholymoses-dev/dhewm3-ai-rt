@@ -132,7 +132,8 @@ static bool VK_RTAnyEffectEnabled()
         return false;
     extern idCVar r_rtShadows;
     extern idCVar r_rtAO;
-    return r_rtShadows.GetBool() || r_rtAO.GetBool();
+    extern idCVar r_rtReflections;
+    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool();
 }
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -165,7 +166,7 @@ static void VK_MultiplyMatrix4(const float *a, const float *b, float *out)
     }
 }
 
-static const char *VK_ResultToString(VkResult r)
+const char *VK_ResultToString(VkResult r)
 {
     switch (r)
     {
@@ -660,6 +661,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
     extern idCVar r_rtAO;
+    extern idCVar r_rtTemporal;
     int *useAOPtr = useSM + 1;
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
                            vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
@@ -668,6 +670,17 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
     float *lightScalePtr = (float *)(useAOPtr + 1);
     *lightScalePtr = backEnd.overBright;
+
+    // useReflections: 1 when RT reflection buffer is valid this frame.
+    // Disabled for portal/mirror subviews: the buffer was populated from the primary
+    // camera and sampling it in a different view produces a screen-space artifact
+    // (wrong geometry, rectangular footprint un-transformed by the portal projection).
+    extern idCVar r_rtReflections;
+    int *useReflPtr = (int *)(lightScalePtr + 1);
+    const bool isPrimaryView = (backEnd.viewDef == NULL || backEnd.viewDef->superView == NULL);
+    const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
+                               vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
+    *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
@@ -720,20 +733,43 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         VK_Image_GetFallbackDescriptorInfo(&shadowMaskInfo);
     }
 
-    // Binding 8: AO mask
+    // Binding 8: AO mask (or temporal history when temporal accumulation is active)
+    // When temporal EMA is enabled, the history image holds the accumulated blended result
+    // and is what should be sampled in the interaction shader.  The raw aoMask is intermediate.
     VkDescriptorImageInfo aoMaskInfo = {};
-    if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE)
     {
-        aoMaskInfo.sampler = vkRT.aoMaskSampler;
-        aoMaskInfo.imageView = vkRT.aoMask[vk.currentFrame].view;
-        aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        const int frameIdx = vk.currentFrame;
+        const bool useHistory =
+            r_rtTemporal.GetBool() && vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE && vkRT.aoHistoryValid[frameIdx];
+        const bool hasValidAOImage = useHistory ? (vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE)
+                                                : (vkRT.aoMask[frameIdx].image != VK_NULL_HANDLE);
+        if (vk.rayTracingSupported && vkRT.isInitialized && hasValidAOImage)
+        {
+            aoMaskInfo.sampler = vkRT.aoMaskSampler;
+            aoMaskInfo.imageView = useHistory ? vkRT.aoReadView[frameIdx] : vkRT.aoMask[frameIdx].view;
+            aoMaskInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+        else
+        {
+            VK_Image_GetFallbackDescriptorInfo(&aoMaskInfo);
+        }
+    }
+
+    // Binding 9: reflection map (or 1x1 black fallback when off)
+    VkDescriptorImageInfo reflMapInfo = {};
+    if (vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
+        vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
+    {
+        reflMapInfo.sampler = vkRT.reflSampler;
+        reflMapInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
+        reflMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
     else
     {
-        VK_Image_GetFallbackDescriptorInfo(&aoMaskInfo);
+        VK_Image_GetFallbackDescriptorInfo(&reflMapInfo);
     }
 
-    VkWriteDescriptorSet writes[9] = {};
+    VkWriteDescriptorSet writes[10] = {};
 
     // Binding 0: UBO
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -766,7 +802,14 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     writes[8].descriptorCount = 1;
     writes[8].pImageInfo = &aoMaskInfo;
 
-    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 9, writes);
+    // Binding 9: reflection map
+    writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[9].dstBinding = 9;
+    writes[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[9].descriptorCount = 1;
+    writes[9].pImageInfo = &reflMapInfo;
+
+    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 10, writes);
 
     // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
@@ -3336,6 +3379,18 @@ void VK_RB_DrawView(const void *data)
     if (!vk.isInitialized || !vkPipes.isValid)
         return;
 
+    if (vk.deviceLost)
+    {
+        static bool s_loggedDeviceLostDrawView = false;
+        if (!s_loggedDeviceLostDrawView)
+        {
+            s_loggedDeviceLostDrawView = true;
+            common->Warning("VK: deviceLost latched, skipping DrawView submissions");
+            fflush(NULL);
+        }
+        fflush(NULL);
+        return;
+    }
     // When the window is minimized the presentation engine holds all swapchain
     // images.  vkAcquireNextImageKHR with UINT64_MAX would block forever.
     // Skip the frame; SDL_WINDOWEVENT_RESTORED will clear this flag.
@@ -3413,7 +3468,6 @@ void VK_RB_DrawView(const void *data)
                             (fenceResult == VK_ERROR_DEVICE_LOST)
                                 ? " — GPU DEVICE LOST: enable r_vkLogRT 2 to see RT breadcrumbs"
                                 : "");
-            fflush(NULL);
             return;
         }
 
@@ -3638,6 +3692,7 @@ void VK_RB_DrawView(const void *data)
 
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
         VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
+        VK_RT_DispatchReflections(cmdBuf, backEnd.viewDef);
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.renderPassResume;
@@ -3706,6 +3761,7 @@ void VK_RB_CopyRender(const void *data)
     int dstActualW = 0;
     int dstActualH = 0;
     const bool haveDstExtent = VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH);
+    bool resizedDstImage = false;
     if (!cmd->image->backendData || !haveDstExtent || dstActualW < desiredW || dstActualH < desiredH)
     {
         const size_t bytes = (size_t)desiredW * (size_t)desiredH * 4u;
@@ -3715,10 +3771,18 @@ void VK_RB_CopyRender(const void *data)
         Mem_Free(blank);
         cmd->image->uploadWidth = desiredW;
         cmd->image->uploadHeight = desiredH;
+        resizedDstImage = true;
 
         // Refresh actual backend extent after upload; if still unavailable, bail safely.
         if (!VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH))
             return;
+    }
+
+    if (resizedDstImage)
+    {
+        // VK_Image_Upload records into the deferred upload batch. Make sure those
+        // transitions/copies execute before this frame samples or blits the image.
+        VK_FlushPendingUploads();
     }
 
     VkImage dstImage = VK_NULL_HANDLE;
@@ -3828,6 +3892,20 @@ void VK_RB_CopyRender(const void *data)
 
 void VK_RB_SwapBuffers()
 {
+    if (vk.deviceLost)
+    {
+        s_frameActive = false;
+        s_frameCmdBuf = VK_NULL_HANDLE;
+        static bool s_loggedDeviceLostSwap = false;
+        if (!s_loggedDeviceLostSwap)
+        {
+            s_loggedDeviceLostSwap = true;
+            common->Warning("VK: deviceLost latched, skipping SwapBuffers");
+            fflush(NULL);
+        }
+        return;
+    }
+
     if (!s_frameActive)
         return; // acquire failed or no RC_DRAW_VIEW this EndFrame
 
@@ -3888,7 +3966,7 @@ void VK_RB_SwapBuffers()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmdBuf;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
+    submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[s_frameImageIndex];
 
     uint32_t submittedFrame = vk.currentFrame; // capture before increment
     const int submitLogMode = r_vkLogSubmitInfo.GetInteger();
@@ -3919,7 +3997,6 @@ void VK_RB_SwapBuffers()
         s_frameActive = false;
         common->Printf("VK: vkQueueSubmit failed with error %d (%s)\n", (int)submitResult,
                        VK_ResultToString(submitResult));
-        fflush(NULL);
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
         return;
     }
@@ -3928,7 +4005,7 @@ void VK_RB_SwapBuffers()
     VkPresentInfoKHR presentInfo = {};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
+    presentInfo.pWaitSemaphores = &vk.renderFinishedSemaphores[s_frameImageIndex];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &vk.swapchain;
     presentInfo.pImageIndices = &s_frameImageIndex;
@@ -4082,10 +4159,16 @@ void VKimp_PostInit(int width, int height)
     {
         common->Printf("VK: initializing RT\n");
         VK_RT_Init();
+        // Material table first: matDescLayout must exist before any pipeline layout
+        // that references it (shadow / reflection pipelines) is created.
+        common->Printf("VK: initializing RT material table\n");
+        VK_RT_InitMaterialTable();
         common->Printf("VK: initializing RT shadows\n");
         VK_RT_InitShadows();
         common->Printf("VK: initializing RT AO\n");
         VK_RT_InitAO();
+        common->Printf("VK: initializing RT reflections\n");
+        VK_RT_InitReflections();
     }
 
     common->Printf("VK: Backend ready\n");

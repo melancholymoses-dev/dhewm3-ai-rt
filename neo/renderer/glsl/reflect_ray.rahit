@@ -1,0 +1,81 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — reflect_ray.rahit — any-hit shader for reflection rays.
+
+Invoked for every non-opaque geometry intersection along a reflection ray.
+Opaque geometry is tagged VK_GEOMETRY_OPAQUE_BIT_KHR at BLAS build time
+and bypasses this shader entirely — the closest-hit runs directly.
+
+Handles three cases:
+
+  1. Alpha-tested (perforated) geometry — MAT_FLAG_ALPHA_TESTED:
+     Sample the diffuse texture; if alpha < threshold the surface is
+     transparent at this texel.  Call ignoreIntersectionEXT so the ray
+     continues through the hole.
+
+  2. Glass (translucent) geometry — MAT_FLAG_GLASS:
+     Accept the intersection without doing anything here.  rchit will
+     apply the Fresnel split (4 % reflect + 96 % straight-through).
+
+  3. Any other non-opaque geometry:
+     Accept and terminate traversal immediately (terminateRayEXT).
+     rchit will shade it as an opaque hit.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing                              : require
+#extension GL_EXT_buffer_reference                         : require
+#extension GL_EXT_buffer_reference2                        : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
+#extension GL_EXT_nonuniform_qualifier                     : enable
+
+#include "rt_material.glsl"
+#include "reflect_payload.glsl"
+
+layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
+hitAttributeEXT vec2 baryCoord;
+
+void main()
+{
+    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+
+    // Guard: out-of-range custom index (uninitialised TLAS entry, multi-surface BLAS
+    // with surface index != 0, etc.) would dereference garbage from materials[] and
+    // crash the GPU.  Ignore the intersection so traversal continues past this surface.
+    if (matIdx >= uint(materials.length()))
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
+    MaterialEntry mat = materials[matIdx];
+
+    if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
+    {
+        vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoord);
+        float alpha = texture(matTextures[nonuniformEXT(mat.diffuseTexIndex)], uv).a;
+        if (alpha < mat.alphaThreshold)
+        {
+            ignoreIntersectionEXT;
+            return;
+        }
+    }
+    else if ((mat.flags & MAT_FLAG_GLASS) != 0u)
+    {
+        // Accept — rchit handles the Fresnel split.
+        return;
+    }
+    else
+    {
+        // Non-opaque but neither alpha-tested nor glass: accept and stop traversal.
+        terminateRayEXT;
+    }
+}

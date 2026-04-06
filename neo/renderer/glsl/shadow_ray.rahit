@@ -9,33 +9,61 @@ of the original Doom 3 GPL Source Code release.
 */
 
 #version 460
-#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_ray_tracing                              : require
+#extension GL_EXT_buffer_reference                         : require
+#extension GL_EXT_buffer_reference2                        : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
+#extension GL_EXT_nonuniform_qualifier                     : enable
 
 // ---------------------------------------------------------------------------
-// shadow_ray.rahit  —  Any-Hit shader
+// shadow_ray.rahit  —  Any-Hit shader (Phase 5.4 / 5.4b)
 //
-// Invoked when the shadow ray intersects a triangle.
-// For opaque surfaces: write 0.0 (shadowed) and terminate the ray.
-// For alpha-tested surfaces: discard below the alpha threshold so the ray
-// continues through the transparent portion.
+// Invoked for every non-opaque triangle intersection along a shadow ray.
+// Opaque geometry is tagged VK_GEOMETRY_OPAQUE_BIT_KHR at BLAS build time
+// and bypasses this shader entirely; the ray terminates immediately with
+// shadowFactor = 0.0 (shadowed).
+//
+// Alpha-tested (perforated) geometry:
+//   - Interpolate UV and sample the diffuse texture.
+//   - If the texel alpha < alphaThreshold: ignore (ray continues through hole).
+//   - Otherwise: terminate as shadowed.
+//
+// Glass (translucent) geometry — MAT_FLAG_GLASS:
+//   - Glass is (mostly) transparent; light passes through.
+//   - Ignore the intersection so the shadow ray continues.
+//
+// Any other non-opaque geometry:
+//   - Treat as opaque: terminate as shadowed.
 // ---------------------------------------------------------------------------
+
+#include "rt_material.glsl"
 
 layout(location = 0) rayPayloadInEXT float shadowFactor;
-
-// Alpha mask texture for the hit surface (optional; binding used only when
-// the surface uses alpha testing).  If not bound, the hit is always opaque.
-layout(set = 1, binding = 0) uniform sampler2D alphaMask;
-
-// Hit attributes passed from the built-in triangle intersection stage
 hitAttributeEXT vec2 baryCoords;
 
-// Per-instance / per-geometry custom data pushed via instance custom index
-// For now we assume opaque geometry only (Phase 4 baseline).
-// Alpha-tested support can be added by reading material flags from a SSBO.
-void main() {
-    // Opaque hit: this pixel is fully in shadow.
+void main()
+{
+    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    MaterialEntry mat = materials[matIdx];
+
+    if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
+    {
+        vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoords);
+        float alpha = texture(matTextures[nonuniformEXT(mat.diffuseTexIndex)], uv).a;
+        if (alpha < mat.alphaThreshold)
+        {
+            ignoreIntersectionEXT;
+            return;
+        }
+    }
+    else if ((mat.flags & MAT_FLAG_GLASS) != 0u)
+    {
+        // Glass is (mostly) transparent — light passes through.
+        ignoreIntersectionEXT;
+        return;
+    }
+
+    // Opaque hit — this point is in shadow.
     shadowFactor = 0.0;
-    // terminateRayEXT is called implicitly once any-hit shader returns without
-    // calling ignoreIntersectionEXT.  We explicitly call it for clarity.
     terminateRayEXT;
 }

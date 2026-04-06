@@ -1,0 +1,62 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan - Temporal EMA resolve compute shader for AO.
+
+Blends the current frame's raw AO image into a per-slot history image using
+an exponential moving average:
+    history = mix(history, current, alpha)
+
+When alpha == 1.0 (first frame or camera cut), history is replaced directly
+with current to avoid reads from uninitialized or stale history.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// binding 0: current frame AO (written by ao_ray.rgen, read-only here)
+layout(set = 0, binding = 0, r8) uniform readonly image2D currentImage;
+
+// binding 1: accumulated history (read-modify-write — each invocation touches exactly
+// one unique pixel, so there are no intra-dispatch data races)
+layout(set = 0, binding = 1, r8) uniform image2D historyImage;
+
+layout(push_constant) uniform PC {
+    float alpha;   // 0.0 = use only history, 1.0 = use only current (reset/first frame)
+    float pad0;
+    float pad1;
+    float pad2;
+};
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dims  = imageSize(historyImage);
+
+    if (coord.x >= dims.x || coord.y >= dims.y)
+        return;
+
+    float current = imageLoad(currentImage, coord).r;
+
+    // On first frame / camera cut: bypass history load to avoid reading uninitialised
+    // or stale texels (IEEE 754: NaN * 0 == NaN, so we cannot rely on (1-alpha)==0).
+    if (alpha >= 1.0)
+    {
+        imageStore(historyImage, coord, vec4(current, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    float hist    = imageLoad(historyImage, coord).r;
+    float blended = mix(hist, current, alpha);
+
+    imageStore(historyImage, coord, vec4(blended, 0.0, 0.0, 1.0));
+}

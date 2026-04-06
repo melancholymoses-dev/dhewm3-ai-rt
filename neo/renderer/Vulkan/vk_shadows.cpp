@@ -1,13 +1,11 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3-rt Vulkan ray tracing - shadow ray pipeline and dispatch.
 
 Replaces RB_StencilShadowPass() when the Vulkan RT backend is active and
 r_rtShadows is enabled.  Outputs a per-pixel shadow mask (R8 UNORM) that
 is sampled in the lighting interaction pass instead of a stencil test.
-
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -195,10 +193,13 @@ static void VK_RT_InitShadowPipeline(void)
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.shadowDescLayout));
 
     // --- Pipeline layout ---
+    // set=0: per-frame resources (TLAS, shadow mask, depth, UBO)
+    // set=1: material table (MatTable, VtxAddrTable, IdxAddrTable, bindless textures)
+    VkDescriptorSetLayout shadowLayouts[2] = {vkRT.shadowDescLayout, vkRT.matDescLayout};
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts = &vkRT.shadowDescLayout;
+    plInfo.setLayoutCount = 2;
+    plInfo.pSetLayouts = shadowLayouts;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.shadowPipelineLayout));
 
     // --- Shader modules ---
@@ -813,6 +814,9 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 0, 1, &ds, 1,
                                 &uboOff);
+        // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless textures)
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 1, 1,
+                                &vkRT.matDescSet, 0, NULL);
 
         const uint32_t dispatchW = dispatchRect.extent.width;
         const uint32_t dispatchH = dispatchRect.extent.height;

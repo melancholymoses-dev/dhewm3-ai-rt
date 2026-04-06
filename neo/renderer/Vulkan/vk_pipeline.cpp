@@ -53,17 +53,18 @@ struct VkInteractionUBO
     int useShadowMask;  // 1 when RT shadow mask is valid this frame
     int useAO;          // 1 when RT AO mask is valid this frame
     float lightScale;   // backEnd.overBright — final color multiplier before gamma
-    float pad;          // pad to 16-byte boundary
+    int useReflections; // 1 when RT reflection buffer is valid this frame (replaces old pad)
 };
-// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 + 4 + 4 = 376 bytes; INTERACTION_UBO_SIZE = 384.
+// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 + 4 + 4 = 364 bytes; INTERACTION_UBO_SIZE = 384.
 
 // ---------------------------------------------------------------------------
 // Pipeline layout for the interaction pass
 // Binding layout:
 //   set 0 binding 0: UBO (VkInteractionUBO)
 //   set 0 binding 1..6: combined image samplers (bump, falloff, proj, diffuse, specular, specTable)
-//   set 0 binding 7:    shadow mask sampler (RT output or 1x1 white fallback)
+//   set 0 binding 7:    shadow mask sampler (RT shadow output or 1x1 white fallback)
 //   set 0 binding 8:    AO mask sampler (RT output or 1x1 white fallback)
+//   set 0 binding 9:    reflection map sampler (RT reflection output or 1x1 black fallback)
 // ---------------------------------------------------------------------------
 
 // vkPipelines_t declared in vk_common.h
@@ -87,7 +88,7 @@ static const char *VK_BUILD_SIGNATURE =
 
 static VkDescriptorSetLayout VK_CreateInteractionDescLayout(void)
 {
-    VkDescriptorSetLayoutBinding bindings[9] = {};
+    VkDescriptorSetLayoutBinding bindings[10] = {};
 
     // Binding 0: UBO
     bindings[0].binding = 0;
@@ -116,10 +117,16 @@ static VkDescriptorSetLayout VK_CreateInteractionDescLayout(void)
     bindings[8].descriptorCount = 1;
     bindings[8].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Binding 9: reflection map (RT reflection output, or 1x1 black fallback when off)
+    bindings[9].binding = 9;
+    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[9].descriptorCount = 1;
+    bindings[9].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
-    info.bindingCount = 9;
+    info.bindingCount = 10;
     info.pBindings = bindings;
 
     VkDescriptorSetLayout layout;

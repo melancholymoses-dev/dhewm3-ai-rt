@@ -1,0 +1,104 @@
+/*
+===========================================================================
+
+dhewm3 Vulkan — À-trous wavelet ambient-occlusion spatial filter.
+
+Runs as N compute passes after the temporal EMA resolve.  Each pass
+reads from one image and writes to the other (ping-pong), with the step
+width doubling every iteration (1 → 2 → 4 → 8 … pixels — the "à trous"
+pattern).  The wider the kernel step, the lower the frequency of noise
+that is removed.
+
+Edge-stopping weights prevent blur from crossing geometry boundaries:
+  wDepth = exp(-|centerDepth - sampleDepth| / sigmaDepth)
+  wAO    = exp(-|centerAO   - sampleAO|   / sigmaLuminance)
+  w      = wDepth * wAO
+
+Inputs (set 0):
+  binding 0 (r8, storage, GENERAL, readonly)  — input AO for this pass
+  binding 1 (r8, storage, GENERAL, writeonly) — output AO for this pass
+  binding 2 (combined image sampler)          — scene depth buffer
+
+Push constants (16 bytes):
+  int   stepWidth      — kernel step in texels (1 << passIndex)
+  float sigmaDepth     — depth edge-stop sigma (default 0.01 NDC)
+  float sigmaLuminance — AO value edge-stop sigma (default 0.1)
+  float pad
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Per-pass ping-pong images (swapped via descriptor set selection)
+layout(set = 0, binding = 0, r8) uniform readonly  image2D inputImage;
+layout(set = 0, binding = 1, r8) uniform writeonly image2D outputImage;
+
+// Depth for edge-stopping (DEPTH_STENCIL_READ_ONLY_OPTIMAL)
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+layout(push_constant) uniform PC {
+    int   stepWidth;       // texel stride: 1 << passIndex
+    float sigmaDepth;      // depth edge-stop sigma (NDC; ~0.01 stops at geometry edges)
+    float sigmaLuminance;  // AO value edge-stop sigma (~0.1 preserves occlusion contrast)
+    float pad;
+};
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dims  = imageSize(inputImage);
+
+    if (coord.x >= dims.x || coord.y >= dims.y)
+        return;
+
+    float centerAO    = imageLoad(inputImage, coord).r;
+    float centerDepth = texelFetch(depthSampler, coord, 0).r;
+
+    // Sky / no geometry — pass AO value through unchanged
+    if (centerDepth >= 1.0)
+    {
+        imageStore(outputImage, coord, vec4(centerAO, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    float aoSum     = 0.0;
+    float weightSum = 0.0;
+
+    // 3×3 kernel at stride stepWidth (à-trous wavelet pattern)
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            ivec2 sampleCoord = clamp(coord + ivec2(dx, dy) * stepWidth,
+                                      ivec2(0), dims - ivec2(1));
+
+            float sampleAO    = imageLoad(inputImage, sampleCoord).r;
+            float sampleDepth = texelFetch(depthSampler, sampleCoord, 0).r;
+
+            // Depth edge-stop: suppress weight across geometry boundaries
+            float wDepth = exp(-abs(centerDepth - sampleDepth)
+                               / max(sigmaDepth, 1e-6));
+
+            // Luminance edge-stop: suppress weight where AO contrast is high
+            // (avoids blurring a lit surface into a strongly occluded neighbour)
+            float wLum = exp(-abs(centerAO - sampleAO)
+                             / max(sigmaLuminance, 1e-6));
+
+            float w = wDepth * wLum;
+            aoSum     += sampleAO * w;
+            weightSum += w;
+        }
+    }
+
+    float result = (weightSum > 0.0) ? (aoSum / weightSum) : centerAO;
+    imageStore(outputImage, coord, vec4(result, 0.0, 0.0, 1.0));
+}

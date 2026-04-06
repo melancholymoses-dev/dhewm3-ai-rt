@@ -90,7 +90,8 @@ struct vkState_t
 
     // Sync objects
     VkSemaphore imageAvailableSemaphores[VK_MAX_FRAMES_IN_FLIGHT];
-    VkSemaphore renderFinishedSemaphores[VK_MAX_FRAMES_IN_FLIGHT];
+    // Present completion is tied to swapchain image lifetime; index these by acquired image.
+    VkSemaphore renderFinishedSemaphores[VK_MAX_SWAPCHAIN_IMAGES];
     VkFence inFlightFences[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Memory properties
@@ -102,11 +103,17 @@ struct vkState_t
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index
+    bool deviceLost;          // latched after first VK_ERROR_DEVICE_LOST
 
     bool isInitialized;
 };
 
 extern vkState_t vk;
+
+// Latches vk.deviceLost and logs the first call site that observed it.
+
+
+const char *VK_ResultToString(VkResult r);
 
 // ---------------------------------------------------------------------------
 // Graphics pipeline objects — defined in vk_pipeline.cpp

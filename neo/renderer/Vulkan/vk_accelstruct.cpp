@@ -110,7 +110,7 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas); // forward decl for model c
 // cleared (and all GPU resources freed) on shutdown and map transitions.
 // ---------------------------------------------------------------------------
 
-static const int VK_RT_MODEL_BLAS_CACHE_MAX = 512;
+static const int VK_RT_MODEL_BLAS_CACHE_MAX = 2048;
 
 struct vkModelBLASCacheEntry_t
 {
@@ -248,6 +248,8 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
     delete[] blas->geomVertSizes;
     delete[] blas->geomIdxSizes;
     delete[] blas->geomPrimCounts;
+    delete[] blas->geomVertAddrs;
+    delete[] blas->geomIdxAddrs;
     delete blas;
 }
 
@@ -377,7 +379,7 @@ static void AllocASBuffer(VkDeviceSize size, VkBufferUsageFlags extraUsage, VkBu
 // Geometry is read from the ambient vertex cache (already on GPU as a GL/Vk buffer).
 // ---------------------------------------------------------------------------
 
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated)
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated, bool isTranslucent)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
 
@@ -417,6 +419,8 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     blas->geomVertMems = new VkDeviceMemory[1]();
     blas->geomIdxBufs = new VkBuffer[1]();
     blas->geomIdxMems = new VkDeviceMemory[1]();
+    blas->geomVertAddrs = new VkDeviceAddress[1]();
+    blas->geomIdxAddrs = new VkDeviceAddress[1]();
 
     if (useGpuBuffers)
     {
@@ -484,11 +488,15 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[0]) + idxSrcOffset;
     triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
 
+    // Store geometry device addresses for VK_RT_MakeMaterialEntry (Phase 5.4).
+    blas->geomVertAddrs[0] = triData.vertexData.deviceAddress;
+    blas->geomIdxAddrs[0] = triData.indexData.deviceAddress;
+
     VkAccelerationStructureGeometryKHR asGeom = {};
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     asGeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     asGeom.geometry.triangles = triData;
-    asGeom.flags = isPerforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+    asGeom.flags = (isPerforated || isTranslucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -558,6 +566,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     {
         const srfTriangles_t *geo;
         bool perforated;
+        bool translucent;
     };
     static const int MAX_BLAS_SURFACES = 512;
     static SurfEntry validSurfs[MAX_BLAS_SURFACES];
@@ -595,11 +604,18 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
 
         if (!haveGpuGeom && !haveCpuGeom)
             continue;
-        // Translucent surfaces never cast shadows — same rule as GL stencil path.
-        if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT)
-            continue;
         validSurfs[validCount].geo = geo;
         validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
+        // Translucent (glass) surfaces: include in BLAS as non-opaque so rahit is invoked.
+        // shadow_ray.rahit passes through glass; reflect_ray.rchit applies the Fresnel split.
+        validSurfs[validCount].translucent = surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT;
+        if (validSurfs[validCount].translucent && r_vkLogRT.GetInteger() >= 1)
+        {
+            common->Printf("VK RT GLASS: model='%s' surf=%d shader='%s' gpu=%s verts=%d idx=%d\n", model->Name(), s,
+                           surf->shader ? surf->shader->GetName() : "<null>", haveGpuGeom ? "yes" : "no", geo->numVerts,
+                           geo->numIndexes);
+            fflush(NULL);
+        }
         validSurfUseGpu[validCount] = haveGpuGeom;
         validCount++;
     }
@@ -685,7 +701,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                 updateGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
                 updateGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
                 updateGeoms[i].geometry.triangles = triData;
-                updateGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+                updateGeoms[i].flags =
+                    (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
                 updateRanges[i] = {};
                 updateRanges[i].primitiveCount = prevBlas->geomPrimCounts[i];
@@ -728,6 +745,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     blas->geomVertSizes = new VkDeviceSize[validCount]();
     blas->geomIdxSizes = new VkDeviceSize[validCount]();
     blas->geomPrimCounts = new uint32_t[validCount]();
+    blas->geomVertAddrs = new VkDeviceAddress[validCount]();
+    blas->geomIdxAddrs = new VkDeviceAddress[validCount]();
 
     // Build geometry descriptors — one per valid surface
     static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
@@ -820,11 +839,15 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         triData.indexData.deviceAddress = GetBufferDeviceAddress(blas->geomIdxBufs[i]) + idxOffsets[i];
         triData.transformData.deviceAddress = 0; // identity — world transform goes in TLAS instance
 
+        // Store per-geometry addresses for the material table (Phase 5.4).
+        blas->geomVertAddrs[i] = triData.vertexData.deviceAddress;
+        blas->geomIdxAddrs[i] = triData.indexData.deviceAddress;
+
         asGeoms[i] = {};
         asGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
         asGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
         asGeoms[i].geometry.triangles = triData;
-        asGeoms[i].flags = validSurfs[i].perforated ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+        asGeoms[i].flags = (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
         primCounts[i] = (uint32_t)geo->numIndexes / 3;
         blas->geomVertSizes[i] = vertSize;
@@ -961,6 +984,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Static instances can be cached and skipped when unchanged.
     static VkAccelerationStructureInstanceKHR staticInstances[VK_RT_MAX_TLAS_INSTANCES];
     static VkAccelerationStructureInstanceKHR dynamicInstances[VK_RT_MAX_TLAS_INSTANCES];
+    // Parallel material-table entries for Phase 5.4.
+    static VkMaterialEntry staticMatEntries[VK_RT_MAX_TLAS_INSTANCES];
+    static VkMaterialEntry dynamicMatEntries[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t staticVtxAddrs[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t staticIdxAddrs[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t dynamicVtxAddrs[VK_RT_MAX_TLAS_INSTANCES];
+    static uint64_t dynamicIdxAddrs[VK_RT_MAX_TLAS_INSTANCES];
     uint32_t staticCount = 0;
     uint32_t dynamicCount = 0;
     uint64_t staticSignature = 1469598103934665603ull; // FNV-1a 64 offset basis
@@ -1078,6 +1108,35 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
 
+        // Collect material entry for Phase 5.4.
+        // instanceCustomIndex = static index or (staticCount + dynamic index); patched below.
+        // We use the current bucket index as a provisional value — corrected at merge time.
+        {
+            const uint32_t provIndex = isDynamicInstance ? dynamicCount - 1 : staticCount - 1;
+            // Representative shader: Surface(0) of the current model (may be NULL).
+            const idMaterial *shader = NULL;
+            if (model->NumSurfaces() > 0)
+            {
+                const modelSurface_t *surf0 = model->Surface(0);
+                if (surf0)
+                    shader = surf0->shader;
+            }
+            uint64_t vtxA = 0, idxA = 0;
+            VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, provIndex, &vtxA, &idxA);
+            if (isDynamicInstance)
+            {
+                dynamicMatEntries[provIndex] = matEntry;
+                dynamicVtxAddrs[provIndex] = vtxA;
+                dynamicIdxAddrs[provIndex] = idxA;
+            }
+            else
+            {
+                staticMatEntries[provIndex] = matEntry;
+                staticVtxAddrs[provIndex] = vtxA;
+                staticIdxAddrs[provIndex] = idxA;
+            }
+        }
+
         if (!isDynamicInstance)
         {
             const uintptr_t entTag = (uintptr_t)ent;
@@ -1174,7 +1233,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (rewriteStatic && staticCount > 0)
     {
         for (uint32_t i = 0; i < staticCount; i++)
+        {
             staticInstances[i].instanceCustomIndex = i;
+            // Patch provisional instanceIndex in the material entry to match.
+            staticMatEntries[i].vtxBufInstance = i;
+            staticMatEntries[i].idxBufInstance = i;
+        }
 
         memcpy(dstBytes, staticInstances, staticBytes);
         memcpy(staticCache.instances, staticInstances, staticBytes);
@@ -1192,11 +1256,20 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (dynamicCount > 0)
     {
         for (uint32_t i = 0; i < dynamicCount; i++)
+        {
             dynamicInstances[i].instanceCustomIndex = staticCount + i;
+            // Patch provisional instanceIndex in the material entry to match.
+            dynamicMatEntries[i].vtxBufInstance = staticCount + i;
+            dynamicMatEntries[i].idxBufInstance = staticCount + i;
+        }
         memcpy(dstBytes + staticBytes, dynamicInstances, dynamicBytes);
     }
 
     vkUnmapMemory(vk.device, tlas.instanceMemory);
+
+    // Upload material table entries (Phase 5.4).
+    VK_RT_UploadMatTableFrame(staticMatEntries, staticCount, rewriteStatic, dynamicMatEntries, dynamicCount,
+                              staticVtxAddrs, staticIdxAddrs, dynamicVtxAddrs, dynamicIdxAddrs);
 
     tlas.instanceCount = instanceCount;
 
@@ -1332,6 +1405,38 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // The shadow pipeline and shadow mask are set up in vk_shadows.cpp.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// VK_RT_BeginLevelLoad (public)
+// Called from idRenderSystemLocal::BeginLevelLoad() before the render model
+// manager purges assets.  Worlds are still valid at this point.
+// Frees all per-entity and cached-model BLASes so that:
+//   (a) model pointers in the BLAS cache don't dangle after model eviction, and
+//   (b) the cache starts empty for the new level.
+// vkDeviceWaitIdle is safe here — the game's main loop stops rendering during
+// level loads.
+// ---------------------------------------------------------------------------
+
+void VK_RT_BeginLevelLoad(void)
+{
+    if (!vkRT.isInitialized)
+        return;
+
+    vkDeviceWaitIdle(vk.device);
+
+    // Walk all worlds (still valid here) and free per-entity non-cached BLASes.
+    // Also clears the model BLAS cache.
+    VK_RT_ClearWorldEntityBLASPointers(true);
+
+    // Drain any remaining deferred garbage — all safe since device is now idle.
+    for (int i = 0; i < s_blasGarbageCount; i++)
+        VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
+    s_blasGarbageCount = 0;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries\n", s_modelBLASCacheCount);
+    // s_modelBLASCacheCount was already reset to 0 by VK_RT_ModelBLASCacheClear() above.
+}
+
 void VK_RT_Init(void)
 {
     memset(&vkRT, 0, sizeof(vkRT));
@@ -1442,6 +1547,53 @@ void VK_RT_Shutdown(void)
         vkDestroyDescriptorSetLayout(vk.device, vkRT.blurDescLayout, NULL);
     if (vkRT.blurDescPool != VK_NULL_HANDLE)
         vkDestroyDescriptorPool(vk.device, vkRT.blurDescPool, NULL);
+
+    // AO mask images
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkAOMask_t &ao = vkRT.aoMask[i];
+        if (ao.view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(vk.device, ao.view, NULL);
+            ao.view = VK_NULL_HANDLE;
+        }
+        if (ao.image != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(vk.device, ao.image, NULL);
+            ao.image = VK_NULL_HANDLE;
+        }
+        if (ao.memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, ao.memory, NULL);
+            ao.memory = VK_NULL_HANDLE;
+        }
+    }
+
+    // AO pipeline + SBT
+    if (vkRT.aoPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(vk.device, vkRT.aoPipeline, NULL);
+    if (vkRT.aoPipelineLayout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(vk.device, vkRT.aoPipelineLayout, NULL);
+    if (vkRT.aoDescLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.aoDescLayout, NULL);
+    if (vkRT.aoDescPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(vk.device, vkRT.aoDescPool, NULL);
+    if (vkRT.sbtAOBuffer != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(vk.device, vkRT.sbtAOBuffer, NULL);
+        vkFreeMemory(vk.device, vkRT.sbtAOMemory, NULL);
+    }
+    if (vkRT.aoMaskSampler != VK_NULL_HANDLE)
+        vkDestroySampler(vk.device, vkRT.aoMaskSampler, NULL);
+
+    // Temporal resolve pipeline + history images
+    VK_RT_ShutdownTemporal();
+
+    // Reflection pipeline, SBT, and buffers
+    VK_RT_ShutdownReflections();
+
+    // Material table SSBOs and bindless descriptor set (Phase 5.4)
+    VK_RT_ShutdownMaterialTable();
 
     memset(&vkRT, 0, sizeof(vkRT));
 }

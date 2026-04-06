@@ -15,15 +15,15 @@
                 "value": "x64",
                 "strategy": "set"
             },
-            "binaryDir": "C:/Users/jonat/source/repos/build_rtx",
+            "binaryDir": "../build_rtx",
             "cacheVariables": {
                 "DHEWM3_VULKAN": "ON",
                 "DHEWM3_RAYTRACING": "ON",
-                "DHEWM3LIBS": "C:/Users/jonat/source/repos/dhewm3-libs/x86_64-w64-mingw32",
-                "CMAKE_PREFIX_PATH": "C:/Users/jonat/source/repos/dhewm3-libs/x86_64-w64-mingw32"
+                "DHEWM3LIBS": "../dhewm3-libs/x86_64-w64-mingw32",
+                "CMAKE_PREFIX_PATH": "../dhewm3-libs/x86_64-w64-mingw32"
             },
             "environment": {
-                "PATH": "$penv{PATH};C:/Users/jonat/source/repos/dhewm3-libs/x86_64-w64-mingw32/bin"
+                "PATH": "$penv{PATH};../dhewm3-libs/x86_64-w64-mingw32/bin"
             }
         }
     ],

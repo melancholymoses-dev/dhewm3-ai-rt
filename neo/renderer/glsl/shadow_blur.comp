@@ -1,5 +1,5 @@
 /*
-RT Shdow Blurrer
+RT Shadow Blurrer
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -58,7 +58,14 @@ void main() {
         if (depthAware > 0.5) {
             float sampleDepth = texelFetch(depthSampler, sampleCoord, 0).r;
             float dz = abs(sampleDepth - centerDepth);
-            if (dz > depthThreshold) {
+            float th = max(depthThreshold, 1e-6);
+
+            // Soft edge-aware weighting avoids quantized banding from hard reject.
+            // 1.0 at dz<=th, smoothly fades to 0.0 by dz>=2*th.
+            float edgeW = 1.0 - smoothstep(th, th * 2.0, dz);
+            w *= edgeW;
+
+            if (w <= 1e-5) {
                 continue;
             }
         }
