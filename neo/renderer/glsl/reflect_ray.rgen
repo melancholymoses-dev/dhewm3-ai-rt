@@ -103,8 +103,11 @@ void main()
 
         accum  += weight * reflPayload.colour;
         weight *= reflPayload.transmittance;
-        origin  = reflPayload.nextOrigin;
-        dir     = reflPayload.nextDir;
+        if (reflPayload.transmittance > 0.0)
+        {
+            origin = reflPayload.nextOrigin;
+            dir    = reflPayload.nextDir;
+        }
     }
 
     imageStore(reflImage, coord, vec4(accum * params.reflBlend, 1.0));
