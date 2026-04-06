@@ -14,7 +14,6 @@ may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 
 It is distributed under the same modified GNU General Public License Version 3
 of the original Doom 3 GPL Source Code release.
 
-
 ===========================================================================
 */
 

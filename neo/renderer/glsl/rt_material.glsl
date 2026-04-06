@@ -1,17 +1,25 @@
-// rt_material.glsl — shared material table include for dhewm3 RT shaders.
-//
-// Provides:
-//   - MaterialEntry struct (mirrors VkMaterialEntry in vk_raytracing.h)
-//   - set=1 SSBO bindings: MatTable, VtxAddrTable, IdxAddrTable
-//   - set=1 bindless sampler array: matTextures[4096]
-//   - rt_InterpolateUV(matIdx, primId, bary)  — barycentrically-interpolated UV
-//   - rt_SampleDiffuse(matIdx, primId, bary)  — diffuse texel at hit surface
-//
-// Required extensions (include before this file):
-//   #extension GL_EXT_buffer_reference                        : require
-//   #extension GL_EXT_buffer_reference2                       : require
-//   #extension GL_EXT_shader_explicit_arithmetic_types_int64  : require
-//   #extension GL_EXT_nonuniform_qualifier                    : enable
+/* rt_material.glsl — shared material table include for dhewm3 RT shaders.
+ 
+  Provides:
+    - MaterialEntry struct (mirrors VkMaterialEntry in vk_raytracing.h)
+    - set=1 SSBO bindings: MatTable, VtxAddrTable, IdxAddrTable
+    - set=1 bindless sampler array: matTextures[4096]
+    - rt_InterpolateUV(matIdx, primId, bary)  — barycentrically-interpolated UV
+    - rt_SampleDiffuse(matIdx, primId, bary)  — diffuse texel at hit surface
+ 
+  Required extensions (include before this file):
+    #extension GL_EXT_buffer_reference                        : require
+    #extension GL_EXT_buffer_reference2                       : require
+    #extension GL_EXT_shader_explicit_arithmetic_types_int64  : require
+    #extension GL_EXT_nonuniform_qualifier                    : enable
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+*/
+
 
 // ---------------------------------------------------------------------------
 // Per-instance material entry — must match VkMaterialEntry (vk_raytracing.h)

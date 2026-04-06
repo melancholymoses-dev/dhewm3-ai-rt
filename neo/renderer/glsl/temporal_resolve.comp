@@ -1,8 +1,7 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
-dhewm3 Vulkan - Temporal EMA resolve compute shader for AO.
+dhewm3-rt Vulkan - Temporal EMA resolve compute shader for AO.
 
 Blends the current frame's raw AO image into a per-slot history image using
 an exponential moving average:
@@ -11,12 +10,11 @@ an exponential moving average:
 When alpha == 1.0 (first frame or camera cut), history is replaced directly
 with current to avoid reads from uninitialized or stale history.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */

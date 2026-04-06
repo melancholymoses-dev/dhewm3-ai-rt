@@ -2,7 +2,7 @@
 ===========================================================================
 
 Doom 3 GPL Source Code
-dhewm3 Vulkan — reflect_ray.rchit — closest-hit shader for reflection rays.
+dhewm3-rt Vulkan — reflect_ray.rchit — closest-hit shader for reflection rays.
 
 Phase 5.4: samples the actual diffuse texture of the hit surface using the
 material table (set=1).  UVs are barycentrically interpolated from the hit
@@ -14,12 +14,11 @@ incidence).  The remaining 96 % is passed through to the next bounce via
 reflPayload.transmittance + nextOrigin/nextDir.  rgen traces the continuation
 ray on the next loop iteration.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */

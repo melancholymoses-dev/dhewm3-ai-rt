@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3-rt Vulkan backend - swapchain, render pass, and framebuffers.
 
 

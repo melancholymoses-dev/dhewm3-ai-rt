@@ -1,13 +1,11 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3-rt Vulkan ray tracing - shadow ray pipeline and dispatch.
 
 Replaces RB_StencilShadowPass() when the Vulkan RT backend is active and
 r_rtShadows is enabled.  Outputs a per-pixel shadow mask (R8 UNORM) that
 is sampled in the lighting interaction pass instead of a stencil test.
-
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.

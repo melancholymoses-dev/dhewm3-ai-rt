@@ -399,8 +399,12 @@ static void VKimp_CreateSyncObjects(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         VK_CHECK(vkCreateSemaphore(vk.device, &semInfo, NULL, &vk.imageAvailableSemaphores[i]));
-        VK_CHECK(vkCreateSemaphore(vk.device, &semInfo, NULL, &vk.renderFinishedSemaphores[i]));
         VK_CHECK(vkCreateFence(vk.device, &fenceInfo, NULL, &vk.inFlightFences[i]));
+    }
+
+    for (int i = 0; i < VK_MAX_SWAPCHAIN_IMAGES; i++)
+    {
+        VK_CHECK(vkCreateSemaphore(vk.device, &semInfo, NULL, &vk.renderFinishedSemaphores[i]));
     }
 }
 
@@ -612,8 +616,12 @@ void VKimp_Shutdown(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkDestroySemaphore(vk.device, vk.imageAvailableSemaphores[i], NULL);
-        vkDestroySemaphore(vk.device, vk.renderFinishedSemaphores[i], NULL);
         vkDestroyFence(vk.device, vk.inFlightFences[i], NULL);
+    }
+
+    for (int i = 0; i < VK_MAX_SWAPCHAIN_IMAGES; i++)
+    {
+        vkDestroySemaphore(vk.device, vk.renderFinishedSemaphores[i], NULL);
     }
 
     vkDestroyCommandPool(vk.device, vk.commandPool, NULL);
