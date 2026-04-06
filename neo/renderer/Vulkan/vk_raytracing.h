@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3-rt Vulkan ray tracing - types and declarations.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
@@ -55,20 +54,20 @@ static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
 
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
 #define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
-#define VK_MAT_FLAG_TWO_SIDED    0x02u // CT_TWO_SIDED — no back-face cull
-#define VK_MAT_FLAG_GLASS        0x04u // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
+#define VK_MAT_FLAG_TWO_SIDED 0x02u    // CT_TWO_SIDED — no back-face cull
+#define VK_MAT_FLAG_GLASS 0x04u        // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
 
 // One entry per TLAS instance.  Indexed by gl_InstanceCustomIndexEXT in shaders.
 // std430-compatible: all fields are 4 bytes, total = 32 bytes.
 struct VkMaterialEntry
 {
-    uint32_t diffuseTexIndex;  // index into bindless texture array (0 = white fallback)
-    uint32_t normalTexIndex;   // index into bindless texture array (0 = flat normal)
-    float    roughness;        // GGX roughness [0,1]; default 1.0 (fully diffuse)
-    uint32_t flags;            // VK_MAT_FLAG_*
-    uint32_t vtxBufInstance;   // = instanceCustomIndex → VtxAddrTable[vtxBufInstance]
-    uint32_t idxBufInstance;   // = instanceCustomIndex → IdxAddrTable[idxBufInstance]
-    float    alphaThreshold;   // alpha test cutoff (MC_PERFORATED); default 0.5
+    uint32_t diffuseTexIndex; // index into bindless texture array (0 = white fallback)
+    uint32_t normalTexIndex;  // index into bindless texture array (0 = flat normal)
+    float roughness;          // GGX roughness [0,1]; default 1.0 (fully diffuse)
+    uint32_t flags;           // VK_MAT_FLAG_*
+    uint32_t vtxBufInstance;  // = instanceCustomIndex → VtxAddrTable[vtxBufInstance]
+    uint32_t idxBufInstance;  // = instanceCustomIndex → IdxAddrTable[idxBufInstance]
+    float alphaThreshold;     // alpha test cutoff (MC_PERFORATED); default 0.5
     uint32_t pad;
 };
 static_assert(sizeof(VkMaterialEntry) == 32, "VkMaterialEntry size mismatch");
@@ -219,17 +218,17 @@ struct vkRTState_t
     vkAOMask_t aoHistory[VK_MAX_FRAMES_IN_FLIGHT]; // accumulated EMA history, R8_UNORM
 
     // Temporal compute pipeline (temporal_resolve.comp)
-    VkPipeline           temporalPipeline;
-    VkPipelineLayout     temporalPipelineLayout;
+    VkPipeline temporalPipeline;
+    VkPipelineLayout temporalPipelineLayout;
     VkDescriptorSetLayout temporalDescLayout;
-    VkDescriptorPool     temporalDescPool;
+    VkDescriptorPool temporalDescPool;
     // One descriptor set per frame slot: binding 0=aoMask (readonly), binding 1=aoHistory (rw)
-    VkDescriptorSet      temporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                  temporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet temporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int temporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Per-slot history validity and camera-state cache for cut detection.
     // Reset to false when the slot's images are recreated or the pipeline is (re)initialised.
-    bool  aoHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
+    bool aoHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
     float aoPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
 
     // --------------------------------------------------------------------------
@@ -243,39 +242,39 @@ struct vkRTState_t
     //
     // Requires r_rtTemporal 1 (EMA must run first to supply a reasonable  input).
     // --------------------------------------------------------------------------
-    vkAOMask_t            aoScratch[VK_MAX_FRAMES_IN_FLIGHT]; // ping-pong scratch, R8_UNORM, GENERAL
+    vkAOMask_t aoScratch[VK_MAX_FRAMES_IN_FLIGHT]; // ping-pong scratch, R8_UNORM, GENERAL
 
-    VkPipeline            atrousPipeline;
-    VkPipelineLayout      atrousPipelineLayout;
+    VkPipeline atrousPipeline;
+    VkPipelineLayout atrousPipelineLayout;
     VkDescriptorSetLayout atrousDescLayout;
-    VkDescriptorPool      atrousDescPool;
+    VkDescriptorPool atrousDescPool;
     // [frameIdx][0]: binding0=aoHistory(in), binding1=aoScratch(out), binding2=depth
     // [frameIdx][1]: binding0=aoScratch(in), binding1=aoHistory(out), binding2=depth
-    VkDescriptorSet       atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][2];
-    int                   atrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][2];
+    int atrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // View sampled by the interaction pass.  Initialised to aoHistory[i].view at
     // CreateHistoryImages; updated at end of each DispatchAtrousAO to whichever
     // image holds the final Atrous output (history if even pass count, scratch if odd).
     // Falls back to aoHistory[i].view when Atrous is disabled (r_rtAtrousIterations 0).
-    VkImageView           aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
+    VkImageView aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // RT Reflections (Step 5.3)
     //
     // One RGBA16F buffer per frame-in-flight slot.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t reflBuffer[VK_MAX_FRAMES_IN_FLIGHT];  // RGBA16F reflection colour
-    VkSampler      reflSampler;                           // linear-clamp for interaction shader
+    vkReflBuffer_t reflBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F reflection colour
+    VkSampler reflSampler;                              // linear-clamp for interaction shader
 
-    VkPipeline            reflPipeline;
-    VkPipelineLayout      reflPipelineLayout;
+    VkPipeline reflPipeline;
+    VkPipelineLayout reflPipelineLayout;
     VkDescriptorSetLayout reflDescLayout;
-    VkDescriptorPool      reflDescPool;
-    VkDescriptorSet       reflDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   reflDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool reflDescPool;
+    VkDescriptorSet reflDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int reflDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    VkBuffer       sbtReflBuffer;
+    VkBuffer sbtReflBuffer;
     VkDeviceMemory sbtReflMemory;
     VkStridedDeviceAddressRegionKHR reflRgenRegion;
     VkStridedDeviceAddressRegionKHR reflMissRegion;
@@ -302,22 +301,22 @@ struct vkRTState_t
     // binding=3.  All VK_MAT_MAX_TEXTURES slots are initialised to the white
     // fallback; slots are updated when new diffuse images appear in the scene.
     // --------------------------------------------------------------------------
-    VkBuffer       matTableSSBO;
+    VkBuffer matTableSSBO;
     VkDeviceMemory matTableSSBOMemory;
-    void          *matTableMapped;      // persistently mapped
+    void *matTableMapped; // persistently mapped
 
-    VkBuffer       vtxAddrSSBO;
+    VkBuffer vtxAddrSSBO;
     VkDeviceMemory vtxAddrSSBOMemory;
-    void          *vtxAddrMapped;       // persistently mapped
+    void *vtxAddrMapped; // persistently mapped
 
-    VkBuffer       idxAddrSSBO;
+    VkBuffer idxAddrSSBO;
     VkDeviceMemory idxAddrSSBOMemory;
-    void          *idxAddrMapped;       // persistently mapped
+    void *idxAddrMapped; // persistently mapped
 
     VkDescriptorSetLayout matDescLayout; // set=2: mat SSBO + vtx/idx addr + bindless textures
-    VkDescriptorPool      matDescPool;
-    VkDescriptorSet       matDescSet;    // single set — textures stable between frames
-    VkSampler             matSampler;    // bilinear-clamp, used for all bindless slots
+    VkDescriptorPool matDescPool;
+    VkDescriptorSet matDescSet; // single set — textures stable between frames
+    VkSampler matSampler;       // bilinear-clamp, used for all bindless slots
 
     bool matTableInitialized;
 
@@ -336,7 +335,7 @@ void VK_RT_LoadFunctionPointers(void);
 // Initialize the RT pipeline (called once after device creation when RT is available)
 void VK_RT_Init(void);
 void VK_RT_Shutdown(void);
-void VK_RT_BeginLevelLoad(void);  // clears BLAS cache at level transitions
+void VK_RT_BeginLevelLoad(void); // clears BLAS cache at level transitions
 
 // Initialize the shadow ray pipeline and shadow mask images (called after swapchain creation)
 void VK_RT_InitShadows(void);
@@ -421,7 +420,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
-vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false, bool isTranslucent = false);
+vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool isPerforated = false,
+                          bool isTranslucent = false);
 void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 
 // Build a multi-geometry BLAS covering all non-translucent surfaces of a model.
@@ -465,19 +465,16 @@ void VK_RT_ShutdownMaterialTable(void);
 // instanceIndex: the gl_InstanceCustomIndexEXT that will be assigned to this instance.
 // outVtxAddr / outIdxAddr: receive the device address of surface-0 vertex/index data.
 // NOTE: internally assigns bindless texture slots; call once per instance per frame.
-VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas,
-                                         uint32_t instanceIndex,
-                                         uint64_t *outVtxAddr, uint64_t *outIdxAddr);
+VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas, uint32_t instanceIndex,
+                                        uint64_t *outVtxAddr, uint64_t *outIdxAddr);
 
 // Upload the frame's material entries and address tables to the GPU SSBOs.
 // Mirrors the static/dynamic split of VK_RT_RebuildTLAS.
 // When rewriteStatic == false the static portion of the SSBO is left unchanged.
 // Also rebuilds the bindless texture descriptors if new images were encountered.
 // Called from vk_accelstruct.cpp at the end of VK_RT_RebuildTLAS.
-void VK_RT_UploadMatTableFrame(
-    const VkMaterialEntry *staticEntries,  uint32_t staticCount,  bool rewriteStatic,
-    const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount,
-    const uint64_t *staticVtx,  const uint64_t *staticIdx,
-    const uint64_t *dynamicVtx, const uint64_t *dynamicIdx);
+void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t staticCount, bool rewriteStatic,
+                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount, const uint64_t *staticVtx,
+                               const uint64_t *staticIdx, const uint64_t *dynamicVtx, const uint64_t *dynamicIdx);
 
 #endif // __VK_RAYTRACING_H__

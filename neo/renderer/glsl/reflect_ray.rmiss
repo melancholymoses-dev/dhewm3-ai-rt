@@ -1,13 +1,16 @@
 /*
 ===========================================================================
-Doom 3 GPL Source Code — dhewm3 Vulkan
 reflect_ray.rmiss — miss shader for reflection rays.
 
 Ray missed all geometry: the reflected direction points toward open space
 (sky, void, or far distance).  Return a sky gradient colour and set
 transmittance = 0 so the rgen bounce loop stops here.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 ===========================================================================
 */
 

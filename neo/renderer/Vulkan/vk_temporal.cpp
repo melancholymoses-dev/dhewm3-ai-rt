@@ -1,7 +1,6 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
 dhewm3 Vulkan ray tracing - temporal EMA resolve for ambient occlusion.
 
 Temporal accumulation blends the raw per-frame AO image into a per-slot
@@ -27,12 +26,11 @@ r_rtTemporalCutThreshold, alpha is forced to 1.0 so history is replaced
 entirely with the current frame.  This prevents stale history from
 ghosting through level transitions and teleport cuts.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
@@ -524,10 +522,9 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             0, 1, &barrier, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &barrier, 0, NULL, 0, NULL);
     }
 }
 
@@ -567,39 +564,39 @@ static void VK_RT_InitAtrousPipeline(void)
     // Binding 1: output image (storage, r8, GENERAL, writeonly)
     // Binding 2: depth sampler (combined image sampler)
     VkDescriptorSetLayoutBinding bindings[3] = {};
-    bindings[0].binding         = 0;
-    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[1].binding         = 1;
-    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[2].binding         = 2;
-    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
-    layoutCI.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutCI.bindingCount = 3;
-    layoutCI.pBindings    = bindings;
+    layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.atrousDescLayout));
 
     // Push constant: stepWidth(int) + sigmaDepth(float) + sigmaLuminance(float) + pad = 16 bytes
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset     = 0;
-    pushRange.size       = 16;
+    pushRange.offset = 0;
+    pushRange.size = 16;
 
     VkPipelineLayoutCreateInfo plCI = {};
-    plCI.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plCI.setLayoutCount         = 1;
-    plCI.pSetLayouts            = &vkRT.atrousDescLayout;
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.atrousDescLayout;
     plCI.pushConstantRangeCount = 1;
-    plCI.pPushConstantRanges    = &pushRange;
+    plCI.pPushConstantRanges = &pushRange;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.atrousPipelineLayout));
 
     VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/atrous_filter.comp.spv");
@@ -610,14 +607,14 @@ static void VK_RT_InitAtrousPipeline(void)
     }
 
     VkPipelineShaderStageCreateInfo stageCI = {};
-    stageCI.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageCI.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     stageCI.module = compModule;
-    stageCI.pName  = "main";
+    stageCI.pName = "main";
 
     VkComputePipelineCreateInfo pipeCI = {};
-    pipeCI.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipeCI.stage  = stageCI;
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
     pipeCI.layout = vkRT.atrousPipelineLayout;
     VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.atrousPipeline));
     vkDestroyShaderModule(vk.device, compModule, NULL);
@@ -625,16 +622,16 @@ static void VK_RT_InitAtrousPipeline(void)
     // Pool: 2 ping-pong sets per slot × VK_MAX_FRAMES_IN_FLIGHT
     const int totalSets = VK_MAX_FRAMES_IN_FLIGHT * 2;
     VkDescriptorPoolSize poolSizes[2] = {};
-    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 2 * totalSets; // 2 storage images per set
-    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = 1 * totalSets; // 1 depth sampler per set
 
     VkDescriptorPoolCreateInfo poolCI = {};
-    poolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets       = totalSets;
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = totalSets;
     poolCI.poolSizeCount = 2;
-    poolCI.pPoolSizes    = poolSizes;
+    poolCI.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.atrousDescPool));
 
     VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT * 2];
@@ -642,10 +639,10 @@ static void VK_RT_InitAtrousPipeline(void)
         layouts[i] = vkRT.atrousDescLayout;
 
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkRT.atrousDescPool;
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.atrousDescPool;
     dsAlloc.descriptorSetCount = totalSets;
-    dsAlloc.pSetLayouts        = layouts;
+    dsAlloc.pSetLayouts = layouts;
     // Allocate as flat array: [0][0], [0][1], [1][0], [1][1]
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, &vkRT.atrousDescSets[0][0]));
 
@@ -747,50 +744,50 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
     if (vkRT.atrousDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
     {
         VkDescriptorImageInfo depthInfo = {};
-        depthInfo.sampler     = vkRT.depthSampler;
-        depthInfo.imageView   = vk.depthSampledView;
+        depthInfo.sampler = vkRT.depthSampler;
+        depthInfo.imageView = vk.depthSampledView;
         depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         // imgViews[setIdx][bindingIdx] — 0=input, 1=output
         VkDescriptorImageInfo imgViews[2][2] = {};
-        imgViews[0][0] = { VK_NULL_HANDLE, history.view, VK_IMAGE_LAYOUT_GENERAL }; // set0 in = history
-        imgViews[0][1] = { VK_NULL_HANDLE, scratch.view, VK_IMAGE_LAYOUT_GENERAL }; // set0 out = scratch
-        imgViews[1][0] = { VK_NULL_HANDLE, scratch.view, VK_IMAGE_LAYOUT_GENERAL }; // set1 in = scratch
-        imgViews[1][1] = { VK_NULL_HANDLE, history.view, VK_IMAGE_LAYOUT_GENERAL }; // set1 out = history
+        imgViews[0][0] = {VK_NULL_HANDLE, history.view, VK_IMAGE_LAYOUT_GENERAL}; // set0 in = history
+        imgViews[0][1] = {VK_NULL_HANDLE, scratch.view, VK_IMAGE_LAYOUT_GENERAL}; // set0 out = scratch
+        imgViews[1][0] = {VK_NULL_HANDLE, scratch.view, VK_IMAGE_LAYOUT_GENERAL}; // set1 in = scratch
+        imgViews[1][1] = {VK_NULL_HANDLE, history.view, VK_IMAGE_LAYOUT_GENERAL}; // set1 out = history
 
         VkWriteDescriptorSet writes[6] = {};
         for (int s = 0; s < 2; s++)
         {
             VkDescriptorSet ds = vkRT.atrousDescSets[frameIdx][s];
 
-            writes[s * 3 + 0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 3 + 0].dstSet          = ds;
-            writes[s * 3 + 0].dstBinding      = 0;
+            writes[s * 3 + 0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 3 + 0].dstSet = ds;
+            writes[s * 3 + 0].dstBinding = 0;
             writes[s * 3 + 0].descriptorCount = 1;
-            writes[s * 3 + 0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[s * 3 + 0].pImageInfo      = &imgViews[s][0];
+            writes[s * 3 + 0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[s * 3 + 0].pImageInfo = &imgViews[s][0];
 
-            writes[s * 3 + 1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 3 + 1].dstSet          = ds;
-            writes[s * 3 + 1].dstBinding      = 1;
+            writes[s * 3 + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 3 + 1].dstSet = ds;
+            writes[s * 3 + 1].dstBinding = 1;
             writes[s * 3 + 1].descriptorCount = 1;
-            writes[s * 3 + 1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            writes[s * 3 + 1].pImageInfo      = &imgViews[s][1];
+            writes[s * 3 + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[s * 3 + 1].pImageInfo = &imgViews[s][1];
 
-            writes[s * 3 + 2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[s * 3 + 2].dstSet          = ds;
-            writes[s * 3 + 2].dstBinding      = 2;
+            writes[s * 3 + 2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 3 + 2].dstSet = ds;
+            writes[s * 3 + 2].dstBinding = 2;
             writes[s * 3 + 2].descriptorCount = 1;
-            writes[s * 3 + 2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[s * 3 + 2].pImageInfo      = &depthInfo;
+            writes[s * 3 + 2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[s * 3 + 2].pImageInfo = &depthInfo;
         }
         vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
         vkRT.atrousDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
     const float sigmaDepth = r_rtAtrousSigmaDepth.GetFloat();
-    const float sigmaLum   = r_rtAtrousSigmaLuminance.GetFloat();
-    const uint32_t groupsX = (history.width  + 7) / 8;
+    const float sigmaLum = r_rtAtrousSigmaLuminance.GetFloat();
+    const uint32_t groupsX = (history.width + 7) / 8;
     const uint32_t groupsY = (history.height + 7) / 8;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.atrousPipeline);
@@ -803,33 +800,29 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
         struct AtrousPC
         {
             int32_t stepWidth;
-            float   sigmaDepth;
-            float   sigmaLuminance;
-            float   pad;
+            float sigmaDepth;
+            float sigmaLuminance;
+            float pad;
         } pc;
-        pc.stepWidth      = 1 << pass; // 1, 2, 4, 8, 16 ...
-        pc.sigmaDepth     = sigmaDepth;
+        pc.stepWidth = 1 << pass; // 1, 2, 4, 8, 16 ...
+        pc.sigmaDepth = sigmaDepth;
         pc.sigmaLuminance = sigmaLum;
-        pc.pad            = 0.0f;
+        pc.pad = 0.0f;
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                vkRT.atrousPipelineLayout, 0, 1,
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.atrousPipelineLayout, 0, 1,
                                 &vkRT.atrousDescSets[frameIdx][descIdx], 0, NULL);
-        vkCmdPushConstants(cmd, vkRT.atrousPipelineLayout,
-                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdPushConstants(cmd, vkRT.atrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
         // Barrier after each pass: output becomes input for the next pass (COMPUTE→COMPUTE),
         // or transitions to FRAGMENT_READ after the final pass.
         const bool isLastPass = (pass == iters - 1);
         VkMemoryBarrier mb = {};
-        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             isLastPass ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-                                        : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             isLastPass ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                              0, 1, &mb, 0, NULL, 0, NULL);
     }
 
@@ -841,8 +834,6 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
     vkRT.aoReadView[frameIdx] = finalInHistory ? history.view : scratch.view;
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Atrous: %d passes slot=%d final=%s step_max=%d\n",
-                       iters, frameIdx,
-                       finalInHistory ? "history" : "scratch",
-                       1 << (iters - 1));
+        common->Printf("VK RT Atrous: %d passes slot=%d final=%s step_max=%d\n", iters, frameIdx,
+                       finalInHistory ? "history" : "scratch", 1 << (iters - 1));
 }

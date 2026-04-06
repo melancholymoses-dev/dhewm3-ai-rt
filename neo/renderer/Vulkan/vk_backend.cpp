@@ -3750,6 +3750,7 @@ void VK_RB_CopyRender(const void *data)
     int dstActualW = 0;
     int dstActualH = 0;
     const bool haveDstExtent = VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH);
+    bool resizedDstImage = false;
     if (!cmd->image->backendData || !haveDstExtent || dstActualW < desiredW || dstActualH < desiredH)
     {
         const size_t bytes = (size_t)desiredW * (size_t)desiredH * 4u;
@@ -3759,10 +3760,18 @@ void VK_RB_CopyRender(const void *data)
         Mem_Free(blank);
         cmd->image->uploadWidth = desiredW;
         cmd->image->uploadHeight = desiredH;
+        resizedDstImage = true;
 
         // Refresh actual backend extent after upload; if still unavailable, bail safely.
         if (!VK_Image_GetExtent(cmd->image, &dstActualW, &dstActualH))
             return;
+    }
+
+    if (resizedDstImage)
+    {
+        // VK_Image_Upload records into the deferred upload batch. Make sure those
+        // transitions/copies execute before this frame samples or blits the image.
+        VK_FlushPendingUploads();
     }
 
     VkImage dstImage = VK_NULL_HANDLE;
@@ -3932,7 +3941,7 @@ void VK_RB_SwapBuffers()
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmdBuf;
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
+    submitInfo.pSignalSemaphores = &vk.renderFinishedSemaphores[s_frameImageIndex];
 
     uint32_t submittedFrame = vk.currentFrame; // capture before increment
     const int submitLogMode = r_vkLogSubmitInfo.GetInteger();
@@ -3972,7 +3981,7 @@ void VK_RB_SwapBuffers()
     VkPresentInfoKHR presentInfo = {};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &vk.renderFinishedSemaphores[vk.currentFrame];
+    presentInfo.pWaitSemaphores = &vk.renderFinishedSemaphores[s_frameImageIndex];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &vk.swapchain;
     presentInfo.pImageIndices = &s_frameImageIndex;

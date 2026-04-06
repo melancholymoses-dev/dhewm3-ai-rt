@@ -1,8 +1,7 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
-dhewm3 Vulkan ray tracing — material table (Phase 5.4).
+dhewm3-rt Vulkan ray tracing — material table (Phase 5.4).
 
 Builds and maintains three persistently-mapped SSBOs and one bindless
 combined-image-sampler array that are bound at set=2 in all RT shaders
@@ -25,12 +24,11 @@ it has not seen before, the slot is assigned and the dirty flag is set.
 A rebuild of the bindless descriptors (vkUpdateDescriptorSets) is issued at
 the end of VK_RT_UploadMatTableFrame when the dirty flag is set.
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
@@ -50,8 +48,7 @@ the Free Software Foundation, either version 3 of the License, or
 // Forward declarations
 // ---------------------------------------------------------------------------
 
-extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
-                            VkMemoryPropertyFlags memProps,
+extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern idCVar r_vkLogRT;
 
@@ -71,9 +68,9 @@ static const uint32_t MAT_MAX_INSTANCES = 4096;
 // s_bindlessDirty is set whenever a new slot is assigned.
 // ---------------------------------------------------------------------------
 
-static idImage  *s_bindlessImages[VK_MAT_MAX_TEXTURES];
-static uint32_t  s_bindlessCount = 0;
-static bool      s_bindlessDirty = false;
+static idImage *s_bindlessImages[VK_MAT_MAX_TEXTURES];
+static uint32_t s_bindlessCount = 0;
+static bool s_bindlessDirty = false;
 
 // Returns the bindless slot index for img, assigning a new one if needed.
 // img == NULL returns slot 0 (white/flat-normal fallback, slot 0 is reserved).
@@ -128,7 +125,7 @@ static void RebuildBindlessDescriptors(void)
     // White fallback info — used for any slot whose image has no Vulkan data yet.
     VkDescriptorImageInfo fallbackInfo = {};
     VK_Image_GetDescriptorInfo(globalImages->whiteImage, &fallbackInfo);
-    fallbackInfo.sampler     = vkRT.matSampler;
+    fallbackInfo.sampler = vkRT.matSampler;
     fallbackInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     for (uint32_t i = 0; i < s_bindlessCount; i++)
@@ -139,7 +136,7 @@ static void RebuildBindlessDescriptors(void)
             VkDescriptorImageInfo tmp = {};
             if (VK_Image_GetDescriptorInfo(s_bindlessImages[i], &tmp))
             {
-                info.imageView   = tmp.imageView;
+                info.imageView = tmp.imageView;
                 info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             }
         }
@@ -148,20 +145,19 @@ static void RebuildBindlessDescriptors(void)
     }
 
     VkWriteDescriptorSet write = {};
-    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet          = vkRT.matDescSet;
-    write.dstBinding      = 3;
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = vkRT.matDescSet;
+    write.dstBinding = 3;
     write.dstArrayElement = 0;
     write.descriptorCount = s_bindlessCount;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo      = infos;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = infos;
 
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("VK RT MatTable: rebuilt bindless descriptors — %u textures\n",
-                       s_bindlessCount);
+        common->Printf("VK RT MatTable: rebuilt bindless descriptors — %u textures\n", s_bindlessCount);
         fflush(NULL);
     }
 
@@ -179,46 +175,38 @@ void VK_RT_InitMaterialTable(void)
 
     // --- Persistent SSBOs ---
 
-    const VkDeviceSize matSSBOSize  = (VkDeviceSize)MAT_MAX_INSTANCES * sizeof(VkMaterialEntry);
+    const VkDeviceSize matSSBOSize = (VkDeviceSize)MAT_MAX_INSTANCES * sizeof(VkMaterialEntry);
     const VkDeviceSize addrSSBOSize = (VkDeviceSize)MAT_MAX_INSTANCES * sizeof(uint64_t);
 
-    const VkBufferUsageFlags ssboUsage =
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    const VkMemoryPropertyFlags hostFlags =
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    const VkBufferUsageFlags ssboUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-    VK_CreateBuffer(matSSBOSize,  ssboUsage, hostFlags,
-                    &vkRT.matTableSSBO, &vkRT.matTableSSBOMemory);
-    VK_CHECK(vkMapMemory(vk.device, vkRT.matTableSSBOMemory, 0,
-                         matSSBOSize, 0, &vkRT.matTableMapped));
+    VK_CreateBuffer(matSSBOSize, ssboUsage, hostFlags, &vkRT.matTableSSBO, &vkRT.matTableSSBOMemory);
+    VK_CHECK(vkMapMemory(vk.device, vkRT.matTableSSBOMemory, 0, matSSBOSize, 0, &vkRT.matTableMapped));
 
-    VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags,
-                    &vkRT.vtxAddrSSBO, &vkRT.vtxAddrSSBOMemory);
-    VK_CHECK(vkMapMemory(vk.device, vkRT.vtxAddrSSBOMemory, 0,
-                         addrSSBOSize, 0, &vkRT.vtxAddrMapped));
+    VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags, &vkRT.vtxAddrSSBO, &vkRT.vtxAddrSSBOMemory);
+    VK_CHECK(vkMapMemory(vk.device, vkRT.vtxAddrSSBOMemory, 0, addrSSBOSize, 0, &vkRT.vtxAddrMapped));
 
-    VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags,
-                    &vkRT.idxAddrSSBO, &vkRT.idxAddrSSBOMemory);
-    VK_CHECK(vkMapMemory(vk.device, vkRT.idxAddrSSBOMemory, 0,
-                         addrSSBOSize, 0, &vkRT.idxAddrMapped));
+    VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags, &vkRT.idxAddrSSBO, &vkRT.idxAddrSSBOMemory);
+    VK_CHECK(vkMapMemory(vk.device, vkRT.idxAddrSSBOMemory, 0, addrSSBOSize, 0, &vkRT.idxAddrMapped));
 
     // Zero-initialise so GPU reads zeros for uninitialised instances.
     memset(vkRT.matTableMapped, 0, (size_t)matSSBOSize);
-    memset(vkRT.vtxAddrMapped,  0, (size_t)addrSSBOSize);
-    memset(vkRT.idxAddrMapped,  0, (size_t)addrSSBOSize);
+    memset(vkRT.vtxAddrMapped, 0, (size_t)addrSSBOSize);
+    memset(vkRT.idxAddrMapped, 0, (size_t)addrSSBOSize);
 
     // --- Bilinear sampler for material textures ---
 
     VkSamplerCreateInfo sampInfo = {};
-    sampInfo.sType            = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampInfo.magFilter        = VK_FILTER_LINEAR;
-    sampInfo.minFilter        = VK_FILTER_LINEAR;
-    sampInfo.mipmapMode       = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampInfo.addressModeU     = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampInfo.addressModeV     = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampInfo.addressModeW     = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampInfo.minLod           = 0.0f;
-    sampInfo.maxLod           = VK_LOD_CLAMP_NONE;
+    sampInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampInfo.magFilter = VK_FILTER_LINEAR;
+    sampInfo.minFilter = VK_FILTER_LINEAR;
+    sampInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampInfo.minLod = 0.0f;
+    sampInfo.maxLod = VK_LOD_CLAMP_NONE;
     sampInfo.anisotropyEnable = VK_FALSE;
     VK_CHECK(vkCreateSampler(vk.device, &sampInfo, NULL, &vkRT.matSampler));
 
@@ -230,56 +218,53 @@ void VK_RT_InitMaterialTable(void)
 
     VkDescriptorSetLayoutBinding bindings[4] = {};
 
-    bindings[0].binding         = 0;
-    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR |
-                                   VK_SHADER_STAGE_ANY_HIT_BIT_KHR |
-                                   VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    bindings[0].stageFlags =
+        VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
-    bindings[1].binding         = 1;
-    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags      = bindings[0].stageFlags;
+    bindings[1].stageFlags = bindings[0].stageFlags;
 
-    bindings[2].binding         = 2;
-    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags      = bindings[0].stageFlags;
+    bindings[2].stageFlags = bindings[0].stageFlags;
 
-    bindings[3].binding         = 3;
-    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = VK_MAT_MAX_TEXTURES;
-    bindings[3].stageFlags      = bindings[0].stageFlags;
+    bindings[3].stageFlags = bindings[0].stageFlags;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = 4;
-    layoutInfo.pBindings    = bindings;
-    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL,
-                                         &vkRT.matDescLayout));
+    layoutInfo.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.matDescLayout));
 
     // --- Descriptor pool ---
 
     VkDescriptorPoolSize poolSizes[2] = {
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,          3 }, // 3 SSBOs
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,  VK_MAT_MAX_TEXTURES },
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3}, // 3 SSBOs
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAT_MAX_TEXTURES},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets       = 1;
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
     poolInfo.poolSizeCount = 2;
-    poolInfo.pPoolSizes    = poolSizes;
-    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL,
-                                    &vkRT.matDescPool));
+    poolInfo.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.matDescPool));
 
     // --- Allocate descriptor set ---
 
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkRT.matDescPool;
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.matDescPool;
     dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts        = &vkRT.matDescLayout;
+    dsAlloc.pSetLayouts = &vkRT.matDescLayout;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, &vkRT.matDescSet));
 
     // --- Write SSBO descriptors (static — buffers never change, only content) ---
@@ -287,39 +272,39 @@ void VK_RT_InitMaterialTable(void)
     VkDescriptorBufferInfo matBufInfo = {};
     matBufInfo.buffer = vkRT.matTableSSBO;
     matBufInfo.offset = 0;
-    matBufInfo.range  = matSSBOSize;
+    matBufInfo.range = matSSBOSize;
 
     VkDescriptorBufferInfo vtxBufInfo = {};
     vtxBufInfo.buffer = vkRT.vtxAddrSSBO;
     vtxBufInfo.offset = 0;
-    vtxBufInfo.range  = addrSSBOSize;
+    vtxBufInfo.range = addrSSBOSize;
 
     VkDescriptorBufferInfo idxBufInfo = {};
     idxBufInfo.buffer = vkRT.idxAddrSSBO;
     idxBufInfo.offset = 0;
-    idxBufInfo.range  = addrSSBOSize;
+    idxBufInfo.range = addrSSBOSize;
 
     VkWriteDescriptorSet ssboWrites[3] = {};
-    ssboWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ssboWrites[0].dstSet          = vkRT.matDescSet;
-    ssboWrites[0].dstBinding      = 0;
+    ssboWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    ssboWrites[0].dstSet = vkRT.matDescSet;
+    ssboWrites[0].dstBinding = 0;
     ssboWrites[0].descriptorCount = 1;
-    ssboWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ssboWrites[0].pBufferInfo     = &matBufInfo;
+    ssboWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    ssboWrites[0].pBufferInfo = &matBufInfo;
 
-    ssboWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ssboWrites[1].dstSet          = vkRT.matDescSet;
-    ssboWrites[1].dstBinding      = 1;
+    ssboWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    ssboWrites[1].dstSet = vkRT.matDescSet;
+    ssboWrites[1].dstBinding = 1;
     ssboWrites[1].descriptorCount = 1;
-    ssboWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ssboWrites[1].pBufferInfo     = &vtxBufInfo;
+    ssboWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    ssboWrites[1].pBufferInfo = &vtxBufInfo;
 
-    ssboWrites[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ssboWrites[2].dstSet          = vkRT.matDescSet;
-    ssboWrites[2].dstBinding      = 2;
+    ssboWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    ssboWrites[2].dstSet = vkRT.matDescSet;
+    ssboWrites[2].dstBinding = 2;
     ssboWrites[2].descriptorCount = 1;
-    ssboWrites[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ssboWrites[2].pBufferInfo     = &idxBufInfo;
+    ssboWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    ssboWrites[2].pBufferInfo = &idxBufInfo;
 
     vkUpdateDescriptorSets(vk.device, 3, ssboWrites, 0, NULL);
 
@@ -338,9 +323,7 @@ void VK_RT_InitMaterialTable(void)
 
     common->Printf("VK RT MatTable: initialised — matSSBO=%u KB, addrSSBO=%u KB, "
                    "bindlessSlots=%u\n",
-                   (unsigned)(matSSBOSize / 1024),
-                   (unsigned)(addrSSBOSize / 1024),
-                   VK_MAT_MAX_TEXTURES);
+                   (unsigned)(matSSBOSize / 1024), (unsigned)(addrSSBOSize / 1024), VK_MAT_MAX_TEXTURES);
 }
 
 // ---------------------------------------------------------------------------
@@ -410,8 +393,8 @@ void VK_RT_ShutdownMaterialTable(void)
     if (vkRT.matDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.matDescPool, NULL);
-        vkRT.matDescPool    = VK_NULL_HANDLE;
-        vkRT.matDescSet     = VK_NULL_HANDLE;
+        vkRT.matDescPool = VK_NULL_HANDLE;
+        vkRT.matDescSet = VK_NULL_HANDLE;
     }
 
     if (vkRT.matDescLayout != VK_NULL_HANDLE)
@@ -438,19 +421,18 @@ void VK_RT_ShutdownMaterialTable(void)
 // blas   may be NULL — vtx/idx addresses are set to 0.
 // ---------------------------------------------------------------------------
 
-VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas,
-                                         uint32_t instanceIndex,
-                                         uint64_t *outVtxAddr, uint64_t *outIdxAddr)
+VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas, uint32_t instanceIndex,
+                                        uint64_t *outVtxAddr, uint64_t *outIdxAddr)
 {
     VkMaterialEntry entry = {};
     entry.diffuseTexIndex = 0; // white fallback
-    entry.normalTexIndex  = 1; // flat normal fallback
-    entry.roughness       = 1.0f;
-    entry.flags           = 0;
-    entry.vtxBufInstance  = instanceIndex;
-    entry.idxBufInstance  = instanceIndex;
-    entry.alphaThreshold  = 0.5f;
-    entry.pad             = 0;
+    entry.normalTexIndex = 1;  // flat normal fallback
+    entry.roughness = 1.0f;
+    entry.flags = 0;
+    entry.vtxBufInstance = instanceIndex;
+    entry.idxBufInstance = instanceIndex;
+    entry.alphaThreshold = 0.5f;
+    entry.pad = 0;
 
     // --- Geometry addresses ---
 
@@ -495,7 +477,7 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
         if (stage->lighting == SL_DIFFUSE)
             entry.diffuseTexIndex = GetOrAssignTexIndex(img);
         else if (stage->lighting == SL_BUMP)
-            entry.normalTexIndex  = GetOrAssignTexIndex(img);
+            entry.normalTexIndex = GetOrAssignTexIndex(img);
         // SL_SPECULAR: no scalar exponent available in Doom3 material API.
         // Roughness stays at 1.0 (fully diffuse) — revisit in Phase 6.
     }
@@ -519,17 +501,15 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
 // bindless descriptor writes via vkUpdateDescriptorSets before returning.
 // ---------------------------------------------------------------------------
 
-void VK_RT_UploadMatTableFrame(
-    const VkMaterialEntry *staticEntries,  uint32_t staticCount,  bool rewriteStatic,
-    const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount,
-    const uint64_t *staticVtx,  const uint64_t *staticIdx,
-    const uint64_t *dynamicVtx, const uint64_t *dynamicIdx)
+void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t staticCount, bool rewriteStatic,
+                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount, const uint64_t *staticVtx,
+                               const uint64_t *staticIdx, const uint64_t *dynamicVtx, const uint64_t *dynamicIdx)
 {
     if (!vkRT.matTableInitialized)
         return;
 
     const size_t matEntrySize = sizeof(VkMaterialEntry);
-    const size_t addrSize     = sizeof(uint64_t);
+    const size_t addrSize = sizeof(uint64_t);
 
     uint8_t *matDst = (uint8_t *)vkRT.matTableMapped;
     uint8_t *vtxDst = (uint8_t *)vkRT.vtxAddrMapped;
@@ -539,8 +519,8 @@ void VK_RT_UploadMatTableFrame(
     if (rewriteStatic && staticCount > 0)
     {
         memcpy(matDst, staticEntries, staticCount * matEntrySize);
-        memcpy(vtxDst, staticVtx,     staticCount * addrSize);
-        memcpy(idxDst, staticIdx,      staticCount * addrSize);
+        memcpy(vtxDst, staticVtx, staticCount * addrSize);
+        memcpy(idxDst, staticIdx, staticCount * addrSize);
     }
 
     // Dynamic block (always written, immediately after the static block)
@@ -559,9 +539,8 @@ void VK_RT_UploadMatTableFrame(
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("VK RT MatTable: uploaded — static=%u%s dynamic=%u bindless=%u\n",
-                       staticCount, rewriteStatic ? "(rewritten)" : "(cached)",
-                       dynamicCount, s_bindlessCount);
+        common->Printf("VK RT MatTable: uploaded — static=%u%s dynamic=%u bindless=%u\n", staticCount,
+                       rewriteStatic ? "(rewritten)" : "(cached)", dynamicCount, s_bindlessCount);
         fflush(NULL);
     }
 }
