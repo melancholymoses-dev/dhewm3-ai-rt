@@ -1,7 +1,7 @@
 /*
 ===========================================================================
 
-dhewm3 Vulkan backend - texture/image management.
+dhewm3-rt Vulkan backend - texture/image management.
 
 Wraps idImage for Vulkan: uploads RGBA8 pixel data to a VkImage with a full
 mip chain (generated via vkCmdBlitImage), creates the matching VkImageView
@@ -10,12 +10,11 @@ interaction descriptor set.
 
 Hooked into idImage via the backendData void* field (see Image.h).
 
-This file is part of the Doom 3 GPL Source Code ("Doom 3 Source Code").
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
-Doom 3 Source Code is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
