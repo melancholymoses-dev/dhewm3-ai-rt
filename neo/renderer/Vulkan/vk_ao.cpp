@@ -43,9 +43,11 @@ static idCVar r_rtAORadius("r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
 //   int   numSamples    offset  68  size  4
 //   uint  frameIndex    offset  72  size  4
 //   float pad0          offset  76  size  4
-//   ivec2 screenSize    offset  80  size  8  (ivec2 std140 align=8)
-//   ivec2 pad2          offset  88  size  8
-//   total: 96 bytes
+//   ivec2 screenSize     offset  80  size  8  (ivec2 std140 align=8)
+//   ivec2 scissorOffset  offset  88  size  8
+//   ivec2 scissorExtent  offset  96  size  8
+//   ivec2 pad2           offset 104  size  8
+//   total: 112 bytes
 // ---------------------------------------------------------------------------
 
 struct AOParamsUBO
@@ -57,9 +59,34 @@ struct AOParamsUBO
     float pad0;
     int32_t screenWidth;
     int32_t screenHeight;
+    int32_t scissorOffsetX;
+    int32_t scissorOffsetY;
+    int32_t scissorExtentX;
+    int32_t scissorExtentY;
     int32_t pad1[2];
 };
-static_assert(sizeof(AOParamsUBO) == 96, "AOParamsUBO size mismatch");
+static_assert(sizeof(AOParamsUBO) == 112, "AOParamsUBO size mismatch");
+
+// Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down) in framebuffer coordinates.
+static VkRect2D VK_RT_ComputeViewDispatchRect(const viewDef_t *viewDef)
+{
+    const int w = (int)vk.swapchainExtent.width;
+    const int h = (int)vk.swapchainExtent.height;
+    const idScreenRect &s = viewDef->scissor;
+
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2);
+
+    const int rw = s.x2 - s.x1 + 1;
+    const int rh = s.y2 - s.y1 + 1;
+    if (rw <= 0 || rh <= 0)
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
+    return r;
+}
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in other files)
@@ -444,7 +471,7 @@ void VK_RT_ResizeAOMask(uint32_t width, uint32_t height)
 
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchAO
-// Dispatch hemisphere AO rays for the full screen.
+// Dispatch hemisphere AO rays for the current view scissor rect.
 // Called once per frame after TLAS rebuild, outside a render pass.
 // Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry.
 // ---------------------------------------------------------------------------
@@ -471,17 +498,13 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     const int frameIdx = vk.currentFrame;
 
-    // AO is a full-screen pass — dispatch once per frame slot, not once per view.
-    // Doom 3 calls RB_DrawView for each subview (weapon, mirrors) in the same frame;
-    // a second dispatch would run inside an active render pass → device lost.
-    static int s_lastAODispatchFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
-    if (s_lastAODispatchFrame[frameIdx] == tr.frameCount)
+    const VkRect2D dispatchRect = VK_RT_ComputeViewDispatchRect(viewDef);
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
     {
         if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT AO: skip duplicate dispatch frame=%d slot=%d\n", tr.frameCount, frameIdx);
+            common->Printf("VK RT AO: skip empty dispatch rect frame=%d slot=%d\n", tr.frameCount, frameIdx);
         return;
     }
-    s_lastAODispatchFrame[frameIdx] = tr.frameCount;
 
     vkAOMask_t &ao = vkRT.aoMask[frameIdx];
 
@@ -492,8 +515,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n", tr.frameCount, frameIdx, ao.width,
-                       ao.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.aoPipeline);
+        common->Printf("VK RT AO: frame=%d slot=%d mask=%ux%u rect=(%d,%d %u,%u) tlas=%p pipeline=%p\n",
+                   tr.frameCount, frameIdx, ao.width, ao.height, dispatchRect.offset.x, dispatchRect.offset.y,
+                   (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
+                   (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.aoPipeline);
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     {
@@ -546,6 +571,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.frameIndex = (uint32_t)(tr.frameCount);
     ubo.screenWidth = (int32_t)ao.width;
     ubo.screenHeight = (int32_t)ao.height;
+    ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
+    ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
+    ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
+    ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
 
     memcpy(uboMapped, &ubo, sizeof(AOParamsUBO));
 
@@ -559,8 +588,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 break;
             }
         if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d matNaN=%d uboOff=%u\n", ubo.aoRadius,
-                           ubo.numSamples, ubo.screenWidth, ubo.screenHeight, hasNaN ? 1 : 0, uboOff);
+            common->Printf(
+                "VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d scissor=(%d,%d %d,%d) matNaN=%d uboOff=%u\n",
+                ubo.aoRadius, ubo.numSamples, ubo.screenWidth, ubo.screenHeight, ubo.scissorOffsetX,
+                ubo.scissorOffsetY, ubo.scissorExtentX, ubo.scissorExtentY, hasNaN ? 1 : 0, uboOff);
         if (hasNaN)
             common->Warning("VK RT AO: invViewProj contains NaN — ray directions will be degenerate!");
     }
@@ -634,11 +665,12 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.aoDescSets[frameIdx], 1, &uboOff);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: dispatch %ux%u samples=%d radius=%.1f\n", ao.width, ao.height, ubo.numSamples,
-                       ubo.aoRadius);
+        common->Printf("VK RT AO: dispatch %ux%u samples=%d radius=%.1f (rect origin=%d,%d)\n",
+                   (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
+                   ubo.numSamples, ubo.aoRadius, dispatchRect.offset.x, dispatchRect.offset.y);
 
-    vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion, ao.width,
-                      ao.height, 1);
+        vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
+                  dispatchRect.extent.width, dispatchRect.extent.height, 1);
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: traceRaysKHR recorded\n");
 

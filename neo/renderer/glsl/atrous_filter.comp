@@ -50,15 +50,29 @@ layout(push_constant) uniform PC {
     float sigmaDepth;      // depth edge-stop sigma (NDC; ~0.01 stops at geometry edges)
     float sigmaLuminance;  // AO value edge-stop sigma (~0.1 preserves occlusion contrast)
     float pad;
+  ivec2 scissorOffset;
+  ivec2 scissorExtent;
 };
 
 void main()
 {
-    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+  ivec2 localCoord = ivec2(gl_GlobalInvocationID.xy);
     ivec2 dims  = imageSize(inputImage);
+  ivec2 rectExtent = max(scissorExtent, ivec2(0));
 
-    if (coord.x >= dims.x || coord.y >= dims.y)
-        return;
+  if (localCoord.x >= rectExtent.x || localCoord.y >= rectExtent.y)
+    return;
+
+  ivec2 coord = localCoord + scissorOffset;
+
+  if (coord.x < 0 || coord.y < 0 || coord.x >= dims.x || coord.y >= dims.y)
+    return;
+
+  ivec2 rectMin = max(scissorOffset, ivec2(0));
+  ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), dims - ivec2(1));
+
+  if (coord.x < rectMin.x || coord.y < rectMin.y || coord.x > rectMax.x || coord.y > rectMax.y)
+    return;
 
     float centerAO    = imageLoad(inputImage, coord).r;
     float centerDepth = texelFetch(depthSampler, coord, 0).r;
@@ -78,8 +92,7 @@ void main()
     {
         for (int dx = -1; dx <= 1; dx++)
         {
-            ivec2 sampleCoord = clamp(coord + ivec2(dx, dy) * stepWidth,
-                                      ivec2(0), dims - ivec2(1));
+            ivec2 sampleCoord = clamp(coord + ivec2(dx, dy) * stepWidth, rectMin, rectMax);
 
             float sampleAO    = imageLoad(inputImage, sampleCoord).r;
             float sampleDepth = texelFetch(depthSampler, sampleCoord, 0).r;

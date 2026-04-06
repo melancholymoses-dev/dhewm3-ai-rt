@@ -35,14 +35,28 @@ layout(push_constant) uniform PC {
     float pad0;
     float pad1;
     float pad2;
+    ivec2 scissorOffset;
+    ivec2 scissorExtent;
 };
 
 void main()
 {
-    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 localCoord = ivec2(gl_GlobalInvocationID.xy);
     ivec2 dims  = imageSize(historyImage);
+    ivec2 rectExtent = max(scissorExtent, ivec2(0));
 
-    if (coord.x >= dims.x || coord.y >= dims.y)
+    if (localCoord.x >= rectExtent.x || localCoord.y >= rectExtent.y)
+        return;
+
+    ivec2 coord = localCoord + scissorOffset;
+
+    if (coord.x < 0 || coord.y < 0 || coord.x >= dims.x || coord.y >= dims.y)
+        return;
+
+    ivec2 rectMin = max(scissorOffset, ivec2(0));
+    ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), dims - ivec2(1));
+
+    if (coord.x < rectMin.x || coord.y < rectMin.y || coord.x > rectMax.x || coord.y > rectMax.y)
         return;
 
     float current = imageLoad(currentImage, coord).r;
