@@ -90,7 +90,8 @@ struct vkState_t
 
     // Sync objects
     VkSemaphore imageAvailableSemaphores[VK_MAX_FRAMES_IN_FLIGHT];
-    VkSemaphore renderFinishedSemaphores[VK_MAX_FRAMES_IN_FLIGHT];
+    // Present completion is tied to swapchain image lifetime; index these by acquired image.
+    VkSemaphore renderFinishedSemaphores[VK_MAX_SWAPCHAIN_IMAGES];
     VkFence inFlightFences[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Memory properties
