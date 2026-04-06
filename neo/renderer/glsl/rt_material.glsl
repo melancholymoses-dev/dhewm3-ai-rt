@@ -91,8 +91,24 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
 {
     MaterialEntry mat = materials[matIdx];
 
-    IdxBuf iBuf = IdxBuf(idxAddrs[mat.idxBufInstance]);
-    VtxBuf vBuf = VtxBuf(vtxAddrs[mat.vtxBufInstance]);
+    // Guard: the address table stores only surface 0's geometry per TLAS instance.
+    // For multi-geometry BLASes, hits on surface 1+ have a gl_GeometryIndexEXT > 0
+    // and a gl_PrimitiveID local to that surface — indexing surface 0's buffers with
+    // that primId would be an out-of-bounds GPU access.  Skip the lookup until the
+    // address table is refactored to be per-geometry.
+    // TODO: refactor vtxAddrs/idxAddrs to be indexed by baseGeomIdx + gl_GeometryIndexEXT
+    if (gl_GeometryIndexEXT != 0)
+        return vec2(0.0);
+
+    // Guard: if the buffer addresses are null (uninitialised material entry or address
+    // table not yet uploaded) dereferencing via buffer_reference crashes the GPU.
+    uint64_t idxAddr = idxAddrs[mat.idxBufInstance];
+    uint64_t vtxAddr = vtxAddrs[mat.vtxBufInstance];
+    if (idxAddr == 0ul || vtxAddr == 0ul)
+        return vec2(0.0);
+
+    IdxBuf iBuf = IdxBuf(idxAddr);
+    VtxBuf vBuf = VtxBuf(vtxAddr);
 
     uint base = uint(primId) * 3u;
     uint i0 = iBuf.idx[base + 0u];

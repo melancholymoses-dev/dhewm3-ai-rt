@@ -46,6 +46,16 @@ hitAttributeEXT vec2 baryCoord;
 void main()
 {
     uint matIdx = uint(gl_InstanceCustomIndexEXT);
+
+    // Guard: out-of-range custom index (uninitialised TLAS entry, multi-surface BLAS
+    // with surface index != 0, etc.) would dereference garbage from materials[] and
+    // crash the GPU.  Ignore the intersection so traversal continues past this surface.
+    if (matIdx >= uint(materials.length()))
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
     MaterialEntry mat = materials[matIdx];
 
     if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)

@@ -120,6 +120,8 @@ struct vkBufferData_t
 static const int VK_BUFFER_GARBAGE_MAX = 512;
 static vkBufferData_t *s_bufferGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_BUFFER_GARBAGE_MAX];
 static int s_bufferGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static uint32_t s_bufferGarbageOverflowCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static idList<vkBufferData_t *> s_bufferGarbageOverflow[VK_MAX_FRAMES_IN_FLIGHT];
 
 static void VK_DestroyBufferData(vkBufferData_t *bd)
 {
@@ -137,6 +139,17 @@ void VK_Buffer_DrainGarbage(uint32_t frameIdx)
         VK_DestroyBufferData(s_bufferGarbage[frameIdx][i]);
     }
     s_bufferGarbageCount[frameIdx] = 0;
+
+    for (int i = 0; i < s_bufferGarbageOverflow[frameIdx].Num(); i++)
+    {
+        VK_DestroyBufferData(s_bufferGarbageOverflow[frameIdx][i]);
+    }
+    s_bufferGarbageOverflow[frameIdx].Clear();
+
+    if (s_bufferGarbageOverflowCount[frameIdx] > 0)
+    {
+        s_bufferGarbageOverflowCount[frameIdx] = 0;
+    }
 }
 
 void VK_Buffer_DrainAllGarbage()
@@ -191,9 +204,10 @@ void VK_VertexCache_Free(vertCache_t *block)
     }
     else
     {
-        // Garbage ring full — stall once and destroy immediately.
-        vkDeviceWaitIdle(vk.device);
-        VK_DestroyBufferData(bd);
+        // Garbage ring full: keep deferring in overflow list so we never destroy
+        // resources that might still be referenced by in-flight command buffers.
+        s_bufferGarbageOverflowCount[frameIdx]++;
+        s_bufferGarbageOverflow[frameIdx].Append(bd);
     }
     block->backendData = NULL;
 }

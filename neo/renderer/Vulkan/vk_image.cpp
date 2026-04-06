@@ -59,6 +59,7 @@ static const int VK_IMAGE_GARBAGE_MAX = 512; // max purges per frame slot
 static vkImageData_t *s_imageGarbage[VK_MAX_FRAMES_IN_FLIGHT][VK_IMAGE_GARBAGE_MAX];
 static int s_imageGarbageCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static uint32_t s_imageGarbageOverflowCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static idList<vkImageData_t *> s_imageGarbageOverflow[VK_MAX_FRAMES_IN_FLIGHT];
 
 static float s_cachedMaxSamplerAnisotropy = 1.0f;
 static float s_cachedMaxSamplerLodBias = 0.0f;
@@ -85,10 +86,12 @@ void VK_Image_DrainGarbage(uint32_t frameIdx)
         VK_DestroyImageData(s_imageGarbage[frameIdx][i]);
     s_imageGarbageCount[frameIdx] = 0;
 
+    for (int i = 0; i < s_imageGarbageOverflow[frameIdx].Num(); i++)
+        VK_DestroyImageData(s_imageGarbageOverflow[frameIdx][i]);
+    s_imageGarbageOverflow[frameIdx].Clear();
+
     if (s_imageGarbageOverflowCount[frameIdx] > 0)
     {
-        common->Printf("VK: image garbage overflow summary for frame slot %u: %u immediate destroys after ring-full\n",
-                       frameIdx, s_imageGarbageOverflowCount[frameIdx]);
         s_imageGarbageOverflowCount[frameIdx] = 0;
     }
 }
@@ -992,18 +995,10 @@ void VK_Image_Purge(idImage *img)
     }
     else
     {
-        // Garbage ring full — destroy immediately. Log once per frame slot to avoid spam.
-        // If the device is already lost (e.g., shutdown after a crash), skip the
-        // stall to avoid spamming the log; the process is exiting anyway.
+        // Garbage ring full: keep deferring in overflow list so we never destroy
+        // resources that might still be referenced by in-flight command buffers.
         s_imageGarbageOverflowCount[frameIdx]++;
-        VkResult waitResult = vkDeviceWaitIdle(vk.device);
-        if (waitResult == VK_SUCCESS && s_imageGarbageOverflowCount[frameIdx] == 1)
-        {
-            common->DPrintf(
-                "VK: image garbage ring full for frame %u, stalling (additional overflows this slot suppressed)\n",
-                frameIdx);
-        }
-        VK_DestroyImageData(vkd);
+        s_imageGarbageOverflow[frameIdx].Append(vkd);
     }
 }
 

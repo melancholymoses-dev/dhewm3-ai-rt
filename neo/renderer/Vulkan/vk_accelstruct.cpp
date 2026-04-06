@@ -415,12 +415,12 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     blas->isValid = false;
 
     blas->geomCount = 1;
-    blas->geomVertBufs  = new VkBuffer[1]();
-    blas->geomVertMems  = new VkDeviceMemory[1]();
-    blas->geomIdxBufs   = new VkBuffer[1]();
-    blas->geomIdxMems   = new VkDeviceMemory[1]();
+    blas->geomVertBufs = new VkBuffer[1]();
+    blas->geomVertMems = new VkDeviceMemory[1]();
+    blas->geomIdxBufs = new VkBuffer[1]();
+    blas->geomIdxMems = new VkDeviceMemory[1]();
     blas->geomVertAddrs = new VkDeviceAddress[1]();
-    blas->geomIdxAddrs  = new VkDeviceAddress[1]();
+    blas->geomIdxAddrs = new VkDeviceAddress[1]();
 
     if (useGpuBuffers)
     {
@@ -490,7 +490,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
 
     // Store geometry device addresses for VK_RT_MakeMaterialEntry (Phase 5.4).
     blas->geomVertAddrs[0] = triData.vertexData.deviceAddress;
-    blas->geomIdxAddrs[0]  = triData.indexData.deviceAddress;
+    blas->geomIdxAddrs[0] = triData.indexData.deviceAddress;
 
     VkAccelerationStructureGeometryKHR asGeom = {};
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -605,10 +605,17 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         if (!haveGpuGeom && !haveCpuGeom)
             continue;
         validSurfs[validCount].geo = geo;
-        validSurfs[validCount].perforated   = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
+        validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
         // Translucent (glass) surfaces: include in BLAS as non-opaque so rahit is invoked.
         // shadow_ray.rahit passes through glass; reflect_ray.rchit applies the Fresnel split.
-        validSurfs[validCount].translucent  = surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT;
+        validSurfs[validCount].translucent = surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT;
+        if (validSurfs[validCount].translucent && r_vkLogRT.GetInteger() >= 1)
+        {
+            common->Printf("VK RT GLASS: model='%s' surf=%d shader='%s' gpu=%s verts=%d idx=%d\n", model->Name(), s,
+                           surf->shader ? surf->shader->GetName() : "<null>", haveGpuGeom ? "yes" : "no", geo->numVerts,
+                           geo->numIndexes);
+            fflush(NULL);
+        }
         validSurfUseGpu[validCount] = haveGpuGeom;
         validCount++;
     }
@@ -694,7 +701,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                 updateGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
                 updateGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
                 updateGeoms[i].geometry.triangles = triData;
-                updateGeoms[i].flags = (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
+                updateGeoms[i].flags =
+                    (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
                 updateRanges[i] = {};
                 updateRanges[i].primitiveCount = prevBlas->geomPrimCounts[i];
@@ -730,15 +738,15 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     blas->isValid = false;
 
     blas->geomCount = (uint32_t)validCount;
-    blas->geomVertBufs  = new VkBuffer[validCount]();
-    blas->geomVertMems  = new VkDeviceMemory[validCount]();
-    blas->geomIdxBufs   = new VkBuffer[validCount]();
-    blas->geomIdxMems   = new VkDeviceMemory[validCount]();
+    blas->geomVertBufs = new VkBuffer[validCount]();
+    blas->geomVertMems = new VkDeviceMemory[validCount]();
+    blas->geomIdxBufs = new VkBuffer[validCount]();
+    blas->geomIdxMems = new VkDeviceMemory[validCount]();
     blas->geomVertSizes = new VkDeviceSize[validCount]();
-    blas->geomIdxSizes  = new VkDeviceSize[validCount]();
+    blas->geomIdxSizes = new VkDeviceSize[validCount]();
     blas->geomPrimCounts = new uint32_t[validCount]();
     blas->geomVertAddrs = new VkDeviceAddress[validCount]();
-    blas->geomIdxAddrs  = new VkDeviceAddress[validCount]();
+    blas->geomIdxAddrs = new VkDeviceAddress[validCount]();
 
     // Build geometry descriptors — one per valid surface
     static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
@@ -833,7 +841,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
 
         // Store per-geometry addresses for the material table (Phase 5.4).
         blas->geomVertAddrs[i] = triData.vertexData.deviceAddress;
-        blas->geomIdxAddrs[i]  = triData.indexData.deviceAddress;
+        blas->geomIdxAddrs[i] = triData.indexData.deviceAddress;
 
         asGeoms[i] = {};
         asGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1118,14 +1126,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (isDynamicInstance)
             {
                 dynamicMatEntries[provIndex] = matEntry;
-                dynamicVtxAddrs[provIndex]   = vtxA;
-                dynamicIdxAddrs[provIndex]   = idxA;
+                dynamicVtxAddrs[provIndex] = vtxA;
+                dynamicIdxAddrs[provIndex] = idxA;
             }
             else
             {
                 staticMatEntries[provIndex] = matEntry;
-                staticVtxAddrs[provIndex]   = vtxA;
-                staticIdxAddrs[provIndex]   = idxA;
+                staticVtxAddrs[provIndex] = vtxA;
+                staticIdxAddrs[provIndex] = idxA;
             }
         }
 
@@ -1260,11 +1268,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkUnmapMemory(vk.device, tlas.instanceMemory);
 
     // Upload material table entries (Phase 5.4).
-    VK_RT_UploadMatTableFrame(
-        staticMatEntries,  staticCount,  rewriteStatic,
-        dynamicMatEntries, dynamicCount,
-        staticVtxAddrs, staticIdxAddrs,
-        dynamicVtxAddrs, dynamicIdxAddrs);
+    VK_RT_UploadMatTableFrame(staticMatEntries, staticCount, rewriteStatic, dynamicMatEntries, dynamicCount,
+                              staticVtxAddrs, staticIdxAddrs, dynamicVtxAddrs, dynamicIdxAddrs);
 
     tlas.instanceCount = instanceCount;
 
@@ -1404,7 +1409,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // VK_RT_BeginLevelLoad (public)
 // Called from idRenderSystemLocal::BeginLevelLoad() before the render model
 // manager purges assets.  Worlds are still valid at this point.
-// Frees all per-entity and cached-model BLASes so that:  
+// Frees all per-entity and cached-model BLASes so that:
 //   (a) model pointers in the BLAS cache don't dangle after model eviction, and
 //   (b) the cache starts empty for the new level.
 // vkDeviceWaitIdle is safe here — the game's main loop stops rendering during
@@ -1428,8 +1433,7 @@ void VK_RT_BeginLevelLoad(void)
     s_blasGarbageCount = 0;
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries\n",
-                       s_modelBLASCacheCount);
+        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries\n", s_modelBLASCacheCount);
     // s_modelBLASCacheCount was already reset to 0 by VK_RT_ModelBLASCacheClear() above.
 }
 
@@ -1548,9 +1552,21 @@ void VK_RT_Shutdown(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkAOMask_t &ao = vkRT.aoMask[i];
-        if (ao.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, ao.view,   NULL); ao.view   = VK_NULL_HANDLE; }
-        if (ao.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, ao.image,  NULL); ao.image  = VK_NULL_HANDLE; }
-        if (ao.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, ao.memory, NULL); ao.memory = VK_NULL_HANDLE; }
+        if (ao.view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(vk.device, ao.view, NULL);
+            ao.view = VK_NULL_HANDLE;
+        }
+        if (ao.image != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(vk.device, ao.image, NULL);
+            ao.image = VK_NULL_HANDLE;
+        }
+        if (ao.memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, ao.memory, NULL);
+            ao.memory = VK_NULL_HANDLE;
+        }
     }
 
     // AO pipeline + SBT

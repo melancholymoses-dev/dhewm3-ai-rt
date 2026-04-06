@@ -683,36 +683,36 @@ endif()
 
 # GLSL shaders to compile to SPIR-V
 set(GLSL_SHADER_SOURCES
+	renderer/glsl/blendlight.vert
+	renderer/glsl/blendlight.frag
+	renderer/glsl/depth_clip.frag		
+	renderer/glsl/depth.vert
+	renderer/glsl/depth.frag	
+	renderer/glsl/fog.vert
+	renderer/glsl/fog.frag
+	renderer/glsl/gui.vert
+	renderer/glsl/gui.frag
 	renderer/glsl/interaction.vert
 	renderer/glsl/interaction.frag
 	renderer/glsl/shadow.vert
 	renderer/glsl/shadow.frag
-	renderer/glsl/depth.vert
-	renderer/glsl/depth.frag
-	renderer/glsl/gui.vert
-	renderer/glsl/gui.frag
 	renderer/glsl/skybox.vert
 	renderer/glsl/skybox.frag
-	renderer/glsl/fog.vert
-	renderer/glsl/fog.frag
-	renderer/glsl/blendlight.vert
-	renderer/glsl/blendlight.frag
-	renderer/glsl/depth_clip.frag
 )
 list(APPEND GLSL_SHADER_SOURCES
-	renderer/glsl/shadow_ray.rgen
-	renderer/glsl/shadow_ray.rmiss
-	renderer/glsl/shadow_ray.rahit
-	renderer/glsl/shadow_blur.comp
 	renderer/glsl/ao_ray.rgen
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
-	renderer/glsl/temporal_resolve.comp
 	renderer/glsl/atrous_filter.comp
+	renderer/glsl/reflect_ray.rahit	
+	renderer/glsl/reflect_ray.rchit
 	renderer/glsl/reflect_ray.rgen
 	renderer/glsl/reflect_ray.rmiss
-	renderer/glsl/reflect_ray.rchit
-	renderer/glsl/reflect_ray.rahit
+	renderer/glsl/shadow_blur.comp	
+	renderer/glsl/shadow_ray.rahit	
+	renderer/glsl/shadow_ray.rgen
+	renderer/glsl/shadow_ray.rmiss	
+	renderer/glsl/temporal_resolve.comp
 )
 
 
@@ -722,6 +722,14 @@ file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
 set(GLSLC_FLAGS --target-env=vulkan1.2)
 list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
 
+
+# Shared GLSL include files — not compiled directly but #included by stage shaders.
+# Listing them as DEPENDS ensures any change triggers recompilation of all shaders.
+set(GLSL_INCLUDES
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/reflect_payload.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_indirect.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_material.glsl"
+)
 
 set(SPIRV_BINARIES "")
 foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
@@ -734,7 +742,7 @@ foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
 				${GLSLC_FLAGS}
 				-o "${SPV_FILE}"
 				"${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
-		DEPENDS "${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
+		DEPENDS "${CMAKE_SOURCE_DIR}/${GLSL_SRC}" ${GLSL_INCLUDES}
 		COMMENT "Compiling ${GLSL_SRC} -> ${GLSL_NAME}.spv"
 		VERBATIM
 	)
