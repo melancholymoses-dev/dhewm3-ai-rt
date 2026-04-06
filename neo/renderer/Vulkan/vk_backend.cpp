@@ -2005,6 +2005,8 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 VkDescriptorImageInfo imgInfo = {};
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
                 drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+                if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
+                    drawSubviewGuardBlack();
                 continue;
             }
 
@@ -2036,6 +2038,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 VK_Image_GetFallbackDescriptorInfo(&imgInfo);
                 drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
             }
+
+            // GL parity: perforated surfaces also black out prior subview color in depth prepass.
+            if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
+                drawSubviewGuardBlack();
         }
     }
 }
@@ -3561,6 +3567,10 @@ void VK_RB_DrawView(const void *data)
     else
     {
         // === Subsequent RC_DRAW_VIEW: render pass already open; reset viewport/scissor ===
+        // Compute this view's scissor first; GL clears depth/stencil through the
+        // active scissor for each view (important for subviews/mirrors).
+        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
+
         // Each view has its own projection matrix, so depth values from the previous view
         // are meaningless (and harmful) here.  Clear depth+stencil so this view's depth
         // prepass and EQUAL interaction tests work against a fresh buffer, matching GL's
@@ -3574,7 +3584,7 @@ void VK_RB_DrawView(const void *data)
             clearDepth.clearValue.depthStencil = {1.0f, 128};
 
             VkClearRect clearRect = {};
-            clearRect.rect = {{0, 0}, vk.swapchainExtent};
+            clearRect.rect = s_viewScissor;
             clearRect.baseArrayLayer = 0;
             clearRect.layerCount = 1;
 
@@ -3590,7 +3600,6 @@ void VK_RB_DrawView(const void *data)
         vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
         // Set scissor from viewDef — for the main view this is typically full-screen;
         // for subviews it confines rendering to the mirror surface's screen bounds.
-        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
         vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
     }
 
