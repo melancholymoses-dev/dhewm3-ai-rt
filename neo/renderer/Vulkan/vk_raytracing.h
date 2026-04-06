@@ -453,7 +453,8 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
 // ---------------------------------------------------------------------------
 
 // Create persistently-mapped SSBOs (MatTable, VtxAddrTable, IdxAddrTable) and the
-// bindless sampler2D descriptor set.  Called once after VK_RT_InitReflections.
+// bindless sampler2D descriptor set.  Must be called once before creating any RT
+// pipelines whose pipeline layouts include matDescLayout (for example reflections/shadows).
 void VK_RT_InitMaterialTable(void);
 
 // Destroy all material table GPU resources.  Device must be idle before calling.
