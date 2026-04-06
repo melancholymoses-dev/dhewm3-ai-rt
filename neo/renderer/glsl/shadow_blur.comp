@@ -28,13 +28,27 @@ layout(push_constant) uniform BlurParams {
     int   radius;      // kernel half-width in pixels (e.g. 3 means 7-tap)
     float depthThreshold;
     float depthAware;  // >0.5 enables depth-aware weighting
+    ivec2 scissorOffset;
+    ivec2 scissorExtent;
 };
 
 void main() {
-    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 localCoord = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size  = imageSize(inputImage);
+    ivec2 rectExtent = max(scissorExtent, ivec2(0));
+
+    if (localCoord.x >= rectExtent.x || localCoord.y >= rectExtent.y)
+        return;
+
+    ivec2 coord = localCoord + scissorOffset;
 
     if (coord.x >= size.x || coord.y >= size.y)
+        return;
+
+    ivec2 rectMin = max(scissorOffset, ivec2(0));
+    ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), size - ivec2(1));
+
+    if (coord.x < rectMin.x || coord.y < rectMin.y || coord.x > rectMax.x || coord.y > rectMax.y)
         return;
 
     // Gaussian weights (precomputed for sigma ≈ radius/2)
@@ -51,8 +65,8 @@ void main() {
     for (int i = -r; i <= r; i++) {
         ivec2 sampleCoord = coord + step * i;
 
-        // Clamp to image bounds
-        sampleCoord = clamp(sampleCoord, ivec2(0), size - 1);
+        // Clamp to this light/view dispatch rect to avoid cross-light and cross-mirror bleed.
+        sampleCoord = clamp(sampleCoord, rectMin, rectMax);
 
         float w = float(r + 1 - abs(i));
         if (depthAware > 0.5) {
