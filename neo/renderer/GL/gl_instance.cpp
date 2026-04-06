@@ -19,6 +19,14 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with Doom 3 Source Code.  If not, see <http://www.gnu.org/licenses/>.
 
+The vast majority of this code came from the original Dhewm3 OpenGL implementation and is refactored here.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+
 ===========================================================================
 */
 
@@ -135,7 +143,7 @@ static void APIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum
 
     switch (type)
     {
-#define TYPECASE(X)                                                                                                     \
+#define TYPECASE(X)                                                                                                    \
     case GL_DEBUG_TYPE_##X##_ARB:                                                                                      \
         typeStr = "Type: " #X;                                                                                         \
         break;

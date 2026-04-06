@@ -1,12 +1,26 @@
+/*
+OpenGL Core Backend Loop
+The vast majority of this code came from the original Dhewm3 OpenGL implementation and is refactored here.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+*/
+
 #include "sys/platform.h"
 #include "sys/sys_imgui.h"
 
 #include "renderer/tr_local.h"
 
-static idCVar r_fillWindowAlphaChan(
-    "r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE,
-    "Make sure alpha channel of windows default framebuffer is completely opaque at the end of each frame. Needed at "
-    "least when using Wayland with older drivers.\n 1: do this, 0: don't do it, -1: let dhewm3 decide (default)");
+static idCVar r_fillWindowAlphaChan("r_fillWindowAlphaChan", "-1", CVAR_SYSTEM | CVAR_NOCHEAT | CVAR_ARCHIVE,
+                                    "Make sure alpha channel of windows default framebuffer is completely "
+                                    "opaque at the end of each frame. Needed at "
+                                    "least when using Wayland with older drivers.\n 1: do this, 0: don't do "
+                                    "it, -1: let dhewm3 decide (default)");
 
 /*
 ======================

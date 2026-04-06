@@ -1,12 +1,13 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
-dhewm3 Vulkan backend - fog light fragment shader.
+dhewm3-rt Vulkan backend - fog light fragment shader.
 
 Multiplies the two fog textures together and modulates by the fog color.
 samp0 = globalImages->fogImage      (the 1D fog gradient, mapped via TC0)
 samp1 = globalImages->fogEnterImage (the entry-fade correction, mapped via TC1)
+
+
 
 ===========================================================================
 */

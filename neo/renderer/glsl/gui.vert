@@ -2,10 +2,16 @@
 ===========================================================================
 
 Doom 3 GPL Source Code
-dhewm3 Vulkan backend - GUI / shader-pass vertex shader.
+dhewm3-rt Vulkan backend - GUI / shader-pass vertex shader.
 
 Draws 2D GUI surfaces, unlit world surfaces (menus, HUD, console),
 and TG_SCREEN projective-texture surfaces (mirrors, screen captures).
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */

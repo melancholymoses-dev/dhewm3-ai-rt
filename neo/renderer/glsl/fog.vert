@@ -1,11 +1,16 @@
 /*
 ===========================================================================
 
-Doom 3 GPL Source Code
-dhewm3 Vulkan backend - fog light vertex shader.
+dhewm3-rt Vulkan backend - fog light vertex shader.
 
 Computes two texture coordinates from world-position dot-products with the
-fog planes, mirroring the GL texgen (GL_OBJECT_PLANE) approach in RB_FogPass.
+fog planes, mirroring he GL texgen (GL_OBJECT_PLANE) approach in RB_FogPass.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
+may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
 
 ===========================================================================
 */
