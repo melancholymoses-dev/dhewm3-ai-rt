@@ -43,6 +43,15 @@ hitAttributeEXT vec2 baryCoord;
 void main()
 {
     uint matIdx = uint(gl_InstanceCustomIndexEXT);
+
+    // Guard: out-of-range custom index → return black with no continuation.
+    if (matIdx >= uint(materials.length()))
+    {
+        reflPayload.colour        = vec3(0.0);
+        reflPayload.transmittance = 0.0;
+        return;
+    }
+
     MaterialEntry mat = materials[matIdx];
 
     if ((mat.flags & MAT_FLAG_GLASS) != 0u)
@@ -50,7 +59,7 @@ void main()
         // Thin-glass approximation: flat F0 = 0.04 (4 % reflectance at all angles).
         // The reflected colour is tinted by the glass diffuse texture.
         // The remaining 96 % continues straight through (no refraction).
-        const float F0      = 0.04;
+        const float F0      = 0.8;
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);

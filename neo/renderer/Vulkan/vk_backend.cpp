@@ -166,7 +166,7 @@ static void VK_MultiplyMatrix4(const float *a, const float *b, float *out)
     }
 }
 
-static const char *VK_ResultToString(VkResult r)
+const char *VK_ResultToString(VkResult r)
 {
     switch (r)
     {
@@ -3379,6 +3379,18 @@ void VK_RB_DrawView(const void *data)
     if (!vk.isInitialized || !vkPipes.isValid)
         return;
 
+    if (vk.deviceLost)
+    {
+        static bool s_loggedDeviceLostDrawView = false;
+        if (!s_loggedDeviceLostDrawView)
+        {
+            s_loggedDeviceLostDrawView = true;
+            common->Warning("VK: deviceLost latched, skipping DrawView submissions");
+            fflush(NULL);
+        }
+        fflush(NULL);
+        return;
+    }
     // When the window is minimized the presentation engine holds all swapchain
     // images.  vkAcquireNextImageKHR with UINT64_MAX would block forever.
     // Skip the frame; SDL_WINDOWEVENT_RESTORED will clear this flag.
@@ -3456,7 +3468,6 @@ void VK_RB_DrawView(const void *data)
                             (fenceResult == VK_ERROR_DEVICE_LOST)
                                 ? " — GPU DEVICE LOST: enable r_vkLogRT 2 to see RT breadcrumbs"
                                 : "");
-            fflush(NULL);
             return;
         }
 
@@ -3881,6 +3892,20 @@ void VK_RB_CopyRender(const void *data)
 
 void VK_RB_SwapBuffers()
 {
+    if (vk.deviceLost)
+    {
+        s_frameActive = false;
+        s_frameCmdBuf = VK_NULL_HANDLE;
+        static bool s_loggedDeviceLostSwap = false;
+        if (!s_loggedDeviceLostSwap)
+        {
+            s_loggedDeviceLostSwap = true;
+            common->Warning("VK: deviceLost latched, skipping SwapBuffers");
+            fflush(NULL);
+        }
+        return;
+    }
+
     if (!s_frameActive)
         return; // acquire failed or no RC_DRAW_VIEW this EndFrame
 
@@ -3972,7 +3997,6 @@ void VK_RB_SwapBuffers()
         s_frameActive = false;
         common->Printf("VK: vkQueueSubmit failed with error %d (%s)\n", (int)submitResult,
                        VK_ResultToString(submitResult));
-        fflush(NULL);
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
         return;
     }
