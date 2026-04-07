@@ -1382,6 +1382,15 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         }
     }
 
+    // Guard against combined static+dynamic overflow: each bucket is independently bounded to
+    // VK_MAT_MAX_GEOMS, but the GPU SSBO is only VK_MAT_MAX_GEOMS entries total.
+    if (staticGeomCount + dynamicGeomCount > VK_MAT_MAX_GEOMS)
+    {
+        common->Warning("VK RT: combined geom count overflow (static=%u dynamic=%u limit=%u) — clamping dynamic",
+                        staticGeomCount, dynamicGeomCount, VK_MAT_MAX_GEOMS);
+        dynamicGeomCount = VK_MAT_MAX_GEOMS - staticGeomCount;
+    }
+
     // Upload material table entries: one entry per geometry slot (not per instance).
     VK_RT_UploadMatTableFrame(staticMatEntries, staticGeomCount, rewriteStatic, dynamicMatEntries, dynamicGeomCount,
                               s_staticGeomVtxAddrs, s_staticGeomIdxAddrs, staticGeomCount, s_dynGeomVtxAddrs,
@@ -1525,9 +1534,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // VK_RT_BeginLevelLoad (public)
 // Called from idRenderSystemLocal::BeginLevelLoad() before the render model
 // manager purges assets.  Worlds are still valid at this point.
-// Frees all per-entity and cached-model BLASes so that:
-//   (a) model pointers in the BLAS cache don't dangle after model eviction, and
-//   (b) the cache starts empty for the new level.
+// Performs a full RT clean-slate for the new level:
+//   (a) frees all per-entity and cached-model BLASes so model pointers don't dangle, and
+//   (b) destroys all per-frame TLAS resources so RebuildTLAS never calls
+//       vkDestroyAccelerationStructureKHR inline while a command buffer is recording,
+//       which would trigger the "object destroyed while still in use" validation error.
+//   (c) resets all descriptor-set frame counters so every RT pipeline refreshes its
+//       TLAS binding on the first frame of the new level.
+//   (d) invalidates the static-instance cache so the first TLAS build is unconditional.
 // vkDeviceWaitIdle is safe here — the game's main loop stops rendering during
 // level loads.
 // ---------------------------------------------------------------------------
@@ -1548,8 +1562,53 @@ void VK_RT_BeginLevelLoad(void)
         VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
     s_blasGarbageCount = 0;
 
+    // Destroy all per-frame TLAS resources.  The new level's first RebuildTLAS call
+    // will allocate fresh buffers.  Without this, RebuildTLAS may try to destroy and
+    // recreate the TLAS buffer inline while the command buffer is recording (when the
+    // new level needs a larger TLAS), causing a validation "destroyed while in use" error.
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkTLAS_t &tlas = vkRT.tlas[i];
+        if (tlas.handle != VK_NULL_HANDLE)
+        {
+            vkDestroyAccelerationStructureKHR(vk.device, tlas.handle, NULL);
+            vkDestroyBuffer(vk.device, tlas.buffer, NULL);
+            vkFreeMemory(vk.device, tlas.memory, NULL);
+        }
+        if (tlas.instanceBuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, tlas.instanceBuffer, NULL);
+            vkFreeMemory(vk.device, tlas.instanceMemory, NULL);
+        }
+        if (tlas.scratchBuffer != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, tlas.scratchBuffer, NULL);
+            vkFreeMemory(vk.device, tlas.scratchMemory, NULL);
+        }
+        memset(&tlas, 0, sizeof(tlas));
+        tlas.lastBuiltFrameCount = -1;
+    }
+
+    // Invalidate static-instance cache so the first TLAS build is unconditional.
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        s_staticInstanceCache[i].valid = false;
+
+    // Reset all descriptor-set frame counters so every RT pipeline re-writes its
+    // TLAS binding on the first rendered frame of the new level.
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkRT.shadowDescSetLastUpdatedFrameCount[i]   = -1;
+        vkRT.aoDescSetLastUpdatedFrameCount[i]        = -1;
+        vkRT.reflDescSetLastUpdatedFrameCount[i]      = -1;
+        vkRT.blurDescSetLastUpdatedFrameCount[i]      = -1;
+        vkRT.temporalDescSetLastUpdatedFrameCount[i]  = -1;
+        vkRT.atrousDescSetLastUpdatedFrameCount[i]    = -1;
+        // Temporal history from the old level is meaningless for the new one.
+        vkRT.aoHistoryValid[i] = false;
+    }
+
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries\n", s_modelBLASCacheCount);
+        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n", s_modelBLASCacheCount);
     // s_modelBLASCacheCount was already reset to 0 by VK_RT_ModelBLASCacheClear() above.
 }
 

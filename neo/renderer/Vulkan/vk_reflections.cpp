@@ -369,12 +369,14 @@ static void VK_RT_InitReflPipeline(void)
     groups[3].anyHitShader       = 3;  // main rahit — alpha-discard
     groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Group 4: glass probe triangles hit group — probe rchit (stage 5) only
+    // Group 4: glass probe triangles hit group — probe rchit (stage 5) + alpha-discard rahit (stage 3).
+    // Reusing the main any-hit lets traversal skip perforated/alpha-tested surfaces so the probe
+    // continues until it finds actual glass rather than stopping at the first non-opaque hit.
     groups[4].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[4].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[4].generalShader      = VK_SHADER_UNUSED_KHR;
     groups[4].closestHitShader   = 5;  // glass_probe.rchit
-    groups[4].anyHitShader       = VK_SHADER_UNUSED_KHR;
+    groups[4].anyHitShader       = 3;  // main rahit — alpha-discard, prevents false stops on perforated surfaces
     groups[4].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     // --- RT pipeline ---

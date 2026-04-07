@@ -19,6 +19,9 @@ If there are complex options, favour generating logs and debugging over theoreti
 The main doom3 assets have been unzipped and are accessible at
 ../build_rtx/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.
 
+neo/game/ and neo/d3xp/ are near-identical; changes must be mirrored across both.  
+Game is for the base game, d3xp is the expansion pack.
+
 ## Action to Avoid
 Do not attempt to configure or build the project.  A separate process will handle that. 
 
