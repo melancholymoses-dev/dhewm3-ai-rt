@@ -175,7 +175,7 @@ void VK_RT_InitMaterialTable(void)
 
     // --- Persistent SSBOs ---
 
-    const VkDeviceSize matSSBOSize = (VkDeviceSize)MAT_MAX_INSTANCES * sizeof(VkMaterialEntry);
+    const VkDeviceSize matSSBOSize = (VkDeviceSize)VK_MAT_MAX_GEOMS * sizeof(VkMaterialEntry);
     const VkDeviceSize addrSSBOSize = (VkDeviceSize)VK_MAT_MAX_GEOMS * sizeof(uint64_t);
 
     const VkBufferUsageFlags ssboUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -249,8 +249,7 @@ void VK_RT_InitMaterialTable(void)
         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
-        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
     };
     VkDescriptorSetLayoutBindingFlagsCreateInfo bindFlagsInfo = {};
     bindFlagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
@@ -272,8 +271,8 @@ void VK_RT_InitMaterialTable(void)
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAT_MAX_TEXTURES},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType  = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.flags  = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     poolInfo.maxSets = 1;
     poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
@@ -455,15 +454,16 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     entry.pad0 = 0;
     entry.pad1 = 0;
 
-    // --- Geometry addresses — write one slot per geometry in the BLAS ---
-
-    if (blas && blas->geomCount > 0 && blas->geomVertAddrs && blas->geomIdxAddrs)
+    // --- Geometry addresses ---
+    // Writing is now done per-geometry in the TLAS loop (vk_accelstruct.cpp)
+    // where the exact BLAS geometry index g is known.  MakeMaterialEntry is called
+    // once per geometry and only needs to fill material flags/textures.
+    // outGeomVtxAddrs/outGeomIdxAddrs pointers are kept in the signature for the
+    // single-surface VK_RT_BuildBLAS path which still calls this with geomCount==1.
+    if (blas && blas->geomCount == 1 && blas->geomVertAddrs && blas->geomIdxAddrs && outGeomVtxAddrs && outGeomIdxAddrs)
     {
-        for (uint32_t g = 0; g < blas->geomCount; g++)
-        {
-            outGeomVtxAddrs[baseGeomIdx + g] = (uint64_t)blas->geomVertAddrs[g];
-            outGeomIdxAddrs[baseGeomIdx + g] = (uint64_t)blas->geomIdxAddrs[g];
-        }
+        outGeomVtxAddrs[baseGeomIdx] = (uint64_t)blas->geomVertAddrs[0];
+        outGeomIdxAddrs[baseGeomIdx] = (uint64_t)blas->geomIdxAddrs[0];
     }
 
     if (!shader)
@@ -520,8 +520,8 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
 // bindless descriptor writes via vkUpdateDescriptorSets before returning.
 // ---------------------------------------------------------------------------
 
-void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t staticCount, bool rewriteStatic,
-                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount,
+void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t staticMatCount, bool rewriteStatic,
+                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicMatCount,
                                const uint64_t *staticGeomVtx, const uint64_t *staticGeomIdx, uint32_t staticGeomCount,
                                const uint64_t *dynGeomVtx, const uint64_t *dynGeomIdx, uint32_t dynamicGeomCount,
                                bool rewriteStaticGeoms)
@@ -536,13 +536,13 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
     uint8_t *vtxDst = (uint8_t *)vkRT.vtxAddrMapped;
     uint8_t *idxDst = (uint8_t *)vkRT.idxAddrMapped;
 
-    // Static block — material entries
-    if (rewriteStatic && staticCount > 0)
-        memcpy(matDst, staticEntries, staticCount * matEntrySize);
+    // Static block — material entries (one per geometry slot)
+    if (rewriteStatic && staticMatCount > 0)
+        memcpy(matDst, staticEntries, staticMatCount * matEntrySize);
 
     // Dynamic block — material entries (always written, immediately after static)
-    if (dynamicCount > 0)
-        memcpy(matDst + staticCount * matEntrySize, dynamicEntries, dynamicCount * matEntrySize);
+    if (dynamicMatCount > 0)
+        memcpy(matDst + staticMatCount * matEntrySize, dynamicEntries, dynamicMatCount * matEntrySize);
 
     // Geometry address tables.
     // GPU-side SSBO layout: static [0..staticGeomCount-1], dynamic [staticGeomCount..sGC+dGC-1].
@@ -564,8 +564,8 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("VK RT MatTable: uploaded — static=%u%s dynamic=%u bindless=%u\n", staticCount,
-                       rewriteStatic ? "(rewritten)" : "(cached)", dynamicCount, s_bindlessCount);
+        common->Printf("VK RT MatTable: uploaded — staticMat=%u%s dynamicMat=%u bindless=%u\n", staticMatCount,
+                       rewriteStatic ? "(rewritten)" : "(cached)", dynamicMatCount, s_bindlessCount);
         fflush(NULL);
     }
 }

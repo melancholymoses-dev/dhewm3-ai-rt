@@ -43,7 +43,7 @@ hitAttributeEXT vec2 baryCoords;
 
 void main()
 {
-    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
     MaterialEntry mat = materials[matIdx];
 
     if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
