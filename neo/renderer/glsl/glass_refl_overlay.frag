@@ -46,7 +46,12 @@ void main()
 
     // Sample the reflection buffer.  The RT rchit already applied Fresnel (F0=0.8)
     // so this value is already physically scaled — just add it.
-    vec3 refl = texture(u_ReflectionMap, screenUV).rgb;
+    // The alpha channel encodes whether the glass probe actually found a glass
+    // surface at this screen coordinate.  Only apply the overlay where glass was
+    // confirmed (alpha = 1.0); when the probe missed (camera jumping / off-angle,
+    // alpha = 0.0) the output is black and the additive blend adds nothing.
+    vec4 reflSample = texture(u_ReflectionMap, screenUV);
+    vec3 refl = reflSample.rgb * reflSample.a;
 
     // Additive output.  The pipeline blend is ONE/ONE so alpha is effectively ignored,
     // but set it to 1.0 for robustness.

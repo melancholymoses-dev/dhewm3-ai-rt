@@ -239,8 +239,28 @@ void VK_RT_InitMaterialTable(void)
     bindings[3].descriptorCount = VK_MAT_MAX_TEXTURES;
     bindings[3].stageFlags = bindings[0].stageFlags;
 
+    // All four bindings get UPDATE_AFTER_BIND so that vkUpdateDescriptorSets
+    // can be called while command buffers that reference this set are in flight
+    // (or in recording state).  This avoids validation errors at every frame
+    // and at level transitions when the bindless texture array is rebuilt.
+    // Binding 3 (bindless sampler array) additionally needs PARTIALLY_BOUND
+    // because not all VK_MAT_MAX_TEXTURES slots are always populated.
+    VkDescriptorBindingFlags bindingFlags[4] = {
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+    };
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bindFlagsInfo = {};
+    bindFlagsInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    bindFlagsInfo.bindingCount = 4;
+    bindFlagsInfo.pBindingFlags = bindingFlags;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    layoutInfo.pNext = &bindFlagsInfo;
     layoutInfo.bindingCount = 4;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.matDescLayout));
@@ -252,7 +272,8 @@ void VK_RT_InitMaterialTable(void)
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAT_MAX_TEXTURES},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.sType  = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags  = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     poolInfo.maxSets = 1;
     poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
