@@ -59,7 +59,7 @@ void main()
         // Thin-glass approximation: flat F0 = 0.04 (4 % reflectance at all angles).
         // The reflected colour is tinted by the glass diffuse texture.
         // The remaining 96 % continues straight through (no refraction).
-        const float F0      = 0.8;
+        const float F0 = 0.3;
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
