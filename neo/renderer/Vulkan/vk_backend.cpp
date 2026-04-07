@@ -224,7 +224,7 @@ const char *VK_ResultToString(VkResult r)
 // Pre-allocated pool of UBO memory for interaction parameters.
 // ---------------------------------------------------------------------------
 
-static const uint32_t VK_UBO_RING_SIZE = 4096; // max interactions per frame
+static const uint32_t VK_UBO_RING_SIZE = 8192; // max interactions+overlays per frame
 
 // ---------------------------------------------------------------------------
 // Per-frame data staging ring
@@ -470,17 +470,28 @@ static void VK_DestroyUBORings(void)
     memset(uboRings, 0, sizeof(uboRings));
 }
 
-// Allocate space in the UBO ring and return the byte offset
+// Allocate space in the UBO ring and return the byte offset.
+// On overflow: CLAMP at the last valid slot rather than wrapping to 0.
+// Wrapping to 0 would reuse slots already recorded in this frame's command
+// buffer, corrupting their UBO data mid-execution and causing DEVICE_LOST.
+// Clamping means overflow draws share the last slot's data (visual glitch)
+// which is always preferable to a GPU hang.
 static uint32_t VK_AllocUBO(void)
 {
     vkUBORing_t &ring = uboRings[vk.currentFrame];
+    const uint32_t maxOff = ring.stride * (VK_UBO_RING_SIZE - 1);
+    if (ring.offset >= maxOff)
+    {
+        static int s_overflowFrame = -1;
+        if (s_overflowFrame != (int)tr.frameCount)
+        {
+            s_overflowFrame = (int)tr.frameCount;
+            common->Warning("VK: UBO ring full (>%u slots in frame %d) — clamping", VK_UBO_RING_SIZE, tr.frameCount);
+        }
+        return maxOff; // safe: reuse last slot, no live-slot overwrite
+    }
     uint32_t off = ring.offset;
     ring.offset += ring.stride;
-    if (ring.offset >= ring.stride * VK_UBO_RING_SIZE)
-    {
-        common->Warning("VK: UBO ring overflowed (>%u interactions in one frame)", VK_UBO_RING_SIZE);
-        ring.offset = 0;
-    }
     return off;
 }
 
@@ -1648,19 +1659,16 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             }
         }
 
-        // --- RT reflection overlay for glass / translucent surfaces ---
+        // --- RT reflection overlay for glass surfaces ---
         // After all material stages have drawn for this surface, add one additional
         // additive draw that composites the RT reflection buffer on top.  This gives
         // flat glass panes visible reflections without needing to route them through
         // the per-light interaction pass.
         //
-        // Prerequisites: RT reflections enabled, reflBuffer allocated this frame,
-        //                glassReflPipeline ready, and this surface is MC_TRANSLUCENT.
-        if (mat->Coverage() == MC_TRANSLUCENT &&
-            r_rtReflections.GetBool() &&
-            vk.rayTracingSupported && vkRT.isInitialized &&
-            vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
-            vkRT.reflSampler         != VK_NULL_HANDLE  &&
+        // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
+        // halos, particles, or other MC_TRANSLUCENT surfaces.
+        if (mat->GetSurfaceType() == SURFTYPE_GLASS && r_rtReflections.GetBool() && vk.rayTracingSupported &&
+            vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
             vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
         {
             float mvp[16];
@@ -1678,32 +1686,30 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             VkDescriptorBufferInfo ovBufInfo = {};
             ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
             ovBufInfo.offset = ovUboOffset;
-            ovBufInfo.range  = sizeof(VkGuiUBO);
+            ovBufInfo.range = sizeof(VkGuiUBO);
 
             VkDescriptorImageInfo ovReflInfo = {};
-            ovReflInfo.sampler     = vkRT.reflSampler;
-            ovReflInfo.imageView   = vkRT.reflBuffer[vk.currentFrame].view;
+            ovReflInfo.sampler = vkRT.reflSampler;
+            ovReflInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
             ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
             VkWriteDescriptorSet ovWrites[2] = {};
-            ovWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            ovWrites[0].dstBinding      = 0;
-            ovWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            ovWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ovWrites[0].dstBinding = 0;
+            ovWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             ovWrites[0].descriptorCount = 1;
-            ovWrites[0].pBufferInfo     = &ovBufInfo;
-            ovWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            ovWrites[1].dstBinding      = 1;
-            ovWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            ovWrites[0].pBufferInfo = &ovBufInfo;
+            ovWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ovWrites[1].dstBinding = 1;
+            ovWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             ovWrites[1].descriptorCount = 1;
-            ovWrites[1].pImageInfo      = &ovReflInfo;
+            ovWrites[1].pImageInfo = &ovReflInfo;
 
             vkCmdSetDepthBias(cmd, 0.0f, 0.0f, 0.0f);
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflPipeline);
-            VkCullModeFlags ovCull = (mat->GetCullType() == CT_TWO_SIDED)
-                                         ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            VkCullModeFlags ovCull = (mat->GetCullType() == CT_TWO_SIDED) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
             vkCmdSetCullMode(cmd, ovCull);
-            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      vkPipes.glassReflLayout, 0, 2, ovWrites);
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflLayout, 0, 2, ovWrites);
             vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
             vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);

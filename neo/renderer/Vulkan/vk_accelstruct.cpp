@@ -1180,19 +1180,41 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // staticGeomCount is final.
             if (isDynamicInstance)
             {
-                uint32_t base = dynamicGeomCount; // local offset in s_dynGeom* arrays
-                VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, base,
-                                                                    s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
-                dynamicMatEntries[provIndex] = matEntry;
-                dynamicGeomCount += ent->blas ? ent->blas->geomCount : 1;
+                const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 1;
+                if (dynamicGeomCount + geomCount > VK_MAT_MAX_GEOMS)
+                {
+                    static int s_dynOverflowWarn = 0;
+                    if (s_dynOverflowWarn++ < 4)
+                        common->Warning("VK RT: dynamic geom address table overflow (count=%u geoms=%u limit=%u) — skipping instance",
+                                        dynamicGeomCount, geomCount, VK_MAT_MAX_GEOMS);
+                }
+                else
+                {
+                    uint32_t base = dynamicGeomCount; // local offset in s_dynGeom* arrays
+                    VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, base,
+                                                                        s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
+                    dynamicMatEntries[provIndex] = matEntry;
+                    dynamicGeomCount += geomCount;
+                }
             }
             else
             {
-                uint32_t base = staticGeomCount; // local offset in s_staticGeom* arrays
-                VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, base,
-                                                                    s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
-                staticMatEntries[provIndex] = matEntry;
-                staticGeomCount += ent->blas ? ent->blas->geomCount : 1;
+                const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 1;
+                if (staticGeomCount + geomCount > VK_MAT_MAX_GEOMS)
+                {
+                    static int s_staticOverflowWarn = 0;
+                    if (s_staticOverflowWarn++ < 4)
+                        common->Warning("VK RT: static geom address table overflow (count=%u geoms=%u limit=%u) — skipping instance",
+                                        staticGeomCount, geomCount, VK_MAT_MAX_GEOMS);
+                }
+                else
+                {
+                    uint32_t base = staticGeomCount; // local offset in s_staticGeom* arrays
+                    VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, base,
+                                                                        s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
+                    staticMatEntries[provIndex] = matEntry;
+                    staticGeomCount += geomCount;
+                }
             }
         }
 
@@ -1320,6 +1342,18 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     vkUnmapMemory(vk.device, tlas.instanceMemory);
+
+    // Log geom slot usage once per level load (helps catch VK_MAT_MAX_GEOMS exhaustion).
+    {
+        static uint32_t s_lastLoggedStatic = UINT32_MAX;
+        if (staticGeomCount != s_lastLoggedStatic)
+        {
+            s_lastLoggedStatic = staticGeomCount;
+            common->Printf("VK RT geom slots: static=%u dynamic=%u total=%u limit=%u\n",
+                           staticGeomCount, dynamicGeomCount,
+                           staticGeomCount + dynamicGeomCount, VK_MAT_MAX_GEOMS);
+        }
+    }
 
     // Upload material table entries (Phase 5.4).
     VK_RT_UploadMatTableFrame(staticMatEntries, staticCount, rewriteStatic,
