@@ -67,6 +67,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
     int   u_UseReflections; // 1 when RT reflection buffer is valid this frame
+    int   u_ReflDebug;       // 1 = force specWeight=1.0 (debug)
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -137,7 +138,7 @@ void main() {
         // RGB weights are standard perceptual grayscale (BT.601).
         float specBase   = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
                                vec3(0.299, 0.587, 0.114));
-        float specWeight = specBase;
+        float specWeight = (u_ReflDebug != 0) ? 1.0 : specBase;
         reflColor = reflSample * specWeight;
     }
 

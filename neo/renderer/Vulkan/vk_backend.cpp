@@ -682,6 +682,11 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
+    // reflDebug: force specWeight=1.0 to verify reflection buffer has data.
+    extern idCVar r_rtReflDebug;
+    int *reflDebugPtr = useReflPtr + 1;
+    *reflDebugPtr = r_rtReflDebug.GetBool() ? 1 : 0;
+
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
@@ -1009,6 +1014,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern bool VK_Image_GetDescriptorInfoCube(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+    extern idCVar r_rtReflections;
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
@@ -1640,6 +1646,67 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                                    isWeaponHack ? 1 : 0);
                 }
             }
+        }
+
+        // --- RT reflection overlay for glass / translucent surfaces ---
+        // After all material stages have drawn for this surface, add one additional
+        // additive draw that composites the RT reflection buffer on top.  This gives
+        // flat glass panes visible reflections without needing to route them through
+        // the per-light interaction pass.
+        //
+        // Prerequisites: RT reflections enabled, reflBuffer allocated this frame,
+        //                glassReflPipeline ready, and this surface is MC_TRANSLUCENT.
+        if (mat->Coverage() == MC_TRANSLUCENT &&
+            r_rtReflections.GetBool() &&
+            vk.rayTracingSupported && vkRT.isInitialized &&
+            vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
+            vkRT.reflSampler         != VK_NULL_HANDLE  &&
+            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+        {
+            float mvp[16];
+            VK_BuildSurfMVP(surf->space, mvp);
+
+            uint32_t ovUboOffset = VK_AllocUBO();
+            VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
+            memset(ovUbo, 0, sizeof(*ovUbo));
+            memcpy(ovUbo->modelViewProjection, mvp, 64);
+            // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
+            // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
+            ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
+            ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
+
+            VkDescriptorBufferInfo ovBufInfo = {};
+            ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            ovBufInfo.offset = ovUboOffset;
+            ovBufInfo.range  = sizeof(VkGuiUBO);
+
+            VkDescriptorImageInfo ovReflInfo = {};
+            ovReflInfo.sampler     = vkRT.reflSampler;
+            ovReflInfo.imageView   = vkRT.reflBuffer[vk.currentFrame].view;
+            ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            VkWriteDescriptorSet ovWrites[2] = {};
+            ovWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ovWrites[0].dstBinding      = 0;
+            ovWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            ovWrites[0].descriptorCount = 1;
+            ovWrites[0].pBufferInfo     = &ovBufInfo;
+            ovWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ovWrites[1].dstBinding      = 1;
+            ovWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            ovWrites[1].descriptorCount = 1;
+            ovWrites[1].pImageInfo      = &ovReflInfo;
+
+            vkCmdSetDepthBias(cmd, 0.0f, 0.0f, 0.0f);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflPipeline);
+            VkCullModeFlags ovCull = (mat->GetCullType() == CT_TWO_SIDED)
+                                         ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            vkCmdSetCullMode(cmd, ovCull);
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      vkPipes.glassReflLayout, 0, 2, ovWrites);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         }
     }
 }

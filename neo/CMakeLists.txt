@@ -692,6 +692,7 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/fog.frag
 	renderer/glsl/gui.vert
 	renderer/glsl/gui.frag
+	renderer/glsl/glass_refl_overlay.frag
 	renderer/glsl/interaction.vert
 	renderer/glsl/interaction.frag
 	renderer/glsl/shadow.vert
