@@ -42,7 +42,10 @@ hitAttributeEXT vec2 baryCoord;
 
 void main()
 {
-    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    // matIdx = instanceCustomIndex (== baseGeomIdx of instance) + geometry index.
+    // Each BLAS geometry has its own VkMaterialEntry so this gives the correct
+    // per-surface texture, flags, etc.
+    uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
     // Guard: out-of-range custom index → return black with no continuation.
     if (matIdx >= uint(materials.length()))

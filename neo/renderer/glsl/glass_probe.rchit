@@ -40,7 +40,7 @@ hitAttributeEXT vec2 baryCoord;
 
 void main()
 {
-    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
     // Not a valid or not a glass surface — signal miss and let the rgen
     // fall back to the depth-reconstructed surface.
@@ -57,7 +57,8 @@ void main()
 
     // Barycentrically interpolate vertex normals from the hit triangle.
     MaterialEntry mat = materials[matIdx];
-    uint geomSlot     = mat.baseGeomIdx + uint(gl_GeometryIndexEXT);
+    // geomSlot == matIdx because each entry's baseGeomIdx equals its own index.
+    uint geomSlot     = mat.baseGeomIdx;
     uint64_t idxAddr  = idxAddrs[geomSlot];
     uint64_t vtxAddr  = vtxAddrs[geomSlot];
 
