@@ -250,6 +250,7 @@ static void VK_RT_FreeBLASImmediate(vkBLAS_t *blas)
     delete[] blas->geomPrimCounts;
     delete[] blas->geomVertAddrs;
     delete[] blas->geomIdxAddrs;
+    delete[] blas->geomShaders;
     delete blas;
 }
 
@@ -565,6 +566,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     struct SurfEntry
     {
         const srfTriangles_t *geo;
+        const idMaterial *shader;
         bool perforated;
         bool translucent;
     };
@@ -612,8 +614,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isTranslucentSurf)
                 continue;
             const deform_t def = surf->shader->Deform();
-            if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 ||
-                def == DFRM_SPRITE   || def == DFRM_FLARE)
+            if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE || def == DFRM_FLARE)
                 continue;
         }
         VkBuffer gpuVertBuf = VK_NULL_HANDLE, gpuIdxBuf = VK_NULL_HANDLE;
@@ -634,23 +635,18 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             // Diagnostic: log translucent surfaces that fail the geometry check so we
             // can determine whether the problem is verts/indexes being null, or
             // ambientCache having no GPU buffer.
-            if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT &&
-                r_vkLogRT.GetInteger() >= 1)
+            if (surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT && r_vkLogRT.GetInteger() >= 1)
             {
-                common->Printf(
-                    "VK RT GLASS SKIP: model='%s' surf=%d shader='%s'"
-                    " verts=%s idx=%s ambCache=%s gpuV=%d gpuI=%d\n",
-                    model->Name(), s,
-                    surf->shader->GetName(),
-                    geo->verts   ? "yes" : "NO",
-                    geo->indexes ? "yes" : "NO",
-                    geo->ambientCache ? "yes" : "NO",
-                    haveGpuVerts, haveGpuIdx);
+                common->Printf("VK RT GLASS SKIP: model='%s' surf=%d shader='%s'"
+                               " verts=%s idx=%s ambCache=%s gpuV=%d gpuI=%d\n",
+                               model->Name(), s, surf->shader->GetName(), geo->verts ? "yes" : "NO",
+                               geo->indexes ? "yes" : "NO", geo->ambientCache ? "yes" : "NO", haveGpuVerts, haveGpuIdx);
                 fflush(NULL);
             }
             continue;
         }
         validSurfs[validCount].geo = geo;
+        validSurfs[validCount].shader = surf->shader;
         validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
         // Translucent (glass) surfaces: include in BLAS as non-opaque so rahit is invoked.
         // shadow_ray.rahit passes through glass; reflect_ray.rchit applies the Fresnel split.
@@ -793,6 +789,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     blas->geomPrimCounts = new uint32_t[validCount]();
     blas->geomVertAddrs = new VkDeviceAddress[validCount]();
     blas->geomIdxAddrs = new VkDeviceAddress[validCount]();
+    blas->geomShaders = new const idMaterial *[validCount]();
+    for (int i = 0; i < validCount; i++)
+        blas->geomShaders[i] = validSurfs[i].shader;
 
     // Build geometry descriptors — one per valid surface
     static VkAccelerationStructureGeometryKHR asGeoms[MAX_BLAS_SURFACES];
@@ -1031,8 +1030,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkAccelerationStructureInstanceKHR staticInstances[VK_RT_MAX_TLAS_INSTANCES];
     static VkAccelerationStructureInstanceKHR dynamicInstances[VK_RT_MAX_TLAS_INSTANCES];
     // Parallel material-table entries for Phase 5.4.
-    static VkMaterialEntry staticMatEntries[VK_RT_MAX_TLAS_INSTANCES];
-    static VkMaterialEntry dynamicMatEntries[VK_RT_MAX_TLAS_INSTANCES];
+    // Material entries are now one-per-geometry, not one-per-instance.
+    // Size to VK_MAT_MAX_GEOMS to cover the worst case (all geom slots filled).
+    static VkMaterialEntry staticMatEntries[VK_MAT_MAX_GEOMS];
+    static VkMaterialEntry dynamicMatEntries[VK_MAT_MAX_GEOMS];
+    // Per-instance base geom index — needed to patch instanceCustomIndex after
+    // the static/dynamic merge (dynamic entries shift by staticGeomCount).
+    static uint32_t staticInstBaseGeom[VK_RT_MAX_TLAS_INSTANCES];
+    static uint32_t dynamicInstBaseGeom[VK_RT_MAX_TLAS_INSTANCES];
     // Separate static/dynamic geometry address arrays.  During the interleaved
     // entity loop, static geoms accumulate into s_staticGeom* starting at local
     // offset staticGeomCount, and dynamic geoms into s_dynGeom* at local offset
@@ -1043,7 +1048,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static uint64_t s_staticGeomIdxAddrs[VK_MAT_MAX_GEOMS];
     static uint64_t s_dynGeomVtxAddrs[VK_MAT_MAX_GEOMS];
     static uint64_t s_dynGeomIdxAddrs[VK_MAT_MAX_GEOMS];
-    uint32_t staticGeomCount  = 0;
+    uint32_t staticGeomCount = 0;
     uint32_t dynamicGeomCount = 0;
     uint32_t staticCount = 0;
     uint32_t dynamicCount = 0;
@@ -1162,57 +1167,75 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
 
-        // Collect material entry for Phase 5.4.
-        // instanceCustomIndex = static index or (staticCount + dynamic index); patched below.
-        // We use the current bucket index as a provisional value — corrected at merge time.
+        // Collect per-surface material entries.
+        // instanceCustomIndex will be set to baseGeomIdx so that shaders can compute
+        //   matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
+        // giving one correct VkMaterialEntry per geometry slot.
         {
-            const uint32_t provIndex = isDynamicInstance ? dynamicCount - 1 : staticCount - 1;
-            // Representative shader: Surface(0) of the current model (may be NULL).
-            const idMaterial *shader = NULL;
-            if (model->NumSurfaces() > 0)
-            {
-                const modelSurface_t *surf0 = model->Surface(0);
-                if (surf0)
-                    shader = surf0->shader;
-            }
-            // baseGeomIdx is a local offset within the static or dynamic geometry
-            // address array.  Dynamic entries are patched after the loop once
-            // staticGeomCount is final.
+            const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 0;
             if (isDynamicInstance)
             {
-                const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 1;
                 if (dynamicGeomCount + geomCount > VK_MAT_MAX_GEOMS)
                 {
                     static int s_dynOverflowWarn = 0;
                     if (s_dynOverflowWarn++ < 4)
-                        common->Warning("VK RT: dynamic geom address table overflow (count=%u geoms=%u limit=%u) — skipping instance",
+                        common->Warning("VK RT: dynamic geom address table overflow (count=%u geoms=%u limit=%u) — "
+                                        "skipping instance",
                                         dynamicGeomCount, geomCount, VK_MAT_MAX_GEOMS);
                 }
                 else
                 {
-                    uint32_t base = dynamicGeomCount; // local offset in s_dynGeom* arrays
-                    VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, base,
-                                                                        s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
-                    dynamicMatEntries[provIndex] = matEntry;
+                    const uint32_t base = dynamicGeomCount;
+                    dynamicInstBaseGeom[dynamicCount - 1] = base;
+                    for (uint32_t g = 0; g < geomCount; g++)
+                    {
+                        const idMaterial *surfShader =
+                            (ent->blas->geomShaders && ent->blas->geomShaders[g]) ? ent->blas->geomShaders[g] : NULL;
+                        VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g,
+                                                                           s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
+                        // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
+                        matEntry.baseGeomIdx = base + g;
+                        dynamicMatEntries[base + g] = matEntry;
+                        // Write the per-geometry vertex/index address directly.
+                        if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
+                        {
+                            s_dynGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
+                            s_dynGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
+                        }
+                    }
                     dynamicGeomCount += geomCount;
                 }
             }
             else
             {
-                const uint32_t geomCount = ent->blas ? ent->blas->geomCount : 1;
                 if (staticGeomCount + geomCount > VK_MAT_MAX_GEOMS)
                 {
                     static int s_staticOverflowWarn = 0;
                     if (s_staticOverflowWarn++ < 4)
-                        common->Warning("VK RT: static geom address table overflow (count=%u geoms=%u limit=%u) — skipping instance",
+                        common->Warning("VK RT: static geom address table overflow (count=%u geoms=%u limit=%u) — "
+                                        "skipping instance",
                                         staticGeomCount, geomCount, VK_MAT_MAX_GEOMS);
                 }
                 else
                 {
-                    uint32_t base = staticGeomCount; // local offset in s_staticGeom* arrays
-                    VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(shader, ent->blas, base,
-                                                                        s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
-                    staticMatEntries[provIndex] = matEntry;
+                    const uint32_t base = staticGeomCount;
+                    staticInstBaseGeom[staticCount - 1] = base;
+                    for (uint32_t g = 0; g < geomCount; g++)
+                    {
+                        const idMaterial *surfShader =
+                            (ent->blas->geomShaders && ent->blas->geomShaders[g]) ? ent->blas->geomShaders[g] : NULL;
+                        VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g,
+                                                                           s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
+                        // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
+                        matEntry.baseGeomIdx = base + g;
+                        staticMatEntries[base + g] = matEntry;
+                        // Write the per-geometry vertex/index address directly.
+                        if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
+                        {
+                            s_staticGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
+                            s_staticGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
+                        }
+                    }
                     staticGeomCount += geomCount;
                 }
             }
@@ -1300,7 +1323,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     // Patch dynamic material entries: their baseGeomIdx was a local offset within
     // s_dynGeom*; now that staticGeomCount is final, shift to absolute GPU-side index.
-    for (uint32_t i = 0; i < dynamicCount; i++)
+    for (uint32_t i = 0; i < dynamicGeomCount; i++)
         dynamicMatEntries[i].baseGeomIdx += staticGeomCount;
 
     vkRTStaticInstanceCache_t &staticCache = s_staticInstanceCache[vk.currentFrame];
@@ -1318,8 +1341,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (rewriteStatic && staticCount > 0)
     {
+        // instanceCustomIndex = baseGeomIdx for this instance so that shaders can
+        // index the per-geometry material table as:
+        //   matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
         for (uint32_t i = 0; i < staticCount; i++)
-            staticInstances[i].instanceCustomIndex = i;
+            staticInstances[i].instanceCustomIndex = staticInstBaseGeom[i];
 
         memcpy(dstBytes, staticInstances, staticBytes);
         memcpy(staticCache.instances, staticInstances, staticBytes);
@@ -1336,8 +1362,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (dynamicCount > 0)
     {
+        // Dynamic instanceCustomIndex = staticGeomCount (the start of the dynamic block)
+        // plus the per-instance local base geom offset.
         for (uint32_t i = 0; i < dynamicCount; i++)
-            dynamicInstances[i].instanceCustomIndex = staticCount + i;
+            dynamicInstances[i].instanceCustomIndex = staticGeomCount + dynamicInstBaseGeom[i];
         memcpy(dstBytes + staticBytes, dynamicInstances, dynamicBytes);
     }
 
@@ -1349,18 +1377,15 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (staticGeomCount != s_lastLoggedStatic)
         {
             s_lastLoggedStatic = staticGeomCount;
-            common->Printf("VK RT geom slots: static=%u dynamic=%u total=%u limit=%u\n",
-                           staticGeomCount, dynamicGeomCount,
-                           staticGeomCount + dynamicGeomCount, VK_MAT_MAX_GEOMS);
+            common->Printf("VK RT geom slots: static=%u dynamic=%u total=%u limit=%u\n", staticGeomCount,
+                           dynamicGeomCount, staticGeomCount + dynamicGeomCount, VK_MAT_MAX_GEOMS);
         }
     }
 
-    // Upload material table entries (Phase 5.4).
-    VK_RT_UploadMatTableFrame(staticMatEntries, staticCount, rewriteStatic,
-                              dynamicMatEntries, dynamicCount,
-                              s_staticGeomVtxAddrs, s_staticGeomIdxAddrs, staticGeomCount,
-                              s_dynGeomVtxAddrs,    s_dynGeomIdxAddrs,    dynamicGeomCount,
-                              rewriteStatic);
+    // Upload material table entries: one entry per geometry slot (not per instance).
+    VK_RT_UploadMatTableFrame(staticMatEntries, staticGeomCount, rewriteStatic, dynamicMatEntries, dynamicGeomCount,
+                              s_staticGeomVtxAddrs, s_staticGeomIdxAddrs, staticGeomCount, s_dynGeomVtxAddrs,
+                              s_dynGeomIdxAddrs, dynamicGeomCount, rewriteStatic);
 
     tlas.instanceCount = instanceCount;
 

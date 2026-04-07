@@ -50,15 +50,17 @@ extern PFN_vkGetBufferDeviceAddressKHR pfn_vkGetBufferDeviceAddressKHR;
 // Material table constants and types (Phase 5.4)
 // ---------------------------------------------------------------------------
 
-static const uint32_t VK_MAT_MAX_TEXTURES = 4096;  // max bindless texture slots
-static const uint32_t VK_MAT_MAX_GEOMS    = 16384; // max total geometry slots across all BLAS instances
+static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
+static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots across all BLAS instances
 
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
 #define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
 #define VK_MAT_FLAG_TWO_SIDED 0x02u    // CT_TWO_SIDED — no back-face cull
 #define VK_MAT_FLAG_GLASS 0x04u        // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
 
-// One entry per TLAS instance.  Indexed by gl_InstanceCustomIndexEXT in shaders.
+// One entry per BLAS geometry slot.  Indexed by
+//   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
+// in shaders (instanceCustomIndex == baseGeomIdx of the instance).
 // std430-compatible: all fields are 4 bytes, total = 32 bytes.
 struct VkMaterialEntry
 {
@@ -102,6 +104,11 @@ struct vkBLAS_t
     // the VtxAddrTable and IdxAddrTable SSBOs for UV interpolation in shaders.
     VkDeviceAddress *geomVertAddrs; // [geomCount], NULL if geomCount == 0
     VkDeviceAddress *geomIdxAddrs;  // [geomCount], NULL if geomCount == 0
+    // Per-geometry surface shaders — one per BLAS geometry entry, in the same
+    // order as the valid surfaces selected during VK_RT_BuildBLASForModel.
+    // Used by the TLAS loop to write per-surface VkMaterialEntry values.
+    // idMaterial* pointers are stable for the lifetime of a map session.
+    const idMaterial **geomShaders; // [geomCount], may hold NULLs for missing shaders
     // Scratch buffer used during build (freed at destroy time).
     VkBuffer scratchBuf;
     VkDeviceMemory scratchMem;
@@ -294,7 +301,8 @@ struct vkRTState_t
     // Material table (Phase 5.4) — set=2 in RT shaders
     //
     // Three persistently-mapped HOST_VISIBLE|HOST_COHERENT SSBOs:
-    //   matTableSSBO  — VkMaterialEntry[], indexed by gl_InstanceCustomIndexEXT
+    //   matTableSSBO  — VkMaterialEntry[], one per geometry slot, indexed by
+    //                   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
     //   vtxAddrSSBO   — uint64_t[],        vertex buffer device address per instance
     //   idxAddrSSBO   — uint64_t[],        index  buffer device address per instance
     //
@@ -479,10 +487,13 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
 // GPU-side flat SSBO layout: static block at [0..sGC-1], dynamic block at [sGC..sGC+dGC-1].
 // Also rebuilds the bindless texture descriptors if new images were encountered.
 // Called from vk_accelstruct.cpp at the end of VK_RT_RebuildTLAS.
-void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries,  uint32_t staticCount,  bool rewriteStatic,
-                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount,
+// staticMatCount/dynamicMatCount are the number of VkMaterialEntry entries in
+// staticEntries/dynamicEntries (== staticGeomCount/dynamicGeomCount after the
+// per-geometry material fix).
+void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t staticMatCount, bool rewriteStatic,
+                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicMatCount,
                                const uint64_t *staticGeomVtx, const uint64_t *staticGeomIdx, uint32_t staticGeomCount,
-                               const uint64_t *dynGeomVtx,    const uint64_t *dynGeomIdx,    uint32_t dynamicGeomCount,
+                               const uint64_t *dynGeomVtx, const uint64_t *dynGeomIdx, uint32_t dynamicGeomCount,
                                bool rewriteStaticGeoms);
 
 #endif // __VK_RAYTRACING_H__

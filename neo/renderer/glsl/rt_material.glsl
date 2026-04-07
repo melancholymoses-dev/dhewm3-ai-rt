@@ -91,9 +91,10 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
 {
     MaterialEntry mat = materials[matIdx];
 
-    // Index into the flat per-geometry address tables using the per-instance
-    // baseGeomIdx plus the geometry index within this BLAS that was hit.
-    uint geomSlot    = mat.baseGeomIdx + uint(gl_GeometryIndexEXT);
+    // Index into the flat per-geometry address tables using this entry's baseGeomIdx.
+    // Since matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT and each entry's
+    // baseGeomIdx == matIdx (one entry per geometry), this is equivalent to matIdx.
+    uint geomSlot    = mat.baseGeomIdx;
     uint64_t idxAddr = idxAddrs[geomSlot];
     uint64_t vtxAddr = vtxAddrs[geomSlot];
     if (idxAddr == 0ul || vtxAddr == 0ul)
