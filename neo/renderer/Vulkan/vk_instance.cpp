@@ -337,6 +337,13 @@ static void VKimp_CreateDevice(void)
     vk12Features.descriptorIndexing = vk.rayTracingSupported && supportedVk12.descriptorIndexing;
     vk12Features.shaderSampledImageArrayNonUniformIndexing =
         vk.rayTracingSupported && supportedVk12.shaderSampledImageArrayNonUniformIndexing;
+    // Required to back UPDATE_AFTER_BIND and PARTIALLY_BOUND flags on the material descriptor set layout.
+    vk12Features.descriptorBindingStorageBufferUpdateAfterBind =
+        vk.rayTracingSupported && supportedVk12.descriptorBindingStorageBufferUpdateAfterBind;
+    vk12Features.descriptorBindingSampledImageUpdateAfterBind =
+        vk.rayTracingSupported && supportedVk12.descriptorBindingSampledImageUpdateAfterBind;
+    vk12Features.descriptorBindingPartiallyBound =
+        vk.rayTracingSupported && supportedVk12.descriptorBindingPartiallyBound;
 
     // Extension list: base + optional RT extensions
     const char **exts;
