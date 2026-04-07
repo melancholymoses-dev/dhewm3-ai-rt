@@ -140,13 +140,7 @@ void main() {
 
     vec3 lightDir = toLight / dist;
 
-    float tMin = clamp(params.rayBias, 0.01, 8.0);
-    float tMax = dist - tMin;
-
-    if ( tMax <= 0.0 ) {
-        imageStore( shadowMask, coord, vec4(1.0) );
-        return;
-    }
+    float baseBias = clamp(params.rayBias, 0.01, 8.0);
 
     // ---------------------------------------------------------------------------
     // Normal-based ray origin bias
@@ -213,32 +207,49 @@ void main() {
     float crossLen  = length( crossed );
     if ( crossLen > 1e-4 ) {
         vec3 n = crossed / crossLen;
-        // Orient toward the light (surface lit side).
-        if ( dot(n, lightDir) < 0.0 ) n = -n;
+        // Keep orientation camera-stable. Flipping by light direction can create
+        // screen-space sign changes near dot(n,lightDir) ~= 0, which shows up as
+        // black line striping when lights move close to surfaces.
+        if ( dot(n, toCamera) < 0.0 ) n = -n;
         biasDir          = n;
         gotSurfaceNormal = true;
     } else {
         // Degenerate cross product — surface is edge-on or all neighbours are
-        // on different surfaces.  Camera direction is always safe (visible
-        // surfaces face the camera) — but MUST be oriented toward the light.
-        //
-        // Without the flip: a ceiling pixel (camera below → toCamera = up,
-        // light below → lightDir = down) gets biasDir = up, pushing the ray
-        // origin INTO the solid structure above the ceiling.  The ray
-        // immediately self-intersects the ceiling face and the tile appears
-        // falsely shadowed — producing the stable dark-square artifact.
+        // on different surfaces. Camera-facing is the most stable fallback for
+        // visible geometry.
         biasDir = toCamera;
-        if ( dot(biasDir, lightDir) < 0.0 ) biasDir = -biasDir;
         gotSurfaceNormal = false;
     }
 
-    // Adaptive bias: scale up when the surface is at a grazing angle to the
-    // light (the ray travels mostly parallel to the surface, so a fixed normal
-    // offset provides less separation in the ray direction).
-    // nDotL is floored at 0.2 (≈78° grazing) to cap the factor at 5×.
-    float nDotL       = max( 0.2, dot( biasDir, lightDir ) );
-    float adaptBias   = tMin / nDotL;
+    // Adaptive bias: scale up when light is nearly tangent to the surface.
+    // Use abs(dot) for stability so tiny sign changes around 0 don't flip the
+    // bias factor frame-to-frame.
+    float nDotL       = max( 0.2, abs(dot( biasDir, lightDir )) );
+    float adaptBias   = baseBias / nDotL;
+
+    // Keep the biased origin in front of the light so the ray segment only
+    // covers [surface, light]. Overshooting the light creates false occlusion
+    // from geometry behind the light and appears as black bars/lines.
+    adaptBias = min( adaptBias, max(dist - 0.01, 0.0) );
     vec3 rayOrigin = worldPos + biasDir * adaptBias;
+
+    float tMax = dist - adaptBias;
+    if ( tMax <= 0.0 ) {
+        imageStore( shadowMask, coord, vec4(1.0) );
+        return;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Debug mode 5: raw nDotL (before max(0.2,...) clamp).
+    // Dark pixels = surface nearly perpendicular to the light = highest self-shadow
+    // risk.  Useful for catching shadow stripe regressions — stripes on a dark
+    // surface here confirm the bias is failing at grazing angles.
+    // ---------------------------------------------------------------------------
+    if ( params.debugMode == 5 ) {
+        float rawNDotL = abs( dot( biasDir, lightDir ) );
+        imageStore( shadowMask, coord, vec4( rawNDotL ) );
+        return;
+    }
 
     // ---------------------------------------------------------------------------
     // Fix 1 — world-anchored seed
@@ -314,11 +325,11 @@ void main() {
     float shadow = 1.0 - (occluded / float(N));
 
     // ---------------------------------------------------------------------------
-    // Debug visualisation (r_rtShadowDebugMode)
-    //   Writes a diagnostic value to the shadow mask instead of the real shadow.
+    // Debug visualisation (r_rtShadowDebugMode) — modes 1-3 run post-trace.
     //   1 = biasDir.y  (horizontal surface = 1.0, vertical wall = ~0.5, inverted = 0.0)
     //   2 = gotSurfaceNormal  (white = reconstructed from depth, black = camera fallback)
     //   3 = dot(biasDir, lightDir) mapped to [0,1]  (white = bias aligned with light)
+    // Modes 4-6 (pre-trace) already returned above.
     // ---------------------------------------------------------------------------
     if ( params.debugMode != 0 ) {
         float dbg;
