@@ -30,10 +30,10 @@ struct MaterialEntry {
     uint  normalTexIndex;   // index into matTextures[] (1 = flat normal fallback)
     float roughness;        // GGX roughness [0,1]
     uint  flags;            // MAT_FLAG_*
-    uint  vtxBufInstance;   // index into VtxAddrTable
-    uint  idxBufInstance;   // index into IdxAddrTable
+    uint  baseGeomIdx;      // offset into per-geometry VtxAddrTable/IdxAddrTable
     float alphaThreshold;   // alpha discard threshold (MAT_FLAG_ALPHA_TESTED)
-    uint  pad;
+    uint  pad0;
+    uint  pad1;
 };
 
 #define MAT_FLAG_ALPHA_TESTED 0x01u
@@ -91,19 +91,11 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
 {
     MaterialEntry mat = materials[matIdx];
 
-    // Guard: the address table stores only surface 0's geometry per TLAS instance.
-    // For multi-geometry BLASes, hits on surface 1+ have a gl_GeometryIndexEXT > 0
-    // and a gl_PrimitiveID local to that surface — indexing surface 0's buffers with
-    // that primId would be an out-of-bounds GPU access.  Skip the lookup until the
-    // address table is refactored to be per-geometry.
-    // TODO: refactor vtxAddrs/idxAddrs to be indexed by baseGeomIdx + gl_GeometryIndexEXT
-    if (gl_GeometryIndexEXT != 0)
-        return vec2(0.0);
-
-    // Guard: if the buffer addresses are null (uninitialised material entry or address
-    // table not yet uploaded) dereferencing via buffer_reference crashes the GPU.
-    uint64_t idxAddr = idxAddrs[mat.idxBufInstance];
-    uint64_t vtxAddr = vtxAddrs[mat.vtxBufInstance];
+    // Index into the flat per-geometry address tables using the per-instance
+    // baseGeomIdx plus the geometry index within this BLAS that was hit.
+    uint geomSlot    = mat.baseGeomIdx + uint(gl_GeometryIndexEXT);
+    uint64_t idxAddr = idxAddrs[geomSlot];
+    uint64_t vtxAddr = vtxAddrs[geomSlot];
     if (idxAddr == 0ul || vtxAddr == 0ul)
         return vec2(0.0);
 

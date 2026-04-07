@@ -112,7 +112,6 @@ extern vkState_t vk;
 
 // Latches vk.deviceLost and logs the first call site that observed it.
 
-
 const char *VK_ResultToString(VkResult r);
 
 // ---------------------------------------------------------------------------
@@ -146,6 +145,13 @@ struct vkPipelines_t
     VkPipeline guiOpaquePipeline; // blend disabled (opaque stages)
     VkPipeline guiAlphaPipeline;  // SRC_ALPHA / ONE_MINUS_SRC_ALPHA
     VkPipeline skyboxPipeline;    // samplerCube skybox path (TG_SKYBOX_CUBE)
+
+    // Glass RT-reflection overlay pipeline.
+    // Drawn additively over MC_TRANSLUCENT surfaces to add ray-traced reflections.
+    // Descriptor: binding0=GuiParams UBO (screen dims in texGenS.xy), binding1=reflBuffer sampler.
+    VkDescriptorSetLayout glassReflDescLayout;
+    VkPipelineLayout      glassReflLayout;
+    VkPipeline            glassReflPipeline;
 
     // Fog light pipeline (FogAllLights pass)
     // Shared descriptor layout: binding0=UBO, binding1=samp0, binding2=samp1

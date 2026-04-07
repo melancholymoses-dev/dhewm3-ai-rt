@@ -50,7 +50,8 @@ extern PFN_vkGetBufferDeviceAddressKHR pfn_vkGetBufferDeviceAddressKHR;
 // Material table constants and types (Phase 5.4)
 // ---------------------------------------------------------------------------
 
-static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
+static const uint32_t VK_MAT_MAX_TEXTURES = 4096;  // max bindless texture slots
+static const uint32_t VK_MAT_MAX_GEOMS    = 16384; // max total geometry slots across all BLAS instances
 
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
 #define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
@@ -65,10 +66,10 @@ struct VkMaterialEntry
     uint32_t normalTexIndex;  // index into bindless texture array (0 = flat normal)
     float roughness;          // GGX roughness [0,1]; default 1.0 (fully diffuse)
     uint32_t flags;           // VK_MAT_FLAG_*
-    uint32_t vtxBufInstance;  // = instanceCustomIndex → VtxAddrTable[vtxBufInstance]
-    uint32_t idxBufInstance;  // = instanceCustomIndex → IdxAddrTable[idxBufInstance]
+    uint32_t baseGeomIdx;     // offset into per-geometry VtxAddrTable/IdxAddrTable
     float alphaThreshold;     // alpha test cutoff (MC_PERFORATED); default 0.5
-    uint32_t pad;
+    uint32_t pad0;
+    uint32_t pad1;
 };
 static_assert(sizeof(VkMaterialEntry) == 32, "VkMaterialEntry size mismatch");
 
@@ -461,21 +462,27 @@ void VK_RT_InitMaterialTable(void);
 void VK_RT_ShutdownMaterialTable(void);
 
 // Build a VkMaterialEntry for one TLAS instance.
-// shader: the representative idMaterial for this instance (may be NULL — returns defaults).
-// blas:   the BLAS built for this entity; used to retrieve geomVertAddrs[0]/geomIdxAddrs[0].
-// instanceIndex: the gl_InstanceCustomIndexEXT that will be assigned to this instance.
-// outVtxAddr / outIdxAddr: receive the device address of surface-0 vertex/index data.
+// shader:      the representative idMaterial for this instance (may be NULL — returns defaults).
+// blas:        the BLAS built for this entity; all per-geometry addresses are written.
+// baseGeomIdx: starting offset in the flat geomVtxAddrs/geomIdxAddrs arrays.
+// outGeomVtxAddrs / outGeomIdxAddrs: flat arrays of VK_MAT_MAX_GEOMS entries; this call
+//     writes blas->geomCount addresses starting at baseGeomIdx.
 // NOTE: internally assigns bindless texture slots; call once per instance per frame.
-VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas, uint32_t instanceIndex,
-                                        uint64_t *outVtxAddr, uint64_t *outIdxAddr);
+VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t *blas, uint32_t baseGeomIdx,
+                                        uint64_t *outGeomVtxAddrs, uint64_t *outGeomIdxAddrs);
 
 // Upload the frame's material entries and address tables to the GPU SSBOs.
 // Mirrors the static/dynamic split of VK_RT_RebuildTLAS.
 // When rewriteStatic == false the static portion of the SSBO is left unchanged.
+// staticGeomVtx/Idx: addresses for static geometries (local offsets [0..staticGeomCount-1]).
+// dynGeomVtx/Idx:    addresses for dynamic geometries (local offsets [0..dynamicGeomCount-1]).
+// GPU-side flat SSBO layout: static block at [0..sGC-1], dynamic block at [sGC..sGC+dGC-1].
 // Also rebuilds the bindless texture descriptors if new images were encountered.
 // Called from vk_accelstruct.cpp at the end of VK_RT_RebuildTLAS.
-void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t staticCount, bool rewriteStatic,
-                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount, const uint64_t *staticVtx,
-                               const uint64_t *staticIdx, const uint64_t *dynamicVtx, const uint64_t *dynamicIdx);
+void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries,  uint32_t staticCount,  bool rewriteStatic,
+                               const VkMaterialEntry *dynamicEntries, uint32_t dynamicCount,
+                               const uint64_t *staticGeomVtx, const uint64_t *staticGeomIdx, uint32_t staticGeomCount,
+                               const uint64_t *dynGeomVtx,    const uint64_t *dynGeomIdx,    uint32_t dynamicGeomCount,
+                               bool rewriteStaticGeoms);
 
 #endif // __VK_RAYTRACING_H__
