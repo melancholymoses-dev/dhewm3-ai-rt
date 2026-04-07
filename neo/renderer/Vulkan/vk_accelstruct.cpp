@@ -589,6 +589,30 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         const srfTriangles_t *geo = surf->geometry;
         if (geo->numVerts == 0 || geo->numIndexes == 0)
             continue;
+
+        // Exclude surface types that must not be TLAS occluders:
+        //
+        //  MF_POLYGONOFFSET  — decals coplanar with the surface beneath them.
+        //    Including them causes AO/shadow rays from nearby pixels to
+        //    immediately hit the decal quad → black squares matching decal bounds.
+        //
+        //  MF_NOSHADOWS  — material explicitly opts out of shadow casting.
+        //    Particles, flares, and some translucent surfaces carry this flag.
+        //
+        //  DFRM_PARTICLE / DFRM_PARTICLE2 / DFRM_SPRITE / DFRM_FLARE  — soft
+        //    particles and sprites are view-facing billboards with no physical
+        //    thickness; including them adds spurious AO and shadow blockers.
+        if (surf->shader)
+        {
+            if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
+                continue;
+            if (surf->shader->TestMaterialFlag(MF_NOSHADOWS))
+                continue;
+            const deform_t def = surf->shader->Deform();
+            if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 ||
+                def == DFRM_SPRITE   || def == DFRM_FLARE)
+                continue;
+        }
         VkBuffer gpuVertBuf = VK_NULL_HANDLE, gpuIdxBuf = VK_NULL_HANDLE;
         VkDeviceSize gpuVertOff = 0, gpuIdxOff = 0;
         const bool haveGpuVerts =

@@ -89,8 +89,9 @@ static idCVar r_rtShadowPlayerExcludeDist(
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
-    "0=normal, 1=biasDir.y (floor=white wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
-    "3=dot(biasDir,lightDir) mapped 0..1");
+    "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
+    "3=dot(biasDir,lightDir) mapped 0..1; "
+    "4=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), ");
 
 extern idCVar r_vkRTLogCaptureReset;
 
@@ -432,11 +433,11 @@ static void VK_RT_InitBlurPipeline(void)
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.blurDescLayout));
 
-    // --- Push constant: direction (int) + radius (int) + 2 floats pad ---
+    // --- Push constant: blur params + dispatch rect ---
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 16; // 2 ints + 2 floats pad = 16 bytes
+    pushRange.size = 32; // 2 ints + 2 floats + 2 ivec2 = 32 bytes
 
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -703,6 +704,32 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
                          idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
             idMat4 invVP = vpMat.Inverse();
+
+            // Validate the inverse: a near-singular view-projection produces corrupt world positions
+            // in the ray shader, causing garbage normals and unreliable bias — leading to stripe
+            // artifacts.  Check the Frobenius norm; a well-conditioned game camera is typically < 1e3.
+            {
+                const float *m = invVP.ToFloatPtr();
+                float norm2 = 0.0f;
+                bool hasNonFinite = false;
+                for (int i = 0; i < 16; i++)
+                {
+                    if (!isfinite(m[i]))
+                    {
+                        hasNonFinite = true;
+                        break;
+                    }
+                    norm2 += m[i] * m[i];
+                }
+                float frob = idMath::Sqrt(norm2);
+                if (hasNonFinite || frob > 1e5f)
+                    common->Warning("VK RT Shadow: invViewProj %s (Frobenius norm=%.3g) — world-pos reconstruction "
+                                    "will be corrupt; expect shadow stripe artifacts",
+                                    hasNonFinite ? "contains NaN/Inf" : "is near-singular", (double)frob);
+                else if (r_vkLogRT.GetInteger() >= 2)
+                    common->Printf("VK RT Shadow: invViewProj Frobenius norm=%.3g\n", (double)frob);
+            }
+
             memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
         }
 
@@ -843,8 +870,8 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         if (blurRadius > 8)
             blurRadius = 8;
 
-        uint32_t groupsX = (sm.width + 7) / 8;
-        uint32_t groupsY = (sm.height + 7) / 8;
+        uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+        uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
 
         // Barrier: RT write → compute read
         VkMemoryBarrier barrier = {};
@@ -925,12 +952,20 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             int radius;
             float pad0;
             float pad1;
+            int scissorOffsetX;
+            int scissorOffsetY;
+            int scissorExtentX;
+            int scissorExtentY;
         } pc;
         pc.direction = 0;
         pc.radius = blurRadius;
         pc.pad0 = Max(0.0f, r_rtShadowBlurDepthThreshold.GetFloat());
         pc.pad1 = r_rtShadowBlurDepthAware.GetBool() ? 1.0f : 0.0f;
-        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
+        pc.scissorOffsetX = (int)dispatchRect.offset.x;
+        pc.scissorOffsetY = (int)dispatchRect.offset.y;
+        pc.scissorExtentX = (int)dispatchRect.extent.width;
+        pc.scissorExtentY = (int)dispatchRect.extent.height;
+        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetH, 0, NULL);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
@@ -942,7 +977,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 
         // Push constants: direction=1 (vertical), same radius
         pc.direction = 1;
-        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, &pc);
+        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetV, 0, NULL);
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
