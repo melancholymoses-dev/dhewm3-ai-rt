@@ -82,7 +82,7 @@ void main()
     traceRayEXT(
         topLevelAS,
         gl_RayFlagsCullOpaqueEXT,
-        0xFF,
+        0xFE,           // exclude player instances (mask bit 0) — player is never glass
         1,              // SBT hit offset 1: second entry in hit region = glass_probe.rchit
         0,              // SBT stride 0: ALL geometries use the same hit group (no per-geom offset)
         1,              // miss index 1: second entry in miss region = glass_probe.rmiss
