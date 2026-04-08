@@ -1,0 +1,73 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — glass_probe.rahit — any-hit shader for the glass probe ray.
+
+The probe is fired from the camera with gl_RayFlagsCullOpaqueEXT so only
+non-opaque geometry is tested.  This shader's sole job is alpha-testing:
+skip intersections at transparent texels on perforated surfaces so the probe
+continues through holes (grates, fences) until it finds actual glass.
+
+Glass surfaces (MAT_FLAG_GLASS) are accepted here; glass_probe.rchit then
+records the hit position and normal.
+
+This shader is intentionally separate from reflect_ray.rahit so the two ray
+types can diverge independently without shared-shader hacks.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
+
+It is distributed under the same modified GNU General Public License Version 3
+of the original Doom 3 GPL Source Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing                              : require
+#extension GL_EXT_buffer_reference                         : require
+#extension GL_EXT_buffer_reference2                        : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
+#extension GL_EXT_nonuniform_qualifier                     : enable
+
+#include "rt_material.glsl"
+#include "glass_probe_payload.glsl"
+
+layout(location = 1) rayPayloadInEXT GlassProbePayload glassProbe;
+hitAttributeEXT vec2 baryCoord;
+
+void main()
+{
+    uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
+
+    if (matIdx >= uint(materials.length()))
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
+    MaterialEntry mat = materials[matIdx];
+
+    // Player body geometry — always ignore so the probe passes straight through
+    // the player model to find glass behind it.  Opaque player parts are already
+    // culled by gl_RayFlagsCullOpaqueEXT; this catches any non-opaque player surfaces.
+    if ((mat.flags & MAT_FLAG_PLAYER_BODY) != 0u)
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
+    if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
+    {
+        // Perforated surface — test alpha so the probe passes through holes.
+        vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoord);
+        float alpha = texture(matTextures[nonuniformEXT(mat.diffuseTexIndex)], uv).a;
+        if (alpha < mat.alphaThreshold)
+        {
+            ignoreIntersectionEXT;
+            return;
+        }
+    }
+
+    // Glass or any other non-opaque surface: accept and let glass_probe.rchit decide.
+}

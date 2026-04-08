@@ -1168,7 +1168,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // exclude them (e.g. when the player is directly under a light).
         // World geometry keeps all bits set (0xFF) so it is always intersected.
         inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
-        inst.instanceShaderBindingTableRecordOffset = 0;
+        // Player body uses SBT offset 2 → player_reflect.rchit (main) and placeholder (probe, never fires).
+        // World geometry uses offset 0 → reflect_ray.rchit (main) and glass_probe.rchit (probe).
+        inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
