@@ -14,12 +14,20 @@ of the original Doom 3 GPL Source Code release.
 #extension GL_EXT_ray_tracing : require
 
 // ao_ray.rahit — AO any-hit shader
-// Geometry was hit within aoRadius: the direction is occluded.
-// Terminates immediately (no alpha-test; same as shadow any-hit).
+//
+// The AO rgen fires rays with gl_RayFlagsTerminateOnFirstHitEXT.
+// Opaque geometry (VK_GEOMETRY_OPAQUE_BIT_KHR) never reaches this shader — the
+// driver terminates the ray immediately, making opaque surfaces AO occluders.
+//
+// Only non-opaque geometry (MC_TRANSLUCENT steam/glass, MC_PERFORATED alpha-tested)
+// reaches here.  We ignore all such hits so translucent steam does not cast blocky
+// AO shadow blobs.  Perforated grates become fully transparent to AO rays as a
+// minor trade-off; this can be improved later by adding material-table lookup if
+// the AO descriptor set is extended.
 layout(location = 0) rayPayloadInEXT float aoPayload;
 
 void main()
 {
-    aoPayload = 0.0; // occluded
-    terminateRayEXT;
+    // All non-opaque hits are transparent to AO rays.
+    ignoreIntersectionEXT;
 }

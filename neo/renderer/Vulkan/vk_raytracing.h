@@ -54,9 +54,10 @@ static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
 static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots across all BLAS instances
 
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
-#define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
-#define VK_MAT_FLAG_TWO_SIDED 0x02u    // CT_TWO_SIDED — no back-face cull
-#define VK_MAT_FLAG_GLASS 0x04u        // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
+#define VK_MAT_FLAG_ALPHA_TESTED 0x01u  // MC_PERFORATED — alpha discard in any-hit
+#define VK_MAT_FLAG_TWO_SIDED 0x02u     // CT_TWO_SIDED — no back-face cull
+#define VK_MAT_FLAG_GLASS 0x04u         // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
+#define VK_MAT_FLAG_PLAYER_BODY 0x08u   // noSelfShadow entity — routed to player_reflect hit group
 
 // One entry per BLAS geometry slot.  Indexed by
 //   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
