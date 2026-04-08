@@ -1203,6 +1203,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                                                            s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
                         // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
                         matEntry.baseGeomIdx = base + g;
+                        // Tag player/weapon geometry so glass_probe.rahit can skip it.
+                        if (ent->parms.noSelfShadow)
+                            matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                         dynamicMatEntries[base + g] = matEntry;
                         // Write the per-geometry vertex/index address directly.
                         if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
@@ -1236,6 +1239,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                                                            s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
                         // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
                         matEntry.baseGeomIdx = base + g;
+                        // Tag player/weapon geometry so glass_probe.rahit can skip it.
+                        if (ent->parms.noSelfShadow)
+                            matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                         staticMatEntries[base + g] = matEntry;
                         // Write the per-geometry vertex/index address directly.
                         if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
@@ -1871,6 +1877,9 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &sm.blurTempView));
 
         // Transition both images to GENERAL layout for storage image use
+        char rtShadowInitTag[128];
+        idStr::snPrintf(rtShadowInitTag, sizeof(rtShadowInitTag), "RT shadow images init %ux%u", width, height);
+        VK_TagPendingUploadOp(rtShadowInitTag);
         VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
         VK_TransitionImageLayout(cmd, sm.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                                  VK_IMAGE_ASPECT_COLOR_BIT);

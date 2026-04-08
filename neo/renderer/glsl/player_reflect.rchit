@@ -50,7 +50,7 @@ hitAttributeEXT vec2 baryCoord;
 // treated as pass-through (transmittance = 1.0) to prevent self-occlusion
 // blotches in floor / adjacent-surface reflections.
 // Value should exceed the player's bounding height (~56 units in Doom3 scale).
-const float PLAYER_REFLECT_SKIP_DIST = 20.0;
+const float PLAYER_REFLECT_SKIP_DIST = 10.0;
 
 void main()
 {
