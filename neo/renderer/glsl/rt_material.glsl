@@ -36,9 +36,10 @@ struct MaterialEntry {
     uint  pad1;
 };
 
-#define MAT_FLAG_ALPHA_TESTED 0x01u
-#define MAT_FLAG_TWO_SIDED    0x02u
-#define MAT_FLAG_GLASS        0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
+#define MAT_FLAG_ALPHA_TESTED  0x01u
+#define MAT_FLAG_TWO_SIDED     0x02u
+#define MAT_FLAG_GLASS         0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
+#define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
 
 // ---------------------------------------------------------------------------
 // set=1 bindings
