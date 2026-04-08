@@ -760,6 +760,11 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             updateInfo.dstAccelerationStructure = prevBlas->handle;
             updateInfo.geometryCount = (uint32_t)validCount;
             updateInfo.pGeometries = updateGeoms;
+            // Guard: if scratchBuf is null (shouldn't happen, but .e.g. after a partial
+            // shutdown or device-lost recovery) fall through to a full rebuild below
+            // rather than passing address 0 to the GPU (which would cause a page fault).
+            if (prevBlas->scratchBuf == VK_NULL_HANDLE)
+                goto fullRebuild;
             updateInfo.scratchData.deviceAddress = GetBufferDeviceAddress(prevBlas->scratchBuf);
 
             const VkAccelerationStructureBuildRangeInfoKHR *pRanges = updateRanges;
@@ -770,6 +775,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         }
     }
 
+fullRebuild:
     vkBLAS_t *blas = new vkBLAS_t();
     blas->handle = VK_NULL_HANDLE;
     blas->buffer = VK_NULL_HANDLE;
@@ -1597,18 +1603,19 @@ void VK_RT_BeginLevelLoad(void)
     // TLAS binding on the first rendered frame of the new level.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkRT.shadowDescSetLastUpdatedFrameCount[i]   = -1;
-        vkRT.aoDescSetLastUpdatedFrameCount[i]        = -1;
-        vkRT.reflDescSetLastUpdatedFrameCount[i]      = -1;
-        vkRT.blurDescSetLastUpdatedFrameCount[i]      = -1;
-        vkRT.temporalDescSetLastUpdatedFrameCount[i]  = -1;
-        vkRT.atrousDescSetLastUpdatedFrameCount[i]    = -1;
+        vkRT.shadowDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.aoDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.reflDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.blurDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.temporalDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.atrousDescSetLastUpdatedFrameCount[i] = -1;
         // Temporal history from the old level is meaningless for the new one.
         vkRT.aoHistoryValid[i] = false;
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n", s_modelBLASCacheCount);
+        common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n",
+                       s_modelBLASCacheCount);
     // s_modelBLASCacheCount was already reset to 0 by VK_RT_ModelBLASCacheClear() above.
 }
 
