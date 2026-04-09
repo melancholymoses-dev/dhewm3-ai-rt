@@ -71,7 +71,7 @@ struct VkMaterialEntry
     uint32_t flags;           // VK_MAT_FLAG_*
     uint32_t baseGeomIdx;     // offset into per-geometry VtxAddrTable/IdxAddrTable
     float alphaThreshold;     // alpha test cutoff (MC_PERFORATED); default 0.5
-    uint32_t pad0;
+    uint32_t maxVertex; // numVerts-1 for this geometry; used for bounds check in rt_InterpolateUV
     uint32_t pad1;
 };
 static_assert(sizeof(VkMaterialEntry) == 32, "VkMaterialEntry size mismatch");

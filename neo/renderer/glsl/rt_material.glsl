@@ -32,7 +32,7 @@ struct MaterialEntry {
     uint  flags;            // MAT_FLAG_*
     uint  baseGeomIdx;      // offset into per-geometry VtxAddrTable/IdxAddrTable
     float alphaThreshold;   // alpha discard threshold (MAT_FLAG_ALPHA_TESTED)
-    uint  pad0;
+    uint  maxVertex;        // numVerts-1 for this geometry; 0xFFFFFFFF = no check
     uint  pad1;
 };
 
@@ -111,6 +111,12 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
     uint i0 = iBuf.idx[base + 0u];
     uint i1 = iBuf.idx[base + 1u];
     uint i2 = iBuf.idx[base + 2u];
+
+    // Guard against stale index-buffer addresses (dynamic geometry ring buffer).
+    // maxVertex = numVerts-1 at BLAS build time; 0xFFFFFFFF = no check.
+    uint maxVtx = mat.maxVertex;
+    if (maxVtx != 0xFFFFFFFFu && (i0 > maxVtx || i1 > maxVtx || i2 > maxVtx))
+        return vec2(0.0);
 
     vec2 uv0 = vec2(vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_UV_OFF],
                     vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_UV_OFF + 1u]);

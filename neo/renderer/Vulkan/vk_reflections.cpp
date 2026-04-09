@@ -48,7 +48,7 @@ static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RE
 idCVar r_rtReflDebug("r_rtReflDebug", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_INTEGER,
                      "Debug: force reflection weight to 1.0 on all surfaces to verify buffer has data.");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.1", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection contribution in the interaction shader.\n"
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
