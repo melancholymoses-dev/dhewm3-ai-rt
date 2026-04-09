@@ -53,6 +53,34 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.1", CVAR_RENDERER | 
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
 
+static idCVar r_rtReflectionsSkipTrace(
+    "r_rtReflectionsSkipTrace", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: skip vkCmdTraceRaysKHR in VK_RT_DispatchReflections to isolate reflection trace crashes.");
+static idCVar r_rtReflectionsForceMiss(
+    "r_rtReflectionsForceMiss", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: force reflection rays to miss (cullMask=0) to isolate hit-shader/material-table crashes.");
+static idCVar r_rtReflectionsNoHitData(
+    "r_rtReflectionsNoHitData", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: keep reflection hits enabled but bypass hit-shader material/UV/alpha fetches.");
+static idCVar r_rtReflectionsNoChitData(
+    "r_rtReflectionsNoChitData", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: bypass data access in reflect_ray.rchit only (rahit still does alpha-test).");
+static idCVar r_rtReflectionsNoRahitData(
+    "r_rtReflectionsNoRahitData", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: bypass alpha-test data access in reflect_ray.rahit only (rchit still samples diffuse).");
+static idCVar r_rtReflectionsNoGlassData(
+    "r_rtReflectionsNoGlassData", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: in rchit skip rt_SampleDiffuse for glass surfaces only; opaque still samples.");
+
+enum ReflDebugFlags
+{
+    REFL_DEBUG_FORCE_MISS = 1 << 0,
+    REFL_DEBUG_NO_HITDATA = 1 << 1,    // both rchit + rahit skip all data
+    REFL_DEBUG_NO_CHIT_DATA = 1 << 2,  // rchit only skips data; rahit still alpha-tests
+    REFL_DEBUG_NO_RAHIT_DATA = 1 << 3, // rahit only skips alpha-test; rchit still samples
+    REFL_DEBUG_NO_GLASS_DATA = 1 << 4, // rchit skips glass branch data only
+};
+
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
 //
@@ -61,7 +89,8 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.1", CVAR_RENDERER | 
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
-//   pad                   offset 84  size  12
+//   uint   debugFlags    offset 84  size  4  (bit0: force-miss rays, bit1: no-hitdata)
+//   pad                   offset 88  size  8
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
@@ -73,7 +102,8 @@ struct ReflParamsUBO
     int32_t screenWidth;
     int32_t screenHeight;
     float reflBlend; // r_rtReflectionBlend — baked into imageStore in rgen
-    float pad[3];
+    uint32_t debugFlags;
+    float pad[2];
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -724,10 +754,45 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenWidth = (int32_t)rb.width;
     ubo.screenHeight = (int32_t)rb.height;
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
+    ubo.debugFlags = 0u;
+    if (r_rtReflectionsForceMiss.GetInteger() != 0)
+        ubo.debugFlags |= REFL_DEBUG_FORCE_MISS;
+    if (r_rtReflectionsNoHitData.GetInteger() != 0)
+        ubo.debugFlags |= REFL_DEBUG_NO_HITDATA;
+    if (r_rtReflectionsNoChitData.GetInteger() != 0)
+        ubo.debugFlags |= REFL_DEBUG_NO_CHIT_DATA;
+    if (r_rtReflectionsNoRahitData.GetInteger() != 0)
+        ubo.debugFlags |= REFL_DEBUG_NO_RAHIT_DATA;
+    if (r_rtReflectionsNoGlassData.GetInteger() != 0)
+        ubo.debugFlags |= REFL_DEBUG_NO_GLASS_DATA;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
-    // --- Update descriptor set (once per frame slot when frameCount changes) ---
-    bool refreshSet = (vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
+    if ((ubo.debugFlags & REFL_DEBUG_FORCE_MISS) != 0u && r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl: force-miss mode enabled (r_rtReflectionsForceMiss=1)\n");
+    if ((ubo.debugFlags & REFL_DEBUG_NO_HITDATA) != 0u && r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl: no-hitdata mode enabled (r_rtReflectionsNoHitData=1)\n");
+
+    // --- Update descriptor set (once per frame slot when frameCount changes).
+    // Also force refresh when bound resources changed inside the same frame to
+    // avoid stale cached descriptors after RT resource churn.
+    static VkAccelerationStructureKHR s_lastReflTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    const bool reflResourceChanged = (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+                                     (s_lastReflStorageView[frameIdx] != rb.view) ||
+                                     (s_lastReflDepthView[frameIdx] != vk.depthSampledView);
+
+    if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
+        r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK RT Refl: forcing descriptor refresh due to in-frame resource change frame=%d slot=%d "
+                       "tlas=%p reflView=%p depthView=%p\n",
+                       tr.frameCount, frameIdx, (void *)vkRT.tlas[frameIdx].handle, (void *)rb.view,
+                       (void *)vk.depthSampledView);
+    }
+
+    bool refreshSet = (vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || reflResourceChanged;
     if (refreshSet)
     {
         VkDescriptorSet ds = vkRT.reflDescSets[frameIdx];
@@ -783,6 +848,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
+        s_lastReflStorageView[frameIdx] = rb.view;
+        s_lastReflDepthView[frameIdx] = vk.depthSampledView;
     }
 
     // --- Dispatch ---
@@ -796,17 +864,26 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Refl: dispatch %ux%u maxDist=%.1f\n", rb.width, rb.height, ubo.maxDist);
 
-    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
-                      rb.width, rb.height, 1);
-
-    // --- Barrier: reflection write → fragment shader read ---
+    const bool skipTrace = (r_rtReflectionsSkipTrace.GetInteger() != 0);
+    if (skipTrace)
     {
-        VkMemoryBarrier memBarrier = {};
-        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                             0, 1, &memBarrier, 0, NULL, 0, NULL);
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Refl: skipping traceRaysKHR (r_rtReflectionsSkipTrace=1)\n");
+    }
+    else
+    {
+        vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
+                          rb.width, rb.height, 1);
+
+        // --- Barrier: reflection write -> fragment shader read ---
+        {
+            VkMemoryBarrier memBarrier = {};
+            memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &memBarrier, 0, NULL, 0, NULL);
+        }
     }
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---

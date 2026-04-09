@@ -83,6 +83,10 @@ struct vkRTBlasBuildStats_t
 
 static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1};
 
+static idCVar r_vkRTReflDataDiag(
+    "r_vkRTReflDataDiag", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Reflection hit-data diagnostics: 0=off, 1=per-frame summary, 2=summary + first suspicious slots");
+
 static const int VK_RT_MAX_TLAS_INSTANCES = 4096;
 
 struct vkRTStaticInstanceCache_t
@@ -1405,6 +1409,86 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         dynamicGeomCount = VK_MAT_MAX_GEOMS - staticGeomCount;
     }
 
+    // Reflection hit-data diagnostics: validate material/address tables before upload.
+    if (r_vkRTReflDataDiag.GetInteger() > 0)
+    {
+        int badAddrCount = 0;
+        int badTexCount = 0;
+        int badBaseCount = 0;
+        int alphaNoDiffuseCount = 0;
+        int glassCount = 0;
+        int playerCount = 0;
+        int loggedBad = 0;
+
+        auto logBadSlot = [&](const char *bucket, uint32_t localIdx, uint32_t expectedBase,
+                              const VkMaterialEntry &entry, uint64_t vtxAddr, uint64_t idxAddr, bool badAddr,
+                              bool badTex, bool badBase) {
+            if (r_vkRTReflDataDiag.GetInteger() < 2 || loggedBad >= 16)
+                return;
+            common->Printf(
+                "VK RT ReflData BAD: frame=%d %s local=%u expectedBase=%u base=%u flags=0x%X diff=%u norm=%u "
+                "alpha=%.3f vtx=0x%llx idx=0x%llx bad(addr=%d tex=%d base=%d)\n",
+                tr.frameCount, bucket, localIdx, expectedBase, entry.baseGeomIdx, (unsigned int)entry.flags,
+                entry.diffuseTexIndex, entry.normalTexIndex, entry.alphaThreshold, (unsigned long long)vtxAddr,
+                (unsigned long long)idxAddr, badAddr ? 1 : 0, badTex ? 1 : 0, badBase ? 1 : 0);
+            loggedBad++;
+        };
+
+        for (uint32_t i = 0; i < staticGeomCount; i++)
+        {
+            const VkMaterialEntry &entry = staticMatEntries[i];
+            const uint64_t vtxAddr = s_staticGeomVtxAddrs[i];
+            const uint64_t idxAddr = s_staticGeomIdxAddrs[i];
+            const bool badAddr = (vtxAddr == 0 || idxAddr == 0);
+            const bool badTex =
+                (entry.diffuseTexIndex >= VK_MAT_MAX_TEXTURES || entry.normalTexIndex >= VK_MAT_MAX_TEXTURES);
+            const bool badBase = (entry.baseGeomIdx != i);
+
+            badAddrCount += badAddr ? 1 : 0;
+            badTexCount += badTex ? 1 : 0;
+            badBaseCount += badBase ? 1 : 0;
+            if ((entry.flags & VK_MAT_FLAG_ALPHA_TESTED) != 0 && entry.diffuseTexIndex == 0)
+                alphaNoDiffuseCount++;
+            if ((entry.flags & VK_MAT_FLAG_GLASS) != 0)
+                glassCount++;
+            if ((entry.flags & VK_MAT_FLAG_PLAYER_BODY) != 0)
+                playerCount++;
+
+            if (badAddr || badTex || badBase)
+                logBadSlot("static", i, i, entry, vtxAddr, idxAddr, badAddr, badTex, badBase);
+        }
+
+        for (uint32_t i = 0; i < dynamicGeomCount; i++)
+        {
+            const VkMaterialEntry &entry = dynamicMatEntries[i];
+            const uint64_t vtxAddr = s_dynGeomVtxAddrs[i];
+            const uint64_t idxAddr = s_dynGeomIdxAddrs[i];
+            const uint32_t expectedBase = staticGeomCount + i;
+            const bool badAddr = (vtxAddr == 0 || idxAddr == 0);
+            const bool badTex =
+                (entry.diffuseTexIndex >= VK_MAT_MAX_TEXTURES || entry.normalTexIndex >= VK_MAT_MAX_TEXTURES);
+            const bool badBase = (entry.baseGeomIdx != expectedBase);
+
+            badAddrCount += badAddr ? 1 : 0;
+            badTexCount += badTex ? 1 : 0;
+            badBaseCount += badBase ? 1 : 0;
+            if ((entry.flags & VK_MAT_FLAG_ALPHA_TESTED) != 0 && entry.diffuseTexIndex == 0)
+                alphaNoDiffuseCount++;
+            if ((entry.flags & VK_MAT_FLAG_GLASS) != 0)
+                glassCount++;
+            if ((entry.flags & VK_MAT_FLAG_PLAYER_BODY) != 0)
+                playerCount++;
+
+            if (badAddr || badTex || badBase)
+                logBadSlot("dynamic", i, expectedBase, entry, vtxAddr, idxAddr, badAddr, badTex, badBase);
+        }
+
+        common->Printf("VK RT ReflData: frame=%d static=%u dynamic=%u total=%u badAddr=%d badTex=%d badBase=%d "
+                       "alphaNoDiffuse=%d glass=%d player=%d\n",
+                       tr.frameCount, staticGeomCount, dynamicGeomCount, staticGeomCount + dynamicGeomCount,
+                       badAddrCount, badTexCount, badBaseCount, alphaNoDiffuseCount, glassCount, playerCount);
+    }
+
     // Upload material table entries: one entry per geometry slot (not per instance).
     VK_RT_UploadMatTableFrame(staticMatEntries, staticGeomCount, rewriteStatic, dynamicMatEntries, dynamicGeomCount,
                               s_staticGeomVtxAddrs, s_staticGeomIdxAddrs, staticGeomCount, s_dynGeomVtxAddrs,
@@ -1877,9 +1961,6 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &sm.blurTempView));
 
         // Transition both images to GENERAL layout for storage image use
-        char rtShadowInitTag[128];
-        idStr::snPrintf(rtShadowInitTag, sizeof(rtShadowInitTag), "RT shadow images init %ux%u", width, height);
-        VK_TagPendingUploadOp(rtShadowInitTag);
         VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
         VK_TransitionImageLayout(cmd, sm.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                                  VK_IMAGE_ASPECT_COLOR_BIT);
