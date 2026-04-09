@@ -59,6 +59,12 @@ void main()
     MaterialEntry mat = materials[matIdx];
     // geomSlot == matIdx because each entry's baseGeomIdx equals its own index.
     uint geomSlot     = mat.baseGeomIdx;
+    if (geomSlot >= uint(idxAddrs.length()) || geomSlot >= uint(vtxAddrs.length()))
+    {
+        glassProbe.hitT = 0.0;
+        return;
+    }
+
     uint64_t idxAddr  = idxAddrs[geomSlot];
     uint64_t vtxAddr  = vtxAddrs[geomSlot];
 

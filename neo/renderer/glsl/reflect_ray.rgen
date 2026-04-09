@@ -39,6 +39,7 @@ layout(set = 0, binding = 3) uniform ReflParams {
     uint   frameIndex;
     ivec2  screenSize;
     float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
+    uint   debugFlags;  // bit0: force-miss rays (cullMask=0)
 } params;
 
 #include "reflect_payload.glsl"
@@ -47,6 +48,9 @@ layout(location = 0) rayPayloadEXT ReflPayload reflPayload;
 #include "rt_indirect.glsl"
 #include "glass_probe_payload.glsl"
 layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
+
+const uint REFL_DEBUG_FORCE_MISS = 1u << 0;
+const uint REFL_DEBUG_NO_HITDATA = 1u << 1;
 
 void main()
 {
@@ -79,10 +83,11 @@ void main()
     // room beyond the glass.
     float distToSurface = length(worldPos - camPos);
     glassProbe.hitT = 0.0;
+    uint probeMask = ((params.debugFlags & (REFL_DEBUG_FORCE_MISS | REFL_DEBUG_NO_HITDATA)) != 0u) ? 0u : 0xFEu;
     traceRayEXT(
         topLevelAS,
         gl_RayFlagsCullOpaqueEXT,
-        0xFE,           // exclude player instances (mask bit 0) — player is never glass
+        probeMask,      // force-miss mode sets mask=0; normal mode excludes player bit only
         1,              // SBT hit offset 1: second entry in hit region = glass_probe.rchit
         0,              // SBT stride 0: ALL geometries use the same hit group (no per-geom offset)
         1,              // miss index 1: second entry in miss region = glass_probe.rmiss
@@ -121,11 +126,14 @@ void main()
     {
         reflPayload.colour        = vec3(0.0);
         reflPayload.transmittance = 0.0;
+        reflPayload.debugFlags    = params.debugFlags;
+
+        uint sceneMask = ((params.debugFlags & REFL_DEBUG_FORCE_MISS) != 0u) ? 0u : 0xFFu;
 
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsNoneEXT,
-            0xFF,
+            sceneMask,
             0,              // SBT hit offset 0: first entry in hit region = reflect_ray.rchit
             0,              // SBT stride 0: ALL geometries use the same hit group
             0,              // miss index 0: first entry in miss region = reflect_ray.rmiss
