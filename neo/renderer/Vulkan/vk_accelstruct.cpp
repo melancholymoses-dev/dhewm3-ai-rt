@@ -497,6 +497,12 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
     blas->geomVertAddrs[0] = triData.vertexData.deviceAddress;
     blas->geomIdxAddrs[0] = triData.indexData.deviceAddress;
 
+    // Store vertex/index sizes so TLAS loop can populate maxVertex bounds check.
+    blas->geomVertSizes = new VkDeviceSize[1]();
+    blas->geomIdxSizes  = new VkDeviceSize[1]();
+    blas->geomVertSizes[0] = vertexDataSize;  // numVerts * sizeof(idDrawVert)
+    blas->geomIdxSizes[0]  = indexDataSize;
+
     VkAccelerationStructureGeometryKHR asGeom = {};
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     asGeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
@@ -1010,6 +1016,7 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas)
 
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
+    extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
     if (!viewDef)
         return;
 
@@ -1199,20 +1206,77 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 {
                     const uint32_t base = dynamicGeomCount;
                     dynamicInstBaseGeom[dynamicCount - 1] = base;
+
+                    // For dynamic instances we must refresh vertex/index addresses from
+                    // the model's current surface cache entries each frame.  blas->geomVertAddrs
+                    // was captured at BLAS build time and contains (cacheBaseAddr + oldOffset).
+                    // The vertex cache ring buffer advances each frame, so oldOffset is stale.
+                    // Re-query VK_VertexCache_GetBuffer to get the current offset.
+                    idRenderModel *dynModel = ent->dynamicModel ? ent->dynamicModel : ent->parms.hModel;
+                    uint32_t validSurfIdx = 0; // tracks which BLAS geometry slot each surface maps to
+
                     for (uint32_t g = 0; g < geomCount; g++)
                     {
                         const idMaterial *surfShader =
                             (ent->blas->geomShaders && ent->blas->geomShaders[g]) ? ent->blas->geomShaders[g] : NULL;
                         VkMaterialEntry matEntry = VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g,
                                                                            s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
-                        // baseGeomIdx in each entry is the absolute slot for THIS geometry only.
                         matEntry.baseGeomIdx = base + g;
-                        // Tag player/weapon geometry so glass_probe.rahit can skip it.
                         if (ent->parms.noSelfShadow)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
+                        // Bounds check: max valid vertex index for rt_InterpolateUV.
+                        if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
+                            matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                         dynamicMatEntries[base + g] = matEntry;
-                        // Write the per-geometry vertex/index address directly.
-                        if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
+
+                        // Refresh addresses from the current surface cache entry.
+                        // Walk model surfaces to find the g-th valid BLAS surface and
+                        // re-query its current buffer + offset.
+                        bool addrRefreshed = false;
+                        if (dynModel)
+                        {
+                            const int numSurfaces = dynModel->NumSurfaces();
+                            for (int s = 0; s < numSurfaces && !addrRefreshed; s++)
+                            {
+                                const modelSurface_t *surf = dynModel->Surface(s);
+                                if (!surf || !surf->geometry || !surf->shader)
+                                    continue;
+                                // Skip surfaces that the BLAS builder would have excluded.
+                                if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
+                                    continue;
+                                const bool isTranslucentSurf = surf->shader->Coverage() == MC_TRANSLUCENT;
+                                if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isTranslucentSurf)
+                                    continue;
+                                const deform_t def = surf->shader->Deform();
+                                if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE ||
+                                    def == DFRM_FLARE)
+                                    continue;
+
+                                if (validSurfIdx == g)
+                                {
+                                    // This is the surface for BLAS geometry slot g.
+                                    const srfTriangles_t *geo = surf->geometry;
+                                    VkBuffer vtxBuf = VK_NULL_HANDLE, idxBuf = VK_NULL_HANDLE;
+                                    VkDeviceSize vtxOff = 0, idxOff = 0;
+                                    const bool freshVtx = geo->ambientCache &&
+                                                          VK_VertexCache_GetBuffer(geo->ambientCache, &vtxBuf, &vtxOff);
+                                    const bool freshIdx =
+                                        geo->indexCache && VK_VertexCache_GetBuffer(geo->indexCache, &idxBuf, &idxOff);
+                                    if (freshVtx && freshIdx)
+                                    {
+                                        s_dynGeomVtxAddrs[base + g] =
+                                            (uint64_t)(GetBufferDeviceAddress(vtxBuf) + vtxOff);
+                                        s_dynGeomIdxAddrs[base + g] =
+                                            (uint64_t)(GetBufferDeviceAddress(idxBuf) + idxOff);
+                                        addrRefreshed = true;
+                                    }
+                                }
+                                validSurfIdx++;
+                            }
+                        }
+
+                        // Fallback: use cached address (static geometry, or refresh failed).
+                        if (!addrRefreshed && ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
                         {
                             s_dynGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
                             s_dynGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
@@ -1246,6 +1310,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         // Tag player/weapon geometry so glass_probe.rahit can skip it.
                         if (ent->parms.noSelfShadow)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
+                        // Bounds check: max valid vertex index for rt_InterpolateUV.
+                        if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
+                            matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                         staticMatEntries[base + g] = matEntry;
                         // Write the per-geometry vertex/index address directly.
                         if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)

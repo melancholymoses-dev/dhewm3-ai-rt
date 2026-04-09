@@ -451,7 +451,7 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     entry.flags = 0;
     entry.baseGeomIdx = baseGeomIdx;
     entry.alphaThreshold = 0.5f;
-    entry.pad0 = 0;
+    entry.maxVertex = 0xFFFFFFFFu; // sentinel: no bounds check (overridden in TLAS loop)
     entry.pad1 = 0;
 
     // --- Geometry addresses ---
