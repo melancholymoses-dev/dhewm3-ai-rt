@@ -55,12 +55,8 @@ void main()
         return;
     }
 
-    reflPayload.colour = vec3(0.5); reflPayload.transmittance = 0; return;
-
-
-
+    
     MaterialEntry mat = materials[matIdx];
-
     if ((mat.flags & MAT_FLAG_GLASS) != 0u)
     {
         // Thin-glass approximation: flat F0 = 0.05 (5 % reflectance at all angles).
@@ -70,7 +66,6 @@ void main()
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
-
         reflPayload.colour        = F0 * diffuse.rgb;
         reflPayload.transmittance = transmit;
         // Continuation ray: start just past the glass surface, same direction.
