@@ -55,13 +55,17 @@ void main()
         return;
     }
 
+    reflPayload.colour = vec3(0.5); reflPayload.transmittance = 0; return;
+
+
+
     MaterialEntry mat = materials[matIdx];
 
     if ((mat.flags & MAT_FLAG_GLASS) != 0u)
     {
-        // Thin-glass approximation: flat F0 = 0.04 (4 % reflectance at all angles).
+        // Thin-glass approximation: flat F0 = 0.05 (5 % reflectance at all angles).
         // The reflected colour is tinted by the glass diffuse texture.
-        // The remaining 96 % continues straight through (no refraction).
+        // The remaining 95 % continues straight through (no refraction).
         const float F0 = 0.05;
         const float transmit = 1.0 - F0;
 
@@ -76,7 +80,6 @@ void main()
         reflPayload.nextDir = gl_WorldRayDirectionEXT;
         return;
     }
-
     // Opaque surface — sample diffuse, stop here.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
     reflPayload.colour        = diffuse.rgb;

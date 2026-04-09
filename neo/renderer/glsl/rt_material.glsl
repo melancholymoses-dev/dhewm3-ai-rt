@@ -96,6 +96,9 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
     // Since matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT and each entry's
     // baseGeomIdx == matIdx (one entry per geometry), this is equivalent to matIdx.
     uint geomSlot    = mat.baseGeomIdx;
+    if (geomSlot >= uint(idxAddrs.length()) || geomSlot >= uint(vtxAddrs.length()))
+        return vec2(0.0);
+
     uint64_t idxAddr = idxAddrs[geomSlot];
     uint64_t vtxAddr = vtxAddrs[geomSlot];
     if (idxAddr == 0ul || vtxAddr == 0ul)
@@ -128,5 +131,7 @@ vec4 rt_SampleDiffuse(uint matIdx, int primId, vec2 bary)
 {
     vec2 uv = rt_InterpolateUV(matIdx, primId, bary);
     uint texIdx = materials[matIdx].diffuseTexIndex;
+    if (texIdx >= 4096u)
+        texIdx = 0u;
     return texture(matTextures[nonuniformEXT(texIdx)], uv);
 }
