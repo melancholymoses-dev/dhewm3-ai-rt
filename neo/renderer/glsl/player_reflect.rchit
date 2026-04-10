@@ -54,13 +54,7 @@ const float PLAYER_REFLECT_SKIP_DIST = 10.0;
 
 void main()
 {
-  if ((reflPayload.debugFlags & (1u << 1)) != 0u)
-  {
-    // Debug no-hitdata mode: avoid material-table and texture fetches.
-    reflPayload.colour        = vec3(0.08, 0.10, 0.14);
-    reflPayload.transmittance = 0.0;
-    return;
-  }
+  
 
     if (gl_HitTEXT < PLAYER_REFLECT_SKIP_DIST)
     {

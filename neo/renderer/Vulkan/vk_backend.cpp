@@ -835,11 +835,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
-    // reflDebug: force specWeight=1.0 to verify reflection buffer has data.
-    extern idCVar r_rtReflDebug;
-    int *reflDebugPtr = useReflPtr + 1;
-    *reflDebugPtr = r_rtReflDebug.GetBool() ? 1 : 0;
-
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
