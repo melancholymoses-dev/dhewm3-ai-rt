@@ -692,6 +692,7 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/fog.frag
 	renderer/glsl/gui.vert
 	renderer/glsl/gui.frag
+	renderer/glsl/glass_refl_overlay.frag
 	renderer/glsl/interaction.vert
 	renderer/glsl/interaction.frag
 	renderer/glsl/shadow.vert
@@ -704,6 +705,10 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
 	renderer/glsl/atrous_filter.comp
+	renderer/glsl/glass_probe.rahit
+	renderer/glsl/glass_probe.rchit
+	renderer/glsl/glass_probe.rmiss
+	renderer/glsl/player_reflect.rchit
 	renderer/glsl/reflect_ray.rahit	
 	renderer/glsl/reflect_ray.rchit
 	renderer/glsl/reflect_ray.rgen

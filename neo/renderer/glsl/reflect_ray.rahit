@@ -43,9 +43,11 @@ of the original Doom 3 GPL Source Code release.
 layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 hitAttributeEXT vec2 baryCoord;
 
+
 void main()
 {
-    uint matIdx = uint(gl_InstanceCustomIndexEXT);
+    // matIdx = instanceCustomIndex + geometryIndex — one entry per BLAS geometry.
+    uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
     // Guard: out-of-range custom index (uninitialised TLAS entry, multi-surface BLAS
     // with surface index != 0, etc.) would dereference garbage from materials[] and

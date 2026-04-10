@@ -19,7 +19,7 @@
 | 5.2b | Atrous spatial filter | **Done** |
 | 5.3 | RT reflections (cheap approximation) | **Done** |
 | 5.4 | Material table — real diffuse in reflections, alpha-test in shadows | **Done** |
-| 5.4b | Basic glass reflections (flat Fresnel) | **Planned** |
+| 5.4b | Basic glass reflections (flat Fresnel) | **Done** |
 | 6 | One-bounce global illumination | **Planned** |
 
 ---
@@ -151,129 +151,83 @@ issue for world geometry; deferred to Phase 6.
 
 ---
 
-### Step 5.4b — Basic Glass Reflections (Planned)
+### Step 5.4b — Basic Glass Reflections (Done)
 
-#### Goal
+#### Original Goal
 
 `MC_TRANSLUCENT` geometry (windows, viewports) does not write to the depth
 buffer, so `rgen` fires from the opaque wall *behind* the glass and never
-sees the glass surface.  This step makes glass surfaces visible to reflection
-rays and gives them a flat 4 % reflectance (F0 for real glass ≈ 0.04) with
-the remaining 96 % transmitted straight through (no refraction).
+sees the glass surface.  The goal was to make glass surfaces visible to
+reflection rays and give them a flat Fresnel reflectance.
 
-The result is a visible specular highlight on glass panels at low cost: one
-additional `traceRayEXT` only when a reflection ray hits glass, which is rare
-in most Doom 3 scenes.
+Split probe and reflection appearance to allow the player to appear in reflections, without their geometry
+occluding and causing strange reflections.  Can mainly control scale with r_rtreflectionblend.  F0 does not seem to have much effect.  
 
-#### Why flat 4 % is acceptable
+#### Debug notes. 
+(Have found it necessary to force the LLMs to actual fix the bugs and not just disable features that aren't working)
 
-Real Fresnel ranges from ≈ 4 % at normal incidence to 100 % at grazing angle.
-Doom 3 glass is mostly seen at moderate viewing angles where the error is
-small.  Angle-dependent Schlick (`F0 + (1−F0) × (1 − dot(N,V))^5`) can be
-added later in `rchit` with no structural changes.
+Found it useful to split apart the submission queue to allow per-stage debugging to find which batch of operations 
+poisoned the submission queue.
 
-#### Changes required
+Then debugging by bisecting bad shaders and color coding potential bad shapes/vertexes allowed us to see what we going wrong on the GPU without print statements. 
 
-**1. New flag (`vk_raytracing.h`, `rt_material.glsl`)**
+---
 
-```cpp
-#define VK_MAT_FLAG_GLASS 0x04u   // MC_TRANSLUCENT — thin glass, F0 = 0.04
-```
+##### Crash fix: Stale dynamic geometry addresses + vertex bounds check (implemented 2026-04-09)
 
-**2. Set flag in `VK_RT_MakeMaterialEntry` (`vk_material_table.cpp`)**
+**Root cause (fully diagnosed):** Dynamic model geometry (player, weapons, monsters)
+is skinned and uploaded to the vertex cache ring buffer each frame at a new offset.
+`vkBLAS_t::geomVertAddrs[g]` was set once at BLAS build time and never refreshed,
+so it held a stale `(baseAddr + oldOffset)` from a previous frame.  Once the ring
+buffer wrapped, `rt_InterpolateUV` dereferenced an address pointing into unrelated
+or freed memory → GPU page fault → `VK_ERROR_DEVICE_LOST`.
 
-```cpp
-if (shader->Coverage() == MC_TRANSLUCENT)
-    entry.flags |= VK_MAT_FLAG_GLASS;
-```
 
-**3. Mark glass BLAS geometry non-opaque (`vk_accelstruct.cpp`)**
+**Fix implemented (commit `8e39f41`):**
 
-Translucent surfaces currently receive `VK_GEOMETRY_OPAQUE_BIT_KHR`.  Remove
-that flag for glass so `rahit` is invoked.  Requires passing a second bool
-`isTranslucent` alongside the existing `isPerforated` parameter.
+1. **Address refresh in TLAS rebuild** — for each dynamic instance geometry
+   slot `g`, `VK_RT_RebuildTLAS` now walks the model's surfaces and calls `VK_VertexCache_GetBuffer`
+   to obtain the current `(VkBuffer, offset)` pair.  The device address is
+   recomputed and written each frame.  
 
-**4. Extend the reflection payload (`reflect_ray.rgen` / `reflect_ray.rchit`)**
+2. **`maxVertex` bounds guard** — `vkBLAS_t` now stores `geomVertSizes[g]` and
+   `geomIdxSizes[g]` at build time.  The TLAS rebuild loop checks fetched indices are allowed.
+   Default is `0xFFFFFFFFu` (no check) for static geometry.
 
+3. **`VkMaterialEntry` layout update** — `pad0` renamed to `maxVertex`
+   
+**`rt_material.glsl` guard (added):**
 ```glsl
-layout(location = 0) rayPayloadEXT struct ReflPayload {
-    vec3  colour;         // colour for this ray segment
-    float transmittance;  // weight to carry through (0 = stop)
-    vec3  nextOrigin;     // origin for the continuation ray
-    vec3  nextDir;        // direction (straight-through for glass)
-} reflPayload;
+uint maxVtx = mat.maxVertex;
+if (maxVtx != 0xFFFFFFFFu && (i0 > maxVtx || i1 > maxVtx || i2 > maxVtx))
+    return vec2(0.0);
 ```
 
-**5. Glass branch in `reflect_ray.rchit`**
+**Result:** Reflections now run stably with full material/texture sampling on
+both world and dynamic (player/weapon) geometry.  The `gl_GeometryIndexEXT != 0`
+early-out guard added previously remains as a fallback for multi-surface BLASes
+not yet covered by the per-geometry address table.
 
-```glsl
-if ((mat.flags & MAT_FLAG_GLASS) != 0u) {
-    const float F0       = 0.04;
-    vec4 diffuse         = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
-    reflPayload.colour        = F0 * diffuse.rgb;
-    reflPayload.transmittance = 1.0 - F0;
-    reflPayload.nextOrigin    = gl_WorldRayOriginEXT
-                                + gl_WorldRayDirectionEXT * (gl_HitTEXT + 0.01);
-    reflPayload.nextDir       = gl_WorldRayDirectionEXT;  // straight-through
-    return;
-}
-// Opaque path unchanged — set transmittance = 0.0 to stop the loop
-```
+**Remaining issue:** An occasional `VK_ERROR_DEVICE_LOST` crash occurs when all
+split submits are disabled (i.e. the full frame in a single command buffer with
+no intermediate queue submissions).  This is not yet diagnosed; it may be a
+missing pipeline barrier between AS build and ray dispatch when both occur in
+the same submit.  Split submits remain the default and keep the game stable.
 
-**6. Bounce loop in `reflect_ray.rgen`** (replaces single `traceRayEXT`)
+---
 
-```glsl
-vec3  accum  = vec3(0.0);
-float weight = 1.0;
-vec3  origin = worldPos + normal * 0.5;
-vec3  dir    = reflDir;
+#### Known limitations (unchanged)
 
-for (int i = 0; i < 2 && weight > 0.01; i++) {
-    reflPayload.transmittance = 0.0;
-    traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, 0xFF,
-                0, 0, 0, origin, 0.01, dir, params.maxDist, 0);
-    accum  += weight * reflPayload.colour;
-    weight *= reflPayload.transmittance;
-    origin  = reflPayload.nextOrigin;
-    dir     = reflPayload.nextDir;
-}
-imageStore(reflImage, coord, vec4(accum * params.reflBlend, 1.0));
-```
-
-Max 2 iterations covers double-pane windows.
-
-**7. `reflect_ray.rahit` — accept glass hits**
-
-```glsl
-if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u) {
-    // existing alpha-discard path
-} else if ((mat.flags & MAT_FLAG_GLASS) != 0u) {
-    // fall through — rchit handles the Fresnel split
-} else {
-    terminateRayEXT;
-}
-```
-
-#### Files changed
-
-| File | Change |
-|------|--------|
-| `vk_raytracing.h` | `VK_MAT_FLAG_GLASS 0x04u` |
-| `vk_material_table.cpp` | Set flag for `MC_TRANSLUCENT` |
-| `vk_accelstruct.cpp` | Remove opaque flag for translucent geometry |
-| `rt_material.glsl` | `MAT_FLAG_GLASS` constant |
-| `reflect_ray.rgen` | 2-iteration bounce loop |
-| `reflect_ray.rchit` | Glass branch + transmittance fields |
-| `reflect_ray.rahit` | Accept glass, fall through to rchit |
-
-#### Known limitations
+- Player weapon does not reflect.  The model movements also differ between 1st person and third person.  See shotgun reload.  This includes flashlights and projectiles.  (e.g plasma gun)
+- Models behind the player do not render.  
 
 - No refraction (straight-through approximation). Fine for Doom 3's flat window
-  panels.
+  panels.  - One-sided: only the front glass face gets the Fresnel split. Both Imperceptible
+  for thin single-pane geometry.  
+
 - Angle-independent reflectance. Schlick can be added in `rchit` with no
-  structural changes.
-- One-sided: only the front glass face gets the Fresnel split. Imperceptible
-  for thin single-pane geometry.
+  structural changes.  WOuld be noticeable to have more reflection at more grazing angles. 
+
 
 ---
 
@@ -379,36 +333,6 @@ diffuseLight += gi;
 
 ---
 
-## Open Bugs
-
-### Bug A: Mirrors/Portals Render as Black
-
-`vk_backend.cpp:962` skips shader stages with `DI_MIRROR_RENDER` /
-`DI_REMOTE_RENDER`.  The frontend generates subviews correctly (shared with GL)
-but the Vulkan backend never binds the captured `scratchImage`.
-
-**Fix:** Remove the skip; bind `scratchImage` for mirror stages.  Verify
-`VK_RB_CopyRender` fires and that `isMirror` flips winding order correctly.
-
-**Note:** Once RT reflections are solid, the rasterized mirror subview path can
-be retired — mirrors become a degenerate case of roughness = 0 in the
-reflection pipeline (no clip plane, no second full-scene render).
-
-**Priority:** Medium-high.
-
-### Bug B: Texture Aliasing / Z-Fighting on Camera Tilt
-
-Likely cause: `vkCmdSetDepthBias` argument mapping may have `constant` and
-`slope` swapped relative to GL's `glPolygonOffset` semantics.  Secondary
-cause: anisotropic filtering is disabled, causing mip-level oscillation on
-oblique surfaces.
-
-**Fix:** Verify depth-bias argument order; enable anisotropic filtering by
-default for non-nearest samplers.
-
-**Priority:** Medium.
-
----
 
 ## Implementation Order
 
@@ -420,7 +344,7 @@ default for non-nearest samplers.
 | 4 | Step 5.2b Atrous filter | **Done** |
 | 5 | Step 5.3 RT Reflections | **Done** |
 | 6 | Step 5.4 Material table | **Done** |
-| 7 | Step 5.4b Glass reflections | Planned |
+| 7 | Step 5.4b Glass reflections | **Done** |
 | 8 | Phase 6 GI pipeline | Planned |
 | 9 | Phase 6 Temporal + integration | Planned |
 
@@ -452,6 +376,41 @@ default for non-nearest samplers.
 ---
 
 ## Changelog
+
+### 2026-04-09
+
+- Identified root cause of `VK_ERROR_DEVICE_LOST` crash in reflection hit shaders:
+  dynamic geometry vertex/index addresses were stale (captured at BLAS build time;
+  vertex cache ring buffer advances each frame).
+- Added per-frame address refresh in `VK_RT_RebuildTLAS`: walks model surfaces,
+  calls `VK_VertexCache_GetBuffer` for each dynamic geometry slot, recomputes
+  device address from current `(VkBuffer, offset)` each frame.
+- Added `geomVertSizes`/`geomIdxSizes` arrays to `vkBLAS_t` (stored at build time).
+- Added `maxVertex` field to `VkMaterialEntry` (was `pad0`); populated in TLAS
+  rebuild as `numVerts - 1`; default `0xFFFFFFFFu` (no check) for static geometry.
+- Added `maxVertex` bounds guard in `rt_InterpolateUV` (`rt_material.glsl`):
+  any fetched index exceeding `maxVertex` returns `vec2(0.0)`.
+- Reflections now stable with full material/texture sampling on world and dynamic
+  (player/weapon) geometry.
+- `r_rtReflectionBlend` default raised from 0.1 → 0.5 now that reflections are
+  stable.
+- **Known remaining issue:** occasional crash when all split submits are disabled;
+  likely a missing barrier between AS build and ray dispatch in a unified submit.
+  Split submits remain the safe default.
+
+### 2026-04-06
+
+- Marked Step 5.4b as blocked; replaced original planned design with full
+  investigation findings.
+- Documented multi-surface BLAS OOB crash (root cause, quick fix applied in
+  `rt_material.glsl`, proper fix deferred).
+- Documented why Doom 3 glass is absent from the BLAS: screen-space `heatHaze`
+  materials, no `ambientCache`, `MC_TRANSLUCENT` flag matching wrong surfaces.
+- Analysed alpha-era `mirrorRenderMap` material stage and `R_MirrorRender` in
+  `tr_subview.cpp` as a potential interception point.
+- Added three concrete routes forward (A: fix ambientCache, B: hook subview
+  path, C: GI).  Route A is prerequisite for all others.
+- Updated implementation order table.
 
 ### 2026-04-04
 

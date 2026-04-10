@@ -268,3 +268,110 @@ Important packaging note:
 - Ship disabled by default first (`pm_showFirstPersonBody 0`).
 - Gather screenshots and perf logs in representative levels.
 - Enable by default once artifact/perf criteria are met.
+
+---
+
+## Ray-Traced Reflection Approaches for Player Body
+
+This section records approaches evaluated for showing the player body in RT reflections
+without causing blank/dark blotch artifacts from rays passing through or originating inside
+the player geometry.
+
+### Problem Statement
+
+The reflection pipeline has two ray passes per pixel:
+
+1. **Glass probe ray** — fired from the camera toward the visible depth surface, using
+   `gl_RayFlagsCullOpaqueEXT`. It finds any non-opaque (glass/translucent) geometry between
+   the camera and the surface. If hit, that glass surface becomes the reflection origin so
+   the mirror shows the room the player is standing in rather than what is behind the glass.
+
+2. **Reflection ray** — fired outward from the reflection origin (glass surface or depth
+   surface) in the mirror-reflected view direction to pick up the colour to display.
+
+**The blotch problem** is primarily in step 1. When the player stands in front of a mirror
+or window, the glass probe ray must travel through the player's body to reach it. Player
+geometry that has non-opaque BLAS entries (e.g. MC_PERFORATED arm/weapon surfaces) is
+visible to `gl_RayFlagsCullOpaqueEXT`. The probe hits the player body first, misidentifies
+it as the glass/reflective surface, and sets the reflection origin to the player's body
+surface. The reflection ray then fires from the wrong point and returns a dark or incorrect
+colour — producing a large dark silhouette-shaped blotch on the mirror wherever the player's
+body overlaps it.
+
+A secondary issue: the main reflection ray (step 2, mask 0xFF) can also hit the player body
+from close range when fired from a reflective floor or wall surface nearby, returning the
+player's dark texture instead of the intended room colour.
+
+---
+
+### Approach 1: tMin Distance Cutoff (in rgen)
+
+Set a minimum ray distance (`tMin`) large enough that rays fired from floor/wall surfaces
+skip past the player body entirely.
+
+**How it works:** `traceRayEXT(..., tMin, ...)` — any hit closer than `tMin` is ignored by
+the driver. If `tMin` exceeds the player's physical extent, floor-bounce rays cannot hit
+the body.
+
+**Drawback:** Blunt instrument. A single global tMin cannot distinguish "floor looking up
+at player" from "floor looking at a far mirror that happens to have the player in front of
+it". Also breaks reflections on surfaces very close to the player's feet. Not adopted.
+
+---
+
+### Approach 2: MAT_FLAG_PLAYER_BODY Check in reflect_ray.rchit
+
+Add a `MAT_FLAG_PLAYER_BODY` (0x08) material flag to player geometry, and check it in the
+existing `reflect_ray.rchit` shader to do a distance-based pass-through.
+
+**How it works:** The rchit shader reads `mat.flags & MAT_FLAG_PLAYER_BODY`. If set and
+`gl_HitTEXT < threshold`, it sets `transmittance = 1.0` and `nextOrigin/Dir` to continue
+the ray past the player body.
+
+**Drawback:** Mixes player-specific logic into the world geometry shader. The edit was
+rejected in favour of keeping world and player shaders separate. Not adopted.
+
+---
+
+### Approach 3: Per-Instance SBT Routing with a Dedicated Player Shader (Adopted)
+
+Route player body TLAS instances to a dedicated closest-hit shader by setting
+`instanceShaderBindingTableRecordOffset = 2` on noSelfShadow entities.
+
+**SBT layout (7 entries):**
+
+| Slot | Group | Shader | Purpose |
+|------|-------|--------|---------|
+| 0 | rgen | reflect_ray.rgen | reflection ray generation |
+| 1 | miss | reflect_ray.rmiss | main miss (sky colour) |
+| 2 | miss | reflect_ray.rmiss | glass probe miss |
+| 3 | hit  | reflect_ray.rchit + reflect_ray.rahit | world geometry, main ray |
+| 4 | hit  | reflect_ray.rchit + glass_probe.rahit | world geometry, glass probe |
+| 5 | hit  | player_reflect.rchit (opaque) | player body, main ray |
+| 6 | hit  | placeholder (never fires) | player body, glass probe |
+
+**player_reflect.rchit behaviour:**
+- Hit distance < 80 units (exceeds ~56-unit player height): pass-through — sets
+  `transmittance = 1.0` and continues the ray past the body. Prevents floor-bounce
+  rays from hitting the body from inside/below.
+- Hit distance ≥ 80 units (mirror at distance): samples the player diffuse texture and
+  returns its colour, so the player appears in the mirror.
+
+**Glass probe exclusion via instance mask:**
+The glass probe `traceRayEXT` call uses cull mask `0xFE`. Player TLAS instances have
+`inst.mask = 0x01`. Because `0x01 & 0xFE == 0`, the player is invisible to glass probe
+rays entirely. Slot 6 (player glass probe) exists only to keep SBT index arithmetic
+valid; it never fires.
+
+**Material flag:**
+`VK_MAT_FLAG_PLAYER_BODY (0x08)` is set in the material table for noSelfShadow entity
+geometry. This is readable in shaders but is not needed for the routing to work — the
+routing is purely SBT-based.
+
+**Trade-offs:**
+- Cleanest separation: world shaders have no player-specific branches.
+- Extra pipeline size: 7 groups vs 5. Minor cost.
+- The 80-unit threshold is tuned to player height; may need adjustment if weapon arms
+  extend beyond this in certain poses.
+
+---

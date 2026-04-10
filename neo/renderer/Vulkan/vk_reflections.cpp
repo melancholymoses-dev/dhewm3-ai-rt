@@ -45,10 +45,22 @@ extern idCVar r_rtReflections;
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");
 
+idCVar r_rtReflDebug("r_rtReflDebug", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_INTEGER,
+                     "Debug: force reflection weight to 1.0 on all surfaces to verify buffer has data.");
+
 static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection contribution in the interaction shader.\n"
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
+
+enum ReflDebugFlags
+{
+    REFL_DEBUG_FORCE_MISS = 1 << 0,
+    REFL_DEBUG_NO_HITDATA = 1 << 1,    // both rchit + rahit skip all data
+    REFL_DEBUG_NO_CHIT_DATA = 1 << 2,  // rchit only skips data; rahit still alpha-tests
+    REFL_DEBUG_NO_RAHIT_DATA = 1 << 3, // rahit only skips alpha-test; rchit still samples
+    REFL_DEBUG_NO_GLASS_DATA = 1 << 4, // rchit skips glass branch data only
+};
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -57,8 +69,9 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | 
 //   float  maxDist      offset 64  size  4
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
-//   float  reflBlend    offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
-//   pad                 offset 84  size 12
+//   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
+//   uint   debugFlags    offset 84  size  4  (bit0: force-miss rays, bit1: no-hitdata)
+//   pad                   offset 88  size  8
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
@@ -70,7 +83,8 @@ struct ReflParamsUBO
     int32_t screenWidth;
     int32_t screenHeight;
     float reflBlend; // r_rtReflectionBlend — baked into imageStore in rgen
-    float pad[3];
+    uint32_t debugFlags;
+    float pad[2];
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -180,7 +194,13 @@ static void VK_RT_CreateReflImages(uint32_t width, uint32_t height)
             submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submitInfo.commandBufferCount = 1;
             submitInfo.pCommandBuffers = &tmpCmd;
-            vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+            int submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+            if (submitResult != 0)
+            {
+                common->Printf("VK: vkQueueSubmit failed with error %d in VK_RT_CreateReflImages\n", submitResult);
+                fflush(NULL);
+            }
+
             vkQueueWaitIdle(vk.graphicsQueue);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
@@ -268,9 +288,14 @@ static void VK_RT_InitReflPipeline(void)
     VkShaderModule rmissModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rmiss.spv");
     VkShaderModule rchitModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rchit.spv");
     VkShaderModule rahitModule = VK_LoadSPIRV("glprogs/glsl/reflect_ray.rahit.spv");
+    VkShaderModule probeAhitModule = VK_LoadSPIRV("glprogs/glsl/glass_probe.rahit.spv");
+    VkShaderModule probeMissModule = VK_LoadSPIRV("glprogs/glsl/glass_probe.rmiss.spv");
+    VkShaderModule probeChitModule = VK_LoadSPIRV("glprogs/glsl/glass_probe.rchit.spv");
+    VkShaderModule playerChitModule = VK_LoadSPIRV("glprogs/glsl/player_reflect.rchit.spv");
 
     if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rchitModule == VK_NULL_HANDLE ||
-        rahitModule == VK_NULL_HANDLE)
+        rahitModule == VK_NULL_HANDLE || probeMissModule == VK_NULL_HANDLE || probeAhitModule == VK_NULL_HANDLE ||
+        probeChitModule == VK_NULL_HANDLE || playerChitModule == VK_NULL_HANDLE)
     {
         common->Warning("VK RT Refl: failed to load reflection shader modules — reflections disabled");
         if (rgenModule != VK_NULL_HANDLE)
@@ -281,12 +306,27 @@ static void VK_RT_InitReflPipeline(void)
             vkDestroyShaderModule(vk.device, rchitModule, NULL);
         if (rahitModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, rahitModule, NULL);
+        if (probeMissModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, probeMissModule, NULL);
+        if (probeAhitModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, probeAhitModule, NULL);
+        if (probeChitModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, probeChitModule, NULL);
+        if (playerChitModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, playerChitModule, NULL);
         return;
     }
 
     // --- Shader stages ---
-    // Stage 0: rgen  Stage 1: rmiss  Stage 2: rchit  Stage 3: rahit
-    VkPipelineShaderStageCreateInfo stages[4] = {};
+    // Stage 0: rgen
+    // Stage 1: main rmiss
+    // Stage 2: main rchit           — world geometry reflection hits
+    // Stage 3: main rahit           — alpha-discard for non-opaque world geometry
+    // Stage 4: glass probe rmiss
+    // Stage 5: glass probe rchit    — records glass hit position/normal for rgen
+    // Stage 6: player_reflect rchit — player body: close-range pass-through, mirror-distance visible
+    // Stage 7: glass probe rahit    - record glass hit any
+    VkPipelineShaderStageCreateInfo stages[8] = {};
 
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -308,13 +348,47 @@ static void VK_RT_InitReflPipeline(void)
     stages[3].module = rahitModule;
     stages[3].pName = "main";
 
-    // --- Shader groups ---
-    // Group 0: ray gen
-    // Group 1: miss
-    // Group 2: triangles hit group — closest-hit shades the surface,
-    //          any-hit alpha-discards transparent (perforated) geometry.
-    VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
+    stages[4].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[4].stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+    stages[4].module = probeMissModule;
+    stages[4].pName = "main";
 
+    stages[5].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[5].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    stages[5].module = probeChitModule;
+    stages[5].pName = "main";
+
+    stages[6].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[6].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    stages[6].module = playerChitModule;
+    stages[6].pName = "main";
+
+    stages[7].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[7].stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+    stages[7].module = probeAhitModule;
+    stages[7].pName = "main";
+
+    // --- Shader groups ---
+    // Group 0: rgen
+    // Group 1: main miss            (miss index 0 in miss region)
+    // Group 2: glass probe miss     (miss index 1 in miss region)
+    //
+    // Hit region — indexed by instanceShaderBindingTableRecordOffset + sbtHitOffset:
+    //
+    //   instanceSBTOffset=0 (world geometry):
+    //     + sbtHitOffset 0 → hit slot 0 → Group 3: world main hit
+    //     + sbtHitOffset 1 → hit slot 1 → Group 4: world glass probe hit
+    //
+    //   instanceSBTOffset=2 (player body, noSelfShadow):
+    //     + sbtHitOffset 0 → hit slot 2 → Group 5: player main hit
+    //     + sbtHitOffset 1 → hit slot 3 → Group 6: player glass probe hit (never fires — mask 0xFE excludes player)
+    //
+    // SBT memory layout:
+    //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=world_main  [4]=world_probe  [5]=player_main  [6]=player_probe
+    // reflRgenRegion → [0] reflMissRegion → [1..2] reflHitRegion → [3..6]
+    VkRayTracingShaderGroupCreateInfoKHR groups[7] = {};
+
+    // Group 0: rgen
     groups[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
     groups[0].generalShader = 0;
@@ -322,6 +396,7 @@ static void VK_RT_InitReflPipeline(void)
     groups[0].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
 
+    // Group 1: main miss
     groups[1].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
     groups[1].generalShader = 1;
@@ -329,21 +404,65 @@ static void VK_RT_InitReflPipeline(void)
     groups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
 
+    // Group 2: glass probe miss
     groups[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    groups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-    groups[2].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[2].closestHitShader = 2; // rchit
-    groups[2].anyHitShader = 3;     // rahit — alpha-discard for perforated geometry
+    groups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    groups[2].generalShader = 4; // stage 4 = probeMissModule
+    groups[2].closestHitShader = VK_SHADER_UNUSED_KHR;
+    groups[2].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    // Group 3: world main hit — rchit (stage 2) + rahit (stage 3)
+    groups[3].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    groups[3].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    groups[3].generalShader = VK_SHADER_UNUSED_KHR;
+    groups[3].closestHitShader = 2; // reflect_ray.rchit
+    groups[3].anyHitShader = 3;     // reflect_ray.rahit — alpha-discard
+    groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    // Group 4: world glass probe hit — glass_probe.rchit (stage 5) + glass_probe.rahit (stage 7).
+    // glass_probe.rahit adds MAT_FLAG_PLAYER_BODY skip on top of alpha-test logic so non-opaque
+    // player surfaces (perforated arm/weapon textures) are ignored by the probe.  Combined with
+    // the 0xFE cullMask in rgen this gives two layers of player exclusion.
+    groups[4].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    groups[4].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    groups[4].generalShader = VK_SHADER_UNUSED_KHR;
+    groups[4].closestHitShader = 5; // glass_probe.rchit
+    groups[4].anyHitShader = 7;     // glass_probe.rahit — player-body skip + alpha-discard
+    groups[4].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    // Group 5: player main hit — player_reflect.rchit (stage 6), no rahit needed (player is opaque).
+    // Close-range hits pass through; mirror-distance hits return the player's diffuse colour.
+    groups[5].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    groups[5].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    groups[5].generalShader = VK_SHADER_UNUSED_KHR;
+    groups[5].closestHitShader = 6; // player_reflect.rchit
+    groups[5].anyHitShader = VK_SHADER_UNUSED_KHR;
+    groups[5].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    // Group 6: player glass probe hit — placeholder, never invoked.
+    // Glass probe uses mask 0xFE which excludes player instances (mask 0x01).
+    // This slot must exist in the SBT so the indexing arithmetic stays valid.
+    // Reuse glass_probe.rchit + main rahit as safe defaults.
+    groups[6].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    groups[6].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    groups[6].generalShader = VK_SHADER_UNUSED_KHR;
+    groups[6].closestHitShader = 5; // glass_probe.rchit (safe reuse — never fires)
+    groups[6].anyHitShader = 7;     // glass_probe.rahit  (safe reuse — never fires)
+    groups[6].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    // Stages (8) vs groups (7): stages can be shared across groups, so the counts can differ.
+    // Stage 7 (glass_probe.rahit) is referenced by groups 4 and 6 — no extra group needed.
 
     // --- RT pipeline ---
     VkRayTracingPipelineCreateInfoKHR rtPipeInfo = {};
     rtPipeInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipeInfo.stageCount = 4;
+    rtPipeInfo.stageCount = 8;
     rtPipeInfo.pStages = stages;
-    rtPipeInfo.groupCount = 3;
+    rtPipeInfo.groupCount = 7;
     rtPipeInfo.pGroups = groups;
-    rtPipeInfo.maxPipelineRayRecursionDepth = 1; // single-bounce reflection
+    rtPipeInfo.maxPipelineRayRecursionDepth =
+        1; // probe and reflection rays are sequential from rgen — no actual recursion
     rtPipeInfo.layout = vkRT.reflPipelineLayout;
 
     VK_CHECK(vkCreateRayTracingPipelinesKHR(vk.device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipeInfo, NULL,
@@ -353,6 +472,10 @@ static void VK_RT_InitReflPipeline(void)
     vkDestroyShaderModule(vk.device, rmissModule, NULL);
     vkDestroyShaderModule(vk.device, rchitModule, NULL);
     vkDestroyShaderModule(vk.device, rahitModule, NULL);
+    vkDestroyShaderModule(vk.device, probeMissModule, NULL);
+    vkDestroyShaderModule(vk.device, probeAhitModule, NULL);
+    vkDestroyShaderModule(vk.device, probeChitModule, NULL);
+    vkDestroyShaderModule(vk.device, playerChitModule, NULL);
 
     // --- Shader Binding Table ---
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps = {};
@@ -369,7 +492,8 @@ static void VK_RT_InitReflPipeline(void)
     auto alignUp = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    uint32_t sbtSize = 3 * stride;
+    // Layout: [0]=rgen [1]=main_miss [2]=probe_miss [3]=world_main [4]=world_probe [5]=player_main [6]=player_probe
+    uint32_t sbtSize = 7 * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -377,12 +501,12 @@ static void VK_RT_InitReflPipeline(void)
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkRT.sbtReflBuffer,
                     &vkRT.sbtReflMemory);
 
-    uint8_t *handles = (uint8_t *)alloca(3 * handleSize);
-    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.reflPipeline, 0, 3, 3 * handleSize, handles));
+    uint8_t *handles = (uint8_t *)alloca(7 * handleSize);
+    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.reflPipeline, 0, 7, 7 * handleSize, handles));
 
     uint8_t *sbtData;
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtReflMemory, 0, sbtSize, 0, (void **)&sbtData));
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 7; i++)
         memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtReflMemory);
 
@@ -391,13 +515,15 @@ static void VK_RT_InitReflPipeline(void)
     addrInfo.buffer = vkRT.sbtReflBuffer;
     VkDeviceAddress sbtBase = vkGetBufferDeviceAddressKHR(vk.device, &addrInfo);
 
+    // rgen: slot 0.  miss region: slots 1-2 (main miss, probe miss).
+    // hit region: slots 3-6 (world main, world probe, player main, player probe).
     vkRT.reflRgenRegion = {sbtBase + 0 * stride, stride, stride};
-    vkRT.reflMissRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.reflHitRegion = {sbtBase + 2 * stride, stride, stride};
+    vkRT.reflMissRegion = {sbtBase + 1 * stride, stride, 2 * stride};
+    vkRT.reflHitRegion = {sbtBase + 3 * stride, stride, 4 * stride};
     vkRT.reflCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx\n", stride, sbtSize,
+        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx (7 groups)\n", stride, sbtSize,
                        (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
@@ -607,10 +733,35 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenWidth = (int32_t)rb.width;
     ubo.screenHeight = (int32_t)rb.height;
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
+    ubo.debugFlags = 0u;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
-    // --- Update descriptor set (once per frame slot when frameCount changes) ---
-    bool refreshSet = (vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
+    if ((ubo.debugFlags & REFL_DEBUG_FORCE_MISS) != 0u && r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl: force-miss mode enabled (r_rtReflectionsForceMiss=1)\n");
+    if ((ubo.debugFlags & REFL_DEBUG_NO_HITDATA) != 0u && r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl: no-hitdata mode enabled (r_rtReflectionsNoHitData=1)\n");
+
+    // --- Update descriptor set (once per frame slot when frameCount changes).
+    // Also force refresh when bound resources changed inside the same frame to
+    // avoid stale cached descriptors after RT resource churn.
+    static VkAccelerationStructureKHR s_lastReflTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    const bool reflResourceChanged = (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+                                     (s_lastReflStorageView[frameIdx] != rb.view) ||
+                                     (s_lastReflDepthView[frameIdx] != vk.depthSampledView);
+
+    if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
+        r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK RT Refl: forcing descriptor refresh due to in-frame resource change frame=%d slot=%d "
+                       "tlas=%p reflView=%p depthView=%p\n",
+                       tr.frameCount, frameIdx, (void *)vkRT.tlas[frameIdx].handle, (void *)rb.view,
+                       (void *)vk.depthSampledView);
+    }
+
+    bool refreshSet = (vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || reflResourceChanged;
     if (refreshSet)
     {
         VkDescriptorSet ds = vkRT.reflDescSets[frameIdx];
@@ -666,6 +817,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
+        s_lastReflStorageView[frameIdx] = rb.view;
+        s_lastReflDepthView[frameIdx] = vk.depthSampledView;
     }
 
     // --- Dispatch ---
@@ -682,7 +836,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
                       rb.width, rb.height, 1);
 
-    // --- Barrier: reflection write → fragment shader read ---
+    // --- Barrier: reflection write -> fragment shader read ---
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;

@@ -30,15 +30,16 @@ struct MaterialEntry {
     uint  normalTexIndex;   // index into matTextures[] (1 = flat normal fallback)
     float roughness;        // GGX roughness [0,1]
     uint  flags;            // MAT_FLAG_*
-    uint  vtxBufInstance;   // index into VtxAddrTable
-    uint  idxBufInstance;   // index into IdxAddrTable
+    uint  baseGeomIdx;      // offset into per-geometry VtxAddrTable/IdxAddrTable
     float alphaThreshold;   // alpha discard threshold (MAT_FLAG_ALPHA_TESTED)
-    uint  pad;
+    uint  maxVertex;        // numVerts-1 for this geometry; 0xFFFFFFFF = no check
+    uint  pad1;
 };
 
-#define MAT_FLAG_ALPHA_TESTED 0x01u
-#define MAT_FLAG_TWO_SIDED    0x02u
-#define MAT_FLAG_GLASS        0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
+#define MAT_FLAG_ALPHA_TESTED  0x01u
+#define MAT_FLAG_TWO_SIDED     0x02u
+#define MAT_FLAG_GLASS         0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
+#define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
 
 // ---------------------------------------------------------------------------
 // set=1 bindings
@@ -91,19 +92,15 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
 {
     MaterialEntry mat = materials[matIdx];
 
-    // Guard: the address table stores only surface 0's geometry per TLAS instance.
-    // For multi-geometry BLASes, hits on surface 1+ have a gl_GeometryIndexEXT > 0
-    // and a gl_PrimitiveID local to that surface — indexing surface 0's buffers with
-    // that primId would be an out-of-bounds GPU access.  Skip the lookup until the
-    // address table is refactored to be per-geometry.
-    // TODO: refactor vtxAddrs/idxAddrs to be indexed by baseGeomIdx + gl_GeometryIndexEXT
-    if (gl_GeometryIndexEXT != 0)
+    // Index into the flat per-geometry address tables using this entry's baseGeomIdx.
+    // Since matIdx = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT and each entry's
+    // baseGeomIdx == matIdx (one entry per geometry), this is equivalent to matIdx.
+    uint geomSlot    = mat.baseGeomIdx;
+    if (geomSlot >= uint(idxAddrs.length()) || geomSlot >= uint(vtxAddrs.length()))
         return vec2(0.0);
 
-    // Guard: if the buffer addresses are null (uninitialised material entry or address
-    // table not yet uploaded) dereferencing via buffer_reference crashes the GPU.
-    uint64_t idxAddr = idxAddrs[mat.idxBufInstance];
-    uint64_t vtxAddr = vtxAddrs[mat.vtxBufInstance];
+    uint64_t idxAddr = idxAddrs[geomSlot];
+    uint64_t vtxAddr = vtxAddrs[geomSlot];
     if (idxAddr == 0ul || vtxAddr == 0ul)
         return vec2(0.0);
 
@@ -114,6 +111,12 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
     uint i0 = iBuf.idx[base + 0u];
     uint i1 = iBuf.idx[base + 1u];
     uint i2 = iBuf.idx[base + 2u];
+
+    // Guard against stale index-buffer addresses (dynamic geometry ring buffer).
+    // maxVertex = numVerts-1 at BLAS build time; 0xFFFFFFFF = no check.
+    uint maxVtx = mat.maxVertex;
+    if (maxVtx != 0xFFFFFFFFu && (i0 > maxVtx || i1 > maxVtx || i2 > maxVtx))
+        return vec2(0.0);
 
     vec2 uv0 = vec2(vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_UV_OFF],
                     vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_UV_OFF + 1u]);
@@ -134,5 +137,7 @@ vec4 rt_SampleDiffuse(uint matIdx, int primId, vec2 bary)
 {
     vec2 uv = rt_InterpolateUV(matIdx, primId, bary);
     uint texIdx = materials[matIdx].diffuseTexIndex;
+    if (texIdx >= 4096u)
+        texIdx = 0u;
     return texture(matTextures[nonuniformEXT(texIdx)], uv);
 }

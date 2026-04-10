@@ -515,10 +515,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO: frame=%d slot=%d mask=%ux%u rect=(%d,%d %u,%u) tlas=%p pipeline=%p\n",
-                   tr.frameCount, frameIdx, ao.width, ao.height, dispatchRect.offset.x, dispatchRect.offset.y,
-                   (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
-                   (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.aoPipeline);
+        common->Printf("VK RT AO: frame=%d slot=%d mask=%ux%u rect=(%d,%d %u,%u) tlas=%p pipeline=%p\n", tr.frameCount,
+                       frameIdx, ao.width, ao.height, dispatchRect.offset.x, dispatchRect.offset.y,
+                       (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
+                       (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.aoPipeline);
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     {
@@ -590,14 +590,33 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (r_vkLogRT.GetInteger() >= 1)
             common->Printf(
                 "VK RT AO: UBO radius=%.1f samples=%d screenSize=%dx%d scissor=(%d,%d %d,%d) matNaN=%d uboOff=%u\n",
-                ubo.aoRadius, ubo.numSamples, ubo.screenWidth, ubo.screenHeight, ubo.scissorOffsetX,
-                ubo.scissorOffsetY, ubo.scissorExtentX, ubo.scissorExtentY, hasNaN ? 1 : 0, uboOff);
+                ubo.aoRadius, ubo.numSamples, ubo.screenWidth, ubo.screenHeight, ubo.scissorOffsetX, ubo.scissorOffsetY,
+                ubo.scissorExtentX, ubo.scissorExtentY, hasNaN ? 1 : 0, uboOff);
         if (hasNaN)
             common->Warning("VK RT AO: invViewProj contains NaN — ray directions will be degenerate!");
     }
 
-    // --- Update descriptor set (once per frame slot when frameCount changes) ---
-    bool refreshSet = (vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
+    // --- Update descriptor set (once per frame slot when frameCount changes).
+    // Also force refresh when bound resources changed inside the same frame, which
+    // protects against stale cached descriptors after RT resource churn.
+    static VkAccelerationStructureKHR s_lastAOTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastAOStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastAODepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    const bool aoResourceChanged = (s_lastAOTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+                                   (s_lastAOStorageView[frameIdx] != ao.view) ||
+                                   (s_lastAODepthView[frameIdx] != vk.depthSampledView);
+
+    if (aoResourceChanged && vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
+        r_vkLogRT.GetInteger() >= 1)
+    {
+        common->Printf("VK RT AO: forcing descriptor refresh due to in-frame resource change frame=%d slot=%d tlas=%p "
+                       "aoView=%p depthView=%p\n",
+                       tr.frameCount, frameIdx, (void *)vkRT.tlas[frameIdx].handle, (void *)ao.view,
+                       (void *)vk.depthSampledView);
+    }
+
+    bool refreshSet = (vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || aoResourceChanged;
     if (refreshSet)
     {
         VkDescriptorSet ds = vkRT.aoDescSets[frameIdx];
@@ -657,6 +676,9 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
         vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        s_lastAOTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
+        s_lastAOStorageView[frameIdx] = ao.view;
+        s_lastAODepthView[frameIdx] = vk.depthSampledView;
     }
 
     // --- Dispatch ---
@@ -666,11 +688,11 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: dispatch %ux%u samples=%d radius=%.1f (rect origin=%d,%d)\n",
-                   (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
-                   ubo.numSamples, ubo.aoRadius, dispatchRect.offset.x, dispatchRect.offset.y);
+                       (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height,
+                       ubo.numSamples, ubo.aoRadius, dispatchRect.offset.x, dispatchRect.offset.y);
 
-        vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
-                  dispatchRect.extent.width, dispatchRect.extent.height, 1);
+    vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
+                      dispatchRect.extent.width, dispatchRect.extent.height, 1);
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: traceRaysKHR recorded\n");
 

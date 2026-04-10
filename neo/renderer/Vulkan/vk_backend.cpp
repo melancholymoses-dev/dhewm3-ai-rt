@@ -34,21 +34,135 @@ of the original Doom 3 GPL Source Code release.
 static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
+static bool s_frameNeedsImageAcquireWait = false;
 
-// Debug toggle: force the plasmagun body interaction surface to render two-sided
-// so we can isolate winding/front-face mismatches without affecting world rendering.
-static idCVar r_vkPlasmaForceTwoSided(
-    "r_vkPlasmaForceTwoSided", "0", CVAR_RENDERER,
-    "Force two-sided culling for models/weapons/plasmagun/plasmagun in Vulkan interaction pass (debug)");
-static idCVar r_vkPlasmaNoStencil(
-    "r_vkPlasmaNoStencil", "0", CVAR_RENDERER,
-    "Force no-stencil interaction pipeline for models/weapons/plasmagun/plasmagun (debug)");
+// Current view's scissor rect in VK coordinates (Y-down).
+// Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
+// Used to confine all rendering (depth prepass, interactions, shader passes)
+// to the view's visible area — critical for subviews (mirrors) to prevent
+// reflected content from bleeding outside the mirror surface's screen bounds.
+static VkRect2D s_viewScissor;
+
+// Last major render stage that was entered.  Updated just before each vkCmd* stage.
+// Printed on VK_ERROR_DEVICE_LOST so we know exactly where command recording got to.
+static const char *s_lastRenderStage = "(none)";
+static const int VK_STAGE_BREADCRUMB_MAX = 16;
+static char s_stageBreadcrumbs[VK_STAGE_BREADCRUMB_MAX][160];
+static int s_stageBreadcrumbHead = 0;
+
+static void VK_SetRenderStage(const char *stage)
+{
+    s_lastRenderStage = stage ? stage : "(null)";
+    idStr::snPrintf(s_stageBreadcrumbs[s_stageBreadcrumbHead], sizeof(s_stageBreadcrumbs[0]),
+                    "frame=%d slot=%u stage=%s", tr.frameCount, (unsigned)vk.currentFrame, s_lastRenderStage);
+    s_stageBreadcrumbHead = (s_stageBreadcrumbHead + 1) % VK_STAGE_BREADCRUMB_MAX;
+}
+
+static void VK_DumpStageBreadcrumbs(void)
+{
+    common->Printf("VK: recent stage breadcrumbs (oldest -> newest):\n");
+    for (int i = 0; i < VK_STAGE_BREADCRUMB_MAX; i++)
+    {
+        const int idx = (s_stageBreadcrumbHead + i) % VK_STAGE_BREADCRUMB_MAX;
+        if (s_stageBreadcrumbs[idx][0] != '\0')
+            common->Printf("  [%d] %s\n", i, s_stageBreadcrumbs[idx]);
+    }
+}
+
+// Debug-only helper: submit the current command buffer mid-frame, wait for GPU idle,
+// then continue recording with a fresh command buffer and resumed render pass.
+// This isolates which stage chunk poisons the queue before final present submit.
+static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageTag, bool renderPassActive)
+{
+    if (!cmdBufInOut || *cmdBufInOut == VK_NULL_HANDLE || !s_frameActive)
+        return true;
+
+    VkCommandBuffer cmd = *cmdBufInOut;
+
+    if (renderPassActive)
+        vkCmdEndRenderPass(cmd);
+    VK_CHECK(vkEndCommandBuffer(cmd));
+
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = s_frameNeedsImageAcquireWait ? 1 : 0;
+    submitInfo.pWaitSemaphores = s_frameNeedsImageAcquireWait ? &vk.imageAvailableSemaphores[vk.currentFrame] : NULL;
+    submitInfo.pWaitDstStageMask = s_frameNeedsImageAcquireWait ? &waitStage : NULL;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    submitInfo.signalSemaphoreCount = 0;
+    submitInfo.pSignalSemaphores = NULL;
+
+    VK_SetRenderStage(stageTag);
+    VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    if (submitResult != VK_SUCCESS)
+    {
+        common->Printf("VK SPLIT SUBMIT: failed at stage='%s' err=%d (%s)\n", stageTag ? stageTag : "(null)",
+                       (int)submitResult, VK_ResultToString(submitResult));
+        VK_DumpStageBreadcrumbs();
+        common->FatalError("Vulkan error %d in split vkQueueSubmit", (int)submitResult);
+        return false;
+    }
+
+    VkResult waitResult = vkQueueWaitIdle(vk.graphicsQueue);
+    if (waitResult != VK_SUCCESS)
+    {
+        common->Printf("VK SPLIT SUBMIT: queue wait failed at stage='%s' err=%d (%s)\n", stageTag ? stageTag : "(null)",
+                       (int)waitResult, VK_ResultToString(waitResult));
+        VK_DumpStageBreadcrumbs();
+        common->FatalError("Vulkan error %d in split vkQueueWaitIdle", (int)waitResult);
+        return false;
+    }
+
+    s_frameNeedsImageAcquireWait = false;
+
+    VkCommandBuffer newCmd = vk.commandBuffers[vk.currentFrame];
+    vkResetCommandBuffer(newCmd, 0);
+
+    VkCommandBufferBeginInfo beginInfo = {};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(newCmd, &beginInfo) != VK_SUCCESS)
+    {
+        common->Warning("VK SPLIT SUBMIT: vkBeginCommandBuffer failed");
+        return false;
+    }
+
+    if (renderPassActive)
+    {
+        VkRenderPassBeginInfo rpResume = {};
+        rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        rpResume.renderPass = vk.renderPassResume;
+        rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+        rpResume.renderArea.offset = {0, 0};
+        rpResume.renderArea.extent = vk.swapchainExtent;
+        rpResume.clearValueCount = 0;
+        rpResume.pClearValues = NULL;
+        vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport viewport = {0,
+                               (float)vk.swapchainExtent.height,
+                               (float)vk.swapchainExtent.width,
+                               -(float)vk.swapchainExtent.height,
+                               0.0f,
+                               1.0f};
+        vkCmdSetViewport(newCmd, 0, 1, &viewport);
+        vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
+    }
+
+    s_frameCmdBuf = newCmd;
+    *cmdBufInOut = newCmd;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK SPLIT SUBMIT: completed stage='%s' frame=%d slot=%u\n", stageTag ? stageTag : "(null)",
+                       tr.frameCount, vk.currentFrame);
+
+    return true;
+}
+
 static idCVar r_vkWeaponDepthAlways(
     "r_vkWeaponDepthAlways", "0", CVAR_RENDERER,
     "Force weaponDepthHack interactions to use stencil+depth ALWAYS (debug isolation; can make weapons ghostly)");
-static idCVar r_vkPlasmaIgnoreDepthAlphaTest(
-    "r_vkPlasmaIgnoreDepthAlphaTest", "0", CVAR_RENDERER,
-    "Depth prepass debug: treat models/weapons/plasmagun/plasmagun as opaque (ignore alpha-test clip)");
 static idCVar r_vkPolyOffsetSlopeMin(
     "r_vkPolyOffsetSlopeMin", "0.0", CVAR_RENDERER | CVAR_FLOAT,
     "Vulkan-only minimum slope depth bias for polygonOffset materials when r_offsetFactor is 0");
@@ -68,6 +182,51 @@ idCVar r_vkRTLogCaptureReset("r_vkRTLogCaptureReset", "0", CVAR_RENDERER | CVAR_
                              "bump this integer to reset Vulkan RT debug capture frame counters without restarting");
 static idCVar r_vkRTDebugLightTextures("r_vkRTDebugLightTextures", "0", CVAR_RENDERER | CVAR_INTEGER,
                                        "log Vulkan interaction texture sources for filtered surfaces (0=off, 1=on)");
+static idCVar r_vkSplitSubmitMask(
+    "r_vkSplitSubmitMask", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Debug: force extra queue submits during DrawView to bisect DEVICE_LOST stage. "
+    "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
+    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume (0=off)."
+    "Can be added together to trigger multiple submissions.");
+static idCVar r_vkLowPerturbationMode(
+    "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "Low-perturbation debug mode: keeps stage breadcrumbs but suppresses split-submit probes and extra split logs. "
+    "Set to 0 to re-enable split submits via r_vkSplitSubmitMask.");
+static idCVar r_vkSplitSubmitVerbose(
+    "r_vkSplitSubmitVerbose", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "Verbose split-submit logging (0=quiet, 1=print per-stage split-submit completion)");
+
+static int VK_GetEffectiveSplitSubmitMask()
+{
+    const int requestedMask = r_vkSplitSubmitMask.GetInteger();
+    const bool lowPerturbation = (r_vkLowPerturbationMode.GetInteger() != 0);
+
+    static int s_lastRequestedMask = -1;
+    static int s_lastLowPerturbation = -1;
+    const int lowPerturbationInt = lowPerturbation ? 1 : 0;
+
+    if (requestedMask != s_lastRequestedMask || lowPerturbationInt != s_lastLowPerturbation)
+    {
+        if (requestedMask != 0)
+        {
+            if (lowPerturbation)
+            {
+                common->Printf(
+                    "VK SPLIT SUBMIT: requested mask=0x%X but r_vkLowPerturbationMode=1, probes are suppressed\n",
+                    requestedMask);
+            }
+            else if (r_vkLogRT.GetInteger() >= 1 || r_vkSplitSubmitVerbose.GetInteger() != 0)
+            {
+                common->Printf("VK SPLIT SUBMIT: active mask=0x%X\n", requestedMask);
+            }
+        }
+
+        s_lastRequestedMask = requestedMask;
+        s_lastLowPerturbation = lowPerturbationInt;
+    }
+
+    return lowPerturbation ? 0 : requestedMask;
+}
 
 static bool VK_RTDebugMatMatch(const char *matName)
 {
@@ -224,7 +383,7 @@ const char *VK_ResultToString(VkResult r)
 // Pre-allocated pool of UBO memory for interaction parameters.
 // ---------------------------------------------------------------------------
 
-static const uint32_t VK_UBO_RING_SIZE = 4096; // max interactions per frame
+static const uint32_t VK_UBO_RING_SIZE = 8192; // max interactions+overlays per frame
 
 // ---------------------------------------------------------------------------
 // Per-frame data staging ring
@@ -304,13 +463,6 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 //   new_row2[c] = 0.5 * old_row2[c] + 0.5 * old_row3[c]  (column-major indexing)
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
-
-// Current view's scissor rect in VK coordinates (Y-down).
-// Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
-// Used to confine all rendering (depth prepass, interactions, shader passes)
-// to the view's visible area — critical for subviews (mirrors) to prevent
-// reflected content from bleeding outside the mirror surface's screen bounds.
-static VkRect2D s_viewScissor;
 
 // Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down).
 static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
@@ -470,17 +622,25 @@ static void VK_DestroyUBORings(void)
     memset(uboRings, 0, sizeof(uboRings));
 }
 
-// Allocate space in the UBO ring and return the byte offset
+// Allocate space in the UBO ring and return the byte offset.
+// On overflow: CLAMP at the last valid slot rather than wrapping to 0.
+// Clamping means overflow draws share the last slot's data (visual glitch).
 static uint32_t VK_AllocUBO(void)
 {
     vkUBORing_t &ring = uboRings[vk.currentFrame];
+    const uint32_t maxOff = ring.stride * (VK_UBO_RING_SIZE - 1);
+    if (ring.offset >= maxOff)
+    {
+        static int s_overflowFrame = -1;
+        if (s_overflowFrame != (int)tr.frameCount)
+        {
+            s_overflowFrame = (int)tr.frameCount;
+            common->Warning("VK: UBO ring full (>%u slots in frame %d) — clamping", VK_UBO_RING_SIZE, tr.frameCount);
+        }
+        return maxOff; // safe: reuse last slot, no live-slot overwrite
+    }
     uint32_t off = ring.offset;
     ring.offset += ring.stride;
-    if (ring.offset >= ring.stride * VK_UBO_RING_SIZE)
-    {
-        common->Warning("VK: UBO ring overflowed (>%u interactions in one frame)", VK_UBO_RING_SIZE);
-        ring.offset = 0;
-    }
     return off;
 }
 
@@ -516,13 +676,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const idMaterial *mat = (din->surf && din->surf->material) ? din->surf->material : NULL;
     const char *matName = mat ? mat->GetName() : "<null>";
     const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
-
-    /*if (r_vkLogRT.GetInteger() >= 2)
-    {
-        const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
-        common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
-                       geo ? geo->numIndexes : 0);
-    }*/
 
     vkUBORing_t &ring = uboRings[vk.currentFrame];
 
@@ -681,6 +834,11 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
                                vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
+
+    // reflDebug: force specWeight=1.0 to verify reflection buffer has data.
+    extern idCVar r_rtReflDebug;
+    int *reflDebugPtr = useReflPtr + 1;
+    *reflDebugPtr = r_rtReflDebug.GetBool() ? 1 : 0;
 
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
@@ -890,9 +1048,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         if (backEnd.viewDef && backEnd.viewDef->isMirror && cullMode != VK_CULL_MODE_NONE)
             cullMode = (cullMode == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
 
-        if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
-            cullMode = VK_CULL_MODE_NONE;
-
         vkCmdSetCullMode(s_cmd, cullMode);
     }
 
@@ -914,16 +1069,9 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilLEqual);
     }
 
-    // Debug isolation: force plasma body interactions through no-stencil path to
-    // detect stencil/prepass coupling issues without changing other materials.
-    const bool forceNoStencil = (isWeaponSurf && isPlasmaBody && r_vkPlasmaNoStencil.GetBool() &&
-                                 idStr::Cmp(s_interactionPipeTag, "opaque") == 0);
-    if (forceNoStencil)
-        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
-
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 
-    if (forceNoStencil || forceWeaponStencilLEqual || forceWeaponStencilAlways)
+    if (forceWeaponStencilLEqual || forceWeaponStencilAlways)
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
 }
 
@@ -1009,10 +1157,12 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern bool VK_Image_GetDescriptorInfoCube(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+    extern idCVar r_rtReflections;
 
-    if (r_vkLogRT.GetInteger() >= 2)
+    if (r_vkSplitSubmitVerbose.GetInteger() > 0)
     {
         common->Printf("VK DrawShaderPasses: ENTER numDrawSurfs=%d\n", backEnd.viewDef->numDrawSurfs);
+        fflush(NULL);
     }
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
@@ -1022,6 +1172,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     // view, mirror bounds for subviews).
     vkCmdSetScissor(cmd, 0, 1, &s_viewScissor);
 
+    static char s_shaderPassStageBuf[128];
     for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
     {
         const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
@@ -1034,6 +1185,11 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         vkCmdSetScissor(cmd, 0, 1, &surfScissor);
 
         const idMaterial *mat = surf->material;
+
+        // Track current surface for device-lost diagnostics.
+        idStr::snPrintf(s_shaderPassStageBuf, sizeof(s_shaderPassStageBuf), "ShaderPasses[%d/%d]:%s", si,
+                        backEnd.viewDef->numDrawSurfs, mat->GetName());
+        VK_SetRenderStage(s_shaderPassStageBuf);
         if (mat->SuppressInSubview())
             continue;
 
@@ -1641,6 +1797,67 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 }
             }
         }
+
+        // --- RT reflection overlay for glass surfaces ---
+        // After all material stages have drawn for this surface, add one additional
+        // additive draw that composites the RT reflection buffer on top.  This gives
+        // flat glass panes visible reflections without needing to route them through
+        // the per-light interaction pass.
+        //
+        // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
+        // halos, particles, or other MC_TRANSLUCENT surfaces.
+        if (mat->GetSurfaceType() == SURFTYPE_GLASS && r_rtReflections.GetBool() && vk.rayTracingSupported &&
+            vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
+            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+        {
+            float mvp[16];
+            if (r_vkLogRT.GetInteger() >= 2)
+            {
+                common->Printf("Running RT Reflection overlay for surf: %d, mat: %s\n", si, mat->GetName());
+                fflush(NULL);
+            }
+            VK_BuildSurfMVP(surf->space, mvp);
+
+            uint32_t ovUboOffset = VK_AllocUBO();
+            VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
+            memset(ovUbo, 0, sizeof(*ovUbo));
+            memcpy(ovUbo->modelViewProjection, mvp, 64);
+            // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
+            // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
+            ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
+            ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
+
+            VkDescriptorBufferInfo ovBufInfo = {};
+            ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            ovBufInfo.offset = ovUboOffset;
+            ovBufInfo.range = sizeof(VkGuiUBO);
+
+            VkDescriptorImageInfo ovReflInfo = {};
+            ovReflInfo.sampler = vkRT.reflSampler;
+            ovReflInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
+            ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+            VkWriteDescriptorSet ovWrites[2] = {};
+            ovWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ovWrites[0].dstBinding = 0;
+            ovWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            ovWrites[0].descriptorCount = 1;
+            ovWrites[0].pBufferInfo = &ovBufInfo;
+            ovWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ovWrites[1].dstBinding = 1;
+            ovWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            ovWrites[1].descriptorCount = 1;
+            ovWrites[1].pImageInfo = &ovReflInfo;
+
+            vkCmdSetDepthBias(cmd, 0.0f, 0.0f, 0.0f);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflPipeline);
+            VkCullModeFlags ovCull = (mat->GetCullType() == CT_TWO_SIDED) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+            vkCmdSetCullMode(cmd, ovCull);
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflLayout, 0, 2, ovWrites);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+        }
     }
 }
 
@@ -1998,17 +2215,6 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         }
         else // MC_PERFORATED
         {
-            const bool isPlasmaBody = (idStr::Cmp(mat->GetName(), "models/weapons/plasmagun/plasmagun") == 0);
-            const bool forcePlasmaOpaqueDepth = (isPlasmaBody && r_vkPlasmaIgnoreDepthAlphaTest.GetBool());
-            if (forcePlasmaOpaqueDepth)
-            {
-                VkDescriptorImageInfo imgInfo = {};
-                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
-                if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
-                    drawSubviewGuardBlack();
-                continue;
-            }
 
             const float *regs = surf->shaderRegisters;
             bool didDraw = false;
@@ -3474,6 +3680,7 @@ void VK_RB_DrawView(const void *data)
                             (fenceResult == VK_ERROR_DEVICE_LOST)
                                 ? " — GPU DEVICE LOST: enable r_vkLogRT 2 to see RT breadcrumbs"
                                 : "");
+            common->FatalError("stopping");
             return;
         }
 
@@ -3497,6 +3704,7 @@ void VK_RB_DrawView(const void *data)
 
         vk.currentImageIdx = imageIndex;
         s_frameImageIndex = imageIndex;
+        s_frameNeedsImageAcquireWait = true;
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
@@ -3654,6 +3862,7 @@ void VK_RB_DrawView(const void *data)
     //   3. Interactions — per-light: [end RP] [dispatch shadow rays] [reopen RP] [draw light]
     //   4. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
     //   5. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
+    VK_SetRenderStage("DepthPrepass");
     if (!r_skipDepthPrepass.GetBool())
         VK_RB_FillDepthBuffer(cmdBuf);
 
@@ -3699,9 +3908,33 @@ void VK_RB_DrawView(const void *data)
                                  0, 0, NULL, 0, NULL, 1, &toRT);
         }
 
+        VK_SetRenderStage("TLAS_Rebuild");
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+        const int splitMask = VK_GetEffectiveSplitSubmitMask();
+
+        if ((splitMask & 16) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterTLAS", false))
+                return;
+        }
+
+        VK_SetRenderStage("RT_AO");
         VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
+        if ((splitMask & 32) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterAO", false))
+                return;
+        }
+
+        VK_SetRenderStage("RT_Reflections");
         VK_RT_DispatchReflections(cmdBuf, backEnd.viewDef);
+        if ((splitMask & 64) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterReflections", false))
+                return;
+        }
+
+        VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.renderPassResume;
@@ -3719,10 +3952,30 @@ void VK_RB_DrawView(const void *data)
                                1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+
+        if ((splitMask & 128) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterRTResume", true))
+                return;
+        }
+
+        if ((splitMask & 1) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterRT", true))
+                return;
+        }
     }
 
+    VK_SetRenderStage("Interactions");
     if (!r_skipInteractions.GetBool())
         VK_RB_DrawInteractions(cmdBuf);
+
+    const int splitMask = VK_GetEffectiveSplitSubmitMask();
+    if ((splitMask & 2) != 0)
+    {
+        if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterInteractions", true))
+            return;
+    }
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
@@ -3730,11 +3983,25 @@ void VK_RB_DrawView(const void *data)
         fflush(NULL);
     }
 
+    VK_SetRenderStage("ShaderPasses");
     if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
         VK_RB_DrawShaderPasses(cmdBuf);
 
+    if ((splitMask & 4) != 0)
+    {
+        if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterShaderPasses", true))
+            return;
+    }
+
+    VK_SetRenderStage("FogLights");
     if (!r_skipFogLights.GetBool())
         VK_RB_FogAllLights(cmdBuf);
+
+    if ((splitMask & 8) != 0)
+    {
+        if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterFog", true))
+            return;
+    }
 
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
 }
@@ -3903,6 +4170,7 @@ void VK_RB_SwapBuffers()
 {
     if (vk.deviceLost)
     {
+        s_frameNeedsImageAcquireWait = false;
         s_frameActive = false;
         s_frameCmdBuf = VK_NULL_HANDLE;
         static bool s_loggedDeviceLostSwap = false;
@@ -3916,7 +4184,10 @@ void VK_RB_SwapBuffers()
     }
 
     if (!s_frameActive)
+    {
+        s_frameNeedsImageAcquireWait = false;
         return; // acquire failed or no RC_DRAW_VIEW this EndFrame
+    }
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
@@ -3960,6 +4231,7 @@ void VK_RB_SwapBuffers()
         s_swapchainNeedsRecreate = false;
         vkResetCommandBuffer(vk.commandBuffers[vk.currentFrame], 0);
         VK_RecreateSwapchain(glConfig.vidWidth, glConfig.vidHeight);
+        s_frameNeedsImageAcquireWait = false;
         s_frameActive = false;
         s_frameCmdBuf = VK_NULL_HANDLE;
         return;
@@ -3969,9 +4241,9 @@ void VK_RB_SwapBuffers()
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &vk.imageAvailableSemaphores[vk.currentFrame];
-    submitInfo.pWaitDstStageMask = &waitStage;
+    submitInfo.waitSemaphoreCount = s_frameNeedsImageAcquireWait ? 1 : 0;
+    submitInfo.pWaitSemaphores = s_frameNeedsImageAcquireWait ? &vk.imageAvailableSemaphores[vk.currentFrame] : NULL;
+    submitInfo.pWaitDstStageMask = s_frameNeedsImageAcquireWait ? &waitStage : NULL;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmdBuf;
     submitInfo.signalSemaphoreCount = 1;
@@ -4000,15 +4272,20 @@ void VK_RB_SwapBuffers()
     // fflush before submit: ensures any preceding swapchain recreation log is written, and
     // incidentally gives the presentation engine time to finish processing OUT_OF_DATE.
     fflush(NULL);
+    VK_SetRenderStage("vkQueueSubmit");
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[submittedFrame]);
     if (submitResult != VK_SUCCESS)
     {
+        s_frameNeedsImageAcquireWait = false;
         s_frameActive = false;
-        common->Printf("VK: vkQueueSubmit failed with error %d (%s)\n", (int)submitResult,
-                       VK_ResultToString(submitResult));
+        common->Printf("VK: vkQueueSubmit failed with error %d (%s) — last render stage: %s\n", (int)submitResult,
+                       VK_ResultToString(submitResult), s_lastRenderStage);
+        VK_DumpStageBreadcrumbs();
+        fflush(NULL);
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
         return;
     }
+    s_frameNeedsImageAcquireWait = false;
 
     // --- Present ---
     VkPresentInfoKHR presentInfo = {};
@@ -4047,6 +4324,7 @@ void VK_RB_SwapBuffers()
     }
 
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;
+    s_frameNeedsImageAcquireWait = false;
     s_frameActive = false;
     s_frameCmdBuf = VK_NULL_HANDLE;
 }

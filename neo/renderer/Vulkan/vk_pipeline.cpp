@@ -1,6 +1,7 @@
 /*
 ===========================================================================
 
+Vulkan Pipelines
 dhewm3-rt Vulkan backend - graphics pipeline and descriptor set management.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
@@ -54,8 +55,9 @@ struct VkInteractionUBO
     int useAO;          // 1 when RT AO mask is valid this frame
     float lightScale;   // backEnd.overBright — final color multiplier before gamma
     int useReflections; // 1 when RT reflection buffer is valid this frame (replaces old pad)
+    int reflDebug;      // 1 = force specWeight=1.0 to verify reflection buffer contents
 };
-// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 + 4 + 4 = 364 bytes; INTERACTION_UBO_SIZE = 384.
+// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 + 4 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE = 384.
 
 // ---------------------------------------------------------------------------
 // Pipeline layout for the interaction pass
@@ -630,6 +632,156 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
 }
 
 // ---------------------------------------------------------------------------
+// VK_CreateGlassReflDescLayout / VK_CreateGlassReflPipeline
+// Additive overlay pipeline drawn once per MC_TRANSLUCENT surface to composite
+// RT reflections on top of glass.
+//   binding 0 — GuiParams UBO  (vertex MVP; screen dims in texGenS.xy for frag)
+//   binding 1 — reflBuffer sampler2D
+// ---------------------------------------------------------------------------
+
+static VkDescriptorSetLayout VK_CreateGlassReflDescLayout(void)
+{
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+
+    // Binding 0: GuiParams UBO (reused — gui.vert.spv reads it for the MVP)
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Binding 1: RT reflection buffer
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    info.bindingCount = 2;
+    info.pBindings = bindings;
+
+    VkDescriptorSetLayout layout;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &layout));
+    return layout;
+}
+
+static VkPipeline VK_CreateGlassReflPipeline(VkPipelineLayout layout)
+{
+    VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gui.vert.spv");
+    VkShaderModule fragModule = VK_LoadSPIRV("glprogs/glsl/glass_refl_overlay.frag.spv");
+    if (!vertModule || !fragModule)
+    {
+        if (vertModule)
+            vkDestroyShaderModule(vk.device, vertModule, NULL);
+        if (fragModule)
+            vkDestroyShaderModule(vk.device, fragModule, NULL);
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription binding;
+    VkVertexInputAttributeDescription attrs[12];
+    uint32_t numAttrs = 0;
+    VK_GetInteractionVertexInput(&binding, attrs, &numAttrs);
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = numAttrs;
+    vertexInput.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.f, 1.f};
+    VkRect2D scissor = {{0, 0}, vk.swapchainExtent};
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE; // Y-flip viewport correction
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.depthBiasEnable = VK_TRUE; // allow vkCmdSetDepthBias when sharing cmd stream
+
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // Depth test LEQUAL (translucent surfaces don't write depth), depth write OFF.
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    // Additive blend: reflections are added on top of the glass colour.
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.blendEnable = VK_TRUE;
+    colorBlend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlend.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+    colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 1;
+    blendState.pAttachments = &colorBlend;
+
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                   VK_DYNAMIC_STATE_CULL_MODE_EXT};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 4;
+    dynamicState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &blendState;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = vk.renderPass;
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
+
+    vkDestroyShaderModule(vk.device, vertModule, NULL);
+    vkDestroyShaderModule(vk.device, fragModule, NULL);
+    return pipeline;
+}
+
+// ---------------------------------------------------------------------------
 // VK_CreateGuiDescLayout / VK_CreateGuiPipeline
 // Simple textured pipeline for 2D GUI surfaces and unlit shader passes.
 // ---------------------------------------------------------------------------
@@ -753,7 +905,7 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     blendState.pAttachments = &colorBlend;
 
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
-                                   VK_DYNAMIC_STATE_CULL_MODE};
+                                   VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = 4;
@@ -1001,7 +1153,7 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
     // CULL_MODE is dynamic so shader passes can honor per-material cull type.
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
-                                   VK_DYNAMIC_STATE_CULL_MODE};
+                                   VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = depthTest ? 4 : 3;
@@ -1121,7 +1273,7 @@ static VkPipeline VK_CreateSkyboxPipeline(VkPipelineLayout layout)
     blendState.attachmentCount = 1;
     blendState.pAttachments = &colorBlend;
 
-    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE};
+    VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
     dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = 3;
@@ -1523,6 +1675,17 @@ void VK_InitPipelines(void)
     vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
     vkPipes.depthClipPipeline = VK_CreateDepthPipelineEx(vkPipes.guiLayout, "glprogs/glsl/depth_clip.frag.spv");
 
+    // --- Glass RT-reflection overlay pipeline ---
+    vkPipes.glassReflDescLayout = VK_CreateGlassReflDescLayout();
+    {
+        VkPipelineLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &vkPipes.glassReflDescLayout;
+        VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.glassReflLayout));
+    }
+    vkPipes.glassReflPipeline = VK_CreateGlassReflPipeline(vkPipes.glassReflLayout);
+
     // --- Fog / blend-light pipelines ---
     vkPipes.fogDescLayout = VK_CreateFogDescLayout();
     {
@@ -1613,6 +1776,12 @@ void VK_ShutdownPipelines(void)
         vkDestroyPipelineLayout(vk.device, vkPipes.guiLayout, NULL);
     if (vkPipes.guiDescLayout)
         vkDestroyDescriptorSetLayout(vk.device, vkPipes.guiDescLayout, NULL);
+    if (vkPipes.glassReflPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.glassReflPipeline, NULL);
+    if (vkPipes.glassReflLayout)
+        vkDestroyPipelineLayout(vk.device, vkPipes.glassReflLayout, NULL);
+    if (vkPipes.glassReflDescLayout)
+        vkDestroyDescriptorSetLayout(vk.device, vkPipes.glassReflDescLayout, NULL);
     if (vkPipes.fogPipeline)
         vkDestroyPipeline(vk.device, vkPipes.fogPipeline, NULL);
     if (vkPipes.fogFrustumPipeline)

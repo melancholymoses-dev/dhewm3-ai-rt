@@ -39,12 +39,16 @@ layout(set = 0, binding = 3) uniform ReflParams {
     uint   frameIndex;
     ivec2  screenSize;
     float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
+    uint   debugFlags;  // bit0: force-miss rays (cullMask=0)
 } params;
 
 #include "reflect_payload.glsl"
 layout(location = 0) rayPayloadEXT ReflPayload reflPayload;
 
 #include "rt_indirect.glsl"
+#include "glass_probe_payload.glsl"
+layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
+
 
 void main()
 {
@@ -68,13 +72,46 @@ void main()
     vec3 camPos   = camWorld.xyz / camWorld.w;
     vec3 viewDir  = normalize(worldPos - camPos);   // points away from camera
 
-    vec3 normal   = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, -viewDir);
+    // --- Glass probe ---
+    // The depth buffer records the opaque surface *behind* any glass (glass
+    // never writes depth).  Fire a probe ray from the camera with
+    // CullOpaque so only non-opaque (glass/translucent) geometry is tested.
+    // If glass is found, use the glass surface as the reflection origin so
+    // the mirror image shows the room the player is standing in, not the
+    // room beyond the glass.
+    float distToSurface = length(worldPos - camPos);
+    glassProbe.hitT = 0.0;
+    traceRayEXT(
+        topLevelAS,
+        gl_RayFlagsCullOpaqueEXT,
+        0xFEu,          // normal mode excludes player bit only
+        1,              // SBT hit offset 1: second entry in hit region = glass_probe.rchit
+        0,              // SBT stride 0: ALL geometries use the same hit group (no per-geom offset)
+        1,              // miss index 1: second entry in miss region = glass_probe.rmiss
+        camPos, 0.01,
+        viewDir, distToSurface,
+        1               // payload location 1
+    );
+
+    vec3 reflOrigin, reflNormal;
+    if (glassProbe.hitT > 0.01)
+    {
+        // Glass surface found between camera and depth surface.
+        reflOrigin = glassProbe.hitPos;
+        reflNormal = glassProbe.hitNormal;
+    }
+    else
+    {
+        // No glass — reconstruct normal from depth gradients of the opaque surface.
+        reflNormal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, -viewDir);
+        reflOrigin = worldPos;
+    }
 
     // Mirror-reflect view direction around surface normal
-    vec3 reflDir  = reflect(viewDir, normal);
+    vec3 reflDir  = reflect(viewDir, reflNormal);
 
     // Bias origin off surface to avoid self-intersection
-    vec3 origin = worldPos + normal * 0.5;
+    vec3 origin = reflOrigin + reflNormal * 0.5;
 
     // Bounce loop: up to 2 iterations covers double-pane glass.
     // Each glass hit contributes 4 % and passes 96 % to the next segment.
@@ -86,14 +123,15 @@ void main()
     {
         reflPayload.colour        = vec3(0.0);
         reflPayload.transmittance = 0.0;
+        reflPayload.debugFlags    = params.debugFlags;
 
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsNoneEXT,
-            0xFF,
-            0,              // SBT hit offset: group 2 = hit group
-            0,              // SBT stride
-            0,              // miss index: group 1 = miss
+            0xFFu,
+            0,              // SBT hit offset 0: first entry in hit region = reflect_ray.rchit
+            0,              // SBT stride 0: ALL geometries use the same hit group
+            0,              // miss index 0: first entry in miss region = reflect_ray.rmiss
             origin,
             0.01,           // tMin
             dir,
@@ -110,5 +148,9 @@ void main()
         }
     }
 
-    imageStore(reflImage, coord, vec4(accum * params.reflBlend, 1.0));
+    // Encode whether a glass surface was detected in the alpha channel.
+    // glass_refl_overlay.frag uses this to gate the additive composite: only pixels
+    // where the probe found real glass get the overlay.  
+    float glassFlag = (glassProbe.hitT > 0.01) ? 1.0 : 0.0;
+    imageStore(reflImage, coord, vec4(accum * params.reflBlend, glassFlag));
 }

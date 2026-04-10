@@ -25,13 +25,8 @@ void main()
     vec3 dir = normalize(gl_WorldRayDirectionEXT);
     float up = dir.y * 0.5 + 0.5;   // remap [-1,1] → [0,1]
 
-    // Sky colours: Martian atmosphere — fine iron-oxide dust scatters red/orange,
-    // producing a salmon-pink sky rather than earth-blue.
-    // Horizon/ground: deeper dusty red-brown.
-    // Zenith: slightly lighter salmon (still warm, not blue).
-    vec3 groundColor = vec3(0.26, 0.12, 0.07);  // dark Martian dust at horizon
-    vec3 skyColor    = vec3(0.38, 0.22, 0.14);  // hazy salmon-pink Mars sky
-    vec3 color = mix(groundColor, skyColor, up);
+    // Return a very dark ambient colour for missed rays.
+    vec3 color = mix(vec3(0.01), vec3(0.03), max(0.0, up));
 
     reflPayload.colour        = color;
     reflPayload.transmittance = 0.0;  // stop — sky has no continuation
