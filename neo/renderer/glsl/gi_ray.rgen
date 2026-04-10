@@ -1,0 +1,142 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_ray.rgen — ray generation shader for one-bounce GI.
+
+Phase 6.1 (Option A — Ambient-only):
+  For every screen pixel:
+    1. Reconstruct world-space position from depth.
+    2. Derive world-space normal from depth-buffer gradients.
+    3. Shoot numSamples cosine-weighted hemisphere rays.
+    4. At each hit, rchit returns the surface albedo.
+       On miss, rmiss returns a very dim ambient sky colour.
+    5. Average the sample colours, scale by giStrength, write to the
+       RGBA16F GI buffer.
+
+The GI buffer is sampled by interaction.frag and added to the diffuse
+term, providing colour bleeding and contact brightening.
+
+Reuses rt_indirect.glsl (cosine sampling, world-pos reconstruction).
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+layout(set = 0, binding = 1, rgba16f) uniform image2D giImage;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+layout(set = 0, binding = 3) uniform GIParams {
+    mat4  invViewProj;   // inverse view-projection for world position reconstruction
+    float giRadius;      // max ray length (world units)
+    int   numSamples;    // rays per pixel (1-8)
+    uint  frameIndex;    // for temporal seed variation
+    float giStrength;    // scale applied to accumulated albedo
+    ivec2 screenSize;    // full framebuffer (width, height)
+    ivec2 scissorOffset; // pixel offset into the framebuffer for this view
+    ivec2 scissorExtent; // pixel extent of this view's dispatch region
+    ivec2 pad2;
+} params;
+
+#include "gi_payload.glsl"
+layout(location = 0) rayPayloadEXT GIPayload giPayload;
+
+// Shared helpers: wang_hash, randFloat, rt_ReconstructWorldPos,
+// rt_ReconstructNormal, rt_CosineSampleHemisphere,
+// rt_WorldAnchoredSeed, rt_PixelPhiOffset
+#include "rt_indirect.glsl"
+
+void main()
+{
+    ivec2 localCoord = ivec2(gl_LaunchIDEXT.xy);
+    ivec2 size       = params.screenSize;
+    ivec2 rectExtent = max(params.scissorExtent, ivec2(0));
+
+    if (localCoord.x >= rectExtent.x || localCoord.y >= rectExtent.y)
+        return;
+
+    ivec2 coord = localCoord + params.scissorOffset;
+
+    if (coord.x < 0 || coord.y < 0 || coord.x >= size.x || coord.y >= size.y)
+        return;
+
+    // Sky / no geometry — no surface to bounce from; write black.
+    float depth = texelFetch(depthSampler, coord, 0).r;
+    if (depth >= 1.0)
+    {
+        imageStore(giImage, coord, vec4(0.0));
+        return;
+    }
+
+    vec3 worldPos = rt_ReconstructWorldPos(coord, size, params.invViewProj);
+
+    // Camera position — used as orient reference for the normal.
+    vec4 camClip  = vec4(0.0, 0.0, -1.0, 1.0);
+    vec4 camWorld = params.invViewProj * camClip;
+    vec3 camPos   = camWorld.xyz / camWorld.w;
+    vec3 toCamera = normalize(camPos - worldPos);
+
+    vec3 normal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, toCamera);
+
+    // World-anchored seed + per-pixel phi for temporal stability.
+    uint  baseSeed  = rt_WorldAnchoredSeed(worldPos, params.frameIndex);
+    float phiOffset = rt_PixelPhiOffset(coord, params.frameIndex);
+
+    vec3 accumColour = vec3(0.0);
+    int  N           = max(1, params.numSamples);
+
+    for (int s = 0; s < N; s++)
+    {
+        uint sampleSeed = wang_hash(baseSeed + uint(s) * 1013u);
+
+        // Cosine-weighted direction in hemisphere of normal, with phi rotation.
+        float r1 = randFloat(sampleSeed);
+        float r2 = fract(randFloat(sampleSeed + 1u) + phiOffset + float(s) * 0.6180339887);
+
+        float r     = sqrt(r1);
+        float theta = 2.0 * 3.14159265358979 * r2;
+        float x = r * cos(theta);
+        float y = r * sin(theta);
+        float z = sqrt(max(0.0, 1.0 - r1));
+
+        vec3 up    = abs(normal.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 right = normalize(cross(up, normal));
+        vec3 fwd   = cross(normal, right);
+        vec3 dir   = normalize(right * x + fwd * y + normal * z);
+
+        // Ensure direction is in the upper hemisphere.
+        if (dot(dir, normal) < 0.01)
+            dir = normal;
+
+        // Bias origin off the surface to avoid self-intersection.
+        const float bias = 0.5;
+        vec3 origin = worldPos + normal * bias;
+
+        giPayload.colour = vec3(0.0);
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsNoneEXT,
+            0xFF,               // cull mask (all instances)
+            0,                  // SBT offset
+            0,                  // SBT stride
+            0,                  // miss index
+            origin,
+            0.0,
+            dir,
+            params.giRadius,
+            0                   // payload location
+        );
+        accumColour += giPayload.colour;
+    }
+
+    vec3 giColour = (accumColour / float(N)) * params.giStrength;
+    imageStore(giImage, coord, vec4(giColour, 1.0));
+}

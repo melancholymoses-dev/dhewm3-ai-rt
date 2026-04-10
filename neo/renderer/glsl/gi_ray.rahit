@@ -1,0 +1,58 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_ray.rahit — any-hit shader for GI bounce rays.
+
+Invoked for every non-opaque geometry intersection along a GI ray.
+Opaque geometry (VK_GEOMETRY_OPAQUE_BIT_KHR) bypasses this shader.
+
+Alpha-tested (perforated) geometry: sample diffuse alpha; if below the
+material threshold the surface is a hole — ignore the intersection so
+the ray continues through.  All other non-opaque geometry is accepted.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing                              : require
+#extension GL_EXT_buffer_reference                         : require
+#extension GL_EXT_buffer_reference2                        : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
+#extension GL_EXT_nonuniform_qualifier                     : enable
+
+#include "rt_material.glsl"
+#include "gi_payload.glsl"
+
+layout(location = 0) rayPayloadInEXT GIPayload giPayload;
+hitAttributeEXT vec2 baryCoord;
+
+void main()
+{
+    uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
+
+    if (matIdx >= uint(materials.length()))
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
+    MaterialEntry mat = materials[matIdx];
+
+    if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
+    {
+        vec2  uv    = rt_InterpolateUV(matIdx, gl_PrimitiveID, baryCoord);
+        float alpha = texture(matTextures[nonuniformEXT(mat.diffuseTexIndex)], uv).a;
+        if (alpha < mat.alphaThreshold)
+        {
+            ignoreIntersectionEXT;
+            return;
+        }
+    }
+    // Accept all other non-opaque hits (glass, etc.) — rchit will sample albedo.
+}

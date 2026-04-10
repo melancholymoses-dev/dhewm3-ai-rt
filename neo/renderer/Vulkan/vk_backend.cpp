@@ -292,7 +292,8 @@ static bool VK_RTAnyEffectEnabled()
     extern idCVar r_rtShadows;
     extern idCVar r_rtAO;
     extern idCVar r_rtReflections;
-    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool();
+    extern idCVar r_rtGI;
+    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
 }
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -835,6 +836,13 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
+    // useGI: 1 when RT GI buffer is valid this frame (Phase 6.1)
+    extern idCVar r_rtGI;
+    int *useGIPtr = (int *)(useReflPtr + 1);
+    const bool hasGIBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
+                             vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
+    *useGIPtr = (hasGIBuffer && !isWeaponDepthHack) ? 1 : 0;
+
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
@@ -922,7 +930,22 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         VK_Image_GetFallbackDescriptorInfo(&reflMapInfo);
     }
 
-    VkWriteDescriptorSet writes[10] = {};
+    // Binding 10: GI map (or 1x1 black fallback when off; Phase 6.1)
+    extern idCVar r_rtGI;
+    VkDescriptorImageInfo giMapInfo = {};
+    if (vk.rayTracingSupported && vkRT.isInitialized && r_rtGI.GetBool() &&
+        vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.giSampler != VK_NULL_HANDLE)
+    {
+        giMapInfo.sampler     = vkRT.giSampler;
+        giMapInfo.imageView   = vkRT.giBuffer[vk.currentFrame].view;
+        giMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    else
+    {
+        VK_Image_GetFallbackDescriptorInfo(&giMapInfo);
+    }
+
+    VkWriteDescriptorSet writes[11] = {};
 
     // Binding 0: UBO
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -962,7 +985,14 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     writes[9].descriptorCount = 1;
     writes[9].pImageInfo = &reflMapInfo;
 
-    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 10, writes);
+    // Binding 10: GI map (Phase 6.1)
+    writes[10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[10].dstBinding = 10;
+    writes[10].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[10].descriptorCount = 1;
+    writes[10].pImageInfo = &giMapInfo;
+
+    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 11, writes);
 
     // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
@@ -3929,6 +3959,9 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
+        VK_SetRenderStage("RT_GI");
+        VK_RT_DispatchGI(cmdBuf, backEnd.viewDef);
+
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -4451,6 +4484,8 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitAO();
         common->Printf("VK: initializing RT reflections\n");
         VK_RT_InitReflections();
+        common->Printf("VK: initializing RT GI\n");
+        VK_RT_InitGI();
     }
 
     common->Printf("VK: Backend ready\n");
