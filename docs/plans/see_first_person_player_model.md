@@ -243,7 +243,7 @@ Use Blender for authoring/export. Use Noesis as a fast verifier for MD5 skeleton
 ## Asset Touchpoints (From pak_assets)
 
 Primary reference file in extracted assets:
-- `../build_rtx/pak_assets/pak000/def/player.def`
+- `../build_rt/pak_assets/pak000/def/player.def`
 
 Key declarations to know:
 1. `model model_sp_marine { ... }`
