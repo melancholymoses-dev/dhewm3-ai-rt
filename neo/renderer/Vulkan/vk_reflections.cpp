@@ -15,8 +15,7 @@ weighted by the specular map value.
 
 Known limitation: the interaction shader is called once per light, so the
 reflection contribution is accumulated N times for N lights illuminating a
-pixel.  r_rtReflectionBlend (default 0.1) keeps the result visually
-reasonable.  Moving reflections to a dedicated post-process pass is the
+pixel.  Moving reflections to a dedicated post-process pass is the
 correct fix (planned for a later step).
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
@@ -45,22 +44,10 @@ extern idCVar r_rtReflections;
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");
 
-idCVar r_rtReflDebug("r_rtReflDebug", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_INTEGER,
-                     "Debug: force reflection weight to 1.0 on all surfaces to verify buffer has data.");
-
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection contribution in the interaction shader.\n"
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
-                                  "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
-
-enum ReflDebugFlags
-{
-    REFL_DEBUG_FORCE_MISS = 1 << 0,
-    REFL_DEBUG_NO_HITDATA = 1 << 1,    // both rchit + rahit skip all data
-    REFL_DEBUG_NO_CHIT_DATA = 1 << 2,  // rchit only skips data; rahit still alpha-tests
-    REFL_DEBUG_NO_RAHIT_DATA = 1 << 3, // rahit only skips alpha-test; rchit still samples
-    REFL_DEBUG_NO_GLASS_DATA = 1 << 4, // rchit skips glass branch data only
-};
+                                  "Default 1.0 — decrease if reflections look overbright in heavy-light areas.");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -70,8 +57,7 @@ enum ReflDebugFlags
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
-//   uint   debugFlags    offset 84  size  4  (bit0: force-miss rays, bit1: no-hitdata)
-//   pad                   offset 88  size  8
+//   pad                   offset 84  size  12
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
@@ -83,8 +69,7 @@ struct ReflParamsUBO
     int32_t screenWidth;
     int32_t screenHeight;
     float reflBlend; // r_rtReflectionBlend — baked into imageStore in rgen
-    uint32_t debugFlags;
-    float pad[2];
+    float pad[3];
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -733,13 +718,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenWidth = (int32_t)rb.width;
     ubo.screenHeight = (int32_t)rb.height;
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
-    ubo.debugFlags = 0u;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
-
-    if ((ubo.debugFlags & REFL_DEBUG_FORCE_MISS) != 0u && r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: force-miss mode enabled (r_rtReflectionsForceMiss=1)\n");
-    if ((ubo.debugFlags & REFL_DEBUG_NO_HITDATA) != 0u && r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: no-hitdata mode enabled (r_rtReflectionsNoHitData=1)\n");
 
     // --- Update descriptor set (once per frame slot when frameCount changes).
     // Also force refresh when bound resources changed inside the same frame to
