@@ -43,19 +43,9 @@ of the original Doom 3 GPL Source Code release.
 layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 hitAttributeEXT vec2 baryCoord;
 
-#define REFL_DEBUG_FORCE_MISS    (1u << 0u)
-#define REFL_DEBUG_NO_HITDATA    (1u << 1u)
-#define REFL_DEBUG_NO_CHIT_DATA  (1u << 2u)  // chit only (unused here)
-#define REFL_DEBUG_NO_RAHIT_DATA (1u << 3u)  // rahit only
 
 void main()
 {
-    if ((reflPayload.debugFlags & (REFL_DEBUG_NO_HITDATA | REFL_DEBUG_NO_RAHIT_DATA)) != 0u)
-    {
-        // Debug no-rahit-data mode: accept intersections without alpha-test sampling.
-        return;
-    }
-
     // matIdx = instanceCustomIndex + geometryIndex — one entry per BLAS geometry.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 

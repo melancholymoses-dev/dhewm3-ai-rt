@@ -705,7 +705,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
 	renderer/glsl/atrous_filter.comp
-	renderer/glsl/glass_probe.rahit	
+	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit
 	renderer/glsl/glass_probe.rmiss
 	renderer/glsl/player_reflect.rchit

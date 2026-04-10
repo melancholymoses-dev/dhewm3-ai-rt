@@ -26,12 +26,6 @@ void main()
     float up = dir.y * 0.5 + 0.5;   // remap [-1,1] → [0,1]
 
     // Return a very dark ambient colour for missed rays.
-    // The TLAS only contains geometry visible in the current frustum+PVS, so
-    // rays that escape the scene (behind the player, outside the loaded area)
-    // hit nothing and reach here.  Using the Martian sky colour caused vivid
-    // orange halos on indoor surfaces reflected in glass.  A near-black answer
-    // is visually correct: distant void == dark.  The 'up' term adds a tiny
-    // directional gradient so pure-downward misses aren't identical to pure-up.
     vec3 color = mix(vec3(0.01), vec3(0.03), max(0.0, up));
 
     reflPayload.colour        = color;

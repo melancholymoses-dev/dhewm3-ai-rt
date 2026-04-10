@@ -499,9 +499,9 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
 
     // Store vertex/index sizes so TLAS loop can populate maxVertex bounds check.
     blas->geomVertSizes = new VkDeviceSize[1]();
-    blas->geomIdxSizes  = new VkDeviceSize[1]();
-    blas->geomVertSizes[0] = vertexDataSize;  // numVerts * sizeof(idDrawVert)
-    blas->geomIdxSizes[0]  = indexDataSize;
+    blas->geomIdxSizes = new VkDeviceSize[1]();
+    blas->geomVertSizes[0] = vertexDataSize; // numVerts * sizeof(idDrawVert)
+    blas->geomIdxSizes[0] = indexDataSize;
 
     VkAccelerationStructureGeometryKHR asGeom = {};
     asGeom.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1055,10 +1055,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // the static/dynamic merge (dynamic entries shift by staticGeomCount).
     static uint32_t staticInstBaseGeom[VK_RT_MAX_TLAS_INSTANCES];
     static uint32_t dynamicInstBaseGeom[VK_RT_MAX_TLAS_INSTANCES];
-    // Separate static/dynamic geometry address arrays.  During the interleaved
-    // entity loop, static geoms accumulate into s_staticGeom* starting at local
-    // offset staticGeomCount, and dynamic geoms into s_dynGeom* at local offset
-    // dynamicGeomCount.  After the loop, dynamic material entries' baseGeomIdx
+    // Separate static/dynamic geometry address arrays.  After the loop, dynamic material entries' baseGeomIdx
     // values are patched to add the final staticGeomCount so that the GPU-side
     // flat SSBO has static [0..sGC-1] followed by dynamic [sGC..sGC+dGC-1].
     static uint64_t s_staticGeomVtxAddrs[VK_MAT_MAX_GEOMS];
@@ -1702,8 +1699,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // Performs a full RT clean-slate for the new level:
 //   (a) frees all per-entity and cached-model BLASes so model pointers don't dangle, and
 //   (b) destroys all per-frame TLAS resources so RebuildTLAS never calls
-//       vkDestroyAccelerationStructureKHR inline while a command buffer is recording,
-//       which would trigger the "object destroyed while still in use" validation error.
+//       vkDestroyAccelerationStructureKHR inline while a command buffer is recording.
 //   (c) resets all descriptor-set frame counters so every RT pipeline refreshes its
 //       TLAS binding on the first frame of the new level.
 //   (d) invalidates the static-instance cache so the first TLAS build is unconditional.
@@ -1727,10 +1723,8 @@ void VK_RT_BeginLevelLoad(void)
         VK_RT_FreeBLASImmediate(s_blasGarbage[i].blas);
     s_blasGarbageCount = 0;
 
-    // Destroy all per-frame TLAS resources.  The new level's first RebuildTLAS call
-    // will allocate fresh buffers.  Without this, RebuildTLAS may try to destroy and
-    // recreate the TLAS buffer inline while the command buffer is recording (when the
-    // new level needs a larger TLAS), causing a validation "destroyed while in use" error.
+    // Destroy all per-frame TLAS resources.
+    // The new level's first RebuildTLAS call will allocate fresh buffers.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkTLAS_t &tlas = vkRT.tlas[i];
