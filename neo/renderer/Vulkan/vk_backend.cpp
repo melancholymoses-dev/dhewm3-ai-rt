@@ -186,7 +186,8 @@ static idCVar r_vkSplitSubmitMask(
     "r_vkSplitSubmitMask", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Debug: force extra queue submits during DrawView to bisect DEVICE_LOST stage. "
     "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
-    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume (0=off)."
+    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume, "
+    "256=after GI dispatch (outside RP), 512=after GI composite (inside RP). "
     "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
     "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
@@ -836,13 +837,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
-    // useGI: 1 when RT GI buffer is valid this frame (Phase 6.1)
-    extern idCVar r_rtGI;
-    int *useGIPtr = (int *)(useReflPtr + 1);
-    const bool hasGIBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
-                             vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
-    *useGIPtr = (hasGIBuffer && !isWeaponDepthHack) ? 1 : 0;
-
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
@@ -930,22 +924,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         VK_Image_GetFallbackDescriptorInfo(&reflMapInfo);
     }
 
-    // Binding 10: GI map (or 1x1 black fallback when off; Phase 6.1)
-    extern idCVar r_rtGI;
-    VkDescriptorImageInfo giMapInfo = {};
-    if (vk.rayTracingSupported && vkRT.isInitialized && r_rtGI.GetBool() &&
-        vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.giSampler != VK_NULL_HANDLE)
-    {
-        giMapInfo.sampler     = vkRT.giSampler;
-        giMapInfo.imageView   = vkRT.giBuffer[vk.currentFrame].view;
-        giMapInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    }
-    else
-    {
-        VK_Image_GetFallbackDescriptorInfo(&giMapInfo);
-    }
-
-    VkWriteDescriptorSet writes[11] = {};
+    VkWriteDescriptorSet writes[10] = {};
 
     // Binding 0: UBO
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -985,14 +964,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     writes[9].descriptorCount = 1;
     writes[9].pImageInfo = &reflMapInfo;
 
-    // Binding 10: GI map (Phase 6.1)
-    writes[10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[10].dstBinding = 10;
-    writes[10].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[10].descriptorCount = 1;
-    writes[10].pImageInfo = &giMapInfo;
-
-    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 11, writes);
+    vkCmdPushDescriptorSetKHR(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionLayout, 0, 10, writes);
 
     // Bind vertex and index buffers
     extern bool VK_VertexCache_GetBuffer(vertCache_t *, VkBuffer *, VkDeviceSize *);
@@ -3961,6 +3933,11 @@ void VK_RB_DrawView(const void *data)
 
         VK_SetRenderStage("RT_GI");
         VK_RT_DispatchGI(cmdBuf, backEnd.viewDef);
+        if ((splitMask & 256) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI", false))
+                return;
+        }
 
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
@@ -3990,6 +3967,17 @@ void VK_RB_DrawView(const void *data)
         if ((splitMask & 1) != 0)
         {
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterRT", true))
+                return;
+        }
+
+        // GI composite: blend the GI buffer onto the framebuffer once per view.
+        // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
+        // split-submit probes independently of the per-light interaction loop.
+        VK_SetRenderStage("GI_Composite");
+        VK_RT_CompositeGI(cmdBuf);
+        if ((splitMask & 512) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
                 return;
         }
     }
