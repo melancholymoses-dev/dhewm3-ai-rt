@@ -667,6 +667,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_ao.cpp
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
+	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_material_table.cpp
 )
 
@@ -704,6 +705,10 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rgen
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
+	renderer/glsl/gi_ray.rgen
+	renderer/glsl/gi_ray.rchit
+	renderer/glsl/gi_ray.rahit
+	renderer/glsl/gi_ray.rmiss
 	renderer/glsl/atrous_filter.comp
 	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit

@@ -1916,6 +1916,9 @@ void VK_RT_Shutdown(void)
     // Reflection pipeline, SBT, and buffers
     VK_RT_ShutdownReflections();
 
+    // GI pipeline, SBT, and buffers (Phase 6.1)
+    VK_RT_ShutdownGI();
+
     // Material table SSBOs and bindless descriptor set (Phase 5.4)
     VK_RT_ShutdownMaterialTable();
 
