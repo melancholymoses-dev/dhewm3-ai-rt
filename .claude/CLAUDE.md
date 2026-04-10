@@ -10,14 +10,14 @@ The renderer in neo/renderer/GL is the original version for this repo and works 
 When you work, check the existing GL functionality to understand how Doom3 expects things to render.  
 
 ## Plans
-There are relevant plans in docs/plans/*.md that discuss various refactor efforts and steps.  The main one is rtx_refactor_plan2.md, with the others being steps along the way.
+There are relevant plans in docs/plans/*.md that discuss various refactor efforts and steps.  The main one is rt_refactor_plan5.md, with the others being steps along the way.
 
 ## Procedure
 If there are complex options, favour generating logs and debugging over theoretical discussions.  We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.
 
 ## Assets
 The main doom3 assets have been unzipped and are accessible at
-../build_rtx/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.
+../build_rt/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.
 
 neo/game/ and neo/d3xp/ are near-identical; changes must be mirrored across both.  
 Game is for the base game, d3xp is the expansion pack.

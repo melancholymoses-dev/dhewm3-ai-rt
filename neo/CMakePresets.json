@@ -9,21 +9,21 @@
         {
             "name": "vs2022-x64",
             "displayName": "VS 2022 x64",
-            "description": "Configure dhewm3_rtx with Vulkan using local third-party libs",
+            "description": "Configure dhewm3_rt with Vulkan using local third-party libs",
             "generator": "Visual Studio 17 2022",
             "architecture": {
                 "value": "x64",
                 "strategy": "set"
             },
-            "binaryDir": "../build_rtx",
+            "binaryDir": "${sourceDir}/../../build_rt",
             "cacheVariables": {
-                "DHEWM3_VULKAN": "ON",
-                "DHEWM3_RAYTRACING": "ON",
-                "DHEWM3LIBS": "../dhewm3-libs/x86_64-w64-mingw32",
-                "CMAKE_PREFIX_PATH": "../dhewm3-libs/x86_64-w64-mingw32"
+                "DHEWM3LIBS": "${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32",
+                "CMAKE_PREFIX_PATH": "${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32",
+                "OPENAL_INCLUDE_DIR": "${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32/include",
+                "OPENAL_LIBRARY": "${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32/lib/OpenAL32.lib"
             },
             "environment": {
-                "PATH": "$penv{PATH};../dhewm3-libs/x86_64-w64-mingw32/bin"
+                "PATH": "$penv{PATH};${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32/bin"
             }
         }
     ],

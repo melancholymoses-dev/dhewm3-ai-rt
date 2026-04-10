@@ -1977,32 +1977,7 @@ static CVarOption videoOptionsImmediately[] = {
     CVarOption("r_shadows", "Enable Shadows", OT_BOOL),
     CVarOption("r_skipSpecular", "Disable Specular", OT_BOOL),
     CVarOption("r_skipBump", "Disable Bump Maps", OT_BOOL),
-
-    CVarOption(
-        "r_rtShadows",
-        [](idCVar &cvar) {
-            bool isVulkan = (idStr::Icmpn(r_backend.GetString(), "vulkan", 6) == 0);
-            if (!isVulkan)
-            {
-                ImGui::BeginDisabled();
-            }
-            bool enabled = cvar.GetBool();
-            if (ImGui::Checkbox("Ray Traced Shadows (RTX)", &enabled))
-            {
-                cvar.SetBool(enabled);
-            }
-            if (!isVulkan)
-            {
-                ImGui::EndDisabled();
-            }
-            const char *descr =
-                isVulkan
-                    ? "Replace stencil shadow volumes with hardware ray traced shadows.\nRequires an RTX-capable GPU."
-                    : "Ray traced shadows require the Vulkan backend (r_backend vulkan).";
-            AddCVarOptionTooltips(cvar, descr);
-        }),
-
-};
+}; // namespace
 
 idList<VidMode> vidModes;
 
@@ -2424,6 +2399,188 @@ static void DrawVideoOptionsMenu()
         AddTooltip("Click to show information about the currently used Graphics Card (GPU)");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Ray Tracing Settings Menu
+// ---------------------------------------------------------------------------
+
+struct RTCVars
+{
+    // Toggles (extern-declared in tr_local.h)
+    idCVar *useRayTracing = nullptr;
+    idCVar *rtShadows = nullptr;
+    idCVar *rtAO = nullptr;
+    idCVar *rtReflections = nullptr;
+    idCVar *rtGI = nullptr;
+    idCVar *rtDenoise = nullptr;
+
+    // Shadow fine-tuning
+    idCVar *rtShadowSamples = nullptr;
+    idCVar *rtShadowBlur = nullptr;
+    idCVar *rtShadowBlurEnable = nullptr;
+    idCVar *rtShadowBlurDepthAware = nullptr;
+    idCVar *rtShadowRayBias = nullptr;
+    idCVar *rtShadowSoftRadiusScale = nullptr;
+    idCVar *rtShadowSoftRadiusMin = nullptr;
+    idCVar *rtShadowSoftRadiusMax = nullptr;
+    idCVar *rtFlashlightBias = nullptr;
+    idCVar *rtShadowTemporalJitter = nullptr;
+    idCVar *rtShadowStablePattern = nullptr;
+
+    // AO fine-tuning
+    idCVar *rtAOSamples = nullptr;
+    idCVar *rtAORadius = nullptr;
+    idCVar *rtTemporal = nullptr;
+    idCVar *rtTemporalAlpha = nullptr;
+    idCVar *rtAtrousIterations = nullptr;
+
+    // Reflection fine-tuning
+    idCVar *rtReflectionDistance = nullptr;
+    idCVar *rtReflectionBlend = nullptr;
+
+    // GI fine-tuning
+    idCVar *rtGISamples = nullptr;
+    idCVar *rtGIRadius = nullptr;
+    idCVar *rtGIStrength = nullptr;
+};
+static RTCVars rtCVars;
+
+static void InitRTOptionsMenu()
+{
+    rtCVars.useRayTracing = cvarSystem->Find("r_useRayTracing");
+    rtCVars.rtShadows = cvarSystem->Find("r_rtShadows");
+    rtCVars.rtAO = cvarSystem->Find("r_rtAO");
+    rtCVars.rtReflections = cvarSystem->Find("r_rtReflections");
+    rtCVars.rtGI = cvarSystem->Find("r_rtGI");
+    rtCVars.rtDenoise = cvarSystem->Find("r_rtDenoise");
+    rtCVars.rtShadowSamples = cvarSystem->Find("r_rtShadowSamples");
+    rtCVars.rtShadowBlur = cvarSystem->Find("r_rtShadowBlur");
+    rtCVars.rtShadowBlurEnable = cvarSystem->Find("r_rtShadowBlurEnable");
+    rtCVars.rtShadowBlurDepthAware = cvarSystem->Find("r_rtShadowBlurDepthAware");
+    rtCVars.rtShadowRayBias = cvarSystem->Find("r_rtShadowRayBias");
+    rtCVars.rtShadowSoftRadiusScale = cvarSystem->Find("r_rtShadowSoftRadiusScale");
+    rtCVars.rtShadowSoftRadiusMin = cvarSystem->Find("r_rtShadowSoftRadiusMin");
+    rtCVars.rtShadowSoftRadiusMax = cvarSystem->Find("r_rtShadowSoftRadiusMax");
+    rtCVars.rtFlashlightBias = cvarSystem->Find("r_rtFlashlightBias");
+    rtCVars.rtShadowTemporalJitter = cvarSystem->Find("r_rtShadowTemporalJitter");
+    rtCVars.rtShadowStablePattern = cvarSystem->Find("r_rtShadowStablePattern");
+    rtCVars.rtAOSamples = cvarSystem->Find("r_rtAOSamples");
+    rtCVars.rtAORadius = cvarSystem->Find("r_rtAORadius");
+    rtCVars.rtTemporal = cvarSystem->Find("r_rtTemporal");
+    rtCVars.rtTemporalAlpha = cvarSystem->Find("r_rtTemporalAlpha");
+    rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
+    rtCVars.rtReflectionDistance = cvarSystem->Find("r_rtReflectionDistance");
+    rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
+    rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
+    rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
+    rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
+}
+
+// Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
+static void RTCheckbox(const char *label, idCVar *cvar)
+{
+    if (cvar == nullptr)
+        return;
+    bool b = cvar->GetBool();
+    if (ImGui::Checkbox(label, &b))
+        cvar->SetBool(b);
+    AddCVarOptionTooltips(*cvar);
+}
+
+// Helper: int slider clamped to [minV, maxV].
+static void RTSliderInt(const char *label, idCVar *cvar, int minV, int maxV)
+{
+    if (cvar == nullptr)
+        return;
+    int v = cvar->GetInteger();
+    if (ImGui::SliderInt(label, &v, minV, maxV))
+        cvar->SetInteger(v);
+    AddCVarOptionTooltips(*cvar);
+}
+
+// Helper: float slider clamped to [minV, maxV].
+static void RTSliderFloat(const char *label, idCVar *cvar, float minV, float maxV, const char *fmt = "%.3f")
+{
+    if (cvar == nullptr)
+        return;
+    float f = cvar->GetFloat();
+    if (ImGui::SliderFloat(label, &f, minV, maxV, fmt))
+        cvar->SetFloat(f);
+    AddCVarOptionTooltips(*cvar);
+}
+
+static void DrawRTOptionsMenu()
+{
+    ImGui::Spacing();
+
+    // ---- Master toggle -------------------------------------------------------
+    ImGui::SeparatorText("Ray Tracing");
+    RTCheckbox("Enable Ray Tracing (requires Ray Tracing capable hardware + Vulkan backend)", rtCVars.useRayTracing);
+
+    const bool rtEnabled = rtCVars.useRayTracing && rtCVars.useRayTracing->GetBool();
+    ImGui::BeginDisabled(!rtEnabled);
+
+    // ---- Feature toggles -----------------------------------------------------
+    ImGui::SeparatorText("Feature Toggles");
+    RTCheckbox("RT Shadows", rtCVars.rtShadows);
+    RTCheckbox("RT Ambient Occlusion", rtCVars.rtAO);
+    RTCheckbox("RT Reflections", rtCVars.rtReflections);
+    RTCheckbox("RT Global Illumination", rtCVars.rtGI);
+    RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
+
+    // ---- Shadow settings -----------------------------------------------------
+    const bool shadowsOn = rtCVars.rtShadows && rtCVars.rtShadows->GetBool();
+    ImGui::BeginDisabled(!shadowsOn);
+    ImGui::SeparatorText("Shadow Settings");
+
+    RTSliderInt("Shadow Samples (1=hard, 4+=soft)", rtCVars.rtShadowSamples, 1, 8);
+    RTCheckbox("Shadow Blur", rtCVars.rtShadowBlurEnable);
+    RTSliderInt("Shadow Blur Radius (pixels)", rtCVars.rtShadowBlur, 0, 8);
+    RTCheckbox("Depth-Aware Shadow Blur", rtCVars.rtShadowBlurDepthAware);
+    RTSliderFloat("Shadow Ray Bias", rtCVars.rtShadowRayBias, 0.0f, 2.0f);
+    RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
+    RTSliderFloat("Soft Shadow Radius Min", rtCVars.rtShadowSoftRadiusMin, 0.0f, 10.0f);
+    RTSliderFloat("Soft Shadow Radius Max", rtCVars.rtShadowSoftRadiusMax, 0.0f, 20.0f);
+    RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
+    RTCheckbox("Temporal Jitter Pattern", rtCVars.rtShadowTemporalJitter);
+    RTCheckbox("Stable Spatial Jitter Seed", rtCVars.rtShadowStablePattern);
+    ImGui::EndDisabled(); // !shadowsOn
+
+    // ---- AO settings ---------------------------------------------------------
+    const bool aoOn = rtCVars.rtAO && rtCVars.rtAO->GetBool();
+    ImGui::BeginDisabled(!aoOn);
+    ImGui::SeparatorText("Ambient Occlusion Settings");
+
+    RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
+    RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
+    RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);
+    RTSliderFloat("Temporal Blend Factor", rtCVars.rtTemporalAlpha, 0.0f, 1.0f);
+    RTSliderInt("Atrous Spatial Filter Passes", rtCVars.rtAtrousIterations, 0, 8);
+    ImGui::EndDisabled(); // !aoOn
+
+    // ---- Reflection settings -------------------------------------------------
+    const bool reflOn = rtCVars.rtReflections && rtCVars.rtReflections->GetBool();
+    ImGui::BeginDisabled(!reflOn);
+    ImGui::SeparatorText("Reflection Settings");
+
+    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 8000.0f, "%.0f");
+    RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
+    ImGui::EndDisabled(); // !reflOn
+
+    // ---- GI settings ---------------------------------------------------------
+    const bool giOn = rtCVars.rtGI && rtCVars.rtGI->GetBool();
+    ImGui::BeginDisabled(!giOn);
+    ImGui::SeparatorText("Global Illumination Settings");
+
+    RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
+    RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 32.0f, 2048.0f, "%.0f");
+    RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 0.5f);
+    ImGui::EndDisabled(); // !giOn
+
+    ImGui::EndDisabled(); // !rtEnabled
+}
+
+// ---------------------------------------------------------------------------
 
 static idStrList alDevices;
 static int selAlDevice = 0;
@@ -2931,6 +3088,7 @@ static void InitDhewm3SettingsMenu()
     InitOptions(controlOptions, IM_ARRAYSIZE(controlOptions));
 
     InitVideoOptionsMenu();
+    InitRTOptionsMenu();
     InitAudioOptionsMenu();
     InitGameOptionsMenu();
 
@@ -2999,6 +3157,13 @@ void Com_DrawDhewm3SettingsMenu()
         {
             BeginTabChild("vidchild");
             DrawVideoOptionsMenu();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Ray Tracing"))
+        {
+            BeginTabChild("rtchild");
+            DrawRTOptionsMenu();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
