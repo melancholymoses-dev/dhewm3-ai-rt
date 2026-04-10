@@ -19,7 +19,7 @@
 | 5.2b | Atrous spatial filter | **Done** |
 | 5.3 | RT reflections (cheap approximation) | **Done** |
 | 5.4 | Material table — real diffuse in reflections, alpha-test in shadows | **Done** |
-| 5.4b | Basic glass reflections (flat Fresnel) | **Blocked — see investigation** |
+| 5.4b | Basic glass reflections (flat Fresnel) | **Done** |
 | 6 | One-bounce global illumination | **Planned** |
 
 ---
@@ -151,7 +151,7 @@ issue for world geometry; deferred to Phase 6.
 
 ---
 
-### Step 5.4b — Basic Glass Reflections (Blocked — see investigation)
+### Step 5.4b — Basic Glass Reflections (Done)
 
 #### Original Goal
 
@@ -160,168 +160,74 @@ buffer, so `rgen` fires from the opaque wall *behind* the glass and never
 sees the glass surface.  The goal was to make glass surfaces visible to
 reflection rays and give them a flat Fresnel reflectance.
 
+Split probe and reflection appearance to allow the player to appear in reflections, without their geometry
+occluding and causing strange reflections.  Can mainly control scale with r_rtreflectionblend.  F0 does not seem to have much effect.  
+
+#### Debug notes. 
+(Have found it necessary to force the LLMs to actual fix the bugs and not just disable features that aren't working)
+
+Found it useful to split apart the submission queue to allow per-stage debugging to find which batch of operations 
+poisoned the submission queue.
+
+Then debugging by bisecting bad shaders and color coding potential bad shapes/vertexes allowed us to see what we going wrong on the GPU without print statements. 
+
 ---
 
-#### Investigation Findings (2026-04-06)
+##### Crash fix: Stale dynamic geometry addresses + vertex bounds check (implemented 2026-04-09)
 
-Implementation was attempted but blocked by two compounding problems: a crash
-in the reflection shader caused by multi-geometry BLASes, and a more
-fundamental problem with how Doom 3 renders glass.
+**Root cause (fully diagnosed):** Dynamic model geometry (player, weapons, monsters)
+is skinned and uploaded to the vertex cache ring buffer each frame at a new offset.
+`vkBLAS_t::geomVertAddrs[g]` was set once at BLAS build time and never refreshed,
+so it held a stale `(baseAddr + oldOffset)` from a previous frame.  Once the ring
+buffer wrapped, `rt_InterpolateUV` dereferenced an address pointing into unrelated
+or freed memory → GPU page fault → `VK_ERROR_DEVICE_LOST`.
 
----
 
-##### Crash fix: Multi-surface BLAS OOB (implemented)
+**Fix implemented (commit `8e39f41`):**
 
-`VK_RT_MakeMaterialEntry` always writes `geomVertAddrs[0]` / `geomIdxAddrs[0]`
-— surface 0's geometry addresses — into the material table for every TLAS
-instance.  When a reflection ray hits surface 1+ of a multi-geometry BLAS,
-`gl_PrimitiveID` is local to that surface but indexes into surface 0's buffer
-→ out-of-bounds GPU read → `VK_ERROR_DEVICE_LOST`.
+1. **Address refresh in TLAS rebuild** — for each dynamic instance geometry
+   slot `g`, `VK_RT_RebuildTLAS` now walks the model's surfaces and calls `VK_VertexCache_GetBuffer`
+   to obtain the current `(VkBuffer, offset)` pair.  The device address is
+   recomputed and written each frame.  
 
-**Quick fix applied:** `rt_material.glsl` `rt_InterpolateUV()` now returns
-`vec2(0.0)` early when `gl_GeometryIndexEXT != 0`:
+2. **`maxVertex` bounds guard** — `vkBLAS_t` now stores `geomVertSizes[g]` and
+   `geomIdxSizes[g]` at build time.  The TLAS rebuild loop checks fetched indices are allowed.
+   Default is `0xFFFFFFFFu` (no check) for static geometry.
 
+3. **`VkMaterialEntry` layout update** — `pad0` renamed to `maxVertex`
+   
+**`rt_material.glsl` guard (added):**
 ```glsl
-// Guard: address table stores only surface 0's geometry per TLAS instance.
-// Hits on surface 1+ have a local gl_PrimitiveID that would OOB-read
-// surface 0's buffers.  Return zero UVs until the table is refactored.
-if (gl_GeometryIndexEXT != 0)
+uint maxVtx = mat.maxVertex;
+if (maxVtx != 0xFFFFFFFFu && (i0 > maxVtx || i1 > maxVtx || i2 > maxVtx))
     return vec2(0.0);
 ```
 
-**Proper fix (deferred):** Add `baseGeomIdx` to `VkMaterialEntry`; restructure
-`vtxAddrs` / `idxAddrs` as per-geometry arrays indexed by
-`baseGeomIdx + gl_GeometryIndexEXT`.  Touches `vk_raytracing.h`,
-`vk_material_table.cpp`, TLAS rebuild, `rt_material.glsl`, and all three
-shaders that call `rt_InterpolateUV`.
+**Result:** Reflections now run stably with full material/texture sampling on
+both world and dynamic (player/weapon) geometry.  The `gl_GeometryIndexEXT != 0`
+early-out guard added previously remains as a fallback for multi-surface BLASes
+not yet covered by the per-geometry address table.
+
+**Remaining issue:** An occasional `VK_ERROR_DEVICE_LOST` crash occurs when all
+split submits are disabled (i.e. the full frame in a single command buffer with
+no intermediate queue submissions).  This is not yet diagnosed; it may be a
+missing pipeline barrier between AS build and ray dispatch when both occur in
+the same submit.  Split submits remain the default and keep the game stable.
 
 ---
-
-##### Doom 3 glass is screen-space, not geometry-based
-
-Inspection of `materials/glass.mtr` (and alpha-era materials) shows every
-standard glass surface uses a two-or-three stage setup:
-
-| Stage | Technique |
-|-------|-----------|
-| 0 | `Program heatHaze.vfp` + `fragmentMap _currentRender` — screen-space distortion |
-| 1 | `maskcolor` + `makealpha(texture)` — alpha mask |
-| 2 | `cubeMap env/gen2` + `texgen reflect` — pre-baked environment cube reflection |
-| 3 *(alpha only)* | `mirrorRenderMap 512 512` — id's intended real mirror render, cut from shipped game |
-
-The `heatHaze` program is a custom vertex/fragment program that sources
-`_currentRender` (the framebuffer capture) and applies normal-map distortion.
-It is a pure screen-space effect with no RT-accessible geometry.
-
-Consequences for the RT pipeline:
-
-1. **`VK_DrawShaderPasses` skips stage 0** — the `heatHaze` stage has no
-   `pStage->texture.image` (image is a program parameter via `fragmentMap`,
-   not a standard `map`).  The code falls into the `!img` branch, doesn't
-   match TG_SCREEN / TG_GLASSWARP / cinematic, and hits the `continue` path.
-   This is correct behaviour for now; the stage is genuinely unrenderable
-   without a proper heatHaze replacement.
-
-2. **Glass surfaces do not appear in the BLAS** — world glass surfaces are
-   never processed by the ambient lighting pass (`R_CreateAmbientCache` is
-   not called for purely translucent surfaces), so `geo->ambientCache` is
-   null.  `geo->verts` may also be null if the BSP compiler released CPU
-   memory after static vertex-cache upload.  `VK_RT_BuildBLASForModel`'s
-   geometry check (`haveGpuGeom || haveCpuGeom`) fails silently, and the
-   surface is excluded.
-
-3. **`MC_TRANSLUCENT` is not a glass proxy** — enabling translucent surfaces
-   in the BLAS (commit 411c275) caused the multi-surface crash above.  Debug
-   logging (`VK_RT GLASS:`) confirmed the surfaces flagged were decals
-   (`textures/decals/splat6`), muzzle flashes (`machinegun_mflash*`), and
-   particle effects (`smokepuff`) — not actual glass.  The real
-   `textures/glass/glass1` surfaces were absent from the log entirely.
-
-4. **`drawSurf_t` path is equivalent** — `drawSurf_t->geo` is the same
-   `srfTriangles_t *` as the model surface.  Walking `viewDef->drawSurfs`
-   for MC_TRANSLUCENT entries gives the same geometry pointer and the same
-   null-cache problem; it does not provide access to geometry the entity path
-   cannot see.
-
----
-
-##### What the alpha materials reveal
-
-The pre-release `glass.mtr` (recovered externally) adds a `mirrorRenderMap
-512 512` stage to every glass material.  This was id Software's intended
-real-reflection path: a recursive `R_RenderView` from the mirror's
-perspective, captured to a scratch image.  The implementation exists in
-`neo/renderer/tr_subview.cpp` (`R_MirrorRender`, `R_MirrorViewBySurface`).
-The feature was cut from the shipped game, presumably for performance.
-
-`R_MirrorViewBySurface` accesses `tri->verts` directly to compute the mirror
-plane, confirming CPU verts are present on the `drawSurf_t` when this path is
-active — but this path is not triggered by any shipped material.
-
----
-
-#### Routes Forward
-
-Three credible paths exist, in order of increasing scope:
-
-**Route A — Fix ambientCache for glass (medium effort)**
-
-Identify why world glass surfaces lack `ambientCache` (or `geo->verts`) and
-ensure they are uploaded to the static vertex cache so `haveGpuGeom` is true
-in `VK_RT_BuildBLASForModel`.  This is the narrowest change: glass geometry
-enters the BLAS via the existing entity path and the GLSL changes in the
-original Step 5.4b design (Fresnel split, bounce loop) proceed as planned.
-
-The investigation point: trace whether `R_CreateAmbientCache` is called for
-MC_TRANSLUCENT surfaces in the world area model setup path, and whether the
-vertex cache block is accessible via `VK_VertexCache_GetBuffer`.
-
-**Route B — Hook the `mirrorRenderMap` subview path (medium effort)**
-
-`R_MirrorRender` in `tr_subview.cpp` already computes a mirrored viewDef and
-has access to `tri->verts`.  Instead of doing a full recursive scene render,
-intercept `mirrorRenderMap` stages in the Vulkan backend and substitute the
-RT reflection buffer.  This would:
-- Give glass surfaces a physically-plausible RT reflection without needing to
-  solve the ambientCache problem
-- Require shipping glass materials with the `mirrorRenderMap` stage re-enabled
-  (either via a patched `.mtr` or a mod-style override in `base/materials/`)
-- Still require glass geometry in the BLAS (same root problem, different
-  trigger point)
-
-**Route C — Global illumination naturally handles reflections (high effort)**
-
-With a full path-traced GI pass (Phase 6), reflections are a degenerate case:
-a roughness=0 surface bounces its single GI ray as a pure mirror reflection.
-Glass becomes a transmissive BSDF material.  The `R_MirrorRender` subview path
-becomes entirely redundant.
-
-GI does **not** eliminate the BLAS geometry requirement — glass still needs to
-be in the TLAS for rays to intersect it.  Route A (fixing ambientCache) is a
-prerequisite for Route C as well.
-
----
-
-#### Current State of the Shader Design
-
-The GLSL changes described in the original plan (Fresnel branch in `rchit`,
-bounce loop in `rgen`, glass flag in `rahit`) remain valid and unchanged.
-They can be applied once the geometry pipeline problem is resolved via any
-of the routes above.
-
-**Flag definition (already in header, not yet in use):**
-```cpp
-#define VK_MAT_FLAG_GLASS 0x04u   // MC_TRANSLUCENT — thin glass, flat Fresnel
-```
 
 #### Known limitations (unchanged)
 
+- Player weapon does not reflect.  The model movements also differ between 1st person and third person.  See shotgun reload.  This includes flashlights and projectiles.  (e.g plasma gun)
+- Models behind the player do not render.  
+
 - No refraction (straight-through approximation). Fine for Doom 3's flat window
-  panels.
+  panels.  - One-sided: only the front glass face gets the Fresnel split. Both Imperceptible
+  for thin single-pane geometry.  
+
 - Angle-independent reflectance. Schlick can be added in `rchit` with no
-  structural changes.
-- One-sided: only the front glass face gets the Fresnel split. Imperceptible
-  for thin single-pane geometry.
+  structural changes.  WOuld be noticeable to have more reflection at more grazing angles. 
+
 
 ---
 
@@ -438,7 +344,7 @@ diffuseLight += gi;
 | 4 | Step 5.2b Atrous filter | **Done** |
 | 5 | Step 5.3 RT Reflections | **Done** |
 | 6 | Step 5.4 Material table | **Done** |
-| 7 | Step 5.4b Glass reflections | Blocked (geometry pipeline) |
+| 7 | Step 5.4b Glass reflections | **Done** |
 | 8 | Phase 6 GI pipeline | Planned |
 | 9 | Phase 6 Temporal + integration | Planned |
 
@@ -470,6 +376,27 @@ diffuseLight += gi;
 ---
 
 ## Changelog
+
+### 2026-04-09
+
+- Identified root cause of `VK_ERROR_DEVICE_LOST` crash in reflection hit shaders:
+  dynamic geometry vertex/index addresses were stale (captured at BLAS build time;
+  vertex cache ring buffer advances each frame).
+- Added per-frame address refresh in `VK_RT_RebuildTLAS`: walks model surfaces,
+  calls `VK_VertexCache_GetBuffer` for each dynamic geometry slot, recomputes
+  device address from current `(VkBuffer, offset)` each frame.
+- Added `geomVertSizes`/`geomIdxSizes` arrays to `vkBLAS_t` (stored at build time).
+- Added `maxVertex` field to `VkMaterialEntry` (was `pad0`); populated in TLAS
+  rebuild as `numVerts - 1`; default `0xFFFFFFFFu` (no check) for static geometry.
+- Added `maxVertex` bounds guard in `rt_InterpolateUV` (`rt_material.glsl`):
+  any fetched index exceeding `maxVertex` returns `vec2(0.0)`.
+- Reflections now stable with full material/texture sampling on world and dynamic
+  (player/weapon) geometry.
+- `r_rtReflectionBlend` default raised from 0.1 → 0.5 now that reflections are
+  stable.
+- **Known remaining issue:** occasional crash when all split submits are disabled;
+  likely a missing barrier between AS build and ray dispatch in a unified submit.
+  Split submits remain the safe default.
 
 ### 2026-04-06
 

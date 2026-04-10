@@ -160,20 +160,9 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
     return true;
 }
 
-// Debug toggle: force the plasmagun body interaction surface to render two-sided
-// so we can isolate winding/front-face mismatches without affecting world rendering.
-static idCVar r_vkPlasmaForceTwoSided(
-    "r_vkPlasmaForceTwoSided", "0", CVAR_RENDERER,
-    "Force two-sided culling for models/weapons/plasmagun/plasmagun in Vulkan interaction pass (debug)");
-static idCVar r_vkPlasmaNoStencil(
-    "r_vkPlasmaNoStencil", "0", CVAR_RENDERER,
-    "Force no-stencil interaction pipeline for models/weapons/plasmagun/plasmagun (debug)");
 static idCVar r_vkWeaponDepthAlways(
     "r_vkWeaponDepthAlways", "0", CVAR_RENDERER,
     "Force weaponDepthHack interactions to use stencil+depth ALWAYS (debug isolation; can make weapons ghostly)");
-static idCVar r_vkPlasmaIgnoreDepthAlphaTest(
-    "r_vkPlasmaIgnoreDepthAlphaTest", "0", CVAR_RENDERER,
-    "Depth prepass debug: treat models/weapons/plasmagun/plasmagun as opaque (ignore alpha-test clip)");
 static idCVar r_vkPolyOffsetSlopeMin(
     "r_vkPolyOffsetSlopeMin", "0.0", CVAR_RENDERER | CVAR_FLOAT,
     "Vulkan-only minimum slope depth bias for polygonOffset materials when r_offsetFactor is 0");
@@ -197,7 +186,8 @@ static idCVar r_vkSplitSubmitMask(
     "r_vkSplitSubmitMask", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Debug: force extra queue submits during DrawView to bisect DEVICE_LOST stage. "
     "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
-    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume (0=off)");
+    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume (0=off)."
+    "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
     "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
     "Low-perturbation debug mode: keeps stage breadcrumbs but suppresses split-submit probes and extra split logs. "
@@ -634,10 +624,7 @@ static void VK_DestroyUBORings(void)
 
 // Allocate space in the UBO ring and return the byte offset.
 // On overflow: CLAMP at the last valid slot rather than wrapping to 0.
-// Wrapping to 0 would reuse slots already recorded in this frame's command
-// buffer, corrupting their UBO data mid-execution and causing DEVICE_LOST.
-// Clamping means overflow draws share the last slot's data (visual glitch)
-// which is always preferable to a GPU hang.
+// Clamping means overflow draws share the last slot's data (visual glitch).
 static uint32_t VK_AllocUBO(void)
 {
     vkUBORing_t &ring = uboRings[vk.currentFrame];
@@ -689,13 +676,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     const idMaterial *mat = (din->surf && din->surf->material) ? din->surf->material : NULL;
     const char *matName = mat ? mat->GetName() : "<null>";
     const bool isPlasmaBody = (matName && idStr::Cmp(matName, "models/weapons/plasmagun/plasmagun") == 0);
-
-    /*if (r_vkLogRT.GetInteger() >= 2)
-    {
-        const srfTriangles_t *geo = din->surf ? din->surf->geo : NULL;
-        common->Printf("VK INTER: light=%d phase=%s mat='%s' nIdx=%d\n", s_lightIdx, s_shadowPhaseTag, matName,
-                       geo ? geo->numIndexes : 0);
-    }*/
 
     vkUBORing_t &ring = uboRings[vk.currentFrame];
 
@@ -1068,9 +1048,6 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         if (backEnd.viewDef && backEnd.viewDef->isMirror && cullMode != VK_CULL_MODE_NONE)
             cullMode = (cullMode == VK_CULL_MODE_BACK_BIT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT;
 
-        if (isWeaponSurf && isPlasmaBody && r_vkPlasmaForceTwoSided.GetBool())
-            cullMode = VK_CULL_MODE_NONE;
-
         vkCmdSetCullMode(s_cmd, cullMode);
     }
 
@@ -1092,16 +1069,9 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineStencilLEqual);
     }
 
-    // Debug isolation: force plasma body interactions through no-stencil path to
-    // detect stencil/prepass coupling issues without changing other materials.
-    const bool forceNoStencil = (isWeaponSurf && isPlasmaBody && r_vkPlasmaNoStencil.GetBool() &&
-                                 idStr::Cmp(s_interactionPipeTag, "opaque") == 0);
-    if (forceNoStencil)
-        vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipelineNoStencil);
-
     vkCmdDrawIndexed(s_cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
 
-    if (forceNoStencil || forceWeaponStencilLEqual || forceWeaponStencilAlways)
+    if (forceWeaponStencilLEqual || forceWeaponStencilAlways)
         vkCmdBindPipeline(s_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
 }
 
@@ -1889,8 +1859,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         }
     }
-    common->Printf("Finished Shader passes\n");
-    fflush(NULL);
 }
 
 // ---------------------------------------------------------------------------
@@ -2247,17 +2215,6 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
         }
         else // MC_PERFORATED
         {
-            const bool isPlasmaBody = (idStr::Cmp(mat->GetName(), "models/weapons/plasmagun/plasmagun") == 0);
-            const bool forcePlasmaOpaqueDepth = (isPlasmaBody && r_vkPlasmaIgnoreDepthAlphaTest.GetBool());
-            if (forcePlasmaOpaqueDepth)
-            {
-                VkDescriptorImageInfo imgInfo = {};
-                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
-                if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
-                    drawSubviewGuardBlack();
-                continue;
-            }
 
             const float *regs = surf->shaderRegisters;
             bool didDraw = false;
