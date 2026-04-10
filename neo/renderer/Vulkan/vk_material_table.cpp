@@ -241,8 +241,7 @@ void VK_RT_InitMaterialTable(void)
 
     // All four bindings get UPDATE_AFTER_BIND so that vkUpdateDescriptorSets
     // can be called while command buffers that reference this set are in flight
-    // (or in recording state).  This avoids validation errors at every frame
-    // and at level transitions when the bindless texture array is rebuilt.
+    // (or in recording state).
     // Binding 3 (bindless sampler array) additionally needs PARTIALLY_BOUND
     // because not all VK_MAT_MAX_TEXTURES slots are always populated.
     VkDescriptorBindingFlags bindingFlags[4] = {

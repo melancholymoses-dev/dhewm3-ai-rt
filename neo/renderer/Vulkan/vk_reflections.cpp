@@ -53,25 +53,6 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "0.5", CVAR_RENDERER | 
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 0.5 — decrease if reflections look overbright in heavy-light areas.");
 
-static idCVar r_rtReflectionsSkipTrace(
-    "r_rtReflectionsSkipTrace", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Debug: skip vkCmdTraceRaysKHR in VK_RT_DispatchReflections to isolate reflection trace crashes.");
-static idCVar r_rtReflectionsForceMiss(
-    "r_rtReflectionsForceMiss", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Debug: force reflection rays to miss (cullMask=0) to isolate hit-shader/material-table crashes.");
-static idCVar r_rtReflectionsNoHitData(
-    "r_rtReflectionsNoHitData", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Debug: keep reflection hits enabled but bypass hit-shader material/UV/alpha fetches.");
-static idCVar r_rtReflectionsNoChitData(
-    "r_rtReflectionsNoChitData", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Debug: bypass data access in reflect_ray.rchit only (rahit still does alpha-test).");
-static idCVar r_rtReflectionsNoRahitData(
-    "r_rtReflectionsNoRahitData", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Debug: bypass alpha-test data access in reflect_ray.rahit only (rchit still samples diffuse).");
-static idCVar r_rtReflectionsNoGlassData(
-    "r_rtReflectionsNoGlassData", "0", CVAR_RENDERER | CVAR_INTEGER,
-    "Debug: in rchit skip rt_SampleDiffuse for glass surfaces only; opaque still samples.");
-
 enum ReflDebugFlags
 {
     REFL_DEBUG_FORCE_MISS = 1 << 0,
@@ -401,11 +382,9 @@ static void VK_RT_InitReflPipeline(void)
     //   instanceSBTOffset=2 (player body, noSelfShadow):
     //     + sbtHitOffset 0 → hit slot 2 → Group 5: player main hit
     //     + sbtHitOffset 1 → hit slot 3 → Group 6: player glass probe hit (never fires — mask 0xFE excludes player)
-    //     Q: Update for glass rahit?
     //
     // SBT memory layout:
     //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=world_main  [4]=world_probe  [5]=player_main  [6]=player_probe
-    //   [7]=glass_probe
     // reflRgenRegion → [0] reflMissRegion → [1..2] reflHitRegion → [3..6]
     VkRayTracingShaderGroupCreateInfoKHR groups[7] = {};
 
@@ -755,16 +734,6 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenHeight = (int32_t)rb.height;
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
     ubo.debugFlags = 0u;
-    if (r_rtReflectionsForceMiss.GetInteger() != 0)
-        ubo.debugFlags |= REFL_DEBUG_FORCE_MISS;
-    if (r_rtReflectionsNoHitData.GetInteger() != 0)
-        ubo.debugFlags |= REFL_DEBUG_NO_HITDATA;
-    if (r_rtReflectionsNoChitData.GetInteger() != 0)
-        ubo.debugFlags |= REFL_DEBUG_NO_CHIT_DATA;
-    if (r_rtReflectionsNoRahitData.GetInteger() != 0)
-        ubo.debugFlags |= REFL_DEBUG_NO_RAHIT_DATA;
-    if (r_rtReflectionsNoGlassData.GetInteger() != 0)
-        ubo.debugFlags |= REFL_DEBUG_NO_GLASS_DATA;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     if ((ubo.debugFlags & REFL_DEBUG_FORCE_MISS) != 0u && r_vkLogRT.GetInteger() >= 1)
@@ -864,26 +833,17 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Refl: dispatch %ux%u maxDist=%.1f\n", rb.width, rb.height, ubo.maxDist);
 
-    const bool skipTrace = (r_rtReflectionsSkipTrace.GetInteger() != 0);
-    if (skipTrace)
-    {
-        if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Refl: skipping traceRaysKHR (r_rtReflectionsSkipTrace=1)\n");
-    }
-    else
-    {
-        vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
-                          rb.width, rb.height, 1);
+    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
+                      rb.width, rb.height, 1);
 
-        // --- Barrier: reflection write -> fragment shader read ---
-        {
-            VkMemoryBarrier memBarrier = {};
-            memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-            memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &memBarrier, 0, NULL, 0, NULL);
-        }
+    // --- Barrier: reflection write -> fragment shader read ---
+    {
+        VkMemoryBarrier memBarrier = {};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL for the upcoming render pass ---

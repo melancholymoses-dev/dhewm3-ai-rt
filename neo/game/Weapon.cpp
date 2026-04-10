@@ -802,6 +802,9 @@ void idWeapon::InitWorldModel(const idDeclEntityDef *def)
             worldModelRenderEntity->suppressSurfaceInViewID = owner->entityNumber + 1;
             worldModelRenderEntity->suppressShadowInViewID = owner->entityNumber + 1;
             worldModelRenderEntity->suppressShadowInLightID = LIGHTID_VIEW_MUZZLE_FLASH + owner->entityNumber;
+            // RT: treat the world weapon model as a player-body entity so reflection rays
+            // route it to player_reflect.rchit (mask=0x01, SBT offset=2).
+            worldModelRenderEntity->noSelfShadow = true;
         }
     }
     else
