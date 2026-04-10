@@ -55,7 +55,7 @@ struct VkInteractionUBO
     int useAO;          // 1 when RT AO mask is valid this frame
     float lightScale;   // backEnd.overBright — final color multiplier before gamma
     int useReflections; // 1 when RT reflection buffer is valid this frame (replaces old pad)
-    int reflDebug;      // 1 = force specWeight=1.0 to verify reflection buffer contents
+    int pad;
 };
 // Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 + 4 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE = 384.
 

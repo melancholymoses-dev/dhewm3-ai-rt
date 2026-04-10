@@ -12,8 +12,8 @@ Drawn once per MC_TRANSLUCENT surface (e.g. glass) after the normal material sta
 Samples the RT reflection buffer at the fragment's screen position and outputs it
 additively so reflections appear on top of the existing translucent colour.
 
-Fresnel weighting is already baked into the reflection buffer by reflect_ray.rchit
-(F0=0.8 for glass), so no additional modulation is needed here.
+Schlick Fresnel weighting for the primary glass interface is written to alpha by
+reflect_ray.rgen, and consumed here for additive compositing.
 
 Layout notes:
   binding 0 — GuiParams UBO (shared with gui.vert.spv).
@@ -44,12 +44,8 @@ void main()
     // Compute normalised screen UV from pixel coordinate + render resolution.
     vec2 screenUV = gl_FragCoord.xy / u_TexGenS.xy;
 
-    // Sample the reflection buffer.  The RT rchit already applied Fresnel (F0=0.8)
-    // so this value is already physically scaled — just add it.
-    // The alpha channel encodes whether the glass probe actually found a glass
-    // surface at this screen coordinate.  Only apply the overlay where glass was
-    // confirmed (alpha = 1.0); when the probe missed (camera jumping / off-angle,
-    // alpha = 0.0) the output is black and the additive blend adds nothing.
+    // Sample the reflection buffer.
+    // RGB stores reflected radiance; alpha stores Schlick glass weight from raygen.
     vec4 reflSample = texture(u_ReflectionMap, screenUV);
     vec3 refl = reflSample.rgb * reflSample.a;
 

@@ -23,5 +23,4 @@ struct ReflPayload {
     float transmittance;
     vec3  nextOrigin;
     vec3  nextDir;
-  uint  debugFlags;
 };

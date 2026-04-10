@@ -39,7 +39,6 @@ layout(set = 0, binding = 3) uniform ReflParams {
     uint   frameIndex;
     ivec2  screenSize;
     float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
-    uint   debugFlags;  // bit0: force-miss rays (cullMask=0)
 } params;
 
 #include "reflect_payload.glsl"
@@ -114,7 +113,7 @@ void main()
     vec3 origin = reflOrigin + reflNormal * 0.5;
 
     // Bounce loop: up to 2 iterations covers double-pane glass.
-    // Each glass hit contributes 4 % and passes 96 % to the next segment.
+    // Each glass hit contributes 5 % and passes 95 % to the next segment.
     vec3  accum  = vec3(0.0);
     float weight = 1.0;
     vec3  dir    = reflDir;
@@ -123,7 +122,6 @@ void main()
     {
         reflPayload.colour        = vec3(0.0);
         reflPayload.transmittance = 0.0;
-        reflPayload.debugFlags    = params.debugFlags;
 
         traceRayEXT(
             topLevelAS,
@@ -148,9 +146,16 @@ void main()
         }
     }
 
-    // Encode whether a glass surface was detected in the alpha channel.
-    // glass_refl_overlay.frag uses this to gate the additive composite: only pixels
-    // where the probe found real glass get the overlay.  
-    float glassFlag = (glassProbe.hitT > 0.01) ? 1.0 : 0.0;
-    imageStore(reflImage, coord, vec4(accum * params.reflBlend, glassFlag));
+    // Encode Schlick Fresnel for the camera-facing glass interface in alpha.
+    // The overlay pass uses this as a physically-motivated glass weight.
+    // Exaggerated reflections off glass. 
+    float glassWeight = 0.0;
+    if (glassProbe.hitT > 0.01)
+    {
+        const float GLASS_F0 = 0.2;
+        float cosTheta = clamp(abs(dot(normalize(reflNormal), normalize(reflDir))), 0.0, 1.0);
+        float oneMinusCos = 1.0 - cosTheta;
+        glassWeight = GLASS_F0 + (1.0 - GLASS_F0) * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos;
+    }
+    imageStore(reflImage, coord, vec4(accum * params.reflBlend, glassWeight));
 }

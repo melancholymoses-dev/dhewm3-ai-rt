@@ -1453,17 +1453,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkUnmapMemory(vk.device, tlas.instanceMemory);
 
-    // Log geom slot usage once per level load (helps catch VK_MAT_MAX_GEOMS exhaustion).
-    {
-        static uint32_t s_lastLoggedStatic = UINT32_MAX;
-        if (staticGeomCount != s_lastLoggedStatic)
-        {
-            s_lastLoggedStatic = staticGeomCount;
-            common->Printf("VK RT geom slots: static=%u dynamic=%u total=%u limit=%u\n", staticGeomCount,
-                           dynamicGeomCount, staticGeomCount + dynamicGeomCount, VK_MAT_MAX_GEOMS);
-        }
-    }
-
     // Guard against combined static+dynamic overflow: each bucket is independently bounded to
     // VK_MAT_MAX_GEOMS, but the GPU SSBO is only VK_MAT_MAX_GEOMS entries total.
     if (staticGeomCount + dynamicGeomCount > VK_MAT_MAX_GEOMS)

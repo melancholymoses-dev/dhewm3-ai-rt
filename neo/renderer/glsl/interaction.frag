@@ -67,7 +67,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
     int   u_UseReflections; // 1 when RT reflection buffer is valid this frame
-    int   u_ReflDebug;       // 1 = force specWeight=1.0 (debug)
+    int pad;
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -129,6 +129,7 @@ void main() {
     // the reflection buffer at dispatch time) keeps the result visually reasonable.
     // Reflection is weighted by the per-pixel specular map value so matte surfaces
     // show no reflection and metallic/shiny surfaces show a clear tint.
+    /*
     vec3 reflColor = vec3(0.0);
     if (u_UseReflections != 0) {
         vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
@@ -136,12 +137,13 @@ void main() {
         // Modulate by specular map luminance: only surfaces with non-zero specular maps
         // receive reflections.  Matte surfaces (specBase ~= 0) get no contribution.
         // RGB weights are standard perceptual grayscale (BT.601).
+        // JM Note: have disabled.  These maps are not normalized / way way too bright.
         float specBase   = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
                                vec3(0.299, 0.587, 0.114));
-        float specWeight = (u_ReflDebug != 0) ? 1.0 : specBase;
-        reflColor = reflSample * specWeight;
+        float specweight = 0.01;
+        reflColor = reflSample * specBase * specweight;
     }
-
+    */
     // --- Combine ---
     // Reflection is added independently of the light attenuation/shadow so that
     // reflections remain visible even on surfaces in shadow (environment light,
