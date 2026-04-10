@@ -129,21 +129,22 @@ void main() {
     // the reflection buffer at dispatch time) keeps the result visually reasonable.
     // Reflection is weighted by the per-pixel specular map value so matte surfaces
     // show no reflection and metallic/shiny surfaces show a clear tint.
+    // JM Note: have disabled.  These maps are not normalized / way way too bright.    
+    vec3 reflColor = vec3(0.0);    
     /*
-    vec3 reflColor = vec3(0.0);
     if (u_UseReflections != 0) {
         vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
         vec3 reflSample = texture(u_ReflectionMap, reflUV).rgb;
         // Modulate by specular map luminance: only surfaces with non-zero specular maps
         // receive reflections.  Matte surfaces (specBase ~= 0) get no contribution.
         // RGB weights are standard perceptual grayscale (BT.601).
-        // JM Note: have disabled.  These maps are not normalized / way way too bright.
         float specBase   = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
                                vec3(0.299, 0.587, 0.114));
-        float specweight = 0.01;
+        float specweight = 0.1;
         reflColor = reflSample * specBase * specweight;
     }
     */
+
     // --- Combine ---
     // Reflection is added independently of the light attenuation/shadow so that
     // reflections remain visible even on surfaces in shadow (environment light,
