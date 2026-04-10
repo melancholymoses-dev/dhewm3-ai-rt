@@ -152,7 +152,7 @@ void main()
     float glassWeight = 0.0;
     if (glassProbe.hitT > 0.01)
     {
-        const float GLASS_F0 = 0.2;
+        const float GLASS_F0 = 0.1;
         float cosTheta = clamp(abs(dot(normalize(reflNormal), normalize(reflDir))), 0.0, 1.0);
         float oneMinusCos = 1.0 - cosTheta;
         glassWeight = GLASS_F0 + (1.0 - GLASS_F0) * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos;
