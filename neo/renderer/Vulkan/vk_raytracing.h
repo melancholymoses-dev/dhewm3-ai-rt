@@ -298,6 +298,14 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR giHitRegion;
     VkStridedDeviceAddressRegionKHR giCallRegion;
 
+    // Fullscreen composite pipeline — additively blends the GI buffer onto the
+    // framebuffer once per view, before the per-light interaction draws.
+    VkPipeline              giCompositePipeline;
+    VkPipelineLayout        giCompositeLayout;
+    VkDescriptorSetLayout   giCompositeDescLayout;
+    VkDescriptorPool        giCompositeDescPool;
+    VkDescriptorSet         giCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
     VkPipeline reflPipeline;
     VkPipelineLayout reflPipelineLayout;
     VkDescriptorSetLayout reflDescLayout;
@@ -522,6 +530,11 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height);
 // this function transitions to READ_ONLY_OPTIMAL and back.
 // Output: giBuffer[currentFrame] is ready for FRAGMENT sampling when this returns.
 void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Composite the GI buffer onto the current framebuffer with additive blending.
+// Must be called INSIDE the main render pass, before the per-light interaction draws.
+// Does nothing when r_rtGI is off or the composite pipeline is not ready.
+void VK_RT_CompositeGI(VkCommandBuffer cmd);
 
 // ---------------------------------------------------------------------------
 // Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit

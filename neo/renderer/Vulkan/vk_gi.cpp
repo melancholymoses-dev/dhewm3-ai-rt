@@ -46,8 +46,8 @@ static idCVar r_rtGIRadius("r_rtGIRadius", "512.0", CVAR_RENDERER | CVAR_FLOAT,
 static idCVar r_rtGISamples("r_rtGISamples", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "GI bounce rays per pixel (1-8)");
 
-static idCVar r_rtGIStrength("r_rtGIStrength", "0.4", CVAR_RENDERER | CVAR_FLOAT,
-                             "Scale applied to the GI contribution (default 0.4)");
+static idCVar r_rtGIStrength("r_rtGIStrength", "0.03", CVAR_RENDERER | CVAR_FLOAT,
+                             "Scale applied to the GI contribution per-light (accumulates; default 0.03 ≈ 0.3 for ~10 lights)");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -170,16 +170,35 @@ static void VK_RT_CreateGIImages(uint32_t width, uint32_t height)
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vkBeginCommandBuffer(tmpCmd, &beginInfo);
 
+            VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+            // Transition UNDEFINED → GENERAL (required before clear and imageStore).
             VkImageMemoryBarrier barrier = {};
             barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask       = 0;
-            barrier.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
             barrier.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
             barrier.image               = gb.image;
-            barrier.subresourceRange    = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            barrier.subresourceRange    = subRange;
             vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier);
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+
+            // Clear to black so unwritten pixels don't contain garbage.
+            VkClearColorValue clearBlack = {};
+            vkCmdClearColorImage(tmpCmd, gb.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
+
+            // Second barrier: transfer write → shader write for rgen imageStore.
+            VkImageMemoryBarrier barrier2 = {};
+            barrier2.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier2.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier2.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier2.oldLayout           = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.image               = gb.image;
+            barrier2.subresourceRange    = subRange;
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier2);
 
             vkEndCommandBuffer(tmpCmd);
 
@@ -457,12 +476,159 @@ static void VK_RT_InitGIPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_InitGICompositePipeline
+// Fullscreen additive pipeline that blends the GI buffer onto the framebuffer
+// once per view, before the per-light interaction draws.
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitGICompositePipeline(void)
+{
+    // --- Descriptor set layout: 1 sampler binding ---
+    VkDescriptorSetLayoutBinding binding = {};
+    binding.binding         = 0;
+    binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings    = &binding;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giCompositeDescLayout));
+
+    // --- Pipeline layout ---
+    VkPipelineLayoutCreateInfo plInfo = {};
+    plInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts    = &vkRT.giCompositeDescLayout;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.giCompositeLayout));
+
+    // --- Shader modules ---
+    VkShaderModule vertMod = VK_LoadSPIRV("glprogs/glsl/gi_composite.vert.spv");
+    VkShaderModule fragMod = VK_LoadSPIRV("glprogs/glsl/gi_composite.frag.spv");
+    if (vertMod == VK_NULL_HANDLE || fragMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT GI: failed to load composite shaders — composite pass disabled");
+        if (vertMod != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, vertMod, NULL);
+        if (fragMod != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, fragMod, NULL);
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertMod;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragMod;
+    stages[1].pName  = "main";
+
+    // No vertex input — triangle is generated from gl_VertexIndex in the vert shader.
+    VkPipelineVertexInputStateCreateInfo vertInput = {};
+    vertInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount  = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode    = VK_CULL_MODE_NONE;
+    rasterizer.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msaa = {};
+    msaa.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // No depth test and no depth write — GI is a post-geometry pass.
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable  = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
+
+    // Additive blend: GI is added on top of whatever is already in the framebuffer.
+    // Alpha: ZERO+ONE so we don't disturb the alpha channel.
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.blendEnable         = VK_TRUE;
+    colorBlend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlend.colorBlendOp        = VK_BLEND_OP_ADD;
+    colorBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    colorBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    colorBlend.alphaBlendOp        = VK_BLEND_OP_ADD;
+    colorBlend.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 1;
+    blendState.pAttachments    = &colorBlend;
+
+    // Dynamic viewport and scissor (composite covers full framebuffer).
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates    = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 2;
+    pipelineInfo.pStages             = stages;
+    pipelineInfo.pVertexInputState   = &vertInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState   = &msaa;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pColorBlendState    = &blendState;
+    pipelineInfo.pDynamicState       = &dynamicState;
+    pipelineInfo.layout              = vkRT.giCompositeLayout;
+    pipelineInfo.renderPass          = vk.renderPass;
+    pipelineInfo.subpass             = 0;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.giCompositePipeline));
+
+    vkDestroyShaderModule(vk.device, vertMod, NULL);
+    vkDestroyShaderModule(vk.device, fragMod, NULL);
+
+    // --- Descriptor pool and sets (one per frame in flight) ---
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets       = VK_MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes    = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.giCompositeDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.giCompositeDescLayout;
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool     = vkRT.giCompositeDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts        = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.giCompositeDescSets));
+
+    common->Printf("VK RT GI: composite pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_InitGI (public entry)
 // ---------------------------------------------------------------------------
 
 void VK_RT_InitGI(void)
 {
     VK_RT_InitGIPipeline();
+    VK_RT_InitGICompositePipeline();
     VK_RT_ResizeGI(vk.swapchainExtent.width, vk.swapchainExtent.height);
 }
 
@@ -507,6 +673,29 @@ void VK_RT_ShutdownGI(void)
         vkDestroySampler(vk.device, vkRT.giSampler, NULL);
         vkRT.giSampler = VK_NULL_HANDLE;
     }
+
+    // Composite pipeline cleanup.
+    if (vkRT.giCompositeDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.giCompositeDescPool, NULL);
+        vkRT.giCompositeDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.giCompositeDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.giCompositeDescLayout, NULL);
+        vkRT.giCompositeDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.giCompositePipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.giCompositePipeline, NULL);
+        vkRT.giCompositePipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.giCompositeLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.giCompositeLayout, NULL);
+        vkRT.giCompositeLayout = VK_NULL_HANDLE;
+    }
+
     VK_RT_DestroyGIImages();
 }
 
@@ -631,6 +820,29 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
                      idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
         idMat4 invVP = vpMat.Inverse();
         memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
+    }
+
+    // Guard: skip dispatch if the matrix contains NaN (singular VP on degenerate frame).
+    {
+        bool hasNaN = false;
+        for (int i = 0; i < 16; i++)
+            if (ubo.invViewProj[i] != ubo.invViewProj[i]) { hasNaN = true; break; }
+        if (hasNaN)
+        {
+            common->Warning("VK RT GI: invViewProj contains NaN — skipping dispatch");
+            // Restore depth layout before returning.
+            VkImageMemoryBarrier depthRestore = {};
+            depthRestore.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            depthRestore.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+            depthRestore.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            depthRestore.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            depthRestore.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthRestore.image            = vk.depthImage;
+            depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1, &depthRestore);
+            return;
+        }
     }
 
     VkRect2D dispatchRect = VK_RT_GI_ComputeDispatchRect(viewDef);
@@ -766,4 +978,66 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT GI: dispatch complete\n");
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_CompositeGI (public)
+// Additively blends the GI buffer onto the current framebuffer using a
+// fullscreen triangle.  Must be called inside the main render pass, before
+// the first per-light interaction draw.  Rebinds no pipeline state that the
+// caller cannot restore with a simple vkCmdBindPipeline.
+// ---------------------------------------------------------------------------
+
+void VK_RT_CompositeGI(VkCommandBuffer cmd)
+{
+    if (!r_rtGI.GetBool())
+        return;
+    if (vkRT.giCompositePipeline == VK_NULL_HANDLE)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+    vkReflBuffer_t &gb = vkRT.giBuffer[frameIdx];
+    if (gb.image == VK_NULL_HANDLE || vkRT.giSampler == VK_NULL_HANDLE)
+        return;
+
+    // Update the descriptor set for this frame slot.  The GI image may have
+    // been recreated (resize), so always write it before drawing.
+    VkDescriptorImageInfo imgInfo = {};
+    imgInfo.sampler     = vkRT.giSampler;
+    imgInfo.imageView   = gb.view;
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet write = {};
+    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet          = vkRT.giCompositeDescSets[frameIdx];
+    write.dstBinding      = 0;
+    write.descriptorCount = 1;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo      = &imgInfo;
+    vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
+
+    // Full-framebuffer viewport and scissor — GI covers the entire render target.
+    // Use the Y-flipped viewport (y = H, height = -H) to match the renderer's
+    // OpenGL-convention coordinate system.  This is critical: leaving a non-flipped
+    // viewport bound after this draw breaks all subsequent geometry and GUI passes.
+    VkViewport vp = {};
+    vp.x        = 0.0f;
+    vp.y        = (float)vk.swapchainExtent.height;
+    vp.width    = (float)vk.swapchainExtent.width;
+    vp.height   = -(float)vk.swapchainExtent.height;
+    vp.minDepth = 0.0f;
+    vp.maxDepth = 1.0f;
+    VkRect2D sc = {{0, 0}, vk.swapchainExtent};
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositePipeline);
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &sc);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositeLayout,
+                            0, 1, &vkRT.giCompositeDescSets[frameIdx], 0, NULL);
+
+    // 3 vertices, no vertex buffer — the vert shader generates the triangle from gl_VertexIndex.
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT GI: composite drawn frame=%d slot=%d\n", tr.frameCount, frameIdx);
 }
