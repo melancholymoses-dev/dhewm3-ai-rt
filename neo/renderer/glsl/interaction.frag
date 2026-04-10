@@ -36,6 +36,7 @@ layout(set=0, binding=6) uniform sampler2D u_SpecularTable;   // NdotH -> specul
 layout(set=0, binding=7) uniform sampler2D u_ShadowMask;      // RT shadow mask (1=lit, 0=shadowed)
 layout(set=0, binding=8) uniform sampler2D u_AOMap;           // RT AO mask (1=unoccluded, 0=occluded)
 layout(set=0, binding=9) uniform sampler2D u_ReflectionMap;   // RT reflection buffer (RGBA16F)
+layout(set=0, binding=10) uniform sampler2D u_GIMap;          // RT GI buffer (RGBA16F, Phase 6.1)
 
 // Shared UBO — binding 0, both vertex and fragment stages.
 // Field order matches VkInteractionUBO in vk_pipeline.cpp (std140).
@@ -67,7 +68,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
     int   u_UseReflections; // 1 when RT reflection buffer is valid this frame
-    int pad;
+    int   u_UseGI;          // 1 when RT GI buffer is valid this frame (Phase 6.1)
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -145,11 +146,23 @@ void main() {
     }
     */
 
+    // --- RT global illumination (Phase 6.1 — one-bounce, ambient colour bleeding) ---
+    // Sampled from the GI buffer built once per frame by gi_ray.rgen.
+    // Added directly to the diffuse term so colour bleeding is visible
+    // regardless of direct-light shadow/attenuation at this pixel.
+    // NOTE: like reflections, this accumulates once per light call; r_rtGIStrength
+    // compensates.  A post-process pass would be the correct fix.
+    vec3 giColor = vec3(0.0);
+    if (u_UseGI != 0) {
+        vec2 giUV = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
+        giColor = texture(u_GIMap, giUV).rgb;
+    }
+
     // --- Combine ---
     // Reflection is added independently of the light attenuation/shadow so that
     // reflections remain visible even on surfaces in shadow (environment light,
     // not per-source light).
-    vec3 color = (diffuse * ao + specular) * attenuation * shadow + reflColor;
+    vec3 color = (diffuse * ao + specular) * attenuation * shadow + reflColor + giColor;
     color *= vary_Color.rgb;
 
     color *= u_LightScale;
