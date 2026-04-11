@@ -39,7 +39,6 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 // r_rtReflections declared in RenderSystem_init.cpp
-extern idCVar r_rtReflections;
 
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");

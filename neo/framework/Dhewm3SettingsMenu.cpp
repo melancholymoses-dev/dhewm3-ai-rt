@@ -2442,6 +2442,13 @@ struct RTCVars
     idCVar *rtGISamples = nullptr;
     idCVar *rtGIRadius = nullptr;
     idCVar *rtGIStrength = nullptr;
+    idCVar *rtGIDirectScale = nullptr;
+    idCVar *rtGILightBounce = nullptr;
+    idCVar *rtGIBounceScale = nullptr;
+    idCVar *rtGIAtrous = nullptr;
+    idCVar *rtGIAtrousIterations = nullptr;
+    idCVar *rtGIAtrousSigmaL = nullptr;
+    idCVar *rtGIAtrousSigmaZ = nullptr;
 };
 static RTCVars rtCVars;
 
@@ -2452,7 +2459,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtAO = cvarSystem->Find("r_rtAO");
     rtCVars.rtReflections = cvarSystem->Find("r_rtReflections");
     rtCVars.rtGI = cvarSystem->Find("r_rtGI");
-    rtCVars.rtDenoise = cvarSystem->Find("r_rtDenoise");
     rtCVars.rtShadowSamples = cvarSystem->Find("r_rtShadowSamples");
     rtCVars.rtShadowBlur = cvarSystem->Find("r_rtShadowBlur");
     rtCVars.rtShadowBlurEnable = cvarSystem->Find("r_rtShadowBlurEnable");
@@ -2466,14 +2472,21 @@ static void InitRTOptionsMenu()
     rtCVars.rtShadowStablePattern = cvarSystem->Find("r_rtShadowStablePattern");
     rtCVars.rtAOSamples = cvarSystem->Find("r_rtAOSamples");
     rtCVars.rtAORadius = cvarSystem->Find("r_rtAORadius");
-    rtCVars.rtTemporal = cvarSystem->Find("r_rtTemporal");
-    rtCVars.rtTemporalAlpha = cvarSystem->Find("r_rtTemporalAlpha");
+    rtCVars.rtTemporal = cvarSystem->Find("r_rtAOTemporal");
+    rtCVars.rtTemporalAlpha = cvarSystem->Find("r_rtAOTemporalAlpha");
     rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
     rtCVars.rtReflectionDistance = cvarSystem->Find("r_rtReflectionDistance");
     rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
     rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
     rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
+    rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
+    rtCVars.rtGILightBounce = cvarSystem->Find("r_rtGILightBounce");
+    rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
+    rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
+    rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
+    rtCVars.rtGIAtrousSigmaL = cvarSystem->Find("r_rtGIAtrousSigmaL");
+    rtCVars.rtGIAtrousSigmaZ = cvarSystem->Find("r_rtGIAtrousSigmaZ");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2574,7 +2587,24 @@ static void DrawRTOptionsMenu()
 
     RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
     RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 32.0f, 2048.0f, "%.0f");
-    RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 0.5f);
+    RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
+    RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 2.0f);
+    ImGui::Spacing();
+    ImGui::SeparatorText("GI Colour Bounce (Option B)");
+    RTCheckbox("Colour Bounce: evaluate lights at secondary hit", rtCVars.rtGILightBounce);
+    const bool bounceOn = rtCVars.rtGILightBounce && rtCVars.rtGILightBounce->GetBool();
+    ImGui::BeginDisabled(!bounceOn);
+    RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
+    ImGui::EndDisabled();
+    ImGui::Spacing();
+    ImGui::SeparatorText("GI Spatial Filter (A-trous)");
+    RTCheckbox("A-trous Spatial Filter", rtCVars.rtGIAtrous);
+    const bool giAtrousOn = rtCVars.rtGIAtrous && rtCVars.rtGIAtrous->GetBool();
+    ImGui::BeginDisabled(!giAtrousOn);
+    RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
+    RTSliderFloat("Luminance Edge-Stop (SigmaL)", rtCVars.rtGIAtrousSigmaL, 0.0f, 1.0f);
+    RTSliderFloat("Depth Edge-Stop (SigmaZ)", rtCVars.rtGIAtrousSigmaZ, 0.001f, 0.1f, "%.4f");
+    ImGui::EndDisabled(); // !giAtrousOn
     ImGui::EndDisabled(); // !giOn
 
     ImGui::EndDisabled(); // !rtEnabled
