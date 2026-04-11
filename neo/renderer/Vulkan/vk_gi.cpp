@@ -49,6 +49,11 @@ static idCVar r_rtGISamples("r_rtGISamples", "1", CVAR_RENDERER | CVAR_INTEGER,
 static idCVar r_rtGIStrength("r_rtGIStrength", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
 
+idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+                                "Multiplier on direct interaction lighting when GI is active. "
+                                "Reduce below 1.0 (e.g. 0.7) to compensate for GI-added luminance "
+                                "and keep overall brightness consistent with the original game");
+
 static idCVar r_rtGILightBounce("r_rtGILightBounce", "1", CVAR_RENDERER | CVAR_BOOL,
                                 "Enable Option B: evaluate nearest lights at secondary hit (directional colour bounce)");
 

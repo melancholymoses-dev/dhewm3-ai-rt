@@ -29,9 +29,6 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 // r_rtAO and r_rtAOSamples declared in RenderSystem_init.cpp — use extern here.
-extern idCVar r_rtAO;
-extern idCVar r_rtAOSamples;
-
 static idCVar r_rtAORadius("r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
                            "Max AO ray length in world units (default 64)");
 

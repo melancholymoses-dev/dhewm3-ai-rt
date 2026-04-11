@@ -22,7 +22,7 @@ Camera-cut detection
 --------------------
 On the first use of a slot, or whenever the per-slot cached invViewProj
 matrix differs from the current frame's matrix by more than
-r_rtTemporalCutThreshold, alpha is forced to 1.0 so history is replaced
+r_rtAOTemporalCutThreshold, alpha is forced to 1.0 so history is replaced
 entirely with the current frame.  This prevents stale history from
 ghosting through level transitions and teleport cuts.
 
@@ -47,20 +47,20 @@ of the original Doom 3 GPL Source Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtTemporal("r_rtTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtAOTemporal("r_rtAOTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
                     "Enable temporal EMA accumulation for AO (requires r_rtAO 1)");
 
-idCVar r_rtTemporalAlpha("r_rtTemporalAlpha", "0.3", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                          "EMA blend factor: 0=use only history, 1=use only current frame (reset). "
                          "Lower values are smoother but ghost more during movement.");
 
-idCVar r_rtTemporalCutThreshold("r_rtTemporalCutThreshold", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtAOTemporalCutThreshold("r_rtAOTemporalCutThreshold", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                 "Max L-inf distance between consecutive invViewProj matrices before "
                                 "history is discarded (camera cut / teleport detection).");
 
 idCVar r_rtAtrousIterations("r_rtAtrousIterations", "4", CVAR_RENDERER | CVAR_INTEGER,
                             "Atrous spatial AO filter passes after EMA (0=off, 2 or 4 recommended). "
-                            "Requires r_rtAO 1 and r_rtTemporal 1.");
+                            "Requires r_rtAO 1 and r_rtAOTemporal 1.");
 
 idCVar r_rtAtrousSigmaDepth("r_rtAtrousSigmaDepth", "0.01", CVAR_RENDERER | CVAR_FLOAT,
                             "Atrous depth edge-stop sigma (NDC). Smaller = sharper geometry edges.");
@@ -75,9 +75,6 @@ idCVar r_rtAtrousSigmaLuminance("r_rtAtrousSigmaLuminance", "0.1", CVAR_RENDERER
 extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
-extern idCVar r_vkLogRT;
-extern idCVar r_useRayTracing;
-extern idCVar r_rtAO;
 
 static VkRect2D s_temporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
@@ -418,7 +415,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
 {
     if (!vkRT.isInitialized)
         return;
-    if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool() || !r_rtTemporal.GetBool())
+    if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool() || !r_rtAOTemporal.GetBool())
         return;
     if (vkRT.temporalPipeline == VK_NULL_HANDLE)
     {
@@ -475,10 +472,10 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
             if (d > maxDiff)
                 maxDiff = d;
         }
-        float cutThresh = Max(0.0f, r_rtTemporalCutThreshold.GetFloat());
+        float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
         if (maxDiff <= cutThresh)
         {
-            effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtTemporalAlpha.GetFloat());
+            effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtAOTemporalAlpha.GetFloat());
         }
         else if (r_vkLogRT.GetInteger() >= 1)
         {
@@ -751,7 +748,7 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
 {
     if (!vkRT.isInitialized)
         return;
-    if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool() || !r_rtTemporal.GetBool())
+    if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool() || !r_rtAOTemporal.GetBool())
         return;
 
     const int frameIdx = vk.currentFrame;
@@ -912,7 +909,6 @@ static idCVar r_rtGITemporalAlpha("r_rtGITemporalAlpha", "0.15", CVAR_RENDERER |
                                   "GI EMA blend factor: 0=use only history, 1=use only current frame. "
                                   "0.1-0.2 recommended; lower = smoother but more ghosting.");
 
-extern idCVar r_rtGI;
 
 // Per-frame dispatch rect cache (parallel to s_temporalDispatchRect for AO)
 static VkRect2D s_giTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
@@ -1269,7 +1265,7 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
             float d = fabsf(invVP[i] - vkRT.giPrevInvViewProj[frameIdx][i]);
             if (d > maxDiff) maxDiff = d;
         }
-        float cutThresh = Max(0.0f, r_rtTemporalCutThreshold.GetFloat());
+        float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
         if (maxDiff <= cutThresh)
         {
             effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtGITemporalAlpha.GetFloat());
