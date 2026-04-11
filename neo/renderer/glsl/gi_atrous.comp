@@ -1,0 +1,139 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_atrous.comp — À-trous wavelet spatial filter for GI.
+
+One compute dispatch performs a single À-trous pass over the GI buffer
+using a 3×3 B3-spline kernel evaluated at stride `stepSize` pixels.
+Running 3–5 passes with stepSize = 1, 2, 4, 8, 16 gives an effective
+filter radius of (2^N − 1) pixels while only doing 9 texture taps each pass.
+
+Edge-stopping functions prevent blurring across:
+  • Geometric edges — depth discontinuity weight  w_d = exp(-Δd² / sigmaZ²)
+  • Shading edges  — luminance difference weight   w_l = exp(-Δl² / sigmaL²)
+
+Inputs  (set 0, binding 0) : source GI buffer  (COMBINED_IMAGE_SAMPLER)
+Output  (set 0, binding 1) : destination image (rgba16f STORAGE_IMAGE)
+Depth   (set 0, binding 2) : depth buffer      (COMBINED_IMAGE_SAMPLER)
+
+Per-pass parameters arrive via push constants (40 bytes).
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// ---------------------------------------------------------------------------
+// Descriptors
+// ---------------------------------------------------------------------------
+
+layout(set = 0, binding = 0) uniform sampler2D giSrc;
+layout(set = 0, binding = 1, rgba16f) uniform image2D giDst;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+// ---------------------------------------------------------------------------
+// Push constants
+// ---------------------------------------------------------------------------
+
+layout(push_constant) uniform PC {
+    int   stepSize;       // 1, 2, 4, 8, … (2^iteration)
+    float sigmaL;         // luminance edge-stop bandwidth  (e.g. 0.2)
+    float sigmaZ;         // depth edge-stop bandwidth      (e.g. 0.01)
+    float pad;
+    int   screenWidth;
+    int   screenHeight;
+    int   scissorOffsetX;
+    int   scissorOffsetY;
+    int   scissorExtentX;
+    int   scissorExtentY;
+} pc;
+
+// ---------------------------------------------------------------------------
+// B3-spline 3×3 kernel (sum = 1)
+// ---------------------------------------------------------------------------
+
+const float K[3][3] = float[3][3](
+    float[3](0.0625, 0.125, 0.0625),
+    float[3](0.125,  0.25,  0.125 ),
+    float[3](0.0625, 0.125, 0.0625)
+);
+
+float luminance(vec3 c)
+{
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// ---------------------------------------------------------------------------
+void main()
+// ---------------------------------------------------------------------------
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 ext   = ivec2(pc.scissorExtentX, pc.scissorExtentY);
+
+    if (local.x >= ext.x || local.y >= ext.y)
+        return;
+
+    ivec2 coord = local + ivec2(pc.scissorOffsetX, pc.scissorOffsetY);
+    ivec2 size  = ivec2(pc.screenWidth, pc.screenHeight);
+
+    if (coord.x < 0 || coord.y < 0 || coord.x >= size.x || coord.y >= size.y)
+        return;
+
+    // Centre texel values.
+    vec3  cCenter = texelFetch(giSrc, coord, 0).rgb;
+    float lCenter = luminance(cCenter);
+    float dCenter = texelFetch(depthSampler, coord, 0).r;
+
+    // Sky pixels carry no GI — pass through zero immediately.
+    if (dCenter >= 1.0)
+    {
+        imageStore(giDst, coord, vec4(0.0));
+        return;
+    }
+
+    float sigmaL2 = pc.sigmaL * pc.sigmaL + 0.0001;
+    float sigmaZ2 = pc.sigmaZ * pc.sigmaZ + 0.0001;
+
+    vec3  accumColour = vec3(0.0);
+    float accumWeight = 0.0;
+
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            ivec2 sCoord = coord + ivec2(dx, dy) * pc.stepSize;
+            sCoord = clamp(sCoord, ivec2(0), size - 1);
+
+            vec3  sColour = texelFetch(giSrc,      sCoord, 0).rgb;
+            float sDepth  = texelFetch(depthSampler, sCoord, 0).r;
+
+            // Depth edge-stopping: skip neighbours on sky.
+            if (sDepth >= 1.0)
+                continue;
+
+            // Luminance edge-stopping weight.
+            float dl = lCenter - luminance(sColour);
+            float wL = exp(-(dl * dl) / sigmaL2);
+
+            // Depth edge-stopping weight.
+            float dd = dCenter - sDepth;
+            float wD = exp(-(dd * dd) / sigmaZ2);
+
+            float w = K[dy + 1][dx + 1] * wL * wD;
+
+            accumColour += sColour * w;
+            accumWeight += w;
+        }
+    }
+
+    vec3 result = (accumWeight > 0.0001) ? (accumColour / accumWeight) : cCenter;
+    imageStore(giDst, coord, vec4(result, 1.0));
+}

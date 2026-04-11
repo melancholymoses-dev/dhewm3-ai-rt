@@ -46,11 +46,23 @@ static idCVar r_rtGIRadius("r_rtGIRadius", "512.0", CVAR_RENDERER | CVAR_FLOAT,
 static idCVar r_rtGISamples("r_rtGISamples", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "GI bounce rays per pixel (1-8)");
 
-static idCVar r_rtGIStrength("r_rtGIStrength", "0.03", CVAR_RENDERER | CVAR_FLOAT,
-                             "Scale applied to the GI contribution per-light (accumulates; default 0.03 ≈ 0.3 for ~10 lights)");
+static idCVar r_rtGIStrength("r_rtGIStrength", "0.3", CVAR_RENDERER | CVAR_FLOAT,
+                             "Global scale applied to the GI buffer before compositing");
 
 static idCVar r_rtGILightBounce("r_rtGILightBounce", "1", CVAR_RENDERER | CVAR_BOOL,
                                 "Enable Option B: evaluate nearest lights at secondary hit (directional colour bounce)");
+
+static idCVar r_rtGIBounceScale("r_rtGIBounceScale", "5.0", CVAR_RENDERER | CVAR_FLOAT,
+                                "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
+
+static idCVar r_rtGIAtrous("r_rtGIAtrous", "1", CVAR_RENDERER | CVAR_BOOL,
+                           "Enable À-trous spatial filter on the GI buffer after temporal resolve");
+static idCVar r_rtGIAtrousIterations("r_rtGIAtrousIterations", "3", CVAR_RENDERER | CVAR_INTEGER,
+                                     "Number of À-trous filter passes (each doubles the filter radius; 3 → effective radius ~7px)");
+static idCVar r_rtGIAtrousSigmaL("r_rtGIAtrousSigmaL", "0.2", CVAR_RENDERER | CVAR_FLOAT,
+                                  "À-trous luminance edge-stop bandwidth (smaller = sharper edges preserved)");
+static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | CVAR_FLOAT,
+                                  "À-trous depth edge-stop bandwidth (smaller = tighter depth edges)");
 
 // ---------------------------------------------------------------------------
 // GI light SSBO — mirrors GILightBuffer in gi_ray.rchit GLSL
@@ -67,7 +79,8 @@ struct GILightEntry
 struct GILightBuffer
 {
     int32_t    numLights;
-    int32_t    pad[3];
+    float      bounceScale; // r_rtGIBounceScale — per-light irradiance multiplier
+    int32_t    pad[2];
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
 static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffer size mismatch");
@@ -268,12 +281,18 @@ static void VK_RT_CreateGIImages(uint32_t width, uint32_t height)
 
             vkEndCommandBuffer(tmpCmd);
 
+            VkFenceCreateInfo fenceCI = {};
+            fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VkFence fence = VK_NULL_HANDLE;
+            VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
+
             VkSubmitInfo submitInfo         = {};
             submitInfo.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submitInfo.commandBufferCount   = 1;
             submitInfo.pCommandBuffers      = &tmpCmd;
-            vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-            vkQueueWaitIdle(vk.graphicsQueue);
+            vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
+            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
     }
@@ -746,6 +765,7 @@ void VK_RT_InitGI(void)
     VK_RT_InitGICompositePipeline();
     VK_RT_ResizeGI(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_InitGITemporal();
+    VK_RT_InitGIAtrous();
 }
 
 // ---------------------------------------------------------------------------
@@ -812,6 +832,7 @@ void VK_RT_ShutdownGI(void)
         vkRT.giCompositeLayout = VK_NULL_HANDLE;
     }
 
+    VK_RT_ShutdownGIAtrous();
     VK_RT_ShutdownGITemporal();
     VK_RT_DestroyGIImages();
     VK_RT_DestroyGILightSsbos();
@@ -828,7 +849,15 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.giDescSetLastUpdatedFrameCount[i] = -1;
     VK_RT_CreateGIImages(width, height);
-    VK_RT_ResizeGITemporal(width, height);
+
+    // Only resize temporal/atrous subsystems once their pipelines have been
+    // created.  During VK_RT_InitGI the pipeline handles are still NULL here
+    // (InitGITemporal/InitGIAtrous are called afterwards), so these are skipped
+    // to prevent double-allocation of the history/ping-pong images.
+    if (vkRT.giTemporalPipeline != VK_NULL_HANDLE)
+        VK_RT_ResizeGITemporal(width, height);
+    if (vkRT.giAtrousPipeline != VK_NULL_HANDLE)
+        VK_RT_ResizeGIAtrous(width, height);
 }
 
 // ---------------------------------------------------------------------------
@@ -983,7 +1012,8 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (vkRT.giLightSsboMapped[frameIdx] != NULL)
     {
         GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
-        lb->numLights = 0;
+        lb->numLights   = 0;
+        lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
 
         if (r_rtGILightBounce.GetBool())
         {
@@ -1127,14 +1157,15 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
                           dispatchRect.extent.width, dispatchRect.extent.height, 1);
     }
 
-    // --- Barrier: GI write -> fragment shader read ---
+    // --- Barrier: GI write -> compute/fragment shader read ---
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &memBarrier, 0, NULL, 0, NULL);
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL ---
@@ -1165,7 +1196,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
 void VK_RT_CompositeGI(VkCommandBuffer cmd)
 {
-    if (!r_rtGI.GetBool())
+    if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool())
         return;
     if (vkRT.giCompositePipeline == VK_NULL_HANDLE)
         return;
@@ -1198,22 +1229,13 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
     write.pImageInfo      = &imgInfo;
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
-    // Full-framebuffer viewport and scissor — GI covers the entire render target.
-    // Use the Y-flipped viewport (y = H, height = -H) to match the renderer's
-    // OpenGL-convention coordinate system.  This is critical: leaving a non-flipped
-    // viewport bound after this draw breaks all subsequent geometry and GUI passes.
-    VkViewport vp = {};
-    vp.x        = 0.0f;
-    vp.y        = (float)vk.swapchainExtent.height;
-    vp.width    = (float)vk.swapchainExtent.width;
-    vp.height   = -(float)vk.swapchainExtent.height;
-    vp.minDepth = 0.0f;
-    vp.maxDepth = 1.0f;
-    VkRect2D sc = {{0, 0}, vk.swapchainExtent};
-
+    // Viewport and scissor are inherited from the caller (VK_RB_DrawView resumes
+    // the render pass with the Y-flipped full viewport and s_viewScissor already
+    // bound).  Do not override them here: widening the scissor to the full
+    // swapchain extent would leave subsequent interaction draws using the wrong
+    // region, and the GI buffer outside the dispatch rect is already cleared to
+    // black so blending it adds nothing visually.
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositePipeline);
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositeLayout,
                             0, 1, &vkRT.giCompositeDescSets[frameIdx], 0, NULL);
 
@@ -1222,4 +1244,494 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT GI: composite drawn frame=%d slot=%d\n", tr.frameCount, frameIdx);
+}
+
+// ===========================================================================
+// GI À-trous spatial filter (Phase 6.3)
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Image helpers
+// ---------------------------------------------------------------------------
+
+static bool VK_RT_AllocGIAtrousImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
+{
+    img.width  = width;
+    img.height = height;
+
+    VkImageCreateInfo imgInfo = {};
+    imgInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgInfo.imageType     = VK_IMAGE_TYPE_2D;
+    imgInfo.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgInfo.extent        = {width, height, 1};
+    imgInfo.mipLevels     = 1;
+    imgInfo.arrayLayers   = 1;
+    imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imgInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    imgInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &img.image));
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vk.device, img.image, &memReq);
+
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
+    uint32_t memTypeIdx = UINT32_MAX;
+    for (uint32_t m = 0; m < memProps.memoryTypeCount; m++)
+    {
+        if ((memReq.memoryTypeBits & (1u << m)) &&
+            (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+        {
+            memTypeIdx = m;
+            break;
+        }
+    }
+    if (memTypeIdx == UINT32_MAX)
+    {
+        common->Warning("VK RT GI Atrous: no device-local memory for image");
+        return false;
+    }
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize  = memReq.size;
+    allocInfo.memoryTypeIndex = memTypeIdx;
+    VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &img.memory));
+    VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image            = img.image;
+    viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &img.view));
+
+    // Transition UNDEFINED → GENERAL and clear to black.
+    VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
+    {
+        VkCommandBufferAllocateInfo cbAlloc = {};
+        cbAlloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbAlloc.commandPool        = vk.commandPool;
+        cbAlloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbAlloc.commandBufferCount = 1;
+        VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
+
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(tmpCmd, &beginInfo);
+
+        VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        VkImageMemoryBarrier b1 = {};
+        b1.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b1.srcAccessMask    = 0;
+        b1.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b1.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+        b1.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+        b1.image            = img.image;
+        b1.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b1);
+
+        VkClearColorValue clearBlack = {};
+        vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
+
+        VkImageMemoryBarrier b2 = {};
+        b2.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b2.srcAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b2.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        b2.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
+        b2.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+        b2.image            = img.image;
+        b2.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &b2);
+
+        vkEndCommandBuffer(tmpCmd);
+
+        VkFenceCreateInfo fenceCI = {};
+        fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
+
+        VkSubmitInfo submitI = {};
+        submitI.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitI.commandBufferCount = 1;
+        submitI.pCommandBuffers    = &tmpCmd;
+        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
+        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(vk.device, fence, NULL);
+        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
+    }
+    return true;
+}
+
+static void VK_RT_FreeGIAtrousImage(vkReflBuffer_t &img)
+{
+    if (img.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, img.view,   NULL); img.view   = VK_NULL_HANDLE; }
+    if (img.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, img.image,  NULL); img.image  = VK_NULL_HANDLE; }
+    if (img.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, img.memory, NULL); img.memory = VK_NULL_HANDLE; }
+    img.width  = 0;
+    img.height = 0;
+}
+
+static void VK_RT_CreateGIAtrousImages(uint32_t width, uint32_t height)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (!VK_RT_AllocGIAtrousImage(vkRT.giAtrousA[i], width, height))
+            common->Warning("VK RT GI Atrous: failed to allocate giAtrousA slot %d", i);
+        if (!VK_RT_AllocGIAtrousImage(vkRT.giAtrousB[i], width, height))
+            common->Warning("VK RT GI Atrous: failed to allocate giAtrousB slot %d", i);
+    }
+}
+
+static void VK_RT_DestroyGIAtrousImages(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_RT_FreeGIAtrousImage(vkRT.giAtrousA[i]);
+        VK_RT_FreeGIAtrousImage(vkRT.giAtrousB[i]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_InitGIAtrousPipeline
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitGIAtrousPipeline(void)
+{
+    // gi_atrous.comp bindings:
+    //   binding 0: COMBINED_IMAGE_SAMPLER — input GI buffer (giSrc, sampler2D)
+    //   binding 1: STORAGE_IMAGE          — output GI buffer (giDst, rgba16f image2D)
+    //   binding 2: COMBINED_IMAGE_SAMPLER — depth sampler
+    VkDescriptorSetLayoutBinding bindings[3] = {};
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 3;
+    layoutCI.pBindings    = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.giAtrousDescLayout));
+
+    // Push constants: 40 bytes matching gi_atrous.comp PC block.
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset     = 0;
+    pushRange.size       = 40;
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount         = 1;
+    plCI.pSetLayouts            = &vkRT.giAtrousDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges    = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.giAtrousPipelineLayout));
+
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/gi_atrous.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT GI Atrous: failed to load gi_atrous.comp.spv — GI spatial filter disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compModule;
+    stageCI.pName  = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage  = stageCI;
+    pipeCI.layout = vkRT.giAtrousPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.giAtrousPipeline));
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    // Pool: 3 sets per frame slot × VK_MAX_FRAMES_IN_FLIGHT
+    //   COMBINED_IMAGE_SAMPLER: 2 per set (input + depth) × 3 × 2 slots = 12
+    //   STORAGE_IMAGE:          1 per set                  × 3 × 2 slots = 6
+    const int totalSets = VK_MAX_FRAMES_IN_FLIGHT * 3;
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount = 2 * totalSets;
+    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = 1 * totalSets;
+
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets       = totalSets;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes    = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.giAtrousDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT * 3];
+    for (int i = 0; i < totalSets; i++)
+        layouts[i] = vkRT.giAtrousDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool     = vkRT.giAtrousDescPool;
+    dsAlloc.descriptorSetCount = totalSets;
+    dsAlloc.pSetLayouts        = layouts;
+    // Allocate flat: [0][0],[0][1],[0][2],[1][0],[1][1],[1][2]
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, &vkRT.giAtrousDescSets[0][0]));
+
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.giAtrousDescSetLastUpdatedFrameCount[i] = -1;
+
+    common->Printf("VK RT GI Atrous: spatial filter pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points — GI À-trous
+// ---------------------------------------------------------------------------
+
+void VK_RT_InitGIAtrous(void)
+{
+    VK_RT_InitGIAtrousPipeline();
+    VK_RT_CreateGIAtrousImages(vk.swapchainExtent.width, vk.swapchainExtent.height);
+}
+
+void VK_RT_ShutdownGIAtrous(void)
+{
+    VK_RT_DestroyGIAtrousImages();
+
+    if (vkRT.giAtrousPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.giAtrousPipeline, NULL);
+        vkRT.giAtrousPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.giAtrousPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.giAtrousPipelineLayout, NULL);
+        vkRT.giAtrousPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.giAtrousDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.giAtrousDescPool, NULL);
+        vkRT.giAtrousDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.giAtrousDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.giAtrousDescLayout, NULL);
+        vkRT.giAtrousDescLayout = VK_NULL_HANDLE;
+    }
+}
+
+void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height)
+{
+    vkDeviceWaitIdle(vk.device);
+    VK_RT_DestroyGIAtrousImages();
+    VK_RT_CreateGIAtrousImages(width, height);
+
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.giAtrousDescSetLastUpdatedFrameCount[i] = -1;
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchAtrousGI
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!vkRT.isInitialized)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool())
+        return;
+
+    const int frameIdx = vk.currentFrame;
+
+    const int iters = idMath::ClampInt(0, 8, r_rtGIAtrousIterations.GetInteger());
+    if (!r_rtGIAtrous.GetBool() || iters == 0)
+        return; // No filter: composite reads the current giReadView unchanged.
+
+    if (vkRT.giAtrousPipeline == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT GI Atrous: pipeline is NULL, skipping dispatch");
+        return;
+    }
+
+    vkReflBuffer_t &bufA = vkRT.giAtrousA[frameIdx];
+    vkReflBuffer_t &bufB = vkRT.giAtrousB[frameIdx];
+
+    if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT GI Atrous: skip — images not ready (slot %d)\n", frameIdx);
+        return;
+    }
+
+    const VkRect2D dispatchRect = VK_RT_GI_ComputeDispatchRect(viewDef);
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
+    // --- Depth barrier: ATTACHMENT_OPTIMAL → READ_ONLY for depth edge-stopping ---
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+    {
+        VkImageMemoryBarrier depthToRead = {};
+        depthToRead.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthToRead.image            = vk.depthImage;
+        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
+    }
+
+    // --- Update descriptor sets (once per tr.frameCount per slot) ---
+    // DS[frameIdx][0]: giReadView(sampler) → giAtrousA  — rebuilt each frame (giReadView may change)
+    // DS[frameIdx][1]: giAtrousA(sampler)  → giAtrousB  — stable after images created
+    // DS[frameIdx][2]: giAtrousB(sampler)  → giAtrousA  — stable after images created
+    if (vkRT.giAtrousDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
+    {
+        VkDescriptorImageInfo depthInfo = {};
+        depthInfo.sampler     = vkRT.depthSampler;
+        depthInfo.imageView   = vk.depthSampledView;
+        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo srcInfos[3] = {};
+        srcInfos[0] = {vkRT.giSampler, vkRT.giReadView[frameIdx], VK_IMAGE_LAYOUT_GENERAL}; // giReadView → A
+        srcInfos[1] = {vkRT.giSampler, bufA.view,                 VK_IMAGE_LAYOUT_GENERAL}; // A → B
+        srcInfos[2] = {vkRT.giSampler, bufB.view,                 VK_IMAGE_LAYOUT_GENERAL}; // B → A
+
+        VkDescriptorImageInfo dstInfos[3] = {};
+        dstInfos[0] = {VK_NULL_HANDLE, bufA.view, VK_IMAGE_LAYOUT_GENERAL}; // → A
+        dstInfos[1] = {VK_NULL_HANDLE, bufB.view, VK_IMAGE_LAYOUT_GENERAL}; // → B
+        dstInfos[2] = {VK_NULL_HANDLE, bufA.view, VK_IMAGE_LAYOUT_GENERAL}; // → A
+
+        VkWriteDescriptorSet writes[9] = {};
+        for (int s = 0; s < 3; s++)
+        {
+            VkDescriptorSet ds = vkRT.giAtrousDescSets[frameIdx][s];
+
+            writes[s * 3 + 0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 3 + 0].dstSet          = ds;
+            writes[s * 3 + 0].dstBinding      = 0;
+            writes[s * 3 + 0].descriptorCount = 1;
+            writes[s * 3 + 0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[s * 3 + 0].pImageInfo      = &srcInfos[s];
+
+            writes[s * 3 + 1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 3 + 1].dstSet          = ds;
+            writes[s * 3 + 1].dstBinding      = 1;
+            writes[s * 3 + 1].descriptorCount = 1;
+            writes[s * 3 + 1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[s * 3 + 1].pImageInfo      = &dstInfos[s];
+
+            writes[s * 3 + 2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[s * 3 + 2].dstSet          = ds;
+            writes[s * 3 + 2].dstBinding      = 2;
+            writes[s * 3 + 2].descriptorCount = 1;
+            writes[s * 3 + 2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[s * 3 + 2].pImageInfo      = &depthInfo;
+        }
+        vkUpdateDescriptorSets(vk.device, 9, writes, 0, NULL);
+        vkRT.giAtrousDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+    }
+
+    const float sigmaL = r_rtGIAtrousSigmaL.GetFloat();
+    const float sigmaZ = r_rtGIAtrousSigmaZ.GetFloat();
+
+    const uint32_t groupsX = (dispatchRect.extent.width  + 7) / 8;
+    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giAtrousPipeline);
+
+    for (int pass = 0; pass < iters; pass++)
+    {
+        // Descriptor set selection:
+        //   pass 0          → DS[0] (giReadView → A)
+        //   pass 1, 3, 5 …  → DS[1] (A → B)
+        //   pass 2, 4, 6 …  → DS[2] (B → A)
+        const int descIdx = (pass == 0) ? 0 : (1 + (pass - 1) % 2);
+
+        struct AtrousGIPC
+        {
+            int32_t stepSize;
+            float   sigmaL;
+            float   sigmaZ;
+            float   pad;
+            int32_t screenWidth;
+            int32_t screenHeight;
+            int32_t scissorOffsetX;
+            int32_t scissorOffsetY;
+            int32_t scissorExtentX;
+            int32_t scissorExtentY;
+        } pc;
+        static_assert(sizeof(pc) == 40, "AtrousGIPC size mismatch");
+
+        pc.stepSize       = 1 << pass;
+        pc.sigmaL         = sigmaL;
+        pc.sigmaZ         = sigmaZ;
+        pc.pad            = 0.0f;
+        pc.screenWidth    = (int32_t)bufA.width;
+        pc.screenHeight   = (int32_t)bufA.height;
+        pc.scissorOffsetX = (int32_t)dispatchRect.offset.x;
+        pc.scissorOffsetY = (int32_t)dispatchRect.offset.y;
+        pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
+        pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giAtrousPipelineLayout,
+                                0, 1, &vkRT.giAtrousDescSets[frameIdx][descIdx], 0, NULL);
+        vkCmdPushConstants(cmd, vkRT.giAtrousPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 40, &pc);
+        vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+        // Barrier: output becomes input for the next pass; final pass transfers to FRAGMENT.
+        const bool isLastPass = (pass == iters - 1);
+        VkMemoryBarrier mb = {};
+        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             isLastPass ? VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                                        : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 1, &mb, 0, NULL, 0, NULL);
+    }
+
+    // Update giReadView to whichever buffer the final pass wrote.
+    // pass 0 → A, pass 1 → B, pass 2 → A, pass 3 → B …
+    // When (iters-1) is even the last pass wrote A; when odd it wrote B.
+    const bool finalInA = ((iters - 1) % 2 == 0);
+    vkRT.giReadView[frameIdx] = finalInA ? bufA.view : bufB.view;
+
+    // --- Restore depth to ATTACHMENT_OPTIMAL ---
+    {
+        VkImageMemoryBarrier depthRestore = {};
+        depthRestore.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthRestore.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+        depthRestore.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthRestore.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthRestore.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthRestore.image            = vk.depthImage;
+        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1, &depthRestore);
+    }
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT GI Atrous: %d passes slot=%d final=%s step_max=%d\n",
+                       iters, frameIdx, finalInA ? "A" : "B", 1 << (iters - 1));
 }

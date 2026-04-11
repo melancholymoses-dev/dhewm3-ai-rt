@@ -308,6 +308,32 @@ struct vkRTState_t
     int                   giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
+    // GI À-trous spatial filter (Phase 6.3)
+    //
+    // Two ping-pong RGBA16F buffers per frame slot.  Three descriptor sets per
+    // slot handle the three possible read→write directions:
+    //   DS[slot][0]: giReadView (temporal history or raw GI) → giAtrousA
+    //   DS[slot][1]: giAtrousA → giAtrousB
+    //   DS[slot][2]: giAtrousB → giAtrousA
+    //
+    // After all passes, giReadView[slot] is updated to point at whichever
+    // buffer received the final write; the composite pass then reads it.
+    //
+    // DS[slot][0] is rebuilt each frame because giReadView may change
+    // (temporal on/off).  DS[slot][1] and DS[slot][2] are stable after init.
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t giAtrousA[VK_MAX_FRAMES_IN_FLIGHT]; // ping
+    vkReflBuffer_t giAtrousB[VK_MAX_FRAMES_IN_FLIGHT]; // pong
+
+    VkPipeline            giAtrousPipeline;
+    VkPipelineLayout      giAtrousPipelineLayout;
+    VkDescriptorSetLayout giAtrousDescLayout;
+    VkDescriptorPool      giAtrousDescPool;
+    // [slot][0..2]: first-pass (src→A), AtoB, BtoA
+    VkDescriptorSet       giAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
+    int                   giAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // --------------------------------------------------------------------------
     // GI light list SSBO (Phase 6.1 Option B)
     //
     // One host-visible, persistently-mapped storage buffer per frame-in-flight
@@ -592,6 +618,26 @@ void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height);
 // On exit giHistory[currentFrame] contains the blended result; giReadView[currentFrame]
 // is set to giHistory.view and a (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued.
 void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// GI À-trous spatial filter (Phase 6.3)
+// ---------------------------------------------------------------------------
+
+// Allocate ping-pong filter buffers and the gi_atrous.comp compute pipeline.
+// Called from VK_RT_InitGI after the ray pipeline is ready.
+void VK_RT_InitGIAtrous(void);
+
+// Destroy all À-trous resources.  Device must be idle before calling.
+void VK_RT_ShutdownGIAtrous(void);
+
+// Reallocate filter buffers when render resolution changes.
+void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height);
+
+// Run r_rtGIAtrousIterations filter passes over giReadView; updates giReadView
+// to point at the filtered result.  Must be called outside a render pass, after
+// VK_RT_DispatchTemporalResolveGI.  Issues a COMPUTE_WRITE → FRAGMENT_READ
+// barrier on exit.
+void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit

@@ -56,7 +56,8 @@ struct GILight {
 
 layout(set = 0, binding = 4, std430) readonly buffer GILightBuffer {
     int     numLights;
-    int     pad[3];
+    float   bounceScale; // r_rtGIBounceScale from host
+    int     pad[2];
     GILight lights[];
 } giLightBuf;
 
@@ -154,7 +155,7 @@ void main()
         float t     = 1.0 - (dist / lightRadius);
         float atten = t * t;
 
-        irradiance += lightColor * intensity * NdotL * atten;
+        irradiance += lightColor * intensity * NdotL * atten * giLightBuf.bounceScale;
     }
 
     // Final bounce colour: albedo × gathered irradiance.

@@ -253,3 +253,7 @@ Option A is the right fix. It is a localized change to `vk_backend.cpp` — move
 ### Related: Smoke/Effects Not Visible IN Reflections
 
 A secondary issue is that smoke/plasma effects fired toward the camera (visible in reflected direction) are absent from the reflection image — the mirror shows a clean room, but the primary view has visible effects. This is a harder problem (BLAS inclusion of billboard geometry is incorrect due to facing direction) and is lower priority than fixing the rectangle artifacts.
+
+
+### 4. Include Irradiance in reflections
+Right now all reflections are treated equally.  We should take into account their source illumination/albedo. 
