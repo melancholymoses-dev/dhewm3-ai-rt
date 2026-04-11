@@ -886,6 +886,7 @@ extern idCVar r_useRayTracing;    // enable hardware ray tracing
 extern idCVar r_rtShadows;        // ray traced shadows
 extern idCVar r_rtAO;             // ray traced ambient occlusion
 extern idCVar r_rtReflections;    // ray traced reflections
+extern idCVar r_rtGI;             // ray traced global illumination (Phase 6.1)
 extern idCVar r_rtShadowSamples;  // shadow rays per pixel
 extern idCVar r_rtShadowBlur;     // shadow mask blur radius (0=off, 1-8=kernel half-width)
 extern idCVar r_rtFlashlightBias; // units to push flashlight origin forward to avoid hand self-shadow

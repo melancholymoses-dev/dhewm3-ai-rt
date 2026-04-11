@@ -186,7 +186,8 @@ static idCVar r_vkSplitSubmitMask(
     "r_vkSplitSubmitMask", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Debug: force extra queue submits during DrawView to bisect DEVICE_LOST stage. "
     "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
-    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume (0=off)."
+    "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume, "
+    "256=after GI dispatch (outside RP), 512=after GI composite (inside RP). "
     "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
     "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
@@ -292,7 +293,8 @@ static bool VK_RTAnyEffectEnabled()
     extern idCVar r_rtShadows;
     extern idCVar r_rtAO;
     extern idCVar r_rtReflections;
-    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool();
+    extern idCVar r_rtGI;
+    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
 }
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -3929,6 +3931,17 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
+        VK_SetRenderStage("RT_GI");
+        VK_RT_DispatchGI(cmdBuf, backEnd.viewDef);
+        if ((splitMask & 256) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI", false))
+                return;
+        }
+
+        VK_SetRenderStage("RT_GI_Temporal");
+        VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
+
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -3957,6 +3970,17 @@ void VK_RB_DrawView(const void *data)
         if ((splitMask & 1) != 0)
         {
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterRT", true))
+                return;
+        }
+
+        // GI composite: blend the GI buffer onto the framebuffer once per view.
+        // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
+        // split-submit probes independently of the per-light interaction loop.
+        VK_SetRenderStage("GI_Composite");
+        VK_RT_CompositeGI(cmdBuf);
+        if ((splitMask & 512) != 0)
+        {
+            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
                 return;
         }
     }
@@ -4451,6 +4475,8 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitAO();
         common->Printf("VK: initializing RT reflections\n");
         VK_RT_InitReflections();
+        common->Printf("VK: initializing RT GI\n");
+        VK_RT_InitGI();
     }
 
     common->Printf("VK: Backend ready\n");

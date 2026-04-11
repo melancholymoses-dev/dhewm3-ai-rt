@@ -138,12 +138,14 @@ idCVar r_useGLSL("r_useGLSL", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 // Vulkan / Ray Tracing backend CVars
 idCVar r_backend("r_backend", "vulkan", CVAR_RENDERER | CVAR_ARCHIVE, "rendering backend: \"opengl\" or \"vulkan\"");
 idCVar r_useRayTracing("r_useRayTracing", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-                       "enable hardware ray tracing (requires Vulkan backend and RTX hardware)");
+                       "enable hardware ray tracing (requires Vulkan backend and RT hardware)");
 idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                    "ray traced shadows (replaces stencil shadow volumes when using Vulkan RT)");
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "ray traced reflections (expensive)");
+// r_rtGI is declared in vk_gi.cpp — extern reference here for documentation.
+// All CVars from vk_gi.cpp are registered automatically at startup.
 idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
                          "shadow rays per pixel (1=hard shadows, 4+=soft shadows)");
 idCVar r_rtShadowBlur("r_rtShadowBlur", "6", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,

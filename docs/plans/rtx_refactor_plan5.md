@@ -221,13 +221,6 @@ the same submit.  Split submits remain the default and keep the game stable.
 - Player weapon does not reflect.  The model movements also differ between 1st person and third person.  See shotgun reload.  This includes flashlights and projectiles.  (e.g plasma gun)
 - Models behind the player do not render.  
 
-- No refraction (straight-through approximation). Fine for Doom 3's flat window
-  panels.  - One-sided: only the front glass face gets the Fresnel split. Both Imperceptible
-  for thin single-pane geometry.  
-
-- Angle-independent reflectance. Schlick can be added in `rchit` with no
-  structural changes.  WOuld be noticeable to have more reflection at more grazing angles. 
-
 
 ---
 

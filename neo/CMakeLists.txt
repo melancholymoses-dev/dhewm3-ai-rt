@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.6...3.22 FATAL_ERROR)
-project(dhewm3_rtx)
+project(dhewm3_rt)
 
 # Build/version stamp from git metadata (falls back to "unknown" for source archives).
 set(DHEWM3_GIT_VERSION "unknown")
@@ -69,7 +69,7 @@ else()
 	set(CMAKE_SKIP_RPATH ON CACHE BOOL "Skip RPATH" FORCE)
 endif()
 
-set(DHEWM3BINARY "dhewm3_rtx")
+set(DHEWM3BINARY "dhewm3_rt")
 
 include(CheckCXXCompilerFlag)
 include(GNUInstallDirs OPTIONAL RESULT_VARIABLE GNUINSTALLDIRS)
@@ -564,6 +564,7 @@ if(GNUINSTALLDIRS MATCHES "NOTFOUND")
 	endforeach()
 endif()
 
+# JM: Lingering Dhewm3 reference in save/install paths.
 set(bindir		"${CMAKE_INSTALL_FULL_BINDIR}")
 set(libdir		"${CMAKE_INSTALL_FULL_LIBDIR}/dhewm3")
 set(datadir		"${CMAKE_INSTALL_FULL_DATADIR}/dhewm3")
@@ -667,6 +668,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_ao.cpp
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
+	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_material_table.cpp
 )
 
@@ -690,6 +692,8 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/depth.frag	
 	renderer/glsl/fog.vert
 	renderer/glsl/fog.frag
+	renderer/glsl/gi_composite.vert
+	renderer/glsl/gi_composite.frag
 	renderer/glsl/gui.vert
 	renderer/glsl/gui.frag
 	renderer/glsl/glass_refl_overlay.frag
@@ -704,7 +708,12 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rgen
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
-	renderer/glsl/atrous_filter.comp
+	renderer/glsl/atrous_filter.comp	
+	renderer/glsl/gi_ray.rgen
+	renderer/glsl/gi_ray.rchit
+	renderer/glsl/gi_ray.rahit
+	renderer/glsl/gi_ray.rmiss
+	renderer/glsl/gi_temporal_resolve.comp
 	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit
 	renderer/glsl/glass_probe.rmiss
@@ -1517,6 +1526,7 @@ endif()
 
 	# Also copy to the user config base dir for compatibility with installs
 	# that don't use the exe-relative base.
+	# JM: Lingering dhewm3 reference in path
 	set(SPIRV_USER_DIR "$ENV{USERPROFILE}/Documents/My Games/dhewm3/base/glprogs/glsl")
 	if(WIN32 AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
 		add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD

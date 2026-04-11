@@ -67,7 +67,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
     int   u_UseReflections; // 1 when RT reflection buffer is valid this frame
-    int pad;
+    int   _pad;             // reserved (was u_UseGI — GI now handled by gi_composite pass)
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -144,6 +144,9 @@ void main() {
         reflColor = reflSample * specBase * specweight;
     }
     */
+
+    // --- RT global illumination (Phase 6.1) ---
+    // GI is now applied by the dedicated VK_RT_CompositeGI fullscreen pass (gi_composite.frag)
 
     // --- Combine ---
     // Reflection is added independently of the light attenuation/shadow so that
