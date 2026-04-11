@@ -49,6 +49,29 @@ static idCVar r_rtGISamples("r_rtGISamples", "1", CVAR_RENDERER | CVAR_INTEGER,
 static idCVar r_rtGIStrength("r_rtGIStrength", "0.03", CVAR_RENDERER | CVAR_FLOAT,
                              "Scale applied to the GI contribution per-light (accumulates; default 0.03 ≈ 0.3 for ~10 lights)");
 
+static idCVar r_rtGILightBounce("r_rtGILightBounce", "1", CVAR_RENDERER | CVAR_BOOL,
+                                "Enable Option B: evaluate nearest lights at secondary hit (directional colour bounce)");
+
+// ---------------------------------------------------------------------------
+// GI light SSBO — mirrors GILightBuffer in gi_ray.rchit GLSL
+// ---------------------------------------------------------------------------
+
+#define VK_GI_MAX_LIGHTS 64
+
+struct GILightEntry
+{
+    float posRadius[4];      // xyz = world pos, w = bounding radius
+    float colorIntensity[4]; // rgb = light colour, a = intensity
+};
+
+struct GILightBuffer
+{
+    int32_t    numLights;
+    int32_t    pad[3];
+    GILightEntry lights[VK_GI_MAX_LIGHTS];
+};
+static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffer size mismatch");
+
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
 //
@@ -92,6 +115,49 @@ extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **o
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
+
+// ---------------------------------------------------------------------------
+// VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
+// Per-frame host-visible SSBO for GI Option B light data.
+// Size is fixed (VK_GI_MAX_LIGHTS entries) — allocated once, filled every frame.
+// ---------------------------------------------------------------------------
+
+static void VK_RT_CreateGILightSsbos(void)
+{
+    const VkDeviceSize bufSize = sizeof(GILightBuffer);
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_CreateBuffer(bufSize,
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &vkRT.giLightSsbo[i], &vkRT.giLightSsboMemory[i]);
+        VK_CHECK(vkMapMemory(vk.device, vkRT.giLightSsboMemory[i], 0, bufSize, 0, &vkRT.giLightSsboMapped[i]));
+        // Zero out so numLights=0 by default (Option A fallback until first dispatch).
+        memset(vkRT.giLightSsboMapped[i], 0, bufSize);
+    }
+}
+
+static void VK_RT_DestroyGILightSsbos(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (vkRT.giLightSsboMapped[i] != NULL)
+        {
+            vkUnmapMemory(vk.device, vkRT.giLightSsboMemory[i]);
+            vkRT.giLightSsboMapped[i] = NULL;
+        }
+        if (vkRT.giLightSsbo[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, vkRT.giLightSsbo[i], NULL);
+            vkRT.giLightSsbo[i] = VK_NULL_HANDLE;
+        }
+        if (vkRT.giLightSsboMemory[i] != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, vkRT.giLightSsboMemory[i], NULL);
+            vkRT.giLightSsboMemory[i] = VK_NULL_HANDLE;
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGIImages
@@ -258,12 +324,17 @@ static void VK_RT_InitGIPipeline(void)
     // binding 2: depth sampler (COMBINED_IMAGE_SAMPLER)
     // binding 3: GI params UBO (dynamic)
 
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    // binding 0: TLAS — rgen fires primary GI rays; rchit fires inline shadow rays
+    // binding 1: GI RGBA16F storage image (rgen write)
+    // binding 2: depth sampler (rgen read)
+    // binding 3: GI params UBO (rgen read, dynamic)
+    // binding 4: GI light list SSBO (rchit read — Option B light evaluation)
+    VkDescriptorSetLayoutBinding bindings[5] = {};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
     bindings[1].binding         = 1;
     bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -280,9 +351,14 @@ static void VK_RT_InitGIPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags      = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[4].binding         = 4;
+    bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags      = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 5;
     layoutInfo.pBindings    = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giDescLayout));
 
@@ -297,28 +373,32 @@ static void VK_RT_InitGIPipeline(void)
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.giPipelineLayout));
 
     // --- Shader modules ---
-    VkShaderModule rgenModule  = VK_LoadSPIRV("glprogs/glsl/gi_ray.rgen.spv");
-    VkShaderModule rmissModule = VK_LoadSPIRV("glprogs/glsl/gi_ray.rmiss.spv");
-    VkShaderModule rchitModule = VK_LoadSPIRV("glprogs/glsl/gi_ray.rchit.spv");
-    VkShaderModule rahitModule = VK_LoadSPIRV("glprogs/glsl/gi_ray.rahit.spv");
+    VkShaderModule rgenModule       = VK_LoadSPIRV("glprogs/glsl/gi_ray.rgen.spv");
+    VkShaderModule rmissModule      = VK_LoadSPIRV("glprogs/glsl/gi_ray.rmiss.spv");
+    VkShaderModule rchitModule      = VK_LoadSPIRV("glprogs/glsl/gi_ray.rchit.spv");
+    VkShaderModule rahitModule      = VK_LoadSPIRV("glprogs/glsl/gi_ray.rahit.spv");
+    VkShaderModule shadowMissModule = VK_LoadSPIRV("glprogs/glsl/gi_shadow.rmiss.spv");
 
     if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE ||
-        rchitModule == VK_NULL_HANDLE || rahitModule == VK_NULL_HANDLE)
+        rchitModule == VK_NULL_HANDLE || rahitModule == VK_NULL_HANDLE ||
+        shadowMissModule == VK_NULL_HANDLE)
     {
         common->Warning("VK RT GI: failed to load GI shader modules — GI disabled");
-        if (rgenModule  != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rgenModule,  NULL);
-        if (rmissModule != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rmissModule, NULL);
-        if (rchitModule != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rchitModule, NULL);
-        if (rahitModule != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rahitModule, NULL);
+        if (rgenModule       != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rgenModule,       NULL);
+        if (rmissModule      != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rmissModule,      NULL);
+        if (rchitModule      != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rchitModule,      NULL);
+        if (rahitModule      != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, rahitModule,      NULL);
+        if (shadowMissModule != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, shadowMissModule, NULL);
         return;
     }
 
     // --- Shader stages ---
     // Stage 0: rgen
-    // Stage 1: rmiss
-    // Stage 2: rchit
-    // Stage 3: rahit
-    VkPipelineShaderStageCreateInfo stages[4] = {};
+    // Stage 1: gi miss (sky ambient)
+    // Stage 2: rchit (albedo + Option B light eval + shadow trace)
+    // Stage 3: rahit (alpha-discard for GI rays)
+    // Stage 4: shadow miss (clears occluded flag)
+    VkPipelineShaderStageCreateInfo stages[5] = {};
 
     stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage  = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -340,11 +420,17 @@ static void VK_RT_InitGIPipeline(void)
     stages[3].module = rahitModule;
     stages[3].pName  = "main";
 
+    stages[4].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[4].stage  = VK_SHADER_STAGE_MISS_BIT_KHR;
+    stages[4].module = shadowMissModule;
+    stages[4].pName  = "main";
+
     // --- Shader groups ---
     // Group 0: rgen
-    // Group 1: miss
-    // Group 2: hit (rchit + rahit for alpha-discard)
-    VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
+    // Group 1: gi miss (missIndex=0 in traceRayEXT)
+    // Group 2: hit (rchit + rahit)
+    // Group 3: shadow miss (missIndex=1 in shadow traceRayEXT calls from rchit)
+    VkRayTracingShaderGroupCreateInfoKHR groups[4] = {};
 
     groups[0].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[0].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
@@ -355,7 +441,7 @@ static void VK_RT_InitGIPipeline(void)
 
     groups[1].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[1].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-    groups[1].generalShader      = 1; // rmiss
+    groups[1].generalShader      = 1; // gi miss
     groups[1].closestHitShader   = VK_SHADER_UNUSED_KHR;
     groups[1].anyHitShader       = VK_SHADER_UNUSED_KHR;
     groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
@@ -363,29 +449,42 @@ static void VK_RT_InitGIPipeline(void)
     groups[2].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[2].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[2].generalShader      = VK_SHADER_UNUSED_KHR;
-    groups[2].closestHitShader   = 2; // gi_ray.rchit — albedo lookup
-    groups[2].anyHitShader       = 3; // gi_ray.rahit  — alpha-discard
+    groups[2].closestHitShader   = 2; // gi_ray.rchit
+    groups[2].anyHitShader       = 3; // gi_ray.rahit — alpha-discard
     groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    groups[3].sType              = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    groups[3].type               = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    groups[3].generalShader      = 4; // shadow miss
+    groups[3].closestHitShader   = VK_SHADER_UNUSED_KHR;
+    groups[3].anyHitShader       = VK_SHADER_UNUSED_KHR;
+    groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     // --- RT pipeline ---
     VkRayTracingPipelineCreateInfoKHR rtPipeInfo = {};
     rtPipeInfo.sType                          = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipeInfo.stageCount                     = 4;
+    rtPipeInfo.stageCount                     = 5;
     rtPipeInfo.pStages                        = stages;
-    rtPipeInfo.groupCount                     = 3;
+    rtPipeInfo.groupCount                     = 4;
     rtPipeInfo.pGroups                        = groups;
-    rtPipeInfo.maxPipelineRayRecursionDepth   = 1; // one bounce — no recursion
+    rtPipeInfo.maxPipelineRayRecursionDepth   = 2; // primary GI ray + inline shadow ray
     rtPipeInfo.layout                         = vkRT.giPipelineLayout;
 
     VK_CHECK(vkCreateRayTracingPipelinesKHR(vk.device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipeInfo, NULL,
                                             &vkRT.giPipeline));
 
-    vkDestroyShaderModule(vk.device, rgenModule,  NULL);
-    vkDestroyShaderModule(vk.device, rmissModule, NULL);
-    vkDestroyShaderModule(vk.device, rchitModule, NULL);
-    vkDestroyShaderModule(vk.device, rahitModule, NULL);
+    vkDestroyShaderModule(vk.device, rgenModule,       NULL);
+    vkDestroyShaderModule(vk.device, rmissModule,      NULL);
+    vkDestroyShaderModule(vk.device, rchitModule,      NULL);
+    vkDestroyShaderModule(vk.device, rahitModule,      NULL);
+    vkDestroyShaderModule(vk.device, shadowMissModule, NULL);
 
     // --- Shader Binding Table ---
+    // SBT layout:
+    //   slot 0 (rgen region)     : rgen
+    //   slot 1 (miss region[0])  : gi miss  (missIndex=0 — GI rays)
+    //   slot 2 (miss region[1])  : shadow miss (missIndex=1 — shadow rays from rchit)
+    //   slot 3 (hit region[0])   : hit group (rchit + rahit)
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps = {};
     rtProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
     VkPhysicalDeviceProperties2 props2 = {};
@@ -400,8 +499,12 @@ static void VK_RT_InitGIPipeline(void)
     auto alignUp = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride            = alignUp(handleSizeAligned, baseAlignment);
-    // Layout: [0]=rgen  [1]=miss  [2]=hit
-    uint32_t sbtSize = 3 * stride;
+
+    // 4 groups total; SBT regions:
+    //   rgen:  1 entry  (group 0)
+    //   miss:  2 entries (groups 1, 3)  — gi miss + shadow miss
+    //   hit:   1 entry  (group 2)
+    uint32_t sbtSize = 4 * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -409,13 +512,20 @@ static void VK_RT_InitGIPipeline(void)
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                     &vkRT.sbtGIBuffer, &vkRT.sbtGIMemory);
 
-    uint8_t *handles = (uint8_t *)alloca(3 * handleSize);
-    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.giPipeline, 0, 3, 3 * handleSize, handles));
+    // Fetch all 4 group handles in pipeline order: [rgen, gi-miss, hit, shadow-miss]
+    uint8_t *handles = (uint8_t *)alloca(4 * handleSize);
+    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.giPipeline, 0, 4, 4 * handleSize, handles));
 
     uint8_t *sbtData;
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtGIMemory, 0, sbtSize, 0, (void **)&sbtData));
-    for (int i = 0; i < 3; i++)
-        memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
+    // SBT slot 0 = rgen (group 0)
+    memcpy(sbtData + 0 * stride, handles + 0 * handleSize, handleSize);
+    // SBT slot 1 = gi miss (group 1)
+    memcpy(sbtData + 1 * stride, handles + 1 * handleSize, handleSize);
+    // SBT slot 2 = shadow miss (group 3)
+    memcpy(sbtData + 2 * stride, handles + 3 * handleSize, handleSize);
+    // SBT slot 3 = hit group (group 2)
+    memcpy(sbtData + 3 * stride, handles + 2 * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtGIMemory);
 
     VkBufferDeviceAddressInfo addrInfo = {};
@@ -423,26 +533,30 @@ static void VK_RT_InitGIPipeline(void)
     addrInfo.buffer = vkRT.sbtGIBuffer;
     VkDeviceAddress sbtBase = vkGetBufferDeviceAddressKHR(vk.device, &addrInfo);
 
+    // rgen:  slot 0
+    // miss:  slots 1–2 (stride * 2 region, covers gi-miss[0] and shadow-miss[1])
+    // hit:   slot 3
     vkRT.giRgenRegion = {sbtBase + 0 * stride, stride, stride};
-    vkRT.giMissRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.giHitRegion  = {sbtBase + 2 * stride, stride, stride};
+    vkRT.giMissRegion = {sbtBase + 1 * stride, stride, 2 * stride};
+    vkRT.giHitRegion  = {sbtBase + 3 * stride, stride, stride};
     vkRT.giCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (3 groups)\n",
+        common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit)\n",
                        stride, sbtSize, (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
-    VkDescriptorPoolSize poolSizes[4] = {
+    VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,     VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             VK_MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets       = VK_MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 4;
+    poolInfo.poolSizeCount = 5;
     poolInfo.pPoolSizes    = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.giDescPool));
 
@@ -627,6 +741,7 @@ static void VK_RT_InitGICompositePipeline(void)
 
 void VK_RT_InitGI(void)
 {
+    VK_RT_CreateGILightSsbos();
     VK_RT_InitGIPipeline();
     VK_RT_InitGICompositePipeline();
     VK_RT_ResizeGI(vk.swapchainExtent.width, vk.swapchainExtent.height);
@@ -699,6 +814,7 @@ void VK_RT_ShutdownGI(void)
 
     VK_RT_ShutdownGITemporal();
     VK_RT_DestroyGIImages();
+    VK_RT_DestroyGILightSsbos();
 }
 
 // ---------------------------------------------------------------------------
@@ -862,6 +978,50 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
+    // --- Upload GI light list (Option B) ---
+    // Unconditional each frame — light positions change continuously.
+    if (vkRT.giLightSsboMapped[frameIdx] != NULL)
+    {
+        GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
+        lb->numLights = 0;
+
+        if (r_rtGILightBounce.GetBool())
+        {
+            for (const viewLight_t *vl = viewDef->viewLights; vl != NULL; vl = vl->next)
+            {
+                if (lb->numLights >= VK_GI_MAX_LIGHTS)
+                    break;
+                if (vl->lightDef == NULL)
+                    continue;
+
+                const renderLight_t &p = vl->lightDef->parms;
+
+                // Bounding radius: use max of the three semi-axes.
+                float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
+                if (radius < 1.0f)
+                    continue; // degenerate / ambient
+
+                // Colour from shaderParms; intensity from alpha parm (default to 1 if zero).
+                float r = p.shaderParms[SHADERPARM_RED];
+                float g = p.shaderParms[SHADERPARM_GREEN];
+                float b = p.shaderParms[SHADERPARM_BLUE];
+                float intensity = p.shaderParms[SHADERPARM_ALPHA];
+                if (intensity < 0.001f) intensity = 1.0f;
+
+                GILightEntry &entry = lb->lights[lb->numLights++];
+                entry.posRadius[0] = p.origin.x;
+                entry.posRadius[1] = p.origin.y;
+                entry.posRadius[2] = p.origin.z;
+                entry.posRadius[3] = radius;
+                entry.colorIntensity[0] = r;
+                entry.colorIntensity[1] = g;
+                entry.colorIntensity[2] = b;
+                entry.colorIntensity[3] = intensity;
+            }
+        }
+        // else numLights stays 0 — rchit falls back to Option A (albedo only)
+    }
+
     // --- Update descriptor set (once per frame slot when frameCount changes) ---
     static VkAccelerationStructureKHR s_lastGITlasHandle[VK_MAX_FRAMES_IN_FLIGHT]  = {};
     static VkImageView                s_lastGIStorageView[VK_MAX_FRAMES_IN_FLIGHT]  = {};
@@ -895,7 +1055,12 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         uboInfo.offset = 0;
         uboInfo.range  = sizeof(GIParamsUBO);
 
-        VkWriteDescriptorSet writes[4] = {};
+        VkDescriptorBufferInfo lightSsboInfo = {};
+        lightSsboInfo.buffer = vkRT.giLightSsbo[frameIdx];
+        lightSsboInfo.offset = 0;
+        lightSsboInfo.range  = sizeof(GILightBuffer);
+
+        VkWriteDescriptorSet writes[5] = {};
 
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext           = &tlasWrite;
@@ -925,7 +1090,14 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[3].pBufferInfo     = &uboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet          = ds;
+        writes[4].dstBinding      = 4;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[4].pBufferInfo     = &lightSsboInfo;
+
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.giDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastGITlasHandle[frameIdx]  = vkRT.tlas[frameIdx].handle;
         s_lastGIStorageView[frameIdx] = gb.view;

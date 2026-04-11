@@ -307,6 +307,17 @@ struct vkRTState_t
     VkDescriptorSet       giTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // GI light list SSBO (Phase 6.1 Option B)
+    //
+    // One host-visible, persistently-mapped storage buffer per frame-in-flight
+    // slot.  Filled each frame from viewDef->viewLights; consumed by
+    // gi_ray.rchit to evaluate direct lighting at the secondary hit point.
+    // --------------------------------------------------------------------------
+    VkBuffer       giLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory giLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void          *giLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+
     VkPipeline giPipeline;
     VkPipelineLayout giPipelineLayout;
     VkDescriptorSetLayout giDescLayout;

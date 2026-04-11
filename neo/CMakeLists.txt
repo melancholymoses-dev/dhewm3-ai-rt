@@ -713,6 +713,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/gi_ray.rchit
 	renderer/glsl/gi_ray.rahit
 	renderer/glsl/gi_ray.rmiss
+	renderer/glsl/gi_shadow.rmiss
 	renderer/glsl/gi_temporal_resolve.comp
 	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit

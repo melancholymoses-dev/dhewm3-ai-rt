@@ -81,8 +81,9 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Vtx
 //
 //   stride = 15 floats = 60 bytes
 // ---------------------------------------------------------------------------
-#define RT_VTX_STRIDE 15u
-#define RT_VTX_UV_OFF  3u   // float offset of st.x within one vertex
+#define RT_VTX_STRIDE   15u
+#define RT_VTX_UV_OFF    3u   // float offset of st.x within one vertex
+#define RT_VTX_NORM_OFF  5u   // float offset of normal.x within one vertex
 
 // ---------------------------------------------------------------------------
 // rt_InterpolateUV — barycentrically interpolate texture coordinates for the
@@ -127,6 +128,53 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
 
     float w0 = 1.0 - bary.x - bary.y;
     return w0 * uv0 + bary.x * uv1 + bary.y * uv2;
+}
+
+// ---------------------------------------------------------------------------
+// rt_InterpolateNormal — barycentrically interpolate the vertex normal for the
+// hit triangle.  Returns a unit-length world-space normal; falls back to
+// vec3(0,1,0) on degenerate or out-of-bounds geometry.
+// ---------------------------------------------------------------------------
+vec3 rt_InterpolateNormal(uint matIdx, int primId, vec2 bary)
+{
+    MaterialEntry mat = materials[matIdx];
+
+    uint geomSlot = mat.baseGeomIdx;
+    if (geomSlot >= uint(idxAddrs.length()) || geomSlot >= uint(vtxAddrs.length()))
+        return vec3(0.0, 1.0, 0.0);
+
+    uint64_t idxAddr = idxAddrs[geomSlot];
+    uint64_t vtxAddr = vtxAddrs[geomSlot];
+    if (idxAddr == 0ul || vtxAddr == 0ul)
+        return vec3(0.0, 1.0, 0.0);
+
+    IdxBuf iBuf = IdxBuf(idxAddr);
+    VtxBuf vBuf = VtxBuf(vtxAddr);
+
+    uint base = uint(primId) * 3u;
+    uint i0 = iBuf.idx[base + 0u];
+    uint i1 = iBuf.idx[base + 1u];
+    uint i2 = iBuf.idx[base + 2u];
+
+    uint maxVtx = mat.maxVertex;
+    if (maxVtx != 0xFFFFFFFFu && (i0 > maxVtx || i1 > maxVtx || i2 > maxVtx))
+        return vec3(0.0, 1.0, 0.0);
+
+    vec3 n0 = vec3(vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_NORM_OFF],
+                   vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_NORM_OFF + 1u],
+                   vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_NORM_OFF + 2u]);
+    vec3 n1 = vec3(vBuf.data[i1 * RT_VTX_STRIDE + RT_VTX_NORM_OFF],
+                   vBuf.data[i1 * RT_VTX_STRIDE + RT_VTX_NORM_OFF + 1u],
+                   vBuf.data[i1 * RT_VTX_STRIDE + RT_VTX_NORM_OFF + 2u]);
+    vec3 n2 = vec3(vBuf.data[i2 * RT_VTX_STRIDE + RT_VTX_NORM_OFF],
+                   vBuf.data[i2 * RT_VTX_STRIDE + RT_VTX_NORM_OFF + 1u],
+                   vBuf.data[i2 * RT_VTX_STRIDE + RT_VTX_NORM_OFF + 2u]);
+
+    float w0 = 1.0 - bary.x - bary.y;
+    vec3 n = w0 * n0 + bary.x * n1 + bary.y * n2;
+
+    float len2 = dot(n, n);
+    return (len2 > 0.0001) ? (n / sqrt(len2)) : vec3(0.0, 1.0, 0.0);
 }
 
 // ---------------------------------------------------------------------------
