@@ -1290,6 +1290,12 @@ static bool VK_RT_AllocGIAtrousImage(vkReflBuffer_t &img, uint32_t width, uint32
     if (memTypeIdx == UINT32_MAX)
     {
         common->Warning("VK RT GI Atrous: no device-local memory for image");
+        vkDestroyImage(vk.device, img.image, NULL);
+        img.image  = VK_NULL_HANDLE;
+        img.memory = VK_NULL_HANDLE;
+        img.view   = VK_NULL_HANDLE;
+        img.width  = 0;
+        img.height = 0;
         return false;
     }
 
@@ -1506,6 +1512,11 @@ static void VK_RT_InitGIAtrousPipeline(void)
 void VK_RT_InitGIAtrous(void)
 {
     VK_RT_InitGIAtrousPipeline();
+    if (vkRT.giAtrousPipeline == VK_NULL_HANDLE)
+    {
+        VK_RT_DestroyGIAtrousImages();
+        return;
+    }
     VK_RT_CreateGIAtrousImages(vk.swapchainExtent.width, vk.swapchainExtent.height);
 }
 
