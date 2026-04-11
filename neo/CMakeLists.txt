@@ -743,6 +743,9 @@ list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
 # Listing them as DEPENDS ensures any change triggers recompilation of all shaders.
 set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/reflect_payload.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/glass_probe_payload.glsl"	
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_shadow_payload.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_payload.glsl"	
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_indirect.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_material.glsl"
 )
