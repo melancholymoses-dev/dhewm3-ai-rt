@@ -713,7 +713,9 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/gi_ray.rchit
 	renderer/glsl/gi_ray.rahit
 	renderer/glsl/gi_ray.rmiss
+	renderer/glsl/gi_shadow.rmiss
 	renderer/glsl/gi_temporal_resolve.comp
+	renderer/glsl/gi_atrous.comp
 	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit
 	renderer/glsl/glass_probe.rmiss
@@ -741,6 +743,9 @@ list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
 # Listing them as DEPENDS ensures any change triggers recompilation of all shaders.
 set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/reflect_payload.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/glass_probe_payload.glsl"	
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_shadow_payload.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_payload.glsl"	
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_indirect.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_material.glsl"
 )
