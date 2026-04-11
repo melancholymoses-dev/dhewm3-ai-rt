@@ -1,0 +1,80 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_temporal_resolve.comp — temporal EMA resolve for GI.
+
+Blends the current frame's raw RGBA16F GI image into a per-slot history
+image using an exponential moving average:
+
+    history = mix(history, current, alpha)
+
+This is the RGBA16F counterpart of temporal_resolve.comp (which operates
+on R8_UNORM AO masks).  The same push-constant layout and dispatch
+convention are used so both passes can share the same C++ dispatch helper.
+
+When alpha == 1.0 (first frame or camera cut), history is replaced directly
+with current to avoid reading uninitialised or stale history texels.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// binding 0: current frame GI (written by gi_ray.rgen, read-only here)
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D currentImage;
+
+// binding 1: accumulated history (read-modify-write)
+layout(set = 0, binding = 1, rgba16f) uniform image2D historyImage;
+
+layout(push_constant) uniform PC {
+    float alpha;   // 0.0 = use only history, 1.0 = use only current (reset/first frame)
+    float pad0;
+    float pad1;
+    float pad2;
+    ivec2 scissorOffset;
+    ivec2 scissorExtent;
+};
+
+void main()
+{
+    ivec2 localCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dims       = imageSize(historyImage);
+    ivec2 rectExtent = max(scissorExtent, ivec2(0));
+
+    if (localCoord.x >= rectExtent.x || localCoord.y >= rectExtent.y)
+        return;
+
+    ivec2 coord = localCoord + scissorOffset;
+
+    if (coord.x < 0 || coord.y < 0 || coord.x >= dims.x || coord.y >= dims.y)
+        return;
+
+    ivec2 rectMin = max(scissorOffset, ivec2(0));
+    ivec2 rectMax = min(scissorOffset + rectExtent - ivec2(1), dims - ivec2(1));
+
+    if (coord.x < rectMin.x || coord.y < rectMin.y || coord.x > rectMax.x || coord.y > rectMax.y)
+        return;
+
+    vec4 current = imageLoad(currentImage, coord);
+
+    // On first frame / camera cut: bypass history load to avoid NaN propagation.
+    if (alpha >= 1.0)
+    {
+        imageStore(historyImage, coord, current);
+        return;
+    }
+
+    vec4 hist    = imageLoad(historyImage, coord);
+    vec4 blended = mix(hist, current, alpha);
+
+    imageStore(historyImage, coord, blended);
+}

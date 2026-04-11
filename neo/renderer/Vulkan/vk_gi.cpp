@@ -630,6 +630,7 @@ void VK_RT_InitGI(void)
     VK_RT_InitGIPipeline();
     VK_RT_InitGICompositePipeline();
     VK_RT_ResizeGI(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    VK_RT_InitGITemporal();
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +697,7 @@ void VK_RT_ShutdownGI(void)
         vkRT.giCompositeLayout = VK_NULL_HANDLE;
     }
 
+    VK_RT_ShutdownGITemporal();
     VK_RT_DestroyGIImages();
 }
 
@@ -710,6 +712,7 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.giDescSetLastUpdatedFrameCount[i] = -1;
     VK_RT_CreateGIImages(width, height);
+    VK_RT_ResizeGITemporal(width, height);
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,11 +1003,18 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
     if (gb.image == VK_NULL_HANDLE || vkRT.giSampler == VK_NULL_HANDLE)
         return;
 
+    // When GI temporal is active, giReadView[frameIdx] points to the accumulated
+    // giHistory (set by VK_RT_DispatchTemporalResolveGI).  Otherwise it falls
+    // back to the raw per-frame giBuffer view.
+    VkImageView readView = vkRT.giReadView[frameIdx];
+    if (readView == VK_NULL_HANDLE)
+        readView = gb.view; // safety fallback
+
     // Update the descriptor set for this frame slot.  The GI image may have
     // been recreated (resize), so always write it before drawing.
     VkDescriptorImageInfo imgInfo = {};
     imgInfo.sampler     = vkRT.giSampler;
-    imgInfo.imageView   = gb.view;
+    imgInfo.imageView   = readView;
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkWriteDescriptorSet write = {};

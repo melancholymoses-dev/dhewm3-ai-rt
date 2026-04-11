@@ -281,8 +281,31 @@ struct vkRTState_t
     //
     // One RGBA16F buffer per frame-in-flight slot.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t giBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F GI colour
+    vkReflBuffer_t giBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F GI colour (raw per-frame)
     VkSampler giSampler;                              // linear-clamp for interaction shader
+
+    // --------------------------------------------------------------------------
+    // GI temporal EMA accumulation (Phase 6.2)
+    //
+    // giHistory: RGBA16F per-slot accumulation buffer.  gi_temporal_resolve.comp
+    //   blends giBuffer (raw current frame) into giHistory each frame.
+    // giReadView: updated each frame to point at giHistory when temporal is
+    //   active, or giBuffer when r_rtGITemporal is off.  The composite pass
+    //   and any future interaction-shader sampling should read from giReadView.
+    // giHistoryValid / giPrevInvViewProj: camera-cut detection state (same
+    //   convention as aoHistoryValid / aoPrevInvViewProj).
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t giHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated GI history
+    bool           giHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
+    float          giPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
+    VkImageView    giReadView[VK_MAX_FRAMES_IN_FLIGHT];             // composite reads from here
+
+    VkPipeline            giTemporalPipeline;
+    VkPipelineLayout      giTemporalPipelineLayout;
+    VkDescriptorSetLayout giTemporalDescLayout;
+    VkDescriptorPool      giTemporalDescPool;
+    VkDescriptorSet       giTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline giPipeline;
     VkPipelineLayout giPipelineLayout;
@@ -533,8 +556,31 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Composite the GI buffer onto the current framebuffer with additive blending.
 // Must be called INSIDE the main render pass, before the per-light interaction draws.
+// Reads from giReadView[currentFrame] (giHistory when temporal is active, else giBuffer).
 // Does nothing when r_rtGI is off or the composite pipeline is not ready.
 void VK_RT_CompositeGI(VkCommandBuffer cmd);
+
+// ---------------------------------------------------------------------------
+// GI temporal EMA resolve (Phase 6.2)
+// ---------------------------------------------------------------------------
+
+// Initialize GI history images and the gi_temporal_resolve compute pipeline.
+// Called from VK_RT_InitGI after the GI ray pipeline is ready.
+void VK_RT_InitGITemporal(void);
+
+// Destroy all GI temporal resources.  Device must be idle before calling.
+void VK_RT_ShutdownGITemporal(void);
+
+// Resize GI history images when render resolution changes.
+void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height);
+
+// Blend the raw GI buffer into the per-slot history using exponential moving average.
+// Must be called after VK_RT_DispatchGI (outside a render pass).
+// On entry giBuffer[currentFrame] is in GENERAL with a shader-write → shader-read barrier
+// already issued by VK_RT_DispatchGI.
+// On exit giHistory[currentFrame] contains the blended result; giReadView[currentFrame]
+// is set to giHistory.view and a (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued.
+void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit
