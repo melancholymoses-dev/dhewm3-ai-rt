@@ -912,7 +912,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // Binding 9: reflection map (or 1x1 black fallback when off)
     VkDescriptorImageInfo reflMapInfo = {};
-    if (vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
+    if (r_useRayTracing.GetBool() && vk.rayTracingSupported && vkRT.isInitialized && r_rtReflections.GetBool() &&
         vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE)
     {
         reflMapInfo.sampler = vkRT.reflSampler;
@@ -1803,9 +1803,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         //
         // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
         // halos, particles, or other MC_TRANSLUCENT surfaces.
-        if (mat->GetSurfaceType() == SURFTYPE_GLASS && r_rtReflections.GetBool() && vk.rayTracingSupported &&
-            vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
-            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+        if (mat->GetSurfaceType() == SURFTYPE_GLASS && r_useRayTracing.GetBool() && r_rtReflections.GetBool() &&
+            vk.rayTracingSupported && vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
+            vkRT.reflSampler != VK_NULL_HANDLE && vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
         {
             float mvp[16];
             if (r_vkLogRT.GetInteger() >= 2)
@@ -3941,6 +3941,9 @@ void VK_RB_DrawView(const void *data)
 
         VK_SetRenderStage("RT_GI_Temporal");
         VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
+
+        VK_SetRenderStage("RT_GI_Atrous");
+        VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
 
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};

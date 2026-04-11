@@ -197,12 +197,18 @@ static bool VK_RT_AllocHistoryImage(vkAOMask_t &img, uint32_t width, uint32_t he
 
         vkEndCommandBuffer(tmpCmd);
 
+        VkFenceCreateInfo fenceCI = {};
+        fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
+
         VkSubmitInfo submitI = {};
         submitI.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers = &tmpCmd;
-        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, VK_NULL_HANDLE);
-        vkQueueWaitIdle(vk.graphicsQueue);
+        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
+        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
 
@@ -1015,12 +1021,18 @@ static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint3
 
         vkEndCommandBuffer(tmpCmd);
 
+        VkFenceCreateInfo fenceCI = {};
+        fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
+
         VkSubmitInfo submitI = {};
         submitI.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitI.commandBufferCount = 1;
         submitI.pCommandBuffers    = &tmpCmd;
-        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, VK_NULL_HANDLE);
-        vkQueueWaitIdle(vk.graphicsQueue);
+        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
+        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(vk.device, fence, NULL);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
 
