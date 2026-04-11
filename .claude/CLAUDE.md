@@ -13,7 +13,9 @@ When you work, check the existing GL functionality to understand how Doom3 expec
 There are relevant plans in docs/plans/*.md that discuss various refactor efforts and steps.  The main one is rt_refactor_plan5.md, with the others being steps along the way.
 
 ## Procedure
-If there are complex options, favour generating logs and debugging over theoretical discussions.  We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.
+If there are complex options, favour generating logs and debugging over theoretical discussions.  We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.  For graphical/GPU debugging suggest a way of outputting color coding for the relevant objects to allow visual inspection.
+
+When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
 ## Assets
 The main doom3 assets have been unzipped and are accessible at
