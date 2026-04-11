@@ -3939,6 +3939,9 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
+        VK_SetRenderStage("RT_GI_Temporal");
+        VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
+
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
