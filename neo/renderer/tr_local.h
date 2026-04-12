@@ -895,6 +895,7 @@ extern idCVar r_rtShadowBlur;     // shadow mask blur radius (0=off, 1-8=kernel 
 extern idCVar r_rtFlashlightBias; // units to push flashlight origin forward to avoid hand self-shadow
 extern idCVar r_vkLogRT;          // RT diagnostics verbosity (0=off,1=frame,2=per-light)
 extern idCVar r_rtAOSamples;      // AO rays per pixel
+extern idCVar r_rtNearDynRadius;  // radius for forcing off-screen dynamic entities into TLAS
 
 extern idCVar r_checkBounds; // compare all surface bounds with precalculated ones
 
