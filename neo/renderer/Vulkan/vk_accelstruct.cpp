@@ -1443,11 +1443,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     // Third pass: include nearby off-screen dynamic entities (enemies, characters) so
     // they appear in RT reflections and cast RT shadows when outside the view frustum.
-    // We REUSE the BLAS built in the last frame the entity was visible — no rebuild.
-    // The entity's pose will be whatever it was when it last left the frustum; this is
-    // imperceptible for a typical reflection glance at 1-2 frames stale.
-    // Vertex/index addresses in the material table may point at recycled vertex-cache
-    // memory → UV sampling in hit shaders can be wrong for long-absent entities, but
+    // For each entity within r_rtNearDynRadius units we call R_EntityDefDynamicModel to
+    // CPU-skin the current animation pose (game logic updates joints every frame regardless
+    // of visibility) and then rebuild the BLAS in-place.  Cost is one MD5 skin + BLAS
+    // update per nearby off-screen enemy — negligible at the default 256-unit radius.
     // geometry intersections (shape, shadow, reflection silhouette) are always correct.
     if (tr.primaryWorld != NULL && r_rtNearDynRadius.GetFloat() > 0.0f)
     {
@@ -1475,9 +1474,31 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (!hModel || hModel->IsDynamicModel() == DM_STATIC)
                 continue;
 
-            // Must have a valid BLAS from a prior frame — no new builds in this pass.
+            // Regenerate the current animation pose. The game keeps parms.joints
+            // up-to-date every frame regardless of frustum visibility, so this gives
+            // the correct posed mesh for the current game tick even though the entity
+            // isn't in viewEntitys.
+            idRenderModel *model = R_EntityDefDynamicModel(ent);
+            if (!model || model->NumSurfaces() == 0)
+                continue;
+
+            // Rebuild the BLAS in-place so vertex positions match the current pose.
+            // In-place update reuses the existing GPU buffers and device address,
+            // preventing TLAS signature churn.
+            if (ent->blas)
+            {
+                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas);
+                if (updated != ent->blas)
+                    VK_RT_DestroyBLAS(ent->blas);
+                ent->blas = updated;
+            }
+            else
+            {
+                ent->blas = VK_RT_BuildBLASForModel(model, cmd);
+            }
             if (!ent->blas || !ent->blas->isValid)
                 continue;
+            anyBLASBuilt = true;
 
             if (dynamicGeomCount + ent->blas->geomCount > VK_MAT_MAX_GEOMS)
                 continue;
@@ -1524,8 +1545,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                     matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                 dynamicMatEntries[base + g] = matEntry;
-                // Use cached vertex/index addresses from the last BLAS build.
-                // These may be stale (vertex cache recycled) for long-absent entities.
+                // Addresses captured during the BLAS build above — current for this frame.
                 if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
                 {
                     s_dynGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
