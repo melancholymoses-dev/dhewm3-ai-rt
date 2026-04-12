@@ -3913,6 +3913,11 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
+        // Upload scene lights to the GI SSBO before any RT dispatch that reads it.
+        // Reflections dispatch before GI, so this ensures reflection hit shaders
+        // always see the current frame's light list.
+        VK_RT_UploadGILights(backEnd.viewDef);
+
         VK_SetRenderStage("RT_AO");
         VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
         if ((splitMask & 32) != 0)
