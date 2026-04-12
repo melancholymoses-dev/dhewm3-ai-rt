@@ -10,7 +10,8 @@ Phase 6.1 Option B — Single light evaluation at secondary hit:
     gi_colour = albedo * sum_lights(lightColour * NdotL * attenuation * shadow)
 
   The light list is provided by vk_gi.cpp via a per-frame SSBO (binding 4),
-  populated from viewDef->viewLights each frame.
+  populated from tr.primaryWorld->lightDefs (all world lights, not just
+  frustum-visible ones) within r_rtGIRadius of the camera each frame.
 
   For each in-range light:
     1. Compute Lambert NdotL using the vertex-interpolated surface normal.
