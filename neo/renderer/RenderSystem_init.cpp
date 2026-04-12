@@ -156,6 +156,9 @@ idCVar r_rtFlashlightBias("r_rtFlashlightBias", "17", CVAR_RENDERER | CVAR_ARCHI
 idCVar r_vkLogRT("r_vkLogRT", "0", CVAR_RENDERER | CVAR_INTEGER,
                  "RT pipeline diagnostics: 0=off 1=per-frame TLAS+dispatch summary 2=per-light verbose (flushed)");
 idCVar r_rtAOSamples("r_rtAOSamples", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "AO rays per pixel");
+idCVar r_rtNearDynRadius("r_rtNearDynRadius", "256", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                         "Radius (world units) within which off-screen dynamic entities (enemies etc.) "
+                         "are forced into the TLAS for reflection/shadow coverage. 0 = disabled.");
 
 idCVar r_jitter("r_jitter", "0", CVAR_RENDERER | CVAR_BOOL, "randomly subpixel jitter the projection matrix");
 

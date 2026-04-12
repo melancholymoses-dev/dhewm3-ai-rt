@@ -1441,6 +1441,101 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         }
     }
 
+    // Third pass: include nearby off-screen dynamic entities (enemies, characters) so
+    // they appear in RT reflections and cast RT shadows when outside the view frustum.
+    // We REUSE the BLAS built in the last frame the entity was visible — no rebuild.
+    // The entity's pose will be whatever it was when it last left the frustum; this is
+    // imperceptible for a typical reflection glance at 1-2 frames stale.
+    // Vertex/index addresses in the material table may point at recycled vertex-cache
+    // memory → UV sampling in hit shaders can be wrong for long-absent entities, but
+    // geometry intersections (shape, shadow, reflection silhouette) are always correct.
+    if (tr.primaryWorld != NULL && r_rtNearDynRadius.GetFloat() > 0.0f)
+    {
+        const float nearRad = r_rtNearDynRadius.GetFloat();
+        const float distCullSq = nearRad * nearRad;
+        const idVec3 camPos = viewDef->renderView.vieworg;
+
+        const int numEntityDefs = tr.primaryWorld->entityDefs.Num();
+        for (int ei = 0; ei < numEntityDefs && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; ei++)
+        {
+            idRenderEntityLocal *ent = tr.primaryWorld->entityDefs[ei];
+            if (!ent)
+                continue;
+
+            // Already added by a previous pass this frame.
+            if (ent->blasFrameCount == tr.frameCount)
+                continue;
+
+            // Must be within the near-dynamic radius.
+            if ((ent->parms.origin - camPos).LengthSqr() > distCullSq)
+                continue;
+
+            // Only dynamic model types — static entities are covered by the second pass.
+            idRenderModel *hModel = ent->parms.hModel;
+            if (!hModel || hModel->IsDynamicModel() == DM_STATIC)
+                continue;
+
+            // Must have a valid BLAS from a prior frame — no new builds in this pass.
+            if (!ent->blas || !ent->blas->isValid)
+                continue;
+
+            if (dynamicGeomCount + ent->blas->geomCount > VK_MAT_MAX_GEOMS)
+                continue;
+
+            ent->blasFrameCount = tr.frameCount;
+
+            VkAccelerationStructureInstanceKHR &inst = dynamicInstances[dynamicCount];
+            memset(&inst, 0, sizeof(inst));
+
+            const float *m = ent->modelMatrix;
+            inst.transform.matrix[0][0] = m[0];
+            inst.transform.matrix[0][1] = m[4];
+            inst.transform.matrix[0][2] = m[8];
+            inst.transform.matrix[0][3] = m[12];
+            inst.transform.matrix[1][0] = m[1];
+            inst.transform.matrix[1][1] = m[5];
+            inst.transform.matrix[1][2] = m[9];
+            inst.transform.matrix[1][3] = m[13];
+            inst.transform.matrix[2][0] = m[2];
+            inst.transform.matrix[2][1] = m[6];
+            inst.transform.matrix[2][2] = m[10];
+            inst.transform.matrix[2][3] = m[14];
+
+            inst.instanceCustomIndex = 0; // patched below
+            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+            inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
+            inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            inst.accelerationStructureReference = ent->blas->deviceAddress;
+
+            const uint32_t base = dynamicGeomCount;
+            dynamicInstBaseGeom[dynamicCount] = base;
+            dynamicCount++;
+
+            const uint32_t geomCount = ent->blas->geomCount;
+            for (uint32_t g = 0; g < geomCount; g++)
+            {
+                const idMaterial *surfShader =
+                    (ent->blas->geomShaders && ent->blas->geomShaders[g]) ? ent->blas->geomShaders[g] : NULL;
+                VkMaterialEntry matEntry =
+                    VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g, s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
+                matEntry.baseGeomIdx = base + g;
+                if (ent->parms.noSelfShadow)
+                    matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
+                if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
+                    matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                dynamicMatEntries[base + g] = matEntry;
+                // Use cached vertex/index addresses from the last BLAS build.
+                // These may be stale (vertex cache recycled) for long-absent entities.
+                if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
+                {
+                    s_dynGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
+                    s_dynGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
+                }
+            }
+            dynamicGeomCount += geomCount;
+        }
+    }
+
     const uint32_t instanceCount = staticCount + dynamicCount;
 
     if (instanceCount == 0)
