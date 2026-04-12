@@ -1336,6 +1336,226 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         }
     }
 
+    // Second pass: include static, already-cached entities that were portal/frustum
+    // culled from viewEntitys but whose BLASes are already built.  This ensures GI
+    // rays can hit geometry in adjacent areas (e.g. the ceiling under a skylight when
+    // the player looks away from it).  No new BLAS builds — cache hits only.
+    // Distance cull: GI rays travel at most r_rtGIRadius from the pixel world position,
+    // which is itself at most r_rtGIRadius from the camera — so 2x radius covers all
+    // reachable geometry.
+    if (tr.primaryWorld != NULL)
+    {
+        const float giRadius = r_rtGIRadius.GetFloat();
+        const float distCullSq = (2.0f * giRadius) * (2.0f * giRadius);
+        const idVec3 camPos = viewDef->renderView.vieworg;
+
+        const int numEntityDefs = tr.primaryWorld->entityDefs.Num();
+        for (int ei = 0; ei < numEntityDefs && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; ei++)
+        {
+            idRenderEntityLocal *ent = tr.primaryWorld->entityDefs[ei];
+            if (!ent)
+                continue;
+
+            // Distance cull — entities beyond 2*giRadius can't be reached by any GI ray.
+            if ((ent->parms.origin - camPos).LengthSqr() > distCullSq)
+                continue;
+
+            // Already included by the viewEntitys pass above.
+            if (ent->blasFrameCount == tr.frameCount)
+                continue;
+
+            // Only static entities — dynamic ones need a BLAS rebuild each frame
+            // which we can't do here safely outside the viewEntitys loop.
+            if (ent->dynamicModel)
+                continue;
+
+            // Must have a valid cached BLAS — no building allowed in this pass.
+            idRenderModel *model = ent->parms.hModel;
+            if (!model || model->NumSurfaces() == 0)
+                continue;
+
+            // Check model BLAS cache.
+            vkBLAS_t *cached = VK_RT_ModelBLASCacheLookup(model);
+            if (!cached || !cached->isValid)
+                continue;
+
+            // Use the cached BLAS; mark as seen so it won't be double-added.
+            ent->blas = cached;
+            ent->blasFrameCount = tr.frameCount;
+
+            if (staticGeomCount + cached->geomCount > VK_MAT_MAX_GEOMS)
+                continue; // no room in geom table
+
+            VkAccelerationStructureInstanceKHR &inst = staticInstances[staticCount];
+            memset(&inst, 0, sizeof(inst));
+
+            const float *m = ent->modelMatrix;
+            inst.transform.matrix[0][0] = m[0];
+            inst.transform.matrix[0][1] = m[4];
+            inst.transform.matrix[0][2] = m[8];
+            inst.transform.matrix[0][3] = m[12];
+            inst.transform.matrix[1][0] = m[1];
+            inst.transform.matrix[1][1] = m[5];
+            inst.transform.matrix[1][2] = m[9];
+            inst.transform.matrix[1][3] = m[13];
+            inst.transform.matrix[2][0] = m[2];
+            inst.transform.matrix[2][1] = m[6];
+            inst.transform.matrix[2][2] = m[10];
+            inst.transform.matrix[2][3] = m[14];
+
+            inst.instanceCustomIndex = 0; // patched below
+            inst.mask = 0xFF;
+            inst.instanceShaderBindingTableRecordOffset = 0;
+            inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            inst.accelerationStructureReference = cached->deviceAddress;
+
+            const uint32_t base = staticGeomCount;
+            staticInstBaseGeom[staticCount] = base;
+            for (uint32_t g = 0; g < cached->geomCount; g++)
+            {
+                const idMaterial *surfShader =
+                    (cached->geomShaders && cached->geomShaders[g]) ? cached->geomShaders[g] : NULL;
+                VkMaterialEntry matEntry =
+                    VK_RT_MakeMaterialEntry(surfShader, cached, base + g, s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
+                matEntry.baseGeomIdx = base + g;
+                if (cached->geomVertSizes && cached->geomVertSizes[g] >= sizeof(idDrawVert))
+                    matEntry.maxVertex = (uint32_t)(cached->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                staticMatEntries[base + g] = matEntry;
+                if (cached->geomVertAddrs && cached->geomIdxAddrs)
+                {
+                    s_staticGeomVtxAddrs[base + g] = (uint64_t)cached->geomVertAddrs[g];
+                    s_staticGeomIdxAddrs[base + g] = (uint64_t)cached->geomIdxAddrs[g];
+                }
+            }
+            staticGeomCount += cached->geomCount;
+
+            // Update static signature so TLAS rebuild is triggered when new
+            // off-screen entities enter/leave the cache-hit set.
+            const uintptr_t entTag = (uintptr_t)ent;
+            uint64_t sigAfterEnt = VK_RT_HashFnv1a64_Bytes(staticSignature, &entTag, sizeof(entTag));
+            uint64_t sigAfterAddr = VK_RT_HashFnv1a64_Bytes(sigAfterEnt, &inst.accelerationStructureReference,
+                                                            sizeof(inst.accelerationStructureReference));
+            staticSignature =
+                VK_RT_HashFnv1a64_Bytes(sigAfterAddr, &inst.transform.matrix[0][0], sizeof(inst.transform.matrix));
+            staticCount++;
+        }
+    }
+
+    // Third pass: include nearby off-screen dynamic entities (enemies, characters) so
+    // they appear in RT reflections and cast RT shadows when outside the view frustum.
+    // For each entity within r_rtNearDynRadius units we call R_EntityDefDynamicModel to
+    // CPU-skin the current animation pose (game logic updates joints every frame regardless
+    // of visibility) and then rebuild the BLAS in-place.  Cost is one MD5 skin + BLAS
+    // update per nearby off-screen enemy — negligible at the default 256-unit radius.
+    // geometry intersections (shape, shadow, reflection silhouette) are always correct.
+    if (tr.primaryWorld != NULL && r_rtNearDynRadius.GetFloat() > 0.0f)
+    {
+        const float nearRad = r_rtNearDynRadius.GetFloat();
+        const float distCullSq = nearRad * nearRad;
+        const idVec3 camPos = viewDef->renderView.vieworg;
+
+        const int numEntityDefs = tr.primaryWorld->entityDefs.Num();
+        for (int ei = 0; ei < numEntityDefs && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; ei++)
+        {
+            idRenderEntityLocal *ent = tr.primaryWorld->entityDefs[ei];
+            if (!ent)
+                continue;
+
+            // Already added by a previous pass this frame.
+            if (ent->blasFrameCount == tr.frameCount)
+                continue;
+
+            // Must be within the near-dynamic radius.
+            if ((ent->parms.origin - camPos).LengthSqr() > distCullSq)
+                continue;
+
+            // Only dynamic model types — static entities are covered by the second pass.
+            idRenderModel *hModel = ent->parms.hModel;
+            if (!hModel || hModel->IsDynamicModel() == DM_STATIC)
+                continue;
+
+            // Regenerate the current animation pose. The game keeps parms.joints
+            // up-to-date every frame regardless of frustum visibility, so this gives
+            // the correct posed mesh for the current game tick even though the entity
+            // isn't in viewEntitys.
+            idRenderModel *model = R_EntityDefDynamicModel(ent);
+            if (!model || model->NumSurfaces() == 0)
+                continue;
+
+            // Rebuild the BLAS in-place so vertex positions match the current pose.
+            // In-place update reuses the existing GPU buffers and device address,
+            // preventing TLAS signature churn.
+            if (ent->blas)
+            {
+                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas);
+                if (updated != ent->blas)
+                    VK_RT_DestroyBLAS(ent->blas);
+                ent->blas = updated;
+            }
+            else
+            {
+                ent->blas = VK_RT_BuildBLASForModel(model, cmd);
+            }
+            if (!ent->blas || !ent->blas->isValid)
+                continue;
+            anyBLASBuilt = true;
+
+            if (dynamicGeomCount + ent->blas->geomCount > VK_MAT_MAX_GEOMS)
+                continue;
+
+            ent->blasFrameCount = tr.frameCount;
+
+            VkAccelerationStructureInstanceKHR &inst = dynamicInstances[dynamicCount];
+            memset(&inst, 0, sizeof(inst));
+
+            const float *m = ent->modelMatrix;
+            inst.transform.matrix[0][0] = m[0];
+            inst.transform.matrix[0][1] = m[4];
+            inst.transform.matrix[0][2] = m[8];
+            inst.transform.matrix[0][3] = m[12];
+            inst.transform.matrix[1][0] = m[1];
+            inst.transform.matrix[1][1] = m[5];
+            inst.transform.matrix[1][2] = m[9];
+            inst.transform.matrix[1][3] = m[13];
+            inst.transform.matrix[2][0] = m[2];
+            inst.transform.matrix[2][1] = m[6];
+            inst.transform.matrix[2][2] = m[10];
+            inst.transform.matrix[2][3] = m[14];
+
+            inst.instanceCustomIndex = 0; // patched below
+            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+            inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
+            inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            inst.accelerationStructureReference = ent->blas->deviceAddress;
+
+            const uint32_t base = dynamicGeomCount;
+            dynamicInstBaseGeom[dynamicCount] = base;
+            dynamicCount++;
+
+            const uint32_t geomCount = ent->blas->geomCount;
+            for (uint32_t g = 0; g < geomCount; g++)
+            {
+                const idMaterial *surfShader =
+                    (ent->blas->geomShaders && ent->blas->geomShaders[g]) ? ent->blas->geomShaders[g] : NULL;
+                VkMaterialEntry matEntry =
+                    VK_RT_MakeMaterialEntry(surfShader, ent->blas, base + g, s_dynGeomVtxAddrs, s_dynGeomIdxAddrs);
+                matEntry.baseGeomIdx = base + g;
+                if (ent->parms.noSelfShadow)
+                    matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
+                if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
+                    matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                dynamicMatEntries[base + g] = matEntry;
+                // Addresses captured during the BLAS build above — current for this frame.
+                if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
+                {
+                    s_dynGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
+                    s_dynGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
+                }
+            }
+            dynamicGeomCount += geomCount;
+        }
+    }
+
     const uint32_t instanceCount = staticCount + dynamicCount;
 
     if (instanceCount == 0)

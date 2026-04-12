@@ -129,8 +129,8 @@ void main() {
     // the reflection buffer at dispatch time) keeps the result visually reasonable.
     // Reflection is weighted by the per-pixel specular map value so matte surfaces
     // show no reflection and metallic/shiny surfaces show a clear tint.
-    // JM Note: have disabled.  These maps are not normalized / way way too bright.    
-    vec3 reflColor = vec3(0.0);    
+    // JM Note: have disabled.  These maps are not normalized / way way too bright.
+    vec3 reflColor = vec3(0.0);
     /*
     if (u_UseReflections != 0) {
         vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);

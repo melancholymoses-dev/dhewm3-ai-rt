@@ -290,10 +290,6 @@ static bool VK_RTAnyEffectEnabled()
 {
     if (!vk.rayTracingSupported || !vkRT.isInitialized || !r_useRayTracing.GetBool())
         return false;
-    extern idCVar r_rtShadows;
-    extern idCVar r_rtAO;
-    extern idCVar r_rtReflections;
-    extern idCVar r_rtGI;
     return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
 }
 
@@ -587,6 +583,8 @@ static bool VK_ComputeLocalViewOriginFromModelView(const viewEntity_t *space, fl
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
 // + screenSize vec2 + useShadowMask int + useAO int + lightScale float + pad float = 376 bytes -> round to 384.
+// FIXME: replace the raw pointer arithmetic used to write fields below with a proper mirrored C++ struct
+// (matching the GLSL InteractionParams layout), and add static_assert(offsetof(...)) checks to catch drift.
 static const uint32_t INTERACTION_UBO_SIZE = 384;
 
 static void VK_CreateUBORings(void)
@@ -815,22 +813,23 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     }
 
     // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
-    extern idCVar r_rtAO;
-    extern idCVar r_rtTemporal;
     int *useAOPtr = useSM + 1;
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
                            vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
     *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
 
-    // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed)
+    // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed).
+    // When GI is active, scale by r_rtGIDirectScale to compensate for the additive GI contribution
+    // and keep overall luminance consistent with the non-GI path.
     float *lightScalePtr = (float *)(useAOPtr + 1);
-    *lightScalePtr = backEnd.overBright;
+    const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
+                          vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+    *lightScalePtr = backEnd.overBright * (giActive ? idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat()) : 1.0f);
 
     // useReflections: 1 when RT reflection buffer is valid this frame.
     // Disabled for portal/mirror subviews: the buffer was populated from the primary
     // camera and sampling it in a different view produces a screen-space artifact
     // (wrong geometry, rectangular footprint un-transformed by the portal projection).
-    extern idCVar r_rtReflections;
     int *useReflPtr = (int *)(lightScalePtr + 1);
     const bool isPrimaryView = (backEnd.viewDef == NULL || backEnd.viewDef->superView == NULL);
     const bool hasReflBuffer = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtReflections.GetBool() &&
@@ -895,7 +894,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     {
         const int frameIdx = vk.currentFrame;
         const bool useHistory =
-            r_rtTemporal.GetBool() && vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE && vkRT.aoHistoryValid[frameIdx];
+            r_rtAOTemporal.GetBool() && vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE && vkRT.aoHistoryValid[frameIdx];
         const bool hasValidAOImage = useHistory ? (vkRT.aoReadView[frameIdx] != VK_NULL_HANDLE)
                                                 : (vkRT.aoMask[frameIdx].image != VK_NULL_HANDLE);
         if (vk.rayTracingSupported && vkRT.isInitialized && hasValidAOImage)
@@ -1154,7 +1153,6 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern bool VK_Image_GetDescriptorInfoCube(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
-    extern idCVar r_rtReflections;
 
     if (r_vkSplitSubmitVerbose.GetInteger() > 0)
     {
@@ -3914,6 +3912,11 @@ void VK_RB_DrawView(const void *data)
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterTLAS", false))
                 return;
         }
+
+        // Upload scene lights to the GI SSBO before any RT dispatch that reads it.
+        // Reflections dispatch before GI, so this ensures reflection hit shaders
+        // always see the current frame's light list.
+        VK_RT_UploadGILights(backEnd.viewDef);
 
         VK_SetRenderStage("RT_AO");
         VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
