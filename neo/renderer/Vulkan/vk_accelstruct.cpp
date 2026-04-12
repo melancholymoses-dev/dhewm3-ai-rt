@@ -1336,6 +1336,111 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         }
     }
 
+    // Second pass: include static, already-cached entities that were portal/frustum
+    // culled from viewEntitys but whose BLASes are already built.  This ensures GI
+    // rays can hit geometry in adjacent areas (e.g. the ceiling under a skylight when
+    // the player looks away from it).  No new BLAS builds — cache hits only.
+    // Distance cull: GI rays travel at most r_rtGIRadius from the pixel world position,
+    // which is itself at most r_rtGIRadius from the camera — so 2x radius covers all
+    // reachable geometry.
+    if (tr.primaryWorld != NULL)
+    {
+        const float giRadius = r_rtGIRadius.GetFloat();
+        const float distCullSq = (2.0f * giRadius) * (2.0f * giRadius);
+        const idVec3 camPos = viewDef->renderView.vieworg;
+
+        const int numEntityDefs = tr.primaryWorld->entityDefs.Num();
+        for (int ei = 0; ei < numEntityDefs && (staticCount + dynamicCount) < VK_RT_MAX_TLAS_INSTANCES; ei++)
+        {
+            idRenderEntityLocal *ent = tr.primaryWorld->entityDefs[ei];
+            if (!ent)
+                continue;
+
+            // Distance cull — entities beyond 2*giRadius can't be reached by any GI ray.
+            if ((ent->parms.origin - camPos).LengthSqr() > distCullSq)
+                continue;
+
+            // Already included by the viewEntitys pass above.
+            if (ent->blasFrameCount == tr.frameCount)
+                continue;
+
+            // Only static entities — dynamic ones need a BLAS rebuild each frame
+            // which we can't do here safely outside the viewEntitys loop.
+            if (ent->dynamicModel)
+                continue;
+
+            // Must have a valid cached BLAS — no building allowed in this pass.
+            idRenderModel *model = ent->parms.hModel;
+            if (!model || model->NumSurfaces() == 0)
+                continue;
+
+            // Check model BLAS cache.
+            vkBLAS_t *cached = VK_RT_ModelBLASCacheLookup(model);
+            if (!cached || !cached->isValid)
+                continue;
+
+            // Use the cached BLAS; mark as seen so it won't be double-added.
+            ent->blas = cached;
+            ent->blasFrameCount = tr.frameCount;
+
+            if (staticGeomCount + cached->geomCount > VK_MAT_MAX_GEOMS)
+                continue; // no room in geom table
+
+            VkAccelerationStructureInstanceKHR &inst = staticInstances[staticCount];
+            memset(&inst, 0, sizeof(inst));
+
+            const float *m = ent->modelMatrix;
+            inst.transform.matrix[0][0] = m[0];
+            inst.transform.matrix[0][1] = m[4];
+            inst.transform.matrix[0][2] = m[8];
+            inst.transform.matrix[0][3] = m[12];
+            inst.transform.matrix[1][0] = m[1];
+            inst.transform.matrix[1][1] = m[5];
+            inst.transform.matrix[1][2] = m[9];
+            inst.transform.matrix[1][3] = m[13];
+            inst.transform.matrix[2][0] = m[2];
+            inst.transform.matrix[2][1] = m[6];
+            inst.transform.matrix[2][2] = m[10];
+            inst.transform.matrix[2][3] = m[14];
+
+            inst.instanceCustomIndex = 0; // patched below
+            inst.mask = 0xFF;
+            inst.instanceShaderBindingTableRecordOffset = 0;
+            inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            inst.accelerationStructureReference = cached->deviceAddress;
+
+            const uint32_t base = staticGeomCount;
+            staticInstBaseGeom[staticCount] = base;
+            for (uint32_t g = 0; g < cached->geomCount; g++)
+            {
+                const idMaterial *surfShader =
+                    (cached->geomShaders && cached->geomShaders[g]) ? cached->geomShaders[g] : NULL;
+                VkMaterialEntry matEntry =
+                    VK_RT_MakeMaterialEntry(surfShader, cached, base + g, s_staticGeomVtxAddrs, s_staticGeomIdxAddrs);
+                matEntry.baseGeomIdx = base + g;
+                if (cached->geomVertSizes && cached->geomVertSizes[g] >= sizeof(idDrawVert))
+                    matEntry.maxVertex = (uint32_t)(cached->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                staticMatEntries[base + g] = matEntry;
+                if (cached->geomVertAddrs && cached->geomIdxAddrs)
+                {
+                    s_staticGeomVtxAddrs[base + g] = (uint64_t)cached->geomVertAddrs[g];
+                    s_staticGeomIdxAddrs[base + g] = (uint64_t)cached->geomIdxAddrs[g];
+                }
+            }
+            staticGeomCount += cached->geomCount;
+
+            // Update static signature so TLAS rebuild is triggered when new
+            // off-screen entities enter/leave the cache-hit set.
+            const uintptr_t entTag = (uintptr_t)ent;
+            uint64_t sigAfterEnt = VK_RT_HashFnv1a64_Bytes(staticSignature, &entTag, sizeof(entTag));
+            uint64_t sigAfterAddr = VK_RT_HashFnv1a64_Bytes(sigAfterEnt, &inst.accelerationStructureReference,
+                                                            sizeof(inst.accelerationStructureReference));
+            staticSignature =
+                VK_RT_HashFnv1a64_Bytes(sigAfterAddr, &inst.transform.matrix[0][0], sizeof(inst.transform.matrix));
+            staticCount++;
+        }
+    }
+
     const uint32_t instanceCount = staticCount + dynamicCount;
 
     if (instanceCount == 0)
