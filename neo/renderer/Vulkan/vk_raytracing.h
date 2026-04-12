@@ -585,6 +585,13 @@ void VK_RT_ShutdownGI(void);
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeGI(uint32_t width, uint32_t height);
 
+// Populate the per-frame GI light SSBO with all in-range world lights.
+// Must be called once per frame BEFORE any RT dispatch that samples the light buffer
+// (reflections, GI).  Safe to call multiple times per frame — the buffer is reset
+// and refilled on each call.  Independent of r_rtGILightBounce so that reflection
+// hit shaders always receive lighting data.
+void VK_RT_UploadGILights(const viewDef_t *viewDef);
+
 // Dispatch GI rays for the current view (once per frame).
 // Must be outside a render pass.  Depth must be in ATTACHMENT_OPTIMAL on entry;
 // this function transitions to READ_ONLY_OPTIMAL and back.

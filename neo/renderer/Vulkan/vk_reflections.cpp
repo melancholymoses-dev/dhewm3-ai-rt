@@ -85,6 +85,47 @@ extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 
 // ---------------------------------------------------------------------------
+// Null light SSBO — 16-byte buffer with numLights = 0, bound when the GI
+// light SSBO is not yet available (GI not initialised, first frame, etc.).
+// The rchit shader checks numLights <= 0 and falls back to raw albedo.
+// ---------------------------------------------------------------------------
+static VkBuffer       s_nullLightSsbo       = VK_NULL_HANDLE;
+static VkDeviceMemory s_nullLightSsboMemory = VK_NULL_HANDLE;
+
+static void VK_RT_CreateNullLightSsbo()
+{
+    if (s_nullLightSsbo != VK_NULL_HANDLE)
+        return;
+
+    // Mirrors the GILightBuffer header: { int numLights; float bounceScale; int pad[2]; }
+    const int32_t nullData[4] = {0, 0, 0, 0}; // numLights = 0
+
+    VK_CreateBuffer(sizeof(nullData),
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                    &s_nullLightSsbo, &s_nullLightSsboMemory);
+
+    void *mapped;
+    vkMapMemory(vk.device, s_nullLightSsboMemory, 0, sizeof(nullData), 0, &mapped);
+    memcpy(mapped, nullData, sizeof(nullData));
+    vkUnmapMemory(vk.device, s_nullLightSsboMemory);
+}
+
+static void VK_RT_DestroyNullLightSsbo()
+{
+    if (s_nullLightSsbo != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(vk.device, s_nullLightSsbo, NULL);
+        s_nullLightSsbo = VK_NULL_HANDLE;
+    }
+    if (s_nullLightSsboMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, s_nullLightSsboMemory, NULL);
+        s_nullLightSsboMemory = VK_NULL_HANDLE;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_CreateReflImages
 // Allocates per-frame RGBA16F reflection buffers at the given resolution.
 // ---------------------------------------------------------------------------
@@ -228,8 +269,10 @@ static void VK_RT_InitReflPipeline(void)
     // binding 1: reflection RGBA16F storage image
     // binding 2: depth sampler (COMBINED_IMAGE_SAMPLER)
     // binding 3: reflection params UBO (dynamic)
+    // binding 4: GI light SSBO — used by rchit to evaluate per-light irradiance
+    //            at the reflection hit point without a full G-buffer.
 
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    VkDescriptorSetLayoutBinding bindings[5] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -251,9 +294,14 @@ static void VK_RT_InitReflPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR; // rchit reads lights
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 5;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
@@ -511,16 +559,17 @@ static void VK_RT_InitReflPipeline(void)
                        (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
-    VkDescriptorPoolSize poolSizes[4] = {
+    VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,     VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             VK_MAX_FRAMES_IN_FLIGHT}, // GI light SSBO
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 4;
+    poolInfo.poolSizeCount = 5;
     poolInfo.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.reflDescPool));
 
@@ -549,6 +598,8 @@ static void VK_RT_InitReflPipeline(void)
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.reflSampler));
     }
+
+    VK_RT_CreateNullLightSsbo();
 
     common->Printf("VK RT Refl: pipeline initialized\n");
 }
@@ -604,6 +655,7 @@ void VK_RT_ShutdownReflections(void)
         vkDestroySampler(vk.device, vkRT.reflSampler, NULL);
         vkRT.reflSampler = VK_NULL_HANDLE;
     }
+    VK_RT_DestroyNullLightSsbo();
     VK_RT_DestroyReflImages();
 }
 
@@ -723,12 +775,19 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Also force refresh when bound resources changed inside the same frame to
     // avoid stale cached descriptors after RT resource churn.
     static VkAccelerationStructureKHR s_lastReflTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView                s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView                s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkBuffer                   s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    // Pick the GI light SSBO for this frame; fall back to the null SSBO if not ready.
+    VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE)
+                             ? vkRT.giLightSsbo[frameIdx]
+                             : s_nullLightSsbo;
 
     const bool reflResourceChanged = (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
                                      (s_lastReflStorageView[frameIdx] != rb.view) ||
-                                     (s_lastReflDepthView[frameIdx] != vk.depthSampledView);
+                                     (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
+                                     (s_lastReflLightSsbo[frameIdx] != lightSsbo);
 
     if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
@@ -763,7 +822,12 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         uboInfo.offset = 0;
         uboInfo.range = sizeof(ReflParamsUBO);
 
-        VkWriteDescriptorSet writes[4] = {};
+        VkDescriptorBufferInfo lightSsboInfo = {};
+        lightSsboInfo.buffer = lightSsbo;
+        lightSsboInfo.offset = 0;
+        lightSsboInfo.range  = VK_WHOLE_SIZE;
+
+        VkWriteDescriptorSet writes[5] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -793,11 +857,19 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[3].pBufferInfo = &uboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = ds;
+        writes[4].dstBinding = 4;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[4].pBufferInfo = &lightSsboInfo;
+
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-        s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
+        s_lastReflTlasHandle[frameIdx]  = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
-        s_lastReflDepthView[frameIdx] = vk.depthSampledView;
+        s_lastReflDepthView[frameIdx]   = vk.depthSampledView;
+        s_lastReflLightSsbo[frameIdx]   = lightSsbo;
     }
 
     // --- Dispatch ---

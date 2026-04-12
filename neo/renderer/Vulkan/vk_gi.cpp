@@ -881,6 +881,70 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height)
 // interaction fragment shader (memory barrier issued before returning).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// VK_RT_UploadGILights (public)
+// Populate the per-frame GI light SSBO with all in-range world lights.
+// Called every frame BEFORE any RT dispatch that needs light data (reflections,
+// GI).  Calling it more than once per frame is safe — the buffer is reset then
+// refilled each call.
+//
+// Independent of r_rtGILightBounce so that reflection hit shaders can always
+// evaluate lighting even when the GI bounce feature is disabled.
+// ---------------------------------------------------------------------------
+void VK_RT_UploadGILights(const viewDef_t *viewDef)
+{
+    if (!vkRT.isInitialized || viewDef == NULL)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+    if (vkRT.giLightSsboMapped[frameIdx] == NULL)
+        return;
+    if (tr.primaryWorld == NULL)
+        return;
+
+    GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
+    lb->numLights   = 0;
+    lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
+
+    const float   giRadius    = r_rtGIRadius.GetFloat();
+    const float   distCullSq  = giRadius * giRadius;
+    const idVec3  camPos      = viewDef->renderView.vieworg;
+    const int     numLightDefs = tr.primaryWorld->lightDefs.Num();
+
+    for (int li = 0; li < numLightDefs && lb->numLights < VK_GI_MAX_LIGHTS; li++)
+    {
+        const idRenderLightLocal *lightLocal = tr.primaryWorld->lightDefs[li];
+        if (lightLocal == NULL)
+            continue;
+
+        const renderLight_t &p = lightLocal->parms;
+
+        if ((p.origin - camPos).LengthSqr() > distCullSq)
+            continue;
+
+        float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
+        if (radius < 1.0f)
+            continue;
+
+        float r         = p.shaderParms[SHADERPARM_RED];
+        float g         = p.shaderParms[SHADERPARM_GREEN];
+        float b         = p.shaderParms[SHADERPARM_BLUE];
+        float intensity = p.shaderParms[SHADERPARM_ALPHA];
+        if (intensity < 0.001f)
+            intensity = 1.0f;
+
+        GILightEntry &entry     = lb->lights[lb->numLights++];
+        entry.posRadius[0]      = p.origin.x;
+        entry.posRadius[1]      = p.origin.y;
+        entry.posRadius[2]      = p.origin.z;
+        entry.posRadius[3]      = radius;
+        entry.colorIntensity[0] = r;
+        entry.colorIntensity[1] = g;
+        entry.colorIntensity[2] = b;
+        entry.colorIntensity[3] = intensity;
+    }
+}
+
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).
 static VkRect2D VK_RT_GI_ComputeDispatchRect(const viewDef_t *viewDef)
 {
@@ -1025,81 +1089,34 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // --- Upload GI light list (Option B) ---
-    // Unconditional each frame — light positions change continuously.
-    if (vkRT.giLightSsboMapped[frameIdx] != NULL)
+    // VK_RT_UploadGILights (called from backend before all RT dispatches) already
+    // filled the buffer unconditionally.  Here we honour r_rtGILightBounce: if the
+    // user has disabled GI light bounce, clear numLights so gi_ray.rchit falls back
+    // to Option A (raw albedo).  Reflections have already dispatched by this point
+    // so this clear only affects the GI pass itself.
+    if (!r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
     {
         GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
-        lb->numLights = 0;
-        lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
+        lb->numLights = 0; // rchit sees 0 → Option A fallback
+    }
 
-        if (r_rtGILightBounce.GetBool() && tr.primaryWorld != NULL)
+    // DEBUG: log light counts once per second (keep for diagnostics).
+    if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
+    {
+        static int s_lastLogFrame = -9999;
+        if (tr.frameCount - s_lastLogFrame > 60)
         {
-            // Iterate ALL lights in the world, not just frustum-visible ones.
-            // GI rays can hit geometry behind or beside the camera; those surfaces
-            // need the full light set to evaluate bounce correctly.
-            // Cull lights beyond r_rtGIRadius — GI rays can't reach them anyway.
-            const float giRadius = r_rtGIRadius.GetFloat();
-            const float distCullSq = giRadius * giRadius;
-            const idVec3 camPos = viewDef->renderView.vieworg;
-
-            // DEBUG: log light counts once per second
-            static int s_lastLogFrame = -9999;
-            if (tr.frameCount - s_lastLogFrame > 60)
-            {
-                s_lastLogFrame = tr.frameCount;
-                int viewLightCount = 0;
-                for (const viewLight_t *vl = viewDef->viewLights; vl; vl = vl->next)
-                    viewLightCount++;
-                int worldLightTotal = tr.primaryWorld->lightDefs.Num();
-                int inRangeCount = 0;
-                for (int li = 0; li < worldLightTotal; li++)
-                {
-                    const idRenderLightLocal *ll = tr.primaryWorld->lightDefs[li];
-                    if (ll && (ll->parms.origin - camPos).LengthSqr() <= distCullSq)
-                        inRangeCount++;
-                }
-                common->Printf("[GI] viewLights=%d  worldLights=%d  inRange(r=%.0f)=%d  camPos=(%.0f,%.0f,%.0f)\n",
-                               viewLightCount, worldLightTotal, giRadius, inRangeCount, camPos.x, camPos.y, camPos.z);
-            }
-
-            const int numLightDefs = tr.primaryWorld->lightDefs.Num();
-            for (int li = 0; li < numLightDefs && lb->numLights < VK_GI_MAX_LIGHTS; li++)
-            {
-                const idRenderLightLocal *lightLocal = tr.primaryWorld->lightDefs[li];
-                if (lightLocal == NULL)
-                    continue;
-
-                const renderLight_t &p = lightLocal->parms;
-
-                // Skip lights beyond GI ray reach.
-                if ((p.origin - camPos).LengthSqr() > distCullSq)
-                    continue;
-
-                // Bounding radius: use max of the three semi-axes.
-                float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
-                if (radius < 1.0f)
-                    continue; // degenerate / ambient
-
-                // Colour from shaderParms; intensity from alpha parm (default to 1 if zero).
-                float r = p.shaderParms[SHADERPARM_RED];
-                float g = p.shaderParms[SHADERPARM_GREEN];
-                float b = p.shaderParms[SHADERPARM_BLUE];
-                float intensity = p.shaderParms[SHADERPARM_ALPHA];
-                if (intensity < 0.001f)
-                    intensity = 1.0f;
-
-                GILightEntry &entry = lb->lights[lb->numLights++];
-                entry.posRadius[0] = p.origin.x;
-                entry.posRadius[1] = p.origin.y;
-                entry.posRadius[2] = p.origin.z;
-                entry.posRadius[3] = radius;
-                entry.colorIntensity[0] = r;
-                entry.colorIntensity[1] = g;
-                entry.colorIntensity[2] = b;
-                entry.colorIntensity[3] = intensity;
-            }
+            s_lastLogFrame = tr.frameCount;
+            const GILightBuffer *lb = (const GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
+            int viewLightCount = 0;
+            for (const viewLight_t *vl = viewDef->viewLights; vl; vl = vl->next)
+                viewLightCount++;
+            common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n",
+                           viewLightCount, lb->numLights,
+                           viewDef->renderView.vieworg.x,
+                           viewDef->renderView.vieworg.y,
+                           viewDef->renderView.vieworg.z);
         }
-        // else numLights stays 0 — rchit falls back to Option A (albedo only)
     }
 
     // --- Update descriptor set (once per frame slot when frameCount changes) ---
