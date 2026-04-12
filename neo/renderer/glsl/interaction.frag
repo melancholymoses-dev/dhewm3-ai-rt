@@ -123,35 +123,45 @@ void main() {
         ao = texture(u_AOMap, aoUV).r;
     }
 
-    // --- RT reflections (cheap approximation, Step 5.3) ---
-    // NOTE: this shader is called once per light, so reflColor is accumulated N
-    // times for N lights illuminating a pixel.  r_rtReflectionBlend (baked into
-    // the reflection buffer at dispatch time) keeps the result visually reasonable.
-    // Reflection is weighted by the per-pixel specular map value so matte surfaces
-    // show no reflection and metallic/shiny surfaces show a clear tint.
-    // JM Note: have disabled.  These maps are not normalized / way way too bright.    
-    vec3 reflColor = vec3(0.0);    
-    /*
+    // --- RT reflections (lighting-weighted, Step 5.3) ---
+    // NOTE: this shader is called once per light, so reflColor accumulates across
+    // all N lights that illuminate a pixel.  To prevent over-brightening we weight
+    // the contribution by how much THIS light actually illuminates the surface:
+    //   litness = lightLum * NdotL * shadow
+    // Effect:
+    //   - Shadow (RT mask = 0)  → no reflection from this light's pass.
+    //   - Surface facing away   → NdotL = 0, no contribution.
+    //   - Dim/distant light     → attenuation luma → 0, minimal contribution.
+    //   - Well-lit surface      → full weighted reflection.
+    // Global brightness is controlled by r_rtReflectionBlend (baked into the
+    // reflection buffer at dispatch time).  kReflLightScale is a per-light
+    // dampener to keep multi-light accumulation visually reasonable.
+    vec3 reflColor = vec3(0.0);
     if (u_UseReflections != 0) {
-        vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
+        vec2 reflUV     = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
         vec3 reflSample = texture(u_ReflectionMap, reflUV).rgb;
-        // Modulate by specular map luminance: only surfaces with non-zero specular maps
-        // receive reflections.  Matte surfaces (specBase ~= 0) get no contribution.
-        // RGB weights are standard perceptual grayscale (BT.601).
-        float specBase   = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
-                               vec3(0.299, 0.587, 0.114));
-        float specweight = 0.1;
-        reflColor = reflSample * specBase * specweight;
+
+        // Specular map masks which surfaces are reflective (matte → 0, shiny → 1).
+        float specBase = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
+                             vec3(0.299, 0.587, 0.114));
+
+        // How much does this light illuminate this pixel?
+        float lightLum = dot(attenuation, vec3(0.299, 0.587, 0.114));
+        float litness  = lightLum * NdotL * shadow;
+
+        // Per-light scale keeps accumulation across multiple lights from over-brightening.
+        // Tune r_rtReflectionBlend for global brightness; this constant controls the
+        // per-light weighting strength.
+        const float kReflLightScale = 0.15;
+        reflColor = reflSample * specBase * litness * kReflLightScale;
     }
-    */
 
     // --- RT global illumination (Phase 6.1) ---
     // GI is now applied by the dedicated VK_RT_CompositeGI fullscreen pass (gi_composite.frag)
 
     // --- Combine ---
-    // Reflection is added independently of the light attenuation/shadow so that
-    // reflections remain visible even on surfaces in shadow (environment light,
-    // not per-source light).
+    // reflColor already encodes per-light weighting (attenuation × NdotL × shadow)
+    // so it is zero on shadowed / unlit surfaces.
     vec3 color = (diffuse * ao + specular) * attenuation * shadow + reflColor;
     color *= vary_Color.rgb;
 
