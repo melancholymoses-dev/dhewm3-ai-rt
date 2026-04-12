@@ -40,10 +40,10 @@ of the original Doom 3 GPL Source Code release.
 
 // r_rtReflections declared in RenderSystem_init.cpp
 
-static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "12000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.4", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection contribution in the interaction shader.\n"
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 1.0 — decrease if reflections look overbright in heavy-light areas.");

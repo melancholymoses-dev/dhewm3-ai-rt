@@ -38,17 +38,17 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtGI("r_rtGI", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_rtGI("r_rtGI", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
               "Enable one-bounce GI (Phase 6.1, ambient colour bleeding)");
 
 idCVar r_rtGIRadius("r_rtGIRadius", "512.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
 
-static idCVar r_rtGISamples("r_rtGISamples", "1", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
+static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
 static idCVar r_rtGIStrength("r_rtGIStrength", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
 
-idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtGIDirectScale("r_rtGIDirectScale", "0.8", CVAR_RENDERER | CVAR_FLOAT,
                          "Multiplier on direct interaction lighting when GI is active. "
                          "Reduce below 1.0 (e.g. 0.7) to compensate for GI-added luminance "
                          "and keep overall brightness consistent with the original game");
