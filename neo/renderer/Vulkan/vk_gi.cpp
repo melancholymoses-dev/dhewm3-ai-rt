@@ -32,6 +32,7 @@ Code release.
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,14 @@ static idCVar r_rtGIBounceScale(
     "r_rtGIBounceScale", "5.0", CVAR_RENDERER | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
 
+static idCVar r_rtGIMaxLights(
+    "r_rtGIMaxLights", "64", CVAR_RENDERER | CVAR_INTEGER,
+    "Max GI lights to sample per frame, sorted nearest-first (1-64, capped at VK_GI_MAX_LIGHTS)");
+
+static idCVar r_rtGILightCollectRadiusScale(
+    "r_rtGILightCollectRadiusScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+    "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale");
+
 static idCVar r_rtGIAtrous("r_rtGIAtrous", "1", CVAR_RENDERER | CVAR_BOOL,
                            "Enable À-trous spatial filter on the GI buffer after temporal resolve");
 static idCVar r_rtGIAtrousIterations(
@@ -87,7 +96,8 @@ struct GILightBuffer
 {
     int32_t numLights;
     float bounceScale; // r_rtGIBounceScale — per-light irradiance multiplier
-    int32_t pad[2];
+    float giRadius;    // r_rtGIRadius — hit-point light evaluation window (shader-side)
+    int32_t pad1;
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
 static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffer size mismatch");
@@ -902,16 +912,43 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     if (tr.primaryWorld == NULL)
         return;
 
+    // Upload once per frame slot from the main world view only.
+    // Secondary/subview passes (GUI, mirrors, etc.) can have no world lights
+    // and must not clear the already-populated GI light list.
+    if (viewDef->renderWorld != tr.primaryWorld || viewDef->isSubview)
+        return;
+
+    static int s_lastGIUploadFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastGIUploadFrame[frameIdx] == tr.frameCount)
+        return;
+    s_lastGIUploadFrame[frameIdx] = tr.frameCount;
+
     GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
-    lb->numLights   = 0;
+    lb->numLights = 0;
     lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
+    lb->giRadius = Max(1.0f, r_rtGIRadius.GetFloat());
 
-    const float   giRadius    = r_rtGIRadius.GetFloat();
-    const float   distCullSq  = giRadius * giRadius;
-    const idVec3  camPos      = viewDef->renderView.vieworg;
-    const int     numLightDefs = tr.primaryWorld->lightDefs.Num();
+    const float giRadius = lb->giRadius;
+    const float lightCollectScale = idMath::ClampFloat(0.25f, 8.0f, r_rtGILightCollectRadiusScale.GetFloat());
+    const float lightCollectRadius = giRadius * lightCollectScale;
+    const float distCullSq = lightCollectRadius * lightCollectRadius;
+    const idVec3 camPos = viewDef->renderView.vieworg;
+    const int numLightDefs = tr.primaryWorld->lightDefs.Num();
+    const int maxLights = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtGIMaxLights.GetInteger());
 
-    for (int li = 0; li < numLightDefs && lb->numLights < VK_GI_MAX_LIGHTS; li++)
+    // Collect candidates within radius, then sort nearest-first so the
+    // closest maxLights are always sampled regardless of lightDefs order.
+    struct Candidate
+    {
+        float distSq;
+        GILightEntry entry;
+    };
+
+    // Use a fixed-size stack buffer — numLightDefs can be in the hundreds.
+    static Candidate s_candidates[1024];
+    int numCandidates = 0;
+
+    for (int li = 0; li < numLightDefs; li++)
     {
         const idRenderLightLocal *lightLocal = tr.primaryWorld->lightDefs[li];
         if (lightLocal == NULL)
@@ -919,30 +956,58 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 
         const renderLight_t &p = lightLocal->parms;
 
-        if ((p.origin - camPos).LengthSqr() > distCullSq)
+        const float dSq = (p.origin - camPos).LengthSqr();
+        if (dSq > distCullSq)
             continue;
 
         float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
         if (radius < 1.0f)
             continue;
 
-        float r         = p.shaderParms[SHADERPARM_RED];
-        float g         = p.shaderParms[SHADERPARM_GREEN];
-        float b         = p.shaderParms[SHADERPARM_BLUE];
+        float r = p.shaderParms[SHADERPARM_RED];
+        float g = p.shaderParms[SHADERPARM_GREEN];
+        float b = p.shaderParms[SHADERPARM_BLUE];
         float intensity = p.shaderParms[SHADERPARM_ALPHA];
         if (intensity < 0.001f)
             intensity = 1.0f;
 
-        GILightEntry &entry     = lb->lights[lb->numLights++];
-        entry.posRadius[0]      = p.origin.x;
-        entry.posRadius[1]      = p.origin.y;
-        entry.posRadius[2]      = p.origin.z;
-        entry.posRadius[3]      = radius;
-        entry.colorIntensity[0] = r;
-        entry.colorIntensity[1] = g;
-        entry.colorIntensity[2] = b;
-        entry.colorIntensity[3] = intensity;
+        if (numCandidates < 1024)
+        {
+            Candidate &c = s_candidates[numCandidates++];
+            c.distSq = dSq;
+            c.entry.posRadius[0] = p.origin.x;
+            c.entry.posRadius[1] = p.origin.y;
+            c.entry.posRadius[2] = p.origin.z;
+            c.entry.posRadius[3] = radius;
+            c.entry.colorIntensity[0] = r;
+            c.entry.colorIntensity[1] = g;
+            c.entry.colorIntensity[2] = b;
+            c.entry.colorIntensity[3] = intensity;
+        }
     }
+
+    if (numCandidates > 1)
+    {
+        const auto cmpCandidates = [](const void *a, const void *b) -> int {
+            const Candidate *ca = (const Candidate *)a;
+            const Candidate *cb = (const Candidate *)b;
+            if (ca->distSq < cb->distSq)
+                return -1;
+            if (ca->distSq > cb->distSq)
+                return 1;
+            return 0;
+        };
+
+        qsort(s_candidates, numCandidates, sizeof(s_candidates[0]), cmpCandidates);
+    }
+
+    const int toUpload = Min(numCandidates, maxLights);
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf(
+            "VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f collectRadius=%.1f\n",
+            toUpload, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius);
+    for (int i = 0; i < toUpload; i++)
+        lb->lights[lb->numLights++] = s_candidates[i].entry;
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).
@@ -1111,11 +1176,8 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
             int viewLightCount = 0;
             for (const viewLight_t *vl = viewDef->viewLights; vl; vl = vl->next)
                 viewLightCount++;
-            common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n",
-                           viewLightCount, lb->numLights,
-                           viewDef->renderView.vieworg.x,
-                           viewDef->renderView.vieworg.y,
-                           viewDef->renderView.vieworg.z);
+            common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n", viewLightCount, lb->numLights,
+                           viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y, viewDef->renderView.vieworg.z);
         }
     }
 
