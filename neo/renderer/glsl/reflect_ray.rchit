@@ -53,7 +53,8 @@ struct ReflGILight {
 layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
     int        numLights;
     float      bounceScale; // unused here; kept for layout compatibility
-    int        pad[2];
+    float      giRadius;    // r_rtGIRadius — max range for light evaluation
+    int        pad1;
     ReflGILight lights[];
 } reflLightBuf;
 
@@ -62,7 +63,7 @@ layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
 // Weight of vertex 0 = 1.0 - baryCoord.x - baryCoord.y.
 hitAttributeEXT vec2 baryCoord;
 
-#define REFL_MAX_LIGHTS 64
+#define REFL_MAX_LIGHTS 128
 
 // ---------------------------------------------------------------------------
 // rt_ReflEvalLighting — evaluate direct irradiance at a surface point using
@@ -85,16 +86,19 @@ vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
 
         vec3  toL  = lPos - hitPos;
         float dist = length(toL);
-        if (dist >= lRad || dist < 0.01)
+        // Use giRadius as the evaluation window; lRad shapes the falloff curve.
+        if (dist >= reflLightBuf.giRadius || dist < 0.01)
             continue;
 
         float NdotL = dot(hitNorm, toL / dist);
         if (NdotL <= 0.0)
             continue;
 
-        // Doom 3 quadratic falloff within the light radius.
-        float t    = 1.0 - (dist / lRad);
-        float atten = t * t;
+        // Doom 3 quadratic falloff within the light volume; inv-sq beyond it.
+        float t     = max(0.0, 1.0 - (dist / max(lRad, 1.0)));
+        float atten = (dist <= lRad)
+                    ? t * t
+                    : (lRad * lRad) / (dist * dist) * 0.25;
 
         irradiance += lColor * lInt * NdotL * atten;
     }
