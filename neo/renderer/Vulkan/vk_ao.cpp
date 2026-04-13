@@ -480,7 +480,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("VK RT AO: skip — RT not initialized\n");
         return;
     }
-    if (!vkRT.tlas[vk.currentFrame].isValid)
+    if (!vkRT.tlas[vk.currentFrame].isValid & (r_vkLogRT.GetInteger() >= 1))
     {
         common->Printf("VK RT AO: skip — TLAS[%d] not valid\n", vk.currentFrame);
         return;
@@ -505,7 +505,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkAOMask_t &ao = vkRT.aoMask[frameIdx];
 
-    if (ao.image == VK_NULL_HANDLE)
+    if (ao.image == VK_NULL_HANDLE & (r_vkLogRT.GetInteger() >= 1))
     {
         common->Printf("VK RT AO: skip — AO image[%d] is NULL\n", frameIdx);
         return;

@@ -58,7 +58,8 @@ struct GILight {
 layout(set = 0, binding = 4, std430) readonly buffer GILightBuffer {
     int     numLights;
     float   bounceScale; // r_rtGIBounceScale from host
-    int     pad[2];
+    float   giRadius;    // r_rtGIRadius — max range for light evaluation
+    int     pad1;
     GILight lights[];
 } giLightBuf;
 
@@ -78,7 +79,7 @@ hitAttributeEXT vec2 baryCoord;
 // Constants
 // ---------------------------------------------------------------------------
 #define GI_SHADOW_BIAS  0.5   // world-unit offset to avoid self-shadowing
-#define GI_MAX_LIGHTS   64    // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
+#define GI_MAX_LIGHTS   128   // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
 
 void main()
 {
@@ -94,12 +95,13 @@ void main()
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
     vec3 albedo  = diffuse.rgb;
 
-    // --- Option A fallback: no lights uploaded ---
-    if (giLightBuf.numLights <= 0)
-    {
-        giPayload.colour = albedo;
-        return;
-    }
+    // DEBUG: encode numLights into green and bounceScale into blue.
+    // Black green = 0 lights (SSBO unbound/upload failed).
+    // Bright green = lights present.  Blue tint = bounceScale non-zero.
+    //giPayload.colour = vec3(0.0,
+    //                        clamp(float(giLightBuf.numLights) / 64.0, 0.0, 1.0),
+    //                        0.0);
+    //return;
 
     // --- Option B: evaluate each in-range light at the secondary hit ---
     vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
@@ -116,15 +118,16 @@ void main()
     for (int i = 0; i < n; i++)
     {
         vec3  lightPos    = giLightBuf.lights[i].posRadius.xyz;
-        float lightRadius = giLightBuf.lights[i].posRadius.w;
+        float lightRadius = giLightBuf.lights[i].posRadius.w; // Doom3 half-extent
         vec3  lightColor  = giLightBuf.lights[i].colorIntensity.rgb;
         float intensity   = giLightBuf.lights[i].colorIntensity.a;
 
         vec3  toLight = lightPos - hitPos;
         float dist    = length(toLight);
 
-        // Skip lights outside the influence radius or degenerate distance.
-        if (dist >= lightRadius || dist < 0.01)
+        // Skip lights beyond the GI evaluation window or degenerate distance.
+        // Use giRadius (the ray travel limit) as the evaluation window rather than lightradius.
+        if (dist >= giLightBuf.giRadius || dist < 0.01)
             continue;
 
         vec3 lightDir = toLight / dist;
@@ -152,14 +155,24 @@ void main()
         if (giShadow.occluded)
             continue;
 
-        // Doom 3 uses a quadratic falloff within the light radius.
-        float t     = 1.0 - (dist / lightRadius);
-        float atten = t * t;
+        // Attenuation: Doom3-style quadratic falloff within the light volume,
+        // feathering to zero at lightRadius.  Beyond lightRadius use inverse-square
+        // so the contribution tapers rather than hard-cutting to black.
+        float t     = max(0.0, 1.0 - (dist / max(lightRadius, 1.0)));
+        float atten = (dist <= lightRadius)
+                    ? t * t                              // Doom3 quad falloff inside volume
+                    : (lightRadius * lightRadius) / (dist * dist) * 0.25; // inv-sq outside
 
         irradiance += lightColor * intensity * NdotL * atten * giLightBuf.bounceScale;
     }
 
     // Final bounce colour: albedo × gathered irradiance.
     // giStrength in the rgen provides an additional global scale.
-    giPayload.colour = albedo * irradiance;
+    // Option A fallback: if no light contributed (numLights == 0 or all failed
+    // radius/NdotL checks), return raw albedo so the rgen's giStrength still
+    // provides a uniform ambient lift rather than returning black.
+    if (giLightBuf.numLights == 0 || giLightBuf.bounceScale == 0.0)
+        giPayload.colour = albedo;
+    else
+        giPayload.colour = albedo * irradiance;
 }
