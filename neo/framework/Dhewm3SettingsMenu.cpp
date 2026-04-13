@@ -2440,6 +2440,8 @@ struct RTCVars
 
     // GI fine-tuning
     idCVar *rtGISamples = nullptr;
+    idCVar *rtGIMaxLights = nullptr;
+    idCVar *rtGILightCollectRadiusScale = nullptr;
     idCVar *rtGIRadius = nullptr;
     idCVar *rtGIStrength = nullptr;
     idCVar *rtGIDirectScale = nullptr;
@@ -2478,6 +2480,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflectionDistance = cvarSystem->Find("r_rtReflectionDistance");
     rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
+    rtCVars.rtGIMaxLights = cvarSystem->Find("r_rtGIMaxLights");
+    rtCVars.rtGILightCollectRadiusScale = cvarSystem->Find("r_rtGILightCollectRadiusScale");
     rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
     rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
     rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
@@ -2586,6 +2590,8 @@ static void DrawRTOptionsMenu()
     ImGui::SeparatorText("Global Illumination Settings");
 
     RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
+    RTSliderInt("GI Max Lights (nearest-first, 1-64)", rtCVars.rtGIMaxLights, 1, 64);
+    RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
     RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 32.0f, 2048.0f, "%.0f");
     RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
     RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 2.0f);

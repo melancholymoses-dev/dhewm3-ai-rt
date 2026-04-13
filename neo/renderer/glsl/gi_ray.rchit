@@ -79,7 +79,7 @@ hitAttributeEXT vec2 baryCoord;
 // Constants
 // ---------------------------------------------------------------------------
 #define GI_SHADOW_BIAS  0.5   // world-unit offset to avoid self-shadowing
-#define GI_MAX_LIGHTS   128   // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
+#define GI_MAX_LIGHTS   64   // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
 
 void main()
 {
@@ -94,11 +94,15 @@ void main()
     // Sample diffuse albedo at secondary hit.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
     vec3 albedo  = diffuse.rgb;
-
+    /*if (giLightBuf.numLights == 0){
+        giPayload.colour = vec3(1.0, 0, 0);
+        return;
+    }
+    */
     // DEBUG: encode numLights into green and bounceScale into blue.
     // Black green = 0 lights (SSBO unbound/upload failed).
     // Bright green = lights present.  Blue tint = bounceScale non-zero.
-    //giPayload.colour = vec3(0.0,
+    // giPayload.colour = vec3(0.0,
     //                        clamp(float(giLightBuf.numLights) / 64.0, 0.0, 1.0),
     //                        0.0);
     //return;
