@@ -73,7 +73,7 @@ hitAttributeEXT vec2 baryCoord;
 vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
 {
     // Small ambient floor so surfaces with no nearby lights aren't fully black.
-    const float kAmbient = 0.04;
+    const float kAmbient = 0.01;
     vec3 irradiance = vec3(kAmbient);
 
     int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);

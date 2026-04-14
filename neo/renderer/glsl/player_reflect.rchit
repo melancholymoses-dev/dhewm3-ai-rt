@@ -57,7 +57,8 @@ struct ReflGILight {
 layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
     int        numLights;
     float      bounceScale;
-    int        pad[2];
+    float      giRadius;    // r_rtGIRadius — max range for light evaluation
+    int        pad1;
     ReflGILight lights[];
 } reflLightBuf;
 
@@ -66,7 +67,7 @@ layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
 // blotches in floor / adjacent-surface reflections.
 // Value should exceed the player's bounding height (~56 units in Doom3 scale).
 const float PLAYER_REFLECT_SKIP_DIST = 10.0;
-#define REFL_MAX_LIGHTS 64
+#define REFL_MAX_LIGHTS 128
 
 void main()
 {
@@ -99,7 +100,7 @@ void main()
         if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
             hitNorm = -hitNorm;
 
-        const float kAmbient = 0.04;
+        const float kAmbient = 0.01;
         vec3 irradiance = vec3(kAmbient);
         int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
         for (int i = 0; i < n; i++)
@@ -110,11 +111,17 @@ void main()
             float lInt   = reflLightBuf.lights[i].colorIntensity.a;
             vec3  toL    = lPos - hitPos;
             float dist   = length(toL);
-            if (dist >= lRad || dist < 0.01) continue;
+            // Match reflect_ray.rchit: extend eval range beyond lRad so player
+            // geometry is still reached by room lights whose origin is far away.
+            float evalRadius = max(reflLightBuf.giRadius, lRad * 2.0);
+            if (dist >= evalRadius || dist < 0.01) continue;
             float NdotL  = dot(hitNorm, toL / dist);
             if (NdotL <= 0.0) continue;
-            float t = 1.0 - (dist / lRad);
-            irradiance += lColor * lInt * NdotL * (t * t);
+            // Normalized inverse-square: continuous, no hard cutoff at lRad.
+            float t = dist / lRad;
+            float atten = 1.0 / (t * t + 1.0);
+            if (atten < 0.02) continue;
+            irradiance += lColor * lInt * NdotL * atten;
         }
         reflPayload.colour = diffuse.rgb * irradiance;
     }
