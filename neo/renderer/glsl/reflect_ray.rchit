@@ -97,11 +97,11 @@ vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
         if (NdotL <= 0.0)
             continue;
 
-        // Doom 3 quadratic falloff within the light volume; inv-sq beyond it.
-        float t     = max(0.0, 1.0 - (dist / max(lRad, 1.0)));
-        float atten = (dist <= lRad)
-                    ? t * t
-                    : (lRad * lRad) / (dist * dist) * 0.25;
+        // normalize inverse square (lorentzian). 
+        float t=  dist/lRad;
+        float atten = 1.0 / (t *t + 1.0);
+        if (atten < 0.02)
+            continue;
 
         irradiance += lColor * lInt * NdotL * atten;
     }
