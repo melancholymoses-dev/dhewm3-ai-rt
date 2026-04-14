@@ -14,6 +14,12 @@ incidence).  The remaining 96 % is passed through to the next bounce via
 reflPayload.transmittance + nextOrigin/nextDir.  rgen traces the continuation
 ray on the next loop iteration.
 
+Lighting: opaque hit surfaces are shaded using the same GI light list
+(set=0, binding=4) that gi_ray.rchit uses for bounce lighting.  No shadow
+rays are fired here — NdotL × quadratic falloff gives directional variation
+and per-light colour without secondary traces.  When no lights are available
+(numLights == 0) the shader falls back to raw diffuse albedo (flat shading).
+
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
@@ -35,10 +41,69 @@ of the original Doom 3 GPL Source Code release.
 
 layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 
+// ---------------------------------------------------------------------------
+// GI light list — same buffer as gi_ray.rchit uses for bounce evaluation.
+// Provided by vk_reflections.cpp at set=0, binding=4 (GI light SSBO).
+// ---------------------------------------------------------------------------
+struct ReflGILight {
+    vec4 posRadius;      // xyz = world pos, w = bounding radius
+    vec4 colorIntensity; // rgb = light colour, a = intensity
+};
+
+layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
+    int        numLights;
+    float      bounceScale; // unused here; kept for layout compatibility
+    float      giRadius;    // r_rtGIRadius — max range for light evaluation
+    int        pad1;
+    ReflGILight lights[];
+} reflLightBuf;
+
 // Barycentric coordinates set by the built-in triangle intersection stage.
 // baryCoord.x = weight of vertex 1, baryCoord.y = weight of vertex 2.
 // Weight of vertex 0 = 1.0 - baryCoord.x - baryCoord.y.
 hitAttributeEXT vec2 baryCoord;
+
+#define REFL_MAX_LIGHTS 128
+
+// ---------------------------------------------------------------------------
+// rt_ReflEvalLighting — evaluate direct irradiance at a surface point using
+// the scene light list.  No shadow rays: NdotL × quadratic falloff only.
+// Returns vec3(kAmbient) as a floor when no lights reach the surface.
+// ---------------------------------------------------------------------------
+vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
+{
+    // Small ambient floor so surfaces with no nearby lights aren't fully black.
+    const float kAmbient = 0.04;
+    vec3 irradiance = vec3(kAmbient);
+
+    int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
+    for (int i = 0; i < n; i++)
+    {
+        vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz;
+        float lRad   = reflLightBuf.lights[i].posRadius.w;
+        vec3  lColor = reflLightBuf.lights[i].colorIntensity.rgb;
+        float lInt   = reflLightBuf.lights[i].colorIntensity.a;
+
+        vec3  toL  = lPos - hitPos;
+        float dist = length(toL);
+        // Use giRadius as the evaluation window; lRad shapes the falloff curve.
+        if (dist >= reflLightBuf.giRadius || dist < 0.01)
+            continue;
+
+        float NdotL = dot(hitNorm, toL / dist);
+        if (NdotL <= 0.0)
+            continue;
+
+        // Doom 3 quadratic falloff within the light volume; inv-sq beyond it.
+        float t     = max(0.0, 1.0 - (dist / max(lRad, 1.0)));
+        float atten = (dist <= lRad)
+                    ? t * t
+                    : (lRad * lRad) / (dist * dist) * 0.25;
+
+        irradiance += lColor * lInt * NdotL * atten;
+    }
+    return irradiance;
+}
 
 void main()
 {
@@ -55,14 +120,14 @@ void main()
         return;
     }
 
-    
     MaterialEntry mat = materials[matIdx];
     if ((mat.flags & MAT_FLAG_GLASS) != 0u)
     {
         // Thin-glass approximation: flat F0 = 0.05 (5 % reflectance at all angles).
         // The reflected colour is tinted by the glass diffuse texture.
         // The remaining 95 % continues straight through (no refraction).
-        const float F0 = 0.05;
+        // Glass tint is left unlit — it is a transmission colour, not a surface.
+        const float F0      = 0.05;
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
@@ -75,8 +140,25 @@ void main()
         reflPayload.nextDir = gl_WorldRayDirectionEXT;
         return;
     }
-    // Opaque surface — sample diffuse, stop here.
+
+    // Opaque surface — sample diffuse and apply per-light direct irradiance.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
-    reflPayload.colour        = diffuse.rgb;
+
+    if (reflLightBuf.numLights > 0)
+    {
+        vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
+        vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
+        // Flip normal if ray hit backface so the hemisphere faces the incoming ray.
+        if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
+            hitNorm = -hitNorm;
+
+        reflPayload.colour = diffuse.rgb * rt_ReflEvalLighting(hitPos, hitNorm);
+    }
+    else
+    {
+        // No lights uploaded (GI not active) — fall back to flat albedo.
+        reflPayload.colour = diffuse.rgb;
+    }
+
     reflPayload.transmittance = 0.0;
 }

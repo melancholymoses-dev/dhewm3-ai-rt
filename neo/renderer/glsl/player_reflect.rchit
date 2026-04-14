@@ -46,16 +46,30 @@ Code release.
 layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 hitAttributeEXT vec2 baryCoord;
 
+// ---------------------------------------------------------------------------
+// GI light list — same buffer as reflect_ray.rchit uses for irradiance.
+// ---------------------------------------------------------------------------
+struct ReflGILight {
+    vec4 posRadius;      // xyz = world pos, w = bounding radius
+    vec4 colorIntensity; // rgb = light colour, a = intensity
+};
+
+layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
+    int        numLights;
+    float      bounceScale;
+    int        pad[2];
+    ReflGILight lights[];
+} reflLightBuf;
+
 // Reflection rays originating within this distance of the player body are
 // treated as pass-through (transmittance = 1.0) to prevent self-occlusion
 // blotches in floor / adjacent-surface reflections.
 // Value should exceed the player's bounding height (~56 units in Doom3 scale).
 const float PLAYER_REFLECT_SKIP_DIST = 10.0;
+#define REFL_MAX_LIGHTS 64
 
 void main()
 {
-  
-
     if (gl_HitTEXT < PLAYER_REFLECT_SKIP_DIST)
     {
         // Pass-through: ray continues past the player body.
@@ -67,7 +81,7 @@ void main()
         return;
     }
 
-    // Mirror distance: look up diffuse texture and return the player's colour.
+    // Mirror distance: look up diffuse texture and apply per-light irradiance.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
     if (matIdx >= uint(materials.length()))
     {
@@ -77,6 +91,37 @@ void main()
     }
 
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
-    reflPayload.colour        = diffuse.rgb;
+
+    if (reflLightBuf.numLights > 0)
+    {
+        vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
+        vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
+        if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
+            hitNorm = -hitNorm;
+
+        const float kAmbient = 0.04;
+        vec3 irradiance = vec3(kAmbient);
+        int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
+        for (int i = 0; i < n; i++)
+        {
+            vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz;
+            float lRad   = reflLightBuf.lights[i].posRadius.w;
+            vec3  lColor = reflLightBuf.lights[i].colorIntensity.rgb;
+            float lInt   = reflLightBuf.lights[i].colorIntensity.a;
+            vec3  toL    = lPos - hitPos;
+            float dist   = length(toL);
+            if (dist >= lRad || dist < 0.01) continue;
+            float NdotL  = dot(hitNorm, toL / dist);
+            if (NdotL <= 0.0) continue;
+            float t = 1.0 - (dist / lRad);
+            irradiance += lColor * lInt * NdotL * (t * t);
+        }
+        reflPayload.colour = diffuse.rgb * irradiance;
+    }
+    else
+    {
+        reflPayload.colour = diffuse.rgb;
+    }
+
     reflPayload.transmittance = 0.0;
 }

@@ -29,9 +29,6 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 // r_rtAO and r_rtAOSamples declared in RenderSystem_init.cpp — use extern here.
-extern idCVar r_rtAO;
-extern idCVar r_rtAOSamples;
-
 static idCVar r_rtAORadius("r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
                            "Max AO ray length in world units (default 64)");
 
@@ -483,7 +480,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("VK RT AO: skip — RT not initialized\n");
         return;
     }
-    if (!vkRT.tlas[vk.currentFrame].isValid)
+    if (!vkRT.tlas[vk.currentFrame].isValid & (r_vkLogRT.GetInteger() >= 1))
     {
         common->Printf("VK RT AO: skip — TLAS[%d] not valid\n", vk.currentFrame);
         return;
@@ -508,7 +505,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkAOMask_t &ao = vkRT.aoMask[frameIdx];
 
-    if (ao.image == VK_NULL_HANDLE)
+    if (ao.image == VK_NULL_HANDLE & (r_vkLogRT.GetInteger() >= 1))
     {
         common->Printf("VK RT AO: skip — AO image[%d] is NULL\n", frameIdx);
         return;
