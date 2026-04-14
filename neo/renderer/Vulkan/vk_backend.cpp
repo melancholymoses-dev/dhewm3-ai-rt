@@ -196,6 +196,12 @@ static idCVar r_vkLowPerturbationMode(
 static idCVar r_vkSplitSubmitVerbose(
     "r_vkSplitSubmitVerbose", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Verbose split-submit logging (0=quiet, 1=print per-stage split-submit completion)");
+static idCVar r_vkRTProfile(
+    "r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "RT GPU phase profiling with Vulkan timestamps (0=off, 1=periodic logs, 2=log every frame)");
+static idCVar r_vkRTProfileLogEvery(
+    "r_vkRTProfileLogEvery", "30", CVAR_RENDERER | CVAR_INTEGER,
+    "When r_vkRTProfile=1, print RT GPU phase timing once every N frames");
 
 static int VK_GetEffectiveSplitSubmitMask()
 {
@@ -291,6 +297,284 @@ static bool VK_RTAnyEffectEnabled()
     if (!vk.rayTracingSupported || !vkRT.isInitialized || !r_useRayTracing.GetBool())
         return false;
     return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
+}
+
+enum vkRTProfilePhase_t
+{
+    VK_RTPROF_PHASE_TLAS = 0,
+    VK_RTPROF_PHASE_AO,
+    VK_RTPROF_PHASE_REFLECTIONS,
+    VK_RTPROF_PHASE_GI,
+    VK_RTPROF_PHASE_GI_TEMPORAL,
+    VK_RTPROF_PHASE_GI_ATROUS,
+    VK_RTPROF_PHASE_GI_COMPOSITE,
+    VK_RTPROF_PHASE_COUNT
+};
+
+struct vkRTProfileEvent_t
+{
+    uint16_t queryStart;
+    uint16_t queryEnd;
+    uint8_t phase;
+    uint8_t pad;
+};
+
+static const int VK_RTPROF_MAX_EVENTS_PER_FRAME = 64;
+static const int VK_RTPROF_QUERY_COUNT = VK_RTPROF_MAX_EVENTS_PER_FRAME * 2;
+
+static VkQueryPool s_rtProfQueryPools[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static vkRTProfileEvent_t s_rtProfEvents[VK_MAX_FRAMES_IN_FLIGHT][VK_RTPROF_MAX_EVENTS_PER_FRAME] = {};
+static uint32_t s_rtProfEventCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static uint32_t s_rtProfNextQuery[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_rtProfRecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+static int s_rtProfCPURecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+static double s_rtProfCPUMs[VK_MAX_FRAMES_IN_FLIGHT][VK_RTPROF_PHASE_COUNT] = {};
+static uint64_t s_rtProfCPUFreq = 0;
+static float s_rtProfTimestampPeriodNs = 0.0f;
+static bool s_rtProfReady = false;
+
+static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
+{
+    switch (phase)
+    {
+    case VK_RTPROF_PHASE_TLAS:
+        return "TLAS";
+    case VK_RTPROF_PHASE_AO:
+        return "AO";
+    case VK_RTPROF_PHASE_REFLECTIONS:
+        return "Refl";
+    case VK_RTPROF_PHASE_GI:
+        return "GI";
+    case VK_RTPROF_PHASE_GI_TEMPORAL:
+        return "GITemporal";
+    case VK_RTPROF_PHASE_GI_ATROUS:
+        return "GIAtrous";
+    case VK_RTPROF_PHASE_GI_COMPOSITE:
+        return "GIComposite";
+    default:
+        return "Unknown";
+    }
+}
+
+static bool VK_RTProfileEnabled()
+{
+    return s_rtProfReady && vk.rayTracingSupported && (r_vkRTProfile.GetInteger() > 0);
+}
+
+static uint64_t VK_RTProfile_CPUStamp(void)
+{
+    return (s_rtProfCPUFreq > 0) ? SDL_GetPerformanceCounter() : 0;
+}
+
+static void VK_RTProfile_AccumulateCPU(vkRTProfilePhase_t phase, uint64_t startCounter)
+{
+    if (!VK_RTProfileEnabled() || s_rtProfCPUFreq == 0 || startCounter == 0)
+        return;
+
+    const uint64_t endCounter = SDL_GetPerformanceCounter();
+    if (endCounter <= startCounter)
+        return;
+
+    const int slot = (int)vk.currentFrame;
+    if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
+        return;
+    if (phase < 0 || phase >= VK_RTPROF_PHASE_COUNT)
+        return;
+
+    const double ms = ((double)(endCounter - startCounter) * 1000.0) / (double)s_rtProfCPUFreq;
+    s_rtProfCPUMs[slot][phase] += ms;
+}
+
+static void VK_RTProfile_Shutdown()
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (s_rtProfQueryPools[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyQueryPool(vk.device, s_rtProfQueryPools[i], NULL);
+            s_rtProfQueryPools[i] = VK_NULL_HANDLE;
+        }
+        s_rtProfEventCount[i] = 0;
+        s_rtProfNextQuery[i] = 0;
+        s_rtProfRecordedFrameCount[i] = -1;
+        s_rtProfCPURecordedFrameCount[i] = -1;
+        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+            s_rtProfCPUMs[i][p] = 0.0;
+    }
+    s_rtProfCPUFreq = 0;
+    s_rtProfTimestampPeriodNs = 0.0f;
+    s_rtProfReady = false;
+}
+
+static void VK_RTProfile_Init()
+{
+    VK_RTProfile_Shutdown();
+
+    VkPhysicalDeviceProperties props = {};
+    vkGetPhysicalDeviceProperties(vk.physicalDevice, &props);
+    if (!props.limits.timestampComputeAndGraphics)
+    {
+        common->Warning("VK RT PROFILE: timestampComputeAndGraphics unsupported, GPU phase profiling disabled");
+        return;
+    }
+
+    s_rtProfTimestampPeriodNs = props.limits.timestampPeriod;
+    s_rtProfCPUFreq = SDL_GetPerformanceFrequency();
+    if (s_rtProfCPUFreq == 0)
+    {
+        common->Warning("VK RT PROFILE: SDL_GetPerformanceFrequency returned 0, CPU phase timing disabled");
+    }
+
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VkQueryPoolCreateInfo qpCI = {};
+        qpCI.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qpCI.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qpCI.queryCount = VK_RTPROF_QUERY_COUNT;
+        VkResult res = vkCreateQueryPool(vk.device, &qpCI, NULL, &s_rtProfQueryPools[i]);
+        if (res != VK_SUCCESS)
+        {
+            common->Warning("VK RT PROFILE: vkCreateQueryPool failed slot=%d err=%d (%s)", i, (int)res,
+                            VK_ResultToString(res));
+            VK_RTProfile_Shutdown();
+            return;
+        }
+    }
+
+    s_rtProfReady = true;
+    common->Printf("VK RT PROFILE: initialized timestampPeriod=%.3f ns/query\n", s_rtProfTimestampPeriodNs);
+}
+
+static void VK_RTProfile_BeginFrame(VkCommandBuffer cmd, int slot)
+{
+    if (!VK_RTProfileEnabled())
+        return;
+
+    s_rtProfEventCount[slot] = 0;
+    s_rtProfNextQuery[slot] = 0;
+    s_rtProfCPURecordedFrameCount[slot] = -1;
+    for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        s_rtProfCPUMs[slot][p] = 0.0;
+    vkCmdResetQueryPool(cmd, s_rtProfQueryPools[slot], 0, VK_RTPROF_QUERY_COUNT);
+}
+
+static int VK_RTProfile_PhaseBegin(VkCommandBuffer cmd, vkRTProfilePhase_t phase)
+{
+    if (!VK_RTProfileEnabled())
+        return -1;
+
+    const int slot = (int)vk.currentFrame;
+    if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
+        return -1;
+
+    if (s_rtProfEventCount[slot] >= VK_RTPROF_MAX_EVENTS_PER_FRAME)
+        return -1;
+    if (s_rtProfNextQuery[slot] + 2 > VK_RTPROF_QUERY_COUNT)
+        return -1;
+
+    const int eventIdx = (int)s_rtProfEventCount[slot]++;
+    vkRTProfileEvent_t &ev = s_rtProfEvents[slot][eventIdx];
+    ev.phase = (uint8_t)phase;
+    ev.pad = 0;
+    ev.queryStart = (uint16_t)s_rtProfNextQuery[slot]++;
+    ev.queryEnd = (uint16_t)s_rtProfNextQuery[slot]++;
+
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s_rtProfQueryPools[slot], ev.queryStart);
+    return eventIdx;
+}
+
+static void VK_RTProfile_PhaseEnd(VkCommandBuffer cmd, int eventIdx)
+{
+    if (eventIdx < 0 || !VK_RTProfileEnabled())
+        return;
+
+    const int slot = (int)vk.currentFrame;
+    if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
+        return;
+    if ((uint32_t)eventIdx >= s_rtProfEventCount[slot])
+        return;
+
+    const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][eventIdx];
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_rtProfQueryPools[slot], ev.queryEnd);
+}
+
+static void VK_RTProfile_CollectAndLog(int slot)
+{
+    if (!s_rtProfReady)
+        return;
+    if (slot < 0 || slot >= VK_MAX_FRAMES_IN_FLIGHT)
+        return;
+
+    const int recordedFrame = s_rtProfRecordedFrameCount[slot];
+    const uint32_t eventCount = s_rtProfEventCount[slot];
+    const uint32_t queryCount = s_rtProfNextQuery[slot];
+    if (recordedFrame < 0 || eventCount == 0 || queryCount == 0)
+        return;
+
+    const int recordedCPUFrame = s_rtProfCPURecordedFrameCount[slot];
+    const bool haveCPU = (recordedCPUFrame == recordedFrame);
+
+    uint64_t queryValues[VK_RTPROF_QUERY_COUNT] = {};
+    VkResult qr = vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount,
+                                        sizeof(uint64_t) * queryCount, queryValues, sizeof(uint64_t),
+                                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    if (qr != VK_SUCCESS)
+    {
+        common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot,
+                        recordedFrame, (int)qr, VK_ResultToString(qr));
+        s_rtProfRecordedFrameCount[slot] = -1;
+        return;
+    }
+
+    double phaseMs[VK_RTPROF_PHASE_COUNT] = {};
+    for (uint32_t i = 0; i < eventCount; i++)
+    {
+        const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][i];
+        if (ev.queryStart >= queryCount || ev.queryEnd >= queryCount || ev.phase >= VK_RTPROF_PHASE_COUNT)
+            continue;
+        const uint64_t t0 = queryValues[ev.queryStart];
+        const uint64_t t1 = queryValues[ev.queryEnd];
+        if (t1 <= t0)
+            continue;
+
+        const double ns = (double)(t1 - t0) * (double)s_rtProfTimestampPeriodNs;
+        phaseMs[ev.phase] += ns * 1e-6;
+    }
+
+    const int mode = r_vkRTProfile.GetInteger();
+    const int logEvery = Max(1, r_vkRTProfileLogEvery.GetInteger());
+    if (mode >= 2 || (recordedFrame % logEvery) == 0)
+    {
+        double totalMs = 0.0;
+        double totalCPUMs = 0.0;
+        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        {
+            totalMs += phaseMs[p];
+            if (haveCPU)
+                totalCPUMs += s_rtProfCPUMs[slot][p];
+        }
+
+        common->Printf(
+            "VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
+            "GIAtrous=%.3f GIComp=%.3f) CPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
+            "GIAtrous=%.3f GIComp=%.3f) events=%u\n",
+            recordedFrame, slot, totalMs, phaseMs[VK_RTPROF_PHASE_TLAS], phaseMs[VK_RTPROF_PHASE_AO],
+            phaseMs[VK_RTPROF_PHASE_REFLECTIONS], phaseMs[VK_RTPROF_PHASE_GI],
+            phaseMs[VK_RTPROF_PHASE_GI_TEMPORAL], phaseMs[VK_RTPROF_PHASE_GI_ATROUS],
+            phaseMs[VK_RTPROF_PHASE_GI_COMPOSITE],
+            haveCPU ? totalCPUMs : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_TLAS] : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_AO] : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_REFLECTIONS] : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI] : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_TEMPORAL] : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_ATROUS] : 0.0,
+            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_COMPOSITE] : 0.0,
+            eventCount);
+    }
+
+    s_rtProfRecordedFrameCount[slot] = -1;
+    s_rtProfCPURecordedFrameCount[slot] = -1;
 }
 
 // Forward declarations (defined in vk_pipeline.cpp)
@@ -3679,6 +3963,10 @@ void VK_RB_DrawView(const void *data)
             return;
         }
 
+        // Per-slot fence guarantees all previous GPU work for this slot is complete.
+        // Collect RT GPU phase timings for the previously submitted frame now.
+        VK_RTProfile_CollectAndLog((int)vk.currentFrame);
+
         // --- Acquire swapchain image ---
         uint32_t imageIndex;
         VkResult acquireResult =
@@ -3731,6 +4019,8 @@ void VK_RB_DrawView(const void *data)
             common->Warning("VK: vkBeginCommandBuffer failed, aborting frame");
             return;
         }
+
+        VK_RTProfile_BeginFrame(cmdBuf, (int)vk.currentFrame);
 
         // Upload any cinematic frames before the render pass opens
         // (transfer ops are illegal inside a render pass).
@@ -3904,7 +4194,11 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_SetRenderStage("TLAS_Rebuild");
+        const uint64_t rtCpuTLASStart = VK_RTProfile_CPUStamp();
+        int rtProfTLAS = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_TLAS);
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfTLAS);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_TLAS, rtCpuTLASStart);
         const int splitMask = VK_GetEffectiveSplitSubmitMask();
 
         if ((splitMask & 16) != 0)
@@ -3919,7 +4213,11 @@ void VK_RB_DrawView(const void *data)
         VK_RT_UploadGILights(backEnd.viewDef);
 
         VK_SetRenderStage("RT_AO");
+        const uint64_t rtCpuAOStart = VK_RTProfile_CPUStamp();
+        int rtProfAO = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_AO);
         VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfAO);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_AO, rtCpuAOStart);
         if ((splitMask & 32) != 0)
         {
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterAO", false))
@@ -3927,7 +4225,11 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_SetRenderStage("RT_Reflections");
+        const uint64_t rtCpuReflStart = VK_RTProfile_CPUStamp();
+        int rtProfRefl = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFLECTIONS);
         VK_RT_DispatchReflections(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfRefl);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFLECTIONS, rtCpuReflStart);
         if ((splitMask & 64) != 0)
         {
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterReflections", false))
@@ -3935,7 +4237,11 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_SetRenderStage("RT_GI");
+        const uint64_t rtCpuGIStart = VK_RTProfile_CPUStamp();
+        int rtProfGI = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI);
         VK_RT_DispatchGI(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGI);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI, rtCpuGIStart);
         if ((splitMask & 256) != 0)
         {
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI", false))
@@ -3943,10 +4249,18 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_SetRenderStage("RT_GI_Temporal");
+        const uint64_t rtCpuGITemporalStart = VK_RTProfile_CPUStamp();
+        int rtProfGITemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_TEMPORAL);
         VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGITemporal);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_TEMPORAL, rtCpuGITemporalStart);
 
         VK_SetRenderStage("RT_GI_Atrous");
+        const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
+        int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
         VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
 
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
@@ -3983,7 +4297,11 @@ void VK_RB_DrawView(const void *data)
         // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
         // split-submit probes independently of the per-light interaction loop.
         VK_SetRenderStage("GI_Composite");
+        const uint64_t rtCpuGICompStart = VK_RTProfile_CPUStamp();
+        int rtProfGIComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_COMPOSITE);
         VK_RT_CompositeGI(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIComp);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_COMPOSITE, rtCpuGICompStart);
         if ((splitMask & 512) != 0)
         {
             if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
@@ -4310,6 +4628,8 @@ void VK_RB_SwapBuffers()
         common->FatalError("Vulkan error %d in vkQueueSubmit", (int)submitResult);
         return;
     }
+    s_rtProfRecordedFrameCount[submittedFrame] = tr.frameCount;
+    s_rtProfCPURecordedFrameCount[submittedFrame] = tr.frameCount;
     s_frameNeedsImageAcquireWait = false;
 
     // --- Present ---
@@ -4467,6 +4787,8 @@ void VKimp_PostInit(int width, int height)
     common->Printf("VK: initializing images\n");
     VK_Image_Init();
 
+    VK_RTProfile_Init();
+
     if (vk.rayTracingSupported)
     {
         common->Printf("VK: initializing RT\n");
@@ -4499,6 +4821,7 @@ void VKimp_PreShutdown(void)
         return;
     VK_ShutdownUploadBatch(); // flush + free any pending uploads before device idle
     vkDeviceWaitIdle(vk.device);
+    VK_RTProfile_Shutdown();
     if (vk.rayTracingSupported && vkRT.isInitialized)
     {
         VK_RT_Shutdown();

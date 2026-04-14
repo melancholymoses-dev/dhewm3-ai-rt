@@ -2446,6 +2446,7 @@ struct RTCVars
     idCVar *rtGIStrength = nullptr;
     idCVar *rtGIDirectScale = nullptr;
     idCVar *rtGILightBounce = nullptr;
+    idCVar *rtGIMaxBounceLights = nullptr;
     idCVar *rtGIBounceScale = nullptr;
     idCVar *rtGIAtrous = nullptr;
     idCVar *rtGIAtrousIterations = nullptr;
@@ -2486,6 +2487,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
     rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
     rtCVars.rtGILightBounce = cvarSystem->Find("r_rtGILightBounce");
+    rtCVars.rtGIMaxBounceLights = cvarSystem->Find("r_rtGIMaxBounceLights");
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
     rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
     rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
@@ -2600,6 +2602,7 @@ static void DrawRTOptionsMenu()
     RTCheckbox("Colour Bounce: evaluate lights at secondary hit", rtCVars.rtGILightBounce);
     const bool bounceOn = rtCVars.rtGILightBounce && rtCVars.rtGILightBounce->GetBool();
     ImGui::BeginDisabled(!bounceOn);
+    RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
     RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
     ImGui::EndDisabled();
     ImGui::Spacing();
