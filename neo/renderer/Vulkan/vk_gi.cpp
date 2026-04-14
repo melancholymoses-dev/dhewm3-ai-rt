@@ -62,6 +62,10 @@ static idCVar r_rtGIBounceScale(
     "r_rtGIBounceScale", "5.0", CVAR_RENDERER | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
 
+static idCVar r_rtGIMaxBounceLights(
+    "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
+    "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
+
 static idCVar r_rtGIMaxLights(
     "r_rtGIMaxLights", "64", CVAR_RENDERER | CVAR_INTEGER,
     "Max GI lights to sample per frame, sorted nearest-first (1-64, capped at VK_GI_MAX_LIGHTS)");
@@ -986,7 +990,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
     }
 
-    if (numCandidates > 1)
+    // No ordering work needed if all candidates are uploaded.
+    if (numCandidates > 1 && numCandidates > maxLights)
     {
         const auto cmpCandidates = [](const void *a, const void *b) -> int {
             const Candidate *ca = (const Candidate *)a;
@@ -1163,6 +1168,16 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     {
         GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
         lb->numLights = 0; // rchit sees 0 → Option A fallback
+    }
+    else if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
+    {
+        // GI shading cost scales with lights evaluated at each secondary hit.
+        // Reflections already ran with the full uploaded list, so clamping here
+        // reduces GI cost without reducing reflection lighting fidelity.
+        GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
+        const int maxBounceLights = idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger());
+        if (lb->numLights > maxBounceLights)
+            lb->numLights = maxBounceLights;
     }
 
     // DEBUG: log light counts once per second (keep for diagnostics).
