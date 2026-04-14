@@ -1529,17 +1529,18 @@ endif()
 		COMMENT "Copying SPIR-V shaders to exe/base/ for self-contained dev builds"
 	)
 
-	# Also copy to the user config base dir for compatibility with installs
-	# that don't use the exe-relative base.
+	# Deploy to the user config base dir whenever any SPV changes — not tied to
+	# the exe POST_BUILD so shader-only edits are picked up without a C++ rebuild.
 	# JM: Lingering dhewm3 reference in path
 	set(SPIRV_USER_DIR "$ENV{USERPROFILE}/Documents/My Games/dhewm3/base/glprogs/glsl")
 	if(WIN32 AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
-		add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+		add_custom_target(deploy_spirv ALL
 			COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPIRV_USER_DIR}"
 			COMMAND "${CMAKE_COMMAND}" -E copy_directory
 					"${CMAKE_BINARY_DIR}/glprogs/glsl"
 					"${SPIRV_USER_DIR}"
-			COMMENT "Copying SPIR-V shaders to user config base dir"
+			DEPENDS dhewm3_spirv
+			COMMENT "Deploying SPIR-V shaders to user config dir"
 		)
 	endif()
 

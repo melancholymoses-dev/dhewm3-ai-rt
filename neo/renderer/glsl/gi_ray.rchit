@@ -50,6 +50,19 @@ Code release.
 // ---------------------------------------------------------------------------
 layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
 
+layout(set = 0, binding = 3) uniform GIParams {
+    mat4  invViewProj;
+    float giRadius;
+    int   numSamples;
+    uint  frameIndex;
+    float giStrength;
+    ivec2 screenSize;
+    ivec2 scissorOffset;
+    ivec2 scissorExtent;
+    int   checker;
+    int   maxBounceLights; // 0 = Option A fallback; otherwise caps light loop
+} params;
+
 struct GILight {
     vec4 posRadius;       // xyz = world pos, w = bounding radius
     vec4 colorIntensity;  // rgb = light colour, a = intensity
@@ -117,7 +130,9 @@ void main()
         hitNorm = -hitNorm;
 
     vec3 irradiance = vec3(0.0);
-    int  n          = min(giLightBuf.numLights, GI_MAX_LIGHTS);
+    // Cap at both the hard shader limit and the per-frame bounce budget from the UBO.
+    // params.maxBounceLights == 0 signals Option A fallback (bounce disabled).
+    int  n          = min(giLightBuf.numLights, min(params.maxBounceLights, GI_MAX_LIGHTS));
 
     for (int i = 0; i < n; i++)
     {
@@ -175,7 +190,7 @@ void main()
     // Option A fallback: if no light contributed (numLights == 0 or all failed
     // radius/NdotL checks), return raw albedo so the rgen's giStrength still
     // provides a uniform ambient lift rather than returning black.
-    if (giLightBuf.numLights == 0 || giLightBuf.bounceScale == 0.0)
+    if (n == 0 || giLightBuf.bounceScale == 0.0)
         giPayload.colour = albedo;
     else
         giPayload.colour = albedo * irradiance;

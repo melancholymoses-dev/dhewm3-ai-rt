@@ -44,8 +44,8 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 scissorOffset; // pixel offset into the framebuffer for this view
     ivec2 scissorExtent; // pixel extent of this view's dispatch region
     int   checker;
-    int pad;
-    } params;
+    int   maxBounceLights;
+} params;
 
 #include "gi_payload.glsl"
 layout(location = 0) rayPayloadEXT GIPayload giPayload;

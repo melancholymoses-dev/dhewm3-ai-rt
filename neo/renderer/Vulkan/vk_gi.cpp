@@ -121,8 +121,8 @@ static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffe
 //   ivec2 screenSize     offset  80  size  8  (ivec2 std140 align=8)
 //   ivec2 scissorOffset  offset  88  size  8
 //   ivec2 scissorExtent  offset  96  size  8
-//   int   checker        offset 104  size  4
-//   int   pad            offset 108  size  4
+//   int   checker           offset 104  size  4
+//   int   maxBounceLights   offset 108  size  4
 //   total: 112 bytes
 // ---------------------------------------------------------------------------
 
@@ -140,7 +140,7 @@ struct GIParamsUBO
     int32_t scissorExtentX;
     int32_t scissorExtentY;
     int32_t checker;
-    int32_t pad;
+    int32_t maxBounceLights;
 };
 static_assert(sizeof(GIParamsUBO) == 112, "GIParamsUBO size mismatch");
 
@@ -1163,30 +1163,13 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
     ubo.checker = r_rtGICheckerboard.GetBool() ? 1 : 0;
-    ubo.pad = 0;
+    // maxBounceLights: 0 disables Option B in rchit (Option A fallback); otherwise
+    // caps the light loop so the GI pass evaluates fewer lights than reflections.
+    // The SSBO numLights is NOT modified — reflections always see the full list.
+    ubo.maxBounceLights = r_rtGILightBounce.GetBool()
+                            ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger())
+                            : 0;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
-
-    // --- Upload GI light list (Option B) ---
-    // VK_RT_UploadGILights (called from backend before all RT dispatches) already
-    // filled the buffer unconditionally.  Here we honour r_rtGILightBounce: if the
-    // user has disabled GI light bounce, clear numLights so gi_ray.rchit falls back
-    // to Option A (raw albedo).  Reflections have already dispatched by this point
-    // so this clear only affects the GI pass itself.
-    if (!r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
-    {
-        GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
-        lb->numLights = 0; // rchit sees 0 → Option A fallback
-    }
-    else if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
-    {
-        // GI shading cost scales with lights evaluated at each secondary hit.
-        // Reflections already ran with the full uploaded list, so clamping here
-        // reduces GI cost without reducing reflection lighting fidelity.
-        GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
-        const int maxBounceLights = idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger());
-        if (lb->numLights > maxBounceLights)
-            lb->numLights = maxBounceLights;
-    }
 
     // DEBUG: log light counts once per second (keep for diagnostics).
     if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
