@@ -2408,6 +2408,7 @@ struct RTCVars
 {
     // Toggles (extern-declared in tr_local.h)
     idCVar *useRayTracing = nullptr;
+    idCVar *showplayershadow = nullptr;
     idCVar *rtShadows = nullptr;
     idCVar *rtAO = nullptr;
     idCVar *rtReflections = nullptr;
@@ -2459,6 +2460,7 @@ static RTCVars rtCVars;
 static void InitRTOptionsMenu()
 {
     rtCVars.useRayTracing = cvarSystem->Find("r_useRayTracing");
+    rtCVars.showplayershadow = cvarSystem->Find("g_showplayershadow");
     rtCVars.rtShadows = cvarSystem->Find("r_rtShadows");
     rtCVars.rtAO = cvarSystem->Find("r_rtAO");
     rtCVars.rtReflections = cvarSystem->Find("r_rtReflections");
@@ -2548,7 +2550,7 @@ static void DrawRTOptionsMenu()
     RTCheckbox("RT Reflections", rtCVars.rtReflections);
     RTCheckbox("RT Global Illumination", rtCVars.rtGI);
     RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
-
+    RTCheckbox("Show player shadow and reflections", rtCVars.showplayershadow);
     // ---- Shadow settings -----------------------------------------------------
     const bool shadowsOn = rtCVars.rtShadows && rtCVars.rtShadows->GetBool();
     ImGui::BeginDisabled(!shadowsOn);

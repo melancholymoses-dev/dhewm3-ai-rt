@@ -174,7 +174,14 @@ vec3 rt_InterpolateNormal(uint matIdx, int primId, vec2 bary)
     vec3 n = w0 * n0 + bary.x * n1 + bary.y * n2;
 
     float len2 = dot(n, n);
-    return (len2 > 0.0001) ? (n / sqrt(len2)) : vec3(0.0, 1.0, 0.0);
+    if (len2 <= 0.0001) return vec3(0.0, 1.0, 0.0);
+    vec3 objNorm = n / sqrt(len2);
+
+    // Transform object-space normal to world space using the inverse transpose
+    // of the object-to-world matrix.  gl_WorldToObjectEXT is the inverse of
+    // gl_ObjectToWorldEXT, so transpose(mat3(gl_WorldToObjectEXT)) is correct
+    // for non-uniform scale (e.g. texture-fit scaling on glass, rotating doors).
+    return normalize(transpose(mat3(gl_WorldToObjectEXT)) * objNorm);
 }
 
 // ---------------------------------------------------------------------------

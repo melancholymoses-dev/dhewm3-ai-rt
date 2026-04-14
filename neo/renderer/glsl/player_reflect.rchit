@@ -70,7 +70,8 @@ const float PLAYER_REFLECT_SKIP_DIST = 10.0;
 #define REFL_MAX_LIGHTS 128
 
 void main()
-{
+{   
+    /*
     if (gl_HitTEXT < PLAYER_REFLECT_SKIP_DIST)
     {
         // Pass-through: ray continues past the player body.
@@ -81,6 +82,7 @@ void main()
         reflPayload.nextDir       = gl_WorldRayDirectionEXT;
         return;
     }
+    */
 
     // Mirror distance: look up diffuse texture and apply per-light irradiance.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
