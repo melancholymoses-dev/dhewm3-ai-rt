@@ -43,7 +43,8 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 screenSize;    // full framebuffer (width, height)
     ivec2 scissorOffset; // pixel offset into the framebuffer for this view
     ivec2 scissorExtent; // pixel extent of this view's dispatch region
-    ivec2 pad2;
+    int   checker;
+    int   maxBounceLights;
 } params;
 
 #include "gi_payload.glsl"
@@ -67,6 +68,15 @@ void main()
 
     if (coord.x < 0 || coord.y < 0 || coord.x >= size.x || coord.y >= size.y)
         return;
+
+    // Checkerboard GI: update alternating pixels each frame to reduce RT cost.
+    // Skipped pixels retain their previous GI value and are filled temporally over time.
+    if (params.checker != 0)
+    {
+        int parity = (coord.x + coord.y + int(params.frameIndex)) & 1;
+        if (parity != 0)
+            return;
+    }
 
     // Sky / no geometry — no surface to bounce from; write black.
     float depth = texelFetch(depthSampler, coord, 0).r;

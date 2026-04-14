@@ -2442,10 +2442,12 @@ struct RTCVars
     idCVar *rtGISamples = nullptr;
     idCVar *rtGIMaxLights = nullptr;
     idCVar *rtGILightCollectRadiusScale = nullptr;
+    idCVar *rtGICheckerboard = nullptr;
     idCVar *rtGIRadius = nullptr;
     idCVar *rtGIStrength = nullptr;
     idCVar *rtGIDirectScale = nullptr;
     idCVar *rtGILightBounce = nullptr;
+    idCVar *rtGIMaxBounceLights = nullptr;
     idCVar *rtGIBounceScale = nullptr;
     idCVar *rtGIAtrous = nullptr;
     idCVar *rtGIAtrousIterations = nullptr;
@@ -2482,10 +2484,12 @@ static void InitRTOptionsMenu()
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
     rtCVars.rtGIMaxLights = cvarSystem->Find("r_rtGIMaxLights");
     rtCVars.rtGILightCollectRadiusScale = cvarSystem->Find("r_rtGILightCollectRadiusScale");
+    rtCVars.rtGICheckerboard = cvarSystem->Find("r_rtGICheckerboard");
     rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
     rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
     rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
     rtCVars.rtGILightBounce = cvarSystem->Find("r_rtGILightBounce");
+    rtCVars.rtGIMaxBounceLights = cvarSystem->Find("r_rtGIMaxBounceLights");
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
     rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
     rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
@@ -2580,7 +2584,7 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(!reflOn);
     ImGui::SeparatorText("Reflection Settings");
 
-    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 8000.0f, "%.0f");
+    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 2000.0f, "%.0f");
     RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
     ImGui::EndDisabled(); // !reflOn
 
@@ -2590,7 +2594,8 @@ static void DrawRTOptionsMenu()
     ImGui::SeparatorText("Global Illumination Settings");
 
     RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
-    RTSliderInt("GI Max Lights (nearest-first, 1-64)", rtCVars.rtGIMaxLights, 1, 64);
+    RTSliderInt("GI Max Lights (nearest-first, 1-64)", rtCVars.rtGIMaxLights, 1, 128);
+    RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
     RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
     RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 32.0f, 2048.0f, "%.0f");
     RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
@@ -2600,6 +2605,7 @@ static void DrawRTOptionsMenu()
     RTCheckbox("Colour Bounce: evaluate lights at secondary hit", rtCVars.rtGILightBounce);
     const bool bounceOn = rtCVars.rtGILightBounce && rtCVars.rtGILightBounce->GetBool();
     ImGui::BeginDisabled(!bounceOn);
+    RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
     RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
     ImGui::EndDisabled();
     ImGui::Spacing();

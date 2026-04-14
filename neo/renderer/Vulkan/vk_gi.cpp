@@ -44,7 +44,7 @@ idCVar r_rtGI("r_rtGI", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INT
 
 idCVar r_rtGIRadius("r_rtGIRadius", "512.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
 
-static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
+static idCVar r_rtGISamples("r_rtGISamples", "3", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
 static idCVar r_rtGIStrength("r_rtGIStrength", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
@@ -59,21 +59,29 @@ static idCVar r_rtGILightBounce(
     "Enable Option B: evaluate nearest lights at secondary hit (directional colour bounce)");
 
 static idCVar r_rtGIBounceScale(
-    "r_rtGIBounceScale", "5.0", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
 
+static idCVar r_rtGIMaxBounceLights(
+    "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
+    "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
+
 static idCVar r_rtGIMaxLights(
-    "r_rtGIMaxLights", "64", CVAR_RENDERER | CVAR_INTEGER,
-    "Max GI lights to sample per frame, sorted nearest-first (1-64, capped at VK_GI_MAX_LIGHTS)");
+    "r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_INTEGER,
+    "Max GI lights to sample per frame, sorted nearest-first (1-128, capped at VK_GI_MAX_LIGHTS)");
 
 static idCVar r_rtGILightCollectRadiusScale(
     "r_rtGILightCollectRadiusScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
     "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale");
 
+static idCVar r_rtGICheckerboard(
+    "r_rtGICheckerboard", "1", CVAR_RENDERER | CVAR_BOOL,
+    "Enable checkerboard GI tracing (updates alternating pixels each frame for lower GI RT cost)");
+
 static idCVar r_rtGIAtrous("r_rtGIAtrous", "1", CVAR_RENDERER | CVAR_BOOL,
                            "Enable À-trous spatial filter on the GI buffer after temporal resolve");
 static idCVar r_rtGIAtrousIterations(
-    "r_rtGIAtrousIterations", "3", CVAR_RENDERER | CVAR_INTEGER,
+    "r_rtGIAtrousIterations", "2", CVAR_RENDERER | CVAR_INTEGER,
     "Number of À-trous filter passes (each doubles the filter radius; 3 → effective radius ~7px)");
 static idCVar r_rtGIAtrousSigmaL("r_rtGIAtrousSigmaL", "0.2", CVAR_RENDERER | CVAR_FLOAT,
                                  "À-trous luminance edge-stop bandwidth (smaller = sharper edges preserved)");
@@ -84,7 +92,7 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 // GI light SSBO — mirrors GILightBuffer in gi_ray.rchit GLSL
 // ---------------------------------------------------------------------------
 
-#define VK_GI_MAX_LIGHTS 64
+#define VK_GI_MAX_LIGHTS 128
 
 struct GILightEntry
 {
@@ -113,7 +121,8 @@ static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffe
 //   ivec2 screenSize     offset  80  size  8  (ivec2 std140 align=8)
 //   ivec2 scissorOffset  offset  88  size  8
 //   ivec2 scissorExtent  offset  96  size  8
-//   ivec2 pad2           offset 104  size  8
+//   int   checker           offset 104  size  4
+//   int   maxBounceLights   offset 108  size  4
 //   total: 112 bytes
 // ---------------------------------------------------------------------------
 
@@ -130,7 +139,8 @@ struct GIParamsUBO
     int32_t scissorOffsetY;
     int32_t scissorExtentX;
     int32_t scissorExtentY;
-    int32_t pad[2];
+    int32_t checker;
+    int32_t maxBounceLights;
 };
 static_assert(sizeof(GIParamsUBO) == 112, "GIParamsUBO size mismatch");
 
@@ -986,7 +996,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
     }
 
-    if (numCandidates > 1)
+    // No ordering work needed if all candidates are uploaded.
+    if (numCandidates > 1 && numCandidates > maxLights)
     {
         const auto cmpCandidates = [](const void *a, const void *b) -> int {
             const Candidate *ca = (const Candidate *)a;
@@ -1151,19 +1162,14 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
+    ubo.checker = r_rtGICheckerboard.GetBool() ? 1 : 0;
+    // maxBounceLights: 0 disables Option B in rchit (Option A fallback); otherwise
+    // caps the light loop so the GI pass evaluates fewer lights than reflections.
+    // The SSBO numLights is NOT modified — reflections always see the full list.
+    ubo.maxBounceLights = r_rtGILightBounce.GetBool()
+                            ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger())
+                            : 0;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
-
-    // --- Upload GI light list (Option B) ---
-    // VK_RT_UploadGILights (called from backend before all RT dispatches) already
-    // filled the buffer unconditionally.  Here we honour r_rtGILightBounce: if the
-    // user has disabled GI light bounce, clear numLights so gi_ray.rchit falls back
-    // to Option A (raw albedo).  Reflections have already dispatched by this point
-    // so this clear only affects the GI pass itself.
-    if (!r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
-    {
-        GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
-        lb->numLights = 0; // rchit sees 0 → Option A fallback
-    }
 
     // DEBUG: log light counts once per second (keep for diagnostics).
     if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
