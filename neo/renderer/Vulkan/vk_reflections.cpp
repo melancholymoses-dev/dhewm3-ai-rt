@@ -40,10 +40,10 @@ of the original Doom 3 GPL Source Code release.
 
 // r_rtReflections declared in RenderSystem_init.cpp
 
-static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "12000.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.4", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.5", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection contribution in the interaction shader.\n"
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 1.0 — decrease if reflections look overbright in heavy-light areas.");
@@ -89,7 +89,7 @@ extern idCVar r_vkLogRT;
 // light SSBO is not yet available (GI not initialised, first frame, etc.).
 // The rchit shader checks numLights <= 0 and falls back to raw albedo.
 // ---------------------------------------------------------------------------
-static VkBuffer       s_nullLightSsbo       = VK_NULL_HANDLE;
+static VkBuffer s_nullLightSsbo = VK_NULL_HANDLE;
 static VkDeviceMemory s_nullLightSsboMemory = VK_NULL_HANDLE;
 
 static void VK_RT_CreateNullLightSsbo()
@@ -100,10 +100,9 @@ static void VK_RT_CreateNullLightSsbo()
     // Mirrors the GILightBuffer header: { int numLights; float bounceScale; int pad[2]; }
     const int32_t nullData[4] = {0, 0, 0, 0}; // numLights = 0
 
-    VK_CreateBuffer(sizeof(nullData),
-                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                    &s_nullLightSsbo, &s_nullLightSsboMemory);
+    VK_CreateBuffer(sizeof(nullData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_nullLightSsbo,
+                    &s_nullLightSsboMemory);
 
     void *mapped;
     vkMapMemory(vk.device, s_nullLightSsboMemory, 0, sizeof(nullData), 0, &mapped);
@@ -561,10 +560,10 @@ static void VK_RT_InitReflPipeline(void)
     // --- Descriptor pool and sets ---
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,     VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             VK_MAX_FRAMES_IN_FLIGHT}, // GI light SSBO
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT}, // GI light SSBO
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -775,14 +774,12 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Also force refresh when bound resources changed inside the same frame to
     // avoid stale cached descriptors after RT resource churn.
     static VkAccelerationStructureKHR s_lastReflTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView                s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView                s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkBuffer                   s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkBuffer s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
     // Pick the GI light SSBO for this frame; fall back to the null SSBO if not ready.
-    VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE)
-                             ? vkRT.giLightSsbo[frameIdx]
-                             : s_nullLightSsbo;
+    VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE) ? vkRT.giLightSsbo[frameIdx] : s_nullLightSsbo;
 
     const bool reflResourceChanged = (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
                                      (s_lastReflStorageView[frameIdx] != rb.view) ||
@@ -825,7 +822,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         VkDescriptorBufferInfo lightSsboInfo = {};
         lightSsboInfo.buffer = lightSsbo;
         lightSsboInfo.offset = 0;
-        lightSsboInfo.range  = VK_WHOLE_SIZE;
+        lightSsboInfo.range = VK_WHOLE_SIZE;
 
         VkWriteDescriptorSet writes[5] = {};
 
@@ -866,10 +863,10 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-        s_lastReflTlasHandle[frameIdx]  = vkRT.tlas[frameIdx].handle;
+        s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
-        s_lastReflDepthView[frameIdx]   = vk.depthSampledView;
-        s_lastReflLightSsbo[frameIdx]   = lightSsbo;
+        s_lastReflDepthView[frameIdx] = vk.depthSampledView;
+        s_lastReflLightSsbo[frameIdx] = lightSsbo;
     }
 
     // --- Dispatch ---
