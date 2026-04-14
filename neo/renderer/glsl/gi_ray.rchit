@@ -79,7 +79,7 @@ hitAttributeEXT vec2 baryCoord;
 // Constants
 // ---------------------------------------------------------------------------
 #define GI_SHADOW_BIAS  0.5   // world-unit offset to avoid self-shadowing
-#define GI_MAX_LIGHTS   64   // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
+#define GI_MAX_LIGHTS   128   // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
 
 void main()
 {

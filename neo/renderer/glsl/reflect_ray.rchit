@@ -86,8 +86,11 @@ vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
 
         vec3  toL  = lPos - hitPos;
         float dist = length(toL);
-        // Use giRadius as the evaluation window; lRad shapes the falloff curve.
-        if (dist >= reflLightBuf.giRadius || dist < 0.01)
+        // GI and reflections share this light buffer, but reflection lighting should
+        // not disappear when GI radius is tuned low for performance. Keep GI radius
+        // as a floor and also allow a light-radius-derived evaluation window.
+        float evalRadius = max(reflLightBuf.giRadius, lRad * 2.0);
+        if (dist >= evalRadius || dist < 0.01)
             continue;
 
         float NdotL = dot(hitNorm, toL / dist);
