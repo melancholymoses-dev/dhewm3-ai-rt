@@ -1366,38 +1366,48 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 // Mirrors the GL path in RB_BindVariableStageImage (tr_render.cpp).
 // ---------------------------------------------------------------------------
 
-static void VK_RB_UpdateCinematics(VkCommandBuffer cmd)
+static void VK_RB_UpdateCinematics(VkCommandBuffer cmdBuf, const void *data)
 {
-    if (!backEnd.viewDef || r_skipDynamicTextures.GetBool())
+    if (r_skipDynamicTextures.GetBool())
         return;
 
-    const int time = (int)(1000 * (backEnd.viewDef->floatTime + backEnd.viewDef->renderView.shaderParms[11]));
-
-    for (int si = 0; si < backEnd.viewDef->numDrawSurfs; si++)
+    for (const emptyCommand_t *cmd = (const emptyCommand_t *)data; cmd != NULL; cmd = (const emptyCommand_t *)cmd->next)
     {
-        const drawSurf_t *surf = backEnd.viewDef->drawSurfs[si];
-        if (!surf || !surf->material)
-            continue;
-
-        const idMaterial *mat = surf->material;
-        const float *regs = surf->shaderRegisters;
-
-        for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
+        if (cmd->commandId == RC_DRAW_VIEW)
         {
-            const shaderStage_t *pStage = mat->GetStage(stageIdx);
-
-            if (!regs[pStage->conditionRegister])
-                continue;
-            if (!pStage->texture.cinematic)
+            const viewDef_t *vDef = ((const drawSurfsCommand_t *)cmd)->viewDef;
+            if (!vDef)
                 continue;
 
-            cinData_t cin = pStage->texture.cinematic->ImageForTime(time);
-            if (cin.image)
-                VK_Image_UpdateCinematic(cmd, cin.image, cin.imageWidth, cin.imageHeight);
-            // Only one cinematic image is supported per frame (matches GL behaviour).
-            // If multiple distinct cinematics are ever needed, a per-idCinematic* cache
-            // is the natural extension.
-            return;
+            const int time = (int)(1000 * (vDef->floatTime + vDef->renderView.shaderParms[11]));
+
+            for (int si = 0; si < vDef->numDrawSurfs; si++)
+            {
+                const drawSurf_t *surf = vDef->drawSurfs[si];
+                if (!surf || !surf->material)
+                    continue;
+
+                const idMaterial *mat = surf->material;
+                const float *regs = surf->shaderRegisters;
+
+                for (int stageIdx = 0; stageIdx < mat->GetNumStages(); stageIdx++)
+                {
+                    const shaderStage_t *pStage = mat->GetStage(stageIdx);
+
+                    if (!regs[pStage->conditionRegister])
+                        continue;
+                    if (!pStage->texture.cinematic)
+                        continue;
+
+                    cinData_t cin = pStage->texture.cinematic->ImageForTime(time);
+                    if (cin.image)
+                        VK_Image_UpdateCinematic(cmdBuf, cin.image, cin.imageWidth, cin.imageHeight);
+                    // Only one cinematic image is supported per frame (matches GL behaviour).
+                    // If multiple distinct cinematics are ever needed, a per-idCinematic* cache
+                    // is the natural extension.
+                    return;
+                }
+            }
         }
     }
 }
@@ -4024,7 +4034,7 @@ void VK_RB_DrawView(const void *data)
 
         // Upload any cinematic frames before the render pass opens
         // (transfer ops are illegal inside a render pass).
-        VK_RB_UpdateCinematics(cmdBuf);
+        VK_RB_UpdateCinematics(cmdBuf, data);
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
         VkClearValue clearValues[2] = {};

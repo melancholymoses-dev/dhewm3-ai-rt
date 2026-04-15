@@ -2266,7 +2266,15 @@ bool idSessionLocal::SaveGame(const char *saveName, bool autosave, const char *s
         {
             const int oldScreenshotFormat = cvarSystem->GetCVarInteger("r_screenshotFormat");
             cvarSystem->SetCVarInteger("r_screenshotFormat", 0);
+            
+            // hide the GUI while taking the screenshot so we don't capture the save menu
+            idUserInterface *oldGui = guiActive;
+            guiActive = NULL;
+            
             renderSystem->TakeScreenshot(320, 240, previewFile, 1, NULL);
+            
+            guiActive = oldGui;
+            
             cvarSystem->SetCVarInteger("r_screenshotFormat", oldScreenshotFormat);
         }
         else
