@@ -618,13 +618,24 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         {
             if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
                 continue;
-            // MF_NOSHADOWS normally skips a surface, but translucent glass carries
-            // noshadows in the shipped materials.  Let glass through so we can log it.
-            const bool isTranslucentSurf = surf->shader->Coverage() == MC_TRANSLUCENT;
-            if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isTranslucentSurf)
+            // MF_NOSHADOWS normally skips a surface.  Exception: real window glass
+            // carries noshadows in the shipped materials yet must be in the BLAS so
+            // reflection rays can hit it.  Translucent non-glass surfaces (smoke,
+            // particles, flares) also carry noshadows+translucent but should be
+            // excluded — the RT pipeline would render them as opaque white boxes.
+            const bool isWindowGlass = surf->shader->Coverage() == MC_TRANSLUCENT &&
+                                       surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
+            if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass)
                 continue;
             const deform_t def = surf->shader->Deform();
             if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE || def == DFRM_FLARE)
+                continue;
+            // Skip surfaces still using the engine's white placeholder material.
+            // Sprites and beams always set surf.shader = tr.defaultMaterial; they
+            // only have a real visual via the entity's customShader override during
+            // rasterisation.  In RT these produce opaque white boxes.  If the
+            // entity later gets a real shader on the surface this check will pass.
+            if (surf->shader == tr.defaultMaterial)
                 continue;
         }
         VkBuffer gpuVertBuf = VK_NULL_HANDLE, gpuIdxBuf = VK_NULL_HANDLE;
@@ -669,6 +680,15 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             fflush(NULL);
         }
         validSurfUseGpu[validCount] = haveGpuGeom;
+        if (r_vkLogRT.GetInteger() >= 2)
+        {
+            common->Printf("VK RT BLAS SURF: model='%s' surf=%d shader='%s' cov=%d noshadow=%d\n",
+                           model->Name(), s,
+                           surf->shader ? surf->shader->GetName() : "<null>",
+                           surf->shader ? (int)surf->shader->Coverage() : -1,
+                           surf->shader ? (int)surf->shader->TestMaterialFlag(MF_NOSHADOWS) : -1);
+            fflush(NULL);
+        }
         validCount++;
     }
 
@@ -1081,8 +1101,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // contribute to the TLAS and cast disembodied RT shadows.
         if (ent->parms.suppressShadowInViewID && ent->parms.suppressShadowInViewID == viewDef->renderView.viewID)
             continue;
+        // First-person weapon (view model): exclude from the TLAS entirely so it
+        // doesn't appear in RT shadows or reflections. Mark blasFrameCount so the
+        // nearby-dynamic pass (pass 3) also skips it via the dedup check.
         if (ent->parms.weaponDepthHack)
+        {
+            ent->blasFrameCount = tr.frameCount;
             continue;
+        }
 
         // Build or rebuild BLAS for this entity if needed
         idRenderModel *model = ent->dynamicModel ? ent->dynamicModel : ent->parms.hModel;
@@ -1241,8 +1267,9 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                 // Skip surfaces that the BLAS builder would have excluded.
                                 if (surf->shader->TestMaterialFlag(MF_POLYGONOFFSET))
                                     continue;
-                                const bool isTranslucentSurf = surf->shader->Coverage() == MC_TRANSLUCENT;
-                                if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isTranslucentSurf)
+                                const bool isWindowGlass = surf->shader->Coverage() == MC_TRANSLUCENT &&
+                                                           surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
+                                if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass)
                                     continue;
                                 const deform_t def = surf->shader->Deform();
                                 if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE ||
@@ -1472,6 +1499,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // Only dynamic model types — static entities are covered by the second pass.
             idRenderModel *hModel = ent->parms.hModel;
             if (!hModel || hModel->IsDynamicModel() == DM_STATIC)
+                continue;
+
+            // Exclude first-person weapon (view model). weaponDepthHack identifies
+            // the view-space gun mesh — it must not appear in RT reflections.
+            if (ent->parms.weaponDepthHack)
                 continue;
 
             // Regenerate the current animation pose. The game keeps parms.joints

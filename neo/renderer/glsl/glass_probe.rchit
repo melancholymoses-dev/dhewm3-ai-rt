@@ -94,9 +94,11 @@ void main()
     }
 
     // Transform object-space normal to world space.
-    // mat3(gl_ObjectToWorldEXT) is correct for uniform-scale transforms
-    // (Doom 3 static world + standard dynamic entity placements).
-    vec3 worldNormal = normalize(mat3(gl_ObjectToWorldEXT) * objNormal);
+    // Correct transform for normals is the inverse transpose of the model matrix.
+    // gl_WorldToObjectEXT is the inverse of gl_ObjectToWorldEXT, so:
+    //   normalMatrix = transpose(mat3(gl_WorldToObjectEXT))
+    // This handles non-uniform scaling (e.g. glass panels with texture-fit scaling).
+    vec3 worldNormal = normalize(transpose(mat3(gl_WorldToObjectEXT)) * objNormal);
 
     // Orient toward the incoming ray origin (camera-side of the glass).
     if (dot(worldNormal, gl_WorldRayDirectionEXT) > 0.0)
