@@ -150,7 +150,7 @@ Single line removal in `vk_accelstruct.cpp`. The routing infrastructure (`player
 ---
 
 Status:
-Fixed.  Allowing dynamic entities worked.  Had to esnure we filtered out first person weapons with the depthfixhack to avoid having a second reflection from he first person model.  
+Fixed.  Allowing dynamic entities worked.  Had to ensure we filtered out first person weapons with the weapondepthhack to avoid having a second reflection from the first person model.  
 
 ## 3. Projectiles Not Visible in Reflections
 

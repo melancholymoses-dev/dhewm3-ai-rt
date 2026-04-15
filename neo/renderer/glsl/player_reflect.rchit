@@ -71,18 +71,6 @@ const float PLAYER_REFLECT_SKIP_DIST = 10.0;
 
 void main()
 {   
-    /*
-    if (gl_HitTEXT < PLAYER_REFLECT_SKIP_DIST)
-    {
-        // Pass-through: ray continues past the player body.
-        reflPayload.colour        = vec3(0.0);
-        reflPayload.transmittance = 1.0;
-        reflPayload.nextOrigin    = gl_WorldRayOriginEXT
-                                  + gl_WorldRayDirectionEXT * (gl_HitTEXT + 0.5);
-        reflPayload.nextDir       = gl_WorldRayDirectionEXT;
-        return;
-    }
-    */
 
     // Mirror distance: look up diffuse texture and apply per-light irradiance.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);

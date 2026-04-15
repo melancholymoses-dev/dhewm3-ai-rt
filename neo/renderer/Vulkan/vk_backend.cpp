@@ -1455,6 +1455,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     };
     deferredGlass_t pendingGlass[256];
     int numPendingGlass = 0;
+    int numMissedGlass = 0;
 
     if (r_vkSplitSubmitVerbose.GetInteger() > 0)
     {
@@ -2116,7 +2117,17 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 pendingGlass[numPendingGlass].si = si;
                 numPendingGlass++;
             }
+            else
+            {
+                numMissedGlass++;
+            }
         }
+    }
+    if (numMissedGlass > 0)
+    {
+        common->Warning("VK_RB_DrawShaderPasses: Exceeded 256 deferred glass overlays, skipping %d. Some reflections "
+                        "will be missing.",
+                        numMissedGlass);
     }
 
     // --- Draw Deferred Glass Overlays ---
