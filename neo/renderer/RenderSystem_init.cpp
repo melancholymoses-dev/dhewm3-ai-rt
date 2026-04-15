@@ -1265,8 +1265,11 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
     int oldWidth = glConfig.vidWidth;
     int oldHeight = glConfig.vidHeight;
 
-    tr.tiledViewport[0] = width;
-    tr.tiledViewport[1] = height;
+    bool downsampleVulkan = glConfig.isVulkan && width < oldWidth && height < oldHeight;
+    if (!downsampleVulkan) {
+        tr.tiledViewport[0] = width;
+        tr.tiledViewport[1] = height;
+    }
 
     // disable scissor, so we don't need to adjust all those rects
     r_useScissor.SetBool(false);
@@ -1309,12 +1312,33 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
 
             if (glConfig.isVulkan)
             {
-                // Copy the captured swapchain tile into the output buffer.
-                // VK_ReadPixels writes packed RGB directly into temp (stride = w*3).
-                VK_ReadPixels(0, 0, w, h, temp);
-                for (int y = 0; y < h; y++)
+                if (downsampleVulkan)
                 {
-                    memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * w * 3, w * 3);
+                    // Full screen was rendered, downsample it manually
+                    VK_ReadPixels(0, 0, oldWidth, oldHeight, temp);
+                    for (int y = 0; y < height; y++)
+                    {
+                        for (int x = 0; x < width; x++)
+                        {
+                            int srcX = x * oldWidth / width;
+                            int srcY = y * oldHeight / height;
+                            int srcIndex = (srcY * oldWidth + srcX) * 3;
+                            int dstIndex = (y * width + x) * 3;
+                            buffer[dstIndex + 0] = temp[srcIndex + 0];
+                            buffer[dstIndex + 1] = temp[srcIndex + 1];
+                            buffer[dstIndex + 2] = temp[srcIndex + 2];
+                        }
+                    }
+                }
+                else
+                {
+                    // Copy the captured swapchain tile into the output buffer.
+                    // VK_ReadPixels writes packed RGB directly into temp (stride = w*3).
+                    VK_ReadPixels(0, 0, w, h, temp);
+                    for (int y = 0; y < h; y++)
+                    {
+                        memcpy(buffer + ((yo + y) * width + xo) * 3, temp + y * w * 3, w * 3);
+                    }
                 }
             }
             else if (glConfig.isWayland)
