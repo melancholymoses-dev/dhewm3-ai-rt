@@ -4,7 +4,7 @@ Tracking ideas for improving raytraced reflections beyond current state.
 
 ---
 
-## 1. Off-Screen Entities in TLAS
+## 1. Off-Screen Entities in TLAS  
 
 Currently the TLAS only contains `viewDef->viewEntitys` — the frustum-culled entity list. Dynamic entities (enemies, NPCs, props) that are behind the player are absent from the TLAS and therefore invisible in reflections.
 
@@ -78,6 +78,9 @@ Keeps TLAS size bounded when the map has many off-screen entities.
 
 ---
 
+Status:
+Solved.  We animate dynamic entities within 500 units of the player.  Works pretty great.  
+
 ## 2. Player Weapon Not Visible in Reflections (World Weapon Excluded from TLAS)
 
 ### Problem
@@ -146,6 +149,9 @@ Single line removal in `vk_accelstruct.cpp`. The routing infrastructure (`player
 
 ---
 
+Status:
+Fixed.  Allowing dynamic entities worked.  Had to esnure we filtered out first person weapons with the depthfixhack to avoid having a second reflection from he first person model.  
+
 ## 3. Projectiles Not Visible in Reflections
 
 ### Problem
@@ -196,6 +202,252 @@ This lets the reflection ray pick up projectile glow and continue to whatever is
 **C. Investigate actual projectile assets first**
 
 Before building the above, check `def/projectile.def` and the plasma/rocket model materials in `pak000` to confirm the actual flags. It's possible projectile body meshes are entirely particle/sprite based, making option B irrelevant. This is a one-time investigation, not a code change.
+
+
+# Plan: Sprite / Particle Effects in RT Reflections (Low-Effort Approximate)
+
+## Goal
+
+Show active weapon effects (muzzle smoke, nozzle glow, fire, sparks) in reflections.  
+Accept billboard orientation as camera-facing (approximate correctness — good enough for smoke/glow).  
+Idle sprites with no active customShader remain invisible (no white boxes).
+
+---
+
+## Background
+
+Sprites and beams in Doom 3 always set `surf.shader = tr.defaultMaterial` on their geometry.
+The real visual material lives on the entity as `parms.customShader` and is applied as an
+override during rasterisation.  The BLAS builder currently skips `tr.defaultMaterial` surfaces
+(added to fix the white-box bug), so sprite/beam entities produce no BLAS and are absent from
+the TLAS.
+
+For active effects we want:
+- Geometry in the TLAS with the real `customShader` driving texture sampling
+- Reflection rays that pass *through* sprites rather than stopping at them
+- Sprite colour accumulated additively on top of whatever solid surface is behind
+
+### Why any-hit (not closest-hit continuation)
+
+Glass uses closest-hit + payload continuation (sets `transmittance + nextOrigin/nextDir`,
+rgen fires another trace for each bounce).  This works for a single refractive surface but
+doesn't scale to N overlapping sprites.
+
+Sprites should use the **any-hit** mechanism instead:
+- BLAS geometry marked non-opaque → `VK_GEOMETRY_NO_OPAQUE_BIT_KHR`
+- Any-hit shader fires for every sprite intersection along the ray
+- Any-hit samples the sprite texture, adds `colour × alpha` to an accumulation field,
+  then calls `ignoreIntersectionEXT()` so traversal continues to the solid surface behind
+- Multiple overlapping particles all contribute automatically in a single trace call
+
+---
+
+## Changes Required
+
+### 1. `reflect_payload.glsl` — add additive accumulation field
+
+```glsl
+struct ReflPayload {
+    vec3  colour;
+    float transmittance;
+    vec3  nextOrigin;
+    vec3  nextDir;
+    vec3  additiveAccum;   // ← NEW: accumulated additive (sprite) contributions
+};
+```
+
+Every shader that declares `ReflPayload` must be recompiled but no logic changes are needed in
+`reflect_ray.rchit`, `player_reflect.rchit`, or `reflect_ray.rmiss` — they never touch
+`additiveAccum`.
+
+---
+
+### 2. `reflect_ray.rgen` — initialise and consume `additiveAccum`
+
+In the bounce loop, reset before each trace and add to the final result after:
+
+```glsl
+vec3 additiveTotal = vec3(0.0);
+
+for (int i = 0; i < 2 && weight > 0.01; i++) {
+    reflPayload.colour        = vec3(0.0);
+    reflPayload.transmittance = 0.0;
+    reflPayload.additiveAccum = vec3(0.0);   // reset per bounce
+
+    traceRayEXT(...);
+
+    result       += weight * reflPayload.colour;
+    additiveTotal += weight * reflPayload.additiveAccum;  // sprites stack here
+    weight        *= reflPayload.transmittance;
+    ...
+}
+
+imageStore(reflImage, pixel, vec4(result + additiveTotal, 1.0));
+```
+
+---
+
+### 3. New shader: `reflect_sprite.rahit`
+
+Any-hit shader.  Included in the SBT as the `anyHitShader` of a new sprite hit group.
+
+Logic:
+1. Look up the hit geometry's material entry (same `rt_material.glsl` helpers as `reflect_ray.rchit`).
+2. Sample the diffuse/albedo texture at the barycentrically interpolated UV.
+3. `reflPayload.additiveAccum += albedo.rgb * albedo.a * shaderParm_alpha`
+   (Use vertex colour alpha if no texture alpha channel.)
+4. Call `ignoreIntersectionEXT()` — traversal continues to find the next surface.
+
+For the first pass this shader can be simple: just sample, accumulate, ignore.  No lighting
+evaluation needed — additive effects like smoke and glow look correct with raw albedo.
+
+Add to `CMakeLists.txt` in `GLSL_INCLUDES`.
+
+---
+
+### 4. `vk_raytracing.h` / material table — sprite material flag
+
+Add a new material flag bit:
+
+```cpp
+#define VK_MAT_FLAG_ADDITIVE_SPRITE  0x10
+```
+
+Set this flag in material entries built for sprite surfaces (see step 5).  The any-hit shader
+can check it for robustness, but it is not strictly required if the hit group routing already
+separates sprites from world geometry.
+
+---
+
+### 5. `vk_accelstruct.cpp` — BLAS builder changes
+
+#### 5a. Pass `renderEntity_t*` to `VK_RT_BuildBLASForModel`
+
+Current signature:
+```cpp
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd,
+                                   vkBLAS_t *prevBlas = nullptr);
+```
+
+New signature:
+```cpp
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd,
+                                   vkBLAS_t *prevBlas = nullptr,
+                                   const renderEntity_t *rentity = nullptr);
+```
+
+Update all three call sites in the TLAS building loop.
+
+#### 5b. Surface filter: promote `tr.defaultMaterial` surfaces with a real customShader
+
+Replace the current blanket skip:
+```cpp
+// Old — skips all defaultMaterial surfaces
+if (surf->shader == tr.defaultMaterial)
+    continue;
+```
+
+With:
+```cpp
+if (surf->shader == tr.defaultMaterial) {
+    if (!rentity || !rentity->customShader)
+        continue;   // idle — no visual, skip as before
+    // Active effect: use the entity's real material for RT sampling
+    effectiveShader      = rentity->customShader;
+    isSpriteAdditiveGeom = true;
+}
+```
+
+Introduce a local `const idMaterial *effectiveShader = surf->shader;` that is used
+everywhere below instead of `surf->shader` directly.
+
+#### 5c. Mark sprite surfaces as non-opaque in BLAS geometry
+
+When `isSpriteAdditiveGeom`:
+- Clear `VK_GEOMETRY_OPAQUE_BIT_KHR` from the geometry flags (or set
+  `VK_GEOMETRY_NO_OPAQUE_BIT_KHR`) so Vulkan invokes the any-hit shader.
+- Set `VK_MAT_FLAG_ADDITIVE_SPRITE` in the `VkMaterialEntry` for this geometry.
+
+---
+
+### 6. `vk_accelstruct.cpp` — TLAS instance routing for sprite entities
+
+Detect sprite entities at instance-build time (inside the main viewEntitys loop and the
+nearby-dynamic pass):
+
+```cpp
+const bool isSpriteEnt = ent->parms.hModel &&
+                         ent->parms.hModel->IsDynamicModel() == DM_CONTINUOUS &&
+                         ent->parms.customShader != nullptr;
+```
+
+Set:
+```cpp
+inst.instanceShaderBindingTableRecordOffset = isSpriteEnt ? SPRITE_SBT_OFFSET : normalOffset;
+inst.mask = 0xFF;  // reflection rays (0xFF) hit sprites; shadow rays (0xFE) miss them if mask=0x01
+```
+
+For shadow suppression, sprite instances can keep `mask = 0xFF` for now (they're non-opaque
+geometry so shadow rays pass through anyway via the any-hit ignore).
+
+---
+
+### 7. `vk_reflections.cpp` — add sprite hit group to SBT
+
+Current SBT (7 groups):
+```
+[0] rgen
+[1] main_miss
+[2] probe_miss
+[3] world_main     (rchit=reflect_ray.rchit,  rahit=reflect_ray.rahit)
+[4] world_probe    (rchit=glass_probe.rchit)
+[5] player_main    (rchit=player_reflect.rchit)
+[6] player_probe   (placeholder)
+```
+
+Add two groups (9 total):
+```
+[7] sprite_main    (rchit=none/passthrough,   rahit=reflect_sprite.rahit)
+[8] sprite_probe   (placeholder — probe rays use mask 0xFE which already excludes sprites)
+```
+
+`SPRITE_SBT_OFFSET = 4` → `instanceSBTOffset=4 + sbtHitOffset=0` → hit slot 4 → group[7].
+
+Update the SBT allocation, stride calculation, and the "N groups" log message.
+
+---
+
+## Files Changed
+
+| File | Change |
+|---|---|
+| `neo/renderer/glsl/reflect_payload.glsl` | Add `additiveAccum` field |
+| `neo/renderer/glsl/reflect_ray.rgen` | Init / consume `additiveAccum` |
+| `neo/renderer/glsl/reflect_sprite.rahit` | **New** — sample + accumulate + ignore |
+| `neo/renderer/Vulkan/vk_raytracing.h` | Add `VK_MAT_FLAG_ADDITIVE_SPRITE` |
+| `neo/renderer/Vulkan/vk_accelstruct.cpp` | BLAS builder entity param; sprite surface promotion; sprite instance routing |
+| `neo/renderer/Vulkan/vk_reflections.cpp` | Extend SBT to 9 groups |
+| `CMakeLists.txt` | Add `reflect_sprite.rahit` to `GLSL_INCLUDES` |
+
+---
+
+## Known Limitations (Approximate Version)
+
+- **Billboard orientation**: Sprite geometry faces the main camera when the BLAS is built.
+  For floor/ceiling reflections (low-grazing angles) this is nearly correct; for wall mirrors
+  at steep angles the sprite may be thin or invisible.  Future fix: regenerate sprite geometry
+  facing the reflection camera or use an analytic billboard in the shader.
+
+- **No lighting on sprites**: Raw albedo × alpha only.  Smoke/glow looks correct; lit smoke
+  would need the GI light list evaluation from `reflect_ray.rchit`.
+
+- **Alpha precision**: Vertex alpha from `shaderParms[SHADERPARM_ALPHA]` is used if the
+  texture has no alpha channel.  Effects that rely entirely on additive blend in the raster
+  path (no alpha texture) may appear dimmer than expected.
+
+- **DM_CONTINUOUS without customShader**: Idle sprite entities (no active effect assigned)
+  still produce no BLAS geometry — the white-box suppression is preserved.
+
 
 ---
 
@@ -257,3 +509,4 @@ A secondary issue is that smoke/plasma effects fired toward the camera (visible 
 
 ### 4. Include Irradiance in reflections
 Right now all reflections are treated equally.  We should take into account their source illumination/albedo. 
+Mostly fixed.  
