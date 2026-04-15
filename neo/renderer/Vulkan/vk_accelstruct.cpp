@@ -1081,8 +1081,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // contribute to the TLAS and cast disembodied RT shadows.
         if (ent->parms.suppressShadowInViewID && ent->parms.suppressShadowInViewID == viewDef->renderView.viewID)
             continue;
+        // First-person weapon (view model): exclude from the TLAS entirely so it
+        // doesn't appear in RT shadows or reflections. Mark blasFrameCount so the
+        // nearby-dynamic pass (pass 3) also skips it via the dedup check.
         if (ent->parms.weaponDepthHack)
+        {
+            ent->blasFrameCount = tr.frameCount;
             continue;
+        }
 
         // Build or rebuild BLAS for this entity if needed
         idRenderModel *model = ent->dynamicModel ? ent->dynamicModel : ent->parms.hModel;
@@ -1472,6 +1478,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // Only dynamic model types — static entities are covered by the second pass.
             idRenderModel *hModel = ent->parms.hModel;
             if (!hModel || hModel->IsDynamicModel() == DM_STATIC)
+                continue;
+
+            // Exclude first-person weapon (view model). weaponDepthHack identifies
+            // the view-space gun mesh — it must not appear in RT reflections.
+            if (ent->parms.weaponDepthHack)
                 continue;
 
             // Regenerate the current animation pose. The game keeps parms.joints
