@@ -1011,8 +1011,40 @@ void VK_Image_Purge(idImage *img)
 
 bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
 {
-    if (!img || !img->backendData)
+    if (!img)
         return false;
+
+    // Emulate idImage::Bind() lazy-loading for Vulkan
+    if (!img->backendData)
+    {
+        if (img->partialImage)
+        {
+            if (img->IsHighPriorityFrontendImage())
+            {
+                img->ActuallyLoadImage(true, true);
+                VK_FlushPendingUploads();
+            }
+            else
+            {
+                if (!img->backgroundLoadInProgress)
+                {
+                    img->StartBackgroundImageLoad();
+                }
+                return VK_Image_GetDescriptorInfo(img->partialImage, out);
+            }
+        }
+        else
+        {
+            img->ActuallyLoadImage(true, true); // load on demand
+            VK_FlushPendingUploads();
+        }
+
+        if (!img->backendData)
+        {
+            return false;
+        }
+    }
+
     vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     out->sampler = vkd->sampler;
     out->imageView = vkd->view;
@@ -1022,8 +1054,39 @@ bool VK_Image_GetDescriptorInfo(idImage *img, VkDescriptorImageInfo *out)
 
 bool VK_Image_GetDescriptorInfoCube(idImage *img, VkDescriptorImageInfo *out)
 {
-    if (!img || !img->backendData)
+    if (!img)
         return false;
+
+    // Emulate idImage::Bind() lazy-loading for Vulkan
+    if (!img->backendData)
+    {
+        if (img->partialImage)
+        {
+            if (img->IsHighPriorityFrontendImage())
+            {
+                img->ActuallyLoadImage(true, true);
+                VK_FlushPendingUploads();
+            }
+            else
+            {
+                if (!img->backgroundLoadInProgress)
+                {
+                    img->StartBackgroundImageLoad();
+                }
+                return VK_Image_GetDescriptorInfoCube(img->partialImage, out);
+            }
+        }
+        else
+        {
+            img->ActuallyLoadImage(true, true); // load on demand
+            VK_FlushPendingUploads();
+        }
+
+        if (!img->backendData)
+        {
+            return false;
+        }
+    }
 
     vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     if (vkd->cubeView == VK_NULL_HANDLE)
