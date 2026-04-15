@@ -74,9 +74,9 @@ bool idImage::IsHighPriorityFrontendImage() const
         return true;
     }
 
-    if (normalized.Icmpn("guis/", 5) != 0)
+    if (normalized.Icmpn("guis/", 5) == 0 || normalized.Icmpn("gfx/guis/", 9) == 0)
     {
-        return false;
+        return true;
     }
 
     return normalized.Find("loading") >= 0 || normalized.Find("loadscreen") >= 0 || normalized.Find("splash") >= 0 ||
