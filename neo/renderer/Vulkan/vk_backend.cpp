@@ -199,9 +199,8 @@ static idCVar r_vkSplitSubmitVerbose(
 static idCVar r_vkRTProfile(
     "r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
     "RT GPU phase profiling with Vulkan timestamps (0=off, 1=periodic logs, 2=log every frame)");
-static idCVar r_vkRTProfileLogEvery(
-    "r_vkRTProfileLogEvery", "30", CVAR_RENDERER | CVAR_INTEGER,
-    "When r_vkRTProfile=1, print RT GPU phase timing once every N frames");
+static idCVar r_vkRTProfileLogEvery("r_vkRTProfileLogEvery", "30", CVAR_RENDERER | CVAR_INTEGER,
+                                    "When r_vkRTProfile=1, print RT GPU phase timing once every N frames");
 
 static int VK_GetEffectiveSplitSubmitMask()
 {
@@ -515,13 +514,13 @@ static void VK_RTProfile_CollectAndLog(int slot)
     const bool haveCPU = (recordedCPUFrame == recordedFrame);
 
     uint64_t queryValues[VK_RTPROF_QUERY_COUNT] = {};
-    VkResult qr = vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount,
-                                        sizeof(uint64_t) * queryCount, queryValues, sizeof(uint64_t),
-                                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    VkResult qr =
+        vkGetQueryPoolResults(vk.device, s_rtProfQueryPools[slot], 0, queryCount, sizeof(uint64_t) * queryCount,
+                              queryValues, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
     if (qr != VK_SUCCESS)
     {
-        common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot,
-                        recordedFrame, (int)qr, VK_ResultToString(qr));
+        common->Warning("VK RT PROFILE: vkGetQueryPoolResults failed slot=%d frame=%d err=%d (%s)", slot, recordedFrame,
+                        (int)qr, VK_ResultToString(qr));
         s_rtProfRecordedFrameCount[slot] = -1;
         return;
     }
@@ -554,23 +553,20 @@ static void VK_RTProfile_CollectAndLog(int slot)
                 totalCPUMs += s_rtProfCPUMs[slot][p];
         }
 
-        common->Printf(
-            "VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
-            "GIAtrous=%.3f GIComp=%.3f) CPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
-            "GIAtrous=%.3f GIComp=%.3f) events=%u\n",
-            recordedFrame, slot, totalMs, phaseMs[VK_RTPROF_PHASE_TLAS], phaseMs[VK_RTPROF_PHASE_AO],
-            phaseMs[VK_RTPROF_PHASE_REFLECTIONS], phaseMs[VK_RTPROF_PHASE_GI],
-            phaseMs[VK_RTPROF_PHASE_GI_TEMPORAL], phaseMs[VK_RTPROF_PHASE_GI_ATROUS],
-            phaseMs[VK_RTPROF_PHASE_GI_COMPOSITE],
-            haveCPU ? totalCPUMs : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_TLAS] : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_AO] : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_REFLECTIONS] : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI] : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_TEMPORAL] : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_ATROUS] : 0.0,
-            haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_COMPOSITE] : 0.0,
-            eventCount);
+        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
+                       "GIAtrous=%.3f GIComp=%.3f) CPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
+                       "GIAtrous=%.3f GIComp=%.3f) events=%u\n",
+                       recordedFrame, slot, totalMs, phaseMs[VK_RTPROF_PHASE_TLAS], phaseMs[VK_RTPROF_PHASE_AO],
+                       phaseMs[VK_RTPROF_PHASE_REFLECTIONS], phaseMs[VK_RTPROF_PHASE_GI],
+                       phaseMs[VK_RTPROF_PHASE_GI_TEMPORAL], phaseMs[VK_RTPROF_PHASE_GI_ATROUS],
+                       phaseMs[VK_RTPROF_PHASE_GI_COMPOSITE], haveCPU ? totalCPUMs : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_TLAS] : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_AO] : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_REFLECTIONS] : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI] : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_TEMPORAL] : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_ATROUS] : 0.0,
+                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_COMPOSITE] : 0.0, eventCount);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -1108,7 +1104,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     float *lightScalePtr = (float *)(useAOPtr + 1);
     const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
                           vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
-    *lightScalePtr = backEnd.overBright * (giActive ? idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat()) : 1.0f);
+    *lightScalePtr =
+        backEnd.overBright * (giActive ? idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat()) : 1.0f);
 
     // useReflections: 1 when RT reflection buffer is valid this frame.
     // Disabled for portal/mirror subviews: the buffer was populated from the primary
@@ -1447,6 +1444,17 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     extern bool VK_Image_GetDescriptorInfo(idImage *, VkDescriptorImageInfo *);
     extern bool VK_Image_GetDescriptorInfoCube(idImage *, VkDescriptorImageInfo *);
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+
+    struct deferredGlass_t
+    {
+        const drawSurf_t *surf;
+        VkBuffer vertBuf;
+        VkDeviceSize vertOffset;
+        VkDeviceSize idxOffset;
+        int si;
+    };
+    deferredGlass_t pendingGlass[256];
+    int numPendingGlass = 0;
 
     if (r_vkSplitSubmitVerbose.GetInteger() > 0)
     {
@@ -2099,54 +2107,80 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             vk.rayTracingSupported && vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
             vkRT.reflSampler != VK_NULL_HANDLE && vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
         {
-            float mvp[16];
-            if (r_vkLogRT.GetInteger() >= 2)
+            if (numPendingGlass < 256)
             {
-                common->Printf("Running RT Reflection overlay for surf: %d, mat: %s\n", si, mat->GetName());
-                fflush(NULL);
+                pendingGlass[numPendingGlass].surf = surf;
+                pendingGlass[numPendingGlass].vertBuf = vertBuf;
+                pendingGlass[numPendingGlass].vertOffset = vertOffset;
+                pendingGlass[numPendingGlass].idxOffset = idxOffset;
+                pendingGlass[numPendingGlass].si = si;
+                numPendingGlass++;
             }
-            VK_BuildSurfMVP(surf->space, mvp);
-
-            uint32_t ovUboOffset = VK_AllocUBO();
-            VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
-            memset(ovUbo, 0, sizeof(*ovUbo));
-            memcpy(ovUbo->modelViewProjection, mvp, 64);
-            // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
-            // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
-            ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
-            ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
-
-            VkDescriptorBufferInfo ovBufInfo = {};
-            ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
-            ovBufInfo.offset = ovUboOffset;
-            ovBufInfo.range = sizeof(VkGuiUBO);
-
-            VkDescriptorImageInfo ovReflInfo = {};
-            ovReflInfo.sampler = vkRT.reflSampler;
-            ovReflInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
-            ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-            VkWriteDescriptorSet ovWrites[2] = {};
-            ovWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            ovWrites[0].dstBinding = 0;
-            ovWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            ovWrites[0].descriptorCount = 1;
-            ovWrites[0].pBufferInfo = &ovBufInfo;
-            ovWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            ovWrites[1].dstBinding = 1;
-            ovWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            ovWrites[1].descriptorCount = 1;
-            ovWrites[1].pImageInfo = &ovReflInfo;
-
-            vkCmdSetDepthBias(cmd, 0.0f, 0.0f, 0.0f);
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflPipeline);
-            VkCullModeFlags ovCull = (mat->GetCullType() == CT_TWO_SIDED) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
-            vkCmdSetCullMode(cmd, ovCull);
-            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflLayout, 0, 2, ovWrites);
-            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
-            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
-            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         }
+    }
+
+    // --- Draw Deferred Glass Overlays ---
+    for (int i = 0; i < numPendingGlass; i++)
+    {
+        const drawSurf_t *surf = pendingGlass[i].surf;
+        const idMaterial *mat = surf->material;
+        const srfTriangles_t *geo = surf->geo;
+        const int si = pendingGlass[i].si;
+        VkBuffer vertBuf = pendingGlass[i].vertBuf;
+        VkDeviceSize vertOffset = pendingGlass[i].vertOffset;
+        VkDeviceSize idxOffset = pendingGlass[i].idxOffset;
+
+        // restore scissor
+        VkRect2D surfScissor = VK_ComputeDrawSurfScissor(surf);
+        vkCmdSetScissor(cmd, 0, 1, &surfScissor);
+
+        float mvp[16];
+        if (r_vkLogRT.GetInteger() >= 2)
+        {
+            common->Printf("Running RT Reflection overlay for surf: %d, mat: %s\n", si, mat->GetName());
+            fflush(NULL);
+        }
+        VK_BuildSurfMVP(surf->space, mvp);
+
+        uint32_t ovUboOffset = VK_AllocUBO();
+        VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
+        memset(ovUbo, 0, sizeof(*ovUbo));
+        memcpy(ovUbo->modelViewProjection, mvp, 64);
+        // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
+        // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
+        ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
+        ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
+
+        VkDescriptorBufferInfo ovBufInfo = {};
+        ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
+        ovBufInfo.offset = ovUboOffset;
+        ovBufInfo.range = sizeof(VkGuiUBO);
+
+        VkDescriptorImageInfo ovReflInfo = {};
+        ovReflInfo.sampler = vkRT.reflSampler;
+        ovReflInfo.imageView = vkRT.reflBuffer[vk.currentFrame].view;
+        ovReflInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet ovWrites[2] = {};
+        ovWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        ovWrites[0].dstBinding = 0;
+        ovWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        ovWrites[0].descriptorCount = 1;
+        ovWrites[0].pBufferInfo = &ovBufInfo;
+        ovWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        ovWrites[1].dstBinding = 1;
+        ovWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        ovWrites[1].descriptorCount = 1;
+        ovWrites[1].pImageInfo = &ovReflInfo;
+
+        vkCmdSetDepthBias(cmd, 0.0f, 0.0f, 0.0f);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflPipeline);
+        VkCullModeFlags ovCull = (mat->GetCullType() == CT_TWO_SIDED) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+        vkCmdSetCullMode(cmd, ovCull);
+        vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.glassReflLayout, 0, 2, ovWrites);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+        vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+        vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
     }
 }
 
@@ -4222,55 +4256,61 @@ void VK_RB_DrawView(const void *data)
         // always see the current frame's light list.
         VK_RT_UploadGILights(backEnd.viewDef);
 
-        VK_SetRenderStage("RT_AO");
-        const uint64_t rtCpuAOStart = VK_RTProfile_CPUStamp();
-        int rtProfAO = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_AO);
-        VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfAO);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_AO, rtCpuAOStart);
-        if ((splitMask & 32) != 0)
+        // RT passes use temporal accumulation buffers that span the entire screen.
+        // Mirrors and subviews re-render the view, which incorrectly replaces the
+        // main view's history buffers with their alternate perspective, causing ghosting.
+        if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror)
         {
-            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterAO", false))
-                return;
+            VK_SetRenderStage("RT_AO");
+            const uint64_t rtCpuAOStart = VK_RTProfile_CPUStamp();
+            int rtProfAO = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_AO);
+            VK_RT_DispatchAO(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfAO);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_AO, rtCpuAOStart);
+            if ((splitMask & 32) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterAO", false))
+                    return;
+            }
+
+            VK_SetRenderStage("RT_Reflections");
+            const uint64_t rtCpuReflStart = VK_RTProfile_CPUStamp();
+            int rtProfRefl = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFLECTIONS);
+            VK_RT_DispatchReflections(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfRefl);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFLECTIONS, rtCpuReflStart);
+            if ((splitMask & 64) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterReflections", false))
+                    return;
+            }
+
+            VK_SetRenderStage("RT_GI");
+            const uint64_t rtCpuGIStart = VK_RTProfile_CPUStamp();
+            int rtProfGI = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI);
+            VK_RT_DispatchGI(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGI);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI, rtCpuGIStart);
+            if ((splitMask & 256) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI", false))
+                    return;
+            }
+
+            VK_SetRenderStage("RT_GI_Temporal");
+            const uint64_t rtCpuGITemporalStart = VK_RTProfile_CPUStamp();
+            int rtProfGITemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_TEMPORAL);
+            VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGITemporal);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_TEMPORAL, rtCpuGITemporalStart);
+
+            VK_SetRenderStage("RT_GI_Atrous");
+            const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
+            int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
+            VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
         }
-
-        VK_SetRenderStage("RT_Reflections");
-        const uint64_t rtCpuReflStart = VK_RTProfile_CPUStamp();
-        int rtProfRefl = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_REFLECTIONS);
-        VK_RT_DispatchReflections(cmdBuf, backEnd.viewDef);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfRefl);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_REFLECTIONS, rtCpuReflStart);
-        if ((splitMask & 64) != 0)
-        {
-            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterReflections", false))
-                return;
-        }
-
-        VK_SetRenderStage("RT_GI");
-        const uint64_t rtCpuGIStart = VK_RTProfile_CPUStamp();
-        int rtProfGI = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI);
-        VK_RT_DispatchGI(cmdBuf, backEnd.viewDef);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGI);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI, rtCpuGIStart);
-        if ((splitMask & 256) != 0)
-        {
-            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGI", false))
-                return;
-        }
-
-        VK_SetRenderStage("RT_GI_Temporal");
-        const uint64_t rtCpuGITemporalStart = VK_RTProfile_CPUStamp();
-        int rtProfGITemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_TEMPORAL);
-        VK_RT_DispatchTemporalResolveGI(cmdBuf, backEnd.viewDef);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGITemporal);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_TEMPORAL, rtCpuGITemporalStart);
-
-        VK_SetRenderStage("RT_GI_Atrous");
-        const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
-        int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
-        VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
 
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
