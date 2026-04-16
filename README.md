@@ -1,13 +1,19 @@
 # ABOUT DHEWM3-RT
 
-**This project is not affiliated with Dhewm3.  Do not bother that team with bug reports or feature requests.  They have made an understandable stance against AI.  Respect their choices.**  
-But, this project would be impossible without their foundation.
+$\color{red}{\textbf{
+This project is not affiliated with Dhewm3.}}$
 
-This an attempt to implement Raytracing in Vulkan om top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
+$\color{red}{\textbf{Do not bother that team with bug reports or feature requests.}}  $
+
+**They have made an understandable stance against AI.  Respect their choices.** 
+
+This project would be impossible without their foundation and updates to the original source code.
+
+This project is an attempt to implement Raytracing in Vulkan on top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
 
 _Dhewm 3 RT_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.   I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  
 
-### Original Source Links
+### Original Dhewm3 and vkDoom3 Source Links
 Original Dhewm3 Links:
 
 **The Dhewm3 homepage is:** https://dhewm3.org
@@ -18,21 +24,22 @@ I have also been using the _vkDoom3_ Vulkan implementation as a reference, which
 
 ## Process
 
-I have been using Claude Code Sonnet 4.5 and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  Given the well-established language and frameworks, famous code base, reference implementations, and quick build cycle this is about as well positioned for success as you can find. 
+I have been using Claude Code (Sonnet 4.5) and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  Given the well-established language and frameworks, famous code base, reference implementations, and quick build cycle this is about as well positioned for success as you can find. 
 I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear. 
 
 
 # RayTracing Changes
 
-- Vulkan rendering pipeline.  This kept the original GL pipeline, and created a Vulkan pipeline in parallel.
+- Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.
 - Raytraced shadows and acceleration structures.
 - Ray-Traced Ambient Occlusion with temporal filtering 
-- working on Ray-traced reflections
+- Ray traced reflections
+- One bounce global illumination
 - Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
 
 ## Useful Cvars
 
-The pipeline and ray-tracing can be enabled/disabled at the terminal in game or via CLI flags.
+The pipeline and ray-tracing can be enabled/disabled at the terminal in game or via CLI flags.  These are accessible from the Dhewm3 Settings Menu (F10) under RayTracing.  
 
 | Flag | Values | Action  |
 |------|--------|-----------|
@@ -40,17 +47,34 @@ The pipeline and ray-tracing can be enabled/disabled at the terminal in game or 
 | r_rtuseraytracing | 0, 1 | Toggle for all ray-tracing vs rasterization.  |
 | r_rtshadows       | 0, 1 | Toggle Ray-Traced Shadows  |
 | r_rtao            | 0, 1 | Toggle Ambient Occlusion |
+| r_rtreflections   | 0, 1 | Toggle Ray-Traced Reflections |
+| r_rtgi            | 0, 1 | Toggle Ray-Traced Global Illumination |
 
+- Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing those in the old engine).  Glass is 
+plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
+- Currently global illumination is pretty rough, and seems to mostly be a flat increase to the lighting which kills the original vibe.  Currently tuning.
+
+## Screenshots
+
+![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
+This is just a definition change to add the color, since this was already in-game but probably off for performance reasons.
+
+![Ray Traced Shadows](docs/img/screenshots/20260331_shadow.jpg)
+![Ray Traced Original](docs/img/screenshots/20260331_shadow_stencil.jpg)
+Ray Traced Shadows are in.  This shows some distinctions with how we're selecting lights - potentially some errors in math and light selection?  Here the side light above the player casts the main shadow in RT, while the stencil has a much moodier shadow.
+
+![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
+Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!
 
 ## Additional Files
 
-Part of this process requires compiling the Vulkan shaders and copying them. 
+Part of the build process requires compiling the Vulkan shaders and copying them. 
 Currently the compiled shaders are compiled and copied in `base/glprogs/glsl` relative to where the player's save data and config lives.
 (e.g. ~/Documents/dhewm3/)
 
 I am also exploring editing some gun definitions to cast more light.  
 Those should be copied to `base/def` alongside the shaders to take effect in game.
-Updated Plasma rifle particles to shed blue light on pulses.
+Updated Plasma Rifle particles to shed blue light on pulses.
 Updated Rockets to show light.
 
 
@@ -72,7 +96,10 @@ _DOOM 3: BFG Edition_, which is *not* supported by dhewm3-rt) are available from
 
 https://store.steampowered.com/app/208200/DOOM_3/
 
-See https://dhewm3.org/#how-to-install for game data installation instructions.
+https://www.gog.com/en/game/doom_3
+
+
+See https://dhewm3.org/#how-to-install for game data installation instructions.  The same libraries and setup apply with this version.
 
 ## Configuration
 
@@ -105,10 +132,10 @@ finally expired.
 
 ## MayaImport
 
-The code for the Maya export plugin is included, if you are a Maya licensee
+The original Dhewm3 code for the Maya export plugin is still included, if you are a Maya licensee
 you can obtain the SDK from Autodesk.
 
-# LICENSE
+# LICENSES
 
 See COPYING.txt for the GNU GENERAL PUBLIC LICENSE
 
