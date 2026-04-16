@@ -719,7 +719,7 @@ void rvDebuggerServer::Break(idInterpreter *interpreter, idProgram *program, int
     // This is to give some time between the keypress that
     // told us to resume and the setforeground window.  Otherwise the quake window
     // would just flash
-    Sleep(150);
+    Sys_Sleep(150);
 
     // Bring the window back to the foreground
     SetForegroundWindow(win32.hWnd);
