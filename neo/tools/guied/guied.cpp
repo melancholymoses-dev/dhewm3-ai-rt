@@ -121,7 +121,7 @@ void GUIEditorRun()
     gApp.RunFrame();
 
     // The GUI editor runs too hot so we need to slow it down a bit.
-    Sleep(1);
+    Sys_Sleep(1);
 }
 
 /*

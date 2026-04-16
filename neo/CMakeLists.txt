@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 2.6...3.22 FATAL_ERROR)
 project(dhewm3_rt)
 
+if (MSVC)
+	add_compile_options(/MP)
+endif()
 # Build/version stamp from git metadata (falls back to "unknown" for source archives).
 set(DHEWM3_GIT_VERSION "unknown")
 find_package(Git QUIET)
@@ -720,10 +723,11 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/glass_probe.rchit
 	renderer/glsl/glass_probe.rmiss
 	renderer/glsl/player_reflect.rchit
-	renderer/glsl/reflect_ray.rahit	
+	renderer/glsl/reflect_ray.rahit
 	renderer/glsl/reflect_ray.rchit
 	renderer/glsl/reflect_ray.rgen
 	renderer/glsl/reflect_ray.rmiss
+	renderer/glsl/reflect_sprite.rahit
 	renderer/glsl/shadow_blur.comp	
 	renderer/glsl/shadow_ray.rahit	
 	renderer/glsl/shadow_ray.rgen
@@ -1533,7 +1537,7 @@ endif()
 	# the exe POST_BUILD so shader-only edits are picked up without a C++ rebuild.
 	# JM: Lingering dhewm3 reference in path
 	set(SPIRV_USER_DIR "$ENV{USERPROFILE}/Documents/My Games/dhewm3/base/glprogs/glsl")
-	if(WIN32 AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
+	if(WIN32 AND NOT DEFINED ENV{GITHUB_ACTIONS} AND NOT SPIRV_USER_DIR STREQUAL "/Documents/My Games/dhewm3/base/glprogs/glsl")
 		add_custom_target(deploy_spirv ALL
 			COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPIRV_USER_DIR}"
 			COMMAND "${CMAKE_COMMAND}" -E copy_directory
