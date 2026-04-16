@@ -148,7 +148,11 @@ jobs:
         cp -r base/* publish/$PKGDIR/base/
         cp base/gamepad-d3xp.cfg publish/$PKGDIR/d3xp/        
         # Copy built GL programs (SPIR-V shaders)
-        cp -r build/glprogs publish/$PKGDIR/base/ || true
+        if [ ! -d build/glprogs ]; then
+          echo "ERROR: Missing required shader output directory: build/glprogs" >&2
+          exit 1
+        fi
+        cp -r build/glprogs publish/$PKGDIR/base/
 
         cp COPYING.txt publish/$PKGDIR/
         echo "dhewm3-rt for 64bit (amd64 aka x86_64 aka x64) Windows, built $(date)" > publish/$PKGDIR/README.txt
