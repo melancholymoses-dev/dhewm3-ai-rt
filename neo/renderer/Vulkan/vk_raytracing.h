@@ -58,6 +58,7 @@ static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots ac
 #define VK_MAT_FLAG_TWO_SIDED 0x02u     // CT_TWO_SIDED — no back-face cull
 #define VK_MAT_FLAG_GLASS 0x04u         // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
 #define VK_MAT_FLAG_PLAYER_BODY 0x08u   // noSelfShadow entity — routed to player_reflect hit group
+#define VK_MAT_FLAG_ADDITIVE_SPRITE 0x10u // sprite/effect geometry — accumulate additive via reflect_sprite.rahit
 
 // One entry per BLAS geometry slot.  Indexed by
 //   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
@@ -530,7 +531,11 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas);
 // prevBlas: if non-NULL and geometry is compatible, performs an in-place update
 // (reuses geometry buffers and uses MODE_UPDATE) instead of a full rebuild.
 // Returns prevBlas on successful update, or a new vkBLAS_t on full rebuild.
-vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas = NULL);
+// rentity: optional entity params.  When non-NULL and an entity's customShader is
+// set, tr.defaultMaterial sprite surfaces are promoted to use customShader so the
+// sprite's actual visual material drives RT texture sampling.
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas = NULL,
+                                   const renderEntity_t *rentity = NULL);
 
 // Drain deferred BLAS deletions (call after fence wait when frame slot is safe)
 void VK_RT_DrainBLASGarbage(void);
