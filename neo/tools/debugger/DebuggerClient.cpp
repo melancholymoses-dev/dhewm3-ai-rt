@@ -429,7 +429,7 @@ bool rvDebuggerClient::WaitFor(EDebuggerMessage msg, int time)
     while (mWaitFor != DBMSG_UNKNOWN && Sys_Milliseconds() - start < time)
     {
         ProcessMessages();
-        Sleep(0);
+        Sys_Sleep(0);
     }
 
     if (mWaitFor != DBMSG_UNKNOWN)
