@@ -65,7 +65,7 @@ void VKBackend::Init()
 
     common->Printf("VK: render system fully initialized\n");
     fflush(NULL);
-    Sleep(100);
+    Sys_Sleep(100);
 }
 
 void VKBackend::Shutdown()

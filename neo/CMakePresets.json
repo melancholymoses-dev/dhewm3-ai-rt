@@ -15,7 +15,7 @@
                 "value": "x64",
                 "strategy": "set"
             },
-            "binaryDir": "${sourceDir}/../../build_rt",
+            "binaryDir": "${sourceDir}/../build_rt",
             "cacheVariables": {
                 "DHEWM3LIBS": "${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32",
                 "CMAKE_PREFIX_PATH": "${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32",

@@ -155,7 +155,7 @@ int rvDebuggerApp::Run(void)
     {
         mClient.ProcessMessages();
 
-        Sleep(0);
+        Sys_Sleep(0);
     }
 
     mClient.Shutdown();
