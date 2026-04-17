@@ -1758,37 +1758,6 @@ void idImage::PurgeImage()
         activeBackend->Image_Purge(this);
 }
 
-//=========================================================================================================
-
-/*
-===============
-PurgeImage
-===============
-*/
-void idImage::PurgeImage()
-{
-    if (texnum != TEXTURE_NOT_LOADED)
-    {
-        qglDeleteTextures(1, &texnum); // this should be the ONLY place it is ever called!
-        texnum = TEXTURE_NOT_LOADED;
-    }
-#ifdef DHEWM3_VULKAN
-    if (vkData)
-    {
-        extern void VK_Image_Purge(idImage *);
-        VK_Image_Purge(this);
-    }
-#endif
-
-    // clear all the current binding caches, so the next bind will do a real one
-    for (int i = 0; i < MAX_MULTITEXTURE_UNITS; i++)
-    {
-        backEnd.glState.tmu[i].current2DMap = -1;
-        backEnd.glState.tmu[i].current3DMap = -1;
-        backEnd.glState.tmu[i].currentCubeMap = -1;
-    }
-}
-
 /*
 ==============
 Bind
