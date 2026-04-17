@@ -19,14 +19,32 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libgl1-mesa-dev libsdl2-dev libopenal-dev libcurl4-openssl-dev cmake ninja-build xz-utils 
-    - name: Install Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@v1.2.1
-      with:
-        vulkan-query-version: 1.4.341.1
-        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang
-        vulkan-use-cache: true        
     - name: Check out repository code
       uses: actions/checkout@v4
+
+    - name: Checkout private Vulkan bundle
+      uses: actions/checkout@v4
+      with:
+        repository: melancholymoses-dev/vulkan-lite
+        token: ${{ secrets.VULKAN_LITE_TOKEN }}
+        path: vulkan-lite
+        fetch-depth: 1
+
+    - name: Export Vulkan paths
+      shell: bash
+      run: |
+        echo "VULKAN_SDK=$GITHUB_WORKSPACE/vulkan-lite" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/vulkan-lite/Bin" >> $GITHUB_PATH        
+    - name: Sanity check Vulkan toolchain
+      run: |
+        set -euo pipefail
+        echo "VULKAN_SDK=$VULKAN_SDK"
+
+        test -f "$VULKAN_SDK/Include/vulkan/vulkan.h" || { echo "Missing Vulkan header: $VULKAN_SDK/Include/vulkan/vulkan.h" >&2; exit 1; }
+        test -f "$VULKAN_SDK/Lib/vulkan-1.lib" || { echo "Missing Vulkan import library: $VULKAN_SDK/Lib/vulkan-1.lib" >&2; exit 1; }
+
+        command -v glslc >/dev/null 2>&1 || { echo "glslc not found in PATH" >&2; exit 1; }
+        glslc --version        
     - name: Build
       run: |
         mkdir build
