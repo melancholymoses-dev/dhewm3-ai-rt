@@ -1244,12 +1244,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         // instanceCustomIndex is patched after static/dynamic merge.
         inst.instanceCustomIndex = 0;
-        // Player body entities get mask bit 0x01 so shadow rays can optionally
-        // exclude them (e.g. when the player is directly under a light).
-        // World geometry keeps all bits set (0xFF) so it is always intersected.
-        // Sprite entities use 0xFF — they are non-opaque geometry; shadow rays pass
-        // through anyway via the any-hit ignore path.
-        inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+        // Instance mask bits:
+        //   0x01 = player body (noSelfShadow) — excluded from glass probe and optionally from shadow rays
+        //   0x04 = sprite/effect entity      — excluded from shadow, AO, GI, and glass-probe rays
+        //   0xFF = world/dynamic geometry    — visible to all ray types
+        inst.mask = isSpriteEnt ? 0x04u : (ent->parms.noSelfShadow ? 0x01u : 0xFFu);
         // SBT offset routing:
         //   0 → world geometry  (reflect_ray.rchit / glass_probe.rchit)
         //   2 → player body     (player_reflect.rchit / placeholder)
@@ -1619,7 +1618,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+            inst.mask = isSpriteEntP3 ? 0x04u : (ent->parms.noSelfShadow ? 0x01u : 0xFFu);
             if (isSpriteEntP3)
                 inst.instanceShaderBindingTableRecordOffset = 4;
             else if (ent->parms.noSelfShadow)
