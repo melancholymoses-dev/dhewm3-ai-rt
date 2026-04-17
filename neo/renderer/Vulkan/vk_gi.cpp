@@ -1166,8 +1166,9 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // maxBounceLights: 0 disables Option B in rchit (Option A fallback); otherwise
     // caps the light loop so the GI pass evaluates fewer lights than reflections.
     // The SSBO numLights is NOT modified — reflections always see the full list.
-    ubo.maxBounceLights =
-        r_rtGILightBounce.GetBool() ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger()) : 0;
+    ubo.maxBounceLights = r_rtGILightBounce.GetBool()
+                            ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger())
+                            : 0;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // DEBUG: log light counts once per second (keep for diagnostics).
@@ -1181,12 +1182,8 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
             int viewLightCount = 0;
             for (const viewLight_t *vl = viewDef->viewLights; vl; vl = vl->next)
                 viewLightCount++;
-            if (r_vkLogRT.GetInteger() >= 1)
-            {
-                common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n", viewLightCount,
-                               lb->numLights, viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y,
-                               viewDef->renderView.vieworg.z);
-            }
+            common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n", viewLightCount, lb->numLights,
+                           viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y, viewDef->renderView.vieworg.z);
         }
     }
 

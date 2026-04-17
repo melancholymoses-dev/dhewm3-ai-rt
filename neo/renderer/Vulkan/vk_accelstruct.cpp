@@ -565,8 +565,7 @@ vkBLAS_t *VK_RT_BuildBLAS(const srfTriangles_t *tri, VkCommandBuffer cmd, bool i
 // rather than only Surface(0).  Used by VK_RT_RebuildTLAS.
 // ---------------------------------------------------------------------------
 
-vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas,
-                                   const renderEntity_t *rentity)
+vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkBLAS_t *prevBlas)
 {
     extern bool VK_VertexCache_GetBuffer(vertCache_t * block, VkBuffer * outBuf, VkDeviceSize * outOffset);
 
@@ -577,10 +576,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     struct SurfEntry
     {
         const srfTriangles_t *geo;
-        const idMaterial *shader;  // effective shader (may be customShader for sprite surfaces)
+        const idMaterial *shader;
         bool perforated;
         bool translucent;
-        bool additive;             // sprite/effect surface — non-opaque, uses reflect_sprite.rahit
     };
     static const int MAX_BLAS_SURFACES = 512;
     static SurfEntry validSurfs[MAX_BLAS_SURFACES];
@@ -632,30 +630,14 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             const deform_t def = surf->shader->Deform();
             if (def == DFRM_PARTICLE || def == DFRM_PARTICLE2 || def == DFRM_SPRITE || def == DFRM_FLARE)
                 continue;
-            // Sprite/beam surfaces use tr.defaultMaterial as a placeholder; the real
-            // visual material lives on the entity as parms.customShader and is applied
-            // as an override during rasterisation.
-            // When an entity pointer (rentity) is provided and it carries a real
-            // customShader, promote the surface so RT sampling uses the correct texture.
-            // Without a customShader (idle effect / no entity context) skip as before.
+            // Skip surfaces still using the engine's white placeholder material.
+            // Sprites and beams always set surf.shader = tr.defaultMaterial; they
+            // only have a real visual via the entity's customShader override during
+            // rasterisation.  In RT these produce opaque white boxes.  If the
+            // entity later gets a real shader on the surface this check will pass.
             if (surf->shader == tr.defaultMaterial)
-            {
-                if (!rentity || !rentity->customShader)
-                    continue;   // idle sprite — no visual material, skip (avoids white boxes)
-                // Active effect: promote to the entity's real material below.
-                // effectiveShader and isSpriteAdditiveGeom are set after this block.
-            }
+                continue;
         }
-
-        // Determine effective shader and sprite flag for this surface.
-        const idMaterial *effectiveShader = surf->shader;
-        bool isSpriteAdditiveGeom = false;
-        if (surf->shader && surf->shader == tr.defaultMaterial && rentity && rentity->customShader)
-        {
-            effectiveShader      = rentity->customShader;
-            isSpriteAdditiveGeom = true;
-        }
-
         VkBuffer gpuVertBuf = VK_NULL_HANDLE, gpuIdxBuf = VK_NULL_HANDLE;
         VkDeviceSize gpuVertOff = 0, gpuIdxOff = 0;
         const bool haveGpuVerts =
@@ -685,37 +667,26 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             continue;
         }
         validSurfs[validCount].geo = geo;
-        // Store effective shader (customShader for sprites, original surf->shader otherwise).
-        validSurfs[validCount].shader = effectiveShader;
-        validSurfs[validCount].perforated = effectiveShader && effectiveShader->Coverage() == MC_PERFORATED;
+        validSurfs[validCount].shader = surf->shader;
+        validSurfs[validCount].perforated = surf->shader && surf->shader->Coverage() == MC_PERFORATED;
         // Translucent (glass) surfaces: include in BLAS as non-opaque so rahit is invoked.
         // shadow_ray.rahit passes through glass; reflect_ray.rchit applies the Fresnel split.
-        validSurfs[validCount].translucent = effectiveShader && effectiveShader->Coverage() == MC_TRANSLUCENT;
-        // Sprite/additive surfaces: non-opaque so reflect_sprite.rahit can accumulate and ignore.
-        validSurfs[validCount].additive = isSpriteAdditiveGeom;
+        validSurfs[validCount].translucent = surf->shader && surf->shader->Coverage() == MC_TRANSLUCENT;
         if (validSurfs[validCount].translucent && r_vkLogRT.GetInteger() >= 1)
         {
             common->Printf("VK RT GLASS: model='%s' surf=%d shader='%s' gpu=%s verts=%d idx=%d\n", model->Name(), s,
-                           effectiveShader ? effectiveShader->GetName() : "<null>", haveGpuGeom ? "yes" : "no",
-                           geo->numVerts, geo->numIndexes);
-            fflush(NULL);
-        }
-        if (isSpriteAdditiveGeom && r_vkLogRT.GetInteger() >= 1)
-        {
-            common->Printf("VK RT SPRITE: model='%s' surf=%d customShader='%s' gpu=%s verts=%d idx=%d\n",
-                           model->Name(), s, effectiveShader ? effectiveShader->GetName() : "<null>",
-                           haveGpuGeom ? "yes" : "no", geo->numVerts, geo->numIndexes);
+                           surf->shader ? surf->shader->GetName() : "<null>", haveGpuGeom ? "yes" : "no", geo->numVerts,
+                           geo->numIndexes);
             fflush(NULL);
         }
         validSurfUseGpu[validCount] = haveGpuGeom;
         if (r_vkLogRT.GetInteger() >= 2)
         {
-            common->Printf("VK RT BLAS SURF: model='%s' surf=%d shader='%s' cov=%d noshadow=%d additive=%d\n",
+            common->Printf("VK RT BLAS SURF: model='%s' surf=%d shader='%s' cov=%d noshadow=%d\n",
                            model->Name(), s,
-                           effectiveShader ? effectiveShader->GetName() : "<null>",
-                           effectiveShader ? (int)effectiveShader->Coverage() : -1,
-                           surf->shader ? (int)surf->shader->TestMaterialFlag(MF_NOSHADOWS) : -1,
-                           (int)isSpriteAdditiveGeom);
+                           surf->shader ? surf->shader->GetName() : "<null>",
+                           surf->shader ? (int)surf->shader->Coverage() : -1,
+                           surf->shader ? (int)surf->shader->TestMaterialFlag(MF_NOSHADOWS) : -1);
             fflush(NULL);
         }
         validCount++;
@@ -803,9 +774,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
                 updateGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
                 updateGeoms[i].geometry.triangles = triData;
                 updateGeoms[i].flags =
-                    (validSurfs[i].perforated || validSurfs[i].translucent || validSurfs[i].additive)
-                        ? 0
-                        : VK_GEOMETRY_OPAQUE_BIT_KHR;
+                    (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
                 updateRanges[i] = {};
                 updateRanges[i].primitiveCount = prevBlas->geomPrimCounts[i];
@@ -959,9 +928,7 @@ fullRebuild:
         asGeoms[i].sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
         asGeoms[i].geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
         asGeoms[i].geometry.triangles = triData;
-        asGeoms[i].flags = (validSurfs[i].perforated || validSurfs[i].translucent || validSurfs[i].additive)
-                               ? 0
-                               : VK_GEOMETRY_OPAQUE_BIT_KHR;
+        asGeoms[i].flags = (validSurfs[i].perforated || validSurfs[i].translucent) ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR;
 
         primCounts[i] = (uint32_t)geo->numIndexes / 3;
         blas->geomVertSizes[i] = vertSize;
@@ -1151,16 +1118,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         if (model->NumSurfaces() == 0)
             continue;
 
-        // Sprite/effect entities: DM_CONTINUOUS models with a customShader override.
-        // Their surfaces use tr.defaultMaterial as a placeholder; the real visual
-        // material is in parms.customShader.  Pass entity info to BuildBLASForModel
-        // so the customShader drives RT texture sampling.  These entities are NOT
-        // eligible for the model BLAS cache (each may have a unique customShader).
-        const bool isSpriteEnt = ent->parms.hModel &&
-                                 ent->parms.hModel->IsDynamicModel() == DM_CONTINUOUS &&
-                                 ent->parms.customShader != NULL;
-        const renderEntity_t *rentityForBLAS = isSpriteEnt ? &ent->parms : NULL;
-
         bool needRebuild = !ent->blas || !ent->blas->isValid;
 
         // Dynamic/animated models must be rebuilt every frame
@@ -1172,10 +1129,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         // avoids BLAS rebuilds when the entity pointer churns (e.g. doors
         // destroyed/recreated each frame) and keeps the device address stable
         // so the static TLAS signature stops churning.
-        // Sprite entities skip the cache: different entities share the same hModel
-        // but may have different customShaders, so cached BLASes would use the wrong
-        // material.
-        if (needRebuild && !ent->dynamicModel && !isSpriteEnt)
+        if (needRebuild && !ent->dynamicModel)
         {
             idRenderModel *staticModel = ent->parms.hModel;
             vkBLAS_t *cached = staticModel ? VK_RT_ModelBLASCacheLookup(staticModel) : NULL;
@@ -1193,7 +1147,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             {
                 // Try in-place BLAS update: reuses buffers and keeps device address
                 // stable, avoiding static TLAS signature churn each frame.
-                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas, rentityForBLAS);
+                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas);
                 if (updated != ent->blas)
                     VK_RT_DestroyBLAS(ent->blas);
                 ent->blas = updated;
@@ -1204,10 +1158,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                     VK_RT_DestroyBLAS(ent->blas); // no-op for cached; safe to call
                 // Build multi-geometry BLAS covering all non-translucent surfaces.
                 // A single TLAS instance per entity, one geometry per surface.
-                ent->blas = VK_RT_BuildBLASForModel(model, cmd, NULL, rentityForBLAS);
+                ent->blas = VK_RT_BuildBLASForModel(model, cmd);
                 // Cache newly built BLAS for static entities so future entity
                 // pointer churn reuses it without a rebuild.
-                if (!ent->dynamicModel && !isSpriteEnt && ent->blas)
+                if (!ent->dynamicModel && ent->blas)
                     VK_RT_ModelBLASCacheInsert(ent->parms.hModel, ent->blas);
             }
             ent->blasFrameCount = tr.frameCount;
@@ -1244,21 +1198,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         // instanceCustomIndex is patched after static/dynamic merge.
         inst.instanceCustomIndex = 0;
-        // Instance mask bits:
-        //   0x01 = player body (noSelfShadow) — excluded from glass probe and optionally from shadow rays
-        //   0x04 = sprite/effect entity      — excluded from shadow, AO, GI, and glass-probe rays
-        //   0xFF = world/dynamic geometry    — visible to all ray types
-        inst.mask = isSpriteEnt ? 0x04u : (ent->parms.noSelfShadow ? 0x01u : 0xFFu);
-        // SBT offset routing:
-        //   0 → world geometry  (reflect_ray.rchit / glass_probe.rchit)
-        //   2 → player body     (player_reflect.rchit / placeholder)
-        //   4 → sprite/effect   (reflect_sprite.rahit / placeholder)
-        if (isSpriteEnt)
-            inst.instanceShaderBindingTableRecordOffset = 4;
-        else if (ent->parms.noSelfShadow)
-            inst.instanceShaderBindingTableRecordOffset = 2;
-        else
-            inst.instanceShaderBindingTableRecordOffset = 0;
+        // Player body entities get mask bit 0x01 so shadow rays can optionally
+        // exclude them (e.g. when the player is directly under a light).
+        // World geometry keeps all bits set (0xFF) so it is always intersected.
+        inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+        // Player body uses SBT offset 2 → player_reflect.rchit (main) and placeholder (probe, never fires).
+        // World geometry uses offset 0 → reflect_ray.rchit (main) and glass_probe.rchit (probe).
+        inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
         inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         // Per-surface opaque flags are encoded in the BLAS geometry entries; no instance-level override needed.
         inst.accelerationStructureReference = ent->blas->deviceAddress;
@@ -1301,8 +1247,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         matEntry.baseGeomIdx = base + g;
                         if (ent->parms.noSelfShadow)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
-                        if (isSpriteEnt)
-                            matEntry.flags |= VK_MAT_FLAG_ADDITIVE_SPRITE;
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                             matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
@@ -1390,8 +1334,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         // Tag player/weapon geometry so glass_probe.rahit can skip it.
                         if (ent->parms.noSelfShadow)
                             matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
-                        if (isSpriteEnt)
-                            matEntry.flags |= VK_MAT_FLAG_ADDITIVE_SPRITE;
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                             matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
@@ -1564,11 +1506,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (ent->parms.weaponDepthHack)
                 continue;
 
-            // Detect sprite/effect entities — same criteria as pass 1.
-            const bool isSpriteEntP3 = hModel->IsDynamicModel() == DM_CONTINUOUS &&
-                                       ent->parms.customShader != NULL;
-            const renderEntity_t *rentityForBLASP3 = isSpriteEntP3 ? &ent->parms : NULL;
-
             // Regenerate the current animation pose. The game keeps parms.joints
             // up-to-date every frame regardless of frustum visibility, so this gives
             // the correct posed mesh for the current game tick even though the entity
@@ -1582,14 +1519,14 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             // preventing TLAS signature churn.
             if (ent->blas)
             {
-                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas, rentityForBLASP3);
+                vkBLAS_t *updated = VK_RT_BuildBLASForModel(model, cmd, ent->blas);
                 if (updated != ent->blas)
                     VK_RT_DestroyBLAS(ent->blas);
                 ent->blas = updated;
             }
             else
             {
-                ent->blas = VK_RT_BuildBLASForModel(model, cmd, NULL, rentityForBLASP3);
+                ent->blas = VK_RT_BuildBLASForModel(model, cmd);
             }
             if (!ent->blas || !ent->blas->isValid)
                 continue;
@@ -1618,13 +1555,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = isSpriteEntP3 ? 0x04u : (ent->parms.noSelfShadow ? 0x01u : 0xFFu);
-            if (isSpriteEntP3)
-                inst.instanceShaderBindingTableRecordOffset = 4;
-            else if (ent->parms.noSelfShadow)
-                inst.instanceShaderBindingTableRecordOffset = 2;
-            else
-                inst.instanceShaderBindingTableRecordOffset = 0;
+            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+            inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = ent->blas->deviceAddress;
 
@@ -1642,8 +1574,6 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 matEntry.baseGeomIdx = base + g;
                 if (ent->parms.noSelfShadow)
                     matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
-                if (isSpriteEntP3)
-                    matEntry.flags |= VK_MAT_FLAG_ADDITIVE_SPRITE;
                 if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                     matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
                 dynamicMatEntries[base + g] = matEntry;
