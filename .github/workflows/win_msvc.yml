@@ -65,7 +65,7 @@ jobs:
         # build with cmake and visual studio
         #echo $PWD # /d/a/dhewm3/dhewm3
         # NOTE: not setting -G "Visual Studio 17 2022" so it just uses the default VS version it can find
-        cmake -A x64 -DDHEWM3LIBS="../dhewm3-libs-master/x86_64-w64-mingw32/" -DDEDICATED=ON -DTOOLS=ON -S neo/ -B build
+        cmake -A x64 -DDHEWM3LIBS="../dhewm3-libs-master/x86_64-w64-mingw32/" -DTOOLS=ON -S neo/ -B build
         time cmake --build build/ --config RelWithDebInfo
     - name: Create testbuild package
       run: |
@@ -79,7 +79,7 @@ jobs:
         mkdir -p debug-syms/$PKGDIR
         # Copy release assets
         cd build/RelWithDebInfo
-        cp dhewm3-rt.exe dhewm3ded.exe base.dll d3xp.dll ../../publish/$PKGDIR/
+        cp dhewm3-rt.exe base.dll d3xp.dll ../../publish/$PKGDIR/
         cp -r *.pdb ../../debug-syms/$PKGDIR/
         cd ../..
         # Copy misc assets

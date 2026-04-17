@@ -49,7 +49,7 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake -G Ninja -DDEDICATED=ON ../neo/
+        cmake -G Ninja ../neo/
         ninja
     - name: Create testbuild package
       run: |
@@ -60,7 +60,7 @@ jobs:
         mkdir publish/$PKGDIR/d3xp
         # Copy release assets
         cd build
-        cp dhewm3-rt dhewm3ded base.so d3xp.so ../publish/$PKGDIR/
+        cp dhewm3-rt base.so d3xp.so ../publish/$PKGDIR/
         cd ..
         # Copy misc assets
         cp -r base/* publish/$PKGDIR/base/
@@ -77,7 +77,7 @@ jobs:
         echo -e "from ${{ github.ref_name }} commit ${{ github.sha }}\n" >> publish/$PKGDIR/README.txt
         echo "!!! Note that you must set dhewm3-rt executable !!!" >> publish/$PKGDIR/README.txt
         echo "! In a Terminal, in this directory, run:" >> publish/$PKGDIR/README.txt
-        echo "  chmod 755 dhewm3-rt dhewm3ded" >> publish/$PKGDIR/README.txt
+        echo "  chmod 755 dhewm3-rt" >> publish/$PKGDIR/README.txt
         echo -e "(this is because of limitations in Githubs Workflow Actions)\n" >> publish/$PKGDIR/README.txt
         cat README.md >> publish/$PKGDIR/README.txt
         cp Changelog.md publish/$PKGDIR/Changelog.txt
