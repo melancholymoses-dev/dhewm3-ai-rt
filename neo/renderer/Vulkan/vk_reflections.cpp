@@ -508,13 +508,16 @@ static void VK_RT_InitReflPipeline(void)
     groups[7].anyHitShader = 8;                         // reflect_sprite.rahit
     groups[7].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Group 8: sprite glass probe hit — placeholder, sprites are not glass.
-    // Reuse glass_probe.rahit which ignores non-glass materials via ignoreIntersectionEXT.
+    // Group 8: sprite glass probe hit — safe no-op, never fires in practice.
+    // Sprite instances use mask 0x04; the glass probe ray uses cullMask 0xFA which
+    // excludes both player (0x01) and sprite (0x04) instances.  This slot must exist
+    // in the SBT to keep hit-region indexing valid.
+    // Use reflect_sprite.rahit (stage 8) which unconditionally calls ignoreIntersectionEXT.
     groups[8].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[8].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[8].generalShader = VK_SHADER_UNUSED_KHR;
     groups[8].closestHitShader = VK_SHADER_UNUSED_KHR;
-    groups[8].anyHitShader = 7; // glass_probe.rahit — will ignoreIntersection for non-glass
+    groups[8].anyHitShader = 8; // reflect_sprite.rahit — always ignoreIntersectionEXT
     groups[8].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     // Stages (9) vs groups (9): stage 7 (glass_probe.rahit) is shared by groups 4, 6, and 8.
