@@ -33,15 +33,15 @@ jobs:
     - name: Export Vulkan paths
       shell: bash
       run: |
-        echo "VULKAN_SDK=$GITHUB_WORKSPACE/vulkan-lite" >> $GITHUB_ENV
-        echo "$GITHUB_WORKSPACE/vulkan-lite/Bin" >> $GITHUB_PATH        
+        echo "VULKAN_SDK=$GITHUB_WORKSPACE/vulkan-lite/ubuntu" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/vulkan-lite/ubuntu/bin" >> $GITHUB_PATH        
     - name: Sanity check Vulkan toolchain
       run: |
         set -euo pipefail
         echo "VULKAN_SDK=$VULKAN_SDK"
 
-        test -f "$VULKAN_SDK/Include/vulkan/vulkan.h" || { echo "Missing Vulkan header: $VULKAN_SDK/Include/vulkan/vulkan.h" >&2; exit 1; }
-        test -f "$VULKAN_SDK/Lib/vulkan-1.lib" || { echo "Missing Vulkan import library: $VULKAN_SDK/Lib/vulkan-1.lib" >&2; exit 1; }
+        test -f "$VULKAN_SDK/include/vulkan/vulkan.h" || { echo "Missing Vulkan header: $VULKAN_SDK/include/vulkan/vulkan.h" >&2; exit 1; }
+        test -f "$VULKAN_SDK/lib/libvulkan.so" || { echo "Missing Vulkan library: $VULKAN_SDK/lib/libvulkan.so" >&2; exit 1; }
 
         command -v glslc >/dev/null 2>&1 || { echo "glslc not found in PATH" >&2; exit 1; }
         glslc --version        

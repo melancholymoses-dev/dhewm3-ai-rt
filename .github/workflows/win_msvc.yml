@@ -46,8 +46,8 @@ jobs:
     - name: Export Vulkan paths
       shell: bash
       run: |
-        echo "VULKAN_SDK=$GITHUB_WORKSPACE/vulkan-lite" >> $GITHUB_ENV
-        echo "$GITHUB_WORKSPACE/vulkan-lite/Bin" >> $GITHUB_PATH
+        echo "VULKAN_SDK=$GITHUB_WORKSPACE/vulkan-lite/win" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/vulkan-lite/win/Bin" >> $GITHUB_PATH
 
     - name: Sanity check Vulkan toolchain
       run: |
