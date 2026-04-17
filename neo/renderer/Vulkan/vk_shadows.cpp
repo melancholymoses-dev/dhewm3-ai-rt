@@ -811,13 +811,11 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         {
             const idVec3 &camPos = viewDef->renderView.vieworg;
             const float distToLight = (shadowOrigin - camPos).Length();
-            // 0xFA = exclude player (0x01) and sprite/effect (0x04) instances.
-            // 0xFB = exclude sprite/effect only (player shadows visible at long range).
-            ubo.rayCullMask = (distToLight < playerExcludeDist) ? 0xFAu : 0xFBu;
+            ubo.rayCullMask = (distToLight < playerExcludeDist) ? 0xFEu : 0xFFu;
         }
         else
         {
-            ubo.rayCullMask = 0xFBu; // always exclude sprite/effect instances from shadow rays
+            ubo.rayCullMask = 0xFFu;
         }
 
         if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))

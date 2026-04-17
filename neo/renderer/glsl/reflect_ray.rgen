@@ -83,7 +83,7 @@ void main()
     traceRayEXT(
         topLevelAS,
         gl_RayFlagsCullOpaqueEXT,
-        0xFAu,          // exclude player (0x01) and sprite/effect (0x04) — glass is solid geometry only
+        0xFEu,          // normal mode excludes player bit only
         1,              // SBT hit offset 1: second entry in hit region = glass_probe.rchit
         0,              // SBT stride 0: ALL geometries use the same hit group (no per-geom offset)
         1,              // miss index 1: second entry in miss region = glass_probe.rmiss
@@ -114,18 +114,14 @@ void main()
 
     // Bounce loop: up to 2 iterations covers double-pane glass.
     // Each glass hit contributes 5 % and passes 95 % to the next segment.
-    // additiveTotal accumulates sprite/effect contributions from reflect_sprite.rahit
-    // across all bounces; these are added to the final colour after the bounce loop.
-    vec3  accum         = vec3(0.0);
-    vec3  additiveTotal = vec3(0.0);
-    float weight        = 1.0;
-    vec3  dir           = reflDir;
+    vec3  accum  = vec3(0.0);
+    float weight = 1.0;
+    vec3  dir    = reflDir;
 
     for (int i = 0; i < 2 && weight > 0.01; i++)
     {
         reflPayload.colour        = vec3(0.0);
         reflPayload.transmittance = 0.0;
-        reflPayload.additiveAccum = vec3(0.0);  // reset per bounce so sprites don't stack across glass bounces
 
         traceRayEXT(
             topLevelAS,
@@ -141,9 +137,8 @@ void main()
             0               // payload location
         );
 
-        accum         += weight * reflPayload.colour;
-        additiveTotal += weight * reflPayload.additiveAccum;  // weighted sprite colour from this bounce
-        weight        *= reflPayload.transmittance;
+        accum  += weight * reflPayload.colour;
+        weight *= reflPayload.transmittance;
         if (reflPayload.transmittance > 0.0)
         {
             origin = reflPayload.nextOrigin;
@@ -153,7 +148,7 @@ void main()
 
     // Encode Schlick Fresnel for the camera-facing glass interface in alpha.
     // The overlay pass uses this as a physically-motivated glass weight.
-    // Exaggerated reflections off glass.
+    // Exaggerated reflections off glass. 
     float glassWeight = 0.0;
     if (glassProbe.hitT > 0.01)
     {
@@ -162,7 +157,5 @@ void main()
         float oneMinusCos = 1.0 - cosTheta;
         glassWeight = GLASS_F0 + (1.0 - GLASS_F0) * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos;
     }
-    // Sprite additive contributions are summed with the solid-surface colour.
-    // Both are scaled by reflBlend so the overall brightness is consistent.
-    imageStore(reflImage, coord, vec4((accum + additiveTotal) * params.reflBlend, glassWeight));
+    imageStore(reflImage, coord, vec4(accum * params.reflBlend, glassWeight));
 }
