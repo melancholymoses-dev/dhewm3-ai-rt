@@ -133,7 +133,7 @@ void main()
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-            0xFBu,              // cull mask: exclude player (0x01) and sprite/effect (0x04) instances
+            0xFF,               // cull mask (all instances)
             0,                  // SBT offset
             0,                  // SBT stride
             0,                  // miss index
