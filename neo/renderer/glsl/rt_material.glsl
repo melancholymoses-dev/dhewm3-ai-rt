@@ -40,7 +40,6 @@ struct MaterialEntry {
 #define MAT_FLAG_TWO_SIDED     0x02u
 #define MAT_FLAG_GLASS         0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
 #define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
-#define MAT_FLAG_ADDITIVE_SPRITE 0x10u // DM_CONTINUOUS sprite/effect entity — additive accumulation in reflections
 
 // ---------------------------------------------------------------------------
 // set=1 bindings
