@@ -654,6 +654,24 @@ set(src_renderer
 
 find_package(Vulkan REQUIRED)
 
+# Apply Vulkan include/link wiring consistently to any target using renderer Vulkan code.
+function(d3_apply_vulkan_target target_name)
+	if(MSVC)
+		# rc.exe (RC1107) fails when the last AdditionalIncludeDirectory lacks a
+		# trailing path separator. Append "/" to the Vulkan include dir and link
+		# the library directly rather than via Vulkan::Vulkan, which would
+		# propagate its bare INTERFACE_INCLUDE_DIRECTORIES to the RC compiler.
+		set(_vk_inc "${Vulkan_INCLUDE_DIR}")
+		if(NOT _vk_inc MATCHES "/$")
+			string(APPEND _vk_inc "/")
+		endif()
+		target_include_directories(${target_name} PRIVATE "${_vk_inc}")
+		target_link_libraries(${target_name} ${Vulkan_LIBRARY})
+	else()
+		target_link_libraries(${target_name} Vulkan::Vulkan)
+	endif()
+endfunction()
+
 set(src_vulkan
 	renderer/Vulkan/vk_instance.cpp
 	renderer/Vulkan/vk_swapchain.cpp
@@ -1482,21 +1500,7 @@ endif()
 		${sys_libs}
 	)
 
-	if(MSVC)
-		# rc.exe (RC1107) fails when the last AdditionalIncludeDirectory lacks a
-		# trailing path separator. Append "/" to the Vulkan include dir and link
-		# the library directly rather than via Vulkan::Vulkan, which would
-		# propagate its bare INTERFACE_INCLUDE_DIRECTORIES to the RC compiler.
-		set(_vk_inc "${Vulkan_INCLUDE_DIR}")
-		if(NOT _vk_inc MATCHES "/$")
-			string(APPEND _vk_inc "/")
-		endif()
-		# string(REGEX REPLACE "[/\\\\]?$" "/" _vk_inc "${Vulkan_INCLUDE_DIR}")
-		target_include_directories(${DHEWM3BINARY} PRIVATE "${_vk_inc}")
-		target_link_libraries(${DHEWM3BINARY} ${Vulkan_LIBRARY})
-	else()
-		target_link_libraries(${DHEWM3BINARY} Vulkan::Vulkan)
-	endif()
+	d3_apply_vulkan_target(${DHEWM3BINARY})
 
 	if(MSVC AND DHEWM3_RUNTIME_BASEPATH)
 		# Ensure F5/debug from Visual Studio can locate base/ data and defaults.
@@ -1586,6 +1590,8 @@ endif()
 		${SDLx_LIBRARY}
 		${sys_libs}
 	)
+
+	d3_apply_vulkan_target(${DHEWM3BINARY}ded)
 
 	if(NOT APPLE AND NOT WIN32)
 		install(TARGETS ${DHEWM3BINARY}ded

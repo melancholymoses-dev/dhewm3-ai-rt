@@ -1550,7 +1550,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             static idStrList s_loggedMats;
             idStr matKey;
             matKey.Format("%s", mat->GetName());
-            if (s_loggedMats.Find(matKey) < 0)
+            if (s_loggedMats.Find(matKey) == NULL)
             {
                 s_loggedMats.Append(matKey);
                 common->Printf("VK DrawShaderPasses: mat='%s' sort=%d numStages=%d\n", mat->GetName(),
@@ -1648,7 +1648,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             {
                 static idStrList s_loggedSkyboxNoSpace;
                 idStr matName(mat->GetName());
-                if (s_loggedSkyboxNoSpace.Find(matName) < 0)
+                if (s_loggedSkyboxNoSpace.Find(matName) == NULL)
                 {
                     s_loggedSkyboxNoSpace.Append(matName);
                     common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d (surf->space is null)\n",
@@ -1661,7 +1661,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
             {
                 static idStrList s_loggedSkyboxPipelineMissing;
                 idStr matName(mat->GetName());
-                if (s_loggedSkyboxPipelineMissing.Find(matName) < 0)
+                if (s_loggedSkyboxPipelineMissing.Find(matName) == NULL)
                 {
                     s_loggedSkyboxPipelineMissing.Append(matName);
                     common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d (skybox pipeline "
@@ -1680,7 +1680,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                 static idStrList s_loggedScreenStages;
                 idStr key;
                 key.Format("%s#%d#%d", mat->GetName(), stageIdx, (int)pStage->texture.texgen);
-                if (s_loggedScreenStages.Find(key) < 0)
+                if (s_loggedScreenStages.Find(key) == NULL)
                 {
                     s_loggedScreenStages.Append(key);
                     common->Printf("VK DrawShaderPasses: SCREEN STAGE mat='%s' stage=%d texgen=%d img=%s\n",
@@ -1738,7 +1738,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     {
                         idStr key;
                         key.Format("%s#%d#%d#%s", mat->GetName(), stageIdx, (int)pStage->texture.texgen, chosenSource);
-                        if (s_loggedDynTexgenPaths.Find(key) < 0)
+                        if (s_loggedDynTexgenPaths.Find(key) == NULL)
                         {
                             s_loggedDynTexgenPaths.Append(key);
                             common->Printf(
@@ -1775,7 +1775,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     {
                         static idStrList s_loggedSkyboxFallbacks;
                         idStr matName(mat->GetName());
-                        if (s_loggedSkyboxFallbacks.Find(matName) < 0)
+                        if (s_loggedSkyboxFallbacks.Find(matName) == NULL)
                         {
                             s_loggedSkyboxFallbacks.Append(matName);
                             common->Printf("VK DrawShaderPasses: skipping skybox mat='%s' stage=%d img='%s' (cube "
@@ -1788,7 +1788,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
                     // Non-skybox path: use 1x1 fallback.
                     static idStrList s_loggedFallbacks;
                     idStr matName(mat->GetName());
-                    if (s_loggedFallbacks.Find(matName) < 0)
+                    if (s_loggedFallbacks.Find(matName) == NULL)
                     {
                         s_loggedFallbacks.Append(matName);
                         common->Printf("VK DrawShaderPasses: fallback texture for mat='%s' stage=%d img='%s' "
@@ -1886,7 +1886,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
                     static idStrList s_loggedSkyboxLocalFallback;
                     idStr matName(mat->GetName());
-                    if (s_loggedSkyboxLocalFallback.Find(matName) < 0)
+                    if (s_loggedSkyboxLocalFallback.Find(matName) == NULL)
                     {
                         s_loggedSkyboxLocalFallback.Append(matName);
                         common->Printf("VK DrawShaderPasses: skybox local-view fallback mat='%s' stage=%d "
