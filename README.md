@@ -11,7 +11,7 @@ This project would be impossible without their foundation and updates to the ori
 
 This project is an attempt to implement Raytracing in Vulkan on top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
 
-_Dhewm 3 RT_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  This version has been tested on Windows.   I forked Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 in March 2026.  
+_Dhewm 3 RT_ is an updated version of _dhewm 3_ which is based on the _Doom 3_ GPL source port.  I started off a clone of Dhewm3 from the official repository at https://github.com/dhewm/dhewm3 from a clone in May 2025 Commit hash: [0277f2](https://github.com/dhewm/dhewm3/commit/0277f298e85d8e2f0ca82a692c6dc0dc0d83c49b).  
 
 ### Original Dhewm3 and vkDoom3 Source Links
 Original Dhewm3 Links:
