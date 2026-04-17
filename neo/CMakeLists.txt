@@ -678,12 +678,12 @@ list(APPEND src_vulkan
 
 list(APPEND src_renderer ${src_vulkan})
 
-# Locate glslc for SPIR-V compilation
-find_program(GLSLC_EXECUTABLE glslc
-	HINTS "${Vulkan_GLSLC_EXECUTABLE}" ENV VULKAN_SDK
+# Locate glslangValidator for SPIR-V compilation
+find_program(GLSLANG_EXECUTABLE glslangValidator
+	HINTS "${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE}" ENV VULKAN_SDK
 	PATH_SUFFIXES bin)
-if(NOT GLSLC_EXECUTABLE)
-	message(FATAL_ERROR "glslc not found. Install the Vulkan SDK and ensure glslc is in PATH.")
+if(NOT GLSLANG_EXECUTABLE)
+	message(FATAL_ERROR "glslangValidator not found. Install Glslang and ensure it is in PATH.")
 endif()
 
 # GLSL shaders to compile to SPIR-V
@@ -738,8 +738,12 @@ list(APPEND GLSL_SHADER_SOURCES
 set(SPV_OUTPUT_DIR "${CMAKE_BINARY_DIR}/glprogs/glsl")
 file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
 
-set(GLSLC_FLAGS --target-env=vulkan1.2)
-list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
+set(GLSLANG_FLAGS
+    -V
+    --target-env vulkan1.3
+	"-I${CMAKE_SOURCE_DIR}/renderer/glsl"
+	"-P#extension GL_GOOGLE_include_directive : enable"
+)
 
 
 # Shared GLSL include files — not compiled directly but #included by stage shaders.
@@ -760,8 +764,8 @@ foreach(GLSL_SRC ${GLSL_SHADER_SOURCES})
 
 	add_custom_command(
 		OUTPUT  "${SPV_FILE}"
-		COMMAND "${GLSLC_EXECUTABLE}"
-				${GLSLC_FLAGS}
+			COMMAND "${GLSLANG_EXECUTABLE}"
+				${GLSLANG_FLAGS}
 				-o "${SPV_FILE}"
 				"${CMAKE_SOURCE_DIR}/${GLSL_SRC}"
 		DEPENDS "${CMAKE_SOURCE_DIR}/${GLSL_SRC}" ${GLSL_INCLUDES}

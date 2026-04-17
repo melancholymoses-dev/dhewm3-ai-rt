@@ -32,12 +32,12 @@ jobs:
         # only unpack the stuff needed (no i686 stuff, no docs from share/)
         unzip dhewm3libs.zip "dhewm3-libs-master/x86_64-w64-mingw32/**" -x "dhewm3-libs-master/x86_64-w64-mingw32/share/**"
 
-        # Download and Install Vulkan
-        echo "Downloading and Installing Vulkan"
-        curl -L -O https://sdk.lunarg.com/sdk/download/1.4.341.1/windows/vulkansdk-windows-X64-1.4.341.1.exe
-        ./vulkansdk-windows-X64-1.4.341.1.exe --accept-licenses --default-answer --confirm-command install
-        echo 'VULKAN_SDK=C:\VulkanSDK\1.4.341.1' >> $GITHUB_ENV
-        echo 'C:\VulkanSDK\1.4.341.1\Bin' >> $GITHUB_PATH
+    - name: Install Vulkan SDK
+      uses: humbletim/setup-vulkan-sdk@v1.2.1
+      with:
+        vulkan-query-version: 1.4.341.1
+        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang
+        vulkan-use-cache: true
 
     - name: Check out repository code
       uses: actions/checkout@v4

@@ -19,13 +19,12 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libgl1-mesa-dev libsdl2-dev libopenal-dev libcurl4-openssl-dev cmake ninja-build xz-utils 
-        # Download and install Vulkan SDK and dependencies
-        sudo apt install -y libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev
-        cd ~
-        curl -L -O https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-        tar -xf vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-        echo "VULKAN_SDK=$HOME/1.4.341.1/x86_64" >> $GITHUB_ENV
-        echo "$HOME/1.4.341.1/x86_64/bin" >> $GITHUB_PATH
+    - name: Install Vulkan SDK
+      uses: humbletim/setup-vulkan-sdk@v1.2.1
+      with:
+        vulkan-query-version: 1.4.341.1
+        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang
+        vulkan-use-cache: true        
     - name: Check out repository code
       uses: actions/checkout@v4
     - name: Build
