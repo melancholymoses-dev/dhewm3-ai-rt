@@ -174,16 +174,36 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vkBeginCommandBuffer(tmpCmd, &beginInfo);
 
+            VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+            // Transition UNDEFINED → GENERAL (required before clear)
             VkImageMemoryBarrier barrier = {};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier.image = ao.image;
-            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier);
+            barrier.subresourceRange = subRange;
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
+                                 0, NULL, 1, &barrier);
+
+            // Clear to 1.0 (full ambient, no occlusion) so unwritten pixels don't contain garbage
+            VkClearColorValue clearWhite = {};
+            clearWhite.float32[0] = 1.0f;
+            vkCmdClearColorImage(tmpCmd, ao.image, VK_IMAGE_LAYOUT_GENERAL, &clearWhite, 1, &subRange);
+
+            // Barrier: transfer write → shader write for rgen imageStore
+            VkImageMemoryBarrier barrier2 = {};
+            barrier2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier2.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.image = ao.image;
+            barrier2.subresourceRange = subRange;
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 0, 0, NULL, 0, NULL, 1, &barrier2);
 
             vkEndCommandBuffer(tmpCmd);
 

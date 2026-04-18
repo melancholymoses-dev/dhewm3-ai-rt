@@ -71,11 +71,65 @@ static const uint32_t MAT_MAX_INSTANCES = 4096;
 static idImage *s_bindlessImages[VK_MAT_MAX_TEXTURES];
 static uint32_t s_bindlessCount = 0;
 static bool s_bindlessDirty = false;
+static bool s_bindlessInitialized = false;
 
+// ---------------------------------------------------------------------------
+// InitializeBindlessDescriptors
+// Called on first use to initialize all 4096 bindless slots with fallback.
+// Deferred until images are loaded to avoid errors during startup.
+// ---------------------------------------------------------------------------
+
+static void InitializeBindlessDescriptors(void)
+{
+    if (s_bindlessInitialized)
+        return;
+
+    VkDescriptorImageInfo whiteFallback = {};
+    if (!VK_Image_GetDescriptorInfo(globalImages->whiteImage, &whiteFallback))
+    {
+        // whiteImage not loaded yet - will retry on next call
+        return;
+    }
+    whiteFallback.sampler = vkRT.matSampler;
+    whiteFallback.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    // Allocate array for all descriptor infos (4096 slots)
+    VkDescriptorImageInfo *allInfos = (VkDescriptorImageInfo *)Mem_Alloc(
+        VK_MAT_MAX_TEXTURES * sizeof(VkDescriptorImageInfo));
+
+    for (uint32_t i = 0; i < VK_MAT_MAX_TEXTURES; i++)
+    {
+        allInfos[i] = whiteFallback;
+    }
+
+    VkWriteDescriptorSet initWrite = {};
+    initWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    initWrite.dstSet = vkRT.matDescSet;
+    initWrite.dstBinding = 3;
+    initWrite.dstArrayElement = 0;
+    initWrite.descriptorCount = VK_MAT_MAX_TEXTURES;
+    initWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    initWrite.pImageInfo = allInfos;
+
+    vkUpdateDescriptorSets(vk.device, 1, &initWrite, 0, NULL);
+    Mem_Free(allInfos);
+
+    s_bindlessInitialized = true;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT MatTable: initialized all %u bindless slots with fallback\n", VK_MAT_MAX_TEXTURES);
+}
+
+// ---------------------------------------------------------------------------
 // Returns the bindless slot index for img, assigning a new one if needed.
 // img == NULL returns slot 0 (white/flat-normal fallback, slot 0 is reserved).
+// ---------------------------------------------------------------------------
+
 static uint32_t GetOrAssignTexIndex(idImage *img)
 {
+    // Initialize bindless descriptors on first use (deferred until images are loaded)
+    InitializeBindlessDescriptors();
+
     if (!img)
         return 0;
 
@@ -101,6 +155,10 @@ static uint32_t GetOrAssignTexIndex(idImage *img)
     uint32_t idx = s_bindlessCount++;
     s_bindlessImages[idx] = img;
     s_bindlessDirty = true;
+
+    if (r_vkLogRT.GetInteger() >= 3)
+        common->Printf("VK RT MatTable: assigned slot %u to '%s'\n", idx, img->imgName.c_str());
+
     return idx;
 }
 
@@ -124,7 +182,11 @@ static void RebuildBindlessDescriptors(void)
 
     // White fallback info — used for any slot whose image has no Vulkan data yet.
     VkDescriptorImageInfo fallbackInfo = {};
-    VK_Image_GetDescriptorInfo(globalImages->whiteImage, &fallbackInfo);
+    if (!VK_Image_GetDescriptorInfo(globalImages->whiteImage, &fallbackInfo))
+    {
+        common->Warning("VK RT MatTable: whiteImage not available for bindless rebuild");
+        return;
+    }
     fallbackInfo.sampler = vkRT.matSampler;
     fallbackInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -136,8 +198,13 @@ static void RebuildBindlessDescriptors(void)
             VkDescriptorImageInfo tmp = {};
             if (VK_Image_GetDescriptorInfo(s_bindlessImages[i], &tmp))
             {
-                info.imageView = tmp.imageView;
-                info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                // Only use the texture if it has a valid imageView
+                if (tmp.imageView != VK_NULL_HANDLE)
+                {
+                    info.imageView = tmp.imageView;
+                    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                }
+                // else: keep using fallbackInfo
             }
         }
         info.sampler = vkRT.matSampler; // always use our bilinear sampler
@@ -327,16 +394,14 @@ void VK_RT_InitMaterialTable(void)
 
     vkUpdateDescriptorSets(vk.device, 3, ssboWrites, 0, NULL);
 
-    // --- Seed bindless slot 0 with fallback images ---
-    // Slot 0 = white (diffuse fallback), slot 1 = flat normal fallback.
+    // --- Bindless descriptor initialization is deferred ---
+    // On Linux, uninitialized descriptor slots contain garbage that crashes the GPU.
+    // We defer initialization until first use (when images are loaded) via InitializeBindlessDescriptors().
 
     s_bindlessCount = 0;
     s_bindlessDirty = false;
+    s_bindlessInitialized = false;
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
-
-    GetOrAssignTexIndex(globalImages->whiteImage);    // slot 0 — diffuse fallback
-    GetOrAssignTexIndex(globalImages->flatNormalMap); // slot 1 — normal fallback
-    // s_bindlessDirty is now true; will be flushed on first UploadMatTableFrame.
 
     vkRT.matTableInitialized = true;
 
@@ -424,6 +489,7 @@ void VK_RT_ShutdownMaterialTable(void)
 
     s_bindlessCount = 0;
     s_bindlessDirty = false;
+    s_bindlessInitialized = false;
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
 
     vkRT.matTableInitialized = false;

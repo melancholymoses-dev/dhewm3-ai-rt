@@ -190,11 +190,11 @@ static idCVar r_vkSplitSubmitMask(
     "256=after GI dispatch (outside RP), 512=after GI composite (inside RP). "
     "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
-    "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
+    "r_vkLowPerturbationMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Low-perturbation debug mode: keeps stage breadcrumbs but suppresses split-submit probes and extra split logs. "
     "Set to 0 to re-enable split submits via r_vkSplitSubmitMask.");
 static idCVar r_vkSplitSubmitVerbose(
-    "r_vkSplitSubmitVerbose", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "r_vkSplitSubmitVerbose", "1", CVAR_RENDERER | CVAR_INTEGER,
     "Verbose split-submit logging (0=quiet, 1=print per-stage split-submit completion)");
 static idCVar r_vkRTProfile(
     "r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
