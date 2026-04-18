@@ -1,0 +1,7 @@
+#!/bin/bash
+
+./dhewm3_rt \
++set r_vkLogRT 0 \
++set r_vkSplitSubmitMask 1023 \
++set r_splitsubmitverbose 0 \
+2>&1 | tee dhewm3.log
