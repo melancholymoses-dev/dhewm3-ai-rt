@@ -107,18 +107,6 @@ void main()
     // Sample diffuse albedo at secondary hit.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
     vec3 albedo  = diffuse.rgb;
-    /*if (giLightBuf.numLights == 0){
-        giPayload.colour = vec3(1.0, 0, 0);
-        return;
-    }
-    */
-    // DEBUG: encode numLights into green and bounceScale into blue.
-    // Black green = 0 lights (SSBO unbound/upload failed).
-    // Bright green = lights present.  Blue tint = bounceScale non-zero.
-    // giPayload.colour = vec3(0.0,
-    //                        clamp(float(giLightBuf.numLights) / 64.0, 0.0, 1.0),
-    //                        0.0);
-    //return;
 
     // --- Option B: evaluate each in-range light at the secondary hit ---
     vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
@@ -144,9 +132,8 @@ void main()
         vec3  toLight = lightPos - hitPos;
         float dist    = length(toLight);
 
-        // Skip lights beyond the GI evaluation window or degenerate distance.
-        // Use giRadius (the ray travel limit) as the evaluation window rather than lightradius.
-        if (dist >= giLightBuf.giRadius || dist < 0.01)
+        // Skip lights beyond the light radius.  
+        if (dist >= lightRadius || dist < 0.01)
             continue;
 
         vec3 lightDir = toLight / dist;
@@ -174,13 +161,9 @@ void main()
         if (giShadow.occluded)
             continue;
 
-        // Attenuation: Doom3-style quadratic falloff within the light volume,
-        // feathering to zero at lightRadius.  Beyond lightRadius use inverse-square
-        // so the contribution tapers rather than hard-cutting to black.
-        float t     = max(0.0, 1.0 - (dist / max(lightRadius, 1.0)));
-        float atten = (dist <= lightRadius)
-                    ? t * t                              // Doom3 quad falloff inside volume
-                    : (lightRadius * lightRadius) / (dist * dist) * 0.25; // inv-sq outside
+        // Drop off light to zero at edge.
+        float t     = (dist / max(lightRadius, 1.0));
+        float atten = t < 1 ? 1.0 - t * t  : 0;
 
         irradiance += lightColor * intensity * NdotL * atten * giLightBuf.bounceScale;
     }
