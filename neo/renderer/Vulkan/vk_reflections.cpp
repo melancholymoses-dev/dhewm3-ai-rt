@@ -324,10 +324,12 @@ static void VK_RT_InitReflPipeline(void)
     VkShaderModule probeMissModule = VK_LoadSPIRV("glprogs/glsl/glass_probe.rmiss.spv");
     VkShaderModule probeChitModule = VK_LoadSPIRV("glprogs/glsl/glass_probe.rchit.spv");
     VkShaderModule playerChitModule = VK_LoadSPIRV("glprogs/glsl/player_reflect.rchit.spv");
+    // Reuse GI shadow miss: fires when a shadow ray from rchit reaches a light without being blocked.
+    VkShaderModule shadowMissModule = VK_LoadSPIRV("glprogs/glsl/gi_shadow.rmiss.spv");
 
     if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rchitModule == VK_NULL_HANDLE ||
         rahitModule == VK_NULL_HANDLE || probeMissModule == VK_NULL_HANDLE || probeAhitModule == VK_NULL_HANDLE ||
-        probeChitModule == VK_NULL_HANDLE || playerChitModule == VK_NULL_HANDLE)
+        probeChitModule == VK_NULL_HANDLE || playerChitModule == VK_NULL_HANDLE || shadowMissModule == VK_NULL_HANDLE)
     {
         common->Warning("VK RT Refl: failed to load reflection shader modules — reflections disabled");
         if (rgenModule != VK_NULL_HANDLE)
@@ -346,19 +348,22 @@ static void VK_RT_InitReflPipeline(void)
             vkDestroyShaderModule(vk.device, probeChitModule, NULL);
         if (playerChitModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, playerChitModule, NULL);
+        if (shadowMissModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, shadowMissModule, NULL);
         return;
     }
 
     // --- Shader stages ---
     // Stage 0: rgen
     // Stage 1: main rmiss
-    // Stage 2: main rchit           — world geometry reflection hits
+    // Stage 2: main rchit           — world geometry reflection hits (fires shadow rays)
     // Stage 3: main rahit           — alpha-discard for non-opaque world geometry
     // Stage 4: glass probe rmiss
     // Stage 5: glass probe rchit    — records glass hit position/normal for rgen
     // Stage 6: player_reflect rchit — player body: close-range pass-through, mirror-distance visible
-    // Stage 7: glass probe rahit    - record glass hit any
-    VkPipelineShaderStageCreateInfo stages[8] = {};
+    // Stage 7: glass probe rahit    — record glass hit any
+    // Stage 8: shadow miss          — clears occluded when shadow ray reaches a light unblocked
+    VkPipelineShaderStageCreateInfo stages[9] = {};
 
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -400,25 +405,31 @@ static void VK_RT_InitReflPipeline(void)
     stages[7].module = probeAhitModule;
     stages[7].pName = "main";
 
+    stages[8].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[8].stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+    stages[8].module = shadowMissModule;
+    stages[8].pName = "main";
+
     // --- Shader groups ---
     // Group 0: rgen
     // Group 1: main miss            (miss index 0 in miss region)
     // Group 2: glass probe miss     (miss index 1 in miss region)
+    // Group 3: shadow miss          (miss index 2 in miss region) — used by rchit shadow rays
     //
     // Hit region — indexed by instanceShaderBindingTableRecordOffset + sbtHitOffset:
     //
     //   instanceSBTOffset=0 (world geometry):
-    //     + sbtHitOffset 0 → hit slot 0 → Group 3: world main hit
-    //     + sbtHitOffset 1 → hit slot 1 → Group 4: world glass probe hit
+    //     + sbtHitOffset 0 → hit slot 0 → Group 4: world main hit
+    //     + sbtHitOffset 1 → hit slot 1 → Group 5: world glass probe hit
     //
     //   instanceSBTOffset=2 (player body, noSelfShadow):
-    //     + sbtHitOffset 0 → hit slot 2 → Group 5: player main hit
-    //     + sbtHitOffset 1 → hit slot 3 → Group 6: player glass probe hit (never fires — mask 0xFE excludes player)
+    //     + sbtHitOffset 0 → hit slot 2 → Group 6: player main hit
+    //     + sbtHitOffset 1 → hit slot 3 → Group 7: player glass probe hit (never fires — mask 0xFE excludes player)
     //
     // SBT memory layout:
-    //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=world_main  [4]=world_probe  [5]=player_main  [6]=player_probe
-    // reflRgenRegion → [0] reflMissRegion → [1..2] reflHitRegion → [3..6]
-    VkRayTracingShaderGroupCreateInfoKHR groups[7] = {};
+    //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=shadow_miss  [4]=world_main  [5]=world_probe  [6]=player_main  [7]=player_probe
+    // reflRgenRegion → [0] reflMissRegion → [1..3] reflHitRegion → [4..7]
+    VkRayTracingShaderGroupCreateInfoKHR groups[8] = {};
 
     // Group 0: rgen
     groups[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -444,57 +455,67 @@ static void VK_RT_InitReflPipeline(void)
     groups[2].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Group 3: world main hit — rchit (stage 2) + rahit (stage 3)
+    // Group 3: shadow miss — gi_shadow.rmiss (stage 8), miss index 2.
+    // Fires when a shadow ray from rchit reaches a light without being blocked — sets occluded=false.
     groups[3].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    groups[3].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-    groups[3].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[3].closestHitShader = 2; // reflect_ray.rchit
-    groups[3].anyHitShader = 3;     // reflect_ray.rahit — alpha-discard
+    groups[3].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    groups[3].generalShader = 8; // gi_shadow.rmiss
+    groups[3].closestHitShader = VK_SHADER_UNUSED_KHR;
+    groups[3].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Group 4: world glass probe hit — glass_probe.rchit (stage 5) + glass_probe.rahit (stage 7).
-    // glass_probe.rahit adds MAT_FLAG_PLAYER_BODY skip on top of alpha-test logic so non-opaque
-    // player surfaces (perforated arm/weapon textures) are ignored by the probe.  Combined with
-    // the 0xFE cullMask in rgen this gives two layers of player exclusion.
+    // Group 4: world main hit — rchit (stage 2) + rahit (stage 3)
     groups[4].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[4].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[4].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[4].closestHitShader = 5; // glass_probe.rchit
-    groups[4].anyHitShader = 7;     // glass_probe.rahit — player-body skip + alpha-discard
+    groups[4].closestHitShader = 2; // reflect_ray.rchit
+    groups[4].anyHitShader = 3;     // reflect_ray.rahit — alpha-discard
     groups[4].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Group 5: player main hit — player_reflect.rchit (stage 6), no rahit needed (player is opaque).
-    // Close-range hits pass through; mirror-distance hits return the player's diffuse colour.
+    // Group 5: world glass probe hit — glass_probe.rchit (stage 5) + glass_probe.rahit (stage 7).
+    // glass_probe.rahit adds MAT_FLAG_PLAYER_BODY skip on top of alpha-test logic so non-opaque
+    // player surfaces (perforated arm/weapon textures) are ignored by the probe.  Combined with
+    // the 0xFE cullMask in rgen this gives two layers of player exclusion.
     groups[5].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[5].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[5].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[5].closestHitShader = 6; // player_reflect.rchit
-    groups[5].anyHitShader = VK_SHADER_UNUSED_KHR;
+    groups[5].closestHitShader = 5; // glass_probe.rchit
+    groups[5].anyHitShader = 7;     // glass_probe.rahit — player-body skip + alpha-discard
     groups[5].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Group 6: player glass probe hit — placeholder, never invoked.
-    // Glass probe uses mask 0xFE which excludes player instances (mask 0x01).
-    // This slot must exist in the SBT so the indexing arithmetic stays valid.
-    // Reuse glass_probe.rchit + main rahit as safe defaults.
+    // Group 6: player main hit — player_reflect.rchit (stage 6), no rahit needed (player is opaque).
+    // Close-range hits pass through; mirror-distance hits return the player's diffuse colour.
     groups[6].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[6].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[6].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[6].closestHitShader = 5; // glass_probe.rchit (safe reuse — never fires)
-    groups[6].anyHitShader = 7;     // glass_probe.rahit  (safe reuse — never fires)
+    groups[6].closestHitShader = 6; // player_reflect.rchit
+    groups[6].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[6].intersectionShader = VK_SHADER_UNUSED_KHR;
 
-    // Stages (8) vs groups (7): stages can be shared across groups, so the counts can differ.
-    // Stage 7 (glass_probe.rahit) is referenced by groups 4 and 6 — no extra group needed.
+    // Group 7: player glass probe hit — placeholder, never invoked.
+    // Glass probe uses mask 0xFE which excludes player instances (mask 0x01).
+    // This slot must exist in the SBT so the indexing arithmetic stays valid.
+    // Reuse glass_probe.rchit + main rahit as safe defaults.
+    groups[7].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    groups[7].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    groups[7].generalShader = VK_SHADER_UNUSED_KHR;
+    groups[7].closestHitShader = 5; // glass_probe.rchit (safe reuse — never fires)
+    groups[7].anyHitShader = 7;     // glass_probe.rahit  (safe reuse — never fires)
+    groups[7].intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    // Stages (9) vs groups (8): stages can be shared across groups, so the counts can differ.
+    // Stage 7 (glass_probe.rahit) is referenced by groups 5 and 7 — no extra group needed.
 
     // --- RT pipeline ---
     VkRayTracingPipelineCreateInfoKHR rtPipeInfo = {};
     rtPipeInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipeInfo.stageCount = 8;
+    rtPipeInfo.stageCount = 9;
     rtPipeInfo.pStages = stages;
-    rtPipeInfo.groupCount = 7;
+    rtPipeInfo.groupCount = 8;
     rtPipeInfo.pGroups = groups;
-    rtPipeInfo.maxPipelineRayRecursionDepth =
-        1; // probe and reflection rays are sequential from rgen — no actual recursion
+    // Depth 2: reflection ray (from rgen) + shadow ray (from rchit). Glass probe is sequential
+    // from rgen and does not add recursion depth.
+    rtPipeInfo.maxPipelineRayRecursionDepth = 2;
     rtPipeInfo.layout = vkRT.reflPipelineLayout;
 
     VK_CHECK(vkCreateRayTracingPipelinesKHR(vk.device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rtPipeInfo, NULL,
@@ -508,6 +529,7 @@ static void VK_RT_InitReflPipeline(void)
     vkDestroyShaderModule(vk.device, probeAhitModule, NULL);
     vkDestroyShaderModule(vk.device, probeChitModule, NULL);
     vkDestroyShaderModule(vk.device, playerChitModule, NULL);
+    vkDestroyShaderModule(vk.device, shadowMissModule, NULL);
 
     // --- Shader Binding Table ---
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps = {};
@@ -524,8 +546,8 @@ static void VK_RT_InitReflPipeline(void)
     auto alignUp = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    // Layout: [0]=rgen [1]=main_miss [2]=probe_miss [3]=world_main [4]=world_probe [5]=player_main [6]=player_probe
-    uint32_t sbtSize = 7 * stride;
+    // Layout: [0]=rgen [1]=main_miss [2]=probe_miss [3]=shadow_miss [4]=world_main [5]=world_probe [6]=player_main [7]=player_probe
+    uint32_t sbtSize = 8 * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -533,12 +555,12 @@ static void VK_RT_InitReflPipeline(void)
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkRT.sbtReflBuffer,
                     &vkRT.sbtReflMemory);
 
-    uint8_t *handles = (uint8_t *)alloca(7 * handleSize);
-    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.reflPipeline, 0, 7, 7 * handleSize, handles));
+    uint8_t *handles = (uint8_t *)alloca(8 * handleSize);
+    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.reflPipeline, 0, 8, 8 * handleSize, handles));
 
     uint8_t *sbtData;
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtReflMemory, 0, sbtSize, 0, (void **)&sbtData));
-    for (int i = 0; i < 7; i++)
+    for (int i = 0; i < 8; i++)
         memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtReflMemory);
 
@@ -547,15 +569,15 @@ static void VK_RT_InitReflPipeline(void)
     addrInfo.buffer = vkRT.sbtReflBuffer;
     VkDeviceAddress sbtBase = vkGetBufferDeviceAddressKHR(vk.device, &addrInfo);
 
-    // rgen: slot 0.  miss region: slots 1-2 (main miss, probe miss).
-    // hit region: slots 3-6 (world main, world probe, player main, player probe).
+    // rgen: slot 0.  miss region: slots 1-3 (main miss, probe miss, shadow miss).
+    // hit region: slots 4-7 (world main, world probe, player main, player probe).
     vkRT.reflRgenRegion = {sbtBase + 0 * stride, stride, stride};
-    vkRT.reflMissRegion = {sbtBase + 1 * stride, stride, 2 * stride};
-    vkRT.reflHitRegion = {sbtBase + 3 * stride, stride, 4 * stride};
+    vkRT.reflMissRegion = {sbtBase + 1 * stride, stride, 3 * stride};
+    vkRT.reflHitRegion = {sbtBase + 4 * stride, stride, 4 * stride};
     vkRT.reflCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx (7 groups)\n", stride, sbtSize,
+        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx (8 groups)\n", stride, sbtSize,
                        (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
