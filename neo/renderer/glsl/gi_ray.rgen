@@ -45,6 +45,7 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 scissorExtent; // pixel extent of this view's dispatch region
     int   checker;
     int   maxBounceLights;
+    float giContrast;
 } params;
 
 #include "gi_payload.glsl"
@@ -148,5 +149,18 @@ void main()
     }
 
     vec3 giColour = (accumColour / float(N)) * params.giStrength;
+
+    // Contrast boost: subtract a fraction (giContrast) of the minimum channel,
+    // then rescale so average brightness is preserved.
+    if (params.giContrast > 0.0)
+    {
+        float minChan    = min(giColour.r, min(giColour.g, giColour.b));
+        float origAvg    = dot(giColour, vec3(1.0 / 3.0));
+        vec3  shifted    = giColour - vec3(minChan * params.giContrast);
+        float shiftedAvg = dot(shifted, vec3(1.0 / 3.0));
+        if (origAvg > 1e-6 && shiftedAvg > 1e-6)
+            giColour = shifted * (origAvg / shiftedAvg);
+    }
+
     imageStore(giImage, coord, vec4(giColour, 1.0));
 }

@@ -2454,6 +2454,7 @@ struct RTCVars
     idCVar *rtGIAtrousIterations = nullptr;
     idCVar *rtGIAtrousSigmaL = nullptr;
     idCVar *rtGIAtrousSigmaZ = nullptr;
+    idCVar *rtGIContrast = nullptr;
 };
 static RTCVars rtCVars;
 
@@ -2497,6 +2498,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
     rtCVars.rtGIAtrousSigmaL = cvarSystem->Find("r_rtGIAtrousSigmaL");
     rtCVars.rtGIAtrousSigmaZ = cvarSystem->Find("r_rtGIAtrousSigmaZ");
+    rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2586,7 +2588,7 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(!reflOn);
     ImGui::SeparatorText("Reflection Settings");
 
-    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 2000.0f, "%.0f");
+    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 12000.0f, "%.0f");
     RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
     ImGui::EndDisabled(); // !reflOn
 
@@ -2601,6 +2603,7 @@ static void DrawRTOptionsMenu()
     RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
     RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 32.0f, 2048.0f, "%.0f");
     RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
+    RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
     RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 2.0f);
     ImGui::Spacing();
     ImGui::SeparatorText("GI Colour Bounce (Option B)");

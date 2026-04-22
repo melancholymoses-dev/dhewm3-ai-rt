@@ -40,7 +40,7 @@ of the original Doom 3 GPL Source Code release.
 
 // r_rtReflections declared in RenderSystem_init.cpp
 
-static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2000.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "10000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2000)");
 
 static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.5", CVAR_RENDERER | CVAR_FLOAT,
@@ -276,7 +276,8 @@ static void VK_RT_InitReflPipeline(void)
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    // rchit also needs TLAS access to fire shadow rays toward lights.
+    bindings[0].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
     bindings[1].binding = 1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;

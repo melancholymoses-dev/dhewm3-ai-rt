@@ -42,12 +42,17 @@ Code release.
 idCVar r_rtGI("r_rtGI", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
               "Enable one-bounce GI (Phase 6.1, ambient colour bleeding)");
 
-idCVar r_rtGIRadius("r_rtGIRadius", "512.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
+idCVar r_rtGIRadius("r_rtGIRadius", "256.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
 
 static idCVar r_rtGISamples("r_rtGISamples", "3", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
 static idCVar r_rtGIStrength("r_rtGIStrength", "0.3", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
+
+static idCVar r_rtGIContrast(
+    "r_rtGIContrast", "0.2", CVAR_RENDERER | CVAR_FLOAT,
+    "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
+    "0 = off, 1 = full effect");
 
 idCVar r_rtGIDirectScale("r_rtGIDirectScale", "0.8", CVAR_RENDERER | CVAR_FLOAT,
                          "Multiplier on direct interaction lighting when GI is active. "
@@ -123,7 +128,8 @@ static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffe
 //   ivec2 scissorExtent  offset  96  size  8
 //   int   checker           offset 104  size  4
 //   int   maxBounceLights   offset 108  size  4
-//   total: 112 bytes
+//   float giContrast        offset 112  size  4
+//   total: 116 bytes
 // ---------------------------------------------------------------------------
 
 struct GIParamsUBO
@@ -141,8 +147,9 @@ struct GIParamsUBO
     int32_t scissorExtentY;
     int32_t checker;
     int32_t maxBounceLights;
+    float giContrast;
 };
-static_assert(sizeof(GIParamsUBO) == 112, "GIParamsUBO size mismatch");
+static_assert(sizeof(GIParamsUBO) == 116, "GIParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -1166,9 +1173,9 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // maxBounceLights: 0 disables Option B in rchit (Option A fallback); otherwise
     // caps the light loop so the GI pass evaluates fewer lights than reflections.
     // The SSBO numLights is NOT modified — reflections always see the full list.
-    ubo.maxBounceLights = r_rtGILightBounce.GetBool()
-                            ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger())
-                            : 0;
+    ubo.maxBounceLights =
+        r_rtGILightBounce.GetBool() ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger()) : 0;
+    ubo.giContrast = idMath::ClampFloat(0.0f, 1.0f, r_rtGIContrast.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // DEBUG: log light counts once per second (keep for diagnostics).
