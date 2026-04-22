@@ -15,9 +15,10 @@ reflPayload.transmittance + nextOrigin/nextDir.  rgen traces the continuation
 ray on the next loop iteration.
 
 Lighting: opaque hit surfaces are shaded using the same GI light list
-(set=0, binding=4) that gi_ray.rchit uses for bounce lighting.  No shadow
-rays are fired here — NdotL × quadratic falloff gives directional variation
-and per-light colour without secondary traces.  When no lights are available
+(set=0, binding=4) that gi_ray.rchit uses for bounce lighting.  Shadow rays
+are fired for the first REFL_MAX_SHADOW_LIGHTS candidates per hit (miss
+index 2 → gi_shadow.rmiss); remaining lights fall back to NdotL × falloff
+only so the cap degrades gracefully.  When no lights are available
 (numLights == 0) the shader falls back to raw diffuse albedo (flat shading).
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
@@ -36,10 +37,15 @@ of the original Doom 3 GPL Source Code release.
 #extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
 #extension GL_EXT_nonuniform_qualifier                     : enable
 
+// TLAS needed to fire shadow rays from this hit shader.
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+
 #include "rt_material.glsl"
 #include "reflect_payload.glsl"
+#include "gi_shadow_payload.glsl"
 
-layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
+layout(location = 0) rayPayloadInEXT ReflPayload         reflPayload;
+layout(location = 1) rayPayloadEXT   GIShadowPayload     reflShadow;
 
 // ---------------------------------------------------------------------------
 // GI light list — same buffer as gi_ray.rchit uses for bounce evaluation.
@@ -63,11 +69,18 @@ layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
 // Weight of vertex 0 = 1.0 - baryCoord.x - baryCoord.y.
 hitAttributeEXT vec2 baryCoord;
 
-#define REFL_MAX_LIGHTS 128
+#define REFL_MAX_LIGHTS      128
+// Cap shadow rays per reflection hit for performance. Lights are iterated
+// in buffer order (closest not guaranteed), so this trades quality for cost.
+// Increase to 16–32 if shadows look incomplete in heavily-lit scenes.
+#define REFL_MAX_SHADOW_LIGHTS 8
+#define REFL_SHADOW_BIAS       0.5   // world-unit offset to avoid self-shadowing
 
 // ---------------------------------------------------------------------------
 // rt_ReflEvalLighting — evaluate direct irradiance at a surface point using
-// the scene light list.  No shadow rays: NdotL × quadratic falloff only.
+// the scene light list.  Shadow rays are fired for the first REFL_MAX_SHADOW_LIGHTS
+// candidates; remaining lights use NdotL × falloff only (no shadow test) so the
+// cap degrades gracefully rather than going black.
 // Returns vec3(kAmbient) as a floor when no lights reach the surface.
 // ---------------------------------------------------------------------------
 vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
@@ -77,6 +90,7 @@ vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
     vec3 irradiance = vec3(kAmbient);
 
     int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
+    int shadowsUsed = 0;
     for (int i = 0; i < n; i++)
     {
         vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz;
@@ -86,22 +100,42 @@ vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
 
         vec3  toL  = lPos - hitPos;
         float dist = length(toL);
-        // GI and reflections share this light buffer, but reflection lighting should
-        // not disappear when GI radius is tuned low for performance. Keep GI radius
-        // as a floor and also allow a light-radius-derived evaluation window.
-        float evalRadius = max(reflLightBuf.giRadius, lRad * 2.0);
-        if (dist >= evalRadius || dist < 0.01)
+        if (dist >= lRad || dist < 0.01)
             continue;
 
-        float NdotL = dot(hitNorm, toL / dist);
+        vec3  lightDir = toL / dist;
+        float NdotL = dot(hitNorm, lightDir);
         if (NdotL <= 0.0)
             continue;
 
-        // normalize inverse square (lorentzian). 
-        float t=  dist/lRad;
-        float atten = 1.0 / (t *t + 1.0);
-        if (atten < 0.02)
+        // Quadratic falloff matching GI: zero at the edge of light radius, hard cutoff beyond.
+        float t     = dist / max(lRad, 1.0);
+        float atten = t < 1.0 ? 1.0 - t * t : 0.0;
+        if (atten <= 0.0)
             continue;
+
+        // Shadow ray — fire for the first REFL_MAX_SHADOW_LIGHTS candidates.
+        // miss index 2 → gi_shadow.rmiss (sets occluded=false when unblocked).
+        if (shadowsUsed < REFL_MAX_SHADOW_LIGHTS)
+        {
+            reflShadow.occluded = true;
+            traceRayEXT(
+                tlas,
+                gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+                0xFF,
+                0,              // sbt hit offset (unused — skip closest hit)
+                0,              // sbt stride
+                2,              // miss index 2 → gi_shadow.rmiss
+                hitPos + hitNorm * REFL_SHADOW_BIAS,
+                0.0,
+                lightDir,
+                dist - REFL_SHADOW_BIAS,
+                1               // payload location 1
+            );
+            shadowsUsed++;
+            if (reflShadow.occluded)
+                continue;
+        }
 
         irradiance += lColor * lInt * NdotL * atten;
     }
