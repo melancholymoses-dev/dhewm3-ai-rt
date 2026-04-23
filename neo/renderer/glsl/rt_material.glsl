@@ -26,20 +26,21 @@ of the original Doom 3 GPL Source Code release.
 // std430: all fields 4 bytes, total 32 bytes.
 // ---------------------------------------------------------------------------
 struct MaterialEntry {
-    uint  diffuseTexIndex;  // index into matTextures[] (0 = white fallback)
-    uint  normalTexIndex;   // index into matTextures[] (1 = flat normal fallback)
-    float roughness;        // GGX roughness [0,1]
-    uint  flags;            // MAT_FLAG_*
-    uint  baseGeomIdx;      // offset into per-geometry VtxAddrTable/IdxAddrTable
-    float alphaThreshold;   // alpha discard threshold (MAT_FLAG_ALPHA_TESTED)
-    uint  maxVertex;        // numVerts-1 for this geometry; 0xFFFFFFFF = no check
-    uint  pad1;
+    uint  diffuseTexIndex;   // index into matTextures[] (0 = white fallback)
+    uint  normalTexIndex;    // index into matTextures[] (1 = flat normal fallback)
+    float roughness;         // GGX roughness [0,1]
+    uint  flags;             // MAT_FLAG_*
+    uint  baseGeomIdx;       // offset into per-geometry VtxAddrTable/IdxAddrTable
+    float alphaThreshold;    // alpha discard threshold (MAT_FLAG_ALPHA_TESTED)
+    uint  maxVertex;         // numVerts-1 for this geometry; 0xFFFFFFFF = no check
+    uint  emissiveTexIndex;  // bindless index of SL_AMBIENT stage image; 0 = no emissive
 };
 
 #define MAT_FLAG_ALPHA_TESTED  0x01u
 #define MAT_FLAG_TWO_SIDED     0x02u
 #define MAT_FLAG_GLASS         0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
 #define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
+#define MAT_FLAG_EMISSIVE      0x10u  // SL_AMBIENT stage present — surface emits its own light
 
 // ---------------------------------------------------------------------------
 // set=1 bindings
@@ -195,4 +196,19 @@ vec4 rt_SampleDiffuse(uint matIdx, int primId, vec2 bary)
     if (texIdx >= 4096u)
         texIdx = 0u;
     return texture(matTextures[nonuniformEXT(texIdx)], uv);
+}
+
+// ---------------------------------------------------------------------------
+// rt_SampleEmissive — sample the SL_AMBIENT (self-illuminated) texture.
+// Returns vec3(0) when the surface has no emissive stage.
+// ---------------------------------------------------------------------------
+vec3 rt_SampleEmissive(uint matIdx, int primId, vec2 bary)
+{
+    if ((materials[matIdx].flags & MAT_FLAG_EMISSIVE) == 0u)
+        return vec3(0.0);
+    vec2 uv = rt_InterpolateUV(matIdx, primId, bary);
+    uint texIdx = materials[matIdx].emissiveTexIndex;
+    if (texIdx >= 4096u)
+        texIdx = 0u;
+    return texture(matTextures[nonuniformEXT(texIdx)], uv).rgb;
 }

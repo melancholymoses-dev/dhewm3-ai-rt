@@ -58,9 +58,9 @@ struct ReflGILight {
 
 layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
     int        numLights;
-    float      bounceScale; // unused here; kept for layout compatibility
-    float      giRadius;    // r_rtGIRadius — max range for light evaluation
-    int        pad1;
+    float      bounceScale;   // unused here; kept for layout compatibility
+    float      giRadius;      // r_rtGIRadius — max range for light evaluation
+    float      emissiveScale; // r_rtGIEmissiveScale — emissive surface multiplier
     ReflGILight lights[];
 } reflLightBuf;
 
@@ -175,6 +175,15 @@ void main()
                                + gl_WorldRayDirectionEXT * gl_HitTEXT
                                + gl_WorldRayDirectionEXT * 0.01;
         reflPayload.nextDir = gl_WorldRayDirectionEXT;
+        return;
+    }
+
+    // Emissive surfaces return their emitted colour directly (no lighting evaluation).
+    vec3 emissive = rt_SampleEmissive(matIdx, gl_PrimitiveID, baryCoord);
+    if (dot(emissive, emissive) > 0.001)
+    {
+        reflPayload.colour        = emissive * reflLightBuf.emissiveScale;
+        reflPayload.transmittance = 0.0;
         return;
     }
 
