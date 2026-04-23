@@ -1179,7 +1179,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // DEBUG: log light counts once per second (keep for diagnostics).
-    if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL)
+    if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL && r_vkLogRT.GetInteger() >= 1)
     {
         static int s_lastLogFrame = -9999;
         if (tr.frameCount - s_lastLogFrame > 60)
@@ -1189,6 +1189,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
             int viewLightCount = 0;
             for (const viewLight_t *vl = viewDef->viewLights; vl; vl = vl->next)
                 viewLightCount++;
+
             common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n", viewLightCount, lb->numLights,
                            viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y, viewDef->renderView.vieworg.z);
         }
