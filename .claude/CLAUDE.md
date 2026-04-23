@@ -19,7 +19,7 @@ When adding new shaders update CMakelists.  For glsl files add them to the GLSL_
 
 ## Assets
 The main doom3 assets have been unzipped and are accessible at
-../build_rt/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.
+build_rt/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.
 
 neo/game/ and neo/d3xp/ are near-identical; changes must be mirrored across both.  
 Game is for the base game, d3xp is the expansion pack.
