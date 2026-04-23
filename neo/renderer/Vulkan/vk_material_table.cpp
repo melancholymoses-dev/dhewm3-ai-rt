@@ -487,8 +487,35 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
         if (!stage)
             continue;
 
-        // Skip stages with no image (e.g. vertex-program-only stages).
         idImage *img = stage->texture.image;
+
+        if (stage->lighting == SL_AMBIENT && !(entry.flags & VK_MAT_FLAG_EMISSIVE))
+        {
+            // Treat SL_AMBIENT stages as emissive if they are true additive overlays
+            // (including masked-add variants) with explicit UVs, or if they are
+            // cinematic/videomap stages.
+            // Cubemap-reflect stages (texgen == TG_REFLECT_CUBE, used for visor/armour
+            // rim-light on characters) share SL_AMBIENT but must NOT be treated as
+            // emissive — they are what caused the false gold outlines on marines/scientists.
+            const int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
+            const int srcBlend = blendBits & GLS_SRCBLEND_BITS;
+            const int dstBlend = blendBits & GLS_DSTBLEND_BITS;
+            const bool addsLight = (dstBlend == GLS_DSTBLEND_ONE && srcBlend != GLS_SRCBLEND_ZERO);
+            const bool isCinematic = (stage->texture.cinematic != nullptr);
+            const bool isExplicitUV = (stage->texture.texgen == TG_EXPLICIT);
+
+            if (isCinematic || (isExplicitUV && addsLight))
+            {
+                // Screen glow, keypad flicker, emissive decal, videomap screen.
+                // If no static image exists (common with cinematic/gui paths), keep
+                // white fallback and rely on the emissive flag.
+                entry.emissiveTexIndex = img ? GetOrAssignTexIndex(img) : 0;
+                entry.flags |= VK_MAT_FLAG_EMISSIVE;
+            }
+            // else: cubemap-reflect, env-blend, or other ambient helper stage — skip.
+        }
+
+        // Skip stages with no image (e.g. vertex-program-only stages) for diffuse/normal.
         if (!img)
             continue;
 
@@ -496,14 +523,17 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
             entry.diffuseTexIndex = GetOrAssignTexIndex(img);
         else if (stage->lighting == SL_BUMP)
             entry.normalTexIndex = GetOrAssignTexIndex(img);
-        else if (stage->lighting == SL_AMBIENT && !(entry.flags & VK_MAT_FLAG_EMISSIVE))
-        {
-            // Use the first SL_AMBIENT stage found as the emissive source.
-            entry.emissiveTexIndex = GetOrAssignTexIndex(img);
-            entry.flags |= VK_MAT_FLAG_EMISSIVE;
-        }
         // SL_SPECULAR: no scalar exponent available in Doom3 material API.
         // Roughness stays at 1.0 (fully diffuse) — revisit in Phase 6.
+    }
+
+    // guiSurf / entity GUI materials often carry emission through GUI draw paths
+    // without a conventional static stage texture; treat them as emissive so GI
+    // can pick them up (e.g. kiosks, vending fronts, terminals).
+    if (!(entry.flags & VK_MAT_FLAG_EMISSIVE) && shader->HasGui())
+    {
+        entry.emissiveTexIndex = 0; // white fallback
+        entry.flags |= VK_MAT_FLAG_EMISSIVE;
     }
 
     // Alpha threshold: default 0.5 for all MC_PERFORATED materials.
