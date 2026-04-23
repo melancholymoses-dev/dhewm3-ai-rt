@@ -451,7 +451,7 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     entry.baseGeomIdx = baseGeomIdx;
     entry.alphaThreshold = 0.5f;
     entry.maxVertex = 0xFFFFFFFFu; // sentinel: no bounds check (overridden in TLAS loop)
-    entry.pad1 = 0;
+    entry.emissiveTexIndex = 0;
 
     // --- Geometry addresses ---
     // Writing is now done per-geometry in the TLAS loop (vk_accelstruct.cpp)
@@ -496,6 +496,12 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
             entry.diffuseTexIndex = GetOrAssignTexIndex(img);
         else if (stage->lighting == SL_BUMP)
             entry.normalTexIndex = GetOrAssignTexIndex(img);
+        else if (stage->lighting == SL_AMBIENT && !(entry.flags & VK_MAT_FLAG_EMISSIVE))
+        {
+            // Use the first SL_AMBIENT stage found as the emissive source.
+            entry.emissiveTexIndex = GetOrAssignTexIndex(img);
+            entry.flags |= VK_MAT_FLAG_EMISSIVE;
+        }
         // SL_SPECULAR: no scalar exponent available in Doom3 material API.
         // Roughness stays at 1.0 (fully diffuse) — revisit in Phase 6.
     }

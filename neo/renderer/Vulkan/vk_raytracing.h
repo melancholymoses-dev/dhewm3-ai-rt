@@ -58,6 +58,7 @@ static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots ac
 #define VK_MAT_FLAG_TWO_SIDED 0x02u     // CT_TWO_SIDED — no back-face cull
 #define VK_MAT_FLAG_GLASS 0x04u         // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
 #define VK_MAT_FLAG_PLAYER_BODY 0x08u   // noSelfShadow entity — routed to player_reflect hit group
+#define VK_MAT_FLAG_EMISSIVE 0x10u      // SL_AMBIENT stage present — surface emits its own light
 
 // One entry per BLAS geometry slot.  Indexed by
 //   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT
@@ -71,8 +72,8 @@ struct VkMaterialEntry
     uint32_t flags;           // VK_MAT_FLAG_*
     uint32_t baseGeomIdx;     // offset into per-geometry VtxAddrTable/IdxAddrTable
     float alphaThreshold;     // alpha test cutoff (MC_PERFORATED); default 0.5
-    uint32_t maxVertex; // numVerts-1 for this geometry; used for bounds check in rt_InterpolateUV
-    uint32_t pad1;
+    uint32_t maxVertex;        // numVerts-1 for this geometry; used for bounds check in rt_InterpolateUV
+    uint32_t emissiveTexIndex; // bindless index of SL_AMBIENT stage image; 0 = no emissive
 };
 static_assert(sizeof(VkMaterialEntry) == 32, "VkMaterialEntry size mismatch");
 

@@ -70,9 +70,9 @@ struct GILight {
 
 layout(set = 0, binding = 4, std430) readonly buffer GILightBuffer {
     int     numLights;
-    float   bounceScale; // r_rtGIBounceScale from host
-    float   giRadius;    // r_rtGIRadius — max range for light evaluation
-    int     pad1;
+    float   bounceScale;   // r_rtGIBounceScale from host
+    float   giRadius;      // r_rtGIRadius — max range for light evaluation
+    float   emissiveScale; // r_rtGIEmissiveScale from host
     GILight lights[];
 } giLightBuf;
 
@@ -107,6 +107,14 @@ void main()
     // Sample diffuse albedo at secondary hit.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
     vec3 albedo  = diffuse.rgb;
+
+    // Emissive surfaces contribute their own colour directly as bounce radiance.
+    vec3 emissive = rt_SampleEmissive(matIdx, gl_PrimitiveID, baryCoord);
+    if (dot(emissive, emissive) > 0.001)
+    {
+        giPayload.colour = emissive * giLightBuf.emissiveScale;
+        return;
+    }
 
     // --- Option B: evaluate each in-range light at the secondary hit ---
     vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
