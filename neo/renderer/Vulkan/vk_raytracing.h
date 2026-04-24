@@ -59,6 +59,7 @@ static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots ac
 #define VK_MAT_FLAG_GLASS 0x04u         // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
 #define VK_MAT_FLAG_PLAYER_BODY 0x08u   // noSelfShadow entity — routed to player_reflect hit group
 #define VK_MAT_FLAG_EMISSIVE 0x10u      // SL_AMBIENT stage present — surface emits its own light
+#define VK_MAT_FLAG_GUI_EMISSIVE 0x20u  // guiSurf/entity GUI surface — boost emissive in RT GI/refs
 
 // One entry per BLAS geometry slot.  Indexed by
 //   gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT

@@ -109,7 +109,7 @@ void main()
     vec3 albedo  = diffuse.rgb;
 
     // Emissive surfaces contribute their own colour directly as bounce radiance.
-    vec3 emissive = rt_SampleEmissive(matIdx, gl_PrimitiveID, baryCoord);
+    vec3 emissive = rt_EvalEmissiveRadiance(matIdx, gl_PrimitiveID, baryCoord);
     if (dot(emissive, emissive) > 0.001)
     {
         giPayload.colour = emissive * giLightBuf.emissiveScale;
