@@ -42,15 +42,15 @@ Code release.
 idCVar r_rtGI("r_rtGI", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
               "Enable one-bounce GI (Phase 6.1, ambient colour bleeding)");
 
-idCVar r_rtGIRadius("r_rtGIRadius", "256.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
+idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI bounce ray distance in world units");
 
-static idCVar r_rtGISamples("r_rtGISamples", "3", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
+static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
-static idCVar r_rtGIStrength("r_rtGIStrength", "0.3", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGIStrength("r_rtGIStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
 
 static idCVar r_rtGIContrast(
-    "r_rtGIContrast", "0.2", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
     "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
     "0 = off, 1 = full effect");
 
@@ -64,12 +64,11 @@ static idCVar r_rtGILightBounce(
     "Enable Option B: evaluate nearest lights at secondary hit (directional colour bounce)");
 
 static idCVar r_rtGIBounceScale(
-    "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIBounceScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
 
-static idCVar r_rtGIEmissiveScale(
-    "r_rtGIEmissiveScale", "1.0", CVAR_RENDERER | CVAR_FLOAT,
-    "Multiplier on emissive surface (SL_AMBIENT) contribution to GI and reflections");
+static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+                                  "Multiplier on emissive surface (SL_AMBIENT) contribution to GI and reflections");
 
 static idCVar r_rtGIMaxBounceLights(
     "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
@@ -112,9 +111,9 @@ struct GILightEntry
 struct GILightBuffer
 {
     int32_t numLights;
-    float bounceScale;    // r_rtGIBounceScale — per-light irradiance multiplier
-    float giRadius;       // r_rtGIRadius — hit-point light evaluation window (shader-side)
-    float emissiveScale;  // r_rtGIEmissiveScale — emissive surface contribution multiplier
+    float bounceScale;   // r_rtGIBounceScale — per-light irradiance multiplier
+    float giRadius;      // r_rtGIRadius — hit-point light evaluation window (shader-side)
+    float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
 static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffer size mismatch");
@@ -946,9 +945,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 
     GILightBuffer *lb = (GILightBuffer *)vkRT.giLightSsboMapped[frameIdx];
     lb->numLights = 0;
-    lb->bounceScale    = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
-    lb->giRadius       = Max(1.0f, r_rtGIRadius.GetFloat());
-    lb->emissiveScale  = idMath::ClampFloat(0.0f, 100.0f, r_rtGIEmissiveScale.GetFloat());
+    lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
+    lb->giRadius = Max(1.0f, r_rtGIRadius.GetFloat());
+    lb->emissiveScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIEmissiveScale.GetFloat());
 
     const float giRadius = lb->giRadius;
     const float lightCollectScale = idMath::ClampFloat(0.25f, 8.0f, r_rtGILightCollectRadiusScale.GetFloat());

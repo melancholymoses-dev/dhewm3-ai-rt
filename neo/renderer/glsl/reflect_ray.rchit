@@ -179,7 +179,7 @@ void main()
     }
 
     // Emissive surfaces return their emitted colour directly (no lighting evaluation).
-    vec3 emissive = rt_SampleEmissive(matIdx, gl_PrimitiveID, baryCoord);
+    vec3 emissive = rt_EvalEmissiveRadiance(matIdx, gl_PrimitiveID, baryCoord);
     if (dot(emissive, emissive) > 0.001)
     {
         reflPayload.colour        = emissive * reflLightBuf.emissiveScale;

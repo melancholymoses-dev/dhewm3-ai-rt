@@ -41,6 +41,7 @@ struct MaterialEntry {
 #define MAT_FLAG_GLASS         0x04u  // MC_TRANSLUCENT — thin glass, F0=0.04
 #define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
 #define MAT_FLAG_EMISSIVE      0x10u  // SL_AMBIENT stage present — surface emits its own light
+#define MAT_FLAG_GUI_EMISSIVE  0x20u  // guiSurf/entity GUI surface — emissive boost path
 
 // ---------------------------------------------------------------------------
 // set=1 bindings
@@ -211,4 +212,15 @@ vec3 rt_SampleEmissive(uint matIdx, int primId, vec2 bary)
     if (texIdx >= 4096u)
         texIdx = 0u;
     return texture(matTextures[nonuniformEXT(texIdx)], uv).rgb;
+}
+
+// rt_EvalEmissiveRadiance — final emissive radiance used by GI/reflection hits.
+// GUI materials are often authored as low dynamic-range UI textures, so boost and
+// clamp to a small floor to make monitor/panel glow visible in indirect light.
+vec3 rt_EvalEmissiveRadiance(uint matIdx, int primId, vec2 bary)
+{
+    vec3 e = rt_SampleEmissive(matIdx, primId, bary);
+    if ((materials[matIdx].flags & MAT_FLAG_GUI_EMISSIVE) != 0u)
+        e = max(e * 3.0, vec3(0.2));
+    return e;
 }

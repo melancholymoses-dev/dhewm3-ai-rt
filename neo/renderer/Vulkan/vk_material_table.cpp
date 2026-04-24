@@ -491,8 +491,8 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
 
         if (stage->lighting == SL_AMBIENT && !(entry.flags & VK_MAT_FLAG_EMISSIVE))
         {
-            // Treat SL_AMBIENT stages as emissive if they are true additive overlays
-            // (including masked-add variants) with explicit UVs, or if they are
+            // Treat SL_AMBIENT stages as emissive if they are strict additive overlays
+            // (blend add == one,one) with explicit UVs, or if they are
             // cinematic/videomap stages.
             // Cubemap-reflect stages (texgen == TG_REFLECT_CUBE, used for visor/armour
             // rim-light on characters) share SL_AMBIENT but must NOT be treated as
@@ -500,11 +500,12 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
             const int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
             const int srcBlend = blendBits & GLS_SRCBLEND_BITS;
             const int dstBlend = blendBits & GLS_DSTBLEND_BITS;
-            const bool addsLight = (dstBlend == GLS_DSTBLEND_ONE && srcBlend != GLS_SRCBLEND_ZERO);
+            const bool isAdditive = (srcBlend == GLS_SRCBLEND_ONE && dstBlend == GLS_DSTBLEND_ONE);
             const bool isCinematic = (stage->texture.cinematic != nullptr);
             const bool isExplicitUV = (stage->texture.texgen == TG_EXPLICIT);
+            const bool isPerforated = (shader->Coverage() == MC_PERFORATED);
 
-            if (isCinematic || (isExplicitUV && addsLight))
+            if (isCinematic || (isExplicitUV && isAdditive && !isPerforated))
             {
                 // Screen glow, keypad flicker, emissive decal, videomap screen.
                 // If no static image exists (common with cinematic/gui paths), keep
@@ -534,6 +535,7 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     {
         entry.emissiveTexIndex = 0; // white fallback
         entry.flags |= VK_MAT_FLAG_EMISSIVE;
+        entry.flags |= VK_MAT_FLAG_GUI_EMISSIVE;
     }
 
     // Alpha threshold: default 0.5 for all MC_PERFORATED materials.
@@ -596,6 +598,34 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
     // Rebuild bindless descriptor array if new images were encountered.
     if (s_bindlessDirty)
         RebuildBindlessDescriptors();
+
+    // Debug summary of emissive tagging coverage.
+    // Log on static rewrites at normal verbosity, and every frame only at very high verbosity.
+    if ((r_vkLogRT.GetInteger() >= 1 && rewriteStatic) || r_vkLogRT.GetInteger() >= 3)
+    {
+        uint32_t emissiveCount = 0;
+        uint32_t guiEmissiveCount = 0;
+
+        for (uint32_t i = 0; i < staticMatCount; i++)
+        {
+            const uint32_t flags = staticEntries[i].flags;
+            if (flags & VK_MAT_FLAG_EMISSIVE)
+                emissiveCount++;
+            if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
+                guiEmissiveCount++;
+        }
+        for (uint32_t i = 0; i < dynamicMatCount; i++)
+        {
+            const uint32_t flags = dynamicEntries[i].flags;
+            if (flags & VK_MAT_FLAG_EMISSIVE)
+                emissiveCount++;
+            if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
+                guiEmissiveCount++;
+        }
+
+        common->Printf("VK RT MatTable: emissive-tagged=%u gui-emissive=%u total=%u\n", emissiveCount,
+                       guiEmissiveCount, staticMatCount + dynamicMatCount);
+    }
 
     if (r_vkLogRT.GetInteger() >= 2)
     {

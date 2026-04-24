@@ -6,6 +6,8 @@ Tracking ideas for improving raytraced reflections beyond current state.
 
 ## 1. Off-Screen Entities in TLAS  
 
+Solved
+
 Currently the TLAS only contains `viewDef->viewEntitys` — the frustum-culled entity list. Dynamic entities (enemies, NPCs, props) that are behind the player are absent from the TLAS and therefore invisible in reflections.
 
 Static world BSP geometry is unaffected (world BLAS is persistent). The gap is dynamic entities.
@@ -81,7 +83,9 @@ Keeps TLAS size bounded when the map has many off-screen entities.
 Status:
 Solved.  We animate dynamic entities within 500 units of the player.  Works pretty great.  
 
-## 2. Player Weapon Not Visible in Reflections (World Weapon Excluded from TLAS)
+## 2. Player Weapon Not Visible in Reflections (World Weapon Excluded from TLAS)  
+
+Solved.
 
 ### Problem
 
@@ -203,6 +207,8 @@ This lets the reflection ray pick up projectile glow and continue to whatever is
 
 Before building the above, check `def/projectile.def` and the plasma/rocket model materials in `pak000` to confirm the actual flags. It's possible projectile body meshes are entirely particle/sprite based, making option B irrelevant. This is a one-time investigation, not a code change.
 
+
+Status: Tried.  Didn't look good and tanked FPS.  
 
 # Plan: Sprite / Particle Effects in RT Reflections (Low-Effort Approximate)
 
