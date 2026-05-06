@@ -68,10 +68,12 @@ jobs:
         cmake -A x64 -DDHEWM3LIBS="../dhewm3-libs-master/x86_64-w64-mingw32/" -DTOOLS=ON -S neo/ -B build
         time cmake --build build/ --config RelWithDebInfo
     - name: Create testbuild package
+      id: package_meta
       run: |
         # Create release directory tree
         export PKGDIR="dhewm3-rt-win64-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
+        echo "pkgname=$PKGDIR" >> $GITHUB_OUTPUT
         mkdir -p publish/$PKGDIR/base
         mkdir publish/$PKGDIR/d3xp
         # debug symbols (*.pdb) are put in a separate zip
@@ -103,18 +105,19 @@ jobs:
         cp Changelog.md publish/$PKGDIR/Changelog.txt
         cp Configuration.md publish/$PKGDIR/Configuration.txt
         # copy runtime libraries (SDL, OpenAL, cURL)
+        mkdir -p "$GITHUB_WORKSPACE/publish/$PKGDIR"
         cd ../dhewm3-libs-master/x86_64-w64-mingw32/bin/
-        cp OpenAL32.dll SDL2.dll libcurl-4.dll ../../../dhewm3-rt/publish/$PKGDIR/
+        cp OpenAL32.dll SDL2.dll libcurl-4.dll "$GITHUB_WORKSPACE/publish/$PKGDIR/"
         cd -
     - name: Upload testbuild package
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.pkgname }}
+        name: ${{ steps.package_meta.outputs.pkgname }}
         path: publish/
         if-no-files-found: error
     - name: Upload testbuild debug symbols
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.pkgname }}-debugsyms
+        name: ${{ steps.package_meta.outputs.pkgname }}-debugsyms
         path: debug-syms/
         if-no-files-found: error
