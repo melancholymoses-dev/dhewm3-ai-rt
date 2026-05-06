@@ -42,6 +42,11 @@ jobs:
 
         test -f "$VULKAN_SDK/include/vulkan/vulkan.h" || { echo "Missing Vulkan header: $VULKAN_SDK/include/vulkan/vulkan.h" >&2; exit 1; }
 
+        # Some checkouts lose executable bits on SDK tools; restore for all files in bin/.
+        if [ -d "$VULKAN_SDK/bin" ]; then
+          find "$VULKAN_SDK/bin" -maxdepth 1 -type f -exec chmod +x {} +
+        fi
+
         # Vulkan SDK bundles may place the loader in lib/ or lib64/, and may only ship versioned .so files.
         VULKAN_LIB_DIR=""
         for d in "$VULKAN_SDK/lib" "$VULKAN_SDK/lib64"; do
@@ -71,10 +76,12 @@ jobs:
         cmake -G Ninja ../neo/
         ninja
     - name: Create testbuild package
+      id: package_meta
       run: |
         # Create release directory tree
         export PKGDIR="dhewm3-rt-linux-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
+        echo "pkgname=$PKGDIR" >> $GITHUB_OUTPUT
         mkdir -p publish/$PKGDIR/base
         mkdir publish/$PKGDIR/d3xp
         # Copy release assets
@@ -104,6 +111,6 @@ jobs:
     - name: Upload testbuild package
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.pkgname }}
+        name: ${{ steps.package_meta.outputs.pkgname }}
         path: publish/
         if-no-files-found: error
