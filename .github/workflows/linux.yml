@@ -41,7 +41,26 @@ jobs:
         echo "VULKAN_SDK=$VULKAN_SDK"
 
         test -f "$VULKAN_SDK/include/vulkan/vulkan.h" || { echo "Missing Vulkan header: $VULKAN_SDK/include/vulkan/vulkan.h" >&2; exit 1; }
-        test -f "$VULKAN_SDK/lib/libvulkan.so" || { echo "Missing Vulkan library: $VULKAN_SDK/lib/libvulkan.so" >&2; exit 1; }
+
+        # Vulkan SDK bundles may place the loader in lib/ or lib64/, and may only ship versioned .so files.
+        VULKAN_LIB_DIR=""
+        for d in "$VULKAN_SDK/lib" "$VULKAN_SDK/lib64"; do
+          if compgen -G "$d/libvulkan.so*" > /dev/null; then
+            VULKAN_LIB_DIR="$d"
+            break
+          fi
+        done
+
+        if [ -z "$VULKAN_LIB_DIR" ]; then
+          echo "Missing Vulkan library under $VULKAN_SDK/lib or $VULKAN_SDK/lib64" >&2
+          exit 1
+        fi
+
+        # Ensure an unversioned soname exists for find_library() style lookups.
+        if [ ! -f "$VULKAN_LIB_DIR/libvulkan.so" ]; then
+          vklib="$(ls -1 "$VULKAN_LIB_DIR"/libvulkan.so* | head -n 1)"
+          ln -sf "$(basename "$vklib")" "$VULKAN_LIB_DIR/libvulkan.so"
+        fi
 
         command -v glslc >/dev/null 2>&1 || { echo "glslc not found in PATH" >&2; exit 1; }
         glslc --version        
@@ -60,7 +79,7 @@ jobs:
         mkdir publish/$PKGDIR/d3xp
         # Copy release assets
         cd build
-        cp dhewm3-rt base.so d3xp.so ../publish/$PKGDIR/
+        cp dhewm3_rt base.so d3xp.so ../publish/$PKGDIR/
         cd ..
         # Copy misc assets
         cp -r base/* publish/$PKGDIR/base/
