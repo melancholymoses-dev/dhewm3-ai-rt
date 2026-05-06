@@ -97,7 +97,7 @@ static void VK_RT_CreateNullLightSsbo()
     if (s_nullLightSsbo != VK_NULL_HANDLE)
         return;
 
-    // Mirrors the GILightBuffer header: { int numLights; float bounceScale; int pad[2]; }
+    // Mirrors the GILightBuffer header: { int numLights; float bounceScale; float giRadius; float emissiveScale; }
     const int32_t nullData[4] = {0, 0, 0, 0}; // numLights = 0
 
     VK_CreateBuffer(sizeof(nullData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
