@@ -118,23 +118,27 @@ vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
         // miss index 2 → gi_shadow.rmiss (sets occluded=false when unblocked).
         if (shadowsUsed < REFL_MAX_SHADOW_LIGHTS)
         {
-            reflShadow.occluded = true;
-            traceRayEXT(
-                tlas,
-                gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-                0xFF,
-                0,              // sbt hit offset (unused — skip closest hit)
-                0,              // sbt stride
-                2,              // miss index 2 → gi_shadow.rmiss
-                hitPos + hitNorm * REFL_SHADOW_BIAS,
-                0.0,
-                lightDir,
-                dist - REFL_SHADOW_BIAS,
-                1               // payload location 1
-            );
-            shadowsUsed++;
-            if (reflShadow.occluded)
-                continue;
+            float shadowTMax = dist - REFL_SHADOW_BIAS;
+            if (shadowTMax > 0.0)
+            {
+                reflShadow.occluded = true;
+                traceRayEXT(
+                    tlas,
+                    gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+                    0xFF,
+                    0,              // sbt hit offset (unused — skip closest hit)
+                    0,              // sbt stride
+                    2,              // miss index 2 → gi_shadow.rmiss
+                    hitPos + hitNorm * REFL_SHADOW_BIAS,
+                    0.0,
+                    lightDir,
+                    shadowTMax,
+                    1               // payload location 1
+                );
+                shadowsUsed++;
+                if (reflShadow.occluded)
+                    continue;
+            }
         }
 
         irradiance += lColor * lInt * NdotL * atten;

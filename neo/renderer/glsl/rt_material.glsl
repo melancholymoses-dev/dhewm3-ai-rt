@@ -207,10 +207,12 @@ vec3 rt_SampleEmissive(uint matIdx, int primId, vec2 bary)
 {
     if ((materials[matIdx].flags & MAT_FLAG_EMISSIVE) == 0u)
         return vec3(0.0);
-    vec2 uv = rt_InterpolateUV(matIdx, primId, bary);
+
     uint texIdx = materials[matIdx].emissiveTexIndex;
-    if (texIdx >= 4096u)
-        texIdx = 0u;
+    if (texIdx == 0u || texIdx >= 4096u)
+        return vec3(0.0);
+
+    vec2 uv = rt_InterpolateUV(matIdx, primId, bary);
     return texture(matTextures[nonuniformEXT(texIdx)], uv).rgb;
 }
 

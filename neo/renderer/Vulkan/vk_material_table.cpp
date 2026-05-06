@@ -505,15 +505,17 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
             const bool isExplicitUV = (stage->texture.texgen == TG_EXPLICIT);
             const bool isPerforated = (shader->Coverage() == MC_PERFORATED);
 
-            if (isCinematic || (isExplicitUV && isAdditive && !isPerforated))
+            if ((isCinematic || (isExplicitUV && isAdditive && !isPerforated)) && img != nullptr)
             {
                 // Screen glow, keypad flicker, emissive decal, videomap screen.
-                // If no static image exists (common with cinematic/gui paths), keep
-                // white fallback and rely on the emissive flag.
-                entry.emissiveTexIndex = img ? GetOrAssignTexIndex(img) : 0;
+                // Ray tracing only marks the stage emissive when a static image exists;
+                // otherwise skip emissive classification instead of sampling slot 0's
+                // white fallback as unintended bright emission.
+                entry.emissiveTexIndex = GetOrAssignTexIndex(img);
                 entry.flags |= VK_MAT_FLAG_EMISSIVE;
             }
-            // else: cubemap-reflect, env-blend, or other ambient helper stage — skip.
+            // else: cubemap-reflect, env-blend, non-textured cinematic/helper stage, or
+            // other ambient helper stage — skip.
         }
 
         // Skip stages with no image (e.g. vertex-program-only stages) for diffuse/normal.
@@ -529,11 +531,12 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     }
 
     // guiSurf / entity GUI materials often carry emission through GUI draw paths
-    // without a conventional static stage texture; treat them as emissive so GI
-    // can pick them up (e.g. kiosks, vending fronts, terminals).
-    if (!(entry.flags & VK_MAT_FLAG_EMISSIVE) && shader->HasGui())
+    // without a conventional static emissive stage texture. Reuse the resolved
+    // GUI/diffuse image as the emissive source when one was found, but never
+    // point emissiveTexIndex at slot 0 because that is the white fallback.
+    if (!(entry.flags & VK_MAT_FLAG_EMISSIVE) && shader->HasGui() && entry.diffuseTexIndex != 0)
     {
-        entry.emissiveTexIndex = 0; // white fallback
+        entry.emissiveTexIndex = entry.diffuseTexIndex;
         entry.flags |= VK_MAT_FLAG_EMISSIVE;
         entry.flags |= VK_MAT_FLAG_GUI_EMISSIVE;
     }
