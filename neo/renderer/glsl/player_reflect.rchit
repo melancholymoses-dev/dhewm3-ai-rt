@@ -58,7 +58,7 @@ layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
     int        numLights;
     float      bounceScale;
     float      giRadius;    // r_rtGIRadius — max range for light evaluation
-    int        pad1;
+    float      emissiveScale; // r_rtGIEmissiveScale — layout compatibility
     ReflGILight lights[];
 } reflLightBuf;
 

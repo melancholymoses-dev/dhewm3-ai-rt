@@ -451,7 +451,7 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     entry.baseGeomIdx = baseGeomIdx;
     entry.alphaThreshold = 0.5f;
     entry.maxVertex = 0xFFFFFFFFu; // sentinel: no bounds check (overridden in TLAS loop)
-    entry.pad1 = 0;
+    entry.emissiveTexIndex = 0;
 
     // --- Geometry addresses ---
     // Writing is now done per-geometry in the TLAS loop (vk_accelstruct.cpp)
@@ -487,8 +487,38 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
         if (!stage)
             continue;
 
-        // Skip stages with no image (e.g. vertex-program-only stages).
         idImage *img = stage->texture.image;
+
+        if (stage->lighting == SL_AMBIENT && !(entry.flags & VK_MAT_FLAG_EMISSIVE))
+        {
+            // Treat SL_AMBIENT stages as emissive if they are strict additive overlays
+            // (blend add == one,one) with explicit UVs, or if they are
+            // cinematic/videomap stages.
+            // Cubemap-reflect stages (texgen == TG_REFLECT_CUBE, used for visor/armour
+            // rim-light on characters) share SL_AMBIENT but must NOT be treated as
+            // emissive — they are what caused the false gold outlines on marines/scientists.
+            const int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
+            const int srcBlend = blendBits & GLS_SRCBLEND_BITS;
+            const int dstBlend = blendBits & GLS_DSTBLEND_BITS;
+            const bool isAdditive = (srcBlend == GLS_SRCBLEND_ONE && dstBlend == GLS_DSTBLEND_ONE);
+            const bool isCinematic = (stage->texture.cinematic != nullptr);
+            const bool isExplicitUV = (stage->texture.texgen == TG_EXPLICIT);
+            const bool isPerforated = (shader->Coverage() == MC_PERFORATED);
+
+            if ((isCinematic || (isExplicitUV && isAdditive && !isPerforated)) && img != nullptr)
+            {
+                // Screen glow, keypad flicker, emissive decal, videomap screen.
+                // Ray tracing only marks the stage emissive when a static image exists;
+                // otherwise skip emissive classification instead of sampling slot 0's
+                // white fallback as unintended bright emission.
+                entry.emissiveTexIndex = GetOrAssignTexIndex(img);
+                entry.flags |= VK_MAT_FLAG_EMISSIVE;
+            }
+            // else: cubemap-reflect, env-blend, non-textured cinematic/helper stage, or
+            // other ambient helper stage — skip.
+        }
+
+        // Skip stages with no image (e.g. vertex-program-only stages) for diffuse/normal.
         if (!img)
             continue;
 
@@ -498,6 +528,17 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
             entry.normalTexIndex = GetOrAssignTexIndex(img);
         // SL_SPECULAR: no scalar exponent available in Doom3 material API.
         // Roughness stays at 1.0 (fully diffuse) — revisit in Phase 6.
+    }
+
+    // guiSurf / entity GUI materials often carry emission through GUI draw paths
+    // without a conventional static emissive stage texture. Reuse the resolved
+    // GUI/diffuse image as the emissive source when one was found, but never
+    // point emissiveTexIndex at slot 0 because that is the white fallback.
+    if (!(entry.flags & VK_MAT_FLAG_EMISSIVE) && shader->HasGui() && entry.diffuseTexIndex != 0)
+    {
+        entry.emissiveTexIndex = entry.diffuseTexIndex;
+        entry.flags |= VK_MAT_FLAG_EMISSIVE;
+        entry.flags |= VK_MAT_FLAG_GUI_EMISSIVE;
     }
 
     // Alpha threshold: default 0.5 for all MC_PERFORATED materials.
@@ -560,6 +601,34 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
     // Rebuild bindless descriptor array if new images were encountered.
     if (s_bindlessDirty)
         RebuildBindlessDescriptors();
+
+    // Debug summary of emissive tagging coverage.
+    // Log on static rewrites at normal verbosity, and every frame only at very high verbosity.
+    if ((r_vkLogRT.GetInteger() >= 1 && rewriteStatic) || r_vkLogRT.GetInteger() >= 3)
+    {
+        uint32_t emissiveCount = 0;
+        uint32_t guiEmissiveCount = 0;
+
+        for (uint32_t i = 0; i < staticMatCount; i++)
+        {
+            const uint32_t flags = staticEntries[i].flags;
+            if (flags & VK_MAT_FLAG_EMISSIVE)
+                emissiveCount++;
+            if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
+                guiEmissiveCount++;
+        }
+        for (uint32_t i = 0; i < dynamicMatCount; i++)
+        {
+            const uint32_t flags = dynamicEntries[i].flags;
+            if (flags & VK_MAT_FLAG_EMISSIVE)
+                emissiveCount++;
+            if (flags & VK_MAT_FLAG_GUI_EMISSIVE)
+                guiEmissiveCount++;
+        }
+
+        common->Printf("VK RT MatTable: emissive-tagged=%u gui-emissive=%u total=%u\n", emissiveCount,
+                       guiEmissiveCount, staticMatCount + dynamicMatCount);
+    }
 
     if (r_vkLogRT.GetInteger() >= 2)
     {

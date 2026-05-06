@@ -48,6 +48,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "framework/GameCallbacks_local.h"
 #include "framework/Game.h"
 
+#include <time.h>
+
 // Vista OpenGL wrapper check
 #ifdef _WIN32
 #include "sys/win32/win_local.h"
@@ -1266,7 +1268,8 @@ void R_ReadTiledPixels(int width, int height, byte *buffer, renderView_t *ref = 
     int oldHeight = glConfig.vidHeight;
 
     bool downsampleVulkan = glConfig.isVulkan && width < oldWidth && height < oldHeight;
-    if (!downsampleVulkan) {
+    if (!downsampleVulkan)
+    {
         tr.tiledViewport[0] = width;
         tr.tiledViewport[1] = height;
     }
@@ -1549,67 +1552,84 @@ void idRenderSystemLocal::TakeScreenshot(int width, int height, const char *file
 ==================
 R_ScreenshotFilename
 
-Returns a filename with digits appended
-if we have saved a previous screenshot, don't scan
-from the beginning, because recording demo avis can involve
-thousands of shots
+Returns a filename with a local timestamp appended.
+If that filename already exists (multiple shots in same second),
+append a numeric suffix to keep it unique.
 ==================
 */
 void R_ScreenshotFilename(int &lastNumber, const char *base, idStr &fileName)
 {
-    int a, b, c, d, e;
-
     bool fsrestrict = cvarSystem->GetCVarBool("fs_restrict");
     cvarSystem->SetCVarBool("fs_restrict", false);
 
     int format = cvarSystem->GetCVarInteger("r_screenshotFormat");
 
-    lastNumber++;
-    if (lastNumber > 99999)
+    const char *extension = ".tga";
+    switch (format)
     {
-        lastNumber = 99999;
+    case 1:
+        extension = ".bmp";
+        break;
+    case 2:
+        extension = ".png";
+        break;
+    case 3:
+        extension = ".jpg";
+        break;
+    default:
+        break;
     }
-    for (; lastNumber < 99999; lastNumber++)
+
+    char timestamp[32] = {0};
+    bool hasTimestamp = false;
+    const time_t now = time(NULL);
+    if (now != (time_t)-1)
     {
-        int frac = lastNumber;
-
-        a = frac / 10000;
-        frac -= a * 10000;
-        b = frac / 1000;
-        frac -= b * 1000;
-        c = frac / 100;
-        frac -= c * 100;
-        d = frac / 10;
-        frac -= d * 10;
-        e = frac;
-
-        switch (format)
+#if defined(_WIN32)
+        struct tm tmValue;
+        if (localtime_s(&tmValue, &now) == 0)
         {
-        default:
-            sprintf(fileName, "%s%i%i%i%i%i.tga", base, a, b, c, d, e);
-            break;
-        case 1:
-            sprintf(fileName, "%s%i%i%i%i%i.bmp", base, a, b, c, d, e);
-            break;
-        case 2:
-            sprintf(fileName, "%s%i%i%i%i%i.png", base, a, b, c, d, e);
-            break;
-        case 3:
-            sprintf(fileName, "%s%i%i%i%i%i.jpg", base, a, b, c, d, e);
-            break;
+            hasTimestamp = strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H-%M-%S", &tmValue) > 0;
         }
-
-        if (lastNumber == 99999)
+#elif defined(_POSIX_VERSION)
+        struct tm tmValue;
+        if (localtime_r(&now, &tmValue) != NULL)
         {
-            break;
+            hasTimestamp = strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H-%M-%S", &tmValue) > 0;
         }
-        int len = fileSystem->ReadFile(fileName, NULL, NULL);
-        if (len <= 0)
+#else
+        struct tm *tmValue = localtime(&now);
+        if (tmValue != NULL)
         {
-            break;
+            hasTimestamp = strftime(timestamp, sizeof(timestamp), "%Y-%m-%d_%H-%M-%S", tmValue) > 0;
         }
-        // check again...
+#endif
     }
+
+    if (!hasTimestamp)
+    {
+        idStr::snPrintf(timestamp, sizeof(timestamp), "%u", Sys_Milliseconds());
+    }
+
+    // Keep names unique when multiple screenshots happen in the same second.
+    for (int attempt = 0; attempt < 10000; ++attempt)
+    {
+        if (attempt == 0)
+        {
+            fileName = va("%s%s%s", base, timestamp, extension);
+        }
+        else
+        {
+            fileName = va("%s%s_%04i%s", base, timestamp, attempt, extension);
+        }
+
+        if (fileSystem->ReadFile(fileName, NULL, NULL) <= 0)
+        {
+            lastNumber = attempt;
+            break;
+        }
+    }
+
     cvarSystem->SetCVarBool("fs_restrict", fsrestrict);
 }
 
@@ -2342,6 +2362,44 @@ void R_VidRestart_f(const idCmdArgs &args)
 
 /*
 =================
+R_BackendRestart_f
+=================
+*/
+static void R_BackendRestart_f(const idCmdArgs &args)
+{
+    const char *targetBackend = NULL;
+
+    if (args.Argc() <= 1 || idStr::Icmp(args.Argv(1), "toggle") == 0)
+    {
+        targetBackend = (idStr::Icmp(r_backend.GetString(), "vulkan") == 0) ? "opengl" : "vulkan";
+    }
+    else
+    {
+        targetBackend = args.Argv(1);
+    }
+
+    if (idStr::Icmp(targetBackend, "opengl") != 0 && idStr::Icmp(targetBackend, "vulkan") != 0)
+    {
+        common->Printf("usage: backend_restart [opengl|vulkan|toggle]\n");
+        return;
+    }
+
+    if (idStr::Icmp(r_backend.GetString(), targetBackend) == 0)
+    {
+        common->Printf("backend_restart: r_backend already '%s'\n", targetBackend);
+    }
+    else
+    {
+        cvarSystem->SetCVarString("r_backend", targetBackend);
+        common->Printf("backend_restart: set r_backend to '%s'\n", targetBackend);
+    }
+
+    // Backend changes require full renderer teardown/reinit; never use partial restart here.
+    cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "vid_restart\n");
+}
+
+/*
+=================
 R_InitMaterials
 =================
 */
@@ -2464,6 +2522,8 @@ void R_InitCommands(void)
     cmdSystem->AddCommand("showTriSurfMemory", R_ShowTriSurfMemory_f, CMD_FL_RENDERER,
                           "shows memory used by triangle surfaces");
     cmdSystem->AddCommand("vid_restart", R_VidRestart_f, CMD_FL_RENDERER, "restarts renderSystem");
+    cmdSystem->AddCommand("backend_restart", R_BackendRestart_f, CMD_FL_RENDERER,
+                          "switches r_backend (opengl/vulkan/toggle) and performs full vid_restart");
     cmdSystem->AddCommand("listRenderEntityDefs", R_ListRenderEntityDefs_f, CMD_FL_RENDERER, "lists the entity defs");
     cmdSystem->AddCommand("listRenderLightDefs", R_ListRenderLightDefs_f, CMD_FL_RENDERER, "lists the light defs");
     cmdSystem->AddCommand("listModes", R_ListModes_f, CMD_FL_RENDERER, "lists all video modes");

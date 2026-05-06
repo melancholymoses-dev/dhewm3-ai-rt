@@ -1005,7 +1005,7 @@ struct VkBlendPipelineEntry
     VkPipeline pipeline;
 };
 
-static const int MAX_BLEND_PIPELINES = 32;
+static const int MAX_BLEND_PIPELINES = 256;
 static VkBlendPipelineEntry s_blendCache[MAX_BLEND_PIPELINES];
 static int s_blendCacheCount = 0;
 
