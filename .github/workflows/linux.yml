@@ -42,9 +42,9 @@ jobs:
 
         test -f "$VULKAN_SDK/include/vulkan/vulkan.h" || { echo "Missing Vulkan header: $VULKAN_SDK/include/vulkan/vulkan.h" >&2; exit 1; }
 
-        # Some checkouts lose executable bits on SDK tools; restore for all files in bin/.
+        # Some checkouts lose executable bits on SDK tools; restore for bin/ recursively.
         if [ -d "$VULKAN_SDK/bin" ]; then
-          find "$VULKAN_SDK/bin" -maxdepth 1 -type f -exec chmod +x {} +
+          chmod -R a+rx "$VULKAN_SDK/bin" || true
         fi
 
         # Vulkan SDK bundles may place the loader in lib/ or lib64/, and may only ship versioned .so files.
@@ -61,19 +61,38 @@ jobs:
           exit 1
         fi
 
+        echo "VULKAN_LIB_DIR=$VULKAN_LIB_DIR" >> $GITHUB_ENV
+
         # Ensure an unversioned soname exists for find_library() style lookups.
         if [ ! -f "$VULKAN_LIB_DIR/libvulkan.so" ]; then
           vklib="$(ls -1 "$VULKAN_LIB_DIR"/libvulkan.so* | head -n 1)"
           ln -sf "$(basename "$vklib")" "$VULKAN_LIB_DIR/libvulkan.so"
         fi
 
-        command -v glslc >/dev/null 2>&1 || { echo "glslc not found in PATH" >&2; exit 1; }
-        glslc --version        
+        GLSLC_PATH="$(command -v glslc || true)"
+        [ -n "$GLSLC_PATH" ] || { echo "glslc not found in PATH" >&2; exit 1; }
+
+        # Some bundles expose glslc via symlink; ensure the resolved binary is executable.
+        if [ ! -x "$GLSLC_PATH" ]; then
+          chmod +x "$GLSLC_PATH" || true
+        fi
+
+        "$GLSLC_PATH" --version || {
+          echo "glslc exists but is not runnable" >&2
+          ls -l "$VULKAN_SDK/bin" >&2 || true
+          file "$GLSLC_PATH" >&2 || true
+          exit 1
+        }
     - name: Build
       run: |
         mkdir build
         cd build
-        cmake -G Ninja ../neo/
+        cmake -G Ninja \
+          -DCMAKE_PREFIX_PATH="$VULKAN_SDK" \
+          -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" \
+          -DVulkan_LIBRARY="$VULKAN_LIB_DIR/libvulkan.so" \
+          -DVulkan_GLSLC_EXECUTABLE="$VULKAN_SDK/bin/glslc" \
+          ../neo/
         ninja
     - name: Create testbuild package
       id: package_meta
