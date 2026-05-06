@@ -63,11 +63,24 @@ jobs:
 
         echo "VULKAN_LIB_DIR=$VULKAN_LIB_DIR" >> $GITHUB_ENV
 
-        # Ensure an unversioned soname exists for find_library() style lookups.
-        if [ ! -f "$VULKAN_LIB_DIR/libvulkan.so" ]; then
-          vklib="$(ls -1 "$VULKAN_LIB_DIR"/libvulkan.so* | head -n 1)"
-          ln -sf "$(basename "$vklib")" "$VULKAN_LIB_DIR/libvulkan.so"
+        # Resolve to a real library file (avoid broken/self-referential libvulkan.so symlinks).
+        VULKAN_LIB_FILE=""
+        for cand in "$VULKAN_LIB_DIR"/libvulkan.so.* "$VULKAN_LIB_DIR"/libvulkan.so; do
+          [ -e "$cand" ] || continue
+          resolved="$(readlink -f "$cand" 2>/dev/null || true)"
+          if [ -n "$resolved" ] && [ -f "$resolved" ]; then
+            VULKAN_LIB_FILE="$resolved"
+            break
+          fi
+        done
+
+        if [ -z "$VULKAN_LIB_FILE" ]; then
+          echo "Could not resolve a usable Vulkan shared library in $VULKAN_LIB_DIR" >&2
+          ls -l "$VULKAN_LIB_DIR" >&2 || true
+          exit 1
         fi
+
+        echo "VULKAN_LIB_FILE=$VULKAN_LIB_FILE" >> $GITHUB_ENV
 
         GLSLC_PATH="$(command -v glslc || true)"
         [ -n "$GLSLC_PATH" ] || { echo "glslc not found in PATH" >&2; exit 1; }
@@ -90,7 +103,7 @@ jobs:
         cmake -G Ninja \
           -DCMAKE_PREFIX_PATH="$VULKAN_SDK" \
           -DVulkan_INCLUDE_DIR="$VULKAN_SDK/include" \
-          -DVulkan_LIBRARY="$VULKAN_LIB_DIR/libvulkan.so" \
+          -DVulkan_LIBRARY="$VULKAN_LIB_FILE" \
           -DVulkan_GLSLC_EXECUTABLE="$VULKAN_SDK/bin/glslc" \
           ../neo/
         ninja
