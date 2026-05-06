@@ -72,14 +72,18 @@ jobs:
         # Create release directory tree
         export PKGDIR="dhewm3-rt-win64-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
-        #echo "PKGDIR is $PKGDIR"
         mkdir -p publish/$PKGDIR/base
         mkdir publish/$PKGDIR/d3xp
         # debug symbols (*.pdb) are put in a separate zip
         mkdir -p debug-syms/$PKGDIR
         # Copy release assets
         cd build/RelWithDebInfo
-        cp dhewm3-rt.exe base.dll d3xp.dll ../../publish/$PKGDIR/
+        # CMake target currently emits dhewm3_rt.exe on Windows CI.
+        EXE_NAME="dhewm3_rt.exe"
+        if [ ! -f "$EXE_NAME" ]; then
+          EXE_NAME="dhewm3-rt.exe"
+        fi
+        cp "$EXE_NAME" base.dll d3xp.dll ../../publish/$PKGDIR/
         cp -r *.pdb ../../debug-syms/$PKGDIR/
         cd ../..
         # Copy misc assets
