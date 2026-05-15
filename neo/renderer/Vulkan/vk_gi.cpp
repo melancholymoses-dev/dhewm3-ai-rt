@@ -104,8 +104,11 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 struct GILightEntry
 {
-    float posRadius[4];      // xyz = world pos, w = bounding radius
-    float colorIntensity[4]; // rgb = light colour, a = intensity
+    float    posRadius[4];      // xyz = world pos, w = bounding radius
+    float    colorIntensity[4]; // rgb = light colour, a = intensity
+    float    coneDir[4];        // xyz = spot direction, w = cos(halfAngle); zeroed for point lights (step 8)
+    uint32_t lightType;         // 0 = point, 1 = projected/spot
+    uint32_t pad[3];            // alignment pad to 64 bytes
 };
 
 struct GILightBuffer
@@ -116,7 +119,7 @@ struct GILightBuffer
     float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 64, "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -1004,6 +1007,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.colorIntensity[1] = g;
             c.entry.colorIntensity[2] = b;
             c.entry.colorIntensity[3] = intensity;
+            // Projected lights (flashlight, spotlights) get lightType=1; cone data filled in step 8.
+            c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = 0.0f;
+            c.entry.coneDir[3] = 0.0f;
+            c.entry.lightType  = (!p.pointLight && !p.parallel) ? 1u : 0u;
+            c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
     }
 

@@ -61,7 +61,16 @@ static idCVar r_rtVolMaxLights("r_rtVolMaxLights", "2", CVAR_RENDERER | CVAR_INT
                                "Nearest lights evaluated per step (pre-sorted, always closest)");
 
 static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
-                              "Final composite scale for the volumetric buffer");
+                              "Final composite scale for point-light scatter");
+
+static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+                                       "Scatter contribution scale for projected/flashlight (not Beer-Lambert)");
+
+static idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
+                                          "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward)");
+
+static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "1.5", CVAR_RENDERER | CVAR_FLOAT,
+                                        "Final composite multiplier for flashlight scatter");
 
 // ---------------------------------------------------------------------------
 // VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
@@ -79,33 +88,39 @@ static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLO
 //   int   scissorOffY   offset 112  size  4
 //   int   scissorExtX   offset 116  size  4
 //   int   scissorExtY   offset 120  size  4
-//   int   screenWidth   offset 124  size  4
-//   int   screenHeight  offset 128  size  4
-//   total: 132 bytes
+//   int   screenWidth         offset 124  size  4
+//   int   screenHeight        offset 128  size  4
+//   float flashlightDensity   offset 132  size  4  (fills std140 tail padding)
+//   float flashlightAniso     offset 136  size  4
+//   float flashlightStrength  offset 140  size  4
+//   total: 144 bytes (std140 rounds 132 → 144 anyway; we declare all fields)
 // ---------------------------------------------------------------------------
 
 struct VolParamsUBO
 {
-    float    invViewProj[16]; // 0
-    float    cameraPosX;      // 64
-    float    cameraPosY;      // 68
-    float    cameraPosZ;      // 72
-    float    cameraPad;       // 76 — pads vec4 cameraPosW in GLSL
-    uint32_t frameIndex;      // 80
-    int32_t  numSamples;      // 84
-    int32_t  maxLights;       // 88
-    float    density;         // 92
-    float    anisotropy;      // 96
-    float    maxDist;         // 100
-    float    strength;        // 104
-    int32_t  scissorOffsetX;  // 108
-    int32_t  scissorOffsetY;  // 112
-    int32_t  scissorExtentX;  // 116
-    int32_t  scissorExtentY;  // 120
-    int32_t  screenWidth;     // 124
-    int32_t  screenHeight;    // 128
+    float    invViewProj[16];      // 0
+    float    cameraPosX;           // 64
+    float    cameraPosY;           // 68
+    float    cameraPosZ;           // 72
+    float    cameraPad;            // 76 — pads vec4 cameraPosW in GLSL
+    uint32_t frameIndex;           // 80
+    int32_t  numSamples;           // 84
+    int32_t  maxLights;            // 88
+    float    density;              // 92
+    float    anisotropy;           // 96
+    float    maxDist;              // 100
+    float    strength;             // 104
+    int32_t  scissorOffsetX;       // 108
+    int32_t  scissorOffsetY;       // 112
+    int32_t  scissorExtentX;       // 116
+    int32_t  scissorExtentY;       // 120
+    int32_t  screenWidth;          // 124
+    int32_t  screenHeight;         // 128
+    float    flashlightDensity;    // 132
+    float    flashlightAnisotropy; // 136
+    float    flashlightStrength;   // 140
 };
-static_assert(sizeof(VolParamsUBO) == 132, "VolParamsUBO size mismatch");
+static_assert(sizeof(VolParamsUBO) == 144, "VolParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations from other vk_*.cpp modules
@@ -239,6 +254,8 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
             vkDestroyFence(vk.device, fence, NULL);
             vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
         }
+        // Default: composite reads raw volBuffer; updated by DispatchTemporalResolveVol each frame.
+        vkRT.volReadView[i] = vkRT.volBuffer[i].view;
     }
 }
 
@@ -252,6 +269,7 @@ static void VK_RT_DestroyVolImages(void)
         if (vb.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, vb.memory, NULL); vb.memory = VK_NULL_HANDLE; }
         vb.width  = 0;
         vb.height = 0;
+        vkRT.volReadView[i] = VK_NULL_HANDLE;
     }
 }
 
@@ -523,6 +541,409 @@ static void VK_RT_InitVolCompositePipeline(void)
     common->Printf("VK RT Vol: composite pipeline initialized\n");
 }
 
+// ===========================================================================
+// Volumetric temporal EMA (Phase 7.2 — step 8)
+//
+// Reuses gi_temporal_resolve.comp.spv — the shader is identical (rgba16f
+// storage images, same push-constant layout).  No new shader file needed.
+// ===========================================================================
+
+static idCVar r_rtVolTemporal("r_rtVolTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
+                              "Enable temporal EMA accumulation for volumetrics (requires r_rtVol 1).");
+
+static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.15", CVAR_RENDERER | CVAR_FLOAT,
+                                   "Vol EMA blend factor: 0=history only, 1=current only. "
+                                   "0.1-0.2 recommended; lower = smoother but more ghosting.");
+
+extern idCVar r_rtAOTemporalCutThreshold; // camera-cut L-inf threshold, defined in vk_temporal.cpp
+
+static VkRect2D s_volTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+// Mirrors VK_RT_ComputeViewDispatchRect from vk_temporal.cpp (static there, duplicated here).
+static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef)
+{
+    const int w = (int)vk.swapchainExtent.width;
+    const int h = (int)vk.swapchainExtent.height;
+    const idScreenRect &s = viewDef->scissor;
+
+    VkRect2D r;
+    r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2);
+
+    const int rw = s.x2 - s.x1 + 1;
+    const int rh = s.y2 - s.y1 + 1;
+    if (rw <= 0 || rh <= 0)
+        return VkRect2D{{0, 0}, {0, 0}};
+
+    r.extent.width  = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
+    r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
+    return r;
+}
+
+// ---------------------------------------------------------------------------
+// History image lifecycle (mirrors VK_RT_AllocGIHistoryImage pattern)
+// ---------------------------------------------------------------------------
+
+static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
+{
+    img.width  = width;
+    img.height = height;
+
+    VkImageCreateInfo imgCI = {};
+    imgCI.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgCI.imageType     = VK_IMAGE_TYPE_2D;
+    imgCI.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgCI.extent        = {width, height, 1};
+    imgCI.mipLevels     = 1;
+    imgCI.arrayLayers   = 1;
+    imgCI.samples       = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(vk.device, &imgCI, NULL, &img.image));
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vk.device, img.image, &memReq);
+    VkPhysicalDeviceMemoryProperties memProps;
+    vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
+    uint32_t memTypeIdx = UINT32_MAX;
+    for (uint32_t m = 0; m < memProps.memoryTypeCount; m++)
+    {
+        if ((memReq.memoryTypeBits & (1u << m)) &&
+            (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+        { memTypeIdx = m; break; }
+    }
+    if (memTypeIdx == UINT32_MAX)
+    {
+        common->Warning("VK RT Vol Temporal: no device-local memory for history image");
+        vkDestroyImage(vk.device, img.image, NULL);
+        img.image = VK_NULL_HANDLE;
+        return false;
+    }
+
+    VkMemoryAllocateInfo allocI = {};
+    allocI.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocI.allocationSize  = memReq.size;
+    allocI.memoryTypeIndex = memTypeIdx;
+    VK_CHECK(vkAllocateMemory(vk.device, &allocI, NULL, &img.memory));
+    VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
+
+    VkImageViewCreateInfo viewCI = {};
+    viewCI.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewCI.image            = img.image;
+    viewCI.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    viewCI.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+    viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(vk.device, &viewCI, NULL, &img.view));
+
+    // Transition UNDEFINED → GENERAL and clear to black.
+    {
+        VkCommandBufferAllocateInfo cbAlloc = {};
+        cbAlloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbAlloc.commandPool        = vk.commandPool;
+        cbAlloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbAlloc.commandBufferCount = 1;
+        VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
+        VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
+
+        VkCommandBufferBeginInfo beginI = {};
+        beginI.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginI.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(tmpCmd, &beginI);
+
+        VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkImageMemoryBarrier b1 = {};
+        b1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b1.srcAccessMask = 0; b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b1.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b1.image = img.image; b1.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b1);
+
+        VkClearColorValue clearBlack = {};
+        vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
+
+        VkImageMemoryBarrier b2 = {};
+        b2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        b2.oldLayout = VK_IMAGE_LAYOUT_GENERAL; b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b2.image = img.image; b2.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &b2);
+
+        vkEndCommandBuffer(tmpCmd);
+        VkFenceCreateInfo fenceCI = {}; fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
+        VkSubmitInfo submitI = {};
+        submitI.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitI.commandBufferCount = 1; submitI.pCommandBuffers = &tmpCmd;
+        vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
+        vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(vk.device, fence, NULL);
+        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
+    }
+    return true;
+}
+
+static void VK_RT_FreeVolHistoryImage(vkReflBuffer_t &img)
+{
+    if (img.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, img.view,   NULL); img.view   = VK_NULL_HANDLE; }
+    if (img.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, img.image,  NULL); img.image  = VK_NULL_HANDLE; }
+    if (img.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, img.memory, NULL); img.memory = VK_NULL_HANDLE; }
+    img.width = img.height = 0;
+}
+
+static void VK_RT_CreateVolHistoryImages(uint32_t width, uint32_t height)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (!VK_RT_AllocVolHistoryImage(vkRT.volHistory[i], width, height))
+            common->Warning("VK RT Vol Temporal: failed to allocate history slot %d", i);
+        vkRT.volHistoryValid[i] = false;
+        memset(vkRT.volPrevInvViewProj[i], 0, sizeof(vkRT.volPrevInvViewProj[i]));
+        vkRT.volReadView[i] = vkRT.volHistory[i].view;
+    }
+}
+
+static void VK_RT_DestroyVolHistoryImages(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_RT_FreeVolHistoryImage(vkRT.volHistory[i]);
+        vkRT.volHistoryValid[i] = false;
+        // Fall back to raw volBuffer so composite doesn't reference freed history.
+        vkRT.volReadView[i] = vkRT.volBuffer[i].view;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_InitVolTemporalPipeline
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitVolTemporalPipeline(void)
+{
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1; bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1; bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 2; layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.volTemporalDescLayout));
+
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0; pushRange.size = 32; // alpha(4)+pad(12)+scissorOffset(8)+scissorExtent(8)
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1; plCI.pSetLayouts = &vkRT.volTemporalDescLayout;
+    plCI.pushConstantRangeCount = 1; plCI.pPushConstantRanges = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.volTemporalPipelineLayout));
+
+    // Reuse gi_temporal_resolve.comp.spv — identical rgba16f EMA logic.
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/gi_temporal_resolve.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Vol Temporal: failed to load gi_temporal_resolve.comp.spv — temporal disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT; stageCI.module = compModule; stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI; pipeCI.layout = vkRT.volTemporalPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.volTemporalPipeline));
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT; poolCI.poolSizeCount = 1; poolCI.pPoolSizes = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.volTemporalDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++) layouts[i] = vkRT.volTemporalDescLayout;
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.volTemporalDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT; dsAlloc.pSetLayouts = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volTemporalDescSets));
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.volTemporalDescSetLastUpdatedFrameCount[i] = -1;
+
+    common->Printf("VK RT Vol Temporal: EMA pipeline initialized (reusing gi_temporal_resolve.comp.spv)\n");
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points — vol temporal
+// ---------------------------------------------------------------------------
+
+void VK_RT_InitVolTemporal(void)
+{
+    VK_RT_InitVolTemporalPipeline();
+    VK_RT_CreateVolHistoryImages(vk.swapchainExtent.width, vk.swapchainExtent.height);
+}
+
+void VK_RT_ShutdownVolTemporal(void)
+{
+    VK_RT_DestroyVolHistoryImages();
+    if (vkRT.volTemporalPipeline     != VK_NULL_HANDLE) { vkDestroyPipeline(vk.device, vkRT.volTemporalPipeline, NULL); vkRT.volTemporalPipeline = VK_NULL_HANDLE; }
+    if (vkRT.volTemporalPipelineLayout != VK_NULL_HANDLE) { vkDestroyPipelineLayout(vk.device, vkRT.volTemporalPipelineLayout, NULL); vkRT.volTemporalPipelineLayout = VK_NULL_HANDLE; }
+    if (vkRT.volTemporalDescPool     != VK_NULL_HANDLE) { vkDestroyDescriptorPool(vk.device, vkRT.volTemporalDescPool, NULL); vkRT.volTemporalDescPool = VK_NULL_HANDLE; }
+    if (vkRT.volTemporalDescLayout   != VK_NULL_HANDLE) { vkDestroyDescriptorSetLayout(vk.device, vkRT.volTemporalDescLayout, NULL); vkRT.volTemporalDescLayout = VK_NULL_HANDLE; }
+}
+
+void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height)
+{
+    vkDeviceWaitIdle(vk.device);
+    VK_RT_DestroyVolHistoryImages();
+    VK_RT_CreateVolHistoryImages(width, height);
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkRT.volTemporalDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.volHistoryValid[i] = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchTemporalResolveVol
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!vkRT.isInitialized)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+
+    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool() || !r_rtVolTemporal.GetBool())
+    {
+        if (vkRT.volBuffer[frameIdx].view != VK_NULL_HANDLE)
+            vkRT.volReadView[frameIdx] = vkRT.volBuffer[frameIdx].view;
+        return;
+    }
+    if (vkRT.volTemporalPipeline == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Vol Temporal: pipeline is NULL, skipping dispatch");
+        return;
+    }
+
+    const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef);
+    s_volTemporalDispatchRect[frameIdx] = dispatchRect;
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
+    vkReflBuffer_t &current = vkRT.volBuffer[frameIdx];
+    vkReflBuffer_t &history = vkRT.volHistory[frameIdx];
+    if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Vol Temporal: skip — images not ready (slot %d)\n", frameIdx);
+        return;
+    }
+
+    // --- Camera-cut detection (same L-inf convention as GI temporal) ---
+    float invVP[16];
+    {
+        const float *proj = viewDef->projectionMatrix;
+        const float *mv   = viewDef->worldSpace.modelViewMatrix;
+        float vp[16];
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++)
+            {
+                vp[c * 4 + r] = 0.0f;
+                for (int k = 0; k < 4; k++)
+                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
+            }
+        idMat4 vpMat(idVec4(vp[0],vp[1],vp[2],vp[3]),   idVec4(vp[4],vp[5],vp[6],vp[7]),
+                     idVec4(vp[8],vp[9],vp[10],vp[11]),  idVec4(vp[12],vp[13],vp[14],vp[15]));
+        idMat4 inv = vpMat.Inverse();
+        memcpy(invVP, inv.ToFloatPtr(), 16 * sizeof(float));
+    }
+
+    float effectiveAlpha = 1.0f;
+    if (vkRT.volHistoryValid[frameIdx])
+    {
+        float maxDiff = 0.0f;
+        for (int i = 0; i < 16; i++)
+        {
+            float d = fabsf(invVP[i] - vkRT.volPrevInvViewProj[frameIdx][i]);
+            if (d > maxDiff) maxDiff = d;
+        }
+        float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
+        if (maxDiff <= cutThresh)
+            effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtVolTemporalAlpha.GetFloat());
+        else if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Vol Temporal: camera cut slot=%d maxDiff=%.4f — resetting history\n",
+                           frameIdx, maxDiff);
+    }
+    memcpy(vkRT.volPrevInvViewProj[frameIdx], invVP, sizeof(invVP));
+    vkRT.volHistoryValid[frameIdx] = true;
+
+    // --- Update descriptor set ---
+    if (vkRT.volTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
+    {
+        VkDescriptorImageInfo currInfo = {};
+        currInfo.imageView = current.view; currInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkDescriptorImageInfo histInfo = {};
+        histInfo.imageView = history.view; histInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[2] = {};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = vkRT.volTemporalDescSets[frameIdx]; writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].pImageInfo = &currInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = vkRT.volTemporalDescSets[frameIdx]; writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &histInfo;
+
+        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+        vkRT.volTemporalDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+    }
+
+    // --- Push constants ---
+    struct { float alpha; float pad[3]; int32_t sx, sy, ex, ey; } pc;
+    pc.alpha = effectiveAlpha; pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
+    pc.sx = (int32_t)dispatchRect.offset.x;  pc.sy = (int32_t)dispatchRect.offset.y;
+    pc.ex = (int32_t)dispatchRect.extent.width; pc.ey = (int32_t)dispatchRect.extent.height;
+
+    // --- Dispatch ---
+    const uint32_t groupsX = (dispatchRect.extent.width  + 7) / 8;
+    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipelineLayout,
+                            0, 1, &vkRT.volTemporalDescSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.volTemporalPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
+    vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Vol Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n",
+                       frameIdx, effectiveAlpha,
+                       dispatchRect.offset.x, dispatchRect.offset.y,
+                       (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height);
+
+    // --- Barrier: volHistory compute write → fragment read (for composite) ---
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
+
+    vkRT.volReadView[frameIdx] = history.view;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -532,10 +953,13 @@ void VK_RT_InitVolumetrics(void)
     VK_RT_InitVolMarchPipeline();
     VK_RT_InitVolCompositePipeline();
     VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    VK_RT_InitVolTemporal();
 }
 
 void VK_RT_ShutdownVolumetrics(void)
 {
+    VK_RT_ShutdownVolTemporal();
+
     if (vkRT.volMarchDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.volMarchDescPool, NULL);
@@ -593,6 +1017,9 @@ void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.volMarchDescSetLastUpdatedFrameCount[i] = -1;
     VK_RT_CreateVolImages(width, height);
+    // Resize temporal history only after the pipeline has been initialized.
+    if (vkRT.volTemporalPipeline != VK_NULL_HANDLE)
+        VK_RT_ResizeVolTemporal(width, height);
 }
 
 // ---------------------------------------------------------------------------
@@ -715,7 +1142,10 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.density        = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
     ubo.anisotropy     = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
     ubo.maxDist        = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    ubo.strength       = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
+    ubo.strength              = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
+    ubo.flashlightDensity     = idMath::ClampFloat(0.0f, 1.0f,  r_rtVolFlashlightDensity.GetFloat());
+    ubo.flashlightAnisotropy  = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
+    ubo.flashlightStrength    = idMath::ClampFloat(0.0f, 8.0f,  r_rtVolFlashlightStrength.GetFloat());
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI).
     const int w = (int)vk.swapchainExtent.width;
@@ -828,7 +1258,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (groupsX > 0 && groupsY > 0)
         vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
-    // --- Barrier: volBuf compute write → fragment shader read ---
+    // --- Barrier: volBuf compute write → compute read (temporal) + fragment read (composite) ---
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -836,7 +1266,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(cmd,
             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
             0, 1, &memBarrier, 0, NULL, 0, NULL);
     }
 
@@ -881,9 +1311,13 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         return;
 
     // Write the descriptor set for this frame slot.
+    // Use volReadView: points to volHistory when temporal is active, volBuffer otherwise.
+    VkImageView readView = vkRT.volReadView[frameIdx];
+    if (readView == VK_NULL_HANDLE) readView = vb.view;
+
     VkDescriptorImageInfo imgInfo = {};
     imgInfo.sampler     = vkRT.volSampler;
-    imgInfo.imageView   = vb.view;
+    imgInfo.imageView   = readView;
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkWriteDescriptorSet write = {};

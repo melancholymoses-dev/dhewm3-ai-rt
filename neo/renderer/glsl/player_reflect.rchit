@@ -52,6 +52,9 @@ hitAttributeEXT vec2 baryCoord;
 struct ReflGILight {
     vec4 posRadius;      // xyz = world pos, w = bounding radius
     vec4 colorIntensity; // rgb = light colour, a = intensity
+    vec4 coneDir;        // xyz = spot direction, w = cos(halfAngle); zeroed for point lights (step 8)
+    uint lightType;      // 0 = point, 1 = projected/spot
+    uint _pad0; uint _pad1; uint _pad2;
 };
 
 layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
