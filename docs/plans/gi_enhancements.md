@@ -497,6 +497,6 @@ EMA; let the result decide whether it is necessary.
 | 5 | vol_march.comp (point lights) | done |
 | 6 | Composite + tuning | done |
 | 7 | Per-type CVars + lightType field + self-shadow fix | done |
-| 8 | Light volume correctness (AABB/cone) | **TODO** |
-| 9 | Temporal EMA for volumetrics | **TODO** |
-| 10 | Bilateral upsample | **TODO** |
+| 8 | Temporal EMA for volumetrics | done |
+| 9 | Light volume correctness (AABB/cone) | **TODO** |
+| 10 | Bilateral upsample | deferred — evaluate after temporal EMA |
