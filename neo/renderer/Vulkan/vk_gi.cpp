@@ -46,11 +46,11 @@ idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI
 
 static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
-static idCVar r_rtGIStrength("r_rtGIStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
 
 static idCVar r_rtGIContrast(
-    "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIContrast", "0.7", CVAR_RENDERER | CVAR_FLOAT,
     "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
     "0 = off, 1 = full effect");
 
@@ -104,13 +104,13 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 struct GILightEntry
 {
-    float    posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
-    float    colorIntensity[4]; // rgb = light colour, a = intensity
-    float    coneDir[4];        // projected: xyz=normalised dir, w=cos(halfAngle); zeroed for point
-    float    boxExtents[4];     // point: xyz=AABB half-extents, w=0
-                                // projected: w=max reach along cone axis; xyz=0
-    uint32_t lightType;         // 0 = point, 1 = projected/spot
-    uint32_t pad[3];            // alignment pad to 80 bytes
+    float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
+    float colorIntensity[4]; // rgb = light colour, a = intensity
+    float coneDir[4];        // projected: xyz=normalised dir, w=cos(halfAngle); zeroed for point
+    float boxExtents[4];     // point: xyz=AABB half-extents, w=0
+                             // projected: w=max reach along cone axis; xyz=0
+    uint32_t lightType;      // 0 = point, 1 = projected/spot
+    uint32_t pad[3];         // alignment pad to 80 bytes
 };
 
 struct GILightBuffer
@@ -1018,21 +1018,24 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                 c.entry.boxExtents[2] = p.lightRadius.z;
                 c.entry.boxExtents[3] = 0.0f;
                 c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = c.entry.coneDir[3] = 0.0f;
+                // Widen sphere pre-cull to cover the 1.5x halo zone outside the box.
+                c.entry.posRadius[3] = radius * 1.5f;
             }
             else
             {
-                idVec3 toTarget = p.target - p.origin;
-                float  reach    = toTarget.Length();
-                idVec3 dir      = (reach > 0.001f) ? toTarget / reach : idVec3(0, 0, 1);
-                float  maxHalf  = Max(p.right.Length(), p.up.Length());
-                float  cosHalf  = reach / idMath::Sqrt(reach * reach + maxHalf * maxHalf);
+                // p.target is LOCAL space; rotate by p.axis to get world-space direction.
+                idVec3 toTarget = p.axis * p.target;
+                float reach = toTarget.Length();
+                idVec3 dir = (reach > 0.001f) ? toTarget / reach : idVec3(0, 0, 1);
+                float maxHalf = Max(p.right.Length(), p.up.Length());
+                float cosHalf = reach / idMath::Sqrt(reach * reach + maxHalf * maxHalf);
                 c.entry.coneDir[0] = dir.x;
                 c.entry.coneDir[1] = dir.y;
                 c.entry.coneDir[2] = dir.z;
                 c.entry.coneDir[3] = cosHalf;
                 c.entry.boxExtents[0] = c.entry.boxExtents[1] = c.entry.boxExtents[2] = 0.0f;
                 c.entry.boxExtents[3] = reach * 1.1f;
-                c.entry.posRadius[3]  = reach * 1.1f; // override sphere pre-cull to match cone reach
+                c.entry.posRadius[3] = reach * 1.1f; // override sphere pre-cull to match cone reach
             }
             c.entry.lightType = isProjected ? 1u : 0u;
             c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
