@@ -52,9 +52,10 @@ layout(location = 1) rayPayloadEXT   GIShadowPayload     reflShadow;
 // Provided by vk_reflections.cpp at set=0, binding=4 (GI light SSBO).
 // ---------------------------------------------------------------------------
 struct ReflGILight {
-    vec4 posRadius;      // xyz = world pos, w = bounding radius
+    vec4 posRadius;      // xyz = world pos, w = sphere pre-cull radius
     vec4 colorIntensity; // rgb = light colour, a = intensity
-    vec4 coneDir;        // xyz = spot direction, w = cos(halfAngle); zeroed for point lights (step 8)
+    vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
+    vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;      // 0 = point, 1 = projected/spot
     uint _pad0; uint _pad1; uint _pad2;
 };

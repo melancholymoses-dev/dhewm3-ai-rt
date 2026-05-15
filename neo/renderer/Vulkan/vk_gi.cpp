@@ -104,11 +104,13 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 struct GILightEntry
 {
-    float    posRadius[4];      // xyz = world pos, w = bounding radius
+    float    posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
     float    colorIntensity[4]; // rgb = light colour, a = intensity
-    float    coneDir[4];        // xyz = spot direction, w = cos(halfAngle); zeroed for point lights (step 8)
+    float    coneDir[4];        // projected: xyz=normalised dir, w=cos(halfAngle); zeroed for point
+    float    boxExtents[4];     // point: xyz=AABB half-extents, w=0
+                                // projected: w=max reach along cone axis; xyz=0
     uint32_t lightType;         // 0 = point, 1 = projected/spot
-    uint32_t pad[3];            // alignment pad to 64 bytes
+    uint32_t pad[3];            // alignment pad to 80 bytes
 };
 
 struct GILightBuffer
@@ -119,7 +121,7 @@ struct GILightBuffer
     float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 64, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -1007,10 +1009,32 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.colorIntensity[1] = g;
             c.entry.colorIntensity[2] = b;
             c.entry.colorIntensity[3] = intensity;
-            // Projected lights (flashlight, spotlights) get lightType=1; cone data filled in step 8.
-            c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = 0.0f;
-            c.entry.coneDir[3] = 0.0f;
-            c.entry.lightType  = (!p.pointLight && !p.parallel) ? 1u : 0u;
+            // Fill volume geometry: AABB half-extents for point lights, cone for projected.
+            const bool isProjected = (!p.pointLight && !p.parallel);
+            if (!isProjected)
+            {
+                c.entry.boxExtents[0] = p.lightRadius.x;
+                c.entry.boxExtents[1] = p.lightRadius.y;
+                c.entry.boxExtents[2] = p.lightRadius.z;
+                c.entry.boxExtents[3] = 0.0f;
+                c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = c.entry.coneDir[3] = 0.0f;
+            }
+            else
+            {
+                idVec3 toTarget = p.target - p.origin;
+                float  reach    = toTarget.Length();
+                idVec3 dir      = (reach > 0.001f) ? toTarget / reach : idVec3(0, 0, 1);
+                float  maxHalf  = Max(p.right.Length(), p.up.Length());
+                float  cosHalf  = reach / idMath::Sqrt(reach * reach + maxHalf * maxHalf);
+                c.entry.coneDir[0] = dir.x;
+                c.entry.coneDir[1] = dir.y;
+                c.entry.coneDir[2] = dir.z;
+                c.entry.coneDir[3] = cosHalf;
+                c.entry.boxExtents[0] = c.entry.boxExtents[1] = c.entry.boxExtents[2] = 0.0f;
+                c.entry.boxExtents[3] = reach * 1.1f;
+                c.entry.posRadius[3]  = reach * 1.1f; // override sphere pre-cull to match cone reach
+            }
+            c.entry.lightType = isProjected ? 1u : 0u;
             c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
     }
