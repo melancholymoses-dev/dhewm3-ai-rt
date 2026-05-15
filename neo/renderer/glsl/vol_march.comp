@@ -66,9 +66,10 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
 } params;
 
 struct GILight {
-    vec4 posRadius;       // xyz = world position, w = bounding radius
+    vec4 posRadius;       // xyz = world position, w = sphere pre-cull radius
     vec4 colorIntensity;  // rgb = colour, a = intensity
-    vec4 coneDir;         // xyz = spot direction, w = cos(halfAngle); zeroed for point lights (step 8)
+    vec4 coneDir;         // projected: xyz=dir, w=cos(halfAngle); zeroed for point
+    vec4 boxExtents;      // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;       // 0 = point, 1 = projected/spot
     uint _pad0; uint _pad1; uint _pad2;
 };
@@ -191,26 +192,52 @@ void main()
         for (int li = 0; li < maxLights; li++)
         {
             vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
-            float lightRadius = giLightBuf.lights[li].posRadius.w;
+            float sphereRad   = giLightBuf.lights[li].posRadius.w;
             vec3  lightColor  = giLightBuf.lights[li].colorIntensity.rgb;
             float lightIntens = giLightBuf.lights[li].colorIntensity.a;
             if (lightIntens < 0.001) lightIntens = 1.0;
 
+            bool  isFlashlight = (giLightBuf.lights[li].lightType == 1u);
+            vec4  cd           = giLightBuf.lights[li].coneDir;
+            vec4  bx           = giLightBuf.lights[li].boxExtents;
+
             vec3  toLight = lightPos - stepPos;
             float dist    = length(toLight);
 
-            if (dist > lightRadius)
+            // Sphere pre-cull: fast reject before precise containment test.
+            if (dist > sphereRad)
                 continue;
 
-            float atten = CauchyRamp(dist, lightRadius);
+            // Precise volume containment + attenuation.
+            float atten;
+            if (!isFlashlight)
+            {
+                // Point light: AABB half-extent containment.
+                if (any(greaterThan(abs(stepPos - lightPos), bx.xyz)))
+                    continue;
+                atten = CauchyRamp(dist, max(max(bx.x, bx.y), bx.z));
+            }
+            else
+            {
+                // Projected light (flashlight, spotlight): cone containment.
+                vec3  toStep    = stepPos - lightPos;
+                float alongCone = dot(toStep, cd.xyz);
+                if (alongCone <= 0.0 || alongCone > bx.w)
+                    continue;
+                float cosAngle = alongCone / max(length(toStep), 0.001);
+                if (cosAngle < cd.w)
+                    continue;
+                // Linear depth falloff along the cone axis.
+                atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+            }
+
             if (atten < 0.001)
                 continue;
 
             vec3  lightDir = toLight / max(dist, 0.001);
             float cosTheta = dot(marchDir, lightDir);
 
-            bool  isFlashlight = (giLightBuf.lights[li].lightType == 1u);
-            float localAniso   = isFlashlight ? params.flashlightAnisotropy : params.anisotropy;
+            float localAniso = isFlashlight ? params.flashlightAnisotropy : params.anisotropy;
             float phase        = HenyeyGreenstein(cosTheta, localAniso);
 
             // Fire a ray query to test occlusion between stepPos and the light.

@@ -330,7 +330,7 @@ The three optimisations built into the design that have the largest impact:
 
 ## Phase 7.2 — Light Volume Correctness
 
-**Status: TODO** (identified during tuning after initial 7.2 ship)
+**Status: done**
 
 ### Problem
 
@@ -498,5 +498,5 @@ EMA; let the result decide whether it is necessary.
 | 6 | Composite + tuning | done |
 | 7 | Per-type CVars + lightType field + self-shadow fix | done |
 | 8 | Temporal EMA for volumetrics | done |
-| 9 | Light volume correctness (AABB/cone) | **TODO** |
+| 9 | Light volume correctness (AABB/cone) | done |
 | 10 | Bilateral upsample | deferred — evaluate after temporal EMA |
