@@ -2624,23 +2624,34 @@ static void DrawRTOptionsMenu()
     const bool giOn = rtCVars.rtGI && rtCVars.rtGI->GetBool();
     ImGui::BeginDisabled(!giOn);
     ImGui::SeparatorText("Global Illumination Settings");
+    if (ImGui::BeginTable("##volCols", 2, ImGuiTableFlags_None))
+    {
+        // --- Left column: general + point lights ---
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("General");
 
-    RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
-    RTSliderInt("GI Max Lights (nearest-first, 1-64)", rtCVars.rtGIMaxLights, 1, 128);
-    RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
-    RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
-    RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 16.0f, 512.0f, "%.0f");
-    RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
-    RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
-    RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 5.0f);
-    RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
+        RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
+        RTSliderInt("GI Max Lights (nearest-first, 1-64)", rtCVars.rtGIMaxLights, 1, 128);
+        RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
+        RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
+        RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 16.0f, 512.0f, "%.0f");
+        RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("Contrast/Scale");
+
+        RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
+        RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 5.0f);
+        RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
+        RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
+        RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
+        ImGui::EndTable();
+    }
     /*ImGui::Spacing();
     ImGui::SeparatorText("GI Colour Bounce (Option B)");
     RTCheckbox("Colour Bounce: evaluate lights at secondary hit", rtCVars.rtGILightBounce);
     const bool bounceOn = rtCVars.rtGILightBounce && rtCVars.rtGILightBounce->GetBool();
     ImGui::BeginDisabled(!bounceOn);
-    RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
-    RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
+
     ImGui::EndDisabled();
     */
     ImGui::Spacing();
@@ -2654,22 +2665,22 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-        RTSliderInt("Samples##vol",    rtCVars.rtVolSamples,       1,    16);
-        RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist,       0.0f, 1024.0f, "%.0f");
-        RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights,     0,    16);
-        RTCheckbox("Temporal Accumulation",                        rtCVars.rtVolTemporal);
+        RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 16);
+        RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
+        RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 64);
+        RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
         RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
         ImGui::Spacing();
         ImGui::TextDisabled("Point Lights");
-        RTSliderFloat("Density##pt",     rtCVars.rtVolDensity,    0.0f, 0.5f);
-        RTSliderFloat("Strength##pt",    rtCVars.rtVolStrength,   0.0f, 5.0f);
-        RTSliderFloat("Anisotropy##pt",  rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
+        RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.25f);
+        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 1.0f);
+        RTSliderFloat("Anisotropy##pt", rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
 
         // --- Right column: flashlight ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Flashlight");
-        RTSliderFloat("Density##fl",    rtCVars.rtVolFlashlightDensity,    0.0f, 0.5f);
-        RTSliderFloat("Strength##fl",   rtCVars.rtVolFlashlightStrength,   0.0f, 5.0f);
+        RTSliderFloat("Density##fl", rtCVars.rtVolFlashlightDensity, 0.0f, 0.5f);
+        RTSliderFloat("Strength##fl", rtCVars.rtVolFlashlightStrength, 0.0f, 1.0f);
         RTSliderFloat("Anisotropy##fl", rtCVars.rtVolFlashlightAnisotropy, 0.0f, 1.0f);
 
         ImGui::EndTable();
@@ -2830,8 +2841,8 @@ static void DrawAudioOptionsMenu()
         ImGui::BeginDisabled();
         int c = 0;
         ImGui::Combo("OpenAL output limiter", &c, "Auto (let OpenAL decide)\0");
-        AddTooltip(
-            "Your OpenAL version doesn't support configuring output-limiter (needs ALC_SOFT_output_limiter extension)");
+        AddTooltip("Your OpenAL version doesn't support configuring output-limiter (needs ALC_SOFT_output_limiter "
+                   "extension)");
         ImGui::EndDisabled();
     }
 

@@ -753,6 +753,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/temporal_resolve.comp
 	renderer/glsl/vol_march.comp
 	renderer/glsl/vol_composite.frag
+	renderer/glsl/vol_bilateral.comp
 )
 
 
