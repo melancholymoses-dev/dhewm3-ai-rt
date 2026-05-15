@@ -2459,12 +2459,17 @@ struct RTCVars
 
     // Volumetric Lighting
     idCVar *rtVol = nullptr;
-    idCVar *rtVolDensity = nullptr;
-    idCVar *rtVolStrength = nullptr;
-    idCVar *rtVolAnisotropy = nullptr;
     idCVar *rtVolSamples = nullptr;
     idCVar *rtVolMaxDist = nullptr;
     idCVar *rtVolMaxLights = nullptr;
+    idCVar *rtVolTemporal = nullptr;
+    idCVar *rtVolTemporalAlpha = nullptr;
+    idCVar *rtVolDensity = nullptr;
+    idCVar *rtVolStrength = nullptr;
+    idCVar *rtVolAnisotropy = nullptr;
+    idCVar *rtVolFlashlightDensity = nullptr;
+    idCVar *rtVolFlashlightStrength = nullptr;
+    idCVar *rtVolFlashlightAnisotropy = nullptr;
 };
 static RTCVars rtCVars;
 
@@ -2511,12 +2516,17 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIAtrousSigmaZ = cvarSystem->Find("r_rtGIAtrousSigmaZ");
     rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
     rtCVars.rtVol = cvarSystem->Find("r_rtVol");
-    rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
-    rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
-    rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
     rtCVars.rtVolSamples = cvarSystem->Find("r_rtVolSamples");
     rtCVars.rtVolMaxDist = cvarSystem->Find("r_rtVolMaxDist");
     rtCVars.rtVolMaxLights = cvarSystem->Find("r_rtVolMaxLights");
+    rtCVars.rtVolTemporal = cvarSystem->Find("r_rtVolTemporal");
+    rtCVars.rtVolTemporalAlpha = cvarSystem->Find("r_rtVolTemporalAlpha");
+    rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
+    rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
+    rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
+    rtCVars.rtVolFlashlightDensity = cvarSystem->Find("r_rtVolFlashlightDensity");
+    rtCVars.rtVolFlashlightStrength = cvarSystem->Find("r_rtVolFlashlightStrength");
+    rtCVars.rtVolFlashlightAnisotropy = cvarSystem->Find("r_rtVolFlashlightAnisotropy");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2636,14 +2646,35 @@ static void DrawRTOptionsMenu()
     ImGui::Spacing();
     ImGui::SeparatorText("GI Volumetric Lighting");
     RTCheckbox("Enable Volumetric Lighting", rtCVars.rtVol);
-    const bool volOn = rtCVars.rtVol;
+    const bool volOn = rtCVars.rtVol && rtCVars.rtVol->GetBool();
     ImGui::BeginDisabled(!volOn);
-    RTSliderInt("Samples", rtCVars.rtVolSamples, 1, 16);
-    RTSliderFloat("Density", rtCVars.rtVolDensity, 0, 0.5);
-    RTSliderFloat("Strength", rtCVars.rtVolStrength, 0, 5);
-    RTSliderFloat("Max Dist", rtCVars.rtVolMaxDist, 0, 1024);
-    RTSliderInt("Max Lights", rtCVars.rtVolMaxLights, 0, 16);
-    RTSliderFloat("Anisotropy", rtCVars.rtVolAnisotropy, 0, 1);
+
+    if (ImGui::BeginTable("##volCols", 2, ImGuiTableFlags_None))
+    {
+        // --- Left column: general + point lights ---
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("General");
+        RTSliderInt("Samples##vol",    rtCVars.rtVolSamples,       1,    16);
+        RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist,       0.0f, 1024.0f, "%.0f");
+        RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights,     0,    16);
+        RTCheckbox("Temporal Accumulation",                        rtCVars.rtVolTemporal);
+        RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
+        ImGui::Spacing();
+        ImGui::TextDisabled("Point Lights");
+        RTSliderFloat("Density##pt",     rtCVars.rtVolDensity,    0.0f, 0.5f);
+        RTSliderFloat("Strength##pt",    rtCVars.rtVolStrength,   0.0f, 5.0f);
+        RTSliderFloat("Anisotropy##pt",  rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
+
+        // --- Right column: flashlight ---
+        ImGui::TableNextColumn();
+        ImGui::TextDisabled("Flashlight");
+        RTSliderFloat("Density##fl",    rtCVars.rtVolFlashlightDensity,    0.0f, 0.5f);
+        RTSliderFloat("Strength##fl",   rtCVars.rtVolFlashlightStrength,   0.0f, 5.0f);
+        RTSliderFloat("Anisotropy##fl", rtCVars.rtVolFlashlightAnisotropy, 0.0f, 1.0f);
+
+        ImGui::EndTable();
+    }
+
     ImGui::EndDisabled();
 
     ImGui::Spacing();
