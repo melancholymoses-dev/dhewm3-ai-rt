@@ -42,34 +42,35 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtVol("r_rtVol", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+idCVar r_rtVol("r_rtVol", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                "Enable volumetric light scattering (Phase 7.2). Off by default until tuned.");
 
 static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
                              "Ray-march steps per pixel (safe default: 8; high-end: 16)");
 
-static idCVar r_rtVolDensity("r_rtVolDensity", "0.02", CVAR_RENDERER | CVAR_FLOAT,
-                             "Global scattering density (extinction + scattering coefficient)");
-
-static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
-
 static idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT,
                              "Max ray-march distance in world units");
 
-static idCVar r_rtVolMaxLights("r_rtVolMaxLights", "2", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtVolMaxLights("r_rtVolMaxLights", "32", CVAR_RENDERER | CVAR_INTEGER,
                                "Nearest lights evaluated per step (pre-sorted, always closest)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolDensity("r_rtVolDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+                             "Global scattering density (extinction + scattering coefficient)");
+
+static idCVar r_rtVolStrength("r_rtVolStrength", "0.2", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
-static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.25", CVAR_RENDERER | CVAR_FLOAT,
+                                "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
+
+static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.03", CVAR_RENDERER | CVAR_FLOAT,
                                        "Scatter contribution scale for projected/flashlight (not Beer-Lambert)");
 
-static idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
-                                          "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward)");
+static idCVar r_rtVolFlashlightAnisotropy(
+    "r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
+    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward)");
 
-static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "1.5", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", ".5", CVAR_RENDERER | CVAR_FLOAT,
                                         "Final composite multiplier for flashlight scatter");
 
 // ---------------------------------------------------------------------------
@@ -98,27 +99,27 @@ static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "1.5", CVAR
 
 struct VolParamsUBO
 {
-    float    invViewProj[16];      // 0
-    float    cameraPosX;           // 64
-    float    cameraPosY;           // 68
-    float    cameraPosZ;           // 72
-    float    cameraPad;            // 76 — pads vec4 cameraPosW in GLSL
-    uint32_t frameIndex;           // 80
-    int32_t  numSamples;           // 84
-    int32_t  maxLights;            // 88
-    float    density;              // 92
-    float    anisotropy;           // 96
-    float    maxDist;              // 100
-    float    strength;             // 104
-    int32_t  scissorOffsetX;       // 108
-    int32_t  scissorOffsetY;       // 112
-    int32_t  scissorExtentX;       // 116
-    int32_t  scissorExtentY;       // 120
-    int32_t  screenWidth;          // 124
-    int32_t  screenHeight;         // 128
-    float    flashlightDensity;    // 132
-    float    flashlightAnisotropy; // 136
-    float    flashlightStrength;   // 140
+    float invViewProj[16];      // 0
+    float cameraPosX;           // 64
+    float cameraPosY;           // 68
+    float cameraPosZ;           // 72
+    float cameraPad;            // 76 — pads vec4 cameraPosW in GLSL
+    uint32_t frameIndex;        // 80
+    int32_t numSamples;         // 84
+    int32_t maxLights;          // 88
+    float density;              // 92
+    float anisotropy;           // 96
+    float maxDist;              // 100
+    float strength;             // 104
+    int32_t scissorOffsetX;     // 108
+    int32_t scissorOffsetY;     // 112
+    int32_t scissorExtentX;     // 116
+    int32_t scissorExtentY;     // 120
+    int32_t screenWidth;        // 124
+    int32_t screenHeight;       // 128
+    float flashlightDensity;    // 132
+    float flashlightAnisotropy; // 136
+    float flashlightStrength;   // 140
 };
 static_assert(sizeof(VolParamsUBO) == 144, "VolParamsUBO size mismatch");
 
@@ -143,20 +144,19 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkReflBuffer_t &vb = vkRT.volBuffer[i];
-        vb.width  = width;
+        vb.width = width;
         vb.height = height;
 
         VkImageCreateInfo imgInfo = {};
-        imgInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        imgInfo.imageType     = VK_IMAGE_TYPE_2D;
-        imgInfo.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
-        imgInfo.extent        = {width, height, 1};
-        imgInfo.mipLevels     = 1;
-        imgInfo.arrayLayers   = 1;
-        imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
-        imgInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
-        imgInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                              | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imgInfo.imageType = VK_IMAGE_TYPE_2D;
+        imgInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        imgInfo.extent = {width, height, 1};
+        imgInfo.mipLevels = 1;
+        imgInfo.arrayLayers = 1;
+        imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imgInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &vb.image));
 
@@ -182,17 +182,17 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
         }
 
         VkMemoryAllocateInfo allocInfo = {};
-        allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize  = memReq.size;
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReq.size;
         allocInfo.memoryTypeIndex = memTypeIdx;
         VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &vb.memory));
         VK_CHECK(vkBindImageMemory(vk.device, vb.image, vb.memory, 0));
 
         VkImageViewCreateInfo viewInfo = {};
-        viewInfo.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        viewInfo.image            = vb.image;
-        viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = vb.image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &vb.view));
 
@@ -200,9 +200,9 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         {
             VkCommandBufferAllocateInfo cbAlloc = {};
-            cbAlloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            cbAlloc.commandPool        = vk.commandPool;
-            cbAlloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            cbAlloc.commandPool = vk.commandPool;
+            cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             cbAlloc.commandBufferCount = 1;
             VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
 
@@ -214,29 +214,29 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
             VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
             VkImageMemoryBarrier barrier = {};
-            barrier.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier.srcAccessMask    = 0;
-            barrier.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
-            barrier.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
-            barrier.image            = vb.image;
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier.image = vb.image;
             barrier.subresourceRange = subRange;
-            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
+                                 0, NULL, 1, &barrier);
 
             VkClearColorValue clearBlack = {};
             vkCmdClearColorImage(tmpCmd, vb.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
 
             VkImageMemoryBarrier barrier2 = {};
-            barrier2.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barrier2.srcAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier2.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
-            barrier2.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
-            barrier2.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
-            barrier2.image            = vb.image;
+            barrier2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier2.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.image = vb.image;
             barrier2.subresourceRange = subRange;
-            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier2);
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                                 NULL, 0, NULL, 1, &barrier2);
 
             vkEndCommandBuffer(tmpCmd);
 
@@ -246,9 +246,9 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
             VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
 
             VkSubmitInfo submitInfo = {};
-            submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
             submitInfo.commandBufferCount = 1;
-            submitInfo.pCommandBuffers    = &tmpCmd;
+            submitInfo.pCommandBuffers = &tmpCmd;
             vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
             vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
             vkDestroyFence(vk.device, fence, NULL);
@@ -264,10 +264,22 @@ static void VK_RT_DestroyVolImages(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         vkReflBuffer_t &vb = vkRT.volBuffer[i];
-        if (vb.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, vb.view,   NULL); vb.view   = VK_NULL_HANDLE; }
-        if (vb.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, vb.image,  NULL); vb.image  = VK_NULL_HANDLE; }
-        if (vb.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, vb.memory, NULL); vb.memory = VK_NULL_HANDLE; }
-        vb.width  = 0;
+        if (vb.view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(vk.device, vb.view, NULL);
+            vb.view = VK_NULL_HANDLE;
+        }
+        if (vb.image != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(vk.device, vb.image, NULL);
+            vb.image = VK_NULL_HANDLE;
+        }
+        if (vb.memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, vb.memory, NULL);
+            vb.memory = VK_NULL_HANDLE;
+        }
+        vb.width = 0;
         vb.height = 0;
         vkRT.volReadView[i] = VK_NULL_HANDLE;
     }
@@ -289,42 +301,42 @@ static void VK_RT_InitVolMarchPipeline(void)
     // --- Descriptor set layout ---
     VkDescriptorSetLayoutBinding bindings[5] = {};
 
-    bindings[0].binding         = 0;
-    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[1].binding         = 1;
-    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[2].binding         = 2;
-    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[3].binding         = 3;
-    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    bindings[4].binding         = 4;
-    bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[4].descriptorCount = 1;
-    bindings[4].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = 5;
-    layoutInfo.pBindings    = bindings;
+    layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.volMarchDescLayout));
 
     // --- Pipeline layout ---
     VkPipelineLayoutCreateInfo plInfo = {};
-    plInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts    = &vkRT.volMarchDescLayout;
+    plInfo.pSetLayouts = &vkRT.volMarchDescLayout;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.volMarchPipelineLayout));
 
     // --- Compute shader module ---
@@ -336,33 +348,32 @@ static void VK_RT_InitVolMarchPipeline(void)
     }
 
     VkPipelineShaderStageCreateInfo stage = {};
-    stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     stage.module = compMod;
-    stage.pName  = "main";
+    stage.pName = "main";
 
     VkComputePipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipelineInfo.stage  = stage;
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.stage = stage;
     pipelineInfo.layout = vkRT.volMarchPipelineLayout;
-    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
-                                      &vkRT.volMarchPipeline));
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volMarchPipeline));
 
     vkDestroyShaderModule(vk.device, compMod, NULL);
 
     // --- Descriptor pool ---
     VkDescriptorPoolSize poolSizes[5] = {};
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,              (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,     (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[3] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,     (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[4] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,             (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[3] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[4] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets       = VK_MAX_FRAMES_IN_FLIGHT;
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
     poolInfo.poolSizeCount = 5;
-    poolInfo.pPoolSizes    = poolSizes;
+    poolInfo.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.volMarchDescPool));
 
     VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
@@ -370,20 +381,20 @@ static void VK_RT_InitVolMarchPipeline(void)
         layouts[i] = vkRT.volMarchDescLayout;
 
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkRT.volMarchDescPool;
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.volMarchDescPool;
     dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
-    dsAlloc.pSetLayouts        = layouts;
+    dsAlloc.pSetLayouts = layouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volMarchDescSets));
 
     // Create the bilinear-clamp sampler shared with the composite pass.
     if (vkRT.volSampler == VK_NULL_HANDLE)
     {
         VkSamplerCreateInfo si = {};
-        si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        si.magFilter    = VK_FILTER_LINEAR;
-        si.minFilter    = VK_FILTER_LINEAR;
-        si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -405,22 +416,22 @@ static void VK_RT_InitVolCompositePipeline(void)
 {
     // --- Descriptor set layout: 1 combined-image-sampler binding ---
     VkDescriptorSetLayoutBinding binding = {};
-    binding.binding         = 0;
-    binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binding.descriptorCount = 1;
-    binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
-    layoutInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings    = &binding;
+    layoutInfo.pBindings = &binding;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.volCompositeDescLayout));
 
     // --- Pipeline layout ---
     VkPipelineLayoutCreateInfo plInfo = {};
-    plInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts    = &vkRT.volCompositeDescLayout;
+    plInfo.pSetLayouts = &vkRT.volCompositeDescLayout;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.volCompositeLayout));
 
     // --- Shader modules — share gi_composite.vert.spv ---
@@ -429,102 +440,101 @@ static void VK_RT_InitVolCompositePipeline(void)
     if (vertMod == VK_NULL_HANDLE || fragMod == VK_NULL_HANDLE)
     {
         common->Warning("VK RT Vol: failed to load composite shaders — composite pass disabled");
-        if (vertMod != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, vertMod, NULL);
-        if (fragMod != VK_NULL_HANDLE) vkDestroyShaderModule(vk.device, fragMod, NULL);
+        if (vertMod != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, vertMod, NULL);
+        if (fragMod != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, fragMod, NULL);
         return;
     }
 
     VkPipelineShaderStageCreateInfo stages[2] = {};
-    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     stages[0].module = vertMod;
-    stages[0].pName  = "main";
-    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     stages[1].module = fragMod;
-    stages[1].pName  = "main";
+    stages[1].pName = "main";
 
     VkPipelineVertexInputStateCreateInfo vertInput = {};
     vertInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
-    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     VkPipelineViewportStateCreateInfo viewportState = {};
-    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewportState.viewportCount = 1;
-    viewportState.scissorCount  = 1;
+    viewportState.scissorCount = 1;
 
     VkPipelineRasterizationStateCreateInfo rasterizer = {};
-    rasterizer.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode    = VK_CULL_MODE_NONE;
-    rasterizer.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.lineWidth   = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo msaa = {};
-    msaa.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
     VkPipelineDepthStencilStateCreateInfo depthStencil = {};
-    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable  = VK_FALSE;
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
     depthStencil.depthWriteEnable = VK_FALSE;
-    depthStencil.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
 
     // Additive blend: volumetric light is added on top of existing framebuffer.
     VkPipelineColorBlendAttachmentState colorBlend = {};
-    colorBlend.blendEnable         = VK_TRUE;
+    colorBlend.blendEnable = VK_TRUE;
     colorBlend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     colorBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    colorBlend.colorBlendOp        = VK_BLEND_OP_ADD;
+    colorBlend.colorBlendOp = VK_BLEND_OP_ADD;
     colorBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     colorBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    colorBlend.alphaBlendOp        = VK_BLEND_OP_ADD;
-    colorBlend.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                   | VK_COLOR_COMPONENT_B_BIT;
+    colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+    colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
     VkPipelineColorBlendStateCreateInfo blendState = {};
-    blendState.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     blendState.attachmentCount = 1;
-    blendState.pAttachments    = &colorBlend;
+    blendState.pAttachments = &colorBlend;
 
     VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
-    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamicState.dynamicStateCount = 2;
-    dynamicState.pDynamicStates    = dynStates;
+    dynamicState.pDynamicStates = dynStates;
 
     VkGraphicsPipelineCreateInfo pipelineInfo = {};
-    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount          = 2;
-    pipelineInfo.pStages             = stages;
-    pipelineInfo.pVertexInputState   = &vertInput;
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertInput;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pViewportState = &viewportState;
     pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState   = &msaa;
-    pipelineInfo.pDepthStencilState  = &depthStencil;
-    pipelineInfo.pColorBlendState    = &blendState;
-    pipelineInfo.pDynamicState       = &dynamicState;
-    pipelineInfo.layout              = vkRT.volCompositeLayout;
-    pipelineInfo.renderPass          = vk.renderPass;
-    pipelineInfo.subpass             = 0;
-    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
-                                       &vkRT.volCompositePipeline));
+    pipelineInfo.pMultisampleState = &msaa;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &blendState;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = vkRT.volCompositeLayout;
+    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.subpass = 0;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositePipeline));
 
     vkDestroyShaderModule(vk.device, vertMod, NULL);
     vkDestroyShaderModule(vk.device, fragMod, NULL);
 
     // --- Descriptor pool and sets ---
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                     (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     VkDescriptorPoolCreateInfo poolInfo = {};
-    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.maxSets       = VK_MAX_FRAMES_IN_FLIGHT;
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
     poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes    = &poolSize;
+    poolInfo.pPoolSizes = &poolSize;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.volCompositeDescPool));
 
     VkDescriptorSetLayout compLayouts[VK_MAX_FRAMES_IN_FLIGHT];
@@ -532,10 +542,10 @@ static void VK_RT_InitVolCompositePipeline(void)
         compLayouts[i] = vkRT.volCompositeDescLayout;
 
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkRT.volCompositeDescPool;
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.volCompositeDescPool;
     dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
-    dsAlloc.pSetLayouts        = compLayouts;
+    dsAlloc.pSetLayouts = compLayouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volCompositeDescSets));
 
     common->Printf("VK RT Vol: composite pipeline initialized\n");
@@ -575,7 +585,7 @@ static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef)
     if (rw <= 0 || rh <= 0)
         return VkRect2D{{0, 0}, {0, 0}};
 
-    r.extent.width  = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
     r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
     return r;
 }
@@ -586,19 +596,19 @@ static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef)
 
 static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
 {
-    img.width  = width;
+    img.width = width;
     img.height = height;
 
     VkImageCreateInfo imgCI = {};
-    imgCI.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imgCI.imageType     = VK_IMAGE_TYPE_2D;
-    imgCI.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
-    imgCI.extent        = {width, height, 1};
-    imgCI.mipLevels     = 1;
-    imgCI.arrayLayers   = 1;
-    imgCI.samples       = VK_SAMPLE_COUNT_1_BIT;
-    imgCI.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    imgCI.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgCI.extent = {width, height, 1};
+    imgCI.mipLevels = 1;
+    imgCI.arrayLayers = 1;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(vk.device, &imgCI, NULL, &img.image));
 
@@ -611,7 +621,10 @@ static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint
     {
         if ((memReq.memoryTypeBits & (1u << m)) &&
             (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
-        { memTypeIdx = m; break; }
+        {
+            memTypeIdx = m;
+            break;
+        }
     }
     if (memTypeIdx == UINT32_MAX)
     {
@@ -622,26 +635,26 @@ static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint
     }
 
     VkMemoryAllocateInfo allocI = {};
-    allocI.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocI.allocationSize  = memReq.size;
+    allocI.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocI.allocationSize = memReq.size;
     allocI.memoryTypeIndex = memTypeIdx;
     VK_CHECK(vkAllocateMemory(vk.device, &allocI, NULL, &img.memory));
     VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
 
     VkImageViewCreateInfo viewCI = {};
-    viewCI.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewCI.image            = img.image;
-    viewCI.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    viewCI.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+    viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewCI.image = img.image;
+    viewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK(vkCreateImageView(vk.device, &viewCI, NULL, &img.view));
 
     // Transition UNDEFINED → GENERAL and clear to black.
     {
         VkCommandBufferAllocateInfo cbAlloc = {};
-        cbAlloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cbAlloc.commandPool        = vk.commandPool;
-        cbAlloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbAlloc.commandPool = vk.commandPool;
+        cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbAlloc.commandBufferCount = 1;
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
@@ -654,11 +667,14 @@ static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint
         VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VkImageMemoryBarrier b1 = {};
         b1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b1.srcAccessMask = 0; b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b1.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b1.image = img.image; b1.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b1);
+        b1.srcAccessMask = 0;
+        b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b1.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b1.image = img.image;
+        b1.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &b1);
 
         VkClearColorValue clearBlack = {};
         vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
@@ -667,18 +683,22 @@ static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint
         b2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        b2.oldLayout = VK_IMAGE_LAYOUT_GENERAL; b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        b2.image = img.image; b2.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &b2);
+        b2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b2.image = img.image;
+        b2.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL,
+                             0, NULL, 1, &b2);
 
         vkEndCommandBuffer(tmpCmd);
-        VkFenceCreateInfo fenceCI = {}; fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFenceCreateInfo fenceCI = {};
+        fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence = VK_NULL_HANDLE;
         VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
         VkSubmitInfo submitI = {};
         submitI.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submitI.commandBufferCount = 1; submitI.pCommandBuffers = &tmpCmd;
+        submitI.commandBufferCount = 1;
+        submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
         vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
@@ -689,9 +709,21 @@ static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint
 
 static void VK_RT_FreeVolHistoryImage(vkReflBuffer_t &img)
 {
-    if (img.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, img.view,   NULL); img.view   = VK_NULL_HANDLE; }
-    if (img.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, img.image,  NULL); img.image  = VK_NULL_HANDLE; }
-    if (img.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, img.memory, NULL); img.memory = VK_NULL_HANDLE; }
+    if (img.view != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(vk.device, img.view, NULL);
+        img.view = VK_NULL_HANDLE;
+    }
+    if (img.image != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(vk.device, img.image, NULL);
+        img.image = VK_NULL_HANDLE;
+    }
+    if (img.memory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, img.memory, NULL);
+        img.memory = VK_NULL_HANDLE;
+    }
     img.width = img.height = 0;
 }
 
@@ -725,24 +757,32 @@ static void VK_RT_DestroyVolHistoryImages(void)
 static void VK_RT_InitVolTemporalPipeline(void)
 {
     VkDescriptorSetLayoutBinding bindings[2] = {};
-    bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[0].descriptorCount = 1; bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount = 1; bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 2; layoutCI.pBindings = bindings;
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.volTemporalDescLayout));
 
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset = 0; pushRange.size = 32; // alpha(4)+pad(12)+scissorOffset(8)+scissorExtent(8)
+    pushRange.offset = 0;
+    pushRange.size = 32; // alpha(4)+pad(12)+scissorOffset(8)+scissorExtent(8)
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plCI.setLayoutCount = 1; plCI.pSetLayouts = &vkRT.volTemporalDescLayout;
-    plCI.pushConstantRangeCount = 1; plCI.pPushConstantRanges = &pushRange;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.volTemporalDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pushRange;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.volTemporalPipelineLayout));
 
     // Reuse gi_temporal_resolve.comp.spv — identical rgba16f EMA logic.
@@ -755,26 +795,33 @@ static void VK_RT_InitVolTemporalPipeline(void)
 
     VkPipelineShaderStageCreateInfo stageCI = {};
     stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT; stageCI.module = compModule; stageCI.pName = "main";
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compModule;
+    stageCI.pName = "main";
 
     VkComputePipelineCreateInfo pipeCI = {};
     pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipeCI.stage = stageCI; pipeCI.layout = vkRT.volTemporalPipelineLayout;
+    pipeCI.stage = stageCI;
+    pipeCI.layout = vkRT.volTemporalPipelineLayout;
     VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.volTemporalPipeline));
     vkDestroyShaderModule(vk.device, compModule, NULL);
 
     VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * VK_MAX_FRAMES_IN_FLIGHT};
     VkDescriptorPoolCreateInfo poolCI = {};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT; poolCI.poolSizeCount = 1; poolCI.pPoolSizes = &poolSize;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes = &poolSize;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.volTemporalDescPool));
 
     VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++) layouts[i] = vkRT.volTemporalDescLayout;
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.volTemporalDescLayout;
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     dsAlloc.descriptorPool = vkRT.volTemporalDescPool;
-    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT; dsAlloc.pSetLayouts = layouts;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = layouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volTemporalDescSets));
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.volTemporalDescSetLastUpdatedFrameCount[i] = -1;
@@ -795,10 +842,26 @@ void VK_RT_InitVolTemporal(void)
 void VK_RT_ShutdownVolTemporal(void)
 {
     VK_RT_DestroyVolHistoryImages();
-    if (vkRT.volTemporalPipeline     != VK_NULL_HANDLE) { vkDestroyPipeline(vk.device, vkRT.volTemporalPipeline, NULL); vkRT.volTemporalPipeline = VK_NULL_HANDLE; }
-    if (vkRT.volTemporalPipelineLayout != VK_NULL_HANDLE) { vkDestroyPipelineLayout(vk.device, vkRT.volTemporalPipelineLayout, NULL); vkRT.volTemporalPipelineLayout = VK_NULL_HANDLE; }
-    if (vkRT.volTemporalDescPool     != VK_NULL_HANDLE) { vkDestroyDescriptorPool(vk.device, vkRT.volTemporalDescPool, NULL); vkRT.volTemporalDescPool = VK_NULL_HANDLE; }
-    if (vkRT.volTemporalDescLayout   != VK_NULL_HANDLE) { vkDestroyDescriptorSetLayout(vk.device, vkRT.volTemporalDescLayout, NULL); vkRT.volTemporalDescLayout = VK_NULL_HANDLE; }
+    if (vkRT.volTemporalPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.volTemporalPipeline, NULL);
+        vkRT.volTemporalPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.volTemporalPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.volTemporalPipelineLayout, NULL);
+        vkRT.volTemporalPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.volTemporalDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.volTemporalDescPool, NULL);
+        vkRT.volTemporalDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.volTemporalDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.volTemporalDescLayout, NULL);
+        vkRT.volTemporalDescLayout = VK_NULL_HANDLE;
+    }
 }
 
 void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height)
@@ -854,7 +917,7 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
     float invVP[16];
     {
         const float *proj = viewDef->projectionMatrix;
-        const float *mv   = viewDef->worldSpace.modelViewMatrix;
+        const float *mv = viewDef->worldSpace.modelViewMatrix;
         float vp[16];
         for (int r = 0; r < 4; r++)
             for (int c = 0; c < 4; c++)
@@ -863,8 +926,8 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
                 for (int k = 0; k < 4; k++)
                     vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
             }
-        idMat4 vpMat(idVec4(vp[0],vp[1],vp[2],vp[3]),   idVec4(vp[4],vp[5],vp[6],vp[7]),
-                     idVec4(vp[8],vp[9],vp[10],vp[11]),  idVec4(vp[12],vp[13],vp[14],vp[15]));
+        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
+                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
         idMat4 inv = vpMat.Inverse();
         memcpy(invVP, inv.ToFloatPtr(), 16 * sizeof(float));
     }
@@ -876,14 +939,15 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
         for (int i = 0; i < 16; i++)
         {
             float d = fabsf(invVP[i] - vkRT.volPrevInvViewProj[frameIdx][i]);
-            if (d > maxDiff) maxDiff = d;
+            if (d > maxDiff)
+                maxDiff = d;
         }
         float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
         if (maxDiff <= cutThresh)
             effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtVolTemporalAlpha.GetFloat());
         else if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Vol Temporal: camera cut slot=%d maxDiff=%.4f — resetting history\n",
-                           frameIdx, maxDiff);
+            common->Printf("VK RT Vol Temporal: camera cut slot=%d maxDiff=%.4f — resetting history\n", frameIdx,
+                           maxDiff);
     }
     memcpy(vkRT.volPrevInvViewProj[frameIdx], invVP, sizeof(invVP));
     vkRT.volHistoryValid[frameIdx] = true;
@@ -892,18 +956,24 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
     if (vkRT.volTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
     {
         VkDescriptorImageInfo currInfo = {};
-        currInfo.imageView = current.view; currInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        currInfo.imageView = current.view;
+        currInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         VkDescriptorImageInfo histInfo = {};
-        histInfo.imageView = history.view; histInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        histInfo.imageView = history.view;
+        histInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet writes[2] = {};
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = vkRT.volTemporalDescSets[frameIdx]; writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].dstSet = vkRT.volTemporalDescSets[frameIdx];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[0].pImageInfo = &currInfo;
         writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = vkRT.volTemporalDescSets[frameIdx]; writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].dstSet = vkRT.volTemporalDescSets[frameIdx];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[1].pImageInfo = &histInfo;
 
         vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
@@ -911,25 +981,32 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
     }
 
     // --- Push constants ---
-    struct { float alpha; float pad[3]; int32_t sx, sy, ex, ey; } pc;
-    pc.alpha = effectiveAlpha; pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
-    pc.sx = (int32_t)dispatchRect.offset.x;  pc.sy = (int32_t)dispatchRect.offset.y;
-    pc.ex = (int32_t)dispatchRect.extent.width; pc.ey = (int32_t)dispatchRect.extent.height;
+    struct
+    {
+        float alpha;
+        float pad[3];
+        int32_t sx, sy, ex, ey;
+    } pc;
+    pc.alpha = effectiveAlpha;
+    pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
+    pc.sx = (int32_t)dispatchRect.offset.x;
+    pc.sy = (int32_t)dispatchRect.offset.y;
+    pc.ex = (int32_t)dispatchRect.extent.width;
+    pc.ey = (int32_t)dispatchRect.extent.height;
 
     // --- Dispatch ---
-    const uint32_t groupsX = (dispatchRect.extent.width  + 7) / 8;
+    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipelineLayout,
-                            0, 1, &vkRT.volTemporalDescSets[frameIdx], 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volTemporalPipelineLayout, 0, 1,
+                            &vkRT.volTemporalDescSets[frameIdx], 0, NULL);
     vkCmdPushConstants(cmd, vkRT.volTemporalPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
     vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n",
-                       frameIdx, effectiveAlpha,
-                       dispatchRect.offset.x, dispatchRect.offset.y,
-                       (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height);
+        common->Printf("VK RT Vol Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n", frameIdx, effectiveAlpha,
+                       dispatchRect.offset.x, dispatchRect.offset.y, (unsigned int)dispatchRect.extent.width,
+                       (unsigned int)dispatchRect.extent.height);
 
     // --- Barrier: volHistory compute write → fragment read (for composite) ---
     {
@@ -937,8 +1014,8 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
         mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &mb, 0, NULL, 0, NULL);
     }
 
     vkRT.volReadView[frameIdx] = history.view;
@@ -1052,37 +1129,35 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: dispatch frame=%d slot=%d size=%ux%u\n",
-                       tr.frameCount, frameIdx, vb.width, vb.height);
+        common->Printf("VK RT Vol: dispatch frame=%d slot=%d size=%ux%u\n", tr.frameCount, frameIdx, vb.width,
+                       vb.height);
 
     // --- Depth aspect flags ---
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT ||
-        vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT  ||
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
         vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
         depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for compute shader sampling ---
     {
         VkImageMemoryBarrier depthToRead = {};
-        depthToRead.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthToRead.srcAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                                     | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthToRead.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
-        depthToRead.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthToRead.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthToRead.image            = vk.depthImage;
+        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthToRead.image = vk.depthImage;
         depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
         vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0, 0, NULL, 0, NULL, 1, &depthToRead);
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
     }
 
     // --- Build UBO ---
-    VkBuffer  uboBuf;
-    uint32_t  uboOff;
-    void     *uboMapped;
+    VkBuffer uboBuf;
+    uint32_t uboOff;
+    void *uboMapped;
     VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
 
     VolParamsUBO ubo = {};
@@ -1090,7 +1165,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Compute invViewProj (same as GI dispatch).
     {
         const float *proj = viewDef->projectionMatrix;
-        const float *mv   = viewDef->worldSpace.modelViewMatrix;
+        const float *mv = viewDef->worldSpace.modelViewMatrix;
         float vp[16];
         for (int r = 0; r < 4; r++)
             for (int c = 0; c < 4; c++)
@@ -1099,10 +1174,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 for (int k = 0; k < 4; k++)
                     vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
             }
-        idMat4 vpMat(idVec4(vp[0],  vp[1],  vp[2],  vp[3]),
-                     idVec4(vp[4],  vp[5],  vp[6],  vp[7]),
-                     idVec4(vp[8],  vp[9],  vp[10], vp[11]),
-                     idVec4(vp[12], vp[13], vp[14], vp[15]));
+        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
+                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
         idMat4 invVP = vpMat.Inverse();
         memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
     }
@@ -1111,41 +1184,44 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     {
         bool hasNaN = false;
         for (int i = 0; i < 16; i++)
-            if (ubo.invViewProj[i] != ubo.invViewProj[i]) { hasNaN = true; break; }
+            if (ubo.invViewProj[i] != ubo.invViewProj[i])
+            {
+                hasNaN = true;
+                break;
+            }
         if (hasNaN)
         {
             common->Warning("VK RT Vol: invViewProj NaN — skipping dispatch");
             VkImageMemoryBarrier restore = {};
-            restore.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            restore.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
-            restore.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                                     | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-            restore.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-            restore.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            restore.image            = vk.depthImage;
+            restore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            restore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            restore.dstAccessMask =
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            restore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            restore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            restore.image = vk.depthImage;
             restore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
                                  0, 0, NULL, 0, NULL, 1, &restore);
             return;
         }
     }
 
     const idVec3 camPos = viewDef->renderView.vieworg;
-    ubo.cameraPosX     = camPos.x;
-    ubo.cameraPosY     = camPos.y;
-    ubo.cameraPosZ     = camPos.z;
-    ubo.cameraPad      = 0.0f;
-    ubo.frameIndex     = (uint32_t)tr.frameCount;
-    ubo.numSamples     = idMath::ClampInt(1, 32, r_rtVolSamples.GetInteger());
-    ubo.maxLights      = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
-    ubo.density        = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
-    ubo.anisotropy     = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
-    ubo.maxDist        = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    ubo.strength              = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
-    ubo.flashlightDensity     = idMath::ClampFloat(0.0f, 1.0f,  r_rtVolFlashlightDensity.GetFloat());
-    ubo.flashlightAnisotropy  = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
-    ubo.flashlightStrength    = idMath::ClampFloat(0.0f, 8.0f,  r_rtVolFlashlightStrength.GetFloat());
+    ubo.cameraPosX = camPos.x;
+    ubo.cameraPosY = camPos.y;
+    ubo.cameraPosZ = camPos.z;
+    ubo.cameraPad = 0.0f;
+    ubo.frameIndex = (uint32_t)tr.frameCount;
+    ubo.numSamples = idMath::ClampInt(1, 32, r_rtVolSamples.GetInteger());
+    ubo.maxLights = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
+    ubo.density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+    ubo.anisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
+    ubo.maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
+    ubo.strength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
+    ubo.flashlightDensity = idMath::ClampFloat(0.0f, 1.0f, r_rtVolFlashlightDensity.GetFloat());
+    ubo.flashlightAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
+    ubo.flashlightStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI).
     const int w = (int)vk.swapchainExtent.width;
@@ -1154,25 +1230,25 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
         const idScreenRect &s = viewDef->scissor;
         int offX = idMath::ClampInt(0, w - 1, s.x1);
         int offY = idMath::ClampInt(0, h - 1, h - 1 - s.y2);
-        int rw   = idMath::ClampInt(1, w - offX, s.x2 - s.x1 + 1);
-        int rh   = idMath::ClampInt(1, h - offY, s.y2 - s.y1 + 1);
+        int rw = idMath::ClampInt(1, w - offX, s.x2 - s.x1 + 1);
+        int rh = idMath::ClampInt(1, h - offY, s.y2 - s.y1 + 1);
         ubo.scissorOffsetX = offX;
         ubo.scissorOffsetY = offY;
         ubo.scissorExtentX = rw;
         ubo.scissorExtentY = rh;
     }
-    ubo.screenWidth  = (int32_t)vb.width;
+    ubo.screenWidth = (int32_t)vb.width;
     ubo.screenHeight = (int32_t)vb.height;
 
     memcpy(uboMapped, &ubo, sizeof(VolParamsUBO));
 
     // --- Update descriptor set (once per frame slot when resources change) ---
     static VkAccelerationStructureKHR s_lastTlas[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView                s_lastVolView[VK_MAX_FRAMES_IN_FLIGHT] = {};
-    static VkImageView                s_lastDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastVolView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
-    const bool resourceChanged = (s_lastTlas[frameIdx]     != vkRT.tlas[frameIdx].handle) ||
-                                 (s_lastVolView[frameIdx]   != vb.view) ||
+    const bool resourceChanged = (s_lastTlas[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+                                 (s_lastVolView[frameIdx] != vb.view) ||
                                  (s_lastDepthView[frameIdx] != vk.depthSampledView);
 
     if (vkRT.volMarchDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount || resourceChanged)
@@ -1180,77 +1256,76 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
         VkDescriptorSet ds = vkRT.volMarchDescSets[frameIdx];
 
         VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
-        tlasWrite.sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
         tlasWrite.accelerationStructureCount = 1;
-        tlasWrite.pAccelerationStructures    = &vkRT.tlas[frameIdx].handle;
+        tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
         VkDescriptorImageInfo volImgInfo = {};
-        volImgInfo.imageView   = vb.view;
+        volImgInfo.imageView = vb.view;
         volImgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkDescriptorImageInfo depthInfo = {};
-        depthInfo.sampler     = vkRT.depthSampler;
-        depthInfo.imageView   = vk.depthSampledView;
+        depthInfo.sampler = vkRT.depthSampler;
+        depthInfo.imageView = vk.depthSampledView;
         depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
         VkDescriptorBufferInfo uboInfo = {};
         uboInfo.buffer = uboBuf;
         uboInfo.offset = 0;
-        uboInfo.range  = sizeof(VolParamsUBO);
+        uboInfo.range = sizeof(VolParamsUBO);
 
         VkDescriptorBufferInfo lightSsboInfo = {};
         lightSsboInfo.buffer = vkRT.giLightSsbo[frameIdx];
         lightSsboInfo.offset = 0;
-        lightSsboInfo.range  = VK_WHOLE_SIZE;
+        lightSsboInfo.range = VK_WHOLE_SIZE;
 
         VkWriteDescriptorSet writes[5] = {};
 
-        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].pNext           = &tlasWrite;
-        writes[0].dstSet          = ds;
-        writes[0].dstBinding      = 0;
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].pNext = &tlasWrite;
+        writes[0].dstSet = ds;
+        writes[0].dstBinding = 0;
         writes[0].descriptorCount = 1;
-        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 
-        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet          = ds;
-        writes[1].dstBinding      = 1;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = ds;
+        writes[1].dstBinding = 1;
         writes[1].descriptorCount = 1;
-        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo      = &volImgInfo;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &volImgInfo;
 
-        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[2].dstSet          = ds;
-        writes[2].dstBinding      = 2;
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = ds;
+        writes[2].dstBinding = 2;
         writes[2].descriptorCount = 1;
-        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[2].pImageInfo      = &depthInfo;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo = &depthInfo;
 
-        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[3].dstSet          = ds;
-        writes[3].dstBinding      = 3;
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = ds;
+        writes[3].dstBinding = 3;
         writes[3].descriptorCount = 1;
-        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-        writes[3].pBufferInfo     = &uboInfo;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        writes[3].pBufferInfo = &uboInfo;
 
-        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[4].dstSet          = ds;
-        writes[4].dstBinding      = 4;
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = ds;
+        writes[4].dstBinding = 4;
         writes[4].descriptorCount = 1;
-        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[4].pBufferInfo     = &lightSsboInfo;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[4].pBufferInfo = &lightSsboInfo;
 
         vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.volMarchDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-        s_lastTlas[frameIdx]      = vkRT.tlas[frameIdx].handle;
-        s_lastVolView[frameIdx]   = vb.view;
+        s_lastTlas[frameIdx] = vkRT.tlas[frameIdx].handle;
+        s_lastVolView[frameIdx] = vb.view;
         s_lastDepthView[frameIdx] = vk.depthSampledView;
     }
 
     // --- Compute dispatch ---
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            vkRT.volMarchPipelineLayout, 0, 1,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 0, 1,
                             &vkRT.volMarchDescSets[frameIdx], 1, &uboOff);
 
     uint32_t groupsX = ((uint32_t)ubo.scissorExtentX + 7) / 8;
@@ -1261,35 +1336,32 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // --- Barrier: volBuf compute write → compute read (temporal) + fragment read (composite) ---
     {
         VkMemoryBarrier memBarrier = {};
-        memBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            0, 1, &memBarrier, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &memBarrier, 0, NULL, 0, NULL);
     }
 
     // --- Depth barrier: restore ATTACHMENT_OPTIMAL ---
     {
         VkImageMemoryBarrier depthRestore = {};
-        depthRestore.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        depthRestore.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
-        depthRestore.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                                      | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthRestore.oldLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-        depthRestore.newLayout        = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depthRestore.image            = vk.depthImage;
+        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthRestore.dstAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthRestore.image = vk.depthImage;
         depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-            0, 0, NULL, 0, NULL, 1, &depthRestore);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                             0, NULL, 0, NULL, 1, &depthRestore);
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: dispatch complete groups=%ux%u density=%.3f samples=%d\n",
-                       groupsX, groupsY, ubo.density, ubo.numSamples);
+        common->Printf("VK RT Vol: dispatch complete groups=%ux%u density=%.3f samples=%d\n", groupsX, groupsY,
+                       ubo.density, ubo.numSamples);
 }
 
 // ---------------------------------------------------------------------------
@@ -1313,25 +1385,25 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     // Write the descriptor set for this frame slot.
     // Use volReadView: points to volHistory when temporal is active, volBuffer otherwise.
     VkImageView readView = vkRT.volReadView[frameIdx];
-    if (readView == VK_NULL_HANDLE) readView = vb.view;
+    if (readView == VK_NULL_HANDLE)
+        readView = vb.view;
 
     VkDescriptorImageInfo imgInfo = {};
-    imgInfo.sampler     = vkRT.volSampler;
-    imgInfo.imageView   = readView;
+    imgInfo.sampler = vkRT.volSampler;
+    imgInfo.imageView = readView;
     imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     VkWriteDescriptorSet write = {};
-    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet          = vkRT.volCompositeDescSets[frameIdx];
-    write.dstBinding      = 0;
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = vkRT.volCompositeDescSets[frameIdx];
+    write.dstBinding = 0;
     write.descriptorCount = 1;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo      = &imgInfo;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imgInfo;
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositePipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            vkRT.volCompositeLayout, 0, 1,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositeLayout, 0, 1,
                             &vkRT.volCompositeDescSets[frameIdx], 0, NULL);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 

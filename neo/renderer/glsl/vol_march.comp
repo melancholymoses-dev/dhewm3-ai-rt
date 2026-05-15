@@ -212,10 +212,19 @@ void main()
             float atten;
             if (!isFlashlight)
             {
-                // Point light: AABB half-extent containment.
-                if (any(greaterThan(abs(stepPos - lightPos), bx.xyz)))
-                    continue;
-                atten = CauchyRamp(dist, max(max(bx.x, bx.y), bx.z));
+                // Point light: box-normalized L∞ distance (1.0 = face, 1.5 = outer limit).
+                vec3  localAbs = abs(stepPos - lightPos);
+                vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
+                float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
+
+                if (maxNorm >= 1.5) continue;
+
+                if (maxNorm <= 1.0)
+                    // Inside box: ramp from 0.1 at face to 1.0 over inner 20%.
+                    atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
+                else
+                    // Halo zone [1.0, 1.5]: ramp from 0.1 at face to 0.0 at outer limit.
+                    atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
             }
             else
             {
