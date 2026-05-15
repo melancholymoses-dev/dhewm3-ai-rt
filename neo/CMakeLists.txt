@@ -690,6 +690,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
 	renderer/Vulkan/vk_gi.cpp
+	renderer/Vulkan/vk_vol.cpp
 	renderer/Vulkan/vk_material_table.cpp
 )
 
@@ -750,6 +751,8 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/shadow_ray.rgen
 	renderer/glsl/shadow_ray.rmiss	
 	renderer/glsl/temporal_resolve.comp
+	renderer/glsl/vol_march.comp
+	renderer/glsl/vol_composite.frag
 )
 
 

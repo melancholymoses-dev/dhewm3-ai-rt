@@ -1,0 +1,237 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — vol_march.comp — Volumetric light scattering.
+
+Compute shader that ray-marches each view ray from the camera to the
+depth-reconstructed hit point, firing GL_EXT_ray_query shadow tests toward
+each in-range light at each step to accumulate single-scatter in-scattering.
+
+Single-scattering model with Henyey-Greenstein phase function and
+Beer-Lambert transmittance.  Exponential step distribution concentrates
+samples near the camera where transmittance is highest.
+
+Descriptors (set 0):
+  binding 0 — TLAS                (ray queries for shadow tests)
+  binding 1 — volBuf rgba16f      (output storage image)
+  binding 2 — depthSampler        (reconstruct world position)
+  binding 3 — VolParams UBO       (params)
+  binding 4 — GILightBuf SSBO    (pre-sorted nearest-first light list)
+
+Phase 7.2 — Volumetric Lighting.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_query : require
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// ---------------------------------------------------------------------------
+// Descriptors
+// ---------------------------------------------------------------------------
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 1, rgba16f) uniform image2D volBuf;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+
+// std140 layout — offsets must match VolParamsUBO in vk_vol.cpp exactly.
+layout(set = 0, binding = 3, std140) uniform VolParams {
+    mat4  invViewProj;    // offset   0, size 64
+    vec4  cameraPosW;     // offset  64, size 16  (xyz = camera world pos, w unused)
+    uint  frameIndex;     // offset  80, size  4
+    int   numSamples;     // offset  84, size  4
+    int   maxLights;      // offset  88, size  4
+    float density;        // offset  92, size  4
+    float anisotropy;     // offset  96, size  4
+    float maxDist;        // offset 100, size  4
+    float strength;       // offset 104, size  4
+    int   scissorOffsetX; // offset 108, size  4
+    int   scissorOffsetY; // offset 112, size  4
+    int   scissorExtentX; // offset 116, size  4
+    int   scissorExtentY; // offset 120, size  4
+    int   screenWidth;    // offset 124, size  4
+    int   screenHeight;   // offset 128, size  4
+} params;
+
+struct GILight {
+    vec4 posRadius;       // xyz = world position, w = bounding radius
+    vec4 colorIntensity;  // rgb = colour, a = intensity
+};
+
+// GILightBuffer matches the C++ GILightBuffer struct (std430).
+layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
+    int    numLights;
+    float  bounceScale;
+    float  giRadius;
+    float  emissiveScale;
+    GILight lights[];
+} giLightBuf;
+
+// ---------------------------------------------------------------------------
+// rt_indirect.glsl: provides wang_hash, randFloat, rt_ReconstructWorldPos.
+// Requires: sampler2D depthSampler (declared above as binding 2).
+// ---------------------------------------------------------------------------
+#include "rt_indirect.glsl"
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+#define VOL_SHADOW_BIAS 0.5
+
+// ---------------------------------------------------------------------------
+// Henyey-Greenstein phase function.
+// cosTheta: dot(marchDir, toLightDir).
+// g in [0,1): 0=isotropic, 0.5=forward-scatter flashlight, 0.8=shaft dust.
+// ---------------------------------------------------------------------------
+float HenyeyGreenstein(float cosTheta, float g)
+{
+    float g2    = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-4), 1.5));
+}
+
+// Cauchy-with-ramp attenuation — matches the GI bounce shading model.
+float CauchyRamp(float dist, float radius)
+{
+    float x     = dist / max(radius, 0.001);
+    float cauchy = 1.0 / (1.0 + x * x * 4.0);
+    float ramp   = clamp(1.0 - x, 0.0, 1.0);
+    return cauchy * ramp * ramp;
+}
+
+// ---------------------------------------------------------------------------
+void main()
+// ---------------------------------------------------------------------------
+{
+    ivec2 local      = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 scissorOff = ivec2(params.scissorOffsetX, params.scissorOffsetY);
+    ivec2 scissorExt = ivec2(params.scissorExtentX, params.scissorExtentY);
+
+    if (local.x >= scissorExt.x || local.y >= scissorExt.y)
+        return;
+
+    ivec2 coord    = local + scissorOff;
+    ivec2 fullSize = ivec2(params.screenWidth, params.screenHeight);
+
+    // Sky early-out: depth 1.0 means no geometry → nothing to scatter into.
+    float depth = texelFetch(depthSampler, coord, 0).r;
+    if (depth >= 1.0)
+    {
+        imageStore(volBuf, coord, vec4(0.0));
+        return;
+    }
+
+    // Reconstruct world-space hit position and view ray direction.
+    vec3 cameraPos = params.cameraPosW.xyz;
+    vec3 hitPos    = rt_ReconstructWorldPos(coord, fullSize, params.invViewProj);
+    vec3 toHit     = hitPos - cameraPos;
+    float hitDist  = length(toHit);
+
+    if (hitDist < 0.001)
+    {
+        imageStore(volBuf, coord, vec4(0.0));
+        return;
+    }
+
+    vec3  marchDir = toHit / hitDist;
+    float tMax     = min(hitDist, params.maxDist);
+
+    // Temporal jitter: shifts the sampling sequence within the first step.
+    // Uses the world-anchored seed helper from rt_indirect.glsl for stability.
+    uint  seed   = wang_hash(uint(coord.x) * 2053u
+                 ^ wang_hash(uint(coord.y) * 4099u + params.frameIndex * 7919u));
+    float jitter = float(wang_hash(seed)) / 4294967296.0;
+
+    int   numSteps = max(1, params.numSamples);
+    float logFac   = log(tMax + 1.0);
+    int   maxLights = min(params.maxLights, giLightBuf.numLights);
+
+    vec3  scatter      = vec3(0.0);
+    float transmittance = 1.0;
+
+    for (int s = 0; s < numSteps; s++)
+    {
+        // Exponential step distribution: samples concentrate near the camera
+        // where transmittance is highest and contribution is greatest.
+        float alphaA = clamp((float(s) + jitter) / float(numSteps), 0.0, 1.0);
+        float alphaB = clamp( float(s + 1)        / float(numSteps), 0.0, 1.0);
+        float tA     = clamp(exp(alphaA * logFac) - 1.0, 0.0, tMax);
+        float tB     = clamp(exp(alphaB * logFac) - 1.0, 0.0, tMax);
+
+        float stepT    = (tA + tB) * 0.5;
+        float stepSize = max(tB - tA, 1e-4);
+
+        // Beer-Lambert: update running transmittance and bail when negligible.
+        transmittance *= exp(-params.density * stepSize);
+        if (transmittance < 0.001)
+            break;
+
+        vec3 stepPos = cameraPos + marchDir * stepT;
+
+        // Evaluate each of the nearest lights at this step position.
+        // The GI light list is pre-sorted nearest-first so the first maxLights
+        // entries are always the closest, giving the strongest contributions.
+        for (int li = 0; li < maxLights; li++)
+        {
+            vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
+            float lightRadius = giLightBuf.lights[li].posRadius.w;
+            vec3  lightColor  = giLightBuf.lights[li].colorIntensity.rgb;
+            float lightIntens = giLightBuf.lights[li].colorIntensity.a;
+            if (lightIntens < 0.001) lightIntens = 1.0;
+
+            vec3  toLight = lightPos - stepPos;
+            float dist    = length(toLight);
+
+            if (dist > lightRadius)
+                continue;
+
+            float atten = CauchyRamp(dist, lightRadius);
+            if (atten < 0.001)
+                continue;
+
+            vec3  lightDir = toLight / max(dist, 0.001);
+            float cosTheta = dot(marchDir, lightDir);
+            float phase    = HenyeyGreenstein(cosTheta, params.anisotropy);
+
+            // Fire a ray query to test occlusion between stepPos and the light.
+            float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
+
+            rayQueryEXT rq;
+            rayQueryInitializeEXT(
+                rq, tlas,
+                gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
+                0xFFu,
+                stepPos, 0.01, lightDir, tShadow);
+
+            while (rayQueryProceedEXT(rq))
+            {
+                if (rayQueryGetIntersectionTypeEXT(rq, false) ==
+                    gl_RayQueryCandidateIntersectionTriangleEXT)
+                    rayQueryConfirmIntersectionEXT(rq);
+            }
+
+            if (rayQueryGetIntersectionTypeEXT(rq, true) !=
+                gl_RayQueryCommittedIntersectionNoneEXT)
+                continue; // occluded — skip this light at this step
+
+            scatter += lightColor * lightIntens * phase * atten * stepSize;
+        }
+    }
+
+    // Global density and final strength multiplier.
+    // density scales the physical scattering coefficient; strength lets the
+    // artist tune the overall brightness independently of the fog thickness.
+    vec3 result = max(scatter * params.density * params.strength, vec3(0.0));
+
+    imageStore(volBuf, coord, vec4(result, 1.0));
+}
