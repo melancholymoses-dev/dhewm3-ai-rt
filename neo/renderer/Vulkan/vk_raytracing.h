@@ -448,6 +448,19 @@ struct vkRTState_t
     VkDescriptorPool      volCompositeDescPool;
     VkDescriptorSet       volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // Volumetric temporal EMA (Phase 7.2 — step 8)
+    vkReflBuffer_t volHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated history
+    bool           volHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
+    float          volPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16];
+    VkImageView    volReadView[VK_MAX_FRAMES_IN_FLIGHT]; // → history when on, → volBuffer when off
+
+    VkPipeline            volTemporalPipeline;
+    VkPipelineLayout      volTemporalPipelineLayout;
+    VkDescriptorSetLayout volTemporalDescLayout;
+    VkDescriptorPool      volTemporalDescPool;
+    VkDescriptorSet       volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
     bool isInitialized;
 };
 
@@ -721,5 +734,23 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Must be called INSIDE the main render pass, after VK_RT_CompositeGI.
 // Does nothing when r_rtVol is off or the pipeline is not ready.
 void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
+
+// ---------------------------------------------------------------------------
+// Volumetric temporal EMA (Phase 7.2 — step 8)
+// ---------------------------------------------------------------------------
+
+// Initialise history images and EMA pipeline.  Called from VK_RT_InitVolumetrics.
+void VK_RT_InitVolTemporal(void);
+
+// Destroy all vol temporal resources.  Device must be idle before calling.
+void VK_RT_ShutdownVolTemporal(void);
+
+// Resize vol history images when render resolution changes.
+void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height);
+
+// Blend volBuffer into volHistory via EMA.  Sets volReadView[currentFrame] to
+// the accumulated history so VK_RT_CompositeVolumetrics reads the smooth result.
+// Must be called outside the render pass, immediately after VK_RT_DispatchVolumetrics.
+void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 #endif // __VK_RAYTRACING_H__

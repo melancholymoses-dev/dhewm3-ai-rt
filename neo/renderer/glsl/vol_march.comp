@@ -58,13 +58,19 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     int   scissorOffsetY; // offset 112, size  4
     int   scissorExtentX; // offset 116, size  4
     int   scissorExtentY; // offset 120, size  4
-    int   screenWidth;    // offset 124, size  4
-    int   screenHeight;   // offset 128, size  4
+    int   screenWidth;          // offset 124, size  4
+    int   screenHeight;         // offset 128, size  4
+    float flashlightDensity;    // offset 132, size  4
+    float flashlightAnisotropy; // offset 136, size  4
+    float flashlightStrength;   // offset 140, size  4
 } params;
 
 struct GILight {
     vec4 posRadius;       // xyz = world position, w = bounding radius
     vec4 colorIntensity;  // rgb = colour, a = intensity
+    vec4 coneDir;         // xyz = spot direction, w = cos(halfAngle); zeroed for point lights (step 8)
+    uint lightType;       // 0 = point, 1 = projected/spot
+    uint _pad0; uint _pad1; uint _pad2;
 };
 
 // GILightBuffer matches the C++ GILightBuffer struct (std430).
@@ -156,7 +162,8 @@ void main()
     float logFac   = log(tMax + 1.0);
     int   maxLights = min(params.maxLights, giLightBuf.numLights);
 
-    vec3  scatter      = vec3(0.0);
+    vec3  scatter_point = vec3(0.0); // accumulates point-light contribution
+    vec3  scatter_flash = vec3(0.0); // accumulates projected/flashlight contribution
     float transmittance = 1.0;
 
     for (int s = 0; s < numSteps; s++)
@@ -201,7 +208,10 @@ void main()
 
             vec3  lightDir = toLight / max(dist, 0.001);
             float cosTheta = dot(marchDir, lightDir);
-            float phase    = HenyeyGreenstein(cosTheta, params.anisotropy);
+
+            bool  isFlashlight = (giLightBuf.lights[li].lightType == 1u);
+            float localAniso   = isFlashlight ? params.flashlightAnisotropy : params.anisotropy;
+            float phase        = HenyeyGreenstein(cosTheta, localAniso);
 
             // Fire a ray query to test occlusion between stepPos and the light.
             float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
@@ -210,7 +220,7 @@ void main()
             rayQueryInitializeEXT(
                 rq, tlas,
                 gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
-                0xFFu,
+                0xFEu,  // skip player body/hands (mask 0x01); world geometry (0xFF) still hit
                 stepPos, 0.01, lightDir, tShadow);
 
             while (rayQueryProceedEXT(rq))
@@ -224,14 +234,21 @@ void main()
                 gl_RayQueryCommittedIntersectionNoneEXT)
                 continue; // occluded — skip this light at this step
 
-            scatter += lightColor * lightIntens * phase * atten * stepSize;
+            vec3 contrib = lightColor * lightIntens * phase * atten * stepSize;
+            if (isFlashlight)
+                scatter_flash += contrib;
+            else
+                scatter_point += contrib;
         }
     }
 
-    // Global density and final strength multiplier.
-    // density scales the physical scattering coefficient; strength lets the
-    // artist tune the overall brightness independently of the fog thickness.
-    vec3 result = max(scatter * params.density * params.strength, vec3(0.0));
+    // Combine point and flashlight scatter with independent density/strength controls.
+    // Beer-Lambert transmittance above uses global density for the medium; these
+    // multipliers scale the contribution of each light type separately.
+    vec3 result = max(
+        scatter_point * params.density       * params.strength +
+        scatter_flash * params.flashlightDensity * params.flashlightStrength,
+        vec3(0.0));
 
     imageStore(volBuf, coord, vec4(result, 1.0));
 }

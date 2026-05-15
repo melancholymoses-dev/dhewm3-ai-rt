@@ -304,14 +304,16 @@ The three optimisations built into the design that have the largest impact:
 
 ### Implementation Order
 
-1. **vk_vol.cpp skeleton** — allocate volBuffer, create pipeline plumbing, dispatch stub
-2. **vol_march.comp** — sky early-out, uniform steps first, point lights only, white constant scatter
-3. **Composite** — additive blend into interaction.frag (even with placeholder output, validates pipeline)
-4. **Exponential steps** — replace uniform t(s) with exponential distribution, compare visually
-5. **Phase function** — add Henyey-Greenstein, tune `r_rtVolAnisotropy`
-6. **Temporal EMA** — add temporal accumulation before declaring feature complete (noise is severe without it)
-7. **Bilateral upsample** — replace bilinear to fix depth-edge halos
-8. **Spot light extension** — extend GILight struct to add cone data for the flashlight
+1. **vk_vol.cpp skeleton** — allocate volBuffer, create pipeline plumbing, dispatch stub ✓
+2. **vol_march.comp** — sky early-out, uniform steps first, point lights only, white constant scatter ✓
+3. **Composite** — additive blend into interaction.frag (even with placeholder output, validates pipeline) ✓
+4. **Exponential steps** — replace uniform t(s) with exponential distribution, compare visually ✓
+5. **Phase function** — add Henyey-Greenstein, tune `r_rtVolAnisotropy` ✓
+6. **Per-type CVars** — separate density/anisotropy/strength for flashlight vs point lights; add `lightType`
+   field to `GILightEntry`; player-model self-shadowing fix (`0xFEu` cull mask) ✓
+7. **Light volume correctness** — replace sphere test with AABB/cone containment (see section below)
+8. **Temporal EMA** — add temporal accumulation before declaring feature complete (noise is severe without it)
+9. **Bilateral upsample** — replace bilinear to fix depth-edge halos
 
 ### Potential Issues
 
@@ -326,16 +328,175 @@ The three optimisations built into the design that have the largest impact:
 
 ---
 
+## Phase 7.2 — Light Volume Correctness
+
+**Status: TODO** (identified during tuning after initial 7.2 ship)
+
+### Problem
+
+The initial implementation uses a spherical volume test for all lights:
+
+```glsl
+float dist = length(stepPos - lightPos);
+if (dist > lightRadius) continue;
+float atten = CauchyRamp(dist, lightRadius);
+```
+
+`lightRadius` is `max(p.lightRadius.xyz)` — the largest axis of the actual bounding box used
+as a sphere radius.  This produces visible glowing spheres centred on each light origin,
+rather than fog uniformly filling the light's real volume.
+
+### How Doom 3 lights actually work
+
+| `pointLight` | `parallel` | Volume shape |
+|---|---|---|
+| `true` | `false` | OBB — `p.lightRadius` gives half-extents; `p.axis` gives orientation |
+| `false` | `false` | Frustum — `p.origin`, `p.target`, `p.right`, `p.up` define a cone/pyramid |
+| any | `true` | Directional/infinite — skip for volumetrics |
+
+The flashlight is a projected light (`pointLight == false`), identical in structure to any
+world spotlight or door-crack projector.
+
+### Fix: AABB containment for point lights
+
+Replace the sphere test with a box containment test.  For axis-aligned lights (the majority
+of Doom 3 lights) this is:
+
+```glsl
+bool inBox = all(lessThanEqual(abs(stepPos - lightPos), boxHalfExtents.xyz));
+if (!inBox) continue;
+```
+
+Attenuation inside the box: a simple linear ramp from 1.0 at the centre to 0.0 at the
+box edge, or just uniform 1.0 (the shadow ray already shapes the contribution).
+
+**OBB / rotated lights** (deferred): Doom 3 lights can have a non-identity `p.axis`.  A
+full OBB test requires transforming `stepPos` into light-local space.  For now the AABB
+approximation is acceptable — fog blending hides the corner over-extension of slightly
+rotated lights.  Add OBB support only if specific maps show obvious artefacts.
+
+### Fix: cone containment for projected lights
+
+Replace the sphere test with a cone/frustum containment test:
+
+```glsl
+vec3  toStep    = stepPos - lightPos;
+float alongCone = dot(toStep, coneDir.xyz);
+float cosAngle  = alongCone / max(length(toStep), 0.001);
+bool  inCone    = cosAngle > coneDir.w          // within half-angle
+               && alongCone > 0.0               // in front of light origin
+               && alongCone < boxExtents.w;     // within max reach
+if (!inCone) continue;
+```
+
+Attenuation: `1/d²` along the cone axis gives the physically correct spotlight falloff.
+
+This single code path handles the flashlight, ceiling spotlights, angled projectors, and
+window-light beams — any light with `lightType == 1`.
+
+### Required struct change: add `boxExtents` to `GILightEntry`
+
+The current `coneDir[4]` field carries cone direction for projected lights.  Point lights
+need their half-extents.  Rather than overloading `coneDir`, add a dedicated field:
+
+```cpp
+struct GILightEntry {
+    float    posRadius[4];   // xyz=pos, w=sphere pre-cull radius (cheap early-out)
+    float    colorIntensity[4];
+    float    coneDir[4];     // projected: xyz=normalised dir, w=cos(halfAngle); zeroed for point
+    float    boxExtents[4];  // point: xyz=AABB half-extents, w=unused
+                             // projected: w=max-reach distance along cone axis
+    uint32_t lightType;      // 0=point, 1=projected
+    uint32_t pad[3];
+};
+// 80 bytes per entry; static_assert → 16 + VK_GI_MAX_LIGHTS * 80
+```
+
+GLSL mirrors:
+```glsl
+struct GILight {
+    vec4 posRadius;
+    vec4 colorIntensity;
+    vec4 coneDir;       // projected: xyz=dir, w=cosHalfAngle
+    vec4 boxExtents;    // point: xyz=halfExtents; projected: w=maxReach
+    uint lightType;
+    uint _pad0; uint _pad1; uint _pad2;
+};
+```
+
+### Required CPU upload changes
+
+**Point lights** (`p.pointLight == true`):
+```cpp
+c.entry.boxExtents[0] = p.lightRadius.x;
+c.entry.boxExtents[1] = p.lightRadius.y;
+c.entry.boxExtents[2] = p.lightRadius.z;
+c.entry.boxExtents[3] = 0.0f;
+c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = c.entry.coneDir[3] = 0.0f;
+// posRadius.w stays as max(lightRadius) for cheap sphere pre-cull
+```
+
+**Projected lights** (`p.pointLight == false && p.parallel == false`):
+```cpp
+idVec3 dir = p.target - p.origin;
+float  reach = dir.Length();
+dir /= reach;
+float maxHalfExtent = Max(p.right.Length(), p.up.Length());
+float cosHalfAngle  = reach / sqrtf(reach * reach + maxHalfExtent * maxHalfExtent);
+
+c.entry.coneDir[0] = dir.x;   c.entry.coneDir[1] = dir.y;
+c.entry.coneDir[2] = dir.z;   c.entry.coneDir[3] = cosHalfAngle;
+c.entry.boxExtents[0] = c.entry.boxExtents[1] = c.entry.boxExtents[2] = 0.0f;
+c.entry.boxExtents[3] = reach * 1.1f;   // slight margin beyond frustum tip
+c.entry.posRadius[3]  = reach * 1.1f;   // sphere pre-cull matches max reach
+```
+
+### Files to change
+
+| File | Change |
+|------|--------|
+| `neo/renderer/Vulkan/vk_gi.cpp` | `GILightEntry` add `boxExtents[4]`; static_assert 80; upload fills |
+| `neo/renderer/glsl/gi_ray.rchit` | `GILight` add `vec4 boxExtents` |
+| `neo/renderer/glsl/reflect_ray.rchit` | `ReflGILight` add `vec4 boxExtents` |
+| `neo/renderer/glsl/player_reflect.rchit` | `ReflGILight` add `vec4 boxExtents` |
+| `neo/renderer/glsl/vol_march.comp` | Replace sphere test with AABB/cone containment; update `GILight` |
+
+### Deferred / stretch
+
+- **OBB rotation**: add `p.axis` (3×3ux = 9 floats, 3 × vec4 extra) to `GILightEntry` and
+  transform `stepPos` into light-local space before AABB test.  Only if axis-aligned AABB
+  shows visible artefacts on specific maps.
+- **Frustum vs cone**: a proper 4-plane frustum test is more accurate for wide projectors.
+  The cone approximation is sufficient for the volumetric blur level.
+
+### Spatial smoothing
+
+Deferred — evaluate after temporal EMA is in place.
+
+The noise sources in the volumetric buffer are: (1) temporal jitter between frames,
+(2) step-boundary banding from discrete march steps, and (3) hard binary shadows from
+ray queries.  Temporal EMA handles (1) almost entirely.  If (2) or (3) are still visible
+after EMA, a bilateral denoise pass (depth-aware, same depth edge-stop as the
+planned bilateral upsample) resolves them.  A plain Gaussian is cheaper but bleeds fog
+through depth edges.
+
+Since we run at full resolution, the planned bilateral upsample step becomes a bilateral
+denoise pass if needed — same compute shader, no size change.  Do not implement before
+EMA; let the result decide whether it is necessary.
+
+---
+
 ## Recommended Sequence
 
-| Step | Feature | Notes |
-|------|---------|-------|
-| 1 | Emissive material slot | Small, self-contained, high visual payoff on screens/panels |
-| 2 | Emissive in GI rchit | Depends on step 1 |
-| 3 | Emissive in reflect_ray.rchit | Same change, screens visible in mirrors |
-| 4 | vk_vol.cpp scaffolding | Allocate buffer, stub dispatch |
-| 5 | vol_march.comp (point lights) | No spot cone, simplified |
-| 6 | Composite + tuning | Get it visible before refining |
-| 7 | Bilateral upsample | Replace bilinear to fix halos |
-| 8 | Temporal EMA for volumetrics | Reduce noise |
-| 9 | Spot light cone in GILight | Flashlight shaft |
+| Step | Feature | Status |
+|------|---------|--------|
+| 1 | Emissive material slot | done |
+| 2 | Emissive in GI rchit | done |
+| 3 | Emissive in reflect_ray.rchit | done |
+| 4 | vk_vol.cpp scaffolding | done |
+| 5 | vol_march.comp (point lights) | done |
+| 6 | Composite + tuning | done |
+| 7 | Per-type CVars + lightType field + self-shadow fix | done |
+| 8 | Light volume correctness (AABB/cone) | **TODO** |
+| 9 | Temporal EMA for volumetrics | **TODO** |
+| 10 | Bilateral upsample | **TODO** |

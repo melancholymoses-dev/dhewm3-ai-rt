@@ -308,6 +308,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_GI_ATROUS,
     VK_RTPROF_PHASE_GI_COMPOSITE,
     VK_RTPROF_PHASE_VOL,
+    VK_RTPROF_PHASE_VOL_TEMPORAL,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
     VK_RTPROF_PHASE_COUNT
 };
@@ -354,6 +355,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "GIComposite";
     case VK_RTPROF_PHASE_VOL:
         return "Vol";
+    case VK_RTPROF_PHASE_VOL_TEMPORAL:
+        return "VolTemporal";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
     default:
@@ -4334,6 +4337,13 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchVolumetrics(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVol);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL, rtCpuVolStart);
+
+            VK_SetRenderStage("RT_VolTemporal");
+            const uint64_t rtCpuVolTemporalStart = VK_RTProfile_CPUStamp();
+            int rtProfVolTemporal = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_TEMPORAL);
+            VK_RT_DispatchTemporalResolveVol(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolTemporal);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_TEMPORAL, rtCpuVolTemporalStart);
         }
 
         VK_SetRenderStage("ResumeRenderPass");

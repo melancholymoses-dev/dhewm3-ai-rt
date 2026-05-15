@@ -2456,6 +2456,15 @@ struct RTCVars
     idCVar *rtGIAtrousSigmaL = nullptr;
     idCVar *rtGIAtrousSigmaZ = nullptr;
     idCVar *rtGIContrast = nullptr;
+
+    // Volumetric Lighting
+    idCVar *rtVol = nullptr;
+    idCVar *rtVolDensity = nullptr;
+    idCVar *rtVolStrength = nullptr;
+    idCVar *rtVolAnisotropy = nullptr;
+    idCVar *rtVolSamples = nullptr;
+    idCVar *rtVolMaxDist = nullptr;
+    idCVar *rtVolMaxLights = nullptr;
 };
 static RTCVars rtCVars;
 
@@ -2501,6 +2510,13 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIAtrousSigmaL = cvarSystem->Find("r_rtGIAtrousSigmaL");
     rtCVars.rtGIAtrousSigmaZ = cvarSystem->Find("r_rtGIAtrousSigmaZ");
     rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
+    rtCVars.rtVol = cvarSystem->Find("r_rtVol");
+    rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
+    rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
+    rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
+    rtCVars.rtVolSamples = cvarSystem->Find("r_rtVolSamples");
+    rtCVars.rtVolMaxDist = cvarSystem->Find("r_rtVolMaxDist");
+    rtCVars.rtVolMaxLights = cvarSystem->Find("r_rtVolMaxLights");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2608,7 +2624,7 @@ static void DrawRTOptionsMenu()
     RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
     RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 5.0f);
     RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
-    ImGui::Spacing();
+    /*ImGui::Spacing();
     ImGui::SeparatorText("GI Colour Bounce (Option B)");
     RTCheckbox("Colour Bounce: evaluate lights at secondary hit", rtCVars.rtGILightBounce);
     const bool bounceOn = rtCVars.rtGILightBounce && rtCVars.rtGILightBounce->GetBool();
@@ -2616,6 +2632,20 @@ static void DrawRTOptionsMenu()
     RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
     RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
     ImGui::EndDisabled();
+    */
+    ImGui::Spacing();
+    ImGui::SeparatorText("GI Volumetric Lighting");
+    RTCheckbox("Enable Volumetric Lighting", rtCVars.rtVol);
+    const bool volOn = rtCVars.rtVol;
+    ImGui::BeginDisabled(!volOn);
+    RTSliderInt("Samples", rtCVars.rtVolSamples, 1, 16);
+    RTSliderFloat("Density", rtCVars.rtVolDensity, 0, 0.5);
+    RTSliderFloat("Strength", rtCVars.rtVolStrength, 0, 5);
+    RTSliderFloat("Max Dist", rtCVars.rtVolMaxDist, 0, 1024);
+    RTSliderInt("Max Lights", rtCVars.rtVolMaxLights, 0, 16);
+    RTSliderFloat("Anisotropy", rtCVars.rtVolAnisotropy, 0, 1);
+    ImGui::EndDisabled();
+
     ImGui::Spacing();
     ImGui::SeparatorText("GI Spatial Filter (A-trous)");
     RTCheckbox("A-trous Spatial Filter", rtCVars.rtGIAtrous);
