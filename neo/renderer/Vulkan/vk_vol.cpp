@@ -1021,6 +1021,270 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
     vkRT.volReadView[frameIdx] = history.view;
 }
 
+// ===========================================================================
+// Volumetric bilateral filter (Phase 7.2 — step 10)
+//
+// Cross-bilateral 5×5 spatial filter applied after temporal EMA.
+// Reads volHistory (storage image), writes to volBlurred.
+// CompositeVolumetrics reads volBlurred when this pass is active.
+// ===========================================================================
+
+static idCVar r_rtVolBilateral("r_rtVolBilateral", "1", CVAR_RENDERER | CVAR_BOOL,
+                               "Enable cross-bilateral spatial filter on volumetric result "
+                               "(reduces grain while preserving depth edges).");
+
+// ---------------------------------------------------------------------------
+// VK_RT_InitVolBilateralPipeline
+// Descriptor layout mirrors vol_bilateral.comp:
+//   binding 0: STORAGE_IMAGE readonly    (volHistory / volIn)
+//   binding 1: COMBINED_IMAGE_SAMPLER    (depth)
+//   binding 2: STORAGE_IMAGE readwrite   (volBlurred / volOut)
+// Push constants: 32 bytes (offX,offY,extX,extY,screenW,screenH,pad0, pad1)
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitVolBilateralPipeline(void)
+{
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.volBilateralDescLayout));
+
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = 32; // int[6] + float + float
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.volBilateralDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.volBilateralPipelineLayout));
+
+    VkShaderModule compMod = VK_LoadSPIRV("glprogs/glsl/vol_bilateral.comp.spv");
+    if (compMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Vol Bilateral: failed to load vol_bilateral.comp.spv — filter disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compMod;
+    stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
+    pipeCI.layout = vkRT.volBilateralPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.volBilateralPipeline));
+    vkDestroyShaderModule(vk.device, compMod, NULL);
+
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2u * (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.volBilateralDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.volBilateralDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.volBilateralDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.volBilateralDescSets));
+
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.volBilateralDescSetLastUpdatedFrameCount[i] = -1;
+
+    common->Printf("VK RT Vol Bilateral: pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points — vol bilateral
+// ---------------------------------------------------------------------------
+
+void VK_RT_InitVolBilateral(void)
+{
+    VK_RT_InitVolBilateralPipeline();
+    // Allocate blurred output images at current swapchain size.
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (!VK_RT_AllocVolHistoryImage(vkRT.volBlurred[i], vk.swapchainExtent.width, vk.swapchainExtent.height))
+            common->Warning("VK RT Vol Bilateral: failed to allocate volBlurred slot %d", i);
+    }
+}
+
+void VK_RT_ShutdownVolBilateral(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        VK_RT_FreeVolHistoryImage(vkRT.volBlurred[i]);
+
+    if (vkRT.volBilateralPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.volBilateralPipeline, NULL);
+        vkRT.volBilateralPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.volBilateralPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.volBilateralPipelineLayout, NULL);
+        vkRT.volBilateralPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.volBilateralDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.volBilateralDescPool, NULL);
+        vkRT.volBilateralDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.volBilateralDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.volBilateralDescLayout, NULL);
+        vkRT.volBilateralDescLayout = VK_NULL_HANDLE;
+    }
+}
+
+void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height)
+{
+    vkDeviceWaitIdle(vk.device);
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_RT_FreeVolHistoryImage(vkRT.volBlurred[i]);
+        VK_RT_AllocVolHistoryImage(vkRT.volBlurred[i], width, height);
+        vkRT.volBilateralDescSetLastUpdatedFrameCount[i] = -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchVolBilateral
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!vkRT.isInitialized)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool() || !r_rtVolBilateral.GetBool())
+        return;
+    if (vkRT.volBilateralPipeline == VK_NULL_HANDLE)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+
+    vkReflBuffer_t &histImg = vkRT.volHistory[frameIdx];
+    vkReflBuffer_t &blurredImg = vkRT.volBlurred[frameIdx];
+
+    if (histImg.image == VK_NULL_HANDLE || blurredImg.image == VK_NULL_HANDLE)
+        return;
+
+    // Compute dispatch rect (same helper as temporal).
+    const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef);
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
+    // Barrier: ensure temporal compute write to volHistory is visible to our compute read.
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb,
+                             0, NULL, 0, NULL);
+    }
+
+    // Update descriptor set when resources change.
+    if (vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
+    {
+        VkDescriptorImageInfo inInfo = {};
+        inInfo.imageView = histImg.view;
+        inInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo outInfo = {};
+        outInfo.imageView = blurredImg.view;
+        outInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[2] = {};
+
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = vkRT.volBilateralDescSets[frameIdx];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].pImageInfo = &inInfo;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = vkRT.volBilateralDescSets[frameIdx];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &outInfo;
+
+        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+        vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+    }
+
+    // Push constants.
+    struct BilateralPC
+    {
+        int32_t offX, offY, extX, extY;
+        int32_t screenW, screenH;
+        float pad0, pad1;
+    } pc;
+    pc.offX = (int32_t)dispatchRect.offset.x;
+    pc.offY = (int32_t)dispatchRect.offset.y;
+    pc.extX = (int32_t)dispatchRect.extent.width;
+    pc.extY = (int32_t)dispatchRect.extent.height;
+    pc.screenW = (int32_t)vk.swapchainExtent.width;
+    pc.screenH = (int32_t)vk.swapchainExtent.height;
+    pc.pad0 = 0.0f;
+    pc.pad1 = 0.0f;
+
+    // Dispatch.
+    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volBilateralPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volBilateralPipelineLayout, 0, 1,
+                            &vkRT.volBilateralDescSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.volBilateralPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
+    vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    // Barrier: bilateral write → fragment read (for composite).
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &mb, 0, NULL, 0, NULL);
+    }
+
+    // Composite now reads the filtered result.
+    vkRT.volReadView[frameIdx] = blurredImg.view;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Vol Bilateral: dispatch slot=%d rect=(%d,%d %u,%u)\n", frameIdx, pc.offX, pc.offY,
+                       (unsigned)pc.extX, (unsigned)pc.extY);
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -1031,10 +1295,12 @@ void VK_RT_InitVolumetrics(void)
     VK_RT_InitVolCompositePipeline();
     VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_InitVolTemporal();
+    VK_RT_InitVolBilateral();
 }
 
 void VK_RT_ShutdownVolumetrics(void)
 {
+    VK_RT_ShutdownVolBilateral();
     VK_RT_ShutdownVolTemporal();
 
     if (vkRT.volMarchDescPool != VK_NULL_HANDLE)
@@ -1094,9 +1360,10 @@ void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.volMarchDescSetLastUpdatedFrameCount[i] = -1;
     VK_RT_CreateVolImages(width, height);
-    // Resize temporal history only after the pipeline has been initialized.
     if (vkRT.volTemporalPipeline != VK_NULL_HANDLE)
         VK_RT_ResizeVolTemporal(width, height);
+    if (vkRT.volBilateralPipeline != VK_NULL_HANDLE)
+        VK_RT_ResizeVolBilateral(width, height);
 }
 
 // ---------------------------------------------------------------------------

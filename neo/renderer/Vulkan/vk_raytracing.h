@@ -461,6 +461,18 @@ struct vkRTState_t
     VkDescriptorSet       volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // Volumetric bilateral filter (Phase 7.2 — step 10)
+    // Reads volHistory (storage image), writes filtered result to volBlurred.
+    // CompositeVolumetrics reads volBlurred when the pass is active.
+    vkReflBuffer_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
+
+    VkPipeline            volBilateralPipeline;
+    VkPipelineLayout      volBilateralPipelineLayout;
+    VkDescriptorSetLayout volBilateralDescLayout;
+    VkDescriptorPool      volBilateralDescPool;
+    VkDescriptorSet       volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
     bool isInitialized;
 };
 
@@ -752,5 +764,23 @@ void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height);
 // the accumulated history so VK_RT_CompositeVolumetrics reads the smooth result.
 // Must be called outside the render pass, immediately after VK_RT_DispatchVolumetrics.
 void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// Volumetric bilateral filter (Phase 7.2 — step 10)
+// ---------------------------------------------------------------------------
+
+// Initialise bilateral filter images and pipeline.  Called from VK_RT_InitVolumetrics.
+void VK_RT_InitVolBilateral(void);
+
+// Destroy all bilateral filter resources.  Device must be idle before calling.
+void VK_RT_ShutdownVolBilateral(void);
+
+// Resize bilateral images when render resolution changes.
+void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height);
+
+// Apply cross-bilateral spatial filter to the temporal history.
+// Sets volReadView[currentFrame] to volBlurred when r_rtVolBilateral is on.
+// Must be called outside the render pass, immediately after DispatchTemporalResolveVol.
+void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 #endif // __VK_RAYTRACING_H__

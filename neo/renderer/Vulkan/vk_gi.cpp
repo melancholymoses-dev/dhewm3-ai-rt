@@ -982,6 +982,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 
         const renderLight_t &p = lightLocal->parms;
 
+        // suppressLightInViewID is set on worldMuzzleFlash (third-person weapon light).
+        // Skip it — volumetrics should follow the first-person (muzzleFlash) light only.
+        if (p.suppressLightInViewID != 0)
+            continue;
+
         const float dSq = (p.origin - camPos).LengthSqr();
         if (dSq > distCullSq)
             continue;

@@ -4344,6 +4344,9 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchTemporalResolveVol(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolTemporal);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_TEMPORAL, rtCpuVolTemporalStart);
+
+            VK_SetRenderStage("RT_VolBilateral");
+            VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
         }
 
         VK_SetRenderStage("ResumeRenderPass");
