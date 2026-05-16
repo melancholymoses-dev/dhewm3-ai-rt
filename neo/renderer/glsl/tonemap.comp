@@ -1,0 +1,107 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — tonemap.comp — Uchimura filmic tonemapping resolve.
+
+Reads the per-frame RGBA16F HDR accumulation image (hdrScene) and writes
+tonemapped LDR output to the swapchain storage image (ldrOut).
+
+The Uchimura / Gran Turismo filmic curve is applied to the Rec. 709 scalar
+luminance (not per-channel).  RGB is then uniformly scaled by the ratio
+(mappedLum / lum), preserving hue and saturation exactly.  A final clamp
+to [0, 1] guards against individual channels exceeding 1.0 in highly
+saturated colours (which the uniform scale does not eliminate).
+
+Descriptors (set 0):
+  binding 0 — hdrIn  rgba16f storage image (readonly) — HDR accumulator
+  binding 1 — ldrOut rgba8   storage image             — swapchain target
+
+Push constants (16 bytes, matches TonemapPC in vk_tonemap.cpp):
+  float exposure      — r_rtTonemapExposure  (default 1.0)
+  float toeStrength   — r_rtTonemapToe       (default 2.0)
+  float linearStart   — r_rtTonemapLinStart  (default 0.22)
+  float linearLength  — r_rtTonemapLinLen    (default 0.40)
+
+Phase 8.1 — Tonemapping.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D hdrIn;
+layout(set = 0, binding = 1, rgba8)   uniform image2D ldrOut;
+
+layout(push_constant) uniform PC {
+    float exposure;      // r_rtTonemapExposure  (default 1.0)
+    float toeStrength;   // r_rtTonemapToe        (default 2.0 — moderate black crush)
+    float linearStart;   // r_rtTonemapLinStart   (default 0.22)
+    float linearLength;  // r_rtTonemapLinLen     (default 0.40)
+} pc;
+
+// Rec. 709 / sRGB luminance weights.
+const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
+
+// Uchimura / Gran Turismo filmic curve applied to a scalar luminance value.
+// P=1 (display max), a=1 (linear contrast), b=0 (pedestal).
+// toeStrength (c): 1=linear, 2=moderate crush, 3+=heavy crush.
+float Uchimura(float x)
+{
+    float P = 1.0;
+    float a = 1.0;
+    float m = pc.linearStart;
+    float l = pc.linearLength;
+    float c = pc.toeStrength;
+
+    float l0  = ((P - m) * l) / a;
+    float S0  = m + l0;
+    float S1  = m + a * l0;
+    float C2  = (a * P) / (P - S1);
+    float CP  = -C2 / P;
+
+    float w0 = 1.0 - smoothstep(0.0, m, x);
+    float w2 = step(S0, x);
+    float w1 = 1.0 - w0 - w2;
+
+    float T = m * pow(max(x / m, 0.0), c);         // toe — crushed blacks
+    float L = m + a * (x - m);                      // linear section
+    float S = P - (P - S1) * exp(CP * (x - S0));    // shoulder — compressed highlights
+
+    return T * w0 + L * w1 + S * w2;
+}
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dims  = imageSize(ldrOut);
+    if (coord.x >= dims.x || coord.y >= dims.y)
+        return;
+
+    vec3  hdr = imageLoad(hdrIn, coord).rgb * pc.exposure;
+    float lum = dot(hdr, LUMINANCE_WEIGHTS);
+
+    vec3 mapped;
+    if (lum > 0.0)
+    {
+        // Scale RGB uniformly by (mappedLum / lum): applies the filmic curve to
+        // perceived brightness only, leaving hue and saturation ratios unchanged.
+        float mappedLum = Uchimura(lum);
+        mapped = hdr * (mappedLum / lum);
+    }
+    else
+    {
+        mapped = vec3(0.0);
+    }
+
+    // Clamp before writing: highly saturated colours can have individual channels
+    // above 1.0 even when their luminance is correctly in [0, 1].
+    imageStore(ldrOut, coord, vec4(clamp(mapped, 0.0, 1.0), 1.0));
+}
