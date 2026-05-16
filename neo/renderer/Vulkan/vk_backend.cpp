@@ -4638,9 +4638,14 @@ void VK_RB_SwapBuffers()
 
     vkCmdEndRenderPass(cmdBuf);
 
+    // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
+    // After this call the swapchain image is in PRESENT_SRC_KHR.
+    VK_SetRenderStage("RT_Tonemap");
+    VK_RT_DispatchTonemap(cmdBuf);
+
     // If a screenshot readback was requested, copy the swapchain image to the
     // staging buffer before presenting.  The image is in PRESENT_SRC_KHR after
-    // vkCmdEndRenderPass (that is the renderpass finalLayout).
+    // VK_RT_DispatchTonemap (the tonemap blit transitions it there).
     s_readbackSubmitted = false;
     if (s_readbackPending && s_readbackBuf != VK_NULL_HANDLE)
     {
