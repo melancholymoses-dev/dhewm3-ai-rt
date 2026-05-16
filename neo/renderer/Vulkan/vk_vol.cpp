@@ -57,44 +57,56 @@ static idCVar r_rtVolMaxLights("r_rtVolMaxLights", "32", CVAR_RENDERER | CVAR_IN
 static idCVar r_rtVolDensity("r_rtVolDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "0.2", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolStrength("r_rtVolStrength", "0.15", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
 static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                                 "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
 
-static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.03", CVAR_RENDERER | CVAR_FLOAT,
-                                       "Scatter contribution scale for projected/flashlight (not Beer-Lambert)");
+// Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
+static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Scatter contribution scale for scene directed/spot lights.");
+static idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.2", CVAR_RENDERER | CVAR_FLOAT,
+                                      "Final composite multiplier for scene directed light scatter.");
 
+static idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+                                        "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
+
+// Player flashlight (lightType 2, allowLightInViewID set).
+static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+                                       "Scatter contribution scale for the player flashlight.");
 static idCVar r_rtVolFlashlightAnisotropy(
     "r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
-    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward)");
-
-static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", ".5", CVAR_RENDERER | CVAR_FLOAT,
-                                        "Final composite multiplier for flashlight scatter");
+    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
+static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+                                        "Final composite multiplier for flashlight scatter.");
 
 // ---------------------------------------------------------------------------
 // VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
 //
-//   mat4  invViewProj   offset   0  size 64
-//   vec4  cameraPosW    offset  64  size 16   (xyz = camera pos, w unused)
-//   uint  frameIndex    offset  80  size  4
-//   int   numSamples    offset  84  size  4
-//   int   maxLights     offset  88  size  4
-//   float density       offset  92  size  4
-//   float anisotropy    offset  96  size  4
-//   float maxDist       offset 100  size  4
-//   float strength      offset 104  size  4
-//   int   scissorOffX   offset 108  size  4
-//   int   scissorOffY   offset 112  size  4
-//   int   scissorExtX   offset 116  size  4
-//   int   scissorExtY   offset 120  size  4
-//   int   screenWidth         offset 124  size  4
-//   int   screenHeight        offset 128  size  4
-//   float flashlightDensity   offset 132  size  4  (fills std140 tail padding)
-//   float flashlightAniso     offset 136  size  4
-//   float flashlightStrength  offset 140  size  4
-//   total: 144 bytes (std140 rounds 132 → 144 anyway; we declare all fields)
+//   mat4  invViewProj       offset   0  size 64
+//   vec4  cameraPosW        offset  64  size 16  (xyz = camera pos, w unused)
+//   uint  frameIndex        offset  80  size  4
+//   int   numSamples        offset  84  size  4
+//   int   maxLights         offset  88  size  4
+//   float density           offset  92  size  4  (point lights — Beer-Lambert too)
+//   float anisotropy        offset  96  size  4  (point lights HG)
+//   float maxDist           offset 100  size  4
+//   float strength          offset 104  size  4  (point lights)
+//   int   scissorOffX       offset 108  size  4
+//   int   scissorOffY       offset 112  size  4
+//   int   scissorExtX       offset 116  size  4
+//   int   scissorExtY       offset 120  size  4
+//   int   screenWidth       offset 124  size  4
+//   int   screenHeight      offset 128  size  4
+//   float flashlightDensity    offset 132  size  4  (player flashlight, lightType 2)
+//   float flashlightAniso      offset 136  size  4
+//   float flashlightStrength   offset 140  size  4
+//   float directedDensity      offset 144  size  4  (scene spot/directed, lightType 1)
+//   float directedAnisotropy   offset 148  size  4
+//   float directedStrength     offset 152  size  4
+//   float _pad                 offset 156  size  4  (std140 round to 16)
+//   total: 160 bytes
 // ---------------------------------------------------------------------------
 
 struct VolParamsUBO
@@ -120,8 +132,12 @@ struct VolParamsUBO
     float flashlightDensity;    // 132
     float flashlightAnisotropy; // 136
     float flashlightStrength;   // 140
+    float directedDensity;      // 144
+    float directedAnisotropy;   // 148
+    float directedStrength;     // 152
+    float _uboPad;              // 156
 };
-static_assert(sizeof(VolParamsUBO) == 144, "VolParamsUBO size mismatch");
+static_assert(sizeof(VolParamsUBO) == 160, "VolParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations from other vk_*.cpp modules
@@ -1024,22 +1040,24 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
 // ===========================================================================
 // Volumetric bilateral filter (Phase 7.2 — step 10)
 //
-// Cross-bilateral 5×5 spatial filter applied after temporal EMA.
+// Spatial Gaussian filter applied after temporal EMA.
 // Reads volHistory (storage image), writes to volBlurred.
 // CompositeVolumetrics reads volBlurred when this pass is active.
 // ===========================================================================
 
 static idCVar r_rtVolBilateral("r_rtVolBilateral", "1", CVAR_RENDERER | CVAR_BOOL,
-                               "Enable cross-bilateral spatial filter on volumetric result "
-                               "(reduces grain while preserving depth edges).");
+                               "Enable spatial Gaussian filter on volumetric result (reduces grain).");
+
+static idCVar r_rtVolBilateralSigma("r_rtVolBilateralSigma", "3.0", CVAR_RENDERER | CVAR_FLOAT,
+                                    "Gaussian sigma in pixels for the vol spatial filter. "
+                                    "Higher = smoother but softer. Default 3.0 → 11×11 kernel.");
 
 // ---------------------------------------------------------------------------
 // VK_RT_InitVolBilateralPipeline
 // Descriptor layout mirrors vol_bilateral.comp:
-//   binding 0: STORAGE_IMAGE readonly    (volHistory / volIn)
-//   binding 1: COMBINED_IMAGE_SAMPLER    (depth)
-//   binding 2: STORAGE_IMAGE readwrite   (volBlurred / volOut)
-// Push constants: 32 bytes (offX,offY,extX,extY,screenW,screenH,pad0, pad1)
+//   binding 0: STORAGE_IMAGE readonly  (volHistory / volIn)
+//   binding 1: STORAGE_IMAGE           (volBlurred / volOut)
+// Push constants: 32 bytes (offX,offY,extX,extY,screenW,screenH,sigma,pad)
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitVolBilateralPipeline(void)
@@ -1246,7 +1264,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     {
         int32_t offX, offY, extX, extY;
         int32_t screenW, screenH;
-        float pad0, pad1;
+        float sigma;
+        float pad;
     } pc;
     pc.offX = (int32_t)dispatchRect.offset.x;
     pc.offY = (int32_t)dispatchRect.offset.y;
@@ -1254,8 +1273,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     pc.extY = (int32_t)dispatchRect.extent.height;
     pc.screenW = (int32_t)vk.swapchainExtent.width;
     pc.screenH = (int32_t)vk.swapchainExtent.height;
-    pc.pad0 = 0.0f;
-    pc.pad1 = 0.0f;
+    pc.sigma = idMath::ClampFloat(0.5f, 8.0f, r_rtVolBilateralSigma.GetFloat());
+    pc.pad = 0.0f;
 
     // Dispatch.
     const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
@@ -1489,6 +1508,10 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.flashlightDensity = idMath::ClampFloat(0.0f, 1.0f, r_rtVolFlashlightDensity.GetFloat());
     ubo.flashlightAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
     ubo.flashlightStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
+    ubo.directedDensity = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDirectedDensity.GetFloat());
+    ubo.directedAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
+    ubo.directedStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
+    ubo._uboPad = 0.0f;
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI).
     const int w = (int)vk.swapchainExtent.width;

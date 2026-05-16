@@ -1042,7 +1042,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                 c.entry.boxExtents[3] = reach * 1.1f;
                 c.entry.posRadius[3] = reach * 1.1f; // override sphere pre-cull to match cone reach
             }
-            c.entry.lightType = isProjected ? 1u : 0u;
+            // lightType: 0=point, 1=scene directed/spot, 2=player flashlight.
+            // allowLightInViewID is set on muzzleFlash (first-person weapon light).
+            c.entry.lightType = isProjected
+                                    ? (p.allowLightInViewID != 0 ? 2u : 1u)
+                                    : 0u;
             c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
     }

@@ -2470,7 +2470,11 @@ struct RTCVars
     idCVar *rtVolFlashlightDensity = nullptr;
     idCVar *rtVolFlashlightStrength = nullptr;
     idCVar *rtVolFlashlightAnisotropy = nullptr;
+    idCVar *rtVolDirectedDensity = nullptr;
+    idCVar *rtVolDirectedStrength = nullptr;
+    idCVar *rtVolDirectedAnisotropy = nullptr;
 };
+
 static RTCVars rtCVars;
 
 static void InitRTOptionsMenu()
@@ -2527,6 +2531,9 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolFlashlightDensity = cvarSystem->Find("r_rtVolFlashlightDensity");
     rtCVars.rtVolFlashlightStrength = cvarSystem->Find("r_rtVolFlashlightStrength");
     rtCVars.rtVolFlashlightAnisotropy = cvarSystem->Find("r_rtVolFlashlightAnisotropy");
+    rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
+    rtCVars.rtVolDirectedStrength = cvarSystem->Find("r_rtVolDirectedStrength");
+    rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2673,14 +2680,18 @@ static void DrawRTOptionsMenu()
         ImGui::Spacing();
         ImGui::TextDisabled("Point Lights");
         RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.25f);
-        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 1.0f);
+        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 0.5f);
         RTSliderFloat("Anisotropy##pt", rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
 
         // --- Right column: flashlight ---
         ImGui::TableNextColumn();
+        ImGui::TextDisabled("Directed");
+        RTSliderFloat("Density##dir", rtCVars.rtVolDirectedDensity, 0.0f, 0.25f);
+        RTSliderFloat("Strength##dir", rtCVars.rtVolDirectedStrength, 0.0f, .5f);
+        RTSliderFloat("Anisotropy##dir", rtCVars.rtVolDirectedAnisotropy, 0.0f, 1.0f);
         ImGui::TextDisabled("Flashlight");
-        RTSliderFloat("Density##fl", rtCVars.rtVolFlashlightDensity, 0.0f, 0.5f);
-        RTSliderFloat("Strength##fl", rtCVars.rtVolFlashlightStrength, 0.0f, 1.0f);
+        RTSliderFloat("Density##fl", rtCVars.rtVolFlashlightDensity, 0.0f, 0.25f);
+        RTSliderFloat("Strength##fl", rtCVars.rtVolFlashlightStrength, 0.0f, 0.5f);
         RTSliderFloat("Anisotropy##fl", rtCVars.rtVolFlashlightAnisotropy, 0.0f, 1.0f);
 
         ImGui::EndTable();
