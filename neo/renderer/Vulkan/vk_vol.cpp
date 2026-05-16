@@ -43,7 +43,7 @@ Code release.
 // ---------------------------------------------------------------------------
 
 idCVar r_rtVol("r_rtVol", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-               "Enable volumetric light scattering (Phase 7.2). Off by default until tuned.");
+               "Enable volumetric light scattering (Phase 7.2). On by default.");
 
 static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
                              "Ray-march steps per pixel (safe default: 8; high-end: 16)");
@@ -1047,9 +1047,9 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
 static idCVar r_rtVolBilateral("r_rtVolBilateral", "1", CVAR_RENDERER | CVAR_BOOL,
                                "Enable spatial Gaussian filter on volumetric result (reduces grain).");
 
-static idCVar r_rtVolBilateralSigma("r_rtVolBilateralSigma", "3.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolBilateralSigma("r_rtVolBilateralSigma", "2.0", CVAR_RENDERER | CVAR_FLOAT,
                                     "Gaussian sigma in pixels for the vol spatial filter. "
-                                    "Higher = smoother but softer. Default 3.0 → 11×11 kernel.");
+                                    "Higher = smoother but softer. Radius = ceil(2*sigma); default 2.0 → 9×9 kernel.");
 
 // ---------------------------------------------------------------------------
 // VK_RT_InitVolBilateralPipeline
