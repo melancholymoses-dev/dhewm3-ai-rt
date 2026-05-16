@@ -60,9 +60,13 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     int   scissorExtentY; // offset 120, size  4
     int   screenWidth;          // offset 124, size  4
     int   screenHeight;         // offset 128, size  4
-    float flashlightDensity;    // offset 132, size  4
+    float flashlightDensity;    // offset 132, size  4  (player flashlight, lightType 2)
     float flashlightAnisotropy; // offset 136, size  4
     float flashlightStrength;   // offset 140, size  4
+    float directedDensity;      // offset 144, size  4  (scene spot/directed, lightType 1)
+    float directedAnisotropy;   // offset 148, size  4
+    float directedStrength;     // offset 152, size  4
+    float _pad;                 // offset 156, size  4
 } params;
 
 struct GILight {
@@ -163,9 +167,10 @@ void main()
     float logFac   = log(tMax + 1.0);
     int   maxLights = min(params.maxLights, giLightBuf.numLights);
 
-    vec3  scatter_point = vec3(0.0); // accumulates point-light contribution
-    vec3  scatter_flash = vec3(0.0); // accumulates projected/flashlight contribution
-    float transmittance = 1.0;
+    vec3  scatter_point    = vec3(0.0); // lightType 0: point lights
+    vec3  scatter_directed = vec3(0.0); // lightType 1: scene directed/spot lights
+    vec3  scatter_flash    = vec3(0.0); // lightType 2: player flashlight
+    float transmittance    = 1.0;
 
     for (int s = 0; s < numSteps; s++)
     {
@@ -197,7 +202,9 @@ void main()
             float lightIntens = giLightBuf.lights[li].colorIntensity.a;
             if (lightIntens < 0.001) lightIntens = 1.0;
 
-            bool  isFlashlight = (giLightBuf.lights[li].lightType == 1u);
+            uint  lt           = giLightBuf.lights[li].lightType;
+            bool  isFlashlight = (lt == 2u);
+            bool  isDirected   = (lt == 1u);
             vec4  cd           = giLightBuf.lights[li].coneDir;
             vec4  bx           = giLightBuf.lights[li].boxExtents;
 
@@ -209,26 +216,26 @@ void main()
                 continue;
 
             // Precise volume containment + attenuation.
+            // Point lights (lt==0) use bounding-box containment.
+            // Projected lights (lt==1 directed, lt==2 flashlight) use cone containment.
             float atten;
-            if (!isFlashlight)
+            if (lt == 0u)
             {
                 // Point light: box-normalized L∞ distance (1.0 = face, 1.5 = outer limit).
-                vec3  localAbs = abs(stepPos - lightPos);
+                vec3  localAbs  = abs(stepPos - lightPos);
                 vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
                 float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
 
                 if (maxNorm >= 1.5) continue;
 
                 if (maxNorm <= 1.0)
-                    // Inside box: ramp from 0.1 at face to 1.0 over inner 20%.
                     atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
                 else
-                    // Halo zone [1.0, 1.5]: ramp from 0.1 at face to 0.0 at outer limit.
                     atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
             }
             else
             {
-                // Projected light (flashlight, spotlight): cone containment.
+                // Projected light (scene directed lt==1, or flashlight lt==2): cone containment.
                 vec3  toStep    = stepPos - lightPos;
                 float alongCone = dot(toStep, cd.xyz);
                 if (alongCone <= 0.0 || alongCone > bx.w)
@@ -236,7 +243,6 @@ void main()
                 float cosAngle = alongCone / max(length(toStep), 0.001);
                 if (cosAngle < cd.w)
                     continue;
-                // Linear depth falloff along the cone axis.
                 atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
             }
 
@@ -246,7 +252,9 @@ void main()
             vec3  lightDir = toLight / max(dist, 0.001);
             float cosTheta = dot(marchDir, lightDir);
 
-            float localAniso = isFlashlight ? params.flashlightAnisotropy : params.anisotropy;
+            float localAniso = isFlashlight ? params.flashlightAnisotropy
+                             : isDirected   ? params.directedAnisotropy
+                                            : params.anisotropy;
             float phase        = HenyeyGreenstein(cosTheta, localAniso);
 
             // Fire a ray query to test occlusion between stepPos and the light.
@@ -272,18 +280,20 @@ void main()
 
             vec3 contrib = lightColor * lightIntens * phase * atten * stepSize;
             if (isFlashlight)
-                scatter_flash += contrib;
+                scatter_flash    += contrib;
+            else if (isDirected)
+                scatter_directed += contrib;
             else
-                scatter_point += contrib;
+                scatter_point    += contrib;
         }
     }
 
-    // Combine point and flashlight scatter with independent density/strength controls.
-    // Beer-Lambert transmittance above uses global density for the medium; these
-    // multipliers scale the contribution of each light type separately.
+    // Combine three light classes with independent density/strength controls.
+    // Beer-Lambert transmittance uses global density; these multipliers tune each type.
     vec3 result = max(
-        scatter_point * params.density       * params.strength +
-        scatter_flash * params.flashlightDensity * params.flashlightStrength,
+        scatter_point    * params.density          * params.strength          +
+        scatter_directed * params.directedDensity  * params.directedStrength  +
+        scatter_flash    * params.flashlightDensity * params.flashlightStrength,
         vec3(0.0));
 
     imageStore(volBuf, coord, vec4(result, 1.0));
