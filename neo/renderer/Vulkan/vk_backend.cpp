@@ -132,8 +132,8 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
     {
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpResume.renderPass = vk.renderPassResume;
-        rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+        rpResume.renderPass = vk.hdrRenderPassResume;
+        rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpResume.renderArea.offset = {0, 0};
         rpResume.renderArea.extent = vk.swapchainExtent;
         rpResume.clearValueCount = 0;
@@ -3425,8 +3425,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor);
             VkRenderPassBeginInfo rpResume = {};
             rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rpResume.renderPass = vk.renderPassResume;
-            rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+            rpResume.renderPass = vk.hdrRenderPassResume;
+            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
             rpResume.renderArea.offset = {0, 0};
             rpResume.renderArea.extent = vk.swapchainExtent;
             rpResume.clearValueCount = 0;
@@ -4097,8 +4097,8 @@ void VK_RB_DrawView(const void *data)
 
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpBegin.renderPass = vk.renderPass;
-        rpBegin.framebuffer = vk.swapchainFramebuffers[imageIndex];
+        rpBegin.renderPass = vk.hdrRenderPass;
+        rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
         rpBegin.renderArea.extent = vk.swapchainExtent;
         rpBegin.clearValueCount = 2;
@@ -4352,8 +4352,8 @@ void VK_RB_DrawView(const void *data)
         VK_SetRenderStage("ResumeRenderPass");
         VkRenderPassBeginInfo rpResume = {};
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpResume.renderPass = vk.renderPassResume;
-        rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+        rpResume.renderPass = vk.hdrRenderPassResume;
+        rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpResume.renderArea.offset = {0, 0};
         rpResume.renderArea.extent = vk.swapchainExtent;
         rpResume.clearValueCount = 0;
@@ -4545,10 +4545,13 @@ void VK_RB_CopyRender(const void *data)
     }
 
     // Suspend active render pass to perform transfer operations.
+    // The hdrRenderPassResume finalLayout is COLOR_ATTACHMENT_OPTIMAL, so the
+    // HDR image is automatically in that layout when vkCmdEndRenderPass returns.
     vkCmdEndRenderPass(cmdBuf);
 
-    // Source: current swapchain image (rendered scene so far).
-    VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+    // Source: HDR scene image (rendered scene so far in linear floating point).
+    VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
     // Destination: capture texture sampled later by TG_SCREEN/window materials.
@@ -4570,20 +4573,22 @@ void VK_RB_CopyRender(const void *data)
     region.dstOffsets[0] = {0, 0, 0};
     region.dstOffsets[1] = {copyW, copyH, 1};
 
-    vkCmdBlitImage(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstImage,
-                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+    // Blit RGBA16F → RGBA8: driver performs format conversion. Values > 1.0 clamp.
+    vkCmdBlitImage(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
 
-    // Restore layouts expected by subsequent rendering and presentation.
+    // Restore layouts for subsequent rendering.
     VK_TransitionImageLayout(cmdBuf, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    VK_TransitionImageLayout(cmdBuf, vk.swapchainImages[s_frameImageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     // Resume render pass so the rest of the frame can continue.
     VkRenderPassBeginInfo rpResume = {};
     rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpResume.renderPass = vk.renderPassResume;
-    rpResume.framebuffer = vk.swapchainFramebuffers[s_frameImageIndex];
+    rpResume.renderPass = vk.hdrRenderPassResume;
+    rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
     rpResume.renderArea.offset = {0, 0};
     rpResume.renderArea.extent = vk.swapchainExtent;
     rpResume.clearValueCount = 0;

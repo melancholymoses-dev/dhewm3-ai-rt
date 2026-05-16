@@ -221,6 +221,40 @@ void VK_CreateRenderPass(void)
     rpInfo.pAttachments = resumeAttachments;
 
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPassResume));
+
+    // --- HDR render pass (RGBA16F CLEAR) ---
+    // Used by all scene rendering and graphics pipelines.  Writes to vkRT.hdrScene
+    // instead of the swapchain; the tonemap compute pass resolves to the swapchain.
+    VkAttachmentDescription hdrColor = {};
+    hdrColor.format         = VK_FORMAT_R16G16B16A16_SFLOAT;
+    hdrColor.samples        = VK_SAMPLE_COUNT_1_BIT;
+    hdrColor.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrColor.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    hdrColor.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    hdrColor.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    hdrColor.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    hdrColor.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    // Depth attachment is identical to the UNORM passes — same format, same CLEAR+STORE ops.
+    VkAttachmentDescription hdrDepth = depthAttachment; // copy from above; initialLayout stays UNDEFINED
+
+    VkAttachmentDescription hdrAttachments[2] = { hdrColor, hdrDepth };
+    rpInfo.pAttachments = hdrAttachments;
+    VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPass));
+
+    // --- HDR render pass (RGBA16F LOAD) ---
+    // Resume variant: preserves prior colour and depth/stencil contents.
+    hdrColor.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrColor.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrColor.finalLayout   = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    hdrDepth.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrDepth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription hdrResumeAttachments[2] = { hdrColor, hdrDepth };
+    rpInfo.pAttachments = hdrResumeAttachments;
+    VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPassResume));
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +379,8 @@ void VK_DestroySwapchain(void)
     vkFreeMemory(vk.device, vk.depthMemory, NULL);
     vkDestroyRenderPass(vk.device, vk.renderPass, NULL);
     vkDestroyRenderPass(vk.device, vk.renderPassResume, NULL);
+    vkDestroyRenderPass(vk.device, vk.hdrRenderPass, NULL);
+    vkDestroyRenderPass(vk.device, vk.hdrRenderPassResume, NULL);
     vkDestroySwapchainKHR(vk.device, vk.swapchain, NULL);
 }
 

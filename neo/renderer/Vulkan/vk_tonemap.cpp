@@ -209,6 +209,40 @@ static void VK_RT_DestroyHDRImages(void)
 }
 
 // ---------------------------------------------------------------------------
+// HDR framebuffers
+// ---------------------------------------------------------------------------
+
+static void VK_RT_CreateHDRFramebuffers(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VkImageView attachments[2] = { vkRT.hdrScene[i].view, vk.depthView };
+
+        VkFramebufferCreateInfo fbInfo = {};
+        fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass      = vk.hdrRenderPass;
+        fbInfo.attachmentCount = 2;
+        fbInfo.pAttachments    = attachments;
+        fbInfo.width           = vkRT.hdrScene[i].width;
+        fbInfo.height          = vkRT.hdrScene[i].height;
+        fbInfo.layers          = 1;
+        VK_CHECK(vkCreateFramebuffer(vk.device, &fbInfo, NULL, &vk.hdrFramebuffers[i]));
+    }
+}
+
+static void VK_RT_DestroyHDRFramebuffers(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (vk.hdrFramebuffers[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyFramebuffer(vk.device, vk.hdrFramebuffers[i], NULL);
+            vk.hdrFramebuffers[i] = VK_NULL_HANDLE;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -222,14 +256,17 @@ void VK_RT_InitTonemap(void)
 void VK_RT_ShutdownTonemap(void)
 {
     // Tonemap pipeline teardown will be added in Step 4.
+    VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
 }
 
 void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
+    VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
     VK_RT_CreateHDRImages(width, height);
+    VK_RT_CreateHDRFramebuffers();
 }
 
 void VK_RT_DispatchTonemap(VkCommandBuffer /*cmd*/)

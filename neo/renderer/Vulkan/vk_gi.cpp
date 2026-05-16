@@ -772,7 +772,7 @@ static void VK_RT_InitGICompositePipeline(void)
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = vkRT.giCompositeLayout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.giCompositePipeline));
 
