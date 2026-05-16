@@ -1,0 +1,103 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — vol_bilateral.comp — Spatial Gaussian smoothing for
+volumetric lighting.
+
+Runs immediately after the temporal EMA resolve pass, reading the accumulated
+history image and writing a smoothed result to a separate output image.  The
+compositor then blends the filtered image rather than the raw history.
+
+An 11×11 Gaussian kernel (default sigma = 3.0 px) is applied at full screen
+resolution.  Sigma is passed as a push constant so it can be tuned at runtime
+via r_rtVolBilateralSigma without a recompile.  No depth weighting — volumetric
+fog is a continuous medium so edge-stopping is not required.
+
+Descriptors (set 0):
+  binding 0 — volIn  rgba16f storage image (readonly) — temporal history
+  binding 1 — volOut rgba16f storage image             — smoothed output
+
+Push constants (32 bytes, matches BilateralPC in vk_vol.cpp):
+  int offX, offY   — scissor offset
+  int extX, extY   — scissor extent
+  int screenW, screenH — full screen dimensions
+  float sigma      — Gaussian sigma in pixels (r_rtVolBilateralSigma)
+  float pad
+
+Phase 7.2 — Volumetric Lighting (denoising step 10).
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// ---------------------------------------------------------------------------
+// Descriptors
+// ---------------------------------------------------------------------------
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D volIn;
+layout(set = 0, binding = 1, rgba16f) uniform image2D volOut;
+
+// ---------------------------------------------------------------------------
+// Push constants
+// ---------------------------------------------------------------------------
+
+layout(push_constant) uniform PC {
+    int   offX;
+    int   offY;
+    int   extX;
+    int   extY;
+    int   screenW;
+    int   screenH;
+    float sigma;   // Gaussian sigma in pixels (r_rtVolBilateralSigma)
+    float pad;
+} pc;
+
+// ---------------------------------------------------------------------------
+void main()
+// ---------------------------------------------------------------------------
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    if (local.x >= pc.extX || local.y >= pc.extY)
+        return;
+
+    ivec2 coord    = local + ivec2(pc.offX, pc.offY);
+    ivec2 maxCoord = ivec2(pc.screenW - 1, pc.screenH - 1);
+
+    // Gaussian kernel: radius = ceil(2*sigma), denom = 2*sigma^2.
+    // Driven by push constant sigma (r_rtVolBilateralSigma, default 3.0).
+    // At sigma=3 this is an 11×11 kernel (121 taps), giving ~9-pixel effective
+    // smoothing — enough to suppress Monte Carlo ray-march grain.
+    const float denom  = max(2.0 * pc.sigma * pc.sigma, 0.001);
+    const int   RADIUS = min(int(ceil(2.0 * pc.sigma)), 8); // max radius 8 → 17×17
+
+    vec3  sumColor = vec3(0.0);
+    float sumW     = 0.0;
+
+    for (int dy = -RADIUS; dy <= RADIUS; dy++)
+    {
+        for (int dx = -RADIUS; dx <= RADIUS; dx++)
+        {
+            ivec2 sCoord = clamp(coord + ivec2(dx, dy), ivec2(0), maxCoord);
+
+            vec3  sVol  = imageLoad(volIn, sCoord).rgb;
+            float dist2 = float(dx * dx + dy * dy);
+            float w     = exp(-dist2 / denom);
+
+            sumColor += sVol * w;
+            sumW     += w;
+        }
+    }
+
+    vec3 result = sumColor / max(sumW, 1e-4);
+    imageStore(volOut, coord, vec4(result, 1.0));
+}

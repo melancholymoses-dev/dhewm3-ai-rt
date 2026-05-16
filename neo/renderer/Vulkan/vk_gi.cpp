@@ -46,11 +46,11 @@ idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI
 
 static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
-static idCVar r_rtGIStrength("r_rtGIStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scale applied to the GI buffer before compositing");
 
 static idCVar r_rtGIContrast(
-    "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIContrast", "0.7", CVAR_RENDERER | CVAR_FLOAT,
     "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
     "0 = off, 1 = full effect");
 
@@ -104,8 +104,13 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 struct GILightEntry
 {
-    float posRadius[4];      // xyz = world pos, w = bounding radius
+    float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
     float colorIntensity[4]; // rgb = light colour, a = intensity
+    float coneDir[4];        // projected: xyz=normalised dir, w=cos(halfAngle); zeroed for point
+    float boxExtents[4];     // point: xyz=AABB half-extents, w=0
+                             // projected: w=max reach along cone axis; xyz=0
+    uint32_t lightType;      // 0 = point, 1 = projected/spot
+    uint32_t pad[3];         // alignment pad to 80 bytes
 };
 
 struct GILightBuffer
@@ -116,7 +121,7 @@ struct GILightBuffer
     float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 32, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -977,6 +982,21 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 
         const renderLight_t &p = lightLocal->parms;
 
+        // suppressLightInViewID is set on worldMuzzleFlash (third-person weapon light).
+        // Skip it — volumetrics should follow the first-person (muzzleFlash) light only.
+        if (p.suppressLightInViewID != 0)
+            continue;
+
+        // Parallel (directional/sky) lights are infinite — no volume boundary or falloff,
+        // so they cannot contribute meaningful single-scatter volumetrics.
+        if (p.parallel)
+            continue;
+
+        // noShadows lights are pure ambient fill with no occlusion path; they produce
+        // large uniform blobs rather than shafts and are not worth marching.
+        if (p.noShadows)
+            continue;
+
         const float dSq = (p.origin - camPos).LengthSqr();
         if (dSq > distCullSq)
             continue;
@@ -1004,6 +1024,40 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.colorIntensity[1] = g;
             c.entry.colorIntensity[2] = b;
             c.entry.colorIntensity[3] = intensity;
+            // Fill volume geometry: AABB half-extents for point lights, cone for projected.
+            const bool isProjected = (!p.pointLight && !p.parallel);
+            if (!isProjected)
+            {
+                c.entry.boxExtents[0] = p.lightRadius.x;
+                c.entry.boxExtents[1] = p.lightRadius.y;
+                c.entry.boxExtents[2] = p.lightRadius.z;
+                c.entry.boxExtents[3] = 0.0f;
+                c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = c.entry.coneDir[3] = 0.0f;
+                // Widen sphere pre-cull to cover the 1.5x halo zone outside the box.
+                c.entry.posRadius[3] = radius * 1.5f;
+            }
+            else
+            {
+                // p.target is LOCAL space; rotate by p.axis to get world-space direction.
+                idVec3 toTarget = p.axis * p.target;
+                float reach = toTarget.Length();
+                idVec3 dir = (reach > 0.001f) ? toTarget / reach : idVec3(0, 0, 1);
+                float maxHalf = Max(p.right.Length(), p.up.Length());
+                float cosHalf = reach / idMath::Sqrt(reach * reach + maxHalf * maxHalf);
+                c.entry.coneDir[0] = dir.x;
+                c.entry.coneDir[1] = dir.y;
+                c.entry.coneDir[2] = dir.z;
+                c.entry.coneDir[3] = cosHalf;
+                c.entry.boxExtents[0] = c.entry.boxExtents[1] = c.entry.boxExtents[2] = 0.0f;
+                c.entry.boxExtents[3] = reach * 1.1f;
+                c.entry.posRadius[3] = reach * 1.1f; // override sphere pre-cull to match cone reach
+            }
+            // lightType: 0=point, 1=scene directed/spot, 2=player flashlight.
+            // allowLightInViewID is set on muzzleFlash (first-person weapon light).
+            c.entry.lightType = isProjected
+                                    ? (p.allowLightInViewID != 0 ? 2u : 1u)
+                                    : 0u;
+            c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
     }
 

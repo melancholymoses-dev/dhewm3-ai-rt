@@ -2171,6 +2171,9 @@ void VK_RT_Shutdown(void)
     // GI pipeline, SBT, and buffers (Phase 6.1)
     VK_RT_ShutdownGI();
 
+    // Volumetric lighting pipeline and buffers (Phase 7.2)
+    VK_RT_ShutdownVolumetrics();
+
     // Material table SSBOs and bindless descriptor set (Phase 5.4)
     VK_RT_ShutdownMaterialTable();
 

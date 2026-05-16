@@ -422,6 +422,57 @@ struct vkRTState_t
 
     bool matTableInitialized;
 
+    // --------------------------------------------------------------------------
+    // Volumetric Lighting (Phase 7.2)
+    //
+    // volBuffer: RGBA16F per-slot scatter accumulation image (full resolution).
+    //   Written by vol_march.comp (compute + ray queries).
+    //   Read by the composite pass (additive blend onto framebuffer).
+    // volMarch*: compute pipeline for the ray-march dispatch.
+    // volComposite*: graphics pipeline for additive composite (shares
+    //   gi_composite.vert; separate vol_composite.frag).
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t volBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F volumetric scatter
+    VkSampler volSampler;                               // bilinear-clamp for composite
+
+    VkPipeline            volMarchPipeline;
+    VkPipelineLayout      volMarchPipelineLayout;
+    VkDescriptorSetLayout volMarchDescLayout;
+    VkDescriptorPool      volMarchDescPool;
+    VkDescriptorSet       volMarchDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkPipeline            volCompositePipeline;
+    VkPipelineLayout      volCompositeLayout;
+    VkDescriptorSetLayout volCompositeDescLayout;
+    VkDescriptorPool      volCompositeDescPool;
+    VkDescriptorSet       volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Volumetric temporal EMA (Phase 7.2 — step 8)
+    vkReflBuffer_t volHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated history
+    bool           volHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
+    float          volPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16];
+    VkImageView    volReadView[VK_MAX_FRAMES_IN_FLIGHT]; // → history when on, → volBuffer when off
+
+    VkPipeline            volTemporalPipeline;
+    VkPipelineLayout      volTemporalPipelineLayout;
+    VkDescriptorSetLayout volTemporalDescLayout;
+    VkDescriptorPool      volTemporalDescPool;
+    VkDescriptorSet       volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Volumetric bilateral filter (Phase 7.2 — step 10)
+    // Reads volHistory (storage image), writes filtered result to volBlurred.
+    // CompositeVolumetrics reads volBlurred when the pass is active.
+    vkReflBuffer_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
+
+    VkPipeline            volBilateralPipeline;
+    VkPipelineLayout      volBilateralPipelineLayout;
+    VkDescriptorSetLayout volBilateralDescLayout;
+    VkDescriptorPool      volBilateralDescPool;
+    VkDescriptorSet       volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
     bool isInitialized;
 };
 
@@ -668,5 +719,68 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
                                const uint64_t *staticGeomVtx, const uint64_t *staticGeomIdx, uint32_t staticGeomCount,
                                const uint64_t *dynGeomVtx, const uint64_t *dynGeomIdx, uint32_t dynamicGeomCount,
                                bool rewriteStaticGeoms);
+
+// ---------------------------------------------------------------------------
+// Volumetric Lighting (Phase 7.2)
+// ---------------------------------------------------------------------------
+
+// Create the RGBA16F vol buffer, compute march pipeline, and composite pipeline.
+// Called once from VK_InitVulkan after VK_RT_InitGI.
+void VK_RT_InitVolumetrics(void);
+
+// Destroy all volumetric resources.  Device must be idle before calling.
+void VK_RT_ShutdownVolumetrics(void);
+
+// Resize vol buffer when render resolution changes.
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height);
+
+// Dispatch the volumetric ray-march compute pass for the current view.
+// Must be called outside a render pass, after TLAS build and GI dispatch.
+// Depth must be in ATTACHMENT_OPTIMAL on entry; transitions to READ_ONLY
+// for the compute dispatch and restores to ATTACHMENT_OPTIMAL on exit.
+// Output: volBuffer[currentFrame] is ready for FRAGMENT sampling when done.
+void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Composite the volumetric buffer onto the framebuffer with additive blending.
+// Must be called INSIDE the main render pass, after VK_RT_CompositeGI.
+// Does nothing when r_rtVol is off or the pipeline is not ready.
+void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
+
+// ---------------------------------------------------------------------------
+// Volumetric temporal EMA (Phase 7.2 — step 8)
+// ---------------------------------------------------------------------------
+
+// Initialise history images and EMA pipeline.  Called from VK_RT_InitVolumetrics.
+void VK_RT_InitVolTemporal(void);
+
+// Destroy all vol temporal resources.  Device must be idle before calling.
+void VK_RT_ShutdownVolTemporal(void);
+
+// Resize vol history images when render resolution changes.
+void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height);
+
+// Blend volBuffer into volHistory via EMA.  Sets volReadView[currentFrame] to
+// the accumulated history so VK_RT_CompositeVolumetrics reads the smooth result.
+// Must be called outside the render pass, immediately after VK_RT_DispatchVolumetrics.
+void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// Volumetric bilateral filter (Phase 7.2 — step 10)
+// ---------------------------------------------------------------------------
+
+// Initialise bilateral filter images and pipeline.  Called from VK_RT_InitVolumetrics.
+void VK_RT_InitVolBilateral(void);
+
+// Destroy all bilateral filter resources.  Device must be idle before calling.
+void VK_RT_ShutdownVolBilateral(void);
+
+// Resize bilateral images when render resolution changes.
+void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height);
+
+// Apply cross-bilateral spatial filter to the temporal history.
+// Sets volReadView[currentFrame] to volBlurred when r_rtVolBilateral is on.
+// Must be called outside the render pass, immediately after DispatchTemporalResolveVol.
+void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 #endif // __VK_RAYTRACING_H__
