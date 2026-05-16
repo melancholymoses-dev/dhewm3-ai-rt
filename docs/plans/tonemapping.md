@@ -1,4 +1,5 @@
 # Doom 3 RT Tonemapping and Volumetrics Plan
+Date: May 16, 2026
 
 This document outlines the strategy for resolving washed-out visuals caused by adding Global Illumination (GI) and fixing Volumetric "blobs" in the Doom 3 Vulkan Ray Tracing renderer.
 
