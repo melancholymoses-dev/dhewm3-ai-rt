@@ -473,6 +473,16 @@ struct vkRTState_t
     VkDescriptorSet       volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // HDR scene buffer (Phase 8.1 — Tonemapping)
+    //
+    // hdrScene: RGBA16F per-slot image used as the colour attachment for all
+    //   scene and composite render passes instead of the swapchain.  A final
+    //   tonemap.comp dispatch reads hdrScene, applies the Uchimura filmic curve,
+    //   and writes the mapped result to the swapchain storage image.
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t hdrScene[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F HDR accumulator
+
     bool isInitialized;
 };
 
@@ -782,5 +792,24 @@ void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height);
 // Sets volReadView[currentFrame] to volBlurred when r_rtVolBilateral is on.
 // Must be called outside the render pass, immediately after DispatchTemporalResolveVol.
 void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// Tonemapping (Phase 8.1)
+// ---------------------------------------------------------------------------
+
+// Allocate HDR scene images and create the tonemap compute pipeline.
+// Called once after device creation (inside the VK_RT_Init block).
+void VK_RT_InitTonemap(void);
+
+// Destroy all tonemap resources.  Device must be idle before calling.
+void VK_RT_ShutdownTonemap(void);
+
+// Reallocate HDR scene images when render resolution changes.
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeTonemap(uint32_t width, uint32_t height);
+
+// Dispatch the Uchimura tonemap compute pass: hdrScene → swapchain.
+// Must be called outside a render pass, after all composites have finished.
+void VK_RT_DispatchTonemap(VkCommandBuffer cmd);
 
 #endif // __VK_RAYTRACING_H__
