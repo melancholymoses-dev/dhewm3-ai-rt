@@ -7,7 +7,14 @@ $\color{red}{\textbf{Do not bother that team with bug reports or feature request
 
 **They have made an understandable stance against AI.  Respect their choices.** 
 
-This project would be impossible without their foundation and updates to the original source code.
+
+|  Dhewm3 |  Dhewm3-RT | 
+|:---------:|:-----------:|
+|![Dhewm3](docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg)|![VibeCoded Restoration](docs/img/Attempted_restoration_of_Ecce_Homo.jpg)|
+| Doom3/Dhewm3's source code | Vibe Coded Ray-Traced Additions|
+
+
+This project would be impossible without the Dhewm3 foundation and updates to the original source code.
 
 This project is an attempt to implement Ray Tracing in Vulkan on top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
 
@@ -30,25 +37,29 @@ I would be cautious about assuming any AI coding projects work this well in the 
 
 # Ray Tracing Changes
 
-- Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.
-- Ray Traced shadows and acceleration structures.
+1. Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.
+2. Ray Traced shadows and acceleration structures.
 ![Ray Traced Shadows](docs/img/screenshots/20260331_shadow.jpg)
 ![Ray Traced Original](docs/img/screenshots/20260331_shadow_stencil.jpg)
 Ray Traced Shadows are in.  This shows some distinctions with how we're selecting lights - potentially some errors in math and light selection?  Top screenshot is RT, lower screenshot is original stencil.  Here the side light above the player's head casts the main shadow in RT, while the stencil has a much moodier shadow.
 
-- Ray-Traced Ambient Occlusion with temporal filtering 
-- Ray traced reflections
+3. Ray-Traced Ambient Occlusion with temporal filtering 
+4. Ray traced reflections
 
 ![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
 Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!
 
-- Global Illumination - One bounce global illumination
-- Volumetric Lighting
-- Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
+5. Global Illumination - One bounce global illumination
+5a.Volumetric Lighting
+
+5c. Tone mapping 
+As part of the global illumination passes I found it was washing out the color, killing the contrast and mood.  We have added a Uchimara tone-map to try to restore that dynamic range while sticking close to the original art style while trying to enhance it.
+
+
+7. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
 
 ![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
 This is just a definition change to add the color, since this was already in-game but probably off for performance reasons.
-
 
 
 
