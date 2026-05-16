@@ -2631,14 +2631,14 @@ static void DrawRTOptionsMenu()
     const bool giOn = rtCVars.rtGI && rtCVars.rtGI->GetBool();
     ImGui::BeginDisabled(!giOn);
     ImGui::SeparatorText("Global Illumination Settings");
-    if (ImGui::BeginTable("##volCols", 2, ImGuiTableFlags_None))
+    if (ImGui::BeginTable("##giCols", 2, ImGuiTableFlags_None))
     {
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
 
         RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
-        RTSliderInt("GI Max Lights (nearest-first, 1-64)", rtCVars.rtGIMaxLights, 1, 128);
+        RTSliderInt("GI Max Lights (nearest-first, 1-128)", rtCVars.rtGIMaxLights, 1, 128);
         RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
         RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
         RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 16.0f, 512.0f, "%.0f");
