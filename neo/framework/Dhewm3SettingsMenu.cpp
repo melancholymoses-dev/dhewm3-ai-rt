@@ -2473,6 +2473,13 @@ struct RTCVars
     idCVar *rtVolDirectedDensity = nullptr;
     idCVar *rtVolDirectedStrength = nullptr;
     idCVar *rtVolDirectedAnisotropy = nullptr;
+
+    // Tonemapping (Phase 8.1)
+    idCVar *rtTonemap = nullptr;
+    idCVar *rtTonemapExposure = nullptr;
+    idCVar *rtTonemapToe = nullptr;
+    idCVar *rtTonemapLinStart = nullptr;
+    idCVar *rtTonemapLinLen = nullptr;
 };
 
 static RTCVars rtCVars;
@@ -2534,6 +2541,11 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
     rtCVars.rtVolDirectedStrength = cvarSystem->Find("r_rtVolDirectedStrength");
     rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
+    rtCVars.rtTonemap = cvarSystem->Find("r_rtTonemap");
+    rtCVars.rtTonemapExposure = cvarSystem->Find("r_rtTonemapExposure");
+    rtCVars.rtTonemapToe = cvarSystem->Find("r_rtTonemapToe");
+    rtCVars.rtTonemapLinStart = cvarSystem->Find("r_rtTonemapLinStart");
+    rtCVars.rtTonemapLinLen = cvarSystem->Find("r_rtTonemapLinLen");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2592,30 +2604,41 @@ static void DrawRTOptionsMenu()
     const bool shadowsOn = rtCVars.rtShadows && rtCVars.rtShadows->GetBool();
     ImGui::BeginDisabled(!shadowsOn);
     ImGui::SeparatorText("Shadow Settings");
-
-    RTSliderInt("Shadow Samples (1=hard, 4+=soft)", rtCVars.rtShadowSamples, 1, 8);
-    RTCheckbox("Shadow Blur", rtCVars.rtShadowBlurEnable);
-    RTSliderInt("Shadow Blur Radius (pixels)", rtCVars.rtShadowBlur, 0, 8);
-    RTCheckbox("Depth-Aware Shadow Blur", rtCVars.rtShadowBlurDepthAware);
-    RTSliderFloat("Shadow Ray Bias", rtCVars.rtShadowRayBias, 0.0f, 2.0f);
-    RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
-    RTSliderFloat("Soft Shadow Radius Min", rtCVars.rtShadowSoftRadiusMin, 0.0f, 10.0f);
-    RTSliderFloat("Soft Shadow Radius Max", rtCVars.rtShadowSoftRadiusMax, 0.0f, 20.0f);
-    RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
-    RTCheckbox("Temporal Jitter Pattern", rtCVars.rtShadowTemporalJitter);
-    RTCheckbox("Stable Spatial Jitter Seed", rtCVars.rtShadowStablePattern);
+    if (ImGui::BeginTable("##shadowCols", 2, ImGuiTableFlags_None))
+    {
+        ImGui::TableNextColumn();
+        RTSliderInt("Shadow Samples (1=hard, 4+=soft)", rtCVars.rtShadowSamples, 1, 8);
+        RTCheckbox("Shadow Blur", rtCVars.rtShadowBlurEnable);
+        RTSliderInt("Shadow Blur Radius (pixels)", rtCVars.rtShadowBlur, 0, 8);
+        RTCheckbox("Depth-Aware Shadow Blur", rtCVars.rtShadowBlurDepthAware);
+        RTSliderFloat("Shadow Ray Bias", rtCVars.rtShadowRayBias, 0.0f, 2.0f);
+        ImGui::TableNextColumn();
+        RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
+        RTSliderFloat("Soft Shadow Radius Min", rtCVars.rtShadowSoftRadiusMin, 0.0f, 10.0f);
+        RTSliderFloat("Soft Shadow Radius Max", rtCVars.rtShadowSoftRadiusMax, 0.0f, 20.0f);
+        RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
+        RTCheckbox("Temporal Jitter Pattern", rtCVars.rtShadowTemporalJitter);
+        RTCheckbox("Stable Spatial Jitter Seed", rtCVars.rtShadowStablePattern);
+        ImGui::EndTable()
+    }
     ImGui::EndDisabled(); // !shadowsOn
 
     // ---- AO settings ---------------------------------------------------------
     const bool aoOn = rtCVars.rtAO && rtCVars.rtAO->GetBool();
     ImGui::BeginDisabled(!aoOn);
     ImGui::SeparatorText("Ambient Occlusion Settings");
+    if (ImGui::BeginTable("##AOCols", 2, ImGuiTableFlags_None))
+    {
+        ImGui::TableNextColumn();
 
-    RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
-    RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
-    RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);
-    RTSliderFloat("Temporal Blend Factor", rtCVars.rtTemporalAlpha, 0.0f, 1.0f);
-    RTSliderInt("Atrous Spatial Filter Passes", rtCVars.rtAtrousIterations, 0, 8);
+        RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
+        RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
+        ImGui::TableNextColumn();
+        RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);
+        RTSliderFloat("Temporal Blend Factor", rtCVars.rtTemporalAlpha, 0.0f, 1.0f);
+        RTSliderInt("Atrous Spatial Filter Passes", rtCVars.rtAtrousIterations, 0, 8);
+        ImGui::EndTable();
+    }
     ImGui::EndDisabled(); // !aoOn
 
     // ---- Reflection settings -------------------------------------------------
@@ -2662,6 +2685,16 @@ static void DrawRTOptionsMenu()
     ImGui::EndDisabled();
     */
     ImGui::Spacing();
+    ImGui::SeparatorText("GI Spatial Filter (A-trous)");
+    RTCheckbox("A-trous Spatial Filter", rtCVars.rtGIAtrous);
+    const bool giAtrousOn = rtCVars.rtGIAtrous && rtCVars.rtGIAtrous->GetBool();
+    ImGui::BeginDisabled(!giAtrousOn);
+    RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
+    RTSliderFloat("Luminance Edge-Stop (SigmaL)", rtCVars.rtGIAtrousSigmaL, 0.0f, 1.0f);
+    RTSliderFloat("Depth Edge-Stop (SigmaZ)", rtCVars.rtGIAtrousSigmaZ, 0.001f, 0.1f, "%.4f");
+    ImGui::EndDisabled(); // !giAtrousOn
+
+    ImGui::Spacing();
     ImGui::SeparatorText("GI Volumetric Lighting");
     RTCheckbox("Enable Volumetric Lighting", rtCVars.rtVol);
     const bool volOn = rtCVars.rtVol && rtCVars.rtVol->GetBool();
@@ -2697,18 +2730,20 @@ static void DrawRTOptionsMenu()
         ImGui::EndTable();
     }
 
-    ImGui::EndDisabled();
+    ImGui::EndDisabled(); // Volumetric
+
+    ImGui::EndDisabled(); // !giOn
 
     ImGui::Spacing();
-    ImGui::SeparatorText("GI Spatial Filter (A-trous)");
-    RTCheckbox("A-trous Spatial Filter", rtCVars.rtGIAtrous);
-    const bool giAtrousOn = rtCVars.rtGIAtrous && rtCVars.rtGIAtrous->GetBool();
-    ImGui::BeginDisabled(!giAtrousOn);
-    RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
-    RTSliderFloat("Luminance Edge-Stop (SigmaL)", rtCVars.rtGIAtrousSigmaL, 0.0f, 1.0f);
-    RTSliderFloat("Depth Edge-Stop (SigmaZ)", rtCVars.rtGIAtrousSigmaZ, 0.001f, 0.1f, "%.4f");
-    ImGui::EndDisabled(); // !giAtrousOn
-    ImGui::EndDisabled(); // !giOn
+    ImGui::SeparatorText("Tonemapping");
+    RTCheckbox("Enable Tonemapping (Uchimura filmic curve)", rtCVars.rtTonemap);
+    const bool tonemapOn = rtCVars.rtTonemap && rtCVars.rtTonemap->GetBool();
+    ImGui::BeginDisabled(!tonemapOn);
+    RTSliderFloat("Exposure", rtCVars.rtTonemapExposure, 0.1f, 4.0f, "%.2f");
+    RTSliderFloat("Toe Strength", rtCVars.rtTonemapToe, 1.0f, 4.0f, "%.2f");
+    RTSliderFloat("Linear Start", rtCVars.rtTonemapLinStart, 0.0f, 0.5f, "%.3f");
+    RTSliderFloat("Linear Length", rtCVars.rtTonemapLinLen, 0.0f, 1.0f, "%.3f");
+    ImGui::EndDisabled(); // !tonemapOn
 
     ImGui::EndDisabled(); // !rtEnabled
 }
