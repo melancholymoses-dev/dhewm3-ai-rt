@@ -328,7 +328,7 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
     pipelineInfo.subpass = 0;
 
     VkPipeline pipeline;
@@ -479,7 +479,7 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -621,7 +621,7 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -771,7 +771,7 @@ static VkPipeline VK_CreateGlassReflPipeline(VkPipelineLayout layout)
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -924,7 +924,7 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -1172,7 +1172,7 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -1292,7 +1292,7 @@ static VkPipeline VK_CreateSkyboxPipeline(VkPipelineLayout layout)
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
@@ -1547,7 +1547,7 @@ static VkPipeline VK_CreateFogPipelineEx(VkPipelineLayout layout, const char *ve
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = layout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));

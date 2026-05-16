@@ -536,7 +536,7 @@ static void VK_RT_InitVolCompositePipeline(void)
     pipelineInfo.pColorBlendState = &blendState;
     pipelineInfo.pDynamicState = &dynamicState;
     pipelineInfo.layout = vkRT.volCompositeLayout;
-    pipelineInfo.renderPass = vk.renderPass;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositePipeline));
 
