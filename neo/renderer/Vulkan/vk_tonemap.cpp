@@ -6,13 +6,19 @@ dhewm3-rt Vulkan — vk_tonemap.cpp — HDR scene buffer and Uchimura tonemap re
 Phase 8.1: allocates a per-frame RGBA16F HDR accumulation image (hdrScene) that
 replaces the swapchain as the colour attachment for scene and composite passes.
 A final compute dispatch (tonemap.comp) reads hdrScene, applies the Uchimura
-filmic S-curve, and writes the mapped result to the swapchain storage image.
+filmic S-curve to the Rec. 709 scalar luminance, and writes the tonemapped
+result to a per-frame RGBA8 resolve image (tonemapResolve).  That resolve image
+is then blitted to the acquired swapchain image (BGRA8_UNORM) before presentation.
+
+The blit handles RGBA8 → BGRA8 format conversion: the Vulkan spec maps each named
+component (R, G, B, A) to its counterpart in the destination format, so colours
+are preserved correctly.
 
 Dispatch order in the RT frame:
   [scene render pass  → hdrScene]
   [GI composite       → hdrScene]
   [vol composite      → hdrScene]
-  VK_RT_DispatchTonemap   ← this file (tonemap.comp, outside render pass)
+  VK_RT_DispatchTonemap   ← this file (tonemap.comp + blit → swapchain)
   [resume render pass → swapchain (HUD / 2D)]
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
@@ -49,7 +55,14 @@ idCVar r_rtTonemapLinLen("r_rtTonemapLinLen", "0.40", CVAR_RENDERER | CVAR_ARCHI
     "Length of the linear section.");
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Externs from other translation units
+// ---------------------------------------------------------------------------
+
+extern VkShaderModule VK_LoadSPIRV(const char *path);
+extern idCVar r_vkLogRT;
+
+// ---------------------------------------------------------------------------
+// HDR images (RGBA16F — colour attachment for scene passes)
 // ---------------------------------------------------------------------------
 
 static void VK_RT_CreateHDRImages(uint32_t width, uint32_t height)
@@ -209,7 +222,7 @@ static void VK_RT_DestroyHDRImages(void)
 }
 
 // ---------------------------------------------------------------------------
-// HDR framebuffers
+// HDR framebuffers (depth + hdrScene as colour attachment)
 // ---------------------------------------------------------------------------
 
 static void VK_RT_CreateHDRFramebuffers(void)
@@ -243,6 +256,254 @@ static void VK_RT_DestroyHDRFramebuffers(void)
 }
 
 // ---------------------------------------------------------------------------
+// Tonemap resolve images (RGBA8_UNORM — compute shader output, blitted to swapchain)
+// ---------------------------------------------------------------------------
+
+static void VK_RT_CreateTonemapResolveImages(uint32_t width, uint32_t height)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkReflBuffer_t &res = vkRT.tonemapResolve[i];
+        res.width  = width;
+        res.height = height;
+
+        VkImageCreateInfo imgInfo = {};
+        imgInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imgInfo.imageType     = VK_IMAGE_TYPE_2D;
+        imgInfo.format        = VK_FORMAT_R8G8B8A8_UNORM;
+        imgInfo.extent        = { width, height, 1 };
+        imgInfo.mipLevels     = 1;
+        imgInfo.arrayLayers   = 1;
+        imgInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+        imgInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        // STORAGE: tonemap.comp writes here (rgba8 format qualifier in shader).
+        // TRANSFER_SRC: blitted to the BGRA8 swapchain image after dispatch.
+        imgInfo.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &res.image));
+
+        VkMemoryRequirements memReq;
+        vkGetImageMemoryRequirements(vk.device, res.image, &memReq);
+
+        VkPhysicalDeviceMemoryProperties memProps;
+        vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
+        uint32_t memTypeIdx = UINT32_MAX;
+        for (uint32_t m = 0; m < memProps.memoryTypeCount; m++)
+        {
+            if ((memReq.memoryTypeBits & (1u << m)) &&
+                (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+            {
+                memTypeIdx = m;
+                break;
+            }
+        }
+        if (memTypeIdx == UINT32_MAX)
+        {
+            common->Error("VK RT Tonemap: no device-local memory type for tonemap resolve buffer");
+            return;
+        }
+
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize  = memReq.size;
+        allocInfo.memoryTypeIndex = memTypeIdx;
+        VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &res.memory));
+        VK_CHECK(vkBindImageMemory(vk.device, res.image, res.memory, 0));
+
+        VkImageViewCreateInfo viewInfo = {};
+        viewInfo.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image            = res.image;
+        viewInfo.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format           = VK_FORMAT_R8G8B8A8_UNORM;
+        viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &res.view));
+
+        // Transition UNDEFINED → GENERAL: compute shader writes in GENERAL,
+        // and vkCmdBlitImage accepts GENERAL as the source layout.
+        VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
+        {
+            VkCommandBufferAllocateInfo cbAlloc = {};
+            cbAlloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            cbAlloc.commandPool        = vk.commandPool;
+            cbAlloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            cbAlloc.commandBufferCount = 1;
+            VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
+
+            VkCommandBufferBeginInfo beginInfo = {};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(tmpCmd, &beginInfo);
+
+            VkImageMemoryBarrier barrier = {};
+            barrier.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.srcAccessMask    = 0;
+            barrier.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+            barrier.image            = res.image;
+            barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            vkCmdPipelineBarrier(tmpCmd,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0, 0, NULL, 0, NULL, 1, &barrier);
+
+            vkEndCommandBuffer(tmpCmd);
+
+            VkFenceCreateInfo fenceCI = {};
+            fenceCI.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VkFence fence = VK_NULL_HANDLE;
+            VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
+
+            VkSubmitInfo submitInfo = {};
+            submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers    = &tmpCmd;
+            vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, fence);
+            vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
+            vkDestroyFence(vk.device, fence, NULL);
+            vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
+        }
+    }
+}
+
+static void VK_RT_DestroyTonemapResolveImages(void)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkReflBuffer_t &res = vkRT.tonemapResolve[i];
+        if (res.view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(vk.device, res.view, NULL);
+            res.view = VK_NULL_HANDLE;
+        }
+        if (res.image != VK_NULL_HANDLE)
+        {
+            vkDestroyImage(vk.device, res.image, NULL);
+            res.image = VK_NULL_HANDLE;
+        }
+        if (res.memory != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, res.memory, NULL);
+            res.memory = VK_NULL_HANDLE;
+        }
+        res.width  = 0;
+        res.height = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tonemap compute pipeline
+// ---------------------------------------------------------------------------
+
+static void VK_RT_CreateTonemapPipeline(void)
+{
+    // --- Descriptor set layout: binding 0 = hdrIn (readonly), binding 1 = ldrOut ---
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings    = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.tonemapDescLayout));
+
+    // --- Pipeline layout: descriptor set + 16-byte push constant ---
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset     = 0;
+    pushRange.size       = 16; // TonemapPC: exposure, toeStrength, linearStart, linearLength
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount         = 1;
+    plCI.pSetLayouts            = &vkRT.tonemapDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges    = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.tonemapPipelineLayout));
+
+    // --- Compute shader ---
+    VkShaderModule compMod = VK_LoadSPIRV("glprogs/glsl/tonemap.comp.spv");
+    if (compMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Tonemap: failed to load tonemap.comp.spv — tonemap disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stage = {};
+    stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = compMod;
+    stage.pName  = "main";
+
+    VkComputePipelineCreateInfo pipelineCI = {};
+    pipelineCI.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineCI.stage  = stage;
+    pipelineCI.layout = vkRT.tonemapPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineCI, NULL,
+                                      &vkRT.tonemapPipeline));
+    vkDestroyShaderModule(vk.device, compMod, NULL);
+
+    // --- Descriptor pool (2 storage images × VK_MAX_FRAMES_IN_FLIGHT sets) ---
+    VkDescriptorPoolSize poolSize = {};
+    poolSize.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSize.descriptorCount = 2 * VK_MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets       = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 1;
+    poolCI.pPoolSizes    = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.tonemapDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.tonemapDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool     = vkRT.tonemapDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts        = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.tonemapDescSets));
+
+    // Mark as dirty so the first dispatch updates the image views.
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.tonemapDescSetLastUpdatedFrameCount[i] = -1;
+
+    common->Printf("VK RT Tonemap: compute pipeline initialized\n");
+}
+
+static void VK_RT_DestroyTonemapPipeline(void)
+{
+    if (vkRT.tonemapPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.tonemapPipeline, NULL);
+        vkRT.tonemapPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.tonemapPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.tonemapPipelineLayout, NULL);
+        vkRT.tonemapPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.tonemapDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.tonemapDescPool, NULL);
+        vkRT.tonemapDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.tonemapDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.tonemapDescLayout, NULL);
+        vkRT.tonemapDescLayout = VK_NULL_HANDLE;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -250,14 +511,15 @@ void VK_RT_InitTonemap(void)
 {
     common->Printf("VK: initializing RT tonemapping (Phase 8.1)\n");
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    // Tonemap compute pipeline (tonemap.comp) is created in Step 4.
+    VK_RT_CreateTonemapPipeline();
 }
 
 void VK_RT_ShutdownTonemap(void)
 {
-    // Tonemap pipeline teardown will be added in Step 4.
+    VK_RT_DestroyTonemapPipeline();
     VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
+    VK_RT_DestroyTonemapResolveImages();
 }
 
 void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
@@ -267,11 +529,167 @@ void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
     VK_RT_DestroyHDRImages();
     VK_RT_CreateHDRImages(width, height);
     VK_RT_CreateHDRFramebuffers();
+    VK_RT_DestroyTonemapResolveImages();
+    VK_RT_CreateTonemapResolveImages(width, height);
+    // Force descriptor set update on next dispatch (image views have changed).
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        vkRT.tonemapDescSetLastUpdatedFrameCount[i] = -1;
 }
 
-void VK_RT_DispatchTonemap(VkCommandBuffer /*cmd*/)
+void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
 {
-    // Tonemap compute dispatch will be implemented in Step 4 (tonemap.comp pipeline).
-    // Until then this is a no-op; the scene renders to hdrScene but is not resolved
-    // to the swapchain via this path.
+    if (!vkRT.isInitialized || !r_rtTonemap.GetBool())
+        return;
+    if (vkRT.tonemapPipeline == VK_NULL_HANDLE)
+        return;
+    if (vkRT.tonemapResolve[0].image == VK_NULL_HANDLE)
+        return;
+
+    const int      frameIdx = (int)vk.currentFrame;
+    const uint32_t swapIdx  = vk.currentImageIdx;
+
+    // 1. hdrScene COLOR_ATTACHMENT_OPTIMAL → GENERAL for compute shader read.
+    //    The finalLayout of hdrRenderPassResume is COLOR_ATTACHMENT_OPTIMAL.
+    VkImageMemoryBarrier hdrToGeneral = {};
+    hdrToGeneral.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    hdrToGeneral.srcAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    hdrToGeneral.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+    hdrToGeneral.oldLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrToGeneral.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+    hdrToGeneral.image            = vkRT.hdrScene[frameIdx].image;
+    hdrToGeneral.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 0, NULL, 0, NULL, 1, &hdrToGeneral);
+
+    // 2. Update descriptor sets lazily (after init or resize).
+    //    tonemapDescSetLastUpdatedFrameCount < 0 means "needs update".
+    if (vkRT.tonemapDescSetLastUpdatedFrameCount[frameIdx] < 0)
+    {
+        VkDescriptorImageInfo hdrInfo = {};
+        hdrInfo.imageView   = vkRT.hdrScene[frameIdx].view;
+        hdrInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo resolveInfo = {};
+        resolveInfo.imageView   = vkRT.tonemapResolve[frameIdx].view;
+        resolveInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[2] = {};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = vkRT.tonemapDescSets[frameIdx];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].pImageInfo      = &hdrInfo;
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = vkRT.tonemapDescSets[frameIdx];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo      = &resolveInfo;
+
+        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+        vkRT.tonemapDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+    }
+
+    // 3. Push constants from CVars.
+    struct TonemapPC {
+        float exposure;
+        float toeStrength;
+        float linearStart;
+        float linearLength;
+    } pc;
+    pc.exposure     = r_rtTonemapExposure.GetFloat();
+    pc.toeStrength  = r_rtTonemapToe.GetFloat();
+    pc.linearStart  = r_rtTonemapLinStart.GetFloat();
+    pc.linearLength = r_rtTonemapLinLen.GetFloat();
+
+    // 4. Bind pipeline and dispatch (8×8 workgroups).
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.tonemapPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+        vkRT.tonemapPipelineLayout, 0, 1, &vkRT.tonemapDescSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.tonemapPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+        0, sizeof(TonemapPC), &pc);
+
+    uint32_t groupsX = (vkRT.tonemapResolve[frameIdx].width  + 7) / 8;
+    uint32_t groupsY = (vkRT.tonemapResolve[frameIdx].height + 7) / 8;
+    vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    // 5. Memory barrier: compute writes → blit read.
+    //    tonemapResolve stays in GENERAL throughout (valid source for vkCmdBlitImage).
+    VkMemoryBarrier computeDone = {};
+    computeDone.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    computeDone.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    computeDone.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 1, &computeDone, 0, NULL, 0, NULL);
+
+    // 6. Swapchain UNDEFINED → TRANSFER_DST_OPTIMAL.
+    //    UNDEFINED as source discards old contents, which is correct since
+    //    the tonemap blit will overwrite the entire image.
+    VkImageMemoryBarrier swapToDst = {};
+    swapToDst.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    swapToDst.srcAccessMask    = 0;
+    swapToDst.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+    swapToDst.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+    swapToDst.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    swapToDst.image            = vk.swapchainImages[swapIdx];
+    swapToDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &swapToDst);
+
+    // 7. Blit tonemapResolve (RGBA8, GENERAL) → swapchain (BGRA8, TRANSFER_DST).
+    //    Vulkan maps each named component (R→R, G→G, B→B, A→A) across formats,
+    //    so RGBA8→BGRA8 preserves colours correctly.
+    VkImageBlit region = {};
+    region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.srcOffsets[0]  = { 0, 0, 0 };
+    region.srcOffsets[1]  = { (int32_t)vkRT.tonemapResolve[frameIdx].width,
+                               (int32_t)vkRT.tonemapResolve[frameIdx].height, 1 };
+    region.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.dstOffsets[0]  = { 0, 0, 0 };
+    region.dstOffsets[1]  = { (int32_t)vk.swapchainExtent.width,
+                               (int32_t)vk.swapchainExtent.height, 1 };
+    vkCmdBlitImage(cmd,
+        vkRT.tonemapResolve[frameIdx].image, VK_IMAGE_LAYOUT_GENERAL,
+        vk.swapchainImages[swapIdx],         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &region, VK_FILTER_NEAREST);
+
+    // 8. Swapchain TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR.
+    VkImageMemoryBarrier swapToPresent = {};
+    swapToPresent.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    swapToPresent.srcAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+    swapToPresent.dstAccessMask    = VK_ACCESS_MEMORY_READ_BIT;
+    swapToPresent.oldLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    swapToPresent.newLayout        = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    swapToPresent.image            = vk.swapchainImages[swapIdx];
+    swapToPresent.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, NULL, 0, NULL, 1, &swapToPresent);
+
+    // 9. hdrScene GENERAL → COLOR_ATTACHMENT_OPTIMAL for the next frame's render pass.
+    VkImageMemoryBarrier hdrToCA = {};
+    hdrToCA.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    hdrToCA.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+    hdrToCA.dstAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    hdrToCA.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
+    hdrToCA.newLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrToCA.image            = vkRT.hdrScene[frameIdx].image;
+    hdrToCA.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        0, 0, NULL, 0, NULL, 1, &hdrToCA);
+
+    if (r_vkLogRT.GetInteger() >= 2)
+        common->Printf("VK RT Tonemap: dispatch frame=%d swap=%u groups=%ux%u exp=%.2f toe=%.2f\n",
+                        tr.frameCount, swapIdx, groupsX, groupsY,
+                        pc.exposure, pc.toeStrength);
 }

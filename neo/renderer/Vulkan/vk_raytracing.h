@@ -474,14 +474,22 @@ struct vkRTState_t
     int                   volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // HDR scene buffer (Phase 8.1 — Tonemapping)
+    // HDR scene buffer and Uchimura tonemap pipeline (Phase 8.1)
     //
     // hdrScene: RGBA16F per-slot image used as the colour attachment for all
-    //   scene and composite render passes instead of the swapchain.  A final
-    //   tonemap.comp dispatch reads hdrScene, applies the Uchimura filmic curve,
-    //   and writes the mapped result to the swapchain storage image.
+    //   scene and composite render passes instead of the swapchain.
+    // tonemapResolve: RGBA8_UNORM per-slot storage target that tonemap.comp writes
+    //   to; blitted to the BGRA8 swapchain image after dispatch.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t hdrScene[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F HDR accumulator
+    vkReflBuffer_t        hdrScene[VK_MAX_FRAMES_IN_FLIGHT];      // RGBA16F HDR accumulator
+    vkReflBuffer_t        tonemapResolve[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA8_UNORM resolve target
+
+    VkPipeline            tonemapPipeline;
+    VkPipelineLayout      tonemapPipelineLayout;
+    VkDescriptorSetLayout tonemapDescLayout;
+    VkDescriptorPool      tonemapDescPool;
+    VkDescriptorSet       tonemapDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   tonemapDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     bool isInitialized;
 };
