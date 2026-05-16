@@ -1,4 +1,5 @@
 # Phase 8.1 — Tonemapping Plan
+Date: May 16 2026
 
 Builds on the Uchimura suggestion in `tonemapping.md`.  Addresses the washed-out
 volumetric look and the associated dynamic-range problem without requiring level redesign.
@@ -80,9 +81,14 @@ layout(push_constant) uniform PC {
     float linearLength;   // r_rtTonemapLinLen     (default 0.40)
 } pc;
 
-// Uchimura / Gran Turismo filmic curve.
+// Rec. 709 / sRGB luminance weights — perceptually correct dot-product.
+const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
+
+// Uchimura / Gran Turismo filmic curve applied to a scalar luminance value.
 // P=1 (display max), a=1 (contrast), b=0 (pedestal).
-vec3 Uchimura(vec3 x) {
+// Operating on luminance rather than RGB individually preserves hue and
+// saturation: only the perceived brightness is remapped.
+float Uchimura(float x) {
     float P = 1.0;
     float a = 1.0;
     float m = pc.linearStart;
@@ -95,13 +101,13 @@ vec3 Uchimura(vec3 x) {
     float C2  = (a * P) / (P - S1);
     float CP  = -C2 / P;
 
-    vec3 w0 = 1.0 - smoothstep(vec3(0.0), vec3(m),      x);
-    vec3 w2 = step(vec3(S0), x);
-    vec3 w1 = 1.0 - w0 - w2;
+    float w0 = 1.0 - smoothstep(0.0, m,  x);
+    float w2 = step(S0, x);
+    float w1 = 1.0 - w0 - w2;
 
-    vec3 T = m * pow(max(x / m, 0.0), vec3(c));   // toe  — crushed blacks
-    vec3 L = m + a * (x - m);                      // linear section
-    vec3 S = P - (P - S1) * exp(CP * (x - S0));    // shoulder — compressed highlights
+    float T = m * pow(max(x / m, 0.0), c);          // toe  — crushed blacks
+    float L = m + a * (x - m);                       // linear section
+    float S = P - (P - S1) * exp(CP * (x - S0));     // shoulder — compressed highlights
 
     return T * w0 + L * w1 + S * w2;
 }
@@ -111,11 +117,33 @@ void main() {
     ivec2 dims  = imageSize(ldrOut);
     if (coord.x >= dims.x || coord.y >= dims.y) return;
 
-    vec3 hdr    = imageLoad(hdrIn, coord).rgb * pc.exposure;
-    vec3 mapped = Uchimura(hdr);
-    imageStore(ldrOut, coord, vec4(mapped, 1.0));
+    vec3  hdr = imageLoad(hdrIn, coord).rgb * pc.exposure;
+    float lum = dot(hdr, LUMINANCE_WEIGHTS);
+
+    vec3 mapped;
+    if (lum > 0.0) {
+        // Scale RGB by the ratio of tonemapped luminance to original luminance.
+        // This applies the filmic curve to perceived brightness only, leaving
+        // hue and saturation unchanged — no per-channel colour shift.
+        float mappedLum = Uchimura(lum);
+        mapped = hdr * (mappedLum / lum);
+    } else {
+        mapped = vec3(0.0);
+    }
+
+    // Clamp to [0, 1] before writing to the LDR swapchain.
+    // Highly saturated colours can have individual channels above 1.0 even
+    // after their luminance is correctly mapped — the uniform scale factor
+    // does not guarantee per-channel bounds.
+    imageStore(ldrOut, coord, vec4(clamp(mapped, 0.0, 1.0), 1.0));
 }
 ```
+
+The curve operates on the Rec. 709 luminance scalar rather than each RGB channel
+independently.  This ensures the filmic knee affects only perceived brightness —
+hue and saturation ratios are preserved exactly.  Applying the curve per-channel
+would shift colours toward the curve's fixed points (e.g. pushing mid-tones
+toward the linearStart crossover differently per channel).
 
 The `toeStrength` (`c`) parameter is the key control from `tonemapping.md`.
 - `c = 1.0` — linear toe (neutral, no crushing)
