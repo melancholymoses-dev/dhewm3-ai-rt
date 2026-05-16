@@ -987,6 +987,16 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         if (p.suppressLightInViewID != 0)
             continue;
 
+        // Parallel (directional/sky) lights are infinite — no volume boundary or falloff,
+        // so they cannot contribute meaningful single-scatter volumetrics.
+        if (p.parallel)
+            continue;
+
+        // noShadows lights are pure ambient fill with no occlusion path; they produce
+        // large uniform blobs rather than shafts and are not worth marching.
+        if (p.noShadows)
+            continue;
+
         const float dSq = (p.origin - camPos).LengthSqr();
         if (dSq > distCullSq)
             continue;

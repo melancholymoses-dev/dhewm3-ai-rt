@@ -57,7 +57,7 @@ static idCVar r_rtVolMaxLights("r_rtVolMaxLights", "32", CVAR_RENDERER | CVAR_IN
 static idCVar r_rtVolDensity("r_rtVolDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "0.15", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolStrength("r_rtVolStrength", "0.10", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
 static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.25", CVAR_RENDERER | CVAR_FLOAT,
@@ -66,9 +66,8 @@ static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.25", CVAR_RENDERER | CVA
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
 static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                                      "Scatter contribution scale for scene directed/spot lights.");
-static idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.2", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.1", CVAR_RENDERER | CVAR_FLOAT,
                                       "Final composite multiplier for scene directed light scatter.");
-
 static idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                         "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
 
