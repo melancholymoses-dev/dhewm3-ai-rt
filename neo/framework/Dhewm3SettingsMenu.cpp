@@ -2440,6 +2440,8 @@ struct RTCVars
     idCVar *rtReflectionBlend = nullptr;
 
     // GI fine-tuning
+    idCVar *rtGITemporal = nullptr;
+    idCVar *rtGITemporalAlpha = nullptr;
     idCVar *rtGISamples = nullptr;
     idCVar *rtGIMaxLights = nullptr;
     idCVar *rtGILightCollectRadiusScale = nullptr;
@@ -2447,7 +2449,6 @@ struct RTCVars
     idCVar *rtGIRadius = nullptr;
     idCVar *rtGIStrength = nullptr;
     idCVar *rtGIDirectScale = nullptr;
-    idCVar *rtGILightBounce = nullptr;
     idCVar *rtGIMaxBounceLights = nullptr;
     idCVar *rtGIBounceScale = nullptr;
     idCVar *rtGIEmissiveScale = nullptr;
@@ -2510,6 +2511,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
     rtCVars.rtReflectionDistance = cvarSystem->Find("r_rtReflectionDistance");
     rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
+    rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
+    rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
     rtCVars.rtGIMaxLights = cvarSystem->Find("r_rtGIMaxLights");
     rtCVars.rtGILightCollectRadiusScale = cvarSystem->Find("r_rtGILightCollectRadiusScale");
@@ -2517,7 +2520,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIRadius = cvarSystem->Find("r_rtGIRadius");
     rtCVars.rtGIStrength = cvarSystem->Find("r_rtGIStrength");
     rtCVars.rtGIDirectScale = cvarSystem->Find("r_rtGIDirectScale");
-    rtCVars.rtGILightBounce = cvarSystem->Find("r_rtGILightBounce");
     rtCVars.rtGIEmissiveScale = cvarSystem->Find("r_rtGIEmissiveScale");
     rtCVars.rtGIMaxBounceLights = cvarSystem->Find("r_rtGIMaxBounceLights");
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
@@ -2619,7 +2621,7 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
         RTCheckbox("Temporal Jitter Pattern", rtCVars.rtShadowTemporalJitter);
         RTCheckbox("Stable Spatial Jitter Seed", rtCVars.rtShadowStablePattern);
-        ImGui::EndTable()
+        ImGui::EndTable();
     }
     ImGui::EndDisabled(); // !shadowsOn
 
@@ -2673,17 +2675,17 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 5.0f);
         RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
         RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
-        RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 20.0f, "%.1f");
+        RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 10.0f, "%.1f");
         ImGui::EndTable();
     }
-    /*ImGui::Spacing();
-    ImGui::SeparatorText("GI Colour Bounce (Option B)");
-    RTCheckbox("Colour Bounce: evaluate lights at secondary hit", rtCVars.rtGILightBounce);
-    const bool bounceOn = rtCVars.rtGILightBounce && rtCVars.rtGILightBounce->GetBool();
-    ImGui::BeginDisabled(!bounceOn);
+    ImGui::Spacing();
+    ImGui::SeparatorText("GI Temporal Filter (EMA)");
+    RTCheckbox("GI Temporal Accumulation (EMA)", rtCVars.rtGITemporal);
+    const bool giTemporalOn = rtCVars.rtGITemporal && rtCVars.rtGITemporal->GetBool();
+    ImGui::BeginDisabled(!giTemporalOn);
+    RTSliderFloat("Temporal Alpha (0=full history, 1=current only)", rtCVars.rtGITemporalAlpha, 0.0f, 1.0f, "%.3f");
+    ImGui::EndDisabled(); // !giTemporalOn
 
-    ImGui::EndDisabled();
-    */
     ImGui::Spacing();
     ImGui::SeparatorText("GI Spatial Filter (A-trous)");
     RTCheckbox("A-trous Spatial Filter", rtCVars.rtGIAtrous);
@@ -2741,7 +2743,7 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(!tonemapOn);
     RTSliderFloat("Exposure", rtCVars.rtTonemapExposure, 0.1f, 4.0f, "%.2f");
     RTSliderFloat("Toe Strength", rtCVars.rtTonemapToe, 1.0f, 4.0f, "%.2f");
-    RTSliderFloat("Linear Start", rtCVars.rtTonemapLinStart, 0.0f, 0.5f, "%.3f");
+    RTSliderFloat("Linear Start", rtCVars.rtTonemapLinStart, 0.1f, 0.5f, "%.3f");
     RTSliderFloat("Linear Length", rtCVars.rtTonemapLinLen, 0.0f, 1.0f, "%.3f");
     ImGui::EndDisabled(); // !tonemapOn
 

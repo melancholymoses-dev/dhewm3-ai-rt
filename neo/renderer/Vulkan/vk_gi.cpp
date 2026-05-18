@@ -59,10 +59,6 @@ idCVar r_rtGIDirectScale("r_rtGIDirectScale", "0.8", CVAR_RENDERER | CVAR_FLOAT,
                          "Reduce below 1.0 (e.g. 0.7) to compensate for GI-added luminance "
                          "and keep overall brightness consistent with the original game");
 
-static idCVar r_rtGILightBounce(
-    "r_rtGILightBounce", "1", CVAR_RENDERER | CVAR_BOOL,
-    "Enable Option B: evaluate nearest lights at secondary hit (directional colour bounce)");
-
 static idCVar r_rtGIBounceScale(
     "r_rtGIBounceScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
@@ -79,7 +75,7 @@ static idCVar r_rtGIMaxLights(
     "Max GI lights to sample per frame, sorted nearest-first (1-128, capped at VK_GI_MAX_LIGHTS)");
 
 static idCVar r_rtGILightCollectRadiusScale(
-    "r_rtGILightCollectRadiusScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGILightCollectRadiusScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
     "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale");
 
 static idCVar r_rtGICheckerboard(
@@ -89,7 +85,7 @@ static idCVar r_rtGICheckerboard(
 static idCVar r_rtGIAtrous("r_rtGIAtrous", "1", CVAR_RENDERER | CVAR_BOOL,
                            "Enable À-trous spatial filter on the GI buffer after temporal resolve");
 static idCVar r_rtGIAtrousIterations(
-    "r_rtGIAtrousIterations", "2", CVAR_RENDERER | CVAR_INTEGER,
+    "r_rtGIAtrousIterations", "3", CVAR_RENDERER | CVAR_INTEGER,
     "Number of À-trous filter passes (each doubles the filter radius; 3 → effective radius ~7px)");
 static idCVar r_rtGIAtrousSigmaL("r_rtGIAtrousSigmaL", "0.2", CVAR_RENDERER | CVAR_FLOAT,
                                  "À-trous luminance edge-stop bandwidth (smaller = sharper edges preserved)");
@@ -1054,9 +1050,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             }
             // lightType: 0=point, 1=scene directed/spot, 2=player flashlight.
             // allowLightInViewID is set on muzzleFlash (first-person weapon light).
-            c.entry.lightType = isProjected
-                                    ? (p.allowLightInViewID != 0 ? 2u : 1u)
-                                    : 0u;
+            c.entry.lightType = isProjected ? (p.allowLightInViewID != 0 ? 2u : 1u) : 0u;
             c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
     }
@@ -1231,13 +1225,12 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // maxBounceLights: 0 disables Option B in rchit (Option A fallback); otherwise
     // caps the light loop so the GI pass evaluates fewer lights than reflections.
     // The SSBO numLights is NOT modified — reflections always see the full list.
-    ubo.maxBounceLights =
-        r_rtGILightBounce.GetBool() ? idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger()) : 0;
+    ubo.maxBounceLights = idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger());
     ubo.giContrast = idMath::ClampFloat(0.0f, 1.0f, r_rtGIContrast.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // DEBUG: log light counts once per second (keep for diagnostics).
-    if (r_rtGILightBounce.GetBool() && vkRT.giLightSsboMapped[frameIdx] != NULL && r_vkLogRT.GetInteger() >= 1)
+    if (vkRT.giLightSsboMapped[frameIdx] != NULL && r_vkLogRT.GetInteger() >= 1)
     {
         static int s_lastLogFrame = -9999;
         if (tr.frameCount - s_lastLogFrame > 60)
