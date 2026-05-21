@@ -20,6 +20,9 @@ of the original Doom 3 GPL Source Code release.
 // Defined in vk_backend.cpp
 void VK_SetWindowMinimized(bool minimized);
 
+// Defined in vk_tonemap.cpp
+void VK_RT_ResizeTonemap(uint32_t width, uint32_t height);
+
 // ---------------------------------------------------------------------------
 // Surface format / present mode selection
 // ---------------------------------------------------------------------------
@@ -221,6 +224,44 @@ void VK_CreateRenderPass(void)
     rpInfo.pAttachments = resumeAttachments;
 
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.renderPassResume));
+
+    // --- HDR render pass (RGBA16F CLEAR) ---
+    // Used by all scene rendering and graphics pipelines.  Writes to vkRT.hdrScene
+    // instead of the swapchain; the tonemap compute pass resolves to the swapchain.
+    VkAttachmentDescription hdrColor = {};
+    hdrColor.format         = VK_FORMAT_R16G16B16A16_SFLOAT;
+    hdrColor.samples        = VK_SAMPLE_COUNT_1_BIT;
+    hdrColor.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrColor.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    hdrColor.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    hdrColor.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    hdrColor.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    hdrColor.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    // Depth attachment: same format and STORE ops as the UNORM passes, but must reset
+    // the load ops and initial layout — depthAttachment was mutated for the resume pass above.
+    VkAttachmentDescription hdrDepth = depthAttachment;
+    hdrDepth.loadOp        = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrDepth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkAttachmentDescription hdrAttachments[2] = { hdrColor, hdrDepth };
+    rpInfo.pAttachments = hdrAttachments;
+    VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPass));
+
+    // --- HDR render pass (RGBA16F LOAD) ---
+    // Resume variant: preserves prior colour and depth/stencil contents.
+    hdrColor.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrColor.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrColor.finalLayout   = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    hdrDepth.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrDepth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription hdrResumeAttachments[2] = { hdrColor, hdrDepth };
+    rpInfo.pAttachments = hdrResumeAttachments;
+    VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPassResume));
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +297,8 @@ void VK_CreateSwapchain(int width, int height)
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // TRANSFER_DST needed for tonemap blit resolve
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -345,6 +387,8 @@ void VK_DestroySwapchain(void)
     vkFreeMemory(vk.device, vk.depthMemory, NULL);
     vkDestroyRenderPass(vk.device, vk.renderPass, NULL);
     vkDestroyRenderPass(vk.device, vk.renderPassResume, NULL);
+    vkDestroyRenderPass(vk.device, vk.hdrRenderPass, NULL);
+    vkDestroyRenderPass(vk.device, vk.hdrRenderPassResume, NULL);
     vkDestroySwapchainKHR(vk.device, vk.swapchain, NULL);
 }
 
@@ -449,7 +493,8 @@ void VK_RecreateSwapchain(int width, int height)
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // TRANSFER_DST needed for tonemap blit resolve
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -507,6 +552,10 @@ void VK_RecreateSwapchain(int width, int height)
         fbInfo.layers = 1;
         VK_CHECK(vkCreateFramebuffer(vk.device, &fbInfo, NULL, &vk.swapchainFramebuffers[i]));
     }
+
+    // Rebuild HDR framebuffers — they reference vk.depthView which was just recreated.
+    // Also resizes the hdrScene and tonemapResolve images to the new swapchain extent.
+    VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
 
     // Swapchain is healthy again; clear any minimized flag set during the
     // previous (aborted) recreation when the surface was 0x0.

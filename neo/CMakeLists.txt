@@ -691,6 +691,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_reflections.cpp
 	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_vol.cpp
+	renderer/Vulkan/vk_tonemap.cpp
 	renderer/Vulkan/vk_material_table.cpp
 )
 
@@ -754,6 +755,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/vol_march.comp
 	renderer/glsl/vol_composite.frag
 	renderer/glsl/vol_bilateral.comp
+	renderer/glsl/tonemap.comp
 )
 
 

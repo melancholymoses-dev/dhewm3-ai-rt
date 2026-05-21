@@ -80,9 +80,16 @@ struct vkState_t
     VkImageView depthSampledView; // depth-only view (for shader sampling — conformant)
     VkFormat depthFormat;
 
-    // Render pass
+    // Render pass — swapchain format (UNORM); used for swapchain framebuffer compatibility
     VkRenderPass renderPass;       // CLEAR load op — used on first begin each frame
     VkRenderPass renderPassResume; // LOAD load op  — used when reopening after RT dispatch
+
+    // HDR render passes — RGBA16F; used for scene rendering and all graphics pipelines
+    VkRenderPass hdrRenderPass;       // CLEAR — writes rgba16f HDR accumulator
+    VkRenderPass hdrRenderPassResume; // LOAD  — reopened after RT/per-light dispatches
+
+    // HDR framebuffers — indexed by currentFrame (not swapchain image index)
+    VkFramebuffer hdrFramebuffers[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Command pool / buffers
     VkCommandPool commandPool;
