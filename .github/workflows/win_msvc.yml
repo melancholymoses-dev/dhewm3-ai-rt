@@ -128,20 +128,14 @@ jobs:
         if-no-files-found: error
     - name: Create release asset archives
       if: github.event_name == 'release'
+      shell: pwsh
       run: |
-        set -euo pipefail
-        mkdir -p release-assets
-        command -v zip >/dev/null 2>&1 || { echo "zip not found in PATH" >&2; exit 1; }
+        $ErrorActionPreference = 'Stop'
+        New-Item -ItemType Directory -Force -Path 'release-assets' | Out-Null
 
-        PKGNAME="${{ steps.package_meta.outputs.pkgname }}"
-        (
-          cd publish
-          zip -r "../release-assets/${PKGNAME}.zip" "${PKGNAME}"
-        )
-        (
-          cd debug-syms
-          zip -r "../release-assets/${PKGNAME}-debugsyms.zip" "${PKGNAME}"
-        )
+        $pkgName = '${{ steps.package_meta.outputs.pkgname }}'
+        Compress-Archive -Path "publish/$pkgName/*" -DestinationPath "release-assets/$pkgName.zip" -Force
+        Compress-Archive -Path "debug-syms/$pkgName/*" -DestinationPath "release-assets/$pkgName-debugsyms.zip" -Force
     - name: Upload release assets
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
