@@ -144,3 +144,4 @@ jobs:
           release-assets/${{ steps.package_meta.outputs.pkgname }}.zip
           release-assets/${{ steps.package_meta.outputs.pkgname }}-debugsyms.zip
         fail_on_unmatched_files: true
+        overwrite_files: true
