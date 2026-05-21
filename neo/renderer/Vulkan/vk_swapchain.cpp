@@ -238,8 +238,12 @@ void VK_CreateRenderPass(void)
     hdrColor.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
     hdrColor.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    // Depth attachment is identical to the UNORM passes — same format, same CLEAR+STORE ops.
-    VkAttachmentDescription hdrDepth = depthAttachment; // copy from above; initialLayout stays UNDEFINED
+    // Depth attachment: same format and STORE ops as the UNORM passes, but must reset
+    // the load ops and initial layout — depthAttachment was mutated for the resume pass above.
+    VkAttachmentDescription hdrDepth = depthAttachment;
+    hdrDepth.loadOp        = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrDepth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkAttachmentDescription hdrAttachments[2] = { hdrColor, hdrDepth };
     rpInfo.pAttachments = hdrAttachments;
@@ -293,7 +297,8 @@ void VK_CreateSwapchain(int width, int height)
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // TRANSFER_DST needed for tonemap blit resolve
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -488,7 +493,8 @@ void VK_RecreateSwapchain(int width, int height)
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // TRANSFER_DST needed for tonemap blit resolve
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;

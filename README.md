@@ -5,16 +5,13 @@ This project is not affiliated with Dhewm3.}}$
 
 $\color{red}{\textbf{Do not bother that team with bug reports or feature requests.}}  $
 
-**They have made an understandable stance against AI.  Respect their choices.** 
-
+**They have made an understandable stance against AI.  Respect their choices.**  This project would be impossible without the Dhewm3 foundation and updates to the original source code.
 
 |  Dhewm3 |  Dhewm3-RT | 
 |:---------:|:-----------:|
 |![Dhewm3](docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg)|![VibeCoded Restoration](docs/img/Attempted_restoration_of_Ecce_Homo.jpg)|
 | Doom3/Dhewm3's source code | Vibe Coded Ray-Traced Additions|
 
-
-This project would be impossible without the Dhewm3 foundation and updates to the original source code.
 
 This project is an attempt to implement Ray Tracing in Vulkan on top of Dhewm3 as an experiment in AI development on a complex code-base.  Vulkan allows cross-platform ray-tracing to work on any manufacturer's graphics cards.
 
@@ -27,13 +24,18 @@ Original Dhewm3 Links:
 
 **The Dhewm3 project is hosted at:** https://github.com/dhewm
 
-I have also been using the _vkDoom3_ Vulkan implementation as a reference, which I found after starting work on this.  (https://github.com/DustinHLand/vkDOOM3)
+There is an archived _vkDoom3_ Vulkan implementation of Dhewm-BFG edition at  https://github.com/DustinHLand/vkDOOM3, which I found after starting work.
 
-## Process
+## Process and AI Thoughts
 
-I have been using Claude Code (Sonnet 4.5) and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  Given the well-established language and frameworks, famous code base, reference implementations, and quick build cycle this is about as well positioned for success as you can find. 
+I have been using Claude Code (Sonnet 4.5) and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  This has mostly worked because:
+- Doom3 is a famous C++ code base.  
+- Well-established language (C++) and frameworks (Vulkan).
+- Graphics Techniques are well known at this point and incorporated into training corpus.
+- Reference implementations to riff on
+- Quick build cycle, so failure and testing is rapid with quick failure modes.
+- I have some experience as a software dev in other domains and can guide the LLM or correct it when hung up.
 I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear. 
-
 
 # Ray Tracing Changes
 
@@ -47,23 +49,18 @@ Ray Traced Shadows are in.  This shows some distinctions with how we're selectin
 4. Ray traced reflections
 
 ![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
-Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!
+Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.
 
-5. Global Illumination - One bounce global illumination
-5a.Volumetric Lighting
-
+5. Global Illumination
+5a. One bounce global illumination.  Reflected surfaces can share luminance (e.g. light bouncing off a red wall illuminates a shadow)
+5b. Volumetric Lighting.  Gives light shafts more substance.  
 5c. Tone mapping 
 As part of the global illumination passes I found it was washing out the color, killing the contrast and mood.  We have added a Uchimara tone-map to try to restore that dynamic range while sticking close to the original art style while trying to enhance it.
 
-
-7. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
+6. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
 
 ![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
-This is just a definition change to add the color, since this was already in-game but probably off for performance reasons.
-
-
-
-
+This is just a definition on the weapon to activate an existing effect.  This was already in-game but probably off for 2005 performance reasons.
 
 ## Useful Cvars
 
@@ -80,11 +77,7 @@ The pipeline and ray-tracing can be enabled/disabled at the terminal in game or 
 
 - Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing those in the old engine).  Glass is 
 plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
-- Currently global illumination is pretty rough, and seems to mostly be a flat increase to the lighting which kills the original vibe.  Currently tuning.
-
-## Screenshots
-
-
+- Currently global illumination is pretty rough, and is improved with tone-mapping.  I could see this having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
 
 ## Additional Files
 
