@@ -160,10 +160,14 @@ jobs:
         command -v zip >/dev/null 2>&1 || { echo "zip not found in PATH" >&2; exit 1; }
 
         PKGNAME="${{ steps.package_meta.outputs.pkgname }}"
-        zip -r "release-assets/${PKGNAME}.zip" "publish/${PKGNAME}"
+        (
+          cd publish
+          zip -r "../release-assets/${PKGNAME}.zip" "${PKGNAME}"
+        )
     - name: Upload release asset
       if: github.event_name == 'release'
       uses: softprops/action-gh-release@v2
       with:
         files: release-assets/${{ steps.package_meta.outputs.pkgname }}.zip
         fail_on_unmatched_files: true
+        overwrite_files: true
