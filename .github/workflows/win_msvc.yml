@@ -1,14 +1,19 @@
-name: Testbuild for x86 and x86_64 Windows
-run-name: testbuild_windows
+name: Release Build for Windows x86_64
+run-name: release_build_windows
 on:
   workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
 
 concurrency:
   # Cancel concurrent workflows for the same PR or commit hash.
   group: ${{github.workflow}}-${{github.event_name == 'pull_request' && github.head_ref || github.sha}}
   cancel-in-progress: true
 jobs:
-  build_win_x86_64_msvc:
+  release_win_x86_64_msvc:
     runs-on: windows-latest
     defaults:
       run:
@@ -67,7 +72,7 @@ jobs:
         # NOTE: not setting -G "Visual Studio 17 2022" so it just uses the default VS version it can find
         cmake -A x64 -DDHEWM3LIBS="../dhewm3-libs-master/x86_64-w64-mingw32/" -DTOOLS=ON -S neo/ -B build
         time cmake --build build/ --config RelWithDebInfo
-    - name: Create testbuild package
+    - name: Create release package
       id: package_meta
       run: |
         # Create release directory tree
@@ -109,15 +114,33 @@ jobs:
         cd ../dhewm3-libs-master/x86_64-w64-mingw32/bin/
         cp OpenAL32.dll SDL2.dll libcurl-4.dll "$GITHUB_WORKSPACE/publish/$PKGDIR/"
         cd -
-    - name: Upload testbuild package
+    - name: Upload workflow artifact package
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.package_meta.outputs.pkgname }}
         path: publish/
         if-no-files-found: error
-    - name: Upload testbuild debug symbols
+    - name: Upload workflow artifact debug symbols
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.package_meta.outputs.pkgname }}-debugsyms
         path: debug-syms/
         if-no-files-found: error
+    - name: Create release asset archives
+      if: github.event_name == 'release'
+      run: |
+        set -euo pipefail
+        mkdir -p release-assets
+        command -v zip >/dev/null 2>&1 || { echo "zip not found in PATH" >&2; exit 1; }
+
+        PKGNAME="${{ steps.package_meta.outputs.pkgname }}"
+        zip -r "release-assets/${PKGNAME}.zip" "publish/${PKGNAME}"
+        zip -r "release-assets/${PKGNAME}-debugsyms.zip" "debug-syms/${PKGNAME}"
+    - name: Upload release assets
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          release-assets/${{ steps.package_meta.outputs.pkgname }}.zip
+          release-assets/${{ steps.package_meta.outputs.pkgname }}-debugsyms.zip
+        fail_on_unmatched_files: true

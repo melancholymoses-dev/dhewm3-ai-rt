@@ -1,13 +1,19 @@
-name: Testbuild for Linux
-run-name: testbuild_linux
+name: Release Build for Linux x86_64
+run-name: release_build_linux
 on:
   workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
 concurrency:
   # Cancel concurrent workflows for the same PR or commit hash.
   group: ${{github.workflow}}-${{github.event_name == 'pull_request' && github.head_ref || github.sha}}
   cancel-in-progress: true
 jobs:
-  build_ubuntu_x86_64:
+  release_ubuntu_x86_64:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -107,7 +113,7 @@ jobs:
           -DVulkan_GLSLC_EXECUTABLE="$VULKAN_SDK/bin/glslc" \
           ../neo/
         ninja
-    - name: Create testbuild package
+    - name: Create release package
       id: package_meta
       run: |
         # Create release directory tree
@@ -140,9 +146,24 @@ jobs:
         cat README.md >> publish/$PKGDIR/README.txt
         cp Changelog.md publish/$PKGDIR/Changelog.txt
         cp Configuration.md publish/$PKGDIR/Configuration.txt
-    - name: Upload testbuild package
+    - name: Upload workflow artifact package
       uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.package_meta.outputs.pkgname }}
         path: publish/
         if-no-files-found: error
+    - name: Create release asset archive
+      if: github.event_name == 'release'
+      run: |
+        set -euo pipefail
+        mkdir -p release-assets
+        command -v zip >/dev/null 2>&1 || { echo "zip not found in PATH" >&2; exit 1; }
+
+        PKGNAME="${{ steps.package_meta.outputs.pkgname }}"
+        zip -r "release-assets/${PKGNAME}.zip" "publish/${PKGNAME}"
+    - name: Upload release asset
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
+      with:
+        files: release-assets/${{ steps.package_meta.outputs.pkgname }}.zip
+        fail_on_unmatched_files: true
