@@ -30,7 +30,7 @@ of the original Doom 3 GPL Source Code release.
 struct ShadowParamsUBO
 {
     float invViewProj[16];    // column-major 4x4,  offset   0
-    float lightOrigin[4];     // xyz = pos, w = radius, offset  64
+    float lightOrigin[4];     // xyz = pos, w = legacy isotropic radius (max axis), offset  64
     float lightFalloffRadius; // offset  80
     int numSamples;           // offset  84
     uint32_t frameIndex;      // offset  88
@@ -41,7 +41,24 @@ struct ShadowParamsUBO
     int32_t scissorOffsetY;   // dispatch rect origin Y // offset 108
     int32_t screenWidth;      // full framebuffer width  // offset 112
     int32_t screenHeight;     // full framebuffer height // offset 116
+    float _pad0[2];           // std140 vec4-alignment padding // offset 120
+
+    // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
+    // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
+    // convention already used by vol_march.comp / vk_gi.cpp — light.axis rotation is
+    // intentionally ignored for point lights, consistent with those passes).
+    // Projected lights: aperture half-extents along the light's own right/up axes,
+    // scaled to the near-clip ("start") plane so softness reflects the physical
+    // fixture/lens size rather than the far-field beam spread.
+    float lightAxisRight[4]; // xyz = world unit axis, w = half-extent (world units) // offset 128
+    float lightAxisUp[4];    // xyz = world unit axis, w = half-extent               // offset 144
+    float lightAxisFwd[4];   // xyz = world unit axis, w = half-extent (0 for projected — flat aperture) // offset 160
+    uint32_t lightKind;      // 0 = point (ellipsoid), 1 = projected (aperture rect) // offset 176
+    float _pad1[3];          // pad block to 16-byte multiple (192 total)            // offset 180
 };
+// Must stay within the shared RT UBO ring stride (384 bytes, sized off VkInteractionUBO
+// in vk_backend.cpp) and match the std140 layout of ShadowParams in shadow_ray.rgen exactly.
+static_assert(sizeof(ShadowParamsUBO) == 192, "ShadowParamsUBO size mismatch — check std140 alignment/padding");
 
 static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
@@ -91,7 +108,11 @@ static idCVar r_rtShadowDebugMode(
     "visualize RT shadow pass internals in the shadow mask: "
     "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
     "3=dot(biasDir,lightDir) mapped 0..1; "
-    "4=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), ");
+    "4=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
+    "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
+    "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
+    "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
+    "elongated fixture or projected-light aperture shows 7!=8.");
 
 extern idCVar r_vkRTLogCaptureReset;
 
@@ -751,18 +772,81 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         ubo.lightOrigin[1] = shadowOrigin.y;
         ubo.lightOrigin[2] = shadowOrigin.z;
 
-        // Soft-shadow jitter radius must be much smaller than the light volume extents;
-        // using full radii creates huge cones and can wash out/shimmer shadows.
-        float softRadius = 0.0f;
+        // --- Anisotropic soft-shadow light shape (Phase 9 / Stage 1) ---
+        // Doom 3 light volumes are frequently non-spherical (elongated point-light
+        // fixtures via a non-uniform lightRadius vector, or projected/spot frustums).
+        // Treating them as a single scalar radius gives every light a uniformly
+        // circular penumbra regardless of its actual shape. Compute up to three
+        // world-space axis/half-extent pairs instead; the shader projects them onto
+        // the tangent plane at each shading point to build an elliptical cone.
+        //
+        // r_rtShadowSoftRadiusScale/Min/Max remain the overall magnitude controls —
+        // applied per axis here exactly as the old code applied them once to the
+        // single scalar radius.
+        idVec3 axisRightDir(1.0f, 0.0f, 0.0f), axisUpDir(0.0f, 1.0f, 0.0f), axisFwdDir(0.0f, 0.0f, 1.0f);
+        float axisRightHalf = 0.0f, axisUpHalf = 0.0f, axisFwdHalf = 0.0f;
+        uint32_t lightKind = 0u;
+
+        const float softScale = Max(0.0f, r_rtShadowSoftRadiusScale.GetFloat());
+        const float softMin = Max(0.0f, r_rtShadowSoftRadiusMin.GetFloat());
+        const float softMax = Max(softMin, r_rtShadowSoftRadiusMax.GetFloat());
+        auto ScaleClampSoft = [softScale, softMin, softMax](float v) {
+            return idMath::ClampFloat(softMin, softMax, v * softScale);
+        };
+
         if (light.pointLight)
         {
-            const float minLightRadius = Min(light.lightRadius.x, Min(light.lightRadius.y, light.lightRadius.z));
-            const float scaledRadius = minLightRadius * Max(0.0f, r_rtShadowSoftRadiusScale.GetFloat());
-            const float softRadiusMin = Max(0.0f, r_rtShadowSoftRadiusMin.GetFloat());
-            const float softRadiusMax = Max(softRadiusMin, r_rtShadowSoftRadiusMax.GetFloat());
-            softRadius = idMath::ClampFloat(softRadiusMin, softRadiusMax, scaledRadius);
+            // World-axis-aligned ellipsoid semi-axes — same simplification (axis
+            // rotation ignored) already used for point-light box tests in
+            // vol_march.comp and vk_gi.cpp, kept consistent here.
+            axisRightHalf = ScaleClampSoft(light.lightRadius.x);
+            axisUpHalf = ScaleClampSoft(light.lightRadius.y);
+            axisFwdHalf = ScaleClampSoft(light.lightRadius.z);
+            lightKind = 0u;
         }
-        ubo.lightOrigin[3] = softRadius;
+        else
+        {
+            // Projected/spot light: the frustum tapers linearly from a point at the
+            // light origin, so the physical fixture/lens size is approximated by the
+            // cross-section at the near-clip ("start") plane, not the far "target"
+            // plane — a flashlight's beam can be metres wide at range even though the
+            // bulb itself is a couple of centimetres across.
+            const float targetLen = light.target.Length();
+            const float startLen = light.start.Length();
+            const float tStart = (targetLen > 0.001f) ? idMath::ClampFloat(0.0f, 1.0f, startLen / targetLen) : 0.0f;
+
+            const idVec3 worldRight = light.axis * light.right;
+            const idVec3 worldUp = light.axis * light.up;
+            const idVec3 worldFwd = light.axis * light.target;
+            const float rightLen = worldRight.Length();
+            const float upLen = worldUp.Length();
+            const float fwdLen = worldFwd.Length();
+
+            axisRightDir = (rightLen > 0.001f) ? worldRight / rightLen : idVec3(1.0f, 0.0f, 0.0f);
+            axisUpDir = (upLen > 0.001f) ? worldUp / upLen : idVec3(0.0f, 1.0f, 0.0f);
+            axisFwdDir = (fwdLen > 0.001f) ? worldFwd / fwdLen : idVec3(0.0f, 0.0f, 1.0f);
+
+            axisRightHalf = ScaleClampSoft(rightLen * tStart);
+            axisUpHalf = ScaleClampSoft(upLen * tStart);
+            axisFwdHalf = 0.0f; // flat aperture — no extent along the beam axis
+            lightKind = 1u;
+        }
+
+        ubo.lightOrigin[3] = Max(axisRightHalf, Max(axisUpHalf, axisFwdHalf)); // legacy scalar fallback
+        ubo.lightAxisRight[0] = axisRightDir.x;
+        ubo.lightAxisRight[1] = axisRightDir.y;
+        ubo.lightAxisRight[2] = axisRightDir.z;
+        ubo.lightAxisRight[3] = axisRightHalf;
+        ubo.lightAxisUp[0] = axisUpDir.x;
+        ubo.lightAxisUp[1] = axisUpDir.y;
+        ubo.lightAxisUp[2] = axisUpDir.z;
+        ubo.lightAxisUp[3] = axisUpHalf;
+        ubo.lightAxisFwd[0] = axisFwdDir.x;
+        ubo.lightAxisFwd[1] = axisFwdDir.y;
+        ubo.lightAxisFwd[2] = axisFwdDir.z;
+        ubo.lightAxisFwd[3] = axisFwdHalf;
+        ubo.lightKind = lightKind;
+        const float softRadius = ubo.lightOrigin[3]; // kept for the existing debug log line below
         // Projected lights are not spherical; their attenuation is handled by light projection/falloff textures
         // in the interaction shader, so RT shadow rays should not early-out by distance for them.
         if (r_rtShadowDistanceCutoff.GetBool() && light.pointLight)
@@ -824,13 +908,15 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             common->Printf(
                 "VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
                 "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
-                "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
+                "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
+                "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
                 "mask=%ux%u\n",
                 tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y, shadowOrigin.z,
                 light.lightRadius.x, light.lightRadius.y, light.lightRadius.z, ubo.lightFalloffRadius, ubo.numSamples,
                 requestedSamples, minSamples, ubo.rayBias, r_rtShadowTemporalJitter.GetBool() ? 1 : 0,
                 allowTemporalJitter ? 1 : 0, jitterMinSamples, r_rtShadowStablePattern.GetBool() ? 1 : 0,
-                ubo.frameIndex, softRadius, r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
+                ubo.frameIndex, softRadius, ubo.lightKind, axisRightHalf, axisUpHalf, axisFwdHalf,
+                r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
                 r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(), sm.width,
                 sm.height);
         }
