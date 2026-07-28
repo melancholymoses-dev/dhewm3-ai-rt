@@ -30,7 +30,7 @@ layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 
 layout(set = 0, binding = 3) uniform ShadowParams {
     mat4  invViewProj;          // inverse view-projection to reconstruct world pos
-    vec4  lightOrigin;          // xyz = world pos, w = light radius (for soft shadows)
+    vec4  lightOrigin;          // xyz = world pos, w = legacy isotropic radius (max axis)
     float lightFalloffRadius;   // point light falloff range
     int   numSamples;           // shadow rays per pixel (1 = hard, 4+ = soft)
     uint  frameIndex;           // for temporal jitter
@@ -39,6 +39,15 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     int   debugMode;            // 0=normal 1=biasDir.y 2=got-surface-normal 3=dot(biasDir,lightDir)
     ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
     ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
+
+    // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
+    // Point lights: world-axis-aligned ellipsoid semi-axes (xyz = world unit axis,
+    // w = half-extent). Projected lights: aperture half-extents along the light's
+    // own right/up axes, scaled to the near-clip ("start") plane.
+    vec4  lightAxisRight;
+    vec4  lightAxisUp;
+    vec4  lightAxisFwd;         // point-light 3rd axis; zero half-extent for projected (flat aperture)
+    uint  lightKind;            // 0 = point (ellipsoid), 1 = projected (aperture rect) — informational only
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -82,37 +91,54 @@ vec3 reconstructWorldPos( ivec2 coord, ivec2 size ) {
 }
 
 // ---------------------------------------------------------------------------
-// Cosine-weighted hemisphere sample (not needed here; kept for RTAO reference)
-// For shadow rays we jitter within a cone around the light direction.
+// Directional radius of an axis-aligned ellipsoid (or a flat aperture rect, when
+// one semi-axis is zero) along a unit direction expressed in the ellipsoid's own
+// basis. Standard implicit-surface formula: r(dir) = 1 / sqrt(sum(dir_i^2/a_i^2)).
+// Used to answer "how big does this light look in this specific direction" for
+// both point-light ellipsoids (world X/Y/Z axes) and projected-light apertures
+// (the light's own right/up/target axes) — see callers in main().
+// ---------------------------------------------------------------------------
+float ellipsoidRadiusAlongDir( vec3 semiAxes, vec3 dirInBasis ) {
+    vec3 d2    = dirInBasis * dirInBasis;
+    vec3 invA2 = 1.0 / max( semiAxes * semiAxes, vec3(1e-6) );
+    float denom = dot( d2, invA2 );
+    return denom > 1e-8 ? inversesqrt( denom ) : 0.0;
+}
+
+// ---------------------------------------------------------------------------
+// Jitter a direction within an elliptical cone around `dir`, built from two
+// tangent-plane half-angles (sinU/sinV) instead of one isotropic radius. This
+// generalizes the old circular cone-jitter: passing sinU == sinV reproduces the
+// original spherical-light behaviour exactly.
+//
+// tRight/tFwd: orthonormal tangent-plane basis perpendicular to `dir` (caller
+// builds this once per pixel — it is invariant across the sample loop).
+// sinU/sinV:   sin(half-angle) along tRight and tFwd respectively.
 //
 // phiOffset: per-pixel blue-noise phi rotation [0,1). Keeps world-anchored
 // seeds from making same-cell pixels identical, and gives low-discrepancy
 // frame-to-frame coverage when advanced by the golden ratio.
 // ---------------------------------------------------------------------------
-vec3 jitterDirection( vec3 dir, float radius, float dist, uint seed, float phiOffset ) {
-    if ( radius <= 0.0 || params.numSamples <= 1 ) return dir;
-
-    float sinHalfAngle = clamp( radius / max( dist, 0.001 ), 0.0, 1.0 );
-    float cosHalfAngle = sqrt( max( 0.0, 1.0 - sinHalfAngle * sinHalfAngle ) );
+vec3 jitterDirectionAniso( vec3 dir, vec3 tRight, vec3 tFwd, float sinU, float sinV, uint seed, float phiOffset ) {
+    if ( params.numSamples <= 1 || (sinU <= 0.0 && sinV <= 0.0) ) return dir;
 
     float r1 = randFloat( seed );
     float r2 = randFloat( seed + 1u );
+    float phi = fract( r2 + phiOffset ) * 2.0 * 3.14159265;
+    float cosPhi = cos(phi), sinPhi = sin(phi);
 
-    // Sample a direction within the cone.
-    // phi is rotated by phiOffset so adjacent pixels (same world cell) sample
-    // different azimuthal directions — spreads error spatially (blue-noise-like).
+    // Elliptical cone boundary: parametric-ellipse radius-at-angle formula applied
+    // to sin(halfAngle) per axis. Reduces exactly to the isotropic circular cone
+    // (the old jitterDirection behaviour) when sinU == sinV.
+    float sinHalfAngle = clamp( sqrt( (sinU*cosPhi)*(sinU*cosPhi) + (sinV*sinPhi)*(sinV*sinPhi) ), 0.0, 1.0 );
+    float cosHalfAngle = sqrt( max( 0.0, 1.0 - sinHalfAngle * sinHalfAngle ) );
+
     float cosTheta = mix( cosHalfAngle, 1.0, r1 );
     float sinTheta = sqrt( max( 0.0, 1.0 - cosTheta * cosTheta ) );
-    float phi      = fract( r2 + phiOffset ) * 2.0 * 3.14159265;
 
-    // Build local frame around `dir`
-    vec3 up    = abs(dir.y) < 0.9 ? vec3(0,1,0) : vec3(1,0,0);
-    vec3 right = normalize( cross(up, dir) );
-    vec3 fwd   = cross(dir, right);
-
-    return normalize( right * (sinTheta * cos(phi))
-                    + fwd   * (sinTheta * sin(phi))
-                    + dir   * cosTheta );
+    return normalize( tRight * (sinTheta * cosPhi)
+                    + tFwd   * (sinTheta * sinPhi)
+                    + dir    * cosTheta );
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +165,38 @@ void main() {
     }
 
     vec3 lightDir = toLight / dist;
+
+    // ---------------------------------------------------------------------------
+    // Anisotropic soft-shadow cone half-angles (Phase 9 Stage 1)
+    //
+    // Build a tangent-plane basis perpendicular to lightDir (same construction the
+    // old isotropic jitter used), then find the light's ellipsoid/aperture radius
+    // along each tangent axis by re-expressing the tangent axis in the light's own
+    // basis (lightAxisRight/Up/Fwd) and evaluating the implicit-ellipsoid formula.
+    // This is invariant across the sample loop, so it's computed once per pixel.
+    // ---------------------------------------------------------------------------
+    vec3 tRight = normalize( cross( abs(lightDir.y) < 0.9 ? vec3(0,1,0) : vec3(1,0,0), lightDir ) );
+    vec3 tFwd   = cross( lightDir, tRight );
+
+    vec3 lightSemiAxes = vec3( params.lightAxisRight.w, params.lightAxisUp.w, params.lightAxisFwd.w );
+    vec3 tRightInLightBasis = vec3( dot(tRight, params.lightAxisRight.xyz),
+                                     dot(tRight, params.lightAxisUp.xyz),
+                                     dot(tRight, params.lightAxisFwd.xyz) );
+    vec3 tFwdInLightBasis   = vec3( dot(tFwd,   params.lightAxisRight.xyz),
+                                     dot(tFwd,   params.lightAxisUp.xyz),
+                                     dot(tFwd,   params.lightAxisFwd.xyz) );
+
+    float coneRadiusU = ellipsoidRadiusAlongDir( lightSemiAxes, tRightInLightBasis );
+    float coneRadiusV = ellipsoidRadiusAlongDir( lightSemiAxes, tFwdInLightBasis );
+    float sinConeU = clamp( coneRadiusU / max( dist, 0.001 ), 0.0, 1.0 );
+    float sinConeV = clamp( coneRadiusV / max( dist, 0.001 ), 0.0, 1.0 );
+
+    // Debug modes 7/8: visualize the two cone half-angles directly (single-channel
+    // R8 mask, so U and V are separate modes rather than packed into R/G).
+    // A spherical point light shows identical 7/8 output; an elongated fixture or
+    // a projected-light aperture shows visibly different 7 vs 8.
+    if ( params.debugMode == 7 ) { imageStore( shadowMask, coord, vec4(sinConeU) ); return; }
+    if ( params.debugMode == 8 ) { imageStore( shadowMask, coord, vec4(sinConeV) ); return; }
 
     float baseBias = clamp(params.rayBias, 0.01, 8.0);
 
@@ -287,7 +345,7 @@ void main() {
 
     for ( int s = 0; s < N; s++ ) {
         uint seed = wang_hash( baseSeed + uint(s) * 1013u );
-        vec3 rayDir = jitterDirection( lightDir, params.lightOrigin.w, dist, seed, phiOffset );
+        vec3 rayDir = jitterDirectionAniso( lightDir, tRight, tFwd, sinConeU, sinConeV, seed, phiOffset );
 
         // Clamp jittered direction to the upper hemisphere relative to the
         // surface normal.  For nearby lights the cone can be very wide (e.g.
@@ -329,7 +387,7 @@ void main() {
     //   1 = biasDir.y  (horizontal surface = 1.0, vertical wall = ~0.5, inverted = 0.0)
     //   2 = gotSurfaceNormal  (white = reconstructed from depth, black = camera fallback)
     //   3 = dot(biasDir, lightDir) mapped to [0,1]  (white = bias aligned with light)
-    // Modes 4-6 (pre-trace) already returned above.
+    // Modes 4-8 (pre-trace) already returned above.
     // ---------------------------------------------------------------------------
     if ( params.debugMode != 0 ) {
         float dbg;

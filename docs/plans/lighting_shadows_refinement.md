@@ -53,6 +53,9 @@ emissive flag alone benefits GI for free but is invisible to volumetrics until a
 
 ## Stage 1 — Shape-aware soft shadow radius
 
+**Status: Implemented** (`vk_shadows.cpp`, `shadow_ray.rgen`) — see below for what landed
+vs. what's still worth tuning in-game.
+
 **Do first** — independent of everything else, no dependency risk, quick "moody" win.
 
 ### Current state
@@ -83,9 +86,32 @@ volumes, and projected/spot lights have a frustum shape entirely.
    anisotropic projection as a multiplier on top, not a replacement.
 
 ### Debug tooling
-Add a new `r_rtShadowDebugMode` value that outputs the two projected half-angles as
-red/green intensity, so you can walk a level and visually confirm elongated fixtures get
-elliptical (not circular) penumbras before/after.
+`r_rtShadowDebugMode 7` and `8` output the two projected cone half-angles (`sinConeU`,
+`sinConeV`) directly to the shadow mask, one per mode (the mask is a single-channel R8
+image, so they can't be packed into R/G as originally sketched — two modes instead of
+one two-channel mode). A spherical point light shows identical output for 7 and 8; an
+elongated fixture or a projected-light aperture should visibly differ between them.
+
+### Implementation notes (what actually landed)
+- CPU side (`vk_shadows.cpp`): per-light, computes three world-space axis/half-extent
+  pairs instead of one scalar. Point lights use the axis-aligned ellipsoid semi-axes
+  (`light.lightRadius.xyz` directly — axis rotation intentionally ignored, matching the
+  existing convention in `vol_march.comp`/`vk_gi.cpp`). Projected lights use
+  `light.right`/`light.up` rotated into world space by `light.axis`, scaled by
+  `start.Length()/target.Length()` to approximate the near-clip aperture size.
+  `r_rtShadowSoftRadiusScale/Min/Max` are applied per-axis, unchanged in meaning.
+- GPU side (`shadow_ray.rgen`): the old isotropic `jitterDirection()` was replaced with
+  `jitterDirectionAniso()`, which builds an elliptical cone from two tangent-plane
+  half-angles instead of one. The half-angles come from projecting the light's ellipsoid
+  (or flat aperture, for projected lights) onto the tangent plane via the implicit-surface
+  formula `r(dir) = 1/sqrt(Σ dir_i²/a_i²)` — this is computed once per pixel (outside the
+  sample loop) since it doesn't depend on the per-sample random jitter.
+  `sinU == sinV` reproduces the old isotropic behavior exactly, so spherical point lights
+  are visually unchanged.
+- Not attempted: true axis-rotated point-light ellipsoids (would break from the
+  established world-axis-aligned convention used elsewhere) and physically exact
+  frustum-aperture projection (the `start`-plane scaling is an approximation, not a
+  rendering of the true near-clip cross-section under perspective).
 
 ### Effort / Impact
 - **Effort:** Medium — vector math in 2 files (`vk_shadows.cpp` UBO fill,
