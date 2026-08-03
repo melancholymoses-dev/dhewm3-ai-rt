@@ -177,26 +177,96 @@ specular texel got a strong mirror-sharp reflection, hence "everything looks lik
 
 ## Stage 3 — Re-enable opaque RT reflections
 
-**Depends on Stage 2.**
+**Depends on Stage 2 and Stage 3.5.**
 
 ### Fix
-Once Stage 2's Fresnel term exists, this is mostly wiring: uncomment
-`interaction.frag:134-146`, swap in `fresnel` for the old `specBase * specweight`, leave
-the ray dispatch (`vk_reflections.cpp`, `reflect_ray.rgen`) untouched. Preserve the
-existing behavior at `interaction.frag:151-154` where reflection is added independently
-of `attenuation`/`shadow` — that's correct (reflections are ambient/environmental, not
-per-light, and shouldn't go dark just because the surface is in a light's shadow).
+Once Stage 3.5's G-buffer normal pass exists, re-enable the reflection blend in
+`interaction.frag`: uncomment the `reflColor` block, swap in `fresnel` for the old
+`specBase * specweight`, leave the ray dispatch (`vk_reflections.cpp`,
+`reflect_ray.rgen`) untouched. Preserve the existing behavior where reflection is added
+independently of `attenuation`/`shadow`.
 
 **Explicitly out of scope:** glossy/roughness-blurred reflections. Reflections stay
 mirror-sharp after this stage. If sharp-but-correctly-gated reflections still look too
-"clean" on rough surfaces once Stage 2 is tuned, that's a follow-up doc (cone-jitter or
-roughness blur reusing the volumetric/AO denoiser infrastructure), not part of this phase.
+"clean" on rough surfaces, that's a follow-up (cone-jitter or roughness blur reusing
+the volumetric/AO denoiser infrastructure), not part of this phase.
+
+### Current state
+Stage 2 (Fresnel) is implemented and the reflection block was wired up, but **reverted**
+after in-game testing showed that `rt_ReconstructNormal` (depth-gradient normal
+reconstruction) produces mirror reflections from the geometric surface normal, not the
+bump-mapped shading normal. Flat-polygon grate floors showed the ceiling reflected
+back at the player. Increasing `r_rtSpecF0Gamma` does not fix this: at grazing NdotV
+the Schlick term approaches 1.0 regardless of the specular map, so the wrong reflection
+direction is always composited at near-silhouette angles. Stage 3 stays disabled until
+Stage 3.5 is complete.
 
 ### Effort / Impact
-- **Effort:** Small — a few hours, given Stage 2 exists.
-- **Impact:** Same payoff as Stage 2, listed separately only for review-ability (small,
-  isolated diffs are easier to bisect if something still looks wrong).
-- **Risk:** Low, contingent on Stage 2 being tuned first.
+- **Effort:** Small — a few hours, given Stage 2 and 3.5 exist.
+- **Impact:** Same payoff as Stage 2, listed separately only for review-ability.
+- **Risk:** Low, contingent on Stage 3.5 being validated first.
+
+---
+
+## Stage 3.5 — G-buffer normal pass (prerequisite for Stage 3)
+
+**Depends on nothing. Do before Stage 3.**
+
+### Problem
+`reflect_ray.rgen` currently reconstructs the surface normal from depth gradients
+(`rt_ReconstructNormal`). This returns the **geometric polygon normal**, not the
+bump-mapped shading normal. For Doom 3's flat-polygon grate floors, "normal = up"
+produces a mirror reflection of the ceiling instead of the floor surface. No Fresnel
+tuning can fix this — the issue is the direction of the reflection ray, not its weight.
+
+### Fix
+Add a world-space normal render target written during the interaction pass and sampled
+by the reflection rgen.
+
+**1. New image (`vk_gbuffer.cpp` or alongside `vk_reflections.cpp`):**
+Allocate `vkRT.gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]` as `rgba8snorm`
+(`SIGNED_NORMALIZED` so each channel stores `[-1, 1]`), same dimensions as the
+swapchain, with `COLOR_ATTACHMENT_BIT | SAMPLED_BIT`. Follow the same
+`vkReflBuffer_t`/resize pattern used by `vkRT.reflBuffer`.
+
+**2. Framebuffer attachment:**
+Add the normal image as a second color attachment in the main render pass
+(`vk_backend.cpp`). The interaction fragment shader already has all vectors needed —
+`N` is the bump-mapped tangent-space normal, but must be transformed to world space
+first (requires passing the TBN matrix to the fragment stage, or encoding in view
+space which avoids the TBN cost).
+
+Simplest approach: encode the **view-space** normal (multiply tangent-space `N` by the
+normal matrix, already computable from the existing `u_ModelViewProjection` or a
+separate normal matrix uniform). View-space is sufficient for `reflect_ray.rgen` since
+it already has the inverse-view-projection to reconstruct world positions.
+
+**3. `interaction.frag`:**
+Add `layout(location = 1) out vec4 gbufNormal;` and write the shading normal:
+```glsl
+gbufNormal = vec4(shadingNormalVS * 0.5 + 0.5, 1.0); // encode [-1,1] → [0,1]
+```
+
+**4. `reflect_ray.rgen`:**
+Add a `sampler2D gbufNormalSampler` binding. Replace the `rt_ReconstructNormal` call:
+```glsl
+vec3 reflNormal = normalize(texture(gbufNormalSampler, uv).xyz * 2.0 - 1.0);
+// transform from view space to world space using params.invViewProj's rotation block
+```
+
+**5. Resize / shutdown:** mirror the pattern already used for `vkRT.reflBuffer` in
+`vk_reflections.cpp`.
+
+### Effort / Impact / Risk
+- **Effort:** Medium (~1 day) — new image, framebuffer change, one new UBO field or
+  normal matrix, two shader edits, resize wiring.
+- **Impact:** High — fixes the root cause of the bad grate reflections; also improves
+  AO (which currently has the same reconstructed-normal problem) and enables
+  roughness-proxy blur in a future stage.
+- **Risk:** Low-medium. Adding a second color attachment is a well-understood Vulkan
+  operation. The main risk is normal-space confusion (tangent vs. view vs. world) —
+  keep a debug mode that outputs the G-buffer normal as colour and walk the level to
+  confirm normals look correct before wiring them to the reflection rgen.
 
 ---
 
@@ -303,28 +373,29 @@ omnidirectional emission.
 ## Order of Operations
 
 ```
-1. Stage 1  (shadow shape)          — independent, safe, do anytime
-2. Stage 2  (Fresnel/specular)      — foundation, must precede 3 and 4a's F0 gate
-3. Stage 3  (re-enable reflections) — depends on 2
-4. Stage 4a (GI auto-emissive)      — depends on 2 (F0 exclusion gate)
-5. Stage 4b (volumetric shafts)     — depends on 4a + validated 2/3
+1. Stage 1   (shadow shape)           — independent, safe, do anytime
+2. Stage 2   (Fresnel/specular)       — foundation, must precede 3 and 4a's F0 gate
+3. Stage 3.5 (G-buffer normal pass)   — prerequisite for Stage 3
+4. Stage 3   (re-enable reflections)  — depends on 2 + 3.5
+5. Stage 4a  (GI auto-emissive)       — depends on 2 (F0 exclusion gate)
+6. Stage 4b  (volumetric shafts)      — depends on 4a + validated 2/3
 ```
 
-Stage 1 has no dependency on the others and can be done first, in parallel, or last —
-it's included here because it's the cheapest, safest win in the doc and shouldn't be
-blocked on the riskier reflection/emissive work.
+Stage 1 has no dependency on the others. Stages 2 and 3.5 can be developed in
+parallel — they touch different parts of the pipeline.
 
 ---
 
 ## Effort / Impact / Risk Summary
 
-| Stage | Effort | Impact | Risk | Depends on |
-|---|---|---|---|---|
-| 1 — Shape-aware shadows | Medium (~1d) | Medium-high, parallax-bearing | Low | none |
-| 2 — Fresnel/specular normalization | Medium (~1d) | High (unblocks 3) | Medium | none |
-| 3 — Re-enable reflections | Small (hrs) | High | Low | 2 |
-| 4a — GI auto-emissive | Medium (~1-2d) | Medium-high (GI/reflections only) | Medium | 2 |
-| 4b — Volumetric light shafts | Large (~3-5d) | High (the actual ask) | High | 4a, 2, 3 |
+| Stage | Effort | Impact | Risk | Depends on | Status |
+|---|---|---|---|---|---|
+| 1 — Shape-aware shadows | Medium (~1d) | Medium-high, parallax-bearing | Low | none | **Done** |
+| 2 — Fresnel/specular normalization | Medium (~1d) | High (unblocks 3) | Medium | none | **Done** |
+| 3.5 — G-buffer normal pass | Medium (~1d) | High (fixes reflection direction) | Low-medium | none | Not started |
+| 3 — Re-enable reflections | Small (hrs) | High | Low | 2, 3.5 | **Reverted** — needs 3.5 |
+| 4a — GI auto-emissive | Medium (~1-2d) | Medium-high (GI/reflections only) | Medium | 2 | Not started |
+| 4b — Volumetric light shafts | Large (~3-5d) | High (the actual ask) | High | 4a, 2, 3 | Not started |
 
 ---
 
@@ -334,8 +405,11 @@ blocked on the riskier reflection/emissive work.
 |---|---|---|
 | `neo/renderer/Vulkan/vk_shadows.cpp` | 1 | Pass anisotropic `lightRadius.xyz`; near-plane aperture for spot lights |
 | `neo/renderer/glsl/shadow_ray.rgen` | 1 | Elliptical cone jitter; new debug mode |
-| `neo/renderer/glsl/interaction.frag` | 2, 3 | Add F0 remap + Schlick term; re-enable reflection blend |
-| `neo/renderer/Vulkan/vk_pipeline.cpp` (or wherever `r_rtSpecF0*` CVars are registered) | 2 | New CVars |
+| `neo/renderer/glsl/interaction.frag` | 2, 3 | Add F0 remap + Schlick term; re-enable reflection blend (after 3.5) |
+| `neo/renderer/Vulkan/vk_pipeline.cpp` | 2 | New UBO fields for Fresnel CVars; G-buffer normal attachment (3.5) |
+| `neo/renderer/Vulkan/vk_reflections.cpp` | 2 | `r_rtSpecF0Scale`, `r_rtSpecF0Gamma`, `r_rtReflectionDebugMode` CVars |
+| `neo/renderer/Vulkan/vk_gbuffer.cpp` (new) | 3.5 | G-buffer normal image alloc, resize, shutdown |
+| `neo/renderer/glsl/reflect_ray.rgen` | 3.5 | Read G-buffer normal instead of `rt_ReconstructNormal` |
 | `neo/renderer/Vulkan/vk_material_table.cpp` | 4a | Texture-content emissive classification pass + gate |
 | `neo/renderer/Vulkan/vk_gi.cpp` | 4b | Synthesize directed `GILightEntry` records, budget/cap, logging |
 | `neo/framework/Dhewm3SettingsMenu.cpp` | 1,2,4a,4b | Expose new CVars in the settings menu, matching existing sections |
