@@ -345,11 +345,6 @@ blocked on the riskier reflection/emissive work.
 
 ## Notes for whoever (human or LLM) implements this
 
-- Follow `CLAUDE.md`: new files get the standard copyright header block; this phase is
-  renderer-only, so no `neo/game`/`neo/d3xp` mirroring is expected — double check nothing
-  here touches game-side code before skipping that step.
-- Add any new `.comp`/`.frag`/`.rgen` files to `CMakeLists.txt`'s `GLSL_INCLUDES`.
-- Do not attempt to configure or build — a separate process handles that.
 - Every stage above has an explicit debug-visualization step. Use it before tuning
   constants by eye on the final composited image — that's how the original hall-of-mirrors
   bug should have been caught, and it's the fastest way to confirm each fix actually

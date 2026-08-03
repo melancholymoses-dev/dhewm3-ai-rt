@@ -2438,6 +2438,8 @@ struct RTCVars
     // Reflection fine-tuning
     idCVar *rtReflectionDistance = nullptr;
     idCVar *rtReflectionBlend = nullptr;
+    idCVar *rtSpecF0Scale = nullptr;
+    idCVar *rtSpecF0Gamma = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2511,6 +2513,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
     rtCVars.rtReflectionDistance = cvarSystem->Find("r_rtReflectionDistance");
     rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
+    rtCVars.rtSpecF0Scale = cvarSystem->Find("r_rtSpecF0Scale");
+    rtCVars.rtSpecF0Gamma = cvarSystem->Find("r_rtSpecF0Gamma");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2650,6 +2654,8 @@ static void DrawRTOptionsMenu()
 
     RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 12000.0f, "%.0f");
     RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
+    RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
+    RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 8.0f, "%.2f");
     ImGui::EndDisabled(); // !reflOn
 
     // ---- GI settings ---------------------------------------------------------
