@@ -66,8 +66,11 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseShadowMask;
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
-    int   u_UseReflections; // 1 when RT reflection buffer is valid this frame
-    int   _pad;             // reserved (was u_UseGI — GI now handled by gi_composite pass)
+    int   u_UseReflections;      // 1 when RT reflection buffer is valid this frame
+    float u_SpecF0Scale;         // r_rtSpecF0Scale — multiplier for specular→F0 remap
+    float u_SpecF0Gamma;         // r_rtSpecF0Gamma — power exponent for specular→F0 remap
+    int   u_ReflectionDebugMode; // r_rtReflectionDebugMode — 0=off, 1=Fresnel greyscale
+    int   _pad;                  // reserved
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -101,10 +104,20 @@ void main() {
 
     // --- Specular (Blinn-Phong via lookup table) ---
     // texture 6 encodes specular power/falloff based on NdotH
-    float NdotH = clamp(dot(N, H), 0.0, 1.0);
+    float NdotH   = clamp(dot(N, H), 0.0, 1.0);
+    float NdotV   = clamp(dot(N, V), 0.0, 1.0);
     vec3 specLookup = texture(u_SpecularTable, vec2(NdotH, 0.5)).rgb;
-    vec3 specular = texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb;
-    specular *= u_SpecularColor.rgb * specLookup;
+    vec3 specMap    = texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb;
+    vec3 specular   = specMap * u_SpecularColor.rgb * specLookup;
+
+    // --- Fresnel / F0 remap (Stage 2) ---
+    // Doom 3 specular maps were authored for Blinn-Phong, not PBR, and run bright
+    // almost everywhere. A power-curve remap gates non-trivial F0 to only the
+    // brightest texels (actual metal / wet surfaces), preventing the hall-of-mirrors
+    // look that occurs when the reflection buffer is enabled on ordinary surfaces.
+    float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
+    float normF0  = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
+    float fresnel = normF0 + (1.0 - normF0) * pow(1.0 - NdotV, 5.0);
 
     // --- RT shadow mask ---
     float shadow = 1.0;
@@ -158,6 +171,15 @@ void main() {
     color *= u_LightScale;
 
     vec4 result = vec4(color, vary_Color.a);
+
+    // --- Debug: Fresnel visualisation ---
+    // Mode 1: output the Fresnel term as greyscale so you can walk the level and
+    // confirm which surfaces will receive reflections before Stage 3 enables them.
+    // Concrete/cloth/skin should read near-black; metal/wet/glass bright at grazing.
+    if (u_ReflectionDebugMode == 1) {
+        fragColor = vec4(vec3(fresnel), 1.0);
+        return;
+    }
 
     // --- Optional gamma correction (mirrors ARB gamma injection) ---
     if (u_ApplyGamma != 0) {

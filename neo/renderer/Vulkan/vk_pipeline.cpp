@@ -55,9 +55,12 @@ struct VkInteractionUBO
     int useAO;          // 1 when RT AO mask is valid this frame
     float lightScale;   // backEnd.overBright — final color multiplier before gamma
     int useReflections; // 1 when RT reflection buffer is valid this frame
-    int _pad;           // reserved for future use (was useGI — moved to gi_composite pass)
+    float specF0Scale;  // r_rtSpecF0Scale — multiplier for the specular→F0 remap curve
+    float specF0Gamma;  // r_rtSpecF0Gamma — power exponent for specular→F0 remap
+    int reflDebugMode;  // r_rtReflectionDebugMode — 0=off, 1=output Fresnel as greyscale
+    int _pad;           // reserved
 };
-// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4 + 4 + 4 + 4 + 4 = 368 bytes; INTERACTION_UBO_SIZE = 384.
+// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4*4 + 4 + 4 + 4 + 4 = 380 bytes; INTERACTION_UBO_SIZE = 384.
 
 // ---------------------------------------------------------------------------
 // Pipeline layout for the interaction pass

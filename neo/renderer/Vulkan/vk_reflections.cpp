@@ -48,6 +48,19 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.5", CVAR_RENDERER | 
                                   "Lower values compensate for the multi-light accumulation artifact.\n"
                                   "Default 1.0 — decrease if reflections look overbright in heavy-light areas.");
 
+idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Scale factor applied after the power-curve remap of specular-map luminance to F0.\n"
+                       "Reduces how much even bright specular texels contribute to reflections.\n"
+                       "Tune with r_rtReflectionDebugMode 1 to see the resulting Fresnel mask.");
+
+idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "2.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Power exponent for remapping raw specular-map luminance to physically plausible F0.\n"
+                       "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
+                       "Tune with r_rtReflectionDebugMode 1.");
+
+idCVar r_rtReflectionDebugMode("r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+                               "0 = off; 1 = output Fresnel term as greyscale (tune r_rtSpecF0Scale/Gamma before enabling reflections).");
+
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
 //
