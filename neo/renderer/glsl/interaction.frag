@@ -136,25 +136,21 @@ void main() {
         ao = texture(u_AOMap, aoUV).r;
     }
 
-    // --- RT reflections (cheap approximation, Step 5.3) ---
-    // NOTE: this shader is called once per light, so reflColor is accumulated N
-    // times for N lights illuminating a pixel.  r_rtReflectionBlend (baked into
-    // the reflection buffer at dispatch time) keeps the result visually reasonable.
-    // Reflection is weighted by the per-pixel specular map value so matte surfaces
-    // show no reflection and metallic/shiny surfaces show a clear tint.
-    // JM Note: have disabled.  These maps are not normalized / way way too bright.
+    // --- RT reflections ---
+    // Disabled until Stage 3.5 (G-buffer normal pass) is implemented.
+    // rt_ReconstructNormal uses depth gradients → returns the geometric polygon normal,
+    // not the bump-mapped shading normal. Flat-polygon grate floors show the ceiling
+    // reflected back at the player regardless of Fresnel tuning, because at grazing
+    // NdotV the Schlick term approaches 1.0 regardless of specular map content.
+    // Stage 3.5 writes the bump-mapped shading normal to a G-buffer attachment so
+    // reflect_ray.rgen can use the correct normal for the reflection direction.
+    // After 3.5 lands, re-enable by uncommenting the block below.
     vec3 reflColor = vec3(0.0);
     /*
     if (u_UseReflections != 0) {
-        vec2 reflUV   = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
+        vec2 reflUV     = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
         vec3 reflSample = texture(u_ReflectionMap, reflUV).rgb;
-        // Modulate by specular map luminance: only surfaces with non-zero specular maps
-        // receive reflections.  Matte surfaces (specBase ~= 0) get no contribution.
-        // RGB weights are standard perceptual grayscale (BT.601).
-        float specBase   = dot(texture(u_SpecularMap, vary_TexCoord_Specular.xy).rgb,
-                               vec3(0.299, 0.587, 0.114));
-        float specweight = 0.1;
-        reflColor = reflSample * specBase * specweight;
+        reflColor = reflSample * fresnel;
     }
     */
 
