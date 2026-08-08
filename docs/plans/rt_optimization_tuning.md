@@ -1,0 +1,266 @@
+# RT Performance Optimization & Tuning Plan
+
+**Date:** 2026-08-08
+**Branch:** shaped-shadows
+**Companion docs:** `gbuffer_normal_pass.md` (G-buffer/F0 pass — several items below
+depend on it), `lighting_shadows_refinement.md` (Stages 2-4).
+
+**Goal:** free enough GPU budget to raise sample counts (1→4 GI samples is a huge
+noise win per in-game testing) while fixing the brightness/tuning problems whose root
+causes are structural, not constant-twiddling.
+
+---
+
+## Guiding rule
+
+**Measure → restructure → tune, in that order.** Several items below change the
+*meaning* of existing tuning constants (the reflection composite changes brightness
+math; stochastic GI changes noise character). Any constant tuned before those land
+will need retuning after. Don't polish CVar values on top of math that's about to move.
+
+The per-phase GPU profiler already exists (`VK_RTProfile_*`, phases TLAS / AO /
+REFLECTIONS / GI / GI_TEMPORAL / GI_ATROUS / VOL / VOL_TEMPORAL). Before and after each
+change below, capture the same test spot (e.g. the Administration hallway in the
+screenshot) and record the phase table. Add a phase for the per-light shadow work if
+one doesn't exist — it's currently the least-visible large cost.
+
+---
+
+## Part 1 — Structural performance issues (largest first)
+
+### P1. Per-light shadow dispatch serializes the whole GPU pipeline
+
+`vk_backend.cpp:3436-3446`: for **every shadow-casting light**, the interaction loop does:
+
+```
+vkCmdEndRenderPass → depth barriers → shadow trace dispatch → barrier
+→ blur compute dispatch (vk_shadows.cpp:951-1053) → barrier → vkCmdBeginRenderPass(resume)
+```
+
+With L visible lights that is L render-pass breaks and 2L+ full pipeline barriers per
+frame, forcing raster→RT→compute→raster serialization with zero overlap. This is very
+likely the largest *structural* cost after raw ray counts.
+
+**Fix (staged):**
+- **P1a (cheap, do first):** skip the blur dispatch when the light's scissor rect is
+  small (< ~64px on a side) — tiny lights don't visibly benefit — and clamp
+  `r_rtShadowBlur` cost by running blur at the dispatch rect only (already done) but with
+  one barrier pair instead of two where possible.
+- **P1b (the real fix):** batch shadow masks. Pack up to 4 lights per RGBA8 mask image
+  (one light per channel), or use an R8 texture-array with one layer per light
+  (`VK_MAX_SHADOWED_LIGHTS` ≈ 8-16 covers Doom 3 scenes). Trace **all** lights in one
+  dispatch (rgen loops lights, or one dispatch per mask image), blur once, then run the
+  entire interaction loop with **zero** render-pass breaks — each light's draw samples
+  its channel/layer. The interaction UBO gains a `shadowMaskChannel`/layer index.
+  This removes ~L render-pass breaks + ~2L barriers per frame.
+- Expected win: highly scene-dependent; measure with the profiler. Rooms with 5-8
+  lights should see a large drop in total frame time even though traced-ray count is
+  unchanged.
+
+### P2. Reflection rays traced for every pixel, reflective or not
+
+`reflect_ray.rgen` traces a glass-probe ray + a mirror ray per non-sky pixel, and each
+opaque hit (`reflect_ray.rchit:98-149`) loops ≤128 lights firing ≤8 shadow rays. On the
+vast majority of pixels (concrete/cloth, F0 ≈ 0) the result is then multiplied to
+~nothing by Fresnel.
+
+**Fix:** the G-buffer F0 early-out (`gbuffer_normal_pass.md` Step 7). Pixels with
+`F0 < 1/255` and no glass skip the reflection ray *and* its shadow rays entirely.
+In typical Doom 3 scenes this culls well over half the reflection workload.
+
+### P3. GI worst case: up to 64 traced rays per pixel
+
+`gi_ray.rgen` fires `numSamples` (4) hemisphere rays; each hit (`gi_ray.rchit:137-181`)
+loops up to `r_rtGIMaxBounceLights` (16) lights with **one shadow ray each** →
+4 × 16 = 64 rays/pixel worst case (checkerboard halves it). This is the dominant GI cost
+and the direct obstacle to raising `numSamples`.
+
+**Fix: stochastic light sampling at bounce hits.** Per hit, pick **1-2 lights** with
+probability proportional to `intensity × attenuation(dist) × NdotL`, fire the shadow ray
+only for the winner(s), and divide the contribution by the selection probability
+(standard importance sampling — unbiased). The existing temporal accumulation + à-trous
+chain is precisely the denoiser this needs.
+
+- Budget math: 4 samples × 2 stochastic lights = 8 rays/pixel vs. today's 64 —
+  an ~8× cut, or equivalently **8 GI samples for a quarter of today's cost**. This is
+  the item that converts perf work into the noise reduction you actually want.
+- Implementation is contained in `gi_ray.rchit` (CDF over the in-range lights, one
+  `randFloat` draw seeded from the existing world-anchored seed).
+- The same treatment applies to `reflect_ray.rchit` (shared include — see P5).
+
+### P4. Reflection-hit shadow rays go to the wrong lights
+
+`reflect_ray.rchit` shadow budget (first 8 lights **in buffer order**) is spent on
+lights sorted nearest-to-*camera*, not nearest-to-hit — reflection hits are often far
+from the camera. Cheap interim fix (independent of P3): skip the shadow ray when
+`lColor·lInt·NdotL·atten` is below a small threshold, so budget flows to lights that
+matter at the hit point. Long-term: P3's stochastic selection subsumes this.
+
+### P5. Duplicated light-evaluation code (maintenance, enables P3/P4)
+
+`gi_ray.rchit` and `reflect_ray.rchit` carry near-identical light loops that have
+already drifted (GI applies `bounceScale`; reflections don't — one cause of
+reflections reading brighter than the surfaces around them). Extract to
+`rt_light_eval.glsl` (add to `GLSL_INCLUDES`) before implementing P3, so the
+stochastic path lands once.
+
+### P6. Glass probe ray fired even in glass-free scenes
+
+Every reflection pixel pays a `traceRayEXT` probe (`reflect_ray.rgen:83-93`) whether or
+not any glass exists. `vk_material_table.cpp` knows at build time if any
+`MAT_FLAG_GLASS` entry exists; `vk_accelstruct.cpp` knows if such an instance is in the
+TLAS. Add `int sceneHasGlass` to `ReflParams`; skip the probe when 0. Full-screen ray
+dispatch saved in most rooms.
+
+### P7. TLAS build flags favor the wrong axis
+
+`vk_accelstruct.cpp:515/942`: both BLAS and TLAS use `PREFER_FAST_TRACE`. Standard
+practice for a **per-frame rebuilt TLAS** is `PREFER_FAST_BUILD` (trace cost difference
+is negligible at TLAS level; build cost is paid every frame). Keep BLAS as
+`FAST_TRACE`. One-line change; measure the TLAS profiler phase before/after.
+
+### P8. Volumetric march at full resolution
+
+`vol_march.comp` marches `r_rtVolSamples` (8) steps × up to `r_rtVolMaxLights` (32)
+lights **per full-res pixel** (no half-res path exists in `vk_vol.cpp`). Volumetric
+media is inherently low-frequency; industry standard is half or quarter resolution +
+joint bilateral upsample. `vol_bilateral.comp` already exists as a blur — extend it
+into a depth-aware upsample and march at half res: **4× cost cut** on one of the
+heavier passes, with little visible loss.
+
+### P9. Depth-reconstruction ALU in three rgens (after G-buffer)
+
+`rt_ReconstructNormal` costs 5 depth fetches + 4 `invViewProj` matrix multiplies per
+pixel and runs in AO, GI, and reflections. Commit 3 of the G-buffer plan replaces it
+with one G-buffer fetch in all three — modest ALU win, plus bump-mapped AO/GI
+directions (quality).
+
+### P10. If reflections are still heavy after P2: checkerboard
+
+GI already has checkerboard + temporal fill. Reflections have no history buffer today,
+so this needs a temporal resolve step too — only worth it if the profiler still shows
+reflections hot after the F0 early-out. Park it.
+
+---
+
+## Part 2 — Brightness / tuning fixes
+
+These are the root causes behind "metal way too bright" and "can't get GI to look
+right". Ordered by how much they change the math (do the big movers first, tune last).
+
+### T1. Reflections composited once, not once per light  *(in G-buffer plan, Step 8)*
+
+`interaction.frag` adds `reflColor` in an additive per-light pass → a pixel lit by N
+lights gets N× the reflection (documented limitation, `vk_reflections.cpp:16-19`).
+The dedicated `refl_composite` fullscreen pass fixes this. **Every reflection-strength
+constant tuned before this lands is invalid after.** Drop `r_rtReflectionBlend`
+default 1.5 → 1.0 at the same time.
+
+### T2. Grazing-angle suppression  *(in G-buffer plan, Step 8)*
+
+Schlick → 1.0 at grazing regardless of F0 is only correct for polished surfaces; rough
+surfaces are held down by shadowing/masking. Without per-pixel roughness, clamp the
+grazing lobe by F0:
+
+```glsl
+float grazing = mix(r_rtSpecGrazingMax /*≈0.35*/, 1.0, smoothstep(0.3, 0.7, f0));
+float fresnel = f0 + (grazing - f0) * pow(1.0 - NdotV, 5.0);
+```
+
+Matte surfaces plateau at ~0.35 reflectance at grazing; genuine metal/glass still
+reaches ~1.0. Directly addresses the bright silhouette-edge rims in the screenshot
+(the rest of that artifact is the wrong reconstructed normal, fixed by the G-buffer).
+
+### T3. Per-material F0 — mirrors too dim, metals too uniform
+
+Reflectance is hardcoded: `GLASS_F0 = 0.1` (`reflect_ray.rgen:156`), `F0 = 0.05`
+(`reflect_ray.rchit:175`). A real mirror needs ~0.9+.
+
+- Add `float f0;` to `VkMaterialEntry`/`MaterialEntry` (there is pad space; bump the
+  static_asserts).
+- Classify in `vk_material_table.cpp`: mirror materials (`SS_SUBVIEW` sort / `mirror`
+  keyword) → 0.9; glass (`MAT_FLAG_GLASS`) keeps 0.05-0.1; others → spec-map remap
+  default.
+- `glass_probe.rchit` returns the hit matIdx so the rgen's `glassWeight` Schlick uses
+  the material F0 instead of the constant.
+
+### T4. Falloff-model mismatch between RT lighting and raster lighting
+
+The raster path lights via projection/falloff **textures**; the RT hit shaders use
+`atten = 1 − (d/r)²` with `intensity` defaulting to 1.0 when `SHADERPARM_ALPHA` is
+unset (`vk_gi.cpp:1004-1009`). RT-lit surfaces (reflection hits, GI bounces) therefore
+disagree with the same surface seen directly — one reason GI tuning feels like
+whack-a-mole: `r_rtGIBounceScale 4.0` is compensating for systematically-dim RT
+falloff in some rooms and overshooting in others.
+
+Pragmatic fix (no texture sampling in hit shaders): fit the falloff curve better.
+Doom 3's default falloff is roughly linear-to-zero; try `atten = (1−t)²` or `(1−t²)²`
+(smoother tail than the current `1−t²`, which holds ~75% brightness at half radius —
+brighter than Doom 3's textures). Add `r_rtGIFalloffMode` (0 = current, 1 = squared,
+2 = smooth) and A/B against the raster image on a known room before retuning
+`r_rtGIBounceScale` downward.
+
+### T5. Emissive floor in reflections/GI
+
+`rt_EvalEmissiveRadiance` (`rt_material.glsl:222-228`): GUI surfaces get
+`max(e*3.0, 0.2)` then × `r_rtGIEmissiveScale` (2.0). The unconditional 0.2 floor makes
+every dark screen pixel a light source in reflections — visible as glowing panels in
+reflective floors. Make the floor conditional on the sampled texel actually being lit
+(`e * 3.0` but floor only where `luminance(e) > 0.05`), or drop the floor for the
+reflection path (`reflLightBuf.emissiveScale` is already a separate knob).
+
+### T6. Final tuning pass (only after T1-T5 + P3 land)
+
+Order: `r_rtSpecF0Gamma/Scale` via debug overlay (F0 mode) → `r_rtSpecGrazingMax` in a
+grate/metal hallway → `r_rtGIFalloffMode` + `r_rtGIBounceScale` against a raster
+reference room → `r_rtGIStrength/Contrast` last. Record final values in this doc.
+
+---
+
+## Part 3 — Recommended order of operations
+
+Rationale: the G-buffer is both the reflection-correctness prerequisite **and** the
+biggest reflection perf win; quick perf items buy the sample-count headroom that
+improves GI quality immediately; invasive restructures and constant-tuning come after
+the math stops moving.
+
+```
+Wave 1 — G-buffer (gbuffer_normal_pass.md commits 1+2)
+         → fixes reflection direction (grates), N× brightness (T1), grazing clamp (T2),
+           F0 early-out (P2). Re-enables Stage 3 reflections.
+
+Wave 2 — Perf quick wins (each independent, small, measurable):
+         P7 TLAS FAST_BUILD          (~1 line)
+         P6 sceneHasGlass probe skip (~20 lines)
+         P4 shadow-ray threshold in reflect rchit (~5 lines)
+         P1a per-light blur skip for small rects
+         P5 shared rt_light_eval.glsl extraction (prep for P3)
+
+Wave 3 — P3 stochastic GI lights, then raise r_rtGISamples with the freed budget
+         (this is the noise-reduction payoff), then P9 (G-buffer commit 3: AO/GI
+         normals).
+
+Wave 4 — Structural: P1b batched shadow masks; P8 half-res volumetrics.
+
+Wave 5 — Tuning: T3 per-material F0, T4 falloff mode, T5 emissive floor, then the
+         T6 constant pass. Then lighting_shadows_refinement.md Stages 4a/4b
+         (auto-emissive / volumetric shafts) on top of the stable, tuned base.
+```
+
+Stages 4a/4b deliberately stay last: their classification gates reuse Stage 2's F0 and
+their visual quality judgment depends on GI/reflection brightness being settled.
+
+---
+
+## Profiler checkpoints
+
+Capture at the same spot each wave (suggest: Administration hallway from the 2026-08-08
+screenshot, 2560×1440):
+
+| Wave | TLAS | AO | Refl | GI | GI-denoise | Vol | Shadow (per-light Σ) | Total |
+|---|---|---|---|---|---|---|---|---|
+| baseline | | | | | | | | |
+| after W1 | | | | | | | | |
+| after W2 | | | | | | | | |
+| after W3 | | | | | | | | |
+| after W4 | | | | | | | | |

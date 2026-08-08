@@ -181,6 +181,7 @@ specular texel got a strong mirror-sharp reflection, hence "everything looks lik
 
 ### Fix
 Once Stage 3.5's G-buffer normal pass exists, re-enable the reflection blend in
+
 `interaction.frag`: uncomment the `reflColor` block, swap in `fresnel` for the old
 `specBase * specweight`, leave the ray dispatch (`vk_reflections.cpp`,
 `reflect_ray.rgen`) untouched. Preserve the existing behavior where reflection is added
@@ -211,6 +212,12 @@ Stage 3.5 is complete.
 ## Stage 3.5 — G-buffer normal pass (prerequisite for Stage 3)
 
 **Depends on nothing. Do before Stage 3.**
+
+> **SUPERSEDED — see `docs/plans/gbuffer_normal_pass.md`.** The design below has a
+> fatal ordering flaw: it writes the normal target during the interaction pass, but
+> reflection rays dispatch *before* the interaction pass each frame
+> (`vk_backend.cpp` ~4228-4373), so the normals would always be one frame stale.
+> The corrected plan writes normals+F0 from the depth prepass instead.
 
 ### Problem
 `reflect_ray.rgen` currently reconstructs the surface normal from depth gradients
