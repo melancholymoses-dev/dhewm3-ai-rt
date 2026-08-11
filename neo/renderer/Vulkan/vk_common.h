@@ -150,6 +150,16 @@ struct vkPipelines_t
     VkPipeline depthPipeline;     // opaque surfaces — no texture sample
     VkPipeline depthClipPipeline; // MC_PERFORATED — samples diffuse, discards on alpha
 
+    // G-buffer normal/F0 prepass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
+    // Only created when vk.gbufferSupported; replaces depthPipeline/depthClipPipeline
+    // in VK_RB_FillDepthBuffer when RT is active. Writes world-space bump-mapped
+    // normal + F0 to gbufNormal (attachment 1); attachment 0 is write-masked off,
+    // same as the depth pipelines it replaces.
+    VkDescriptorSetLayout gbufferDescLayout;
+    VkPipelineLayout gbufferLayout;
+    VkPipeline gbufferPipeline;     // opaque surfaces
+    VkPipeline gbufferClipPipeline; // MC_PERFORATED — samples diffuse, discards on alpha
+
     // GUI / unlit shader-pass pipeline (menu, HUD, console)
     VkDescriptorSetLayout guiDescLayout;
     VkPipelineLayout guiLayout;
