@@ -4103,9 +4103,12 @@ void VK_RB_DrawView(const void *data)
         VK_RB_UpdateCinematics(cmdBuf, data);
 
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
-        VkClearValue clearValues[2] = {};
+        // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 0.5, 0.0}: null normal, F0 0 —
+        // only consumed when vk.gbufferSupported, but harmless to fill in unconditionally.
+        VkClearValue clearValues[3] = {};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 128};
+        clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
 
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -4113,7 +4116,7 @@ void VK_RB_DrawView(const void *data)
         rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
         rpBegin.renderArea.extent = vk.swapchainExtent;
-        rpBegin.clearValueCount = 2;
+        rpBegin.clearValueCount = vk.gbufferSupported ? 3 : 2;
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
@@ -4923,10 +4926,10 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitGI();
         common->Printf("VK: initializing RT volumetrics\n");
         VK_RT_InitVolumetrics();
+        // Also allocates/resizes the G-buffer normal/F0 images (Stage 3.5) and
+        // wires them into the HDR framebuffers — see vk_tonemap.cpp.
         common->Printf("VK: initializing RT tonemapping\n");
         VK_RT_InitTonemap();
-        common->Printf("VK: initializing RT G-buffer\n");
-        VK_RT_InitGBuffer();
     }
 
     common->Printf("VK: Backend ready\n");

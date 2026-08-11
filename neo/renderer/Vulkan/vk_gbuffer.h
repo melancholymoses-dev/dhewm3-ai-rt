@@ -23,14 +23,14 @@ Code release.
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
-// Allocate the G-buffer normal/F0 images at the current swapchain extent.
-// No-op (leaves vkRT.gbufNormal all-NULL) if vk.gbufferSupported is false.
-// Called once after device creation (inside VK_RT_Init block), after tonemap init.
-void VK_RT_InitGBuffer(void);
-
 // Destroy all G-buffer resources.  Safe to call even if never initialized.
+// Called from VK_RT_ShutdownTonemap, after the HDR framebuffers that reference
+// gbufNormal[i].view have been destroyed.
 void VK_RT_ShutdownGBuffer(void);
 
-// Reallocate the G-buffer images at the new swapchain dimensions.
+// (Re)allocate the G-buffer images at the given dimensions. No-op (leaves
+// vkRT.gbufNormal all-NULL) if vk.gbufferSupported is false. Called from
+// VK_RT_ResizeTonemap — including its first call from VK_RT_InitTonemap —
+// before the HDR framebuffers that reference gbufNormal[i].view are (re)built.
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);

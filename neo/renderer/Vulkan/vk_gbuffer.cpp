@@ -183,18 +183,11 @@ static void VK_RT_DestroyGBufferImages(void)
 
 // ---------------------------------------------------------------------------
 // Public entry points
+//
+// No separate "Init": VK_RT_InitTonemap's first call is VK_RT_ResizeTonemap,
+// which calls VK_RT_ResizeGBuffer below before creating the HDR framebuffers
+// that reference gbufNormal[i].view — that first call is this module's init.
 // ---------------------------------------------------------------------------
-
-void VK_RT_InitGBuffer(void)
-{
-    if (!vk.gbufferSupported)
-    {
-        common->Printf("VK RT GBuffer: independentBlend not supported — G-buffer normal pass disabled\n");
-        return;
-    }
-    common->Printf("VK: initializing RT G-buffer normal/F0 images\n");
-    VK_RT_CreateGBufferImages(vk.swapchainExtent.width, vk.swapchainExtent.height);
-}
 
 void VK_RT_ShutdownGBuffer(void)
 {
@@ -204,7 +197,15 @@ void VK_RT_ShutdownGBuffer(void)
 void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height)
 {
     if (!vk.gbufferSupported)
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            common->Printf("VK RT GBuffer: independentBlend not supported — G-buffer normal pass disabled\n");
+            warned = true;
+        }
         return;
+    }
 
     vkDeviceWaitIdle(vk.device);
     VK_RT_DestroyGBufferImages();
