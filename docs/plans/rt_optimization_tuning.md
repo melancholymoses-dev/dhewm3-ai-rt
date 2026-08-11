@@ -3,7 +3,7 @@
 **Date:** 2026-08-08
 **Branch:** shaped-shadows
 **Companion docs:** `gbuffer_normal_pass.md` (G-buffer/F0 pass — several items below
-depend on it), `lighting_shadows_refinement.md` (Stages 2-4).
+depend on it), `completed/lighting_shadows_refinement.md` (Phase 9 record).
 
 **Goal:** free enough GPU budget to raise sample counts (1→4 GI samples is a huge
 noise win per in-game testing) while fixing the brightness/tuning problems whose root
@@ -141,6 +141,29 @@ GI already has checkerboard + temporal fill. Reflections have no history buffer 
 so this needs a temporal resolve step too — only worth it if the profiler still shows
 reflections hot after the F0 early-out. Park it.
 
+### L1. Stratified light list with importance sorting + hysteresis
+
+`VK_RT_UploadGILights` (`vk_gi.cpp:1059-1080`) sorts candidates purely by
+distance-to-camera and uploads the nearest 128; hit shaders walk the first N in that
+order. Consequences: a bright light 200u away loses to dim fill lights near the camera,
+distant sources pop in/out as the player moves, and (with auto-relight) synthesized
+panel lights compete on the wrong axis.
+
+**Fix (CPU-side, ~40 lines, improves GI + reflections + volumetrics at zero GPU cost):**
+
+- Bucket candidates into distance tiers: 0-128, 128-320, 320-768, 768+.
+- Within each tier sort by perceptual importance, not distance:
+  `intensity × luminance(color) × radius²` (optionally `/ max(distSq, radius²)`).
+- Fixed quota per tier (e.g. 48 / 40 / 24 / 16 of the 128 slots) so far-tier bright
+  sources are guaranteed representation.
+- Hysteresis: a light present last frame survives if within ~1.15× of the cut
+  threshold — kills popping.
+- This is the **candidate pool** layer; P3's stochastic per-hit selection is the
+  **usage** layer. They compose: tiers ensure the right lights are in the buffer,
+  the per-hit weighted draw ensures the right lights are sampled at each bounce.
+  Light-around-the-corner reads only when both are in place (the doorway light must
+  win the draw at hit points near the doorway even when the camera is far away).
+
 ---
 
 ## Part 2 — Brightness / tuning fixes
@@ -234,6 +257,7 @@ Wave 2 — Perf quick wins (each independent, small, measurable):
          P6 sceneHasGlass probe skip (~20 lines)
          P4 shadow-ray threshold in reflect rchit (~5 lines)
          P1a per-light blur skip for small rects
+         L1 stratified light list + hysteresis (CPU-only)
          P5 shared rt_light_eval.glsl extraction (prep for P3)
 
 Wave 3 — P3 stochastic GI lights, then raise r_rtGISamples with the freed budget
@@ -242,13 +266,16 @@ Wave 3 — P3 stochastic GI lights, then raise r_rtGISamples with the freed budg
 
 Wave 4 — Structural: P1b batched shadow masks; P8 half-res volumetrics.
 
-Wave 5 — Tuning: T3 per-material F0, T4 falloff mode, T5 emissive floor, then the
-         T6 constant pass. Then lighting_shadows_refinement.md Stages 4a/4b
-         (auto-emissive / volumetric shafts) on top of the stable, tuned base.
+Wave 5 — Auto-relight (auto_relight.md): synthesized panel lights + noShadows unlock.
+         Placed after P1b because each synthesized light is an interaction light +
+         shadow dispatch; start with a budget of ~6 if attempted earlier.
+
+Wave 6 — Tuning: T3 per-material F0, T4 falloff mode, T5 emissive floor, then the
+         T6 constant pass — last, on top of the stable, fast, relit base.
 ```
 
-Stages 4a/4b deliberately stay last: their classification gates reuse Stage 2's F0 and
-their visual quality judgment depends on GI/reflection brightness being settled.
+Auto-relight replaces the old Stage 4a/4b plan (see `auto_relight.md`); tuning stays
+last because T1/P3/auto-relight each change what the existing constants mean.
 
 ---
 
