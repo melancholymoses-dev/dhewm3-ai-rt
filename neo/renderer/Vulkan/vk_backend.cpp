@@ -1136,7 +1136,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     specF0ScalePtr[1] = idMath::ClampFloat(0.1f, 8.0f, r_rtSpecF0Gamma.GetFloat());
     int *reflDbgPtr = (int *)(specF0ScalePtr + 2);
     *reflDbgPtr = r_rtReflectionDebugMode.GetInteger();
-    // _pad: intentionally unset (ring memory zeroed at allocation time)
+    reflDbgPtr[1] = 0; // _pad — ring memory is never cleared, so write it explicitly
 
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
