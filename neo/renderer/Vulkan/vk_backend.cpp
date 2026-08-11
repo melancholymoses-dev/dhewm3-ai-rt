@@ -4925,6 +4925,8 @@ void VKimp_PostInit(int width, int height)
         VK_RT_InitVolumetrics();
         common->Printf("VK: initializing RT tonemapping\n");
         VK_RT_InitTonemap();
+        common->Printf("VK: initializing RT G-buffer\n");
+        VK_RT_InitGBuffer();
     }
 
     common->Printf("VK: Backend ready\n");

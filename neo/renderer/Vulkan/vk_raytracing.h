@@ -491,6 +491,15 @@ struct vkRTState_t
     VkDescriptorSet       tonemapDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   tonemapDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // G-buffer normal/F0 image, written by the depth prepass (see
+    // docs/plans/gbuffer_normal_pass.md).  rgb = world-space bump-mapped normal
+    // (× 0.5 + 0.5), a = normalized F0 (0 = "no data, use rt_ReconstructNormal").
+    // Gated on vk.gbufferSupported (requires independentBlend); left all-NULL
+    // when unsupported so the old depth-only path is used instead.
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM world normal + F0
+
     bool isInitialized;
 };
 
@@ -819,5 +828,20 @@ void VK_RT_ResizeTonemap(uint32_t width, uint32_t height);
 // Dispatch the Uchimura tonemap compute pass: hdrScene → swapchain.
 // Must be called outside a render pass, after all composites have finished.
 void VK_RT_DispatchTonemap(VkCommandBuffer cmd);
+
+// ---------------------------------------------------------------------------
+// G-buffer normal/F0 pass (see docs/plans/gbuffer_normal_pass.md)
+// ---------------------------------------------------------------------------
+
+// Allocate the G-buffer normal/F0 images. No-op if vk.gbufferSupported is false.
+// Called once after device creation (inside the VK_RT_Init block), after tonemap init.
+void VK_RT_InitGBuffer(void);
+
+// Destroy all G-buffer resources. Safe to call even if never initialized.
+void VK_RT_ShutdownGBuffer(void);
+
+// Reallocate the G-buffer images when render resolution changes.
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);
 
 #endif // __VK_RAYTRACING_H__

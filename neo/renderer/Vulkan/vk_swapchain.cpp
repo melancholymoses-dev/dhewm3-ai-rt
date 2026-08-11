@@ -23,6 +23,9 @@ void VK_SetWindowMinimized(bool minimized);
 // Defined in vk_tonemap.cpp
 void VK_RT_ResizeTonemap(uint32_t width, uint32_t height);
 
+// Defined in vk_gbuffer.cpp
+void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);
+
 // ---------------------------------------------------------------------------
 // Surface format / present mode selection
 // ---------------------------------------------------------------------------
@@ -556,6 +559,9 @@ void VK_RecreateSwapchain(int width, int height)
     // Rebuild HDR framebuffers — they reference vk.depthView which was just recreated.
     // Also resizes the hdrScene and tonemapResolve images to the new swapchain extent.
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
+
+    // Resize the G-buffer normal/F0 images to match (no-op if unsupported).
+    VK_RT_ResizeGBuffer(vk.swapchainExtent.width, vk.swapchainExtent.height);
 
     // Swapchain is healthy again; clear any minimized flag set during the
     // previous (aborted) recreation when the surface was 0x0.
