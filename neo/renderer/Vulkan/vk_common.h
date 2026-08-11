@@ -107,6 +107,10 @@ struct vkState_t
     // Capabilities
     bool rayTracingSupported; // VK_KHR_ray_tracing_pipeline
     bool asSupported;         // VK_KHR_acceleration_structure
+    // independentBlend: required by the G-buffer normal/F0 pass (two color attachments with
+    // differing per-attachment blend/write-mask state). See docs/plans/gbuffer_normal_pass.md.
+    // If false, the G-buffer prepass must not be enabled; fall back to the existing depth-only path.
+    bool gbufferSupported;
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index
