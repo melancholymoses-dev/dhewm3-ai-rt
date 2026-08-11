@@ -1126,6 +1126,18 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
                                vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE && isPrimaryView;
     *useReflPtr = (hasReflBuffer && !isWeaponDepthHack) ? 1 : 0;
 
+    // specF0Scale / specF0Gamma — Fresnel/F0 remap curve parameters (Stage 2).
+    // reflDebugMode — 1 = output Fresnel as greyscale for tuning; 0 = off.
+    extern idCVar r_rtSpecF0Scale;
+    extern idCVar r_rtSpecF0Gamma;
+    extern idCVar r_rtReflectionDebugMode;
+    float *specF0ScalePtr = (float *)(useReflPtr + 1);
+    specF0ScalePtr[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecF0Scale.GetFloat());
+    specF0ScalePtr[1] = idMath::ClampFloat(0.1f, 8.0f, r_rtSpecF0Gamma.GetFloat());
+    int *reflDbgPtr = (int *)(specF0ScalePtr + 2);
+    *reflDbgPtr = r_rtReflectionDebugMode.GetInteger();
+    reflDbgPtr[1] = 0; // _pad — ring memory is never cleared, so write it explicitly
+
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
     bufInfo.buffer = ring.buffer;
