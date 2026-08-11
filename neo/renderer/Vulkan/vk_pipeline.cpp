@@ -307,10 +307,16 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     // Dynamic state: viewport, scissor, depth bias (polygon offset), and cull mode (two-sided materials).
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
@@ -460,10 +466,16 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -602,10 +614,16 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0; // stencil-only
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -751,10 +769,16 @@ static VkPipeline VK_CreateGlassReflPipeline(VkPipelineLayout layout)
     colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
                                    VK_DYNAMIC_STATE_CULL_MODE_EXT};
@@ -904,10 +928,16 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
                                    VK_DYNAMIC_STATE_CULL_MODE_EXT};
@@ -1149,10 +1179,16 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
         colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     }
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     // 3D pipelines add DEPTH_BIAS so MF_POLYGONOFFSET decals can use vkCmdSetDepthBias,
     // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
@@ -1273,10 +1309,16 @@ static VkPipeline VK_CreateSkyboxPipeline(VkPipelineLayout layout)
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -1528,10 +1570,16 @@ static VkPipeline VK_CreateFogPipelineEx(VkPipelineLayout layout, const char *ve
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamicState = {};

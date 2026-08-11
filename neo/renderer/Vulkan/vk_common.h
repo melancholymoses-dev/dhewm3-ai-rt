@@ -211,6 +211,24 @@ static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlag
 }
 
 // ---------------------------------------------------------------------------
+// G-buffer normal/F0 pass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md):
+// every graphics pipeline targeting vk.hdrRenderPass must supply a blend
+// attachment state per subpass color attachment. When vk.gbufferSupported is
+// true the subpass declares 2 (attachment 0 = hdrScene, attachment 1 =
+// gbufNormal); pipelines other than the G-buffer prepass itself must not
+// write attachment 1, so they pair their real attachment-0 state with this
+// write-mask-0, blend-off filler. Callers still gate attachmentCount on
+// vk.gbufferSupported (1 when false) so the array is simply unread in that case.
+// ---------------------------------------------------------------------------
+
+static inline void VK_FillSecondBlendAttachment(VkPipelineColorBlendAttachmentState *out)
+{
+    *out = {};
+    out->blendEnable = VK_FALSE;
+    out->colorWriteMask = 0;
+}
+
+// ---------------------------------------------------------------------------
 // Batched upload helpers
 //
 // VK_BeginSingleTimeCommands / VK_EndSingleTimeCommands accumulate all upload
