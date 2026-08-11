@@ -833,14 +833,12 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd);
 // G-buffer normal/F0 pass (see docs/plans/gbuffer_normal_pass.md)
 // ---------------------------------------------------------------------------
 
-// Allocate the G-buffer normal/F0 images. No-op if vk.gbufferSupported is false.
-// Called once after device creation (inside the VK_RT_Init block), after tonemap init.
-void VK_RT_InitGBuffer(void);
-
 // Destroy all G-buffer resources. Safe to call even if never initialized.
+// Called from VK_RT_ShutdownTonemap.
 void VK_RT_ShutdownGBuffer(void);
 
-// Reallocate the G-buffer images when render resolution changes.
+// (Re)allocate the G-buffer images. No-op if vk.gbufferSupported is false.
+// Called from VK_RT_ResizeTonemap (including its first call from VK_RT_InitTonemap).
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);
 
