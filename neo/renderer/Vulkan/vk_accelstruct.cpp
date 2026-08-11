@@ -2177,6 +2177,9 @@ void VK_RT_Shutdown(void)
     // HDR scene buffer and tonemap pipeline (Phase 8.1)
     VK_RT_ShutdownTonemap();
 
+    // G-buffer normal/F0 images (Stage 3.5)
+    VK_RT_ShutdownGBuffer();
+
     // Material table SSBOs and bindless descriptor set (Phase 5.4)
     VK_RT_ShutdownMaterialTable();
 
