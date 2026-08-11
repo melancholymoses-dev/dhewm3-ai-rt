@@ -232,6 +232,13 @@ void main()
                     atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
                 else
                     atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
+
+                // Fade to zero at the light origin to prevent singularity glow blob.
+                // The innermost 15% of the sphere radius is where the march step
+                // is so close to the origin that phase/direction noise amplifies
+                // into a visible bright sphere centred on the light entity.
+                float coreFade = smoothstep(0.0, sphereRad * 0.15, dist);
+                atten *= coreFade;
             }
             else
             {

@@ -10,7 +10,10 @@ The renderer in neo/renderer/GL is the original version for this repo and works 
 When you work, check the existing GL functionality to understand how Doom3 expects things to render.  
 
 ## Plans
-There are relevant plans in docs/plans/*.md that discuss various refactor efforts and steps.  The main one is rt_refactor_plan5.md, with the others being steps along the way.
+Plans live in docs/plans/*.md.  **Start with docs/plans/ROADMAP.md** — it owns the
+ordering/status and links the live design docs (gbuffer_normal_pass.md,
+rt_optimization_tuning.md, auto_relight.md).  Finished or superseded plans are in
+docs/plans/completed/ (including the original rt refactor phase docs).
 
 ## Procedure
 If there are complex options, favour generating logs and debugging over theoretical discussions.  We can figure it out if we can see a log.  This goes for bugs, as well as analyzing graphical errors.  For graphical/GPU debugging suggest a way of outputting color coding for the relevant objects to allow visual inspection.
