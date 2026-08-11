@@ -716,6 +716,9 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/depth.frag	
 	renderer/glsl/fog.vert
 	renderer/glsl/fog.frag
+	renderer/glsl/gbuffer.vert
+	renderer/glsl/gbuffer.frag
+	renderer/glsl/gbuffer_clip.frag
 	renderer/glsl/gi_composite.vert
 	renderer/glsl/gi_composite.frag
 	renderer/glsl/gui.vert
