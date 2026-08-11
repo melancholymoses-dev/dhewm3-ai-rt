@@ -59,8 +59,10 @@ struct VkInteractionUBO
     float specF0Gamma;  // r_rtSpecF0Gamma — power exponent for specular→F0 remap
     int reflDebugMode;  // r_rtReflectionDebugMode — 0=off, 1=output Fresnel as greyscale
     int _pad;           // reserved
+    int _pad2;          // std140 rounds the GLSL block up to a 16-byte multiple (384)
 };
-// Total: 14*16 + 64 + 3*16 + 4 + 8 + 4*4 + 4 + 4 + 4 + 4 = 380 bytes; INTERACTION_UBO_SIZE = 384.
+// Must match INTERACTION_UBO_SIZE (vk_backend.cpp) and the std140 block in interaction.frag.
+static_assert(sizeof(VkInteractionUBO) == 384, "VkInteractionUBO size mismatch vs std140 block / INTERACTION_UBO_SIZE");
 
 // ---------------------------------------------------------------------------
 // Pipeline layout for the interaction pass

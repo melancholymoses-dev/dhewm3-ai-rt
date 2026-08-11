@@ -115,9 +115,14 @@ void main() {
     // almost everywhere. A power-curve remap gates non-trivial F0 to only the
     // brightest texels (actual metal / wet surfaces), preventing the hall-of-mirrors
     // look that occurs when the reflection buffer is enabled on ordinary surfaces.
-    float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
-    float normF0  = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
-    float fresnel = normF0 + (1.0 - normF0) * pow(1.0 - NdotV, 5.0);
+    // Only computed when a consumer exists (uniform branch): the reflection blend
+    // or the debug visualization below.
+    float fresnel = 0.0;
+    if (u_UseReflections != 0 || u_ReflectionDebugMode == 1) {
+        float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
+        float normF0  = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
+        fresnel = normF0 + (1.0 - normF0) * pow(1.0 - NdotV, 5.0);
+    }
 
     // --- RT shadow mask ---
     float shadow = 1.0;
