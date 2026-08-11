@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-08
 **Branch:** shaped-shadows
-**Supersedes:** Stage 3.5 in `lighting_shadows_refinement.md` (which contains a fatal
+**Supersedes:** Stage 3.5 in `completed/lighting_shadows_refinement.md` (which contains a fatal
 ordering flaw — see "Why the previous attempt went in circles" below).
 
 ---
@@ -22,7 +22,7 @@ normal** and a **normalized F0** per pixel, so that:
 
 ## Why the previous attempt went in circles
 
-`lighting_shadows_refinement.md` Stage 3.5 says: *"Add a world-space normal render
+The original Phase 9 Stage 3.5 said: *"Add a world-space normal render
 target written during the interaction pass and sampled by the reflection rgen."*
 
 **That cannot work in-frame.** The frame order in `vk_backend.cpp` (~line 4220) is:
