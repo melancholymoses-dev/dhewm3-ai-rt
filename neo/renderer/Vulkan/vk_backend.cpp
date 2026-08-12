@@ -1457,6 +1457,24 @@ struct VkSkyboxUBO
     float colorAdd[4];             // 16 bytes
 }; // 112 bytes total
 
+// G-buffer normal/F0 prepass UBO (Stage 3.5, must match gbuffer.vert/gbuffer.frag
+// and gbuffer_clip.frag's GBufferParams block, std140). See VK_RB_FillDepthBuffer.
+struct VkGBufferUBO
+{
+    float modelViewProjection[16]; // 64 bytes
+    float modelMatrix[16];         // 64 bytes — surf->space->modelMatrix (rigid transform)
+    float bumpMatrixS[4];          // 16 bytes
+    float bumpMatrixT[4];          // 16 bytes
+    float diffuseMatrixS[4];       // 16 bytes — alpha-test UV (gbuffer_clip.frag only)
+    float diffuseMatrixT[4];       // 16 bytes
+    float specularMatrixS[4];      // 16 bytes
+    float specularMatrixT[4];      // 16 bytes
+    float alphaTestThreshold;      // 4 bytes  — gbuffer_clip.frag only
+    float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
+    float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
+    float _pad0;                   // 4 bytes
+}; // 240 bytes total
+
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
     if (!backEnd.viewDef || backEnd.viewDef->numDrawSurfs == 0)
@@ -2217,6 +2235,50 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 }
 
 // ---------------------------------------------------------------------------
+// VK_FindBumpSpecularStages (Stage 3.5 — G-buffer normal/F0 prepass)
+// Finds the first active SL_BUMP / SL_SPECULAR stage on a material and resolves
+// its image + texture matrix via the same R_SetDrawInteraction() helper the
+// interaction path uses (tr_render.cpp), so the G-buffer prepass samples exactly
+// the same bump/specular sources the light interaction shading would.
+// Falls back to flatNormalMap / blackImage (identity matrix) when no such stage
+// exists, its condition register is false, or it has no image — matching
+// RB_SubmittInteraction's fallback for the same cases.
+// ---------------------------------------------------------------------------
+
+static void VK_FindBumpSpecularStages(const idMaterial *mat, const float *regs, idImage **outBumpImage,
+                                      idVec4 outBumpMatrix[2], idImage **outSpecImage, idVec4 outSpecMatrix[2])
+{
+    extern void R_SetDrawInteraction(const shaderStage_t *, const float *, idImage **, idVec4[2], float *);
+
+    *outBumpImage = NULL;
+    *outSpecImage = NULL;
+
+    for (int i = 0; i < mat->GetNumStages(); i++)
+    {
+        const shaderStage_t *stage = mat->GetStage(i);
+        if (!regs[stage->conditionRegister])
+            continue;
+        if (stage->lighting == SL_BUMP && !*outBumpImage)
+            R_SetDrawInteraction(stage, regs, outBumpImage, outBumpMatrix, NULL);
+        else if (stage->lighting == SL_SPECULAR && !*outSpecImage)
+            R_SetDrawInteraction(stage, regs, outSpecImage, outSpecMatrix, NULL);
+    }
+
+    if (!*outBumpImage)
+    {
+        *outBumpImage = globalImages->flatNormalMap;
+        outBumpMatrix[0].Set(1.f, 0.f, 0.f, 0.f);
+        outBumpMatrix[1].Set(0.f, 1.f, 0.f, 0.f);
+    }
+    if (!*outSpecImage)
+    {
+        *outSpecImage = globalImages->blackImage;
+        outSpecMatrix[0].Set(1.f, 0.f, 0.f, 0.f);
+        outSpecMatrix[1].Set(0.f, 1.f, 0.f, 0.f);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VK_RB_FillDepthBuffer - depth prepass
 // Draws all opaque (MC_OPAQUE) surfaces to the depth buffer only, so the
 // interaction pass can depth-test against a fully populated depth image.
@@ -2233,6 +2295,14 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
     extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+
+    // Stage 3.5: write the G-buffer normal/F0 attachment instead of the depth-only
+    // pipelines when RT is active and the hardware supports it (see Step 0 in
+    // docs/plans/gbuffer_normal_pass.md). Both new pipelines are created together in
+    // VK_InitPipelines, so checking one is enough to know the other exists too.
+    const bool useGBuffer =
+        r_useRayTracing.GetBool() && vk.gbufferSupported && vkPipes.gbufferPipeline != VK_NULL_HANDLE;
+    int gbufBumpFound = 0, gbufBumpFallback = 0, gbufSpecFound = 0, gbufSpecFallback = 0, gbufSurfCount = 0;
 
     // GL parity: when the current (non-subview) view contains mirror surfaces,
     // the depth fill pass must also guard the color buffer so previously rendered
@@ -2530,6 +2600,138 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
         };
 
+        // Records one G-buffer prepass draw (Stage 3.5): same depth-write role as
+        // drawDepthSurf above, plus a world-space bump normal + F0 to gbufNormal.
+        // useClipPipeline/alphaStage/stageRegs/alphaThreshold mirror drawDepthSurf's
+        // perforated-material handling exactly, so the depth buffer this produces is
+        // pixel-identical to what drawDepthSurf would have written.
+        auto drawGBufferSurf = [&](bool useClipPipeline, const shaderStage_t *alphaStage, const float *stageRegs,
+                                   float alphaThreshold, float alphaScale) {
+            extern idCVar r_rtSpecF0Scale;
+            extern idCVar r_rtSpecF0Gamma;
+
+            idImage *bumpImage, *specImage;
+            idVec4 bumpMatrix[2], specMatrix[2];
+            VK_FindBumpSpecularStages(mat, surf->shaderRegisters, &bumpImage, bumpMatrix, &specImage, specMatrix);
+
+            gbufSurfCount++;
+            if (bumpImage != globalImages->flatNormalMap)
+                gbufBumpFound++;
+            else
+                gbufBumpFallback++;
+            if (specImage != globalImages->blackImage)
+                gbufSpecFound++;
+            else
+                gbufSpecFallback++;
+
+            uint32_t uboOffset = VK_AllocUBO();
+            VkGBufferUBO *ubo = (VkGBufferUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
+            memcpy(ubo->modelViewProjection, mvp, 64);
+            memcpy(ubo->modelMatrix, surf->space->modelMatrix, 64);
+            memcpy(ubo->bumpMatrixS, bumpMatrix[0].ToFloatPtr(), 16);
+            memcpy(ubo->bumpMatrixT, bumpMatrix[1].ToFloatPtr(), 16);
+            memcpy(ubo->specularMatrixS, specMatrix[0].ToFloatPtr(), 16);
+            memcpy(ubo->specularMatrixT, specMatrix[1].ToFloatPtr(), 16);
+            if (useClipPipeline && alphaStage && stageRegs && alphaStage->texture.hasMatrix)
+            {
+                // Same texture-matrix resolution as drawDepthSurf's perforated branch,
+                // so the alpha-test UV matches depth_clip.frag's exactly.
+                const textureStage_t &tex = alphaStage->texture;
+                float s2 = stageRegs[tex.matrix[0][2]];
+                if (s2 < -40.f || s2 > 40.f)
+                    s2 -= (float)(int)s2;
+                float t2 = stageRegs[tex.matrix[1][2]];
+                if (t2 < -40.f || t2 > 40.f)
+                    t2 -= (float)(int)t2;
+                ubo->diffuseMatrixS[0] = stageRegs[tex.matrix[0][0]];
+                ubo->diffuseMatrixS[1] = stageRegs[tex.matrix[0][1]];
+                ubo->diffuseMatrixS[2] = 0.f;
+                ubo->diffuseMatrixS[3] = s2;
+                ubo->diffuseMatrixT[0] = stageRegs[tex.matrix[1][0]];
+                ubo->diffuseMatrixT[1] = stageRegs[tex.matrix[1][1]];
+                ubo->diffuseMatrixT[2] = 0.f;
+                ubo->diffuseMatrixT[3] = t2;
+            }
+            else
+            {
+                ubo->diffuseMatrixS[0] = 1.f;
+                ubo->diffuseMatrixS[1] = 0.f;
+                ubo->diffuseMatrixS[2] = 0.f;
+                ubo->diffuseMatrixS[3] = 0.f;
+                ubo->diffuseMatrixT[0] = 0.f;
+                ubo->diffuseMatrixT[1] = 1.f;
+                ubo->diffuseMatrixT[2] = 0.f;
+                ubo->diffuseMatrixT[3] = 0.f;
+            }
+            // gbuffer_clip.frag compares the raw sampled alpha against a single threshold
+            // (no stage-alpha-scale multiply in the shader); fold depth_clip.frag's
+            // "sampledAlpha * alphaScale <= threshold" into an equivalent single value
+            // here instead, so the two shaders discard on the exact same pixels.
+            // alphaScale > 0 is guaranteed by the caller (MC_PERFORATED loop skips <= 0).
+            ubo->alphaTestThreshold = useClipPipeline ? (alphaThreshold / alphaScale) : alphaThreshold;
+            ubo->specF0Scale = r_rtSpecF0Scale.GetFloat();
+            ubo->specF0Gamma = r_rtSpecF0Gamma.GetFloat();
+            ubo->_pad0 = 0.f;
+
+            VkDescriptorImageInfo bumpInfo = {}, specInfo = {};
+            if (!VK_Image_GetDescriptorInfo(bumpImage, &bumpInfo))
+                VK_Image_GetFallbackDescriptorInfo(&bumpInfo);
+            if (!VK_Image_GetDescriptorInfo(specImage, &specInfo))
+                VK_Image_GetFallbackDescriptorInfo(&specInfo);
+
+            VkDescriptorBufferInfo bufInfo = {};
+            bufInfo.buffer = uboRings[vk.currentFrame].buffer;
+            bufInfo.offset = uboOffset;
+            bufInfo.range = sizeof(VkGBufferUBO);
+
+            // Opaque pipeline's shader has no static reference to binding 2 (diffuse),
+            // so only push it for the clip variant — see gbuffer.frag's comment.
+            VkWriteDescriptorSet writes[4] = {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstBinding = 0;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].descriptorCount = 1;
+            writes[0].pBufferInfo = &bufInfo;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstBinding = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].descriptorCount = 1;
+            writes[1].pImageInfo = &bumpInfo;
+
+            VkDescriptorImageInfo diffuseInfo = {};
+            uint32_t numWrites = 2;
+            if (useClipPipeline)
+            {
+                if (!alphaStage || !alphaStage->texture.image ||
+                    !VK_Image_GetDescriptorInfo(alphaStage->texture.image, &diffuseInfo))
+                    VK_Image_GetFallbackDescriptorInfo(&diffuseInfo);
+                writes[numWrites].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[numWrites].dstBinding = 2;
+                writes[numWrites].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[numWrites].descriptorCount = 1;
+                writes[numWrites].pImageInfo = &diffuseInfo;
+                numWrites++;
+            }
+            writes[numWrites].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[numWrites].dstBinding = 3;
+            writes[numWrites].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[numWrites].descriptorCount = 1;
+            writes[numWrites].pImageInfo = &specInfo;
+            numWrites++;
+
+            VkPipeline pipe = useClipPipeline ? vkPipes.gbufferClipPipeline : vkPipes.gbufferPipeline;
+            if (pipe != activePipeline)
+            {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+                activePipeline = pipe;
+            }
+            vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.gbufferLayout, 0, numWrites,
+                                      writes);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &vertBuf, &vertOffset);
+            vkCmdBindIndexBuffer(cmd, dataRings[vk.currentFrame].buffer, idxOffset, idxType);
+            vkCmdDrawIndexed(cmd, (uint32_t)geo->numIndexes, 1, 0, 0, 0);
+        };
+
         // Apply polygon offset for decal/overlay surfaces (mirrors GL qglPolygonOffset).
         // r_offsetUnits (-600 by default) * material polygonOffset value pulls the depth
         // toward the camera so co-planar decals pass the LEQUAL interaction test.
@@ -2559,9 +2761,14 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
         if (coverage == MC_OPAQUE)
         {
-            VkDescriptorImageInfo imgInfo = {};
-            VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-            drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+            if (useGBuffer)
+                drawGBufferSurf(false, NULL, NULL, 0.f, 1.f);
+            else
+            {
+                VkDescriptorImageInfo imgInfo = {};
+                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+            }
 
             // GL parity guard: black out non-mirror opaque surfaces so prior subview
             // color only remains visible through mirror geometry.
@@ -2584,26 +2791,43 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 if (alphaScale <= 0.f)
                     continue;
 
-                VkDescriptorImageInfo imgInfo = {};
-                if (!pStage->texture.image || !VK_Image_GetDescriptorInfo(pStage->texture.image, &imgInfo))
-                    VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-
                 float threshold = regs[pStage->alphaTestRegister];
-                drawDepthSurf(imgInfo, threshold, true, pStage, regs, alphaScale);
+                if (useGBuffer)
+                    drawGBufferSurf(true, pStage, regs, threshold, alphaScale);
+                else
+                {
+                    VkDescriptorImageInfo imgInfo = {};
+                    if (!pStage->texture.image || !VK_Image_GetDescriptorInfo(pStage->texture.image, &imgInfo))
+                        VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                    drawDepthSurf(imgInfo, threshold, true, pStage, regs, alphaScale);
+                }
                 didDraw = true;
             }
             // If no alpha-test stage was active, fall back to opaque depth write.
             if (!didDraw)
             {
-                VkDescriptorImageInfo imgInfo = {};
-                VK_Image_GetFallbackDescriptorInfo(&imgInfo);
-                drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+                if (useGBuffer)
+                    drawGBufferSurf(false, NULL, NULL, 0.f, 1.f);
+                else
+                {
+                    VkDescriptorImageInfo imgInfo = {};
+                    VK_Image_GetFallbackDescriptorInfo(&imgInfo);
+                    drawDepthSurf(imgInfo, 0.f, false, NULL, NULL, 1.f);
+                }
             }
 
             // GL parity: perforated surfaces also black out prior subview color in depth prepass.
             if (guardSubviewColor && mat->GetSort() != SS_SUBVIEW)
                 drawSubviewGuardBlack();
         }
+    }
+
+    // Breadcrumb for the new Stage 3.5 mechanism (see docs/plans/gbuffer_normal_pass.md) —
+    // per project convention of logging new mechanisms immediately, not after they break.
+    if (useGBuffer && r_vkLogRT.GetInteger() >= 1 && gbufSurfCount > 0)
+    {
+        common->Printf("VK GBUFFER: %d surfaces (bump found=%d fallback=%d, spec found=%d fallback=%d)\n",
+                       gbufSurfCount, gbufBumpFound, gbufBumpFallback, gbufSpecFound, gbufSpecFallback);
     }
 }
 
