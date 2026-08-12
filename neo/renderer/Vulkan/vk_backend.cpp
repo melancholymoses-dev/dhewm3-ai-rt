@@ -4462,6 +4462,26 @@ void VK_RB_DrawView(const void *data)
     {
         vkCmdEndRenderPass(cmdBuf);
 
+        // Stage 3.5 (see docs/plans/gbuffer_normal_pass.md): gbufNormal was just
+        // written by the depth prepass above; the reflection rgen (and later AO/GI)
+        // needs to sample it. Unlike the depth barrier pattern in
+        // VK_RT_DispatchReflections (round-tripped per-dispatch), this is done once
+        // here for the whole RT block below, since multiple RT passes will read it.
+        if (vk.gbufferSupported)
+        {
+            vkReflBuffer_t &gbuf = vkRT.gbufNormal[vk.currentFrame];
+            VkImageMemoryBarrier gbufToRead = {};
+            gbufToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            gbufToRead.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            gbufToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            gbufToRead.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            gbufToRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            gbufToRead.image = gbuf.image;
+            gbufToRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &gbufToRead);
+        }
+
         // Clear shadow mask to 1.0 (fully lit) before any per-light dispatches.
         // Without this, pixels not covered by any light this frame retain stale shadow
         // values from the previous frame and appear as a stuck black afterimage.
@@ -4586,6 +4606,25 @@ void VK_RB_DrawView(const void *data)
 
             VK_SetRenderStage("RT_VolBilateral");
             VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
+        }
+
+        // Stage 3.5: restore gbufNormal to COLOR_ATTACHMENT_OPTIMAL before the resume
+        // render pass reopens — its declared initialLayout for this attachment (Step 2
+        // in the plan) expects that, matching the depth-barrier round-trip symmetry.
+        if (vk.gbufferSupported)
+        {
+            vkReflBuffer_t &gbuf = vkRT.gbufNormal[vk.currentFrame];
+            VkImageMemoryBarrier gbufToAttach = {};
+            gbufToAttach.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            gbufToAttach.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            gbufToAttach.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            gbufToAttach.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            gbufToAttach.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            gbufToAttach.image = gbuf.image;
+            gbufToAttach.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1,
+                                 &gbufToAttach);
         }
 
         VK_SetRenderStage("ResumeRenderPass");
