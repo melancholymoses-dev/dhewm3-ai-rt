@@ -4,7 +4,11 @@
 dhewm3-rt Vulkan — Reflection ray generation shader.
 
 For every non-sky pixel:
-  1. Reconstruct world-space position and normal.
+  1. Reconstruct world-space position; sample the G-buffer normal/F0
+     (Stage 3.5, see docs/plans/gbuffer_normal_pass.md) written by the depth
+     prepass — the bump-mapped shading normal, not the flat geometric normal
+     rt_ReconstructNormal derives from depth gradients. Early-out on pixels
+     with no glass in front and F0 ~ 0 (skips the reflect ray + shadow rays).
   2. Compute the mirror-reflected view direction.
   3. Trace rays using a short bounce loop (max 2 iterations).
      - On an opaque hit, rchit writes colour + transmittance=0 → stop.
@@ -12,7 +16,9 @@ For every non-sky pixel:
        so the loop fires a continuation ray straight through the glass.
      - On a miss, rmiss writes sky colour + transmittance=0 → stop.
   4. Accumulate colour weighted by per-segment transmittance, write to
-     the reflection RGBA16F buffer.
+     the reflection RGBA16F buffer. Alpha carries glassWeight for glass
+     pixels, or the surface F0 for opaque pixels (so the composite pass
+     doesn't need a second G-buffer fetch).
 
 The interaction fragment shader samples this buffer and blends the result
 into the specular contribution.
@@ -32,6 +38,12 @@ of the original Doom 3 GPL Source Code release.
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba16f) uniform image2D reflImage;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+// G-buffer normal/F0 (Stage 3.5): rgb = world normal * 0.5 + 0.5, a = F0.
+// a == 0 means "no data" (gbufferSupported false, or sky/translucent geometry) —
+// fall back to rt_ReconstructNormal. Sampled with texelFetch, so the bound
+// sampler's filter/wrap state is irrelevant; always valid (real image when
+// vk.gbufferSupported, a 1x1 null image with a=0 otherwise — see VK_RT_DispatchReflections).
+layout(set = 0, binding = 5) uniform sampler2D gbufNormalSampler;
 
 layout(set = 0, binding = 3) uniform ReflParams {
     mat4   invViewProj;
@@ -92,6 +104,21 @@ void main()
         1               // payload location 1
     );
 
+    // G-buffer normal/F0 (Stage 3.5). Fetched before the glass check because the
+    // early-out below needs f0, but glass reflections themselves don't depend on it.
+    vec4  gbuf = texelFetch(gbufNormalSampler, coord, 0);
+    float f0   = gbuf.a;
+
+    // EARLY-OUT: opaque, non-reflective pixel with no glass in front of it — skip
+    // the reflect ray + shadow rays entirely. This is the perf win the G-buffer
+    // exists for. Placed after the glass probe: glass reflections don't depend on
+    // surface F0, so a glass hit must still fall through to the trace loop below.
+    if (glassProbe.hitT <= 0.01 && f0 < 1.0 / 255.0)
+    {
+        imageStore(reflImage, coord, vec4(0.0));
+        return;
+    }
+
     vec3 reflOrigin, reflNormal;
     if (glassProbe.hitT > 0.01)
     {
@@ -99,9 +126,19 @@ void main()
         reflOrigin = glassProbe.hitPos;
         reflNormal = glassProbe.hitNormal;
     }
+    else if (gbuf.a > 0.0)
+    {
+        // Bump-mapped shading normal from the depth prepass — fixes flat-polygon
+        // surfaces (e.g. grate floors) that rt_ReconstructNormal's depth-gradient
+        // fallback reflects incorrectly (see docs/plans/gbuffer_normal_pass.md).
+        reflNormal = normalize(gbuf.rgb * 2.0 - 1.0);
+        reflOrigin = worldPos;
+    }
     else
     {
-        // No glass — reconstruct normal from depth gradients of the opaque surface.
+        // No glass, no G-buffer data (gbufferSupported false at runtime, or sky/
+        // translucent geometry the prepass doesn't write) — reconstruct from depth
+        // gradients as before this feature existed.
         reflNormal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, -viewDir);
         reflOrigin = worldPos;
     }
@@ -148,7 +185,7 @@ void main()
 
     // Encode Schlick Fresnel for the camera-facing glass interface in alpha.
     // The overlay pass uses this as a physically-motivated glass weight.
-    // Exaggerated reflections off glass. 
+    // Exaggerated reflections off glass.
     float glassWeight = 0.0;
     if (glassProbe.hitT > 0.01)
     {
@@ -157,5 +194,8 @@ void main()
         float oneMinusCos = 1.0 - cosTheta;
         glassWeight = GLASS_F0 + (1.0 - GLASS_F0) * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos * oneMinusCos;
     }
-    imageStore(reflImage, coord, vec4(accum * params.reflBlend, glassWeight));
+    // Opaque pixels carry surface F0 in alpha instead, so the composite pass
+    // (Step 8) doesn't need a second G-buffer fetch to compute Fresnel.
+    float outAlpha = (glassProbe.hitT > 0.01) ? glassWeight : f0;
+    imageStore(reflImage, coord, vec4(accum * params.reflBlend, outAlpha));
 }
