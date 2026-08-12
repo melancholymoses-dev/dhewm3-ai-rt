@@ -4673,6 +4673,12 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
+        // Reflection composite (Stage 3.5 / Step 8, see docs/plans/gbuffer_normal_pass.md):
+        // blend reflBuffer onto the framebuffer once per view, replacing the disabled
+        // per-light reflection block in interaction.frag. Same resume-pass slot as GI.
+        VK_SetRenderStage("Refl_Composite");
+        VK_RT_CompositeReflections(cmdBuf);
+
         VK_SetRenderStage("Vol_Composite");
         const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
         int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
