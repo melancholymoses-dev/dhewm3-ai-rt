@@ -35,7 +35,9 @@ layout(set=0, binding=5) uniform sampler2D u_SpecularMap;     // specular intens
 layout(set=0, binding=6) uniform sampler2D u_SpecularTable;   // NdotH -> specular power
 layout(set=0, binding=7) uniform sampler2D u_ShadowMask;      // RT shadow mask (1=lit, 0=shadowed)
 layout(set=0, binding=8) uniform sampler2D u_AOMap;           // RT AO mask (1=unoccluded, 0=occluded)
-layout(set=0, binding=9) uniform sampler2D u_ReflectionMap;   // RT reflection buffer (RGBA16F)
+// binding=9 (RT reflection buffer) removed: reflections are now composited by the
+// dedicated refl_composite.frag fullscreen pass (Stage 3.5, Step 8 — see
+// docs/plans/gbuffer_normal_pass.md), not sampled per-light here.
 
 // Shared UBO — binding 0, both vertex and fragment stages.
 // Field order matches VkInteractionUBO in vk_pipeline.cpp (std140).
@@ -66,7 +68,8 @@ layout(set=0, binding=0) uniform InteractionParams {
     int   u_UseShadowMask;
     int   u_UseAO;       // 1 when RT AO mask is valid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
-    int   u_UseReflections;      // 1 when RT reflection buffer is valid this frame
+    int   u_UseReflections;      // unused (Stage 3.5, Step 8) — kept so this block's
+                                  // layout still matches VkInteractionUBO in vk_pipeline.cpp
     float u_SpecF0Scale;         // r_rtSpecF0Scale — multiplier for specular→F0 remap
     float u_SpecF0Gamma;         // r_rtSpecF0Gamma — power exponent for specular→F0 remap
     int   u_ReflectionDebugMode; // r_rtReflectionDebugMode — 0=off, 1=Fresnel greyscale
@@ -115,10 +118,10 @@ void main() {
     // almost everywhere. A power-curve remap gates non-trivial F0 to only the
     // brightest texels (actual metal / wet surfaces), preventing the hall-of-mirrors
     // look that occurs when the reflection buffer is enabled on ordinary surfaces.
-    // Only computed when a consumer exists (uniform branch): the reflection blend
-    // or the debug visualization below.
+    // Only computed for the debug visualization below — since Stage 3.5 (Step 8)
+    // moved the real reflection blend to refl_composite.frag, this is its only consumer.
     float fresnel = 0.0;
-    if (u_UseReflections != 0 || u_ReflectionDebugMode == 1) {
+    if (u_ReflectionDebugMode == 1) {
         float specLum = dot(specMap, vec3(0.299, 0.587, 0.114));
         float normF0  = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
         fresnel = normF0 + (1.0 - normF0) * pow(1.0 - NdotV, 5.0);
@@ -142,31 +145,17 @@ void main() {
     }
 
     // --- RT reflections ---
-    // Disabled until Stage 3.5 (G-buffer normal pass) is implemented.
-    // rt_ReconstructNormal uses depth gradients → returns the geometric polygon normal,
-    // not the bump-mapped shading normal. Flat-polygon grate floors show the ceiling
-    // reflected back at the player regardless of Fresnel tuning, because at grazing
-    // NdotV the Schlick term approaches 1.0 regardless of specular map content.
-    // Stage 3.5 writes the bump-mapped shading normal to a G-buffer attachment so
-    // reflect_ray.rgen can use the correct normal for the reflection direction.
-    // After 3.5 lands, re-enable by uncommenting the block below.
-    vec3 reflColor = vec3(0.0);
-    /*
-    if (u_UseReflections != 0) {
-        vec2 reflUV     = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
-        vec3 reflSample = texture(u_ReflectionMap, reflUV).rgb;
-        reflColor = reflSample * fresnel;
-    }
-    */
+    // Composited by the dedicated refl_composite.frag fullscreen pass (Stage 3.5,
+    // Step 8 — see docs/plans/gbuffer_normal_pass.md), once per view instead of
+    // once per light here. That pass also fixes the flat-polygon reflection-direction
+    // bug the old per-light block had: it uses the bump-mapped G-buffer normal from
+    // reflect_ray.rgen instead of rt_ReconstructNormal's depth-gradient geometric normal.
 
     // --- RT global illumination (Phase 6.1) ---
     // GI is now applied by the dedicated VK_RT_CompositeGI fullscreen pass (gi_composite.frag)
 
     // --- Combine ---
-    // Reflection is added independently of the light attenuation/shadow so that
-    // reflections remain visible even on surfaces in shadow (environment light,
-    // not per-source light).
-    vec3 color = (diffuse * ao + specular) * attenuation * shadow + reflColor;
+    vec3 color = (diffuse * ao + specular) * attenuation * shadow;
     color *= vary_Color.rgb;
 
     color *= u_LightScale;
@@ -175,7 +164,9 @@ void main() {
 
     // --- Debug: Fresnel visualisation ---
     // Mode 1: output the Fresnel term as greyscale so you can walk the level and
-    // confirm which surfaces will receive reflections before Stage 3 enables them.
+    // confirm which surfaces will receive reflections. This is the pre-remap
+    // specular→F0 curve only (no grazing-angle clamp); see modes 2-4 (reflect_ray.rgen)
+    // for the actual G-buffer data the reflection pass consumes.
     // Concrete/cloth/skin should read near-black; metal/wet/glass bright at grazing.
     if (u_ReflectionDebugMode == 1) {
         fragColor = vec4(vec3(fresnel), 1.0);

@@ -43,23 +43,42 @@ of the original Doom 3 GPL Source Code release.
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "10000.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 10000.0)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.5", CVAR_RENDERER | CVAR_FLOAT,
-                                  "Scale factor for reflection contribution in the interaction shader.\n"
-                                  "Lower values compensate for the multi-light accumulation artifact.\n"
-                                  "Default 1.0 — decrease if reflections look overbright in heavy-light areas.");
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+                                  "Scale factor for reflection radiance, applied in reflect_ray.rgen.\n"
+                                  "Default dropped from 1.5 to 1.0 when refl_composite.frag (Step 8) replaced the\n"
+                                  "per-light interaction.frag blend: 1.5 was compensating for that pass's N-lights\n"
+                                  "over-brightness bug, which the single-pass composite no longer has.\n"
+                                  "Decrease further if reflections still look overbright.");
 
 idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Scale factor applied after the power-curve remap of specular-map luminance to F0.\n"
                        "Reduces how much even bright specular texels contribute to reflections.\n"
-                       "Tune with r_rtReflectionDebugMode 1 to see the resulting Fresnel mask.");
+                       "Tune with r_rtReflectionDebugMode 1 or 3 to see the resulting F0/Fresnel mask.");
 
 idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "2.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Power exponent for remapping raw specular-map luminance to physically plausible F0.\n"
                        "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
-                       "Tune with r_rtReflectionDebugMode 1.");
+                       "Tune with r_rtReflectionDebugMode 1 or 3.");
 
-idCVar r_rtReflectionDebugMode("r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
-                               "0 = off; 1 = output Fresnel term as greyscale (tune r_rtSpecF0Scale/Gamma before enabling reflections).");
+idCVar r_rtSpecGrazingMax("r_rtSpecGrazingMax", "0.35", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                          "Clamp on the grazing-angle Fresnel lobe for low-F0 (rough) surfaces, applied in\n"
+                          "reflect_ray.rgen (Step 8). Real mirror-like grazing Fresnel (approaching 1.0 at\n"
+                          "NdotV~0) assumes a perfectly smooth surface; rough surfaces never reach it because of\n"
+                          "shadowing/masking this single-F0 approximation doesn't otherwise capture. Surfaces at\n"
+                          "F0 >= ~0.7 (true metal) are unaffected — the clamp only pulls in low-F0 grazing highlights.");
+
+idCVar r_rtReflectionDebugMode(
+    "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "0 = off.\n"
+    "1 = output Fresnel term as greyscale (interaction.frag; tune r_rtSpecF0Scale/Gamma).\n"
+    "2 = output G-buffer world normal as RGB (reflect_ray.rgen) — a grate floor should look\n"
+    "    bumpy/detailed, not flat single-colour; silhouette edges must match geometry.\n"
+    "3 = output G-buffer F0 (alpha) greyscale (reflect_ray.rgen) — most of the scene near-black,\n"
+    "    metal/wet trim grey, nothing solid white.\n"
+    "4 = tint pixels using the rt_ReconstructNormal fallback (G-buffer alpha == 0) magenta\n"
+    "    (reflect_ray.rgen) — should be only sky/translucents once the prepass covers the scene.\n"
+    "Modes 2-4 require r_rtReflections 1 — they ride on the reflection ray dispatch and are\n"
+    "displayed via refl_composite.frag with blending disabled (replace, not add).");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -69,7 +88,9 @@ idCVar r_rtReflectionDebugMode("r_rtReflectionDebugMode", "0", CVAR_RENDERER | C
 //   uint   frameIndex   offset 68  size  4
 //   ivec2  screenSize   offset 72  size  8  (ivec2 std140 align=8 → 72 is fine)
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
-//   pad                   offset 84  size  12
+//   float  grazingMax     offset 84  size  4  (r_rtSpecGrazingMax, Step 8)
+//   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
+//   pad                   offset 92  size  4
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
@@ -80,8 +101,10 @@ struct ReflParamsUBO
     uint32_t frameIndex;
     int32_t screenWidth;
     int32_t screenHeight;
-    float reflBlend; // r_rtReflectionBlend — baked into imageStore in rgen
-    float pad[3];
+    float reflBlend;   // r_rtReflectionBlend — baked into imageStore in rgen
+    float grazingMax;  // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
+    int32_t debugMode; // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
+    float pad[1];
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -773,6 +796,9 @@ static void VK_RT_InitReflPipeline(void)
     common->Printf("VK RT Refl: pipeline initialized\n");
 }
 
+// Defined further below, after VK_RT_DispatchReflections.
+static void VK_RT_InitReflCompositePipeline(void);
+
 // ---------------------------------------------------------------------------
 // VK_RT_InitReflections (public entry)
 // ---------------------------------------------------------------------------
@@ -781,6 +807,10 @@ void VK_RT_InitReflections(void)
 {
     VK_RT_InitReflPipeline();
     VK_RT_ResizeReflections(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    // Step 8: only when vk.gbufferSupported — reflect_ray.rgen's Fresnel/debug-mode
+    // work (which this composite pass displays) needs gbufNormal to exist.
+    if (vk.gbufferSupported)
+        VK_RT_InitReflCompositePipeline();
 }
 
 // ---------------------------------------------------------------------------
@@ -823,6 +853,32 @@ void VK_RT_ShutdownReflections(void)
     {
         vkDestroySampler(vk.device, vkRT.reflSampler, NULL);
         vkRT.reflSampler = VK_NULL_HANDLE;
+    }
+    // Composite pipeline (Step 8)
+    if (vkRT.reflCompositeDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.reflCompositeDescPool, NULL);
+        vkRT.reflCompositeDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflCompositeDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.reflCompositeDescLayout, NULL);
+        vkRT.reflCompositeDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflCompositePipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.reflCompositePipeline, NULL);
+        vkRT.reflCompositePipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflCompositeDebugPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.reflCompositeDebugPipeline, NULL);
+        vkRT.reflCompositeDebugPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.reflCompositeLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.reflCompositeLayout, NULL);
+        vkRT.reflCompositeLayout = VK_NULL_HANDLE;
     }
     VK_RT_DestroyNullLightSsbo();
     VK_RT_DestroyNullGbufNormal();
@@ -940,6 +996,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.screenWidth = (int32_t)rb.width;
     ubo.screenHeight = (int32_t)rb.height;
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
+    ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());
+    ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).
@@ -1104,4 +1162,246 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Refl: dispatch complete\n");
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_InitReflCompositePipeline (Step 8, see docs/plans/gbuffer_normal_pass.md)
+// Fullscreen pass that blends reflBuffer onto the framebuffer once per view,
+// replacing the disabled per-light reflection block in interaction.frag.
+// Deliberately as simple as VK_RT_InitGICompositePipeline's pipeline (single
+// sampler binding): the Schlick Fresnel term and debug-mode visualization both
+// live in reflect_ray.rgen instead of here — see refl_composite.frag's header
+// comment for why (depth can't be sampled while bound read-write by the render
+// pass this composite draws inside).
+//
+// Two pipeline objects share this layout/shader: reflCompositePipeline (additive,
+// normal operation) and reflCompositeDebugPipeline (blend disabled) selected by
+// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-4, so the debug
+// visualization baked into reflBuffer by the rgen replaces the lit scene instead
+// of adding onto it.
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitReflCompositePipeline(void)
+{
+    // --- Descriptor set layout: 1 sampler binding ---
+    VkDescriptorSetLayoutBinding binding = {};
+    binding.binding = 0;
+    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binding.descriptorCount = 1;
+    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &binding;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflCompositeDescLayout));
+
+    // --- Pipeline layout ---
+    VkPipelineLayoutCreateInfo plInfo = {};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts = &vkRT.reflCompositeDescLayout;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.reflCompositeLayout));
+
+    // --- Shader modules — share gi_composite.vert.spv (generic fullscreen triangle) ---
+    VkShaderModule vertMod = VK_LoadSPIRV("glprogs/glsl/gi_composite.vert.spv");
+    VkShaderModule fragMod = VK_LoadSPIRV("glprogs/glsl/refl_composite.frag.spv");
+    if (vertMod == VK_NULL_HANDLE || fragMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Refl: failed to load composite shaders — composite pass disabled");
+        if (vertMod != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, vertMod, NULL);
+        if (fragMod != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, fragMod, NULL);
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertMod;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragMod;
+    stages[1].pName = "main";
+
+    // No vertex input — triangle is generated from gl_VertexIndex in the vert shader.
+    VkPipelineVertexInputStateCreateInfo vertInput = {};
+    vertInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msaa = {};
+    msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // No depth test and no depth write — this is a post-geometry pass, same as GI/vol composite.
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+
+    VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &msaa;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = vkRT.reflCompositeLayout;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
+    pipelineInfo.subpass = 0;
+
+    // --- Additive variant (normal operation) ---
+    // Additive blend: reflection radiance is added on top of whatever is already
+    // in the framebuffer. Alpha: ZERO+ONE so we don't disturb the alpha channel.
+    VkPipelineColorBlendAttachmentState addBlend = {};
+    addBlend.blendEnable = VK_TRUE;
+    addBlend.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    addBlend.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    addBlend.colorBlendOp = VK_BLEND_OP_ADD;
+    addBlend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    addBlend.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    addBlend.alphaBlendOp = VK_BLEND_OP_ADD;
+    addBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState addAttachments[2] = {addBlend, {}};
+    VK_FillSecondBlendAttachment(&addAttachments[1]);
+
+    VkPipelineColorBlendStateCreateInfo addBlendState = {};
+    addBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    addBlendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    addBlendState.pAttachments = addAttachments;
+    pipelineInfo.pColorBlendState = &addBlendState;
+
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.reflCompositePipeline));
+
+    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-4's
+    // visualization (baked into reflBuffer by the rgen) isn't muddied by additive
+    // blending onto the already-lit scene. ---
+    VkPipelineColorBlendAttachmentState replaceBlend = {};
+    replaceBlend.blendEnable = VK_FALSE;
+    replaceBlend.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendAttachmentState replaceAttachments[2] = {replaceBlend, {}};
+    VK_FillSecondBlendAttachment(&replaceAttachments[1]);
+
+    VkPipelineColorBlendStateCreateInfo replaceBlendState = {};
+    replaceBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    replaceBlendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    replaceBlendState.pAttachments = replaceAttachments;
+    pipelineInfo.pColorBlendState = &replaceBlendState;
+
+    VK_CHECK(
+        vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.reflCompositeDebugPipeline));
+
+    vkDestroyShaderModule(vk.device, vertMod, NULL);
+    vkDestroyShaderModule(vk.device, fragMod, NULL);
+
+    // --- Descriptor pool and sets (one per frame in flight) ---
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.reflCompositeDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.reflCompositeDescLayout;
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.reflCompositeDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.reflCompositeDescSets));
+
+    common->Printf("VK RT Refl: composite pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_CompositeReflections (public)
+// Additively blends the reflection buffer onto the current framebuffer using a
+// fullscreen triangle. Must be called inside the main render pass, after
+// VK_RT_CompositeGI. Skips glass pixels (negative alpha sentinel, written by
+// reflect_ray.rgen) — those are composited separately by glass_refl_overlay.frag.
+// ---------------------------------------------------------------------------
+
+void VK_RT_CompositeReflections(VkCommandBuffer cmd)
+{
+    if (!r_useRayTracing.GetBool() || !r_rtReflections.GetBool())
+        return;
+    if (vkRT.reflCompositePipeline == VK_NULL_HANDLE)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+    vkReflBuffer_t &rb = vkRT.reflBuffer[frameIdx];
+    if (rb.image == VK_NULL_HANDLE || vkRT.reflSampler == VK_NULL_HANDLE)
+        return;
+
+    // Update the descriptor set for this frame slot. The reflection image may
+    // have been recreated (resize), so always write it before drawing.
+    VkDescriptorImageInfo imgInfo = {};
+    imgInfo.sampler = vkRT.reflSampler;
+    imgInfo.imageView = rb.view;
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = vkRT.reflCompositeDescSets[frameIdx];
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imgInfo;
+    vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
+
+    const int debugMode = r_rtReflectionDebugMode.GetInteger();
+    const bool debugActive = (debugMode >= 2 && debugMode <= 4);
+    VkPipeline pipe = debugActive ? vkRT.reflCompositeDebugPipeline : vkRT.reflCompositePipeline;
+    if (pipe == VK_NULL_HANDLE)
+        return;
+
+    // Viewport and scissor are inherited from the caller — see VK_RT_CompositeGI's
+    // identical note: do not override them here.
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.reflCompositeLayout, 0, 1,
+                            &vkRT.reflCompositeDescSets[frameIdx], 0, NULL);
+
+    // 3 vertices, no vertex buffer — the vert shader generates the triangle from gl_VertexIndex.
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Refl: composite drawn frame=%d slot=%d debugMode=%d\n", tr.frameCount, frameIdx,
+                       debugMode);
 }

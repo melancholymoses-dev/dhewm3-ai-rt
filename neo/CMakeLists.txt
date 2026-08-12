@@ -726,6 +726,7 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/glass_refl_overlay.frag
 	renderer/glsl/interaction.vert
 	renderer/glsl/interaction.frag
+	renderer/glsl/refl_composite.frag
 	renderer/glsl/shadow.vert
 	renderer/glsl/shadow.frag
 	renderer/glsl/skybox.vert

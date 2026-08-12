@@ -382,6 +382,20 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR reflHitRegion;
     VkStridedDeviceAddressRegionKHR reflCallRegion;
 
+    // Fullscreen composite pipeline (Step 8, see docs/plans/gbuffer_normal_pass.md) —
+    // additively blends reflBuffer onto the framebuffer once per view, replacing the
+    // disabled per-light reflection block in interaction.frag. Only created when
+    // vk.gbufferSupported (the Fresnel/debug-mode math this replaces lives in
+    // reflect_ray.rgen, which needs gbufNormal). reflCompositeDebugPipeline is the
+    // same shader with blending disabled, selected when r_rtReflectionDebugMode is
+    // 2-4 so the visualization replaces rather than adds onto the lit scene.
+    VkPipeline              reflCompositePipeline;
+    VkPipeline              reflCompositeDebugPipeline;
+    VkPipelineLayout        reflCompositeLayout;
+    VkDescriptorSetLayout   reflCompositeDescLayout;
+    VkDescriptorPool        reflCompositeDescPool;
+    VkDescriptorSet         reflCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -597,6 +611,13 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height);
 // this function transitions to READ_ONLY_OPTIMAL and back.
 // Output: reflBuffer[currentFrame] is ready for FRAGMENT sampling when this returns.
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Additively composite reflBuffer onto the framebuffer (Step 8, see
+// docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
+// pass, after VK_RT_CompositeGI. No-op if vk.gbufferSupported is false.
+// Selects a blend-disabled variant when r_rtReflectionDebugMode is 2-4, so the
+// G-buffer visualization replaces rather than adds onto the lit scene.
+void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
