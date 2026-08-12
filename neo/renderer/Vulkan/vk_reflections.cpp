@@ -138,6 +138,127 @@ static void VK_RT_DestroyNullLightSsbo()
 }
 
 // ---------------------------------------------------------------------------
+// Null G-buffer normal/F0 image (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
+// 1x1 image cleared to (0.5, 0.5, 0.5, 0.0), bound to gbufNormalSampler
+// (binding 5) whenever the real per-frame gbufNormal image doesn't exist
+// (vk.gbufferSupported false). Alpha 0 is the same "no data" sentinel the real
+// image uses, so reflect_ray.rgen falls back to rt_ReconstructNormal exactly
+// as it did before this feature existed.
+// ---------------------------------------------------------------------------
+static VkImage s_nullGbufImage = VK_NULL_HANDLE;
+static VkDeviceMemory s_nullGbufMemory = VK_NULL_HANDLE;
+static VkImageView s_nullGbufView = VK_NULL_HANDLE;
+
+static void VK_RT_CreateNullGbufNormal(void)
+{
+    if (s_nullGbufImage != VK_NULL_HANDLE)
+        return;
+
+    VkImageCreateInfo imgInfo = {};
+    imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgInfo.imageType = VK_IMAGE_TYPE_2D;
+    imgInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imgInfo.extent = {1, 1, 1};
+    imgInfo.mipLevels = 1;
+    imgInfo.arrayLayers = 1;
+    imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &s_nullGbufImage));
+
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(vk.device, s_nullGbufImage, &memReq);
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = VK_FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &s_nullGbufMemory));
+    VK_CHECK(vkBindImageMemory(vk.device, s_nullGbufImage, s_nullGbufMemory, 0));
+
+    VkImageViewCreateInfo viewInfo = {};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = s_nullGbufImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &s_nullGbufView));
+
+    // One-time transition + clear, same manual command-buffer pattern as VK_RT_CreateReflImages.
+    VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
+    {
+        VkCommandBufferAllocateInfo cbAlloc = {};
+        cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbAlloc.commandPool = vk.commandPool;
+        cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbAlloc.commandBufferCount = 1;
+        VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
+
+        VkCommandBufferBeginInfo beginInfo = {};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(tmpCmd, &beginInfo);
+
+        VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+        VkImageMemoryBarrier toTransferDst = {};
+        toTransferDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toTransferDst.srcAccessMask = 0;
+        toTransferDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toTransferDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toTransferDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toTransferDst.image = s_nullGbufImage;
+        toTransferDst.subresourceRange = subRange;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &toTransferDst);
+
+        VkClearColorValue clearVal = {};
+        clearVal.float32[0] = 0.5f;
+        clearVal.float32[1] = 0.5f;
+        clearVal.float32[2] = 0.5f;
+        clearVal.float32[3] = 0.0f;
+        vkCmdClearColorImage(tmpCmd, s_nullGbufImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearVal, 1, &subRange);
+
+        VkImageMemoryBarrier toShaderRead = toTransferDst;
+        toShaderRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toShaderRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        toShaderRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0,
+                             0, NULL, 0, NULL, 1, &toShaderRead);
+
+        vkEndCommandBuffer(tmpCmd);
+
+        VkSubmitInfo submitInfo = {};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &tmpCmd;
+        VK_CHECK(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE));
+        vkQueueWaitIdle(vk.graphicsQueue);
+        vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
+    }
+}
+
+static void VK_RT_DestroyNullGbufNormal(void)
+{
+    if (s_nullGbufView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(vk.device, s_nullGbufView, NULL);
+        s_nullGbufView = VK_NULL_HANDLE;
+    }
+    if (s_nullGbufImage != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(vk.device, s_nullGbufImage, NULL);
+        s_nullGbufImage = VK_NULL_HANDLE;
+    }
+    if (s_nullGbufMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, s_nullGbufMemory, NULL);
+        s_nullGbufMemory = VK_NULL_HANDLE;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_CreateReflImages
 // Allocates per-frame RGBA16F reflection buffers at the given resolution.
 // ---------------------------------------------------------------------------
@@ -283,8 +404,13 @@ static void VK_RT_InitReflPipeline(void)
     // binding 3: reflection params UBO (dynamic)
     // binding 4: GI light SSBO — used by rchit to evaluate per-light irradiance
     //            at the reflection hit point without a full G-buffer.
+    // binding 5: G-buffer normal/F0 sampler (Stage 3.5, see
+    //            docs/plans/gbuffer_normal_pass.md). Always bound: the real
+    //            per-frame image when vk.gbufferSupported, otherwise a 1x1
+    //            null image (a=0, same "no data" sentinel) — see
+    //            VK_RT_CreateNullGbufNormal / VK_RT_DispatchReflections.
 
-    VkDescriptorSetLayoutBinding bindings[5] = {};
+    VkDescriptorSetLayoutBinding bindings[6] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -312,9 +438,14 @@ static void VK_RT_InitReflPipeline(void)
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR; // rchit reads lights
 
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 5;
+    layoutInfo.bindingCount = 6;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
@@ -594,10 +725,12 @@ static void VK_RT_InitReflPipeline(void)
                        (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
+    // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
+    // (binding 5, Stage 3.5) are both bound per set now.
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 2},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT}, // GI light SSBO
     };
@@ -635,6 +768,7 @@ static void VK_RT_InitReflPipeline(void)
     }
 
     VK_RT_CreateNullLightSsbo();
+    VK_RT_CreateNullGbufNormal();
 
     common->Printf("VK RT Refl: pipeline initialized\n");
 }
@@ -691,6 +825,7 @@ void VK_RT_ShutdownReflections(void)
         vkRT.reflSampler = VK_NULL_HANDLE;
     }
     VK_RT_DestroyNullLightSsbo();
+    VK_RT_DestroyNullGbufNormal();
     VK_RT_DestroyReflImages();
 }
 
@@ -752,8 +887,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p\n", tr.frameCount, frameIdx,
-                       rb.width, rb.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.reflPipeline);
+        common->Printf("VK RT Refl: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p gbuf=%s\n", tr.frameCount,
+                       frameIdx, rb.width, rb.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.reflPipeline,
+                       (vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE) ? "on" : "off");
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -813,22 +949,31 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkImageView s_lastReflStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastReflDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkBuffer s_lastReflLightSsbo[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastReflGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
     // Pick the GI light SSBO for this frame; fall back to the null SSBO if not ready.
     VkBuffer lightSsbo = (vkRT.giLightSsbo[frameIdx] != VK_NULL_HANDLE) ? vkRT.giLightSsbo[frameIdx] : s_nullLightSsbo;
 
+    // G-buffer normal/F0 (Stage 3.5): real per-frame image when supported, else the
+    // 1x1 null image (a=0, same "no data" sentinel) — see VK_RT_CreateNullGbufNormal.
+    // Both are kept in SHADER_READ_ONLY_OPTIMAL here: the real one by the barrier in
+    // vk_backend.cpp (Step 6), the null one permanently since nothing else writes it.
+    const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
+    VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : s_nullGbufView;
+
     const bool reflResourceChanged = (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
                                      (s_lastReflStorageView[frameIdx] != rb.view) ||
                                      (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
-                                     (s_lastReflLightSsbo[frameIdx] != lightSsbo);
+                                     (s_lastReflLightSsbo[frameIdx] != lightSsbo) ||
+                                     (s_lastReflGbufView[frameIdx] != gbufView);
 
     if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
     {
         common->Printf("VK RT Refl: forcing descriptor refresh due to in-frame resource change frame=%d slot=%d "
-                       "tlas=%p reflView=%p depthView=%p\n",
+                       "tlas=%p reflView=%p depthView=%p gbufView=%p\n",
                        tr.frameCount, frameIdx, (void *)vkRT.tlas[frameIdx].handle, (void *)rb.view,
-                       (void *)vk.depthSampledView);
+                       (void *)vk.depthSampledView, (void *)gbufView);
     }
 
     bool refreshSet = (vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || reflResourceChanged;
@@ -860,7 +1005,12 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         lightSsboInfo.offset = 0;
         lightSsboInfo.range = VK_WHOLE_SIZE;
 
-        VkWriteDescriptorSet writes[5] = {};
+        VkDescriptorImageInfo gbufInfo = {};
+        gbufInfo.sampler = vkRT.depthSampler; // texelFetch ignores filter/wrap state; reuse to avoid a new sampler
+        gbufInfo.imageView = gbufView;
+        gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet writes[6] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -897,12 +1047,20 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[4].pBufferInfo = &lightSsboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = ds;
+        writes[5].dstBinding = 5;
+        writes[5].descriptorCount = 1;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].pImageInfo = &gbufInfo;
+
+        vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
         s_lastReflDepthView[frameIdx] = vk.depthSampledView;
         s_lastReflLightSsbo[frameIdx] = lightSsbo;
+        s_lastReflGbufView[frameIdx] = gbufView;
     }
 
     // --- Dispatch ---
