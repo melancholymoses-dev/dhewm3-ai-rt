@@ -245,7 +245,38 @@ void VK_CreateRenderPass(void)
     hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     hdrDepth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VkAttachmentDescription hdrAttachments[2] = { hdrColor, hdrDepth };
+    // G-buffer normal/F0 attachment (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
+    // Only added when vk.gbufferSupported (independentBlend) — otherwise the HDR
+    // subpass stays single-colour-attachment, identical to before this feature.
+    // rgb = world-space bump normal * 0.5 + 0.5, a = normalized F0; clear value
+    // {0.5, 0.5, 0.5, 0.0} (null normal, F0 0) is set in vk_backend.cpp.
+    VkAttachmentDescription hdrNorm = {};
+    hdrNorm.format         = VK_FORMAT_R8G8B8A8_UNORM;
+    hdrNorm.samples        = VK_SAMPLE_COUNT_1_BIT;
+    hdrNorm.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrNorm.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    hdrNorm.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    hdrNorm.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // COLOR_ATTACHMENT_OPTIMAL, not UNDEFINED: VK_RT_CreateGBufferImages already
+    // transitions the image out of UNDEFINED at creation time, so this initial
+    // layout matches reality and the resume round-trip below is symmetric.
+    hdrNorm.initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrNorm.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference hdrColorRefs[2] = {
+        {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // hdrScene
+        {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // gbufNormal
+    };
+
+    VkSubpassDescription hdrSubpass = {};
+    hdrSubpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    hdrSubpass.colorAttachmentCount = vk.gbufferSupported ? 2 : 1;
+    hdrSubpass.pColorAttachments = hdrColorRefs;
+    hdrSubpass.pDepthStencilAttachment = &depthRef;
+    rpInfo.pSubpasses = &hdrSubpass;
+
+    VkAttachmentDescription hdrAttachments[3] = { hdrColor, hdrDepth, hdrNorm };
+    rpInfo.attachmentCount = vk.gbufferSupported ? 3 : 2;
     rpInfo.pAttachments = hdrAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPass));
 
@@ -259,7 +290,11 @@ void VK_CreateRenderPass(void)
     hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     hdrDepth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentDescription hdrResumeAttachments[2] = { hdrColor, hdrDepth };
+    hdrNorm.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
+    // initialLayout stays COLOR_ATTACHMENT_OPTIMAL — the barrier in vk_backend.cpp
+    // (Step 6) round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
+
+    VkAttachmentDescription hdrResumeAttachments[3] = { hdrColor, hdrDepth, hdrNorm };
     rpInfo.pAttachments = hdrResumeAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPassResume));
 }
@@ -554,7 +589,8 @@ void VK_RecreateSwapchain(int width, int height)
     }
 
     // Rebuild HDR framebuffers — they reference vk.depthView which was just recreated.
-    // Also resizes the hdrScene and tonemapResolve images to the new swapchain extent.
+    // Also resizes the hdrScene, tonemapResolve, and gbufNormal (Stage 3.5) images
+    // to the new swapchain extent.
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
 
     // Swapchain is healthy again; clear any minimized flag set during the

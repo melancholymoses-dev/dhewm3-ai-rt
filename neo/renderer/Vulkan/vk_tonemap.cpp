@@ -35,6 +35,7 @@ Code release.
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
+#include "renderer/Vulkan/vk_gbuffer.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -224,12 +225,15 @@ static void VK_RT_CreateHDRFramebuffers(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        VkImageView attachments[2] = {vkRT.hdrScene[i].view, vk.depthView};
+        // Attachment order must match vk.hdrRenderPass: {0: hdrScene, 1: depth, 2: gbufNormal}.
+        // vkRT.gbufNormal[i].view is NULL when !vk.gbufferSupported, but the framebuffer
+        // only reads the first attachmentCount entries, so the stale NULL slot is unused.
+        VkImageView attachments[3] = {vkRT.hdrScene[i].view, vk.depthView, vkRT.gbufNormal[i].view};
 
         VkFramebufferCreateInfo fbInfo = {};
         fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fbInfo.renderPass = vk.hdrRenderPass;
-        fbInfo.attachmentCount = 2;
+        fbInfo.attachmentCount = vk.gbufferSupported ? 3 : 2;
         fbInfo.pAttachments = attachments;
         fbInfo.width = vkRT.hdrScene[i].width;
         fbInfo.height = vkRT.hdrScene[i].height;
@@ -513,6 +517,9 @@ void VK_RT_ShutdownTonemap(void)
     VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
     VK_RT_DestroyTonemapResolveImages();
+    // G-buffer normal/F0 images (Stage 3.5) — destroyed after the HDR framebuffers
+    // above that reference gbufNormal[i].view as attachment 2. No-op if unsupported.
+    VK_RT_ShutdownGBuffer();
 }
 
 void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
@@ -520,6 +527,9 @@ void VK_RT_ResizeTonemap(uint32_t width, uint32_t height)
     vkDeviceWaitIdle(vk.device);
     VK_RT_DestroyHDRFramebuffers();
     VK_RT_DestroyHDRImages();
+    // Recreate gbufNormal before the HDR framebuffers below are rebuilt — they
+    // reference gbufNormal[i].view as attachment 2. No-op if unsupported.
+    VK_RT_ResizeGBuffer(width, height);
     VK_RT_CreateHDRImages(width, height);
     VK_RT_CreateHDRFramebuffers();
     VK_RT_DestroyTonemapResolveImages();

@@ -307,10 +307,16 @@ static VkPipeline VK_CreateInteractionPipeline(VkPipelineLayout layout, bool ena
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     // Dynamic state: viewport, scissor, depth bias (polygon offset), and cull mode (two-sided materials).
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
@@ -460,10 +466,16 @@ static VkPipeline VK_CreateShadowPipelineZFail(VkPipelineLayout layout, bool mir
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -602,10 +614,16 @@ static VkPipeline VK_CreateShadowPipelineZPass(VkPipelineLayout layout, bool mir
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0; // stencil-only
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -751,10 +769,16 @@ static VkPipeline VK_CreateGlassReflPipeline(VkPipelineLayout layout)
     colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
                                    VK_DYNAMIC_STATE_CULL_MODE_EXT};
@@ -904,10 +928,16 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
     VkPipelineColorBlendAttachmentState colorBlend = {};
     colorBlend.colorWriteMask = 0;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
                                    VK_DYNAMIC_STATE_CULL_MODE_EXT};
@@ -942,6 +972,185 @@ static VkPipeline VK_CreateDepthPipelineEx(VkPipelineLayout layout, const char *
 static VkPipeline VK_CreateDepthPipeline(VkPipelineLayout layout)
 {
     return VK_CreateDepthPipelineEx(layout, "glprogs/glsl/gui.frag.spv");
+}
+
+// ---------------------------------------------------------------------------
+// VK_CreateGBufferDescLayout / VK_CreateGBufferPipelineEx
+// G-buffer normal/F0 prepass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
+// Only ever created when vk.gbufferSupported (see VK_InitPipelines) — replaces
+// depthPipeline/depthClipPipeline in VK_RB_FillDepthBuffer when RT is active,
+// writing world-space bump-mapped normal + F0 to gbufNormal (attachment 1)
+// while keeping attachment 0 write-masked off exactly like the depth pipelines.
+// fragSpv selects the fragment shader:
+//   "glprogs/glsl/gbuffer.frag.spv"      — opaque (no diffuse binding/sample)
+//   "glprogs/glsl/gbuffer_clip.frag.spv" — alpha-clip (MC_PERFORATED)
+// ---------------------------------------------------------------------------
+
+static VkDescriptorSetLayout VK_CreateGBufferDescLayout(void)
+{
+    VkDescriptorSetLayoutBinding bindings[4] = {};
+
+    // Binding 0: UBO (GBufferParams: MVP, model matrix, texture matrices, alpha-test/F0 params)
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Binding 1: bump map (both pipeline variants)
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Binding 2: diffuse map (gbufferClipPipeline only — alpha test)
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Binding 3: specular map (both pipeline variants)
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+    info.bindingCount = 4;
+    info.pBindings = bindings;
+
+    VkDescriptorSetLayout layout;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &info, NULL, &layout));
+    return layout;
+}
+
+static VkPipeline VK_CreateGBufferPipelineEx(VkPipelineLayout layout, const char *fragSpv)
+{
+    VkShaderModule vertModule = VK_LoadSPIRV("glprogs/glsl/gbuffer.vert.spv");
+    VkShaderModule fragModule = VK_LoadSPIRV(fragSpv);
+    if (!vertModule || !fragModule)
+    {
+        if (vertModule)
+            vkDestroyShaderModule(vk.device, vertModule, NULL);
+        if (fragModule)
+            vkDestroyShaderModule(vk.device, fragModule, NULL);
+        return VK_NULL_HANDLE;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertModule;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragModule;
+    stages[1].pName = "main";
+
+    // Full idDrawVert layout (position/color/texcoord/tangents/normal); gbuffer.vert
+    // reads position, texcoord, tangents, and normal — see VK_GetInteractionVertexInput.
+    VkVertexInputBindingDescription binding;
+    VkVertexInputAttributeDescription attrs[12];
+    uint32_t numAttrs = 0;
+    VK_GetInteractionVertexInput(&binding, attrs, &numAttrs);
+
+    VkPipelineVertexInputStateCreateInfo vertexInput = {};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = numAttrs;
+    vertexInput.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
+    inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.f, 1.f};
+    VkRect2D scissor = {{0, 0}, vk.swapchainExtent};
+
+    VkPipelineViewportStateCreateInfo viewportState = {};
+    viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports = &viewport;
+    viewportState.scissorCount = 1;
+    viewportState.pScissors = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer = {};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+    // Y-flip viewport inverts winding — same correction as the other prepass/interaction pipelines.
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterizer.lineWidth = 1.0f;
+    // Enable depth bias so per-surface polygon offset can be applied dynamically
+    // via vkCmdSetDepthBias for surfaces with MF_POLYGONOFFSET (decals, overlays).
+    rasterizer.depthBiasEnable = VK_TRUE;
+
+    VkPipelineMultisampleStateCreateInfo multisampling = {};
+    multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // Depth state identical to the existing depth pipelines: write depth, LESS test, no stencil.
+    VkPipelineDepthStencilStateCreateInfo depthStencil = {};
+    depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.stencilTestEnable = VK_FALSE;
+
+    // Attachment 0 (hdrScene): write-masked off, exactly like the depth pipelines this
+    // replaces — this pass only exists to populate depth and the G-buffer, never colour.
+    VkPipelineColorBlendAttachmentState colorBlend = {};
+    colorBlend.colorWriteMask = 0;
+
+    // Attachment 1 (gbufNormal): full RGBA write, no blending. This is the one pipeline
+    // that actually produces the data every other hdrRenderPass pipeline write-masks away.
+    VkPipelineColorBlendAttachmentState gbufBlend = {};
+    gbufBlend.blendEnable = VK_FALSE;
+    gbufBlend.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, gbufBlend};
+
+    VkPipelineColorBlendStateCreateInfo blendState = {};
+    blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blendState.attachmentCount = 2; // only ever created when vk.gbufferSupported — see VK_InitPipelines
+    blendState.pAttachments = blendAttachments;
+
+    VkDynamicState dynStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                                   VK_DYNAMIC_STATE_CULL_MODE_EXT};
+    VkPipelineDynamicStateCreateInfo dynamicState = {};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 4;
+    dynamicState.pDynamicStates = dynStates;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pDepthStencilState = &depthStencil;
+    pipelineInfo.pColorBlendState = &blendState;
+    pipelineInfo.pDynamicState = &dynamicState;
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = vk.hdrRenderPass;
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &pipeline));
+
+    vkDestroyShaderModule(vk.device, vertModule, NULL);
+    vkDestroyShaderModule(vk.device, fragModule, NULL);
+    return pipeline;
+}
+
+static VkPipeline VK_CreateGBufferPipeline(VkPipelineLayout layout)
+{
+    return VK_CreateGBufferPipelineEx(layout, "glprogs/glsl/gbuffer.frag.spv");
 }
 
 // ---------------------------------------------------------------------------
@@ -1149,10 +1358,16 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
         colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     }
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     // 3D pipelines add DEPTH_BIAS so MF_POLYGONOFFSET decals can use vkCmdSetDepthBias,
     // matching GL's qglPolygonOffset call in RB_STD_T_RenderShaderPasses.
@@ -1273,10 +1488,16 @@ static VkPipeline VK_CreateSkyboxPipeline(VkPipelineLayout layout)
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE_EXT};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -1528,10 +1749,16 @@ static VkPipeline VK_CreateFogPipelineEx(VkPipelineLayout layout, const char *ve
     colorBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
+    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
+    // filler so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    VK_FillSecondBlendAttachment(&blendAttachments[1]);
+
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = 1;
-    blendState.pAttachments = &colorBlend;
+    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamicState = {};
@@ -1680,6 +1907,24 @@ void VK_InitPipelines(void)
     vkPipes.depthPipeline = VK_CreateDepthPipeline(vkPipes.guiLayout);
     vkPipes.depthClipPipeline = VK_CreateDepthPipelineEx(vkPipes.guiLayout, "glprogs/glsl/depth_clip.frag.spv");
 
+    // --- G-buffer normal/F0 prepass pipelines (Stage 3.5) ---
+    // Only created when vk.gbufferSupported (independentBlend) — see Step 0 in
+    // docs/plans/gbuffer_normal_pass.md. When unsupported these stay VK_NULL_HANDLE
+    // and VK_RB_FillDepthBuffer keeps using depthPipeline/depthClipPipeline instead.
+    if (vk.gbufferSupported)
+    {
+        vkPipes.gbufferDescLayout = VK_CreateGBufferDescLayout();
+        VkPipelineLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &vkPipes.gbufferDescLayout;
+        VK_CHECK(vkCreatePipelineLayout(vk.device, &layoutInfo, NULL, &vkPipes.gbufferLayout));
+
+        vkPipes.gbufferPipeline = VK_CreateGBufferPipeline(vkPipes.gbufferLayout);
+        vkPipes.gbufferClipPipeline =
+            VK_CreateGBufferPipelineEx(vkPipes.gbufferLayout, "glprogs/glsl/gbuffer_clip.frag.spv");
+    }
+
     // --- Glass RT-reflection overlay pipeline ---
     vkPipes.glassReflDescLayout = VK_CreateGlassReflDescLayout();
     {
@@ -1732,6 +1977,13 @@ void VK_InitPipelines(void)
                    vkPipes.shadowPipelineZPassMirror ? "OK" : "FAIL", vkPipes.depthPipeline ? "OK" : "FAIL",
                    vkPipes.guiOpaquePipeline ? "OK" : "FAIL", vkPipes.guiAlphaPipeline ? "OK" : "FAIL",
                    vkPipes.skyboxPipeline ? "OK" : "FAIL");
+
+    // Breadcrumb for the new Stage 3.5 mechanism — see docs/plans/gbuffer_normal_pass.md.
+    if (vk.gbufferSupported)
+        common->Printf("VK: G-buffer normal/F0 prepass pipelines (gbuffer=%s/%s)\n",
+                       vkPipes.gbufferPipeline ? "OK" : "FAIL", vkPipes.gbufferClipPipeline ? "OK" : "FAIL");
+    else
+        common->Printf("VK: G-buffer normal/F0 prepass disabled (independentBlend not supported)\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1771,6 +2023,14 @@ void VK_ShutdownPipelines(void)
         vkDestroyPipeline(vk.device, vkPipes.depthPipeline, NULL);
     if (vkPipes.depthClipPipeline)
         vkDestroyPipeline(vk.device, vkPipes.depthClipPipeline, NULL);
+    if (vkPipes.gbufferPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.gbufferPipeline, NULL);
+    if (vkPipes.gbufferClipPipeline)
+        vkDestroyPipeline(vk.device, vkPipes.gbufferClipPipeline, NULL);
+    if (vkPipes.gbufferLayout)
+        vkDestroyPipelineLayout(vk.device, vkPipes.gbufferLayout, NULL);
+    if (vkPipes.gbufferDescLayout)
+        vkDestroyDescriptorSetLayout(vk.device, vkPipes.gbufferDescLayout, NULL);
     if (vkPipes.guiOpaquePipeline)
         vkDestroyPipeline(vk.device, vkPipes.guiOpaquePipeline, NULL);
     if (vkPipes.guiAlphaPipeline)
