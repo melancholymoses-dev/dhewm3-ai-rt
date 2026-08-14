@@ -13,7 +13,11 @@ Samples the RT reflection buffer at the fragment's screen position and outputs i
 additively so reflections appear on top of the existing translucent colour.
 
 Schlick Fresnel weighting for the primary glass interface is written to alpha by
-reflect_ray.rgen, and consumed here for additive compositing.
+reflect_ray.rgen, and consumed here for additive compositing. Stage 3.5 (see
+docs/plans/gbuffer_normal_pass.md, Step 8): reflect_ray.rgen negates this alpha
+as a sentinel telling refl_composite.frag's separate fullscreen pass to skip
+glass pixels (that pass would otherwise misapply the unrelated opaque surface's
+F0/normal behind the glass). Magnitude is unaffected — take abs() here.
 
 Layout notes:
   binding 0 — GuiParams UBO (shared with gui.vert.spv).
@@ -45,9 +49,10 @@ void main()
     vec2 screenUV = gl_FragCoord.xy / u_TexGenS.xy;
 
     // Sample the reflection buffer.
-    // RGB stores reflected radiance; alpha stores Schlick glass weight from raygen.
+    // RGB stores reflected radiance; alpha stores Schlick glass weight from raygen,
+    // negated as a "skip me" sentinel for refl_composite.frag — take abs() here.
     vec4 reflSample = texture(u_ReflectionMap, screenUV);
-    vec3 refl = reflSample.rgb * reflSample.a;
+    vec3 refl = reflSample.rgb * abs(reflSample.a);
 
     // Additive output.  The pipeline blend is ONE/ONE so alpha is effectively ignored,
     // but set it to 1.0 for robustness.

@@ -692,6 +692,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_vol.cpp
 	renderer/Vulkan/vk_tonemap.cpp
+	renderer/Vulkan/vk_gbuffer.cpp
 	renderer/Vulkan/vk_material_table.cpp
 )
 
@@ -715,6 +716,9 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/depth.frag	
 	renderer/glsl/fog.vert
 	renderer/glsl/fog.frag
+	renderer/glsl/gbuffer.vert
+	renderer/glsl/gbuffer.frag
+	renderer/glsl/gbuffer_clip.frag
 	renderer/glsl/gi_composite.vert
 	renderer/glsl/gi_composite.frag
 	renderer/glsl/gui.vert
@@ -722,6 +726,7 @@ set(GLSL_SHADER_SOURCES
 	renderer/glsl/glass_refl_overlay.frag
 	renderer/glsl/interaction.vert
 	renderer/glsl/interaction.frag
+	renderer/glsl/refl_composite.frag
 	renderer/glsl/shadow.vert
 	renderer/glsl/shadow.frag
 	renderer/glsl/skybox.vert

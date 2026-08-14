@@ -317,6 +317,9 @@ static void VKimp_CreateDevice(void)
         common->Error("Vulkan: samplerAnisotropy is required but is not supported by this GPU.");
     if (vk.rayTracingSupported && !supportedFeatures2.features.shaderInt64)
         common->Warning("Vulkan RT: shaderInt64 not supported; RT shader modules may fail.");
+    if (!supportedFeatures2.features.independentBlend)
+        common->Warning(
+            "Vulkan: independentBlend not supported; the G-buffer normal/F0 pass will be disabled.");
     if (vk.rayTracingSupported && !supportedVk12.shaderSampledImageArrayNonUniformIndexing)
         common->Warning(
             "Vulkan RT: shaderSampledImageArrayNonUniformIndexing not supported; bindless indexing may fail.");
@@ -330,6 +333,10 @@ static void VKimp_CreateDevice(void)
     features2.features.depthClamp =
         supportedFeatures2.features.depthClamp; // enable if available, not currently required
     features2.features.shaderInt64 = vk.rayTracingSupported && supportedFeatures2.features.shaderInt64;
+    features2.features.independentBlend = supportedFeatures2.features.independentBlend;
+    // Latched for later use: gates whether the G-buffer normal/F0 pass (2 color attachments
+    // with differing blend/write-mask state) can be enabled. See gbuffer_normal_pass.md Step 0.
+    vk.gbufferSupported = supportedFeatures2.features.independentBlend == VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features vk12Features = {};
     vk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;

@@ -2174,7 +2174,8 @@ void VK_RT_Shutdown(void)
     // Volumetric lighting pipeline and buffers (Phase 7.2)
     VK_RT_ShutdownVolumetrics();
 
-    // HDR scene buffer and tonemap pipeline (Phase 8.1)
+    // HDR scene buffer and tonemap pipeline (Phase 8.1).  Also destroys the
+    // G-buffer normal/F0 images (Stage 3.5) — see vk_tonemap.cpp.
     VK_RT_ShutdownTonemap();
 
     // Material table SSBOs and bindless descriptor set (Phase 5.4)

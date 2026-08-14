@@ -107,6 +107,10 @@ struct vkState_t
     // Capabilities
     bool rayTracingSupported; // VK_KHR_ray_tracing_pipeline
     bool asSupported;         // VK_KHR_acceleration_structure
+    // independentBlend: required by the G-buffer normal/F0 pass (two color attachments with
+    // differing per-attachment blend/write-mask state). See docs/plans/gbuffer_normal_pass.md.
+    // If false, the G-buffer prepass must not be enabled; fall back to the existing depth-only path.
+    bool gbufferSupported;
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index
@@ -145,6 +149,16 @@ struct vkPipelines_t
     VkPipelineLayout depthLayout;
     VkPipeline depthPipeline;     // opaque surfaces — no texture sample
     VkPipeline depthClipPipeline; // MC_PERFORATED — samples diffuse, discards on alpha
+
+    // G-buffer normal/F0 prepass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
+    // Only created when vk.gbufferSupported; replaces depthPipeline/depthClipPipeline
+    // in VK_RB_FillDepthBuffer when RT is active. Writes world-space bump-mapped
+    // normal + F0 to gbufNormal (attachment 1); attachment 0 is write-masked off,
+    // same as the depth pipelines it replaces.
+    VkDescriptorSetLayout gbufferDescLayout;
+    VkPipelineLayout gbufferLayout;
+    VkPipeline gbufferPipeline;     // opaque surfaces
+    VkPipeline gbufferClipPipeline; // MC_PERFORATED — samples diffuse, discards on alpha
 
     // GUI / unlit shader-pass pipeline (menu, HUD, console)
     VkDescriptorSetLayout guiDescLayout;
@@ -204,6 +218,24 @@ static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlag
     }
     common->FatalError("VK_FindMemoryType: no suitable memory type found");
     return UINT32_MAX;
+}
+
+// ---------------------------------------------------------------------------
+// G-buffer normal/F0 pass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md):
+// every graphics pipeline targeting vk.hdrRenderPass must supply a blend
+// attachment state per subpass color attachment. When vk.gbufferSupported is
+// true the subpass declares 2 (attachment 0 = hdrScene, attachment 1 =
+// gbufNormal); pipelines other than the G-buffer prepass itself must not
+// write attachment 1, so they pair their real attachment-0 state with this
+// write-mask-0, blend-off filler. Callers still gate attachmentCount on
+// vk.gbufferSupported (1 when false) so the array is simply unread in that case.
+// ---------------------------------------------------------------------------
+
+static inline void VK_FillSecondBlendAttachment(VkPipelineColorBlendAttachmentState *out)
+{
+    *out = {};
+    out->blendEnable = VK_FALSE;
+    out->colorWriteMask = 0;
 }
 
 // ---------------------------------------------------------------------------

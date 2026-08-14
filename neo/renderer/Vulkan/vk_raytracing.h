@@ -382,6 +382,20 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR reflHitRegion;
     VkStridedDeviceAddressRegionKHR reflCallRegion;
 
+    // Fullscreen composite pipeline (Step 8, see docs/plans/gbuffer_normal_pass.md) —
+    // additively blends reflBuffer onto the framebuffer once per view, replacing the
+    // disabled per-light reflection block in interaction.frag. Only created when
+    // vk.gbufferSupported (the Fresnel/debug-mode math this replaces lives in
+    // reflect_ray.rgen, which needs gbufNormal). reflCompositeDebugPipeline is the
+    // same shader with blending disabled, selected when r_rtReflectionDebugMode is
+    // 2-4 so the visualization replaces rather than adds onto the lit scene.
+    VkPipeline              reflCompositePipeline;
+    VkPipeline              reflCompositeDebugPipeline;
+    VkPipelineLayout        reflCompositeLayout;
+    VkDescriptorSetLayout   reflCompositeDescLayout;
+    VkDescriptorPool        reflCompositeDescPool;
+    VkDescriptorSet         reflCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
     // SBT buffers
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtMemory;
@@ -491,6 +505,15 @@ struct vkRTState_t
     VkDescriptorSet       tonemapDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   tonemapDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // --------------------------------------------------------------------------
+    // G-buffer normal/F0 image, written by the depth prepass (see
+    // docs/plans/gbuffer_normal_pass.md).  rgb = world-space bump-mapped normal
+    // (× 0.5 + 0.5), a = normalized F0 (0 = "no data, use rt_ReconstructNormal").
+    // Gated on vk.gbufferSupported (requires independentBlend); left all-NULL
+    // when unsupported so the old depth-only path is used instead.
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM world normal + F0
+
     bool isInitialized;
 };
 
@@ -588,6 +611,13 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height);
 // this function transitions to READ_ONLY_OPTIMAL and back.
 // Output: reflBuffer[currentFrame] is ready for FRAGMENT sampling when this returns.
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Additively composite reflBuffer onto the framebuffer (Step 8, see
+// docs/plans/gbuffer_normal_pass.md). Must be called INSIDE the main render
+// pass, after VK_RT_CompositeGI. No-op if vk.gbufferSupported is false.
+// Selects a blend-disabled variant when r_rtReflectionDebugMode is 2-4, so the
+// G-buffer visualization replaces rather than adds onto the lit scene.
+void VK_RT_CompositeReflections(VkCommandBuffer cmd);
 
 // Build/update BLAS for a single mesh (single-surface, kept for external use).
 // cmd must be a command buffer currently recording outside a render pass.
@@ -819,5 +849,18 @@ void VK_RT_ResizeTonemap(uint32_t width, uint32_t height);
 // Dispatch the Uchimura tonemap compute pass: hdrScene → swapchain.
 // Must be called outside a render pass, after all composites have finished.
 void VK_RT_DispatchTonemap(VkCommandBuffer cmd);
+
+// ---------------------------------------------------------------------------
+// G-buffer normal/F0 pass (see docs/plans/gbuffer_normal_pass.md)
+// ---------------------------------------------------------------------------
+
+// Destroy all G-buffer resources. Safe to call even if never initialized.
+// Called from VK_RT_ShutdownTonemap.
+void VK_RT_ShutdownGBuffer(void);
+
+// (Re)allocate the G-buffer images. No-op if vk.gbufferSupported is false.
+// Called from VK_RT_ResizeTonemap (including its first call from VK_RT_InitTonemap).
+// Calls vkDeviceWaitIdle internally; do not call from a hot path.
+void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);
 
 #endif // __VK_RAYTRACING_H__
