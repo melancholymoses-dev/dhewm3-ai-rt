@@ -2248,7 +2248,7 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 static void VK_FindBumpSpecularStages(const idMaterial *mat, const float *regs, idImage **outBumpImage,
                                       idVec4 outBumpMatrix[2], idImage **outSpecImage, idVec4 outSpecMatrix[2])
 {
-    extern void R_SetDrawInteraction(const shaderStage_t *, const float *, idImage **, idVec4[2], float *);
+    extern void R_SetDrawInteraction(const shaderStage_t *, const float *, idImage **, idVec4[2], float[4]);
 
     *outBumpImage = NULL;
     *outSpecImage = NULL;
