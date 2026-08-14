@@ -46,8 +46,10 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba16f) uniform image2D reflImage;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 // G-buffer normal/F0 (Stage 3.5): rgb = world normal * 0.5 + 0.5, a = F0.
-// a == 0 means "no data" (gbufferSupported false, or sky/translucent geometry) —
-// fall back to rt_ReconstructNormal. Sampled with texelFetch, so the bound
+// a == 0 means "no usable normal" (gbufferSupported false, sky/translucent
+// geometry, or a surface whose specular map remaps to F0 == 0) — fall back to
+// rt_ReconstructNormal; rgb at the 0.5 clear sentinel means the prepass never
+// wrote the pixel at all (debug mode 4 tests this). Sampled with texelFetch, so the bound
 // sampler's filter/wrap state is irrelevant; always valid (real image when
 // vk.gbufferSupported, a 1x1 null image with a=0 otherwise — see VK_RT_DispatchReflections).
 layout(set = 0, binding = 5) uniform sampler2D gbufNormalSampler;
@@ -79,7 +81,11 @@ void main()
     // G-buffer normal/F0 (Stage 3.5) + debug modes (Step 9). Checked first, before
     // any ray tracing, so debug output stays cheap and reflects exactly what the
     // depth prepass wrote — see docs/plans/gbuffer_normal_pass.md.
-    vec4  gbuf = texelFetch(gbufNormalSampler, coord, 0);
+    // Fetch coord is clamped because the bound image may be the 1x1 null fallback
+    // (gbufferSupported false) — texelFetch out of bounds is undefined without
+    // robustImageAccess.
+    ivec2 gbufSize = textureSize(gbufNormalSampler, 0);
+    vec4  gbuf = texelFetch(gbufNormalSampler, min(coord, gbufSize - 1), 0);
     float f0   = gbuf.a;
 
     if (params.debugMode == 2)
@@ -98,9 +104,12 @@ void main()
     }
     if (params.debugMode == 4)
     {
-        // Fallback-reconstruction pixels (alpha == 0) tinted magenta — should be
-        // only sky/translucents once the prepass covers the scene.
-        imageStore(reflImage, coord, (f0 <= 0.0) ? vec4(1.0, 0.0, 1.0, 1.0) : vec4(0.0));
+        // Prepass-coverage check: pixels the prepass never wrote (rgb still at the
+        // 0.5/0.5/0.5 clear sentinel — no unit normal encodes there) tinted magenta;
+        // should be only sky/translucents once the prepass covers the scene. Can't
+        // test f0 here: black/absent specular maps legitimately write f0 == 0.
+        bool noData = all(lessThanEqual(abs(gbuf.rgb - vec3(0.5)), vec3(1.0 / 255.0)));
+        imageStore(reflImage, coord, noData ? vec4(1.0, 0.0, 1.0, 1.0) : vec4(0.0));
         return;
     }
 

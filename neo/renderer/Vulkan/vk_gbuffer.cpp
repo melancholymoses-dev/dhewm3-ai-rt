@@ -66,28 +66,10 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
         VkMemoryRequirements memReq;
         vkGetImageMemoryRequirements(vk.device, gb.image, &memReq);
 
-        VkPhysicalDeviceMemoryProperties memProps;
-        vkGetPhysicalDeviceMemoryProperties(vk.physicalDevice, &memProps);
-        uint32_t memTypeIdx = UINT32_MAX;
-        for (uint32_t m = 0; m < memProps.memoryTypeCount; m++)
-        {
-            if ((memReq.memoryTypeBits & (1u << m)) &&
-                (memProps.memoryTypes[m].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
-            {
-                memTypeIdx = m;
-                break;
-            }
-        }
-        if (memTypeIdx == UINT32_MAX)
-        {
-            common->Error("VK RT GBuffer: no device-local memory type for normal/F0 image");
-            return;
-        }
-
         VkMemoryAllocateInfo allocInfo = {};
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memReq.size;
-        allocInfo.memoryTypeIndex = memTypeIdx;
+        allocInfo.memoryTypeIndex = VK_FindMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, &gb.memory));
         VK_CHECK(vkBindImageMemory(vk.device, gb.image, gb.memory, 0));
 
