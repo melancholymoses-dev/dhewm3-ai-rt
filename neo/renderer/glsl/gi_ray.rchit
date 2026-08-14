@@ -60,7 +60,9 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 scissorOffset;
     ivec2 scissorExtent;
     int   checker;
-    int   maxBounceLights; // 0 = Option A fallback; otherwise caps light loop
+    int   maxBounceLights;  // 0 = Option A fallback; otherwise caps the deterministic light loop
+    float giContrast;       // unused here; keeps offsets matching gi_ray.rgen's block
+    int   stochasticLights; // P3: shadow-ray draws per bounce hit; 0 = deterministic full loop
 } params;
 
 // ---------------------------------------------------------------------------
@@ -115,14 +117,29 @@ void main()
     if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
         hitNorm = -hitNorm;
 
-    // Shared light loop (rt_light_eval.glsl). Every in-range light gets a shadow
-    // ray (budget = max, threshold 0) — P3's stochastic selection changes this in
-    // Wave 3. bounceScale rides in as contribScale, matching the old inline loop.
-    // params.maxBounceLights == 0 signals Option A fallback (bounce disabled).
-    int  n          = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
-    vec3 irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
-                                            RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
-                                            rtLightBuf.bounceScale, 0.0);
+    // Shared light loop (rt_light_eval.glsl). params.maxBounceLights == 0 signals
+    // Option A fallback (bounce disabled) via the albedo branch below.
+    //
+    // P3 (stochasticLights > 0): importance-sampled selection — stochasticLights
+    // shadow rays per hit instead of one per light. The candidate pool is ALL
+    // uploaded lights (rays no longer scale with candidates; L1's far-tier lights
+    // can win draws at hit points near them). maxBounceLights only caps the
+    // deterministic fallback path.
+    int  n = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
+    vec3 irradiance;
+    if (params.stochasticLights > 0 && params.maxBounceLights > 0)
+    {
+        uint selSeed = rt_LightSelectionSeed(hitPos, params.frameIndex);
+        irradiance   = rt_EvalDirectLightingStochastic(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                                       params.stochasticLights, GI_SHADOW_BIAS,
+                                                       rtLightBuf.bounceScale, selSeed);
+    }
+    else
+    {
+        irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
+                                           RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
+                                           rtLightBuf.bounceScale, 0.0);
+    }
 
     // Final bounce colour: albedo × gathered irradiance.
     // giStrength in the rgen provides an additional global scale.

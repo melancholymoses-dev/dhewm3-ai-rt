@@ -91,6 +91,19 @@ chain is precisely the denoiser this needs.
   `randFloat` draw seeded from the existing world-anchored seed).
 - The same treatment applies to `reflect_ray.rchit` (shared include — see P5).
 
+**✅ Implemented (Wave 3, 2026-08-14):** `rt_EvalDirectLightingStochastic` in
+rt_light_eval.glsl — two passes over the light list (total weight, then a CDF walk
+per draw) so no per-light array is stored; weights are unshadowed contribution
+luminance via the shared `rt_LightContribution` helper; a repeated winner reuses the
+previous draw's shadow result. Selection seed is world-anchored to the hit position
+(`rt_LightSelectionSeed`) so temporal accumulation converges. GI wiring:
+`r_rtGIStochasticLights` (default 2, 0 = legacy full loop) through a new GIParams
+field; the stochastic candidate pool is ALL uploaded lights (not
+`r_rtGIMaxBounceLights`, which now only caps the legacy path) — composing with L1 as
+designed. `r_rtGISamples` default raised 4 → 8 with the freed budget.
+**Reflections intentionally not switched:** they have no temporal denoiser (see P10),
+so stochastic noise there would flicker; the shared function is ready when that lands.
+
 ### P4. Reflection-hit shadow rays go to the wrong lights
 
 `reflect_ray.rchit` shadow budget (first 8 lights **in buffer order**) is spent on
@@ -155,6 +168,15 @@ heavier passes, with little visible loss.
 pixel and runs in AO, GI, and reflections. Commit 3 of the G-buffer plan replaces it
 with one G-buffer fetch in all three — modest ALU win, plus bump-mapped AO/GI
 directions (quality).
+**✅ Implemented (Wave 3, 2026-08-14):** ao_ray.rgen and gi_ray.rgen sample
+gbufNormalSampler at binding 5 (same slot as reflections; AO skips binding 4 for
+parity). Validity test is the **rgb ≠ 0.5-clear-sentinel**, not alpha — a == 0 only
+means F0 == 0, and AO/GI want the bump normal on non-specular surfaces too (unlike
+reflections, which early-out on those pixels anyway). Fallback to
+rt_ReconstructNormal per pixel when the prepass didn't cover it; the 1×1 null image
+(exported as `VK_RT_GetNullGbufView()`) binds when the G-buffer is unsupported. The
+existing whole-RT-block barrier in vk_backend.cpp already covered AO/GI dispatch
+order, so no new barriers were needed.
 
 ### P10. If reflections are still heavy after P2: checkerboard
 

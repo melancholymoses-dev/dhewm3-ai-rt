@@ -235,8 +235,10 @@ static void VK_RT_InitAOPipeline(void)
     // binding 1: AO mask storage image
     // binding 2: depth sampler
     // binding 3: AO params UBO (dynamic)
+    // binding 5: G-buffer normal/F0 sampler (P9 — binding 4 skipped so the G-buffer
+    //            slot number matches the GI/reflection rgens, where 4 is the light SSBO)
 
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    VkDescriptorSetLayoutBinding bindings[5] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -258,9 +260,14 @@ static void VK_RT_InitAOPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[4].binding = 5;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 5;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.aoDescLayout));
 
@@ -400,7 +407,8 @@ static void VK_RT_InitAOPipeline(void)
     VkDescriptorPoolSize poolSizes[4] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
+        // 2 samplers per set: depth (binding 2) + G-buffer normal/F0 (binding 5, P9)
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -599,10 +607,17 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkAccelerationStructureKHR s_lastAOTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastAOStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastAODepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastAOGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    // G-buffer normal/F0 (P9): real per-frame image when supported, else the 1x1
+    // null fallback. In SHADER_READ_ONLY_OPTIMAL for the whole RT block (backend barrier).
+    const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
+    VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufView();
 
     const bool aoResourceChanged = (s_lastAOTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
                                    (s_lastAOStorageView[frameIdx] != ao.view) ||
-                                   (s_lastAODepthView[frameIdx] != vk.depthSampledView);
+                                   (s_lastAODepthView[frameIdx] != vk.depthSampledView) ||
+                                   (s_lastAOGbufView[frameIdx] != gbufView);
 
     if (aoResourceChanged && vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
@@ -641,7 +656,13 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         uboInfo.offset = 0;
         uboInfo.range = sizeof(AOParamsUBO);
 
-        VkWriteDescriptorSet writes[4] = {};
+        // Binding 5: G-buffer normal/F0 (P9)
+        VkDescriptorImageInfo gbufInfo = {};
+        gbufInfo.sampler = vkRT.depthSampler; // texelFetch ignores filter/wrap state; reuse to avoid a new sampler
+        gbufInfo.imageView = gbufView;
+        gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet writes[5] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -671,11 +692,19 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[3].pBufferInfo = &uboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = ds;
+        writes[4].dstBinding = 5;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].pImageInfo = &gbufInfo;
+
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastAOTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastAOStorageView[frameIdx] = ao.view;
         s_lastAODepthView[frameIdx] = vk.depthSampledView;
+        s_lastAOGbufView[frameIdx] = gbufView;
     }
 
     // --- Dispatch ---

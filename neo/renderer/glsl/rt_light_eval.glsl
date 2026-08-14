@@ -2,8 +2,11 @@
 
   P5 (docs/plans/rt_optimization_tuning.md): the light loops in gi_ray.rchit and
   reflect_ray.rchit had drifted apart (bounceScale, shadow budget, tMax guard).
-  This include owns the single loop both use, and is where P3's stochastic light
-  selection will land once, later.
+  This include owns the single loop both use.
+  P3 (Wave 3): rt_EvalDirectLightingStochastic adds importance-sampled light
+  selection — numDraws shadow rays per hit instead of one per light. GI bounce
+  hits use it (r_rtGIStochasticLights); reflections stay on the deterministic
+  loop until their UBO plumbs a toggle (they have no temporal denoiser yet).
 
   Declares the shared light-list SSBO (set=0, binding=4 — the GI light buffer
   vk_gi.cpp uploads; vk_reflections.cpp binds the same buffer) and the shadow-ray
@@ -62,6 +65,67 @@ float rt_LightLuminance(vec3 c)
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
+// Self-contained Wang hash/rand — named to avoid colliding with rt_indirect.glsl's
+// wang_hash if a future shader includes both files.
+uint rt_LightHash(uint seed)
+{
+    seed = (seed ^ 61u) ^ (seed >> 16u);
+    seed *= 9u;
+    seed  = seed ^ (seed >> 4u);
+    seed *= 0x27d4eb2du;
+    seed  = seed ^ (seed >> 15u);
+    return seed;
+}
+
+float rt_LightRand(uint seed)
+{
+    return float(rt_LightHash(seed)) / 4294967296.0;
+}
+
+// World-anchored selection seed (mirrors rt_indirect.glsl's rt_WorldAnchoredSeed).
+// Anchoring the CDF draw to the hit position keeps light selection stable across
+// frames for static geometry, so temporal accumulation converges instead of
+// chasing a per-frame reshuffle; frameIndex still decorrelates over time.
+uint rt_LightSelectionSeed(vec3 hitPos, uint frameIndex)
+{
+    ivec3 cell = ivec3(floor(hitPos * 8.0));
+    uint  s    = rt_LightHash(uint(cell.x) * 2053u
+               ^ rt_LightHash(uint(cell.y) * 4099u
+               ^ rt_LightHash(uint(cell.z) * 8191u)));
+    return rt_LightHash(s + frameIndex * 7919u);
+}
+
+// ---------------------------------------------------------------------------
+// rt_LightContribution — unshadowed contribution of light i at (hitPos, hitNorm),
+// before any contribScale. Returns vec3(0) for out-of-range/backfacing lights;
+// lightDir/dist are only meaningful when the return is non-zero.
+// Single source of truth for the falloff model — the deterministic loop, the
+// stochastic CDF (P3), and its selection weights all call this.
+// ---------------------------------------------------------------------------
+vec3 rt_LightContribution(int i, vec3 hitPos, vec3 hitNorm, out vec3 lightDir, out float dist)
+{
+    vec3  lPos = rtLightBuf.lights[i].posRadius.xyz;
+    float lRad = rtLightBuf.lights[i].posRadius.w;
+
+    vec3 toL = lPos - hitPos;
+    dist     = length(toL);
+    lightDir = vec3(0.0, 0.0, 1.0);
+    if (dist >= lRad || dist < 0.01)
+        return vec3(0.0);
+
+    lightDir    = toL / dist;
+    float NdotL = dot(hitNorm, lightDir);
+    if (NdotL <= 0.0)
+        return vec3(0.0);
+
+    // Quadratic falloff: zero at the edge of the light radius, hard cutoff beyond.
+    // dist < lRad above guarantees t < 1 → atten > 0.
+    float t     = dist / max(lRad, 1.0);
+    float atten = 1.0 - t * t;
+
+    return rtLightBuf.lights[i].colorIntensity.rgb * (rtLightBuf.lights[i].colorIntensity.a * NdotL * atten);
+}
+
 // ---------------------------------------------------------------------------
 // rt_EvalDirectLighting — accumulate direct irradiance at a hit point from the
 // shared light list.  Starts at vec3(0); callers add their own ambient floor.
@@ -83,26 +147,11 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
 
     for (int i = 0; i < n; i++)
     {
-        vec3  lPos   = rtLightBuf.lights[i].posRadius.xyz;
-        float lRad   = rtLightBuf.lights[i].posRadius.w;
-        vec3  lColor = rtLightBuf.lights[i].colorIntensity.rgb;
-        float lInt   = rtLightBuf.lights[i].colorIntensity.a;
-
-        vec3  toL  = lPos - hitPos;
-        float dist = length(toL);
-        if (dist >= lRad || dist < 0.01)
+        vec3  lightDir;
+        float dist;
+        vec3  contrib = rt_LightContribution(i, hitPos, hitNorm, lightDir, dist) * contribScale;
+        if (dot(contrib, contrib) <= 0.0)
             continue;
-
-        vec3  lightDir = toL / dist;
-        float NdotL    = dot(hitNorm, lightDir);
-        if (NdotL <= 0.0)
-            continue;
-
-        // Quadratic falloff: zero at the edge of the light radius, hard cutoff beyond.
-        float t     = dist / max(lRad, 1.0);
-        float atten = 1.0 - t * t;   // dist < lRad above guarantees t < 1 → atten > 0
-
-        vec3 contrib = lColor * (lInt * NdotL * atten * contribScale);
 
         // Shadow ray. The tMax > 0 guard also covers hit points closer to the
         // light centre than the bias — treated as unoccluded.
@@ -132,6 +181,117 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
         }
 
         irradiance += contrib;
+    }
+    return irradiance;
+}
+
+// ---------------------------------------------------------------------------
+// rt_EvalDirectLightingStochastic — P3: importance-sampled direct lighting.
+//
+// Instead of a shadow ray per in-range light (up to 128 rays/hit), draw
+// numDraws lights with probability proportional to their unshadowed
+// contribution luminance and fire shadow rays only for the winners. Each
+// winner's contribution is divided by its selection probability (standard
+// importance sampling — unbiased); the temporal accumulation + à-trous chain
+// downstream is the denoiser for the added variance.
+//
+// Two passes over the light list (total weight, then a CDF walk per draw)
+// recompute the cheap per-light math instead of storing a 128-float array —
+// ALU is far cheaper than the scratch/occupancy cost in a hit shader.
+//
+//   maxLights    — candidate cap (pass RT_LIGHT_MAX_LIGHTS: with rays no longer
+//                  proportional to candidates, the CDF can span every uploaded
+//                  light — this is what lets L1's far-tier lights actually win
+//                  draws at hit points near them)
+//   numDraws     — shadow-ray budget per hit (1-2 typical; the 8×-cut math in
+//                  the plan assumes 2)
+//   seed         — from rt_LightSelectionSeed(hitPos, frameIndex)
+// ---------------------------------------------------------------------------
+vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, int numDraws,
+                                     float shadowBias, float contribScale, uint seed)
+{
+    int n = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
+
+    // Pass 1: total selection weight.
+    float totalW = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+        vec3  lightDir;
+        float dist;
+        totalW += rt_LightLuminance(rt_LightContribution(i, hitPos, hitNorm, lightDir, dist));
+    }
+    if (totalW <= 1e-6)
+        return vec3(0.0);
+
+    vec3 irradiance   = vec3(0.0);
+    int  prevSel      = -1;
+    bool prevOccluded = false;
+
+    for (int k = 0; k < numDraws; k++)
+    {
+        float target = rt_LightRand(seed + uint(k) * 9781u) * totalW;
+
+        // Pass 2: walk the CDF to the winner.
+        float cum        = 0.0;
+        int   sel        = -1;
+        float selW       = 0.0;
+        vec3  selContrib = vec3(0.0);
+        vec3  selDir     = vec3(0.0);
+        float selDist    = 0.0;
+        for (int i = 0; i < n; i++)
+        {
+            vec3  lightDir;
+            float dist;
+            vec3  contrib = rt_LightContribution(i, hitPos, hitNorm, lightDir, dist);
+            float w       = rt_LightLuminance(contrib);
+            cum += w;
+            if (w > 0.0 && cum >= target)
+            {
+                sel        = i;
+                selW       = w;
+                selContrib = contrib;
+                selDir     = lightDir;
+                selDist    = dist;
+                break;
+            }
+        }
+        if (sel < 0)
+            continue; // fp edge: target landed a hair past the recomputed total
+
+        // Shadow ray for the winner; a repeat winner reuses the previous result.
+        bool occluded = false;
+        if (sel == prevSel)
+        {
+            occluded = prevOccluded;
+        }
+        else
+        {
+            float shadowTMax = selDist - shadowBias;
+            if (shadowTMax > 0.0)
+            {
+                rtLightShadow.occluded = true;
+                traceRayEXT(
+                    tlas,
+                    gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+                    0xFF,
+                    0,                          // sbt hit offset (unused — skip closest hit)
+                    0,                          // sbt stride
+                    RT_LIGHT_SHADOW_MISS_INDEX, // gi_shadow.rmiss in this pipeline
+                    hitPos + hitNorm * shadowBias,
+                    0.0,
+                    selDir,
+                    shadowTMax,
+                    1                           // payload location 1
+                );
+                occluded = rtLightShadow.occluded;
+            }
+        }
+        prevSel      = sel;
+        prevOccluded = occluded;
+
+        // contrib / (pdf · numDraws), pdf = selW / totalW.
+        if (!occluded)
+            irradiance += selContrib * (contribScale * totalW / (selW * float(numDraws)));
     }
     return irradiance;
 }

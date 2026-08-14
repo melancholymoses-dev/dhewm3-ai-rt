@@ -112,7 +112,7 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 1a | landed | 811d6ca7, 29dac019, d4449803 (gbuffer branch) | no |
 | 1b | landed | 928f1a8f, 7154481e (gbuffer branch) | no |
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
-| 3 | not started | | |
+| 3 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 4 | not started | | |
 | 5 | not started | | |
 | 6 | not started | | |

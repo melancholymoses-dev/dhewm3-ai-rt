@@ -262,6 +262,16 @@ static void VK_RT_CreateNullGbufNormal(void)
     }
 }
 
+// P9: AO/GI dispatches bind the same 1x1 fallback when the real G-buffer is
+// absent (gbufferSupported false, or images not yet created). Creates on demand
+// so callers don't depend on reflection-init ordering; VK_RT_CreateNullGbufNormal
+// is idempotent.
+VkImageView VK_RT_GetNullGbufView(void)
+{
+    VK_RT_CreateNullGbufNormal();
+    return s_nullGbufView;
+}
+
 static void VK_RT_DestroyNullGbufNormal(void)
 {
     if (s_nullGbufView != VK_NULL_HANDLE)

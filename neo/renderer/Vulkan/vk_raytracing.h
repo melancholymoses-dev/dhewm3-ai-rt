@@ -864,6 +864,11 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd);
 void VK_RT_ShutdownGBuffer(void);
 
 // (Re)allocate the G-buffer images. No-op if vk.gbufferSupported is false.
+// P9: 1x1 null G-buffer fallback view (a=0 sentinel, rgb=0.5 clear sentinel),
+// bound by AO/GI/reflection dispatches when the real G-buffer is unavailable.
+// Defined in vk_reflections.cpp; creates the image on first call.
+VkImageView VK_RT_GetNullGbufView(void);
+
 // Called from VK_RT_ResizeTonemap (including its first call from VK_RT_InitTonemap).
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);
