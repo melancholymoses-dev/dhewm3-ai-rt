@@ -780,6 +780,7 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_payload.glsl"	
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_indirect.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_material.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 )
 
 set(SPIRV_BINARIES "")

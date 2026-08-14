@@ -46,6 +46,9 @@ likely the largest *structural* cost after raw ray counts.
   small (< ~64px on a side) — tiny lights don't visibly benefit — and clamp
   `r_rtShadowBlur` cost by running blur at the dispatch rect only (already done) but with
   one barrier pair instead of two where possible.
+  **✅ Implemented (Wave 2, 2026-08-14):** `r_rtShadowBlurMinRect` (default 64, 0 = always
+  blur) in vk_shadows.cpp; skips when *both* rect sides are under the threshold. Skip
+  logged at `r_vkLogRT 2`. The barrier-pair consolidation was not done (P1b subsumes it).
 - **P1b (the real fix):** batch shadow masks. Pack up to 4 lights per RGBA8 mask image
   (one light per channel), or use an R8 texture-array with one layer per light
   (`VK_MAX_SHADOWED_LIGHTS` ≈ 8-16 covers Doom 3 scenes). Trace **all** lights in one
@@ -95,6 +98,9 @@ lights sorted nearest-to-*camera*, not nearest-to-hit — reflection hits are of
 from the camera. Cheap interim fix (independent of P3): skip the shadow ray when
 `lColor·lInt·NdotL·atten` is below a small threshold, so budget flows to lights that
 matter at the hit point. Long-term: P3's stochastic selection subsumes this.
+**✅ Implemented (Wave 2, 2026-08-14):** `REFL_SHADOW_MIN_LUM` (0.02) in
+reflect_ray.rchit, applied via the shared loop's `minShadowLum` parameter (see P5);
+below-threshold lights contribute unshadowed without consuming budget.
 
 ### P5. Duplicated light-evaluation code (maintenance, enables P3/P4)
 
@@ -103,6 +109,15 @@ already drifted (GI applies `bounceScale`; reflections don't — one cause of
 reflections reading brighter than the surfaces around them). Extract to
 `rt_light_eval.glsl` (add to `GLSL_INCLUDES`) before implementing P3, so the
 stochastic path lands once.
+**✅ Implemented (Wave 2, 2026-08-14):** `rt_light_eval.glsl` owns the light SSBO
+declaration, shadow payload, and `rt_EvalDirectLighting(...)` — parameterized by max
+lights, shadow budget, bias, contribScale (GI passes bounceScale, reflections 1.0 —
+the drift is now an explicit parameter, retune in T6) and P4's minShadowLum. Includers
+`#define RT_LIGHT_SHADOW_MISS_INDEX` (GI 1, refl 2) first. Side fix: GI shadow rays
+now guard against negative tMax (hit closer to the light than the bias), which the old
+inline GI loop didn't. player_reflect.rchit and vol_march.comp keep their own loops
+(different semantics: no shadow budget / cone evaluation) — P3 lands only in the
+shared file.
 
 ### P6. Glass probe ray fired even in glass-free scenes
 
@@ -111,6 +126,10 @@ not any glass exists. `vk_material_table.cpp` knows at build time if any
 `MAT_FLAG_GLASS` entry exists; `vk_accelstruct.cpp` knows if such an instance is in the
 TLAS. Add `int sceneHasGlass` to `ReflParams`; skip the probe when 0. Full-screen ray
 dispatch saved in most rooms.
+**✅ Implemented (Wave 2, 2026-08-14):** `vkRT.sceneHasGlass` recomputed per TLAS build
+in vk_accelstruct.cpp (scan of static+dynamic material entries), plumbed through the
+ReflParams pad slot, probe skipped in reflect_ray.rgen. State transitions logged at
+`r_vkLogRT 1`.
 
 ### P7. TLAS build flags favor the wrong axis
 
@@ -118,6 +137,8 @@ dispatch saved in most rooms.
 practice for a **per-frame rebuilt TLAS** is `PREFER_FAST_BUILD` (trace cost difference
 is negligible at TLAS level; build cost is paid every frame). Keep BLAS as
 `FAST_TRACE`. One-line change; measure the TLAS profiler phase before/after.
+**✅ Implemented (Wave 2, 2026-08-14):** TLAS build flag switched; both BLAS build
+sites unchanged. Measure the TLAS profiler phase at the checkpoint.
 
 ### P8. Volumetric march at full resolution
 
@@ -163,6 +184,18 @@ panel lights compete on the wrong axis.
   the per-hit weighted draw ensures the right lights are sampled at each bounce.
   Light-around-the-corner reads only when both are in place (the doorway light must
   win the draw at hit points near the doorway even when the camera is far away).
+
+**✅ Implemented (Wave 2, 2026-08-14)** in `VK_RT_UploadGILights` (vk_gi.cpp):
+- Tiers 0-128 / 128-320 / 320-768 / 768+, quotas 48/40/24/16 scaled to
+  `r_rtGIMaxLights`, unused quota redistributed near-first.
+- Importance = `intensity × luminance(color) × radius² / max(distSq, radius²)`.
+- Hysteresis via a 1.15× importance boost for lights uploaded the previous frame
+  (equivalent to surviving within ~1.15× of the cut threshold, far simpler).
+- Final upload is **importance-ordered** (not tier-grouped): every consumer walks a
+  prefix of the buffer (GI `maxBounceLights`, reflection shadow budget, volumetric
+  `maxLights`), so ordering is itself a selection layer.
+- `r_rtGILightStratify 0` restores the legacy nearest-first sort for A/B popping
+  comparisons; tier/take counts logged at `r_vkLogRT 1`.
 
 ---
 

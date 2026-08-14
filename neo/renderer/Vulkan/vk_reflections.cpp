@@ -90,7 +90,7 @@ idCVar r_rtReflectionDebugMode(
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
 //   float  grazingMax     offset 84  size  4  (r_rtSpecGrazingMax, Step 8)
 //   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
-//   pad                   offset 92  size  4
+//   int    sceneHasGlass  offset 92  size  4  (P6 — skip glass probe when 0)
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
@@ -101,10 +101,10 @@ struct ReflParamsUBO
     uint32_t frameIndex;
     int32_t screenWidth;
     int32_t screenHeight;
-    float reflBlend;   // r_rtReflectionBlend — baked into imageStore in rgen
-    float grazingMax;  // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
-    int32_t debugMode; // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
-    float pad[1];
+    float reflBlend;       // r_rtReflectionBlend — baked into imageStore in rgen
+    float grazingMax;      // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
+    int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
+    int32_t sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry in the TLAS
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -998,6 +998,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
     ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());
     ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
+    ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).

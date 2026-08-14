@@ -92,6 +92,10 @@ static idCVar r_rtShadowBlurDepthAware("r_rtShadowBlurDepthAware", "1",
 static idCVar r_rtShadowBlurDepthThreshold(
     "r_rtShadowBlurDepthThreshold", "0.003", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "depth threshold for depth-aware RT shadow blur (smaller preserves edges more)");
+static idCVar r_rtShadowBlurMinRect(
+    "r_rtShadowBlurMinRect", "64", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
+    "skip the RT shadow blur when the light's dispatch rect is smaller than this on both sides "
+    "(P1a perf: tiny lights don't visibly benefit; 0 = always blur)");
 static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
                                 "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
 static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -948,9 +952,19 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
     }
 
     // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---
+    // P1a (rt_optimization_tuning.md): skip the blur for tiny lights — each blur is
+    // two compute dispatches + two barriers inside an already-expensive render-pass
+    // break, and a light covering a small screen rect doesn't visibly benefit.
+    const int minRect = r_rtShadowBlurMinRect.GetInteger();
+    const bool rectTooSmall = minRect > 0 && dispatchRect.extent.width < (uint32_t)minRect &&
+                              dispatchRect.extent.height < (uint32_t)minRect;
+    if (rectTooSmall && r_vkLogRT.GetInteger() >= 2)
+        common->Printf("VK RT BLUR: skipped for small rect %ux%u (< %d, frame=%d)\n", dispatchRect.extent.width,
+                       dispatchRect.extent.height, minRect, tr.frameCount);
+
     int blurRadius = r_rtShadowBlur.GetInteger();
     bool didBlur = false;
-    if (r_rtShadowBlurEnable.GetBool() && blurRadius > 0 && vkRT.blurPipeline != VK_NULL_HANDLE &&
+    if (r_rtShadowBlurEnable.GetBool() && blurRadius > 0 && !rectTooSmall && vkRT.blurPipeline != VK_NULL_HANDLE &&
         sm.blurTempImage != VK_NULL_HANDLE)
     {
         if (blurRadius > 8)

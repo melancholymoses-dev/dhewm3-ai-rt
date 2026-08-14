@@ -72,7 +72,12 @@ static idCVar r_rtGIMaxBounceLights(
 
 static idCVar r_rtGIMaxLights(
     "r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_INTEGER,
-    "Max GI lights to sample per frame, sorted nearest-first (1-128, capped at VK_GI_MAX_LIGHTS)");
+    "Max GI lights to sample per frame (1-128, capped at VK_GI_MAX_LIGHTS)");
+
+static idCVar r_rtGILightStratify(
+    "r_rtGILightStratify", "1", CVAR_RENDERER | CVAR_BOOL,
+    "L1: stratified GI light selection — distance tiers with per-tier importance sort, quotas and "
+    "hysteresis, uploaded importance-first. 0 = legacy nearest-to-camera sort (A/B comparison)");
 
 static idCVar r_rtGILightCollectRadiusScale(
     "r_rtGILightCollectRadiusScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
@@ -925,6 +930,11 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height)
 // GI).  Calling it more than once per frame is safe — the buffer is reset then
 // refilled each call.
 //
+// Ordering contract (L1, rt_optimization_tuning.md): lights are selected via
+// stratified distance tiers and uploaded importance-first, because consumers
+// walk a prefix of the buffer (gi_ray.rchit: maxBounceLights, reflect_ray.rchit:
+// shadow budget, vol_march.comp: maxLights).
+//
 // Independent of r_rtGILightBounce so that reflection hit shaders can always
 // evaluate lighting even when the GI bounce feature is disabled.
 // ---------------------------------------------------------------------------
@@ -964,17 +974,27 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     const int numLightDefs = tr.primaryWorld->lightDefs.Num();
     const int maxLights = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtGIMaxLights.GetInteger());
 
-    // Collect candidates within radius, then sort nearest-first so the
-    // closest maxLights are always sampled regardless of lightDefs order.
+    // Collect candidates within radius; selection/ordering happens below (L1).
     struct Candidate
     {
         float distSq;
+        float importance; // L1: intensity × luminance × radius² / max(distSq, radius²), + hysteresis boost
+        int tier;         // L1: distance tier 0-3 (0-128 / 128-320 / 320-768 / 768+)
+        int lightIdx;     // index into lightDefs — stable identity for hysteresis
         GILightEntry entry;
     };
 
     // Use a fixed-size stack buffer — numLightDefs can be in the hundreds.
     static Candidate s_candidates[1024];
     int numCandidates = 0;
+
+    // L1 hysteresis state: which lightDef indices were uploaded by the previous
+    // upload (stamped with that upload's frameCount). A light selected last frame
+    // gets a small importance boost so selection doesn't flicker at the cut line.
+    static const int kHysteresisMaxLightIdx = 4096;
+    static int s_lightSelectedFrame[kHysteresisMaxLightIdx];
+    static int s_prevUploadFrameNum = -1;
+    const int prevUploadFrame = s_prevUploadFrameNum;
 
     for (int li = 0; li < numLightDefs; li++)
     {
@@ -1018,6 +1038,22 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         {
             Candidate &c = s_candidates[numCandidates++];
             c.distSq = dSq;
+            c.lightIdx = li;
+
+            // L1 distance tier (world units): 0-128 / 128-320 / 320-768 / 768+.
+            const float dist = idMath::Sqrt(dSq);
+            c.tier = (dist < 128.0f) ? 0 : (dist < 320.0f) ? 1 : (dist < 768.0f) ? 2 : 3;
+
+            // L1 perceptual importance. The / max(distSq, radius²) term approximates
+            // received flux without re-collapsing to pure distance: inside a light's
+            // own radius the divisor stops shrinking, so nearby lights compare by
+            // intensity·luminance alone.
+            const float lum = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
+            c.importance = intensity * lum * radius * radius / Max(dSq, radius * radius);
+            if (li < kHysteresisMaxLightIdx && prevUploadFrame >= 0 &&
+                s_lightSelectedFrame[li] == prevUploadFrame)
+                c.importance *= 1.15f; // hysteresis: incumbents survive small importance dips
+
             c.entry.posRadius[0] = p.origin.x;
             c.entry.posRadius[1] = p.origin.y;
             c.entry.posRadius[2] = p.origin.z;
@@ -1061,29 +1097,127 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
     }
 
-    // No ordering work needed if all candidates are uploaded.
-    if (numCandidates > 1 && numCandidates > maxLights)
+    // --- L1 (rt_optimization_tuning.md): stratified selection + importance ordering ---
+    //
+    // Pure nearest-to-camera selection (legacy path below) lets dim fill lights near
+    // the camera crowd out a bright light 200u away, and makes distant sources pop
+    // as the player moves. Instead: bucket by distance tier, sort each tier by
+    // importance, give each tier a guaranteed slot quota, and upload the final set
+    // ordered importance-first — order matters because every consumer walks a
+    // *prefix* of this buffer (GI bounce: maxBounceLights, reflection hits: shadow
+    // budget, volumetrics: maxLights).
+    const int toUpload = Min(numCandidates, maxLights);
+
+    if (!r_rtGILightStratify.GetBool())
     {
-        const auto cmpCandidates = [](const void *a, const void *b) -> int {
+        // Legacy nearest-first path, kept for A/B comparison.
+        if (numCandidates > 1 && numCandidates > maxLights)
+        {
+            const auto cmpDist = [](const void *a, const void *b) -> int {
+                const Candidate *ca = (const Candidate *)a;
+                const Candidate *cb = (const Candidate *)b;
+                if (ca->distSq < cb->distSq)
+                    return -1;
+                if (ca->distSq > cb->distSq)
+                    return 1;
+                return 0;
+            };
+            qsort(s_candidates, numCandidates, sizeof(s_candidates[0]), cmpDist);
+        }
+
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf(
+                "VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f collectRadius=%.1f "
+                "(legacy distance sort)\n",
+                toUpload, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius);
+        for (int i = 0; i < toUpload; i++)
+            lb->lights[lb->numLights++] = s_candidates[i].entry;
+        return;
+    }
+
+    // Sort tier-ascending, importance-descending: tiers become contiguous runs,
+    // each run best-first, so per-tier quota picks are just prefixes.
+    if (numCandidates > 1)
+    {
+        const auto cmpTierImportance = [](const void *a, const void *b) -> int {
             const Candidate *ca = (const Candidate *)a;
             const Candidate *cb = (const Candidate *)b;
-            if (ca->distSq < cb->distSq)
+            if (ca->tier != cb->tier)
+                return ca->tier - cb->tier;
+            if (ca->importance > cb->importance)
                 return -1;
-            if (ca->distSq > cb->distSq)
+            if (ca->importance < cb->importance)
                 return 1;
             return 0;
         };
-
-        qsort(s_candidates, numCandidates, sizeof(s_candidates[0]), cmpCandidates);
+        qsort(s_candidates, numCandidates, sizeof(s_candidates[0]), cmpTierImportance);
     }
 
-    const int toUpload = Min(numCandidates, maxLights);
+    int tierStart[4] = {0, 0, 0, 0};
+    int tierCount[4] = {0, 0, 0, 0};
+    for (int i = 0; i < numCandidates; i++)
+        tierCount[s_candidates[i].tier]++;
+    for (int t = 1; t < 4; t++)
+        tierStart[t] = tierStart[t - 1] + tierCount[t - 1];
+
+    // Quotas 48/40/24/16 of 128 slots, scaled to maxLights. Guaranteed floors so
+    // far-tier bright sources always get representation; unused quota flows to
+    // other tiers (near-first) in the second pass.
+    int quota[4];
+    quota[0] = (maxLights * 48) / 128;
+    quota[1] = (maxLights * 40) / 128;
+    quota[2] = (maxLights * 24) / 128;
+    quota[3] = maxLights - quota[0] - quota[1] - quota[2];
+
+    int take[4];
+    int used = 0;
+    for (int t = 0; t < 4; t++)
+    {
+        take[t] = Min(quota[t], tierCount[t]);
+        used += take[t];
+    }
+    for (int t = 0; t < 4 && used < toUpload; t++)
+    {
+        const int extra = Min(toUpload - used, tierCount[t] - take[t]);
+        take[t] += extra;
+        used += extra;
+    }
+
+    // Gather winners (each tier's best-first prefix), then order the final list
+    // by importance so prefix-walking consumers see the lights that matter most.
+    static const Candidate *s_selected[VK_GI_MAX_LIGHTS];
+    int numSelected = 0;
+    for (int t = 0; t < 4; t++)
+        for (int i = 0; i < take[t] && numSelected < VK_GI_MAX_LIGHTS; i++)
+            s_selected[numSelected++] = &s_candidates[tierStart[t] + i];
+
+    if (numSelected > 1)
+    {
+        const auto cmpImportance = [](const void *a, const void *b) -> int {
+            const Candidate *ca = *(const Candidate *const *)a;
+            const Candidate *cb = *(const Candidate *const *)b;
+            if (ca->importance > cb->importance)
+                return -1;
+            if (ca->importance < cb->importance)
+                return 1;
+            return 0;
+        };
+        qsort(s_selected, numSelected, sizeof(s_selected[0]), cmpImportance);
+    }
+
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf(
-            "VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f collectRadius=%.1f\n",
-            toUpload, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius);
-    for (int i = 0; i < toUpload; i++)
-        lb->lights[lb->numLights++] = s_candidates[i].entry;
+        common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
+                       "collectRadius=%.1f tiers=%d/%d/%d/%d take=%d/%d/%d/%d\n",
+                       numSelected, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius, tierCount[0],
+                       tierCount[1], tierCount[2], tierCount[3], take[0], take[1], take[2], take[3]);
+
+    for (int i = 0; i < numSelected; i++)
+    {
+        lb->lights[lb->numLights++] = s_selected[i]->entry;
+        if (s_selected[i]->lightIdx < kHysteresisMaxLightIdx)
+            s_lightSelectedFrame[s_selected[i]->lightIdx] = tr.frameCount;
+    }
+    s_prevUploadFrameNum = tr.frameCount;
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).
