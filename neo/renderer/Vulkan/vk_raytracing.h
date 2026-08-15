@@ -147,18 +147,35 @@ struct vkTLAS_t
     int lastBuiltFrameCount; // skip redundant rebuilds within same frame
 };
 
-// Shadow mask buffer (R8 UNORM, one pixel per screen pixel)
+// ---------------------------------------------------------------------------
+// Shadow mask layer budget (P1b — batched shadow masks, rt_optimization_tuning.md)
+//
+// The shadow mask is an R8_UNORM 2D *array*: one layer per shadow-casting light.
+// All batched lights are traced back-to-back in one block outside the render
+// pass, so the interaction loop runs with zero render-pass breaks — each light's
+// draw samples its own layer via u_ShadowMaskLayer.
+//
+// The final layer is reserved as a serial scratch layer: it is reused, one light
+// at a time, by the legacy per-light path (r_rtShadowBatch 0) and by any lights
+// that overflow the batch budget.  Those lights still cost a render-pass break.
+// ---------------------------------------------------------------------------
+#define VK_RT_SHADOW_LAYERS 8
+#define VK_RT_SHADOW_SERIAL_LAYER (VK_RT_SHADOW_LAYERS - 1)
+#define VK_RT_SHADOW_BATCH_MAX (VK_RT_SHADOW_LAYERS - 1)
+
+// Shadow mask buffer (R8 UNORM 2D array, one pixel per screen pixel, one layer per light)
 struct vkShadowMask_t
 {
     VkImage image;
     VkDeviceMemory memory;
-    VkImageView view;
-    // Temp image for blur ping-pong (same format/size as shadow mask)
+    VkImageView view; // VK_IMAGE_VIEW_TYPE_2D_ARRAY covering all layers
+    // Temp image for blur ping-pong (same format/size/layer count as shadow mask)
     VkImage blurTempImage;
     VkDeviceMemory blurTempMemory;
     VkImageView blurTempView;
     uint32_t width;
     uint32_t height;
+    uint32_t layers;
 };
 
 // AO mask buffer (R8 UNORM, one pixel per screen pixel)
@@ -644,15 +661,54 @@ void VK_RT_DrainBLASGarbage(void);
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Dispatch shadow rays for a single light.
+// Dispatch shadow rays for a single light into `layer` of the shadow mask array.
 // Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
 // this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
 // The shadow mask is kept in VK_IMAGE_LAYOUT_GENERAL throughout (no layout transition).
+// This is the *serial* path (one render-pass break per light) — used by the legacy
+// r_rtShadowBatch 0 mode and by lights that overflow the batch budget.
 void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
-                                      VkRect2D dispatchRect);
+                                      VkRect2D dispatchRect, int layer);
 
 // Resize shadow mask when resolution changes
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
+
+// ---------------------------------------------------------------------------
+// P1b — batched shadow masks
+//
+// Per-view flow (all from vk_backend.cpp):
+//   1. VK_RT_ShadowBatchBegin()                     — reset the layer table
+//   2. VK_RT_ShadowBatchAddLight(vLight, rect) × L  — assign one layer per light,
+//      in the same order and with the same filters as the interaction loop
+//   3. VK_RT_ShadowBatchClearLayers(cmd)            — clear only the layers in use
+//   4. VK_RT_DispatchShadowBatch(cmd, viewDef)      — trace + blur every batched
+//      light with a single depth round-trip and no render-pass breaks
+//   5. interaction loop: VK_RT_GetShadowLayerForLight(vLight) picks the layer;
+//      a light on VK_RT_SHADOW_SERIAL_LAYER still needs the per-light break.
+// ---------------------------------------------------------------------------
+
+// True when batching is enabled and usable this frame (r_rtShadowBatch).
+bool VK_RT_ShadowBatchEnabled(void);
+
+// Reset the per-view layer assignment table.
+void VK_RT_ShadowBatchBegin(void);
+
+// Assign a shadow mask layer to one light.  Returns the layer index, or -1 when
+// the light casts no shadows (noShadows / material "noShadows") — those lights
+// sample no mask at all instead of a cleared-to-white one.
+int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect);
+
+// Layer assigned by VK_RT_ShadowBatchAddLight, or -1 if the light casts no shadows
+// or was never added this view.
+int VK_RT_GetShadowLayerForLight(const viewLight_t *vLight);
+
+// Clear the layers this view actually uses to 1.0 (fully lit).  Must be called
+// outside a render pass, before VK_RT_DispatchShadowBatch.
+void VK_RT_ShadowBatchClearLayers(VkCommandBuffer cmd);
+
+// Trace + blur every batched light.  Must be called outside a render pass, after
+// the TLAS rebuild.  Does nothing when batching is off or no light was batched.
+void VK_RT_DispatchShadowBatch(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit

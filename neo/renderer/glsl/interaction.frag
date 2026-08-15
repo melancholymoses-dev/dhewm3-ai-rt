@@ -33,7 +33,8 @@ layout(set=0, binding=3) uniform sampler2D u_LightProjection; // projected light
 layout(set=0, binding=4) uniform sampler2D u_DiffuseMap;      // diffuse albedo
 layout(set=0, binding=5) uniform sampler2D u_SpecularMap;     // specular intensity/color
 layout(set=0, binding=6) uniform sampler2D u_SpecularTable;   // NdotH -> specular power
-layout(set=0, binding=7) uniform sampler2D u_ShadowMask;      // RT shadow mask (1=lit, 0=shadowed)
+layout(set=0, binding=7) uniform sampler2DArray u_ShadowMask; // RT shadow mask array, one layer per
+                                                              // shadow-casting light (1=lit, 0=shadowed)
 layout(set=0, binding=8) uniform sampler2D u_AOMap;           // RT AO mask (1=unoccluded, 0=occluded)
 // binding=9 (RT reflection buffer) removed: reflections are now composited by the
 // dedicated refl_composite.frag fullscreen pass (Stage 3.5, Step 8 — see
@@ -73,7 +74,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     float u_SpecF0Scale;         // r_rtSpecF0Scale — multiplier for specular→F0 remap
     float u_SpecF0Gamma;         // r_rtSpecF0Gamma — power exponent for specular→F0 remap
     int   u_ReflectionDebugMode; // r_rtReflectionDebugMode — 0=off, 1=Fresnel greyscale
-    int   _pad;                  // reserved
+    int   u_ShadowMaskLayer;     // P1b — array layer holding this light's shadow mask
 };
 
 layout(location = 0) out vec4 fragColor;
@@ -131,7 +132,7 @@ void main() {
     float shadow = 1.0;
     if (u_UseShadowMask != 0) {
         vec2 shadowUV = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
-        shadow = texture(u_ShadowMask, shadowUV).r;
+        shadow = texture(u_ShadowMask, vec3(shadowUV, float(u_ShadowMaskLayer))).r;
     }
 
     // --- RT ambient occlusion ---
