@@ -46,6 +46,9 @@ likely the largest *structural* cost after raw ray counts.
   small (< ~64px on a side) — tiny lights don't visibly benefit — and clamp
   `r_rtShadowBlur` cost by running blur at the dispatch rect only (already done) but with
   one barrier pair instead of two where possible.
+  **✅ Implemented (Wave 2, 2026-08-14):** `r_rtShadowBlurMinRect` (default 64, 0 = always
+  blur) in vk_shadows.cpp; skips when *both* rect sides are under the threshold. Skip
+  logged at `r_vkLogRT 2`. The barrier-pair consolidation was not done (P1b subsumes it).
 - **P1b (the real fix):** batch shadow masks. Pack up to 4 lights per RGBA8 mask image
   (one light per channel), or use an R8 texture-array with one layer per light
   (`VK_MAX_SHADOWED_LIGHTS` ≈ 8-16 covers Doom 3 scenes). Trace **all** lights in one
@@ -88,6 +91,39 @@ chain is precisely the denoiser this needs.
   `randFloat` draw seeded from the existing world-anchored seed).
 - The same treatment applies to `reflect_ray.rchit` (shared include — see P5).
 
+**✅ Implemented (Wave 3, 2026-08-15):** `rt_EvalDirectLightingStochastic()` in
+`rt_light_eval.glsl`, driven by `r_rtGIStochasticLights` (default 2, 0 = legacy
+all-lights path for A/B). Notes for whoever tunes or extends this:
+
+- **Streaming weighted-reservoir sampling, not a CDF.** Two independent
+  single-sample reservoirs live in scalars/vectors; there is no 128-float array,
+  so the hit shader stays register-resident (a per-invocation CDF array in an
+  rchit spills to scratch and is a plausible source of the earlier crashes here).
+- Weight = luminance of the light's *unshadowed* contribution. The estimator's
+  luminance is therefore exactly `wSum` per pick, i.e. bounded by the total
+  unshadowed luminance — the `1/p` division cannot make fireflies. Only the
+  binary shadow term is noisy, which is what the temporal + à-trous chain eats.
+- `n <= picks` defers to the deterministic loop (same ray count, zero variance) —
+  the common case in Doom 3 rooms with 1-3 lights in range. Both reservoirs
+  landing on the same light reuse one trace.
+- Seed is `launchID ⊕ frameIndex ⊕ floatBitsToUint(gl_HitTEXT)`. All three matter:
+  `gl_HitTEXT` decorrelates the rgen's `numSamples` rays (same launch ID),
+  `frameIndex` is what lets temporal accumulation average the picks. Drop it and
+  the same light wins forever at each point — noise bakes into permanent blotches.
+- **Prerequisite bug fixed in the same change:** the GI descriptor set declared
+  binding 3 (GIParams UBO) as `RAYGEN` only, while `gi_ray.rchit` has read it
+  since Option B landed (`maxBounceLights`). Reading a descriptor from a stage
+  absent from `stageFlags` is undefined behaviour — garbage or a fault depending
+  on driver. Now `RAYGEN | CLOSEST_HIT`. Any future per-hit knob must ride in
+  this UBO (GI) or the light SSBO header; `rt_light_eval.glsl` itself stays
+  UBO-free because the *reflection* pipeline's binding 3 is still raygen-only.
+- Reflections were left on the deterministic path (their params UBO is raygen-only,
+  and P4's threshold already caps them at 8 rays). Extending P3 to
+  `reflect_ray.rchit` needs a seed plumbed through `ReflPayload` first.
+- **Not yet done:** raising `r_rtGISamples`. Default stays 4 so the estimator can
+  be validated against the legacy path with ray count held constant. Once stable,
+  8 samples × 2 picks = 16 rays/px, still a 4× cut from today's 64 worst case.
+
 ### P4. Reflection-hit shadow rays go to the wrong lights
 
 `reflect_ray.rchit` shadow budget (first 8 lights **in buffer order**) is spent on
@@ -95,6 +131,9 @@ lights sorted nearest-to-*camera*, not nearest-to-hit — reflection hits are of
 from the camera. Cheap interim fix (independent of P3): skip the shadow ray when
 `lColor·lInt·NdotL·atten` is below a small threshold, so budget flows to lights that
 matter at the hit point. Long-term: P3's stochastic selection subsumes this.
+**✅ Implemented (Wave 2, 2026-08-14):** `REFL_SHADOW_MIN_LUM` (0.02) in
+reflect_ray.rchit, applied via the shared loop's `minShadowLum` parameter (see P5);
+below-threshold lights contribute unshadowed without consuming budget.
 
 ### P5. Duplicated light-evaluation code (maintenance, enables P3/P4)
 
@@ -103,6 +142,15 @@ already drifted (GI applies `bounceScale`; reflections don't — one cause of
 reflections reading brighter than the surfaces around them). Extract to
 `rt_light_eval.glsl` (add to `GLSL_INCLUDES`) before implementing P3, so the
 stochastic path lands once.
+**✅ Implemented (Wave 2, 2026-08-14):** `rt_light_eval.glsl` owns the light SSBO
+declaration, shadow payload, and `rt_EvalDirectLighting(...)` — parameterized by max
+lights, shadow budget, bias, contribScale (GI passes bounceScale, reflections 1.0 —
+the drift is now an explicit parameter, retune in T6) and P4's minShadowLum. Includers
+`#define RT_LIGHT_SHADOW_MISS_INDEX` (GI 1, refl 2) first. Side fix: GI shadow rays
+now guard against negative tMax (hit closer to the light than the bias), which the old
+inline GI loop didn't. player_reflect.rchit and vol_march.comp keep their own loops
+(different semantics: no shadow budget / cone evaluation) — P3 lands only in the
+shared file.
 
 ### P6. Glass probe ray fired even in glass-free scenes
 
@@ -111,6 +159,10 @@ not any glass exists. `vk_material_table.cpp` knows at build time if any
 `MAT_FLAG_GLASS` entry exists; `vk_accelstruct.cpp` knows if such an instance is in the
 TLAS. Add `int sceneHasGlass` to `ReflParams`; skip the probe when 0. Full-screen ray
 dispatch saved in most rooms.
+**✅ Implemented (Wave 2, 2026-08-14):** `vkRT.sceneHasGlass` recomputed per TLAS build
+in vk_accelstruct.cpp (scan of static+dynamic material entries), plumbed through the
+ReflParams pad slot, probe skipped in reflect_ray.rgen. State transitions logged at
+`r_vkLogRT 1`.
 
 ### P7. TLAS build flags favor the wrong axis
 
@@ -118,6 +170,8 @@ dispatch saved in most rooms.
 practice for a **per-frame rebuilt TLAS** is `PREFER_FAST_BUILD` (trace cost difference
 is negligible at TLAS level; build cost is paid every frame). Keep BLAS as
 `FAST_TRACE`. One-line change; measure the TLAS profiler phase before/after.
+**✅ Implemented (Wave 2, 2026-08-14):** TLAS build flag switched; both BLAS build
+sites unchanged. Measure the TLAS profiler phase at the checkpoint.
 
 ### P8. Volumetric march at full resolution
 
@@ -134,6 +188,40 @@ heavier passes, with little visible loss.
 pixel and runs in AO, GI, and reflections. Commit 3 of the G-buffer plan replaces it
 with one G-buffer fetch in all three — modest ALU win, plus bump-mapped AO/GI
 directions (quality).
+
+**✅ Implemented (Wave 3, 2026-08-15):** `rt_gbuf_normal.glsl` (new shared include,
+added to `GLSL_INCLUDES`) provides `rt_GbufNormalAt()`; `ao_ray.rgen` (new binding 4)
+and `gi_ray.rgen` (new binding 5) call it and keep `rt_ReconstructNormal` as the
+fallback. `r_rtGbufNormals` (default 1) forces both back onto reconstruction for an
+A/B; mode transitions log at `r_vkLogRT 1`. Reflections were already on the G-buffer
+from Wave 1b and are untouched.
+
+Two things that are easy to get wrong here:
+
+- **The "no data" test is on RGB, not alpha.** `reflect_ray.rgen` tests `gbuf.a > 0.0`,
+  which is right for reflections — a pixel with F0 == 0 isn't reflective, so the
+  fallback path costs nothing. Copying that test into AO/GI would be a silent no-op:
+  most of a Doom 3 scene is matte with a black or absent specular map, so F0 == 0 is
+  the *normal* case and nearly every pixel would fall back. The honest test is the
+  rgb clear sentinel (0.5, 0.5, 0.5) — the encoding of a zero vector, which no unit
+  normal produces. Same test reflection debug mode 4 uses.
+- **A back-facing bump normal is rejected, not flipped.** `rt_ReconstructNormal`
+  guaranteed `dot(n, toCamera) > 0` and the hemisphere sampling downstream relies on
+  that; flipping a bump-mapped normal instead points it into the surface. Those pixels
+  take the reconstruction fallback.
+
+Plumbing notes: the `COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL` barrier in
+`vk_backend.cpp` was already issued once for the whole RT block (Step 6 of the G-buffer
+plan anticipated this), so no barrier work was needed. The 1x1 null fallback image is
+now shared via `VK_RT_GetNullGbufNormalView()` (vk_reflections.cpp); `VK_RT_InitAO` and
+`VK_RT_InitGI` call it at init so its one-time submit+wait can't land mid-frame.
+AO's `useGbufNormal` reuses the existing `pad0` slot, so `AOParamsUBO` is unchanged at
+112 bytes; `GIParamsUBO` grew to 124.
+
+**Debug:** `r_rtReflectionDebugMode 2/3/4` already visualizes exactly the buffer AO/GI
+now consume — mode 4 (magenta = prepass never wrote this pixel) is the direct predictor
+of where AO/GI still take the fallback. Mode 2 on a grate floor is the quality check:
+AO/GI should now pick up that bump detail.
 
 ### P10. If reflections are still heavy after P2: checkerboard
 
@@ -163,6 +251,18 @@ panel lights compete on the wrong axis.
   the per-hit weighted draw ensures the right lights are sampled at each bounce.
   Light-around-the-corner reads only when both are in place (the doorway light must
   win the draw at hit points near the doorway even when the camera is far away).
+
+**✅ Implemented (Wave 2, 2026-08-14)** in `VK_RT_UploadGILights` (vk_gi.cpp):
+- Tiers 0-128 / 128-320 / 320-768 / 768+, quotas 48/40/24/16 scaled to
+  `r_rtGIMaxLights`, unused quota redistributed near-first.
+- Importance = `intensity × luminance(color) × radius² / max(distSq, radius²)`.
+- Hysteresis via a 1.15× importance boost for lights uploaded the previous frame
+  (equivalent to surviving within ~1.15× of the cut threshold, far simpler).
+- Final upload is **importance-ordered** (not tier-grouped): every consumer walks a
+  prefix of the buffer (GI `maxBounceLights`, reflection shadow budget, volumetric
+  `maxLights`), so ordering is itself a selection layer.
+- `r_rtGILightStratify 0` restores the legacy nearest-first sort for A/B popping
+  comparisons; tier/take counts logged at `r_vkLogRT 1`.
 
 ---
 

@@ -59,10 +59,10 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  maxDist;
     uint   frameIndex;
     ivec2  screenSize;
-    float  reflBlend;   // r_rtReflectionBlend — scale baked in at imageStore time
-    float  grazingMax;  // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
-    int    debugMode;   // r_rtReflectionDebugMode — 2/3/4 handled here (see docs/plans/gbuffer_normal_pass.md)
-    float  _pad0;
+    float  reflBlend;     // r_rtReflectionBlend — scale baked in at imageStore time
+    float  grazingMax;    // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
+    int    debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled here (see docs/plans/gbuffer_normal_pass.md)
+    int    sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry is in the TLAS; skips the glass probe
 } params;
 
 #include "reflect_payload.glsl"
@@ -137,19 +137,24 @@ void main()
     // If glass is found, use the glass surface as the reflection origin so
     // the mirror image shows the room the player is standing in, not the
     // room beyond the glass.
+    // P6: skipped wholesale when the TLAS holds no glass geometry — the probe
+    // can't hit anything, and this saves a full-screen ray dispatch in most rooms.
     float distToSurface = length(worldPos - camPos);
     glassProbe.hitT = 0.0;
-    traceRayEXT(
-        topLevelAS,
-        gl_RayFlagsCullOpaqueEXT,
-        0xFEu,          // normal mode excludes player bit only
-        1,              // SBT hit offset 1: second entry in hit region = glass_probe.rchit
-        0,              // SBT stride 0: ALL geometries use the same hit group (no per-geom offset)
-        1,              // miss index 1: second entry in miss region = glass_probe.rmiss
-        camPos, 0.01,
-        viewDir, distToSurface,
-        1               // payload location 1
-    );
+    if (params.sceneHasGlass != 0)
+    {
+        traceRayEXT(
+            topLevelAS,
+            gl_RayFlagsCullOpaqueEXT,
+            0xFEu,          // normal mode excludes player bit only
+            1,              // SBT hit offset 1: second entry in hit region = glass_probe.rchit
+            0,              // SBT stride 0: ALL geometries use the same hit group (no per-geom offset)
+            1,              // miss index 1: second entry in miss region = glass_probe.rmiss
+            camPos, 0.01,
+            viewDir, distToSurface,
+            1               // payload location 1
+        );
+    }
 
     // EARLY-OUT: opaque, non-reflective pixel with no glass in front of it — skip
     // the reflect ray + shadow rays entirely. This is the perf win the G-buffer

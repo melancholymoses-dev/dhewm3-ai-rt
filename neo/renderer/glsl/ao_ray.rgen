@@ -17,7 +17,8 @@ of the original Doom 3 GPL Source Code release.
 //
 // For every screen pixel:
 //   1. Reconstruct world-space position from depth.
-//   2. Derive world-space normal from depth-buffer gradients.
+//   2. Take the world-space shading normal from the G-buffer the depth prepass
+//      wrote (P9); fall back to depth-buffer gradients where it has no data.
 //   3. Shoot numSamples cosine-weighted hemisphere rays.
 //   4. Write fraction of unoccluded rays (1.0=clear, 0.0=fully occluded).
 //
@@ -28,13 +29,18 @@ of the original Doom 3 GPL Source Code release.
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, r8) uniform image2D aoImage;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+// P9: G-buffer normal/F0 written by the depth prepass (Stage 3.5). rgb = world
+// normal * 0.5 + 0.5, a = F0 (unused here). Always a valid binding — the real
+// per-frame image when vk.gbufferSupported, otherwise a 1x1 null image at the
+// clear sentinel. See rt_gbuf_normal.glsl for the "no data" test.
+layout(set = 0, binding = 4) uniform sampler2D gbufNormalSampler;
 
 layout(set = 0, binding = 3) uniform AOParams {
     mat4  invViewProj;  // inverse view-projection for world position reconstruction
     float aoRadius;     // max ray length (world units); default ~64
     int   numSamples;   // rays per pixel (1-16); default 4
     uint  frameIndex;   // for temporal seed variation
-    float pad;
+    int   useGbufNormal; // P9 — r_rtGbufNormals; 0 when no G-buffer exists
     ivec2 screenSize;   // full framebuffer (width, height)
     ivec2 scissorOffset;
     ivec2 scissorExtent;
@@ -47,6 +53,7 @@ layout(location = 0) rayPayloadEXT float aoPayload;
 // rt_ReconstructNormal, rt_CosineSampleHemisphere,
 // rt_WorldAnchoredSeed, rt_PixelPhiOffset
 #include "rt_indirect.glsl"
+#include "rt_gbuf_normal.glsl"
 
 void main()
 {
@@ -83,7 +90,12 @@ void main()
     vec3 camPos   = camWorld.xyz / camWorld.w;
     vec3 toCamera = normalize(camPos - worldPos);
 
-    vec3 normal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, toCamera);
+    // P9: bump-mapped shading normal from the depth prepass; the depth-gradient
+    // reconstruction stays as the fallback for pixels the prepass didn't write
+    // (and for r_rtGbufNormals 0).
+    vec3 normal;
+    if (!rt_GbufNormalAt(coord, params.useGbufNormal, toCamera, normal))
+        normal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, toCamera);
 
     // World-anchored seed + per-pixel phi for temporal stability
     uint  baseSeed  = rt_WorldAnchoredSeed(worldPos, params.frameIndex);

@@ -1794,6 +1794,21 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        badAddrCount, badTexCount, badBaseCount, alphaNoDiffuseCount, glassCount, playerCount);
     }
 
+    // P6 (rt_optimization_tuning.md): does any glass geometry exist in this frame's
+    // TLAS?  When not, the reflection rgen skips its per-pixel glass probe ray —
+    // a full-screen ray dispatch saved in most rooms.
+    {
+        bool hasGlass = false;
+        for (uint32_t i = 0; i < staticGeomCount && !hasGlass; i++)
+            hasGlass = (staticMatEntries[i].flags & VK_MAT_FLAG_GLASS) != 0;
+        for (uint32_t i = 0; i < dynamicGeomCount && !hasGlass; i++)
+            hasGlass = (dynamicMatEntries[i].flags & VK_MAT_FLAG_GLASS) != 0;
+        if (hasGlass != vkRT.sceneHasGlass && r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT TLAS: sceneHasGlass %d -> %d (frame=%d)\n", vkRT.sceneHasGlass ? 1 : 0,
+                           hasGlass ? 1 : 0, tr.frameCount);
+        vkRT.sceneHasGlass = hasGlass;
+    }
+
     // Upload material table entries: one entry per geometry slot (not per instance).
     VK_RT_UploadMatTableFrame(staticMatEntries, staticGeomCount, rewriteStatic, dynamicMatEntries, dynamicGeomCount,
                               s_staticGeomVtxAddrs, s_staticGeomIdxAddrs, staticGeomCount, s_dynGeomVtxAddrs,
@@ -1851,7 +1866,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo = {};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    // FAST_BUILD, not FAST_TRACE: this TLAS is rebuilt from scratch every frame, so
+    // build time is paid per frame while the trace-quality difference at TLAS level
+    // is negligible (P7, docs/plans/rt_optimization_tuning.md). BLASes stay FAST_TRACE.
+    buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.geometryCount = 1;
     buildInfo.pGeometries = &tlasGeom;

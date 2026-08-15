@@ -14,12 +14,14 @@ incidence).  The remaining 96 % is passed through to the next bounce via
 reflPayload.transmittance + nextOrigin/nextDir.  rgen traces the continuation
 ray on the next loop iteration.
 
-Lighting: opaque hit surfaces are shaded using the same GI light list
-(set=0, binding=4) that gi_ray.rchit uses for bounce lighting.  Shadow rays
-are fired for the first REFL_MAX_SHADOW_LIGHTS candidates per hit (miss
-index 2 → gi_shadow.rmiss); remaining lights fall back to NdotL × falloff
-only so the cap degrades gracefully.  When no lights are available
-(numLights == 0) the shader falls back to raw diffuse albedo (flat shading).
+Lighting: opaque hit surfaces are shaded via the shared rt_light_eval.glsl
+loop (P5) over the same GI light list (set=0, binding=4) that gi_ray.rchit
+uses for bounce lighting.  Shadow rays are budgeted at REFL_MAX_SHADOW_LIGHTS
+per hit (miss index 2 → gi_shadow.rmiss) and skipped for lights whose
+contribution at the hit is below REFL_SHADOW_MIN_LUM (P4); lights past the
+budget/threshold fall back to NdotL × falloff only so the cap degrades
+gracefully.  When no lights are available (numLights == 0) the shader falls
+back to raw diffuse albedo (flat shading).
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -44,111 +46,33 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
 #include "reflect_payload.glsl"
 #include "gi_shadow_payload.glsl"
 
-layout(location = 0) rayPayloadInEXT ReflPayload         reflPayload;
-layout(location = 1) rayPayloadEXT   GIShadowPayload     reflShadow;
+layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
 
-// ---------------------------------------------------------------------------
-// GI light list — same buffer as gi_ray.rchit uses for bounce evaluation.
-// Provided by vk_reflections.cpp at set=0, binding=4 (GI light SSBO).
-// ---------------------------------------------------------------------------
-struct ReflGILight {
-    vec4 posRadius;      // xyz = world pos, w = sphere pre-cull radius
-    vec4 colorIntensity; // rgb = light colour, a = intensity
-    vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
-    vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
-    uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
-    uint _pad0; uint _pad1; uint _pad2;
-};
-
-layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
-    int        numLights;
-    float      bounceScale;   // unused here; kept for layout compatibility
-    float      giRadius;      // r_rtGIRadius — max range for light evaluation
-    float      emissiveScale; // r_rtGIEmissiveScale — emissive surface multiplier
-    ReflGILight lights[];
-} reflLightBuf;
+// Shared light loop (P5) — declares the light SSBO (set=0, binding=4, the same GI
+// light buffer vk_reflections.cpp binds) and the location-1 shadow payload.
+// Miss index 2 = gi_shadow.rmiss's slot in the reflection pipeline's miss region.
+#define RT_LIGHT_SHADOW_MISS_INDEX 2
+#include "rt_light_eval.glsl"
 
 // Barycentric coordinates set by the built-in triangle intersection stage.
 // baryCoord.x = weight of vertex 1, baryCoord.y = weight of vertex 2.
 // Weight of vertex 0 = 1.0 - baryCoord.x - baryCoord.y.
 hitAttributeEXT vec2 baryCoord;
 
-#define REFL_MAX_LIGHTS      128
-// Cap shadow rays per reflection hit for performance. Lights are iterated
-// in buffer order (closest not guaranteed), so this trades quality for cost.
+// Cap shadow rays per reflection hit for performance. Lights arrive importance-
+// ordered for the *camera* (L1, vk_gi.cpp), so this trades quality for cost.
 // Increase to 16–32 if shadows look incomplete in heavily-lit scenes.
 #define REFL_MAX_SHADOW_LIGHTS 8
 #define REFL_SHADOW_BIAS       0.5   // world-unit offset to avoid self-shadowing
+// P4: lights contributing less than this (luminance of colour·intensity·NdotL·atten)
+// at the hit point don't spend a shadow ray — the list is ordered for the *camera*,
+// and reflection hits are often far from it, so without this the 8-ray budget goes
+// to lights that barely reach the hit.  They still contribute unshadowed, exactly
+// like lights past the budget.
+#define REFL_SHADOW_MIN_LUM    0.02
 
-// ---------------------------------------------------------------------------
-// rt_ReflEvalLighting — evaluate direct irradiance at a surface point using
-// the scene light list.  Shadow rays are fired for the first REFL_MAX_SHADOW_LIGHTS
-// candidates; remaining lights use NdotL × falloff only (no shadow test) so the
-// cap degrades gracefully rather than going black.
-// Returns vec3(kAmbient) as a floor when no lights reach the surface.
-// ---------------------------------------------------------------------------
-vec3 rt_ReflEvalLighting(vec3 hitPos, vec3 hitNorm)
-{
-    // Small ambient floor so surfaces with no nearby lights aren't fully black.
-    const float kAmbient = 0.01;
-    vec3 irradiance = vec3(kAmbient);
-
-    int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
-    int shadowsUsed = 0;
-    for (int i = 0; i < n; i++)
-    {
-        vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz;
-        float lRad   = reflLightBuf.lights[i].posRadius.w;
-        vec3  lColor = reflLightBuf.lights[i].colorIntensity.rgb;
-        float lInt   = reflLightBuf.lights[i].colorIntensity.a;
-
-        vec3  toL  = lPos - hitPos;
-        float dist = length(toL);
-        if (dist >= lRad || dist < 0.01)
-            continue;
-
-        vec3  lightDir = toL / dist;
-        float NdotL = dot(hitNorm, lightDir);
-        if (NdotL <= 0.0)
-            continue;
-
-        // Quadratic falloff matching GI: zero at the edge of light radius, hard cutoff beyond.
-        float t     = dist / max(lRad, 1.0);
-        float atten = t < 1.0 ? 1.0 - t * t : 0.0;
-        if (atten <= 0.0)
-            continue;
-
-        // Shadow ray — fire for the first REFL_MAX_SHADOW_LIGHTS candidates.
-        // miss index 2 → gi_shadow.rmiss (sets occluded=false when unblocked).
-        if (shadowsUsed < REFL_MAX_SHADOW_LIGHTS)
-        {
-            float shadowTMax = dist - REFL_SHADOW_BIAS;
-            if (shadowTMax > 0.0)
-            {
-                reflShadow.occluded = true;
-                traceRayEXT(
-                    tlas,
-                    gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-                    0xFF,
-                    0,              // sbt hit offset (unused — skip closest hit)
-                    0,              // sbt stride
-                    2,              // miss index 2 → gi_shadow.rmiss
-                    hitPos + hitNorm * REFL_SHADOW_BIAS,
-                    0.0,
-                    lightDir,
-                    shadowTMax,
-                    1               // payload location 1
-                );
-                shadowsUsed++;
-                if (reflShadow.occluded)
-                    continue;
-            }
-        }
-
-        irradiance += lColor * lInt * NdotL * atten;
-    }
-    return irradiance;
-}
+// Small ambient floor so surfaces with no nearby lights aren't fully black.
+#define REFL_AMBIENT           0.01
 
 void main()
 {
@@ -190,7 +114,7 @@ void main()
     vec3 emissive = rt_EvalEmissiveRadiance(matIdx, gl_PrimitiveID, baryCoord);
     if (dot(emissive, emissive) > 0.001)
     {
-        reflPayload.colour        = emissive * reflLightBuf.emissiveScale;
+        reflPayload.colour        = emissive * rtLightBuf.emissiveScale;
         reflPayload.transmittance = 0.0;
         return;
     }
@@ -198,7 +122,7 @@ void main()
     // Opaque surface — sample diffuse and apply per-light direct irradiance.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
 
-    if (reflLightBuf.numLights > 0)
+    if (rtLightBuf.numLights > 0)
     {
         vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
         vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
@@ -206,7 +130,14 @@ void main()
         if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
             hitNorm = -hitNorm;
 
-        reflPayload.colour = diffuse.rgb * rt_ReflEvalLighting(hitPos, hitNorm);
+        // contribScale 1.0: reflections show first-hit direct light; bounceScale is a
+        // GI-bounce-only knob (the pre-P5 drift where GI applied it and reflections
+        // didn't is now explicit here).
+        vec3 irradiance = vec3(REFL_AMBIENT) +
+                          rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                                REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
+                                                1.0, REFL_SHADOW_MIN_LUM);
+        reflPayload.colour = diffuse.rgb * irradiance;
     }
     else
     {
