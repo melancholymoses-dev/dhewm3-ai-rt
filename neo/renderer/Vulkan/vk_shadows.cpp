@@ -41,7 +41,8 @@ struct ShadowParamsUBO
     int32_t scissorOffsetY;   // dispatch rect origin Y // offset 108
     int32_t screenWidth;      // full framebuffer width  // offset 112
     int32_t screenHeight;     // full framebuffer height // offset 116
-    float _pad0[2];           // std140 vec4-alignment padding // offset 120
+    int32_t shadowLayer;      // P1b: shadow mask array layer for this light // offset 120
+    int32_t _pad0;            // std140 vec4-alignment padding // offset 124
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
@@ -59,6 +60,25 @@ struct ShadowParamsUBO
 // Must stay within the shared RT UBO ring stride (384 bytes, sized off VkInteractionUBO
 // in vk_backend.cpp) and match the std140 layout of ShadowParams in shadow_ray.rgen exactly.
 static_assert(sizeof(ShadowParamsUBO) == 192, "ShadowParamsUBO size mismatch — check std140 alignment/padding");
+
+// ---------------------------------------------------------------------------
+// Push-constant block for shadow_blur.comp.  Must match its layout exactly.
+// `layer` (P1b) selects which shadow mask array layer this sweep operates on, so
+// one descriptor set covers every light and only the push constant changes.
+// ---------------------------------------------------------------------------
+struct vkShadowBlurPush_t
+{
+    int direction; // 0 = horizontal, 1 = vertical
+    int radius;
+    float depthThreshold;
+    float depthAware; // >0.5 enables depth-aware weighting
+    int scissorOffsetX;
+    int scissorOffsetY;
+    int scissorExtentX;
+    int scissorExtentY;
+    int layer;
+};
+static_assert(sizeof(vkShadowBlurPush_t) == 36, "vkShadowBlurPush_t must match shadow_blur.comp's push block");
 
 static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
@@ -96,6 +116,11 @@ static idCVar r_rtShadowBlurMinRect(
     "r_rtShadowBlurMinRect", "64", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
     "skip the RT shadow blur when the light's dispatch rect is smaller than this on both sides "
     "(P1a perf: tiny lights don't visibly benefit; 0 = always blur)");
+static idCVar r_rtShadowBatch(
+    "r_rtShadowBatch", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "P1b: batch all shadow-casting lights into one shadow mask array pass (1) so the interaction "
+    "loop runs with zero render-pass breaks, or dispatch per-light inside the loop like before (0). "
+    "Set 0 to A/B the perf win or to isolate a shadow regression.");
 static idCVar r_vkRTDebugLights("r_vkRTDebugLights", "0", CVAR_RENDERER | CVAR_INTEGER,
                                 "log Vulkan RT shadow dispatch state (0=off, 1=filtered lights)");
 static idCVar r_vkRTLightLogN("r_vkRTLightLogN", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -458,11 +483,11 @@ static void VK_RT_InitBlurPipeline(void)
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.blurDescLayout));
 
-    // --- Push constant: blur params + dispatch rect ---
+    // --- Push constant: blur params + dispatch rect + array layer ---
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 32; // 2 ints + 2 floats + 2 ivec2 = 32 bytes
+    pushRange.size = sizeof(vkShadowBlurPush_t);
 
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -529,71 +554,71 @@ static void VK_RT_InitBlurPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
-// VK_RT_DispatchShadowRaysForLight
-// Called once per light, outside a render pass, after the depth prepass.
+// Depth round-trip for the shadow pass.
 //
-// Dispatches shadow rays for a single light and writes to the shadow mask
-// (VK_IMAGE_LAYOUT_GENERAL throughout — no layout transition for the mask).
-//
-// Depth image is transitioned: DEPTH_STENCIL_ATTACHMENT_OPTIMAL →
-// DEPTH_STENCIL_READ_ONLY_OPTIMAL for the dispatch, then restored before return
-// so the caller can immediately reopen a render pass.
+// The depth image leaves the render pass in DEPTH_STENCIL_ATTACHMENT_OPTIMAL and
+// the rgen samples it, so it must be flipped to READ_ONLY and back.  Split out of
+// the per-light dispatch because the batched pass (P1b) pays this once for every
+// light instead of once per light.
+// ---------------------------------------------------------------------------
+
+static VkImageAspectFlags VK_RT_DepthAspect(void)
+{
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    return depthAspect;
+}
+
+static void VK_RT_ShadowDepthToRead(VkCommandBuffer cmd)
+{
+    VkImageMemoryBarrier depthToRead = {};
+    depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    depthToRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    depthToRead.image = vk.depthImage;
+    depthToRead.subresourceRange = {VK_RT_DepthAspect(), 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                         0, 0, NULL, 0, NULL, 1, &depthToRead);
+}
+
+static void VK_RT_ShadowDepthRestore(VkCommandBuffer cmd, VkPipelineStageFlags srcStage)
+{
+    VkImageMemoryBarrier depthRestore = {};
+    depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    depthRestore.dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthRestore.image = vk.depthImage;
+    depthRestore.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1,
+                         &depthRestore);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_RecordShadowTrace
+// Records the ray-trace dispatch for ONE light into `layer` of the shadow mask
+// array.  Records GPU work only — no barriers, no layout transitions: the caller
+// owns those so the batched path (P1b) can amortise one depth round-trip and one
+// barrier set across every light instead of paying them per light.
 //
 // The shadow-params UBO is allocated from the per-frame UBO ring (dynamic binding),
 // so per-light data is captured in the command buffer's bind offset — no per-call
-// alloc/free and no vkQueueWaitIdle.
+// alloc/free and no vkQueueWaitIdle.  Successive lights therefore differ only by
+// their dynamic offset; the descriptor set itself is refreshed once per frame.
 // ---------------------------------------------------------------------------
 
-void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
-                                      VkRect2D dispatchRect)
+static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
+                                    VkRect2D dispatchRect, int layer)
 {
-    if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
-        return;
-    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
-        return;
-    if (!vLight || !vLight->lightDef)
-        return;
-
     uint32_t frameIdx = vk.currentFrame;
     vkShadowMask_t &sm = vkRT.shadowMask[frameIdx];
-    if (sm.image == VK_NULL_HANDLE)
-        return;
-
-    // Respect the same no-shadow flags the stencil renderer uses.
-    // lightDef->parms.noShadows  — set per light entity (e.g. fill lights inside geometry)
-    // LightCastsShadows()        — set by the light material ("noShadows" keyword)
-    //
-    // IMPORTANT: we must NOT simply return — the lighting pass always samples the shadow
-    // mask for this light.  If we skip writing it the mask holds stale data from the
-    // previous light, causing wrong shadows to appear.  Clear to 1.0 (fully lit) instead.
     const renderLight_t &lp = vLight->lightDef->parms;
-    if (lp.noShadows || !vLight->lightDef->lightShader->LightCastsShadows())
-    {
-        // barrier: wait for previous fragment-shader read of shadow mask
-        VkMemoryBarrier preClear = {};
-        preClear.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        preClear.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        preClear.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1,
-                             &preClear, 0, NULL, 0, NULL);
-
-        VkClearColorValue white = {};
-        white.float32[0] = 1.0f;
-        VkImageSubresourceRange range = {};
-        range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        range.levelCount = 1;
-        range.layerCount = 1;
-        vkCmdClearColorImage(cmd, sm.image, VK_IMAGE_LAYOUT_GENERAL, &white, 1, &range);
-
-        // barrier: make clear visible to the lighting fragment shader
-        VkMemoryBarrier postClear = {};
-        postClear.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        postClear.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        postClear.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
-                             &postClear, 0, NULL, 0, NULL);
-        return;
-    }
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
@@ -611,22 +636,6 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
             (unsigned long long)vkRT.missRegion.deviceAddress, (unsigned long long)vkRT.hitRegion.deviceAddress);
         fflush(NULL);
     }
-
-    // --- Depth barrier: render-pass final layout → shader-readable ---
-    VkImageMemoryBarrier depthToRead = {};
-    depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    depthToRead.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    depthToRead.image = vk.depthImage;
-    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
-        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-    depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                         0, 0, NULL, 0, NULL, 1, &depthToRead);
 
     // --- Update frame-level descriptor set (TLAS, shadow mask, depth sampler, UBO base) ---
     // The UBO binding is DYNAMIC: the descriptor stores the ring buffer base; the per-light
@@ -890,6 +899,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
         ubo.screenWidth = (int32_t)sm.width;
         ubo.screenHeight = (int32_t)sm.height;
+        ubo.shadowLayer = (int32_t)idMath::ClampInt(0, VK_RT_SHADOW_LAYERS - 1, layer);
 
         // Exclude player body from shadow rays when player is very close to the light.
         // Player body TLAS instances use mask 0x01; world geometry uses 0xFF.
@@ -914,7 +924,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
                 "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
                 "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
                 "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
-                "mask=%ux%u\n",
+                "mask=%ux%u layer=%d\n",
                 tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y, shadowOrigin.z,
                 light.lightRadius.x, light.lightRadius.y, light.lightRadius.z, ubo.lightFalloffRadius, ubo.numSamples,
                 requestedSamples, minSamples, ubo.rayBias, r_rtShadowTemporalJitter.GetBool() ? 1 : 0,
@@ -922,7 +932,7 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
                 ubo.frameIndex, softRadius, ubo.lightKind, axisRightHalf, axisUpHalf, axisFwdHalf,
                 r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
                 r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(), sm.width,
-                sm.height);
+                sm.height, (int)ubo.shadowLayer);
         }
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
@@ -941,174 +951,417 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
         if (r_vkLogRT.GetInteger() >= 1)
         {
             common->Printf(
-                "VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) bias=%.4f fIdx=%u samples=%d jitter=%d\n",
-                frameIdx, uboOff, dispatchW, dispatchH, dispatchRect.offset.x, dispatchRect.offset.y, ubo.rayBias,
-                ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
+                "VK RT TRACE: frame=%u uboOff=%u dims=%ux%u (scissor=%d,%d) layer=%d bias=%.4f fIdx=%u samples=%d "
+                "jitter=%d\n",
+                frameIdx, uboOff, dispatchW, dispatchH, dispatchRect.offset.x, dispatchRect.offset.y,
+                (int)ubo.shadowLayer, ubo.rayBias, ubo.frameIndex, ubo.numSamples, allowTemporalJitter ? 1 : 0);
             fflush(NULL);
         }
 
         vkCmdTraceRaysKHR(cmd, &vkRT.rgenRegion, &vkRT.missRegion, &vkRT.hitRegion, &vkRT.callRegion, dispatchW,
                           dispatchH, 1);
     }
+}
 
-    // --- Shadow mask blur (separable Gaussian, two compute dispatches) ---
-    // P1a (rt_optimization_tuning.md): skip the blur for tiny lights — each blur is
-    // two compute dispatches + two barriers inside an already-expensive render-pass
-    // break, and a light covering a small screen rect doesn't visibly benefit.
+// ---------------------------------------------------------------------------
+// Shadow mask blur (separable Gaussian, two compute dispatches per light)
+// ---------------------------------------------------------------------------
+
+// Effective blur radius, or 0 when the blur can't or shouldn't run at all.
+static int VK_RT_ShadowBlurRadius(void)
+{
+    if (!r_rtShadowBlurEnable.GetBool() || vkRT.blurPipeline == VK_NULL_HANDLE ||
+        vkRT.shadowMask[vk.currentFrame].blurTempImage == VK_NULL_HANDLE)
+        return 0;
+    return Min(8, Max(0, r_rtShadowBlur.GetInteger()));
+}
+
+// P1a (rt_optimization_tuning.md): skip the blur for tiny lights — each blur is
+// two compute dispatches, and a light covering a small screen rect doesn't
+// visibly benefit.
+static bool VK_RT_ShadowBlurWanted(VkRect2D dispatchRect)
+{
+    if (VK_RT_ShadowBlurRadius() <= 0)
+        return false;
+
     const int minRect = r_rtShadowBlurMinRect.GetInteger();
     const bool rectTooSmall = minRect > 0 && dispatchRect.extent.width < (uint32_t)minRect &&
                               dispatchRect.extent.height < (uint32_t)minRect;
     if (rectTooSmall && r_vkLogRT.GetInteger() >= 2)
         common->Printf("VK RT BLUR: skipped for small rect %ux%u (< %d, frame=%d)\n", dispatchRect.extent.width,
                        dispatchRect.extent.height, minRect, tr.frameCount);
+    return !rectTooSmall;
+}
 
-    int blurRadius = r_rtShadowBlur.GetInteger();
-    bool didBlur = false;
-    if (r_rtShadowBlurEnable.GetBool() && blurRadius > 0 && !rectTooSmall && vkRT.blurPipeline != VK_NULL_HANDLE &&
-        sm.blurTempImage != VK_NULL_HANDLE)
+// Refresh the H/V blur descriptor sets once per frame slot.  Both sets address the
+// whole shadow-mask / blur-temp arrays; the per-light layer rides in a push constant,
+// so batched lights need no descriptor churn between dispatches.
+static void VK_RT_EnsureBlurDescriptors(uint32_t frameIdx)
+{
+    if (vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount)
+        return;
+
+    vkShadowMask_t &sm = vkRT.shadowMask[frameIdx];
+    VkDescriptorSet blurSetH = vkRT.blurDescSetH[frameIdx];
+    VkDescriptorSet blurSetV = vkRT.blurDescSetV[frameIdx];
+
+    // H-pass descriptors: input=shadowMask, output=blurTemp
+    VkDescriptorImageInfo hInput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
+    VkDescriptorImageInfo hOutput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
+    VkDescriptorImageInfo blurDepthInfo = {};
+    blurDepthInfo.sampler = vkRT.depthSampler;
+    blurDepthInfo.imageView = vk.depthSampledView;
+    blurDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet hWrites[3] = {};
+    hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    hWrites[0].dstSet = blurSetH;
+    hWrites[0].dstBinding = 0;
+    hWrites[0].descriptorCount = 1;
+    hWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    hWrites[0].pImageInfo = &hInput;
+    hWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    hWrites[1].dstSet = blurSetH;
+    hWrites[1].dstBinding = 1;
+    hWrites[1].descriptorCount = 1;
+    hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    hWrites[1].pImageInfo = &hOutput;
+    hWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    hWrites[2].dstSet = blurSetH;
+    hWrites[2].dstBinding = 2;
+    hWrites[2].descriptorCount = 1;
+    hWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    hWrites[2].pImageInfo = &blurDepthInfo;
+    vkUpdateDescriptorSets(vk.device, 3, hWrites, 0, NULL);
+
+    // V-pass descriptors: input=blurTemp, output=shadowMask
+    VkDescriptorImageInfo vInput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
+    VkDescriptorImageInfo vOutput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet vWrites[3] = {};
+    vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    vWrites[0].dstSet = blurSetV;
+    vWrites[0].dstBinding = 0;
+    vWrites[0].descriptorCount = 1;
+    vWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    vWrites[0].pImageInfo = &vInput;
+    vWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    vWrites[1].dstSet = blurSetV;
+    vWrites[1].dstBinding = 1;
+    vWrites[1].descriptorCount = 1;
+    vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    vWrites[1].pImageInfo = &vOutput;
+    vWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    vWrites[2].dstSet = blurSetV;
+    vWrites[2].dstBinding = 2;
+    vWrites[2].descriptorCount = 1;
+    vWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    vWrites[2].pImageInfo = &blurDepthInfo;
+    vkUpdateDescriptorSets(vk.device, 3, vWrites, 0, NULL);
+    vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+}
+
+// Record one separable blur sweep for one light's layer/rect.  No barriers here:
+// sweeps for different lights touch different layers, so the caller emits a single
+// barrier between the whole batch's H sweep and its V sweep.
+static void VK_RT_RecordShadowBlurPass(VkCommandBuffer cmd, VkRect2D dispatchRect, int layer, int direction,
+                                       int blurRadius)
+{
+    const uint32_t frameIdx = vk.currentFrame;
+    vkShadowBlurPush_t pc;
+    pc.direction = direction;
+    pc.radius = blurRadius;
+    pc.depthThreshold = Max(0.0f, r_rtShadowBlurDepthThreshold.GetFloat());
+    pc.depthAware = r_rtShadowBlurDepthAware.GetBool() ? 1.0f : 0.0f;
+    pc.scissorOffsetX = (int)dispatchRect.offset.x;
+    pc.scissorOffsetY = (int)dispatchRect.offset.y;
+    pc.scissorExtentX = (int)dispatchRect.extent.width;
+    pc.scissorExtentY = (int)dispatchRect.extent.height;
+    pc.layer = idMath::ClampInt(0, VK_RT_SHADOW_LAYERS - 1, layer);
+
+    VkDescriptorSet set = (direction == 0) ? vkRT.blurDescSetH[frameIdx] : vkRT.blurDescSetV[frameIdx];
+    vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(vkShadowBlurPush_t), &pc);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &set, 0, NULL);
+    vkCmdDispatch(cmd, (dispatchRect.extent.width + 7) / 8, (dispatchRect.extent.height + 7) / 8, 1);
+}
+
+// Global memory barrier over the shadow mask (it never changes layout — always GENERAL).
+static void VK_RT_ShadowMemBarrier(VkCommandBuffer cmd, VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage,
+                                   VkAccessFlags srcAccess, VkAccessFlags dstAccess)
+{
+    VkMemoryBarrier barrier = {};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = srcAccess;
+    barrier.dstAccessMask = dstAccess;
+    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 1, &barrier, 0, NULL, 0, NULL);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchShadowRaysForLight — serial (one light, one render-pass break)
+//
+// Kept for r_rtShadowBatch 0 and for lights that overflow the batch budget.
+// Depth is round-tripped here so the caller can reopen its render pass immediately.
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *viewDef, const viewLight_t *vLight,
+                                      VkRect2D dispatchRect, int layer)
+{
+    if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
+        return;
+    if (!vLight || !vLight->lightDef)
+        return;
+    // layer < 0 means "this light casts no shadows" — the interaction pass clears
+    // u_UseShadowMask for it, so there is nothing to trace and nothing to clear.
+    if (layer < 0)
+        return;
+    if (vkRT.shadowMask[vk.currentFrame].image == VK_NULL_HANDLE)
+        return;
+
+    VK_RT_ShadowDepthToRead(cmd);
+    VK_RT_RecordShadowTrace(cmd, viewDef, vLight, dispatchRect, layer);
+
+    const int blurRadius = VK_RT_ShadowBlurWanted(dispatchRect) ? VK_RT_ShadowBlurRadius() : 0;
+    const bool didBlur = (blurRadius > 0);
+    if (didBlur)
     {
-        if (blurRadius > 8)
-            blurRadius = 8;
-
-        uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
-        uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
-
-        // Barrier: RT write → compute read
-        VkMemoryBarrier barrier = {};
-        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                             1, &barrier, 0, NULL, 0, NULL);
-
+        VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipeline);
-
-        VkDescriptorSet blurSetH = vkRT.blurDescSetH[frameIdx];
-        VkDescriptorSet blurSetV = vkRT.blurDescSetV[frameIdx];
-        bool refreshBlurSet = (vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount);
-
-        // Update H/V pass descriptors once per frame slot before first blur dispatch.
-        if (refreshBlurSet)
-        {
-            // Update H-pass descriptors: input=shadowMask, output=blurTemp
-            VkDescriptorImageInfo hInput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
-            VkDescriptorImageInfo hOutput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
-            VkDescriptorImageInfo blurDepthInfo = {};
-            blurDepthInfo.sampler = vkRT.depthSampler;
-            blurDepthInfo.imageView = vk.depthSampledView;
-            blurDepthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-
-            VkWriteDescriptorSet hWrites[3] = {};
-            hWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            hWrites[0].dstSet = blurSetH;
-            hWrites[0].dstBinding = 0;
-            hWrites[0].descriptorCount = 1;
-            hWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            hWrites[0].pImageInfo = &hInput;
-            hWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            hWrites[1].dstSet = blurSetH;
-            hWrites[1].dstBinding = 1;
-            hWrites[1].descriptorCount = 1;
-            hWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            hWrites[1].pImageInfo = &hOutput;
-            hWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            hWrites[2].dstSet = blurSetH;
-            hWrites[2].dstBinding = 2;
-            hWrites[2].descriptorCount = 1;
-            hWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            hWrites[2].pImageInfo = &blurDepthInfo;
-            vkUpdateDescriptorSets(vk.device, 3, hWrites, 0, NULL);
-
-            // Update V-pass descriptors: input=blurTemp, output=shadowMask
-            VkDescriptorImageInfo vInput = {VK_NULL_HANDLE, sm.blurTempView, VK_IMAGE_LAYOUT_GENERAL};
-            VkDescriptorImageInfo vOutput = {VK_NULL_HANDLE, sm.view, VK_IMAGE_LAYOUT_GENERAL};
-            VkWriteDescriptorSet vWrites[3] = {};
-            vWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            vWrites[0].dstSet = blurSetV;
-            vWrites[0].dstBinding = 0;
-            vWrites[0].descriptorCount = 1;
-            vWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            vWrites[0].pImageInfo = &vInput;
-            vWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            vWrites[1].dstSet = blurSetV;
-            vWrites[1].dstBinding = 1;
-            vWrites[1].descriptorCount = 1;
-            vWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            vWrites[1].pImageInfo = &vOutput;
-            vWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            vWrites[2].dstSet = blurSetV;
-            vWrites[2].dstBinding = 2;
-            vWrites[2].descriptorCount = 1;
-            vWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            vWrites[2].pImageInfo = &blurDepthInfo;
-            vkUpdateDescriptorSets(vk.device, 3, vWrites, 0, NULL);
-            vkRT.blurDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
-        }
-
-        // Push constants: direction=0 (horizontal), radius
-        struct
-        {
-            int direction;
-            int radius;
-            float pad0;
-            float pad1;
-            int scissorOffsetX;
-            int scissorOffsetY;
-            int scissorExtentX;
-            int scissorExtentY;
-        } pc;
-        pc.direction = 0;
-        pc.radius = blurRadius;
-        pc.pad0 = Max(0.0f, r_rtShadowBlurDepthThreshold.GetFloat());
-        pc.pad1 = r_rtShadowBlurDepthAware.GetBool() ? 1.0f : 0.0f;
-        pc.scissorOffsetX = (int)dispatchRect.offset.x;
-        pc.scissorOffsetY = (int)dispatchRect.offset.y;
-        pc.scissorExtentX = (int)dispatchRect.extent.width;
-        pc.scissorExtentY = (int)dispatchRect.extent.height;
-        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetH, 0, NULL);
-        vkCmdDispatch(cmd, groupsX, groupsY, 1);
-
-        // Barrier: compute H-pass write → compute V-pass read
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-                             &barrier, 0, NULL, 0, NULL);
-
-        // Push constants: direction=1 (vertical), same radius
-        pc.direction = 1;
-        vkCmdPushConstants(cmd, vkRT.blurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipelineLayout, 0, 1, &blurSetV, 0, NULL);
-        vkCmdDispatch(cmd, groupsX, groupsY, 1);
-
-        didBlur = true;
+        VK_RT_EnsureBlurDescriptors(vk.currentFrame);
+        VK_RT_RecordShadowBlurPass(cmd, dispatchRect, layer, 0, blurRadius);
+        VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        VK_RT_RecordShadowBlurPass(cmd, dispatchRect, layer, 1, blurRadius);
     }
+
+    // RT is always in the source scope (it wrote the mask and read depth); compute
+    // joins it only when the blur actually ran.
+    const VkPipelineStageFlags srcStage =
+        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | (didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 
     // --- Barrier: shadow mask → fragment shader read ---
-    {
-        VkMemoryBarrier memBarrier = {};
-        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        VkPipelineStageFlags srcStage =
-            didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
-        vkCmdPipelineBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &memBarrier, 0, NULL, 0, NULL);
-    }
+    VK_RT_ShadowMemBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT);
 
     // --- Depth barrier: restore to DEPTH_STENCIL_ATTACHMENT_OPTIMAL for render pass resume ---
-    VkImageMemoryBarrier depthRestore = {};
-    depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    depthRestore.dstAccessMask =
-        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthRestore.image = vk.depthImage;
-    depthRestore.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
-    VkPipelineStageFlags depthSrcStage =
-        didBlur ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
-    vkCmdPipelineBarrier(cmd, depthSrcStage, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, NULL, 0, NULL, 1,
-                         &depthRestore);
+    VK_RT_ShadowDepthRestore(cmd, srcStage);
+}
+
+// ---------------------------------------------------------------------------
+// P1b — batched shadow masks
+//
+// One layer per shadow-casting light lets every light be traced and blurred in a
+// single block outside the render pass.  The old code paid, per light, a
+// vkCmdEndRenderPass + depth round-trip + ~4 barriers + vkCmdBeginRenderPass; the
+// batch pays that once regardless of light count.  Only lights past
+// VK_RT_SHADOW_BATCH_MAX (or all lights, with r_rtShadowBatch 0) fall back to the
+// serial path and its render-pass break.
+// ---------------------------------------------------------------------------
+
+struct vkShadowBatchEntry_t
+{
+    const viewLight_t *vLight;
+    VkRect2D rect;
+    int layer; // >= 0: mask layer; -1: light casts no shadows
+};
+
+// Doom 3 view light counts are small; this only has to cover one view's lights.
+#define VK_RT_SHADOW_BATCH_TRACK 64
+
+static vkShadowBatchEntry_t s_shadowBatch[VK_RT_SHADOW_BATCH_TRACK];
+static int s_shadowBatchCount = 0;    // entries recorded (including no-shadow lights)
+static int s_shadowBatchLayers = 0;   // batched layers assigned: 0..VK_RT_SHADOW_BATCH_MAX
+static bool s_shadowBatchSerial = false; // any light landed on the serial layer
+static int s_shadowBatchOverflowLogged = -1;
+
+bool VK_RT_ShadowBatchEnabled(void)
+{
+    return r_rtShadowBatch.GetBool();
+}
+
+void VK_RT_ShadowBatchBegin(void)
+{
+    s_shadowBatchCount = 0;
+    s_shadowBatchLayers = 0;
+    s_shadowBatchSerial = false;
+}
+
+int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
+{
+    if (!vLight || !vLight->lightDef || !vLight->lightDef->lightShader)
+        return -1;
+
+    // Out of table space: return before consuming a layer, so the light renders
+    // unshadowed rather than sampling a layer nothing traced.  Doom 3 views never
+    // come close to this, but a silent mismatch here would be a nasty bug to chase.
+    if (s_shadowBatchCount >= VK_RT_SHADOW_BATCH_TRACK)
+    {
+        common->Warning("VK RT: more than %d interaction lights in one view — extra lights render unshadowed",
+                        VK_RT_SHADOW_BATCH_TRACK);
+        return -1;
+    }
+
+    // Respect the same no-shadow flags the stencil renderer uses.
+    //   lightDef->parms.noShadows — per light entity (e.g. fill lights inside geometry)
+    //   LightCastsShadows()       — the light material's "noShadows" keyword
+    // These lights get no layer at all; the interaction pass clears u_UseShadowMask
+    // for them rather than sampling a mask cleared to white (which is what the
+    // single-image version had to do, at the cost of a clear plus two barriers).
+    const renderLight_t &lp = vLight->lightDef->parms;
+    const bool castsShadows = !lp.noShadows && vLight->lightDef->lightShader->LightCastsShadows();
+
+    int layer = -1;
+    if (castsShadows)
+    {
+        if (VK_RT_ShadowBatchEnabled() && s_shadowBatchLayers < VK_RT_SHADOW_BATCH_MAX)
+        {
+            layer = s_shadowBatchLayers++;
+        }
+        else
+        {
+            // Over budget (or batching disabled): reuse the serial scratch layer.
+            layer = VK_RT_SHADOW_SERIAL_LAYER;
+            s_shadowBatchSerial = true;
+            if (VK_RT_ShadowBatchEnabled() && r_vkLogRT.GetInteger() >= 1 &&
+                s_shadowBatchOverflowLogged != tr.frameCount)
+            {
+                s_shadowBatchOverflowLogged = tr.frameCount;
+                common->Printf("VK RT SHADOW BATCH: frame=%d over budget (%d batched layers) — extra lights fall back "
+                               "to the serial path\n",
+                               tr.frameCount, VK_RT_SHADOW_BATCH_MAX);
+            }
+        }
+    }
+
+    vkShadowBatchEntry_t &e = s_shadowBatch[s_shadowBatchCount++];
+    e.vLight = vLight;
+    e.rect = dispatchRect;
+    e.layer = layer;
+    return layer;
+}
+
+int VK_RT_GetShadowLayerForLight(const viewLight_t *vLight)
+{
+    for (int i = 0; i < s_shadowBatchCount; i++)
+    {
+        if (s_shadowBatch[i].vLight == vLight)
+            return s_shadowBatch[i].layer;
+    }
+    return -1;
+}
+
+void VK_RT_ShadowBatchClearLayers(VkCommandBuffer cmd)
+{
+    vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];
+    if (sm.image == VK_NULL_HANDLE)
+        return;
+
+    // Only the layers actually in use this view need clearing — a full 8-layer clear
+    // is pure bandwidth when the room has two lights.
+    VkImageSubresourceRange ranges[2];
+    uint32_t rangeCount = 0;
+    if (s_shadowBatchLayers > 0)
+        ranges[rangeCount++] = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, (uint32_t)s_shadowBatchLayers};
+    if (s_shadowBatchSerial)
+        ranges[rangeCount++] = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_RT_SHADOW_SERIAL_LAYER, 1};
+    if (rangeCount == 0)
+        return;
+
+    // Barrier: last frame's RT/compute writes and this frame's fragment reads → transfer clear
+    VK_RT_ShadowMemBarrier(cmd,
+                           VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT,
+                           VK_ACCESS_TRANSFER_WRITE_BIT);
+
+    VkClearColorValue clearVal = {};
+    clearVal.float32[0] = 1.0f; // fully lit
+    clearVal.float32[1] = 1.0f;
+    clearVal.float32[2] = 1.0f;
+    clearVal.float32[3] = 1.0f;
+    vkCmdClearColorImage(cmd, sm.image, VK_IMAGE_LAYOUT_GENERAL, &clearVal, rangeCount, ranges);
+
+    // Barrier: transfer clear → RT shader writes
+    VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                           VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+}
+
+void VK_RT_DispatchShadowBatch(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!VK_RT_ShadowBatchEnabled())
+        return;
+    if (!vkRT.isInitialized || !vkRT.tlas[vk.currentFrame].isValid)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtShadows.GetBool())
+        return;
+    if (vkRT.shadowMask[vk.currentFrame].image == VK_NULL_HANDLE)
+        return;
+    if (s_shadowBatchLayers <= 0)
+        return;
+
+    // --- Trace every batched light: no barriers between them, they write disjoint layers ---
+    VK_RT_ShadowDepthToRead(cmd);
+
+    int traced = 0;
+    for (int i = 0; i < s_shadowBatchCount; i++)
+    {
+        const vkShadowBatchEntry_t &e = s_shadowBatch[i];
+        if (e.layer < 0 || e.layer >= VK_RT_SHADOW_BATCH_MAX)
+            continue; // no shadows, or deferred to the serial path
+        VK_RT_RecordShadowTrace(cmd, viewDef, e.vLight, e.rect, e.layer);
+        traced++;
+    }
+
+    // --- Blur every light that wants it: two sweeps, one barrier between them ---
+    // Decide per light once (VK_RT_ShadowBlurWanted logs its skips, and both sweeps
+    // plus the barrier decision consult the answer), then sweep.
+    const int blurRadius = VK_RT_ShadowBlurRadius();
+    bool wantsBlur[VK_RT_SHADOW_BATCH_TRACK] = {};
+    int blurred = 0;
+    if (blurRadius > 0)
+    {
+        for (int i = 0; i < s_shadowBatchCount; i++)
+        {
+            const vkShadowBatchEntry_t &e = s_shadowBatch[i];
+            wantsBlur[i] = (e.layer >= 0 && e.layer < VK_RT_SHADOW_BATCH_MAX) && VK_RT_ShadowBlurWanted(e.rect);
+            if (wantsBlur[i])
+                blurred++;
+        }
+    }
+
+    if (blurred > 0)
+    {
+        VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.blurPipeline);
+        VK_RT_EnsureBlurDescriptors(vk.currentFrame);
+
+        for (int dir = 0; dir < 2; dir++)
+        {
+            // Only one barrier between the whole batch's H sweep and its V sweep —
+            // the old path paid one per light.
+            if (dir == 1)
+                VK_RT_ShadowMemBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+            for (int i = 0; i < s_shadowBatchCount; i++)
+            {
+                if (wantsBlur[i])
+                    VK_RT_RecordShadowBlurPass(cmd, s_shadowBatch[i].rect, s_shadowBatch[i].layer, dir, blurRadius);
+            }
+        }
+    }
+
+    // --- One barrier for the whole batch: mask writes → interaction fragment reads ---
+    const VkPipelineStageFlags srcStage =
+        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | (blurred > 0 ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+    VK_RT_ShadowMemBarrier(cmd, srcStage, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+                           VK_ACCESS_SHADER_READ_BIT);
+    VK_RT_ShadowDepthRestore(cmd, srcStage);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT SHADOW BATCH: frame=%d traced=%d blurred=%d layers=%d serialOverflow=%d\n", tr.frameCount,
+                       traced, blurred, s_shadowBatchLayers, s_shadowBatchSerial ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------

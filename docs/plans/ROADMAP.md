@@ -77,6 +77,8 @@ Wave 3 — GI quality-per-ray                       [rt_optimization_tuning.md]
 Wave 4 — Structural perf                          [rt_optimization_tuning.md]
   P1b  batched shadow masks (4 lights/RGBA8 or texture array; zero render-pass
        breaks in the interaction loop)  ← enabler for Wave 5's extra lights
+       ✅ implemented 2026-08-15 (R8 array, 7 batched layers + 1 serial;
+          r_rtShadowBatch, default 1).  Untested; profiler capture still owed.
   P8   half-res volumetric march + bilateral upsample
 
 Wave 5 — Auto-relight                             [auto_relight.md]
@@ -116,6 +118,6 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 1b | landed | 928f1a8f, 7154481e (gbuffer branch) | no |
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
-| 4 | not started | | |
+| 4 | P1b implemented, untested (2026-08-15). Remaining: P8 | rt_perf2_b working tree | no — new `Shadows` phase exists for it |
 | 5 | not started | | |
 | 6 | not started | | |
