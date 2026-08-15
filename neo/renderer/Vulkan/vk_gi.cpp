@@ -145,7 +145,8 @@ static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffe
 //   int   maxBounceLights   offset 108  size  4
 //   float giContrast        offset 112  size  4
 //   int   stochasticLights  offset 116  size  4
-//   total: 120 bytes
+//   int   useGbufNormal     offset 120  size  4
+//   total: 124 bytes
 //
 // gi_ray.rchit declares a matching block (it reads maxBounceLights, frameIndex
 // and stochasticLights), so any field added here must be mirrored in *both*
@@ -170,8 +171,9 @@ struct GIParamsUBO
     int32_t maxBounceLights;
     float giContrast;
     int32_t stochasticLights;
+    int32_t useGbufNormal;
 };
-static_assert(sizeof(GIParamsUBO) == 120, "GIParamsUBO size mismatch");
+static_assert(sizeof(GIParamsUBO) == 124, "GIParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -181,9 +183,12 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped);
+// P9: shared 1x1 G-buffer fallback owned by vk_reflections.cpp (alpha 0 = "no data").
+extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
+extern idCVar r_rtGbufNormals; // P9 — defined in vk_gbuffer.cpp
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
@@ -403,7 +408,8 @@ static void VK_RT_InitGIPipeline(void)
     // binding 2: depth sampler (rgen read)
     // binding 3: GI params UBO (rgen + rchit read, dynamic)
     // binding 4: GI light list SSBO (rchit read — Option B light evaluation)
-    VkDescriptorSetLayoutBinding bindings[5] = {};
+    // binding 5: G-buffer normal/F0 sampler (P9 — rgen, replaces rt_ReconstructNormal)
+    VkDescriptorSetLayoutBinding bindings[6] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -435,9 +441,14 @@ static void VK_RT_InitGIPipeline(void)
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
+    bindings[5].binding = 5;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 5;
+    layoutInfo.bindingCount = 6;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giDescLayout));
 
@@ -629,10 +640,12 @@ static void VK_RT_InitGIPipeline(void)
                        stride, sbtSize, (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
+    // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
+    // (binding 5, P9) — two per frame slot.
     VkDescriptorPoolSize poolSizes[5] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 2},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT},
     };
@@ -834,6 +847,9 @@ void VK_RT_InitGI(void)
 {
     VK_RT_CreateGILightSsbos();
     VK_RT_InitGIPipeline();
+    // P9: ensure the shared null G-buffer image exists at init (idempotent) so its
+    // one-time submit + queue wait never lands mid-frame at the first dispatch.
+    VK_RT_GetNullGbufNormalView();
     VK_RT_InitGICompositePipeline();
     VK_RT_ResizeGI(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_InitGITemporal();
@@ -1389,6 +1405,9 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // maxBounceLights); 1-2 = importance-sampled picks. Clamped to 2 because the
     // estimator in rt_light_eval.glsl keeps exactly two reservoirs in registers.
     ubo.stochasticLights = idMath::ClampInt(0, 2, r_rtGIStochasticLights.GetInteger());
+    // P9: 0 also when the G-buffer isn't available, so the rgen never consults the
+    // 1x1 null image it still has bound.
+    ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
     // P3 mode transitions — one line per change, so a crash/perf report says
@@ -1434,10 +1453,19 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkAccelerationStructureKHR s_lastGITlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastGIStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastGIDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastGIGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    // P9: G-buffer normal/F0 — real per-frame image when supported, else the shared
+    // 1x1 null image (a = 0 sentinel → gi_ray.rgen falls back to rt_ReconstructNormal).
+    // Already in SHADER_READ_ONLY_OPTIMAL via the once-per-RT-block barrier in
+    // vk_backend.cpp, which runs well before the GI dispatch.
+    const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
+    VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
     const bool resourceChanged = (s_lastGITlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
                                  (s_lastGIStorageView[frameIdx] != gb.view) ||
-                                 (s_lastGIDepthView[frameIdx] != vk.depthSampledView);
+                                 (s_lastGIDepthView[frameIdx] != vk.depthSampledView) ||
+                                 (s_lastGIGbufView[frameIdx] != gbufView);
 
     bool refreshSet = (vkRT.giDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || resourceChanged;
     if (refreshSet)
@@ -1468,7 +1496,14 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         lightSsboInfo.offset = 0;
         lightSsboInfo.range = sizeof(GILightBuffer);
 
-        VkWriteDescriptorSet writes[5] = {};
+        // Binding 5: G-buffer normal/F0 (P9). texelFetch in the rgen, so filter/wrap
+        // state is irrelevant — reuse the depth sampler.
+        VkDescriptorImageInfo gbufInfo = {};
+        gbufInfo.sampler = vkRT.depthSampler;
+        gbufInfo.imageView = gbufView;
+        gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet writes[6] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -1505,11 +1540,19 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[4].pBufferInfo = &lightSsboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+        writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet = ds;
+        writes[5].dstBinding = 5;
+        writes[5].descriptorCount = 1;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].pImageInfo = &gbufInfo;
+
+        vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
         vkRT.giDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastGITlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastGIStorageView[frameIdx] = gb.view;
         s_lastGIDepthView[frameIdx] = vk.depthSampledView;
+        s_lastGIGbufView[frameIdx] = gbufView;
     }
 
     // --- Dispatch ---

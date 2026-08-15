@@ -53,7 +53,7 @@ struct AOParamsUBO
     float aoRadius;
     int32_t numSamples;
     uint32_t frameIndex;
-    float pad0;
+    int32_t useGbufNormal; // P9 — was pad0; repurposed, so the layout is unchanged
     int32_t screenWidth;
     int32_t screenHeight;
     int32_t scissorOffsetX;
@@ -93,9 +93,12 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped);
+// P9: shared 1x1 G-buffer fallback owned by vk_reflections.cpp (alpha 0 = "no data").
+extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
+extern idCVar r_rtGbufNormals; // P9 — defined in vk_gbuffer.cpp
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateAOMaskImages
@@ -235,8 +238,9 @@ static void VK_RT_InitAOPipeline(void)
     // binding 1: AO mask storage image
     // binding 2: depth sampler
     // binding 3: AO params UBO (dynamic)
+    // binding 4: G-buffer normal/F0 sampler (P9 — replaces rt_ReconstructNormal)
 
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    VkDescriptorSetLayoutBinding bindings[5] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -258,9 +262,14 @@ static void VK_RT_InitAOPipeline(void)
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 4;
+    layoutInfo.bindingCount = 5;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.aoDescLayout));
 
@@ -397,10 +406,12 @@ static void VK_RT_InitAOPipeline(void)
                        (unsigned long long)sbtBase);
 
     // --- Descriptor pool and sets ---
+    // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
+    // (binding 4, P9) — two per frame slot.
     VkDescriptorPoolSize poolSizes[4] = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 2},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -446,6 +457,10 @@ static void VK_RT_InitAOPipeline(void)
 void VK_RT_InitAO(void)
 {
     VK_RT_InitAOPipeline();
+    // P9: force the shared null G-buffer image into existence here, at init, so the
+    // idempotent create inside never runs mid-frame (it does a submit + queue wait).
+    // AO initializes before reflections, which is the other caller.
+    VK_RT_GetNullGbufNormalView();
     VK_RT_ResizeAOMask(vk.swapchainExtent.width, vk.swapchainExtent.height);
     // Temporal history images and EMA pipeline (Step 5.2)
     VK_RT_InitTemporal();
@@ -566,6 +581,24 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.aoRadius = Max(1.0f, r_rtAORadius.GetFloat());
     ubo.numSamples = idMath::ClampInt(1, 16, r_rtAOSamples.GetInteger());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
+    // P9: 0 also when the G-buffer isn't available at all, so the shader's clamped
+    // fetch of the 1x1 null image is never even consulted.
+    ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
+
+    // P9 mode transitions. AO dispatches before GI and both read the same CVar, so
+    // one line here covers the pair.
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        static int s_lastUseGbuf = -1;
+        if (ubo.useGbufNormal != s_lastUseGbuf)
+        {
+            s_lastUseGbuf = ubo.useGbufNormal;
+            common->Printf("[P9] AO/GI normals: %s\n",
+                           ubo.useGbufNormal ? "G-buffer (bump-mapped)"
+                                             : (vk.gbufferSupported ? "depth-gradient reconstruction (r_rtGbufNormals 0)"
+                                                                    : "depth-gradient reconstruction (no G-buffer)"));
+        }
+    }
     ubo.screenWidth = (int32_t)ao.width;
     ubo.screenHeight = (int32_t)ao.height;
     ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
@@ -599,10 +632,20 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     static VkAccelerationStructureKHR s_lastAOTlasHandle[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastAOStorageView[VK_MAX_FRAMES_IN_FLIGHT] = {};
     static VkImageView s_lastAODepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastAOGbufView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    // P9: G-buffer normal/F0 — real per-frame image when supported, else the shared
+    // 1x1 null image (a = 0, the "no data" sentinel that makes ao_ray.rgen fall back
+    // to rt_ReconstructNormal). Already in SHADER_READ_ONLY_OPTIMAL: the real one via
+    // the barrier vk_backend.cpp issues once for the whole RT block before AO runs,
+    // the null one permanently since nothing writes it.
+    const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
+    VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
     const bool aoResourceChanged = (s_lastAOTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
                                    (s_lastAOStorageView[frameIdx] != ao.view) ||
-                                   (s_lastAODepthView[frameIdx] != vk.depthSampledView);
+                                   (s_lastAODepthView[frameIdx] != vk.depthSampledView) ||
+                                   (s_lastAOGbufView[frameIdx] != gbufView);
 
     if (aoResourceChanged && vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
@@ -641,7 +684,14 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         uboInfo.offset = 0;
         uboInfo.range = sizeof(AOParamsUBO);
 
-        VkWriteDescriptorSet writes[4] = {};
+        // Binding 4: G-buffer normal/F0 sampler (P9). texelFetch in the rgen, so the
+        // sampler's filter/wrap state is irrelevant — reuse the depth sampler.
+        VkDescriptorImageInfo gbufInfo = {};
+        gbufInfo.sampler = vkRT.depthSampler;
+        gbufInfo.imageView = gbufView;
+        gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet writes[5] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -671,11 +721,19 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
         writes[3].pBufferInfo = &uboInfo;
 
-        vkUpdateDescriptorSets(vk.device, 4, writes, 0, NULL);
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = ds;
+        writes[4].dstBinding = 4;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].pImageInfo = &gbufInfo;
+
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
         vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastAOTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastAOStorageView[frameIdx] = ao.view;
         s_lastAODepthView[frameIdx] = vk.depthSampledView;
+        s_lastAOGbufView[frameIdx] = gbufView;
     }
 
     // --- Dispatch ---

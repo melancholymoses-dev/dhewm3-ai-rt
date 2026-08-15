@@ -35,6 +35,15 @@ Code release.
 
 extern idCVar r_vkLogRT;
 
+// P9 (docs/plans/rt_optimization_tuning.md): AO and GI read their shading normal
+// from this buffer instead of rebuilding it from depth gradients. Set 0 to force
+// both back onto rt_ReconstructNormal for an A/B — the ALU cost returns, and so
+// does the flat-polygon look (no bump detail in AO/GI). Reflections are NOT
+// affected; they consume the G-buffer unconditionally (Wave 1b).
+idCVar r_rtGbufNormals("r_rtGbufNormals", "1", CVAR_RENDERER | CVAR_BOOL,
+                       "P9: AO/GI take their shading normal from the G-buffer "
+                       "(0 = legacy depth-gradient reconstruction, for A/B)");
+
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGBufferImages
 // Allocates per-frame R8G8B8A8_UNORM normal/F0 buffers at the given resolution.

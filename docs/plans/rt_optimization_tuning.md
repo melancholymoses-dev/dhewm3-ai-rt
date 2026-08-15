@@ -189,6 +189,40 @@ pixel and runs in AO, GI, and reflections. Commit 3 of the G-buffer plan replace
 with one G-buffer fetch in all three — modest ALU win, plus bump-mapped AO/GI
 directions (quality).
 
+**✅ Implemented (Wave 3, 2026-08-15):** `rt_gbuf_normal.glsl` (new shared include,
+added to `GLSL_INCLUDES`) provides `rt_GbufNormalAt()`; `ao_ray.rgen` (new binding 4)
+and `gi_ray.rgen` (new binding 5) call it and keep `rt_ReconstructNormal` as the
+fallback. `r_rtGbufNormals` (default 1) forces both back onto reconstruction for an
+A/B; mode transitions log at `r_vkLogRT 1`. Reflections were already on the G-buffer
+from Wave 1b and are untouched.
+
+Two things that are easy to get wrong here:
+
+- **The "no data" test is on RGB, not alpha.** `reflect_ray.rgen` tests `gbuf.a > 0.0`,
+  which is right for reflections — a pixel with F0 == 0 isn't reflective, so the
+  fallback path costs nothing. Copying that test into AO/GI would be a silent no-op:
+  most of a Doom 3 scene is matte with a black or absent specular map, so F0 == 0 is
+  the *normal* case and nearly every pixel would fall back. The honest test is the
+  rgb clear sentinel (0.5, 0.5, 0.5) — the encoding of a zero vector, which no unit
+  normal produces. Same test reflection debug mode 4 uses.
+- **A back-facing bump normal is rejected, not flipped.** `rt_ReconstructNormal`
+  guaranteed `dot(n, toCamera) > 0` and the hemisphere sampling downstream relies on
+  that; flipping a bump-mapped normal instead points it into the surface. Those pixels
+  take the reconstruction fallback.
+
+Plumbing notes: the `COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL` barrier in
+`vk_backend.cpp` was already issued once for the whole RT block (Step 6 of the G-buffer
+plan anticipated this), so no barrier work was needed. The 1x1 null fallback image is
+now shared via `VK_RT_GetNullGbufNormalView()` (vk_reflections.cpp); `VK_RT_InitAO` and
+`VK_RT_InitGI` call it at init so its one-time submit+wait can't land mid-frame.
+AO's `useGbufNormal` reuses the existing `pad0` slot, so `AOParamsUBO` is unchanged at
+112 bytes; `GIParamsUBO` grew to 124.
+
+**Debug:** `r_rtReflectionDebugMode 2/3/4` already visualizes exactly the buffer AO/GI
+now consume — mode 4 (magenta = prepass never wrote this pixel) is the direct predictor
+of where AO/GI still take the fallback. Mode 2 on a grate floor is the quality check:
+AO/GI should now pick up that bump detail.
+
 ### P10. If reflections are still heavy after P2: checkerboard
 
 GI already has checkerboard + temporal fill. Reflections have no history buffer today,
