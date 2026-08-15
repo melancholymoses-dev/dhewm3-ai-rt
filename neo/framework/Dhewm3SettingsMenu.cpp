@@ -2453,6 +2453,7 @@ struct RTCVars
     idCVar *rtGIDirectScale = nullptr;
     idCVar *rtGIMaxBounceLights = nullptr;
     idCVar *rtGIStochasticLights = nullptr;
+    idCVar *rtGbufNormals = nullptr;
     idCVar *rtGIBounceScale = nullptr;
     idCVar *rtGIEmissiveScale = nullptr;
     idCVar *rtGIAtrous = nullptr;
@@ -2528,6 +2529,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIEmissiveScale = cvarSystem->Find("r_rtGIEmissiveScale");
     rtCVars.rtGIMaxBounceLights = cvarSystem->Find("r_rtGIMaxBounceLights");
     rtCVars.rtGIStochasticLights = cvarSystem->Find("r_rtGIStochasticLights");
+    rtCVars.rtGbufNormals = cvarSystem->Find("r_rtGbufNormals");
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
     rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
     rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
@@ -2640,6 +2642,7 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
 
         RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
+        RTCheckbox("AO/GI Normals from G-buffer (P9)", rtCVars.rtGbufNormals);
         RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
         ImGui::TableNextColumn();
         RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);

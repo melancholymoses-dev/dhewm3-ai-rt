@@ -262,6 +262,9 @@ Extend `r_rtReflectionDebugMode` (plumbed through the composite pass or rgen):
 2. rgen reads G-buffer + early-out + composite pass + delete interaction blend +
    re-enable reflections (Stage 3). Tune `r_rtSpecF0Scale/Gamma/GrazingMax`.
 3. Follow-up: AO and GI rgen switch `rt_ReconstructNormal` → G-buffer sample.
+   **✅ Landed 2026-08-15** as Wave 3's P9 — see `rt_optimization_tuning.md` P9 for the
+   two non-obvious details (the sentinel test must be on rgb, not alpha; back-facing
+   bump normals are rejected rather than flipped).
 
 ## Risks
 

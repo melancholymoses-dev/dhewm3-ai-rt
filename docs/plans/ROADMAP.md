@@ -71,7 +71,8 @@ Wave 3 — GI quality-per-ray                       [rt_optimization_tuning.md]
        ✅ implemented 2026-08-15 (r_rtGIStochasticLights, default 2)
   →    then RAISE r_rtGISamples with the freed budget — the noise-reduction payoff
        (deliberately deferred: validate P3 at samples=4 first)
-  P9   AO/GI rgen read G-buffer normals (G-buffer commit 3)  ← deferred by request
+  P9   AO/GI rgen read G-buffer normals (G-buffer commit 3)
+       ✅ implemented 2026-08-15 (r_rtGbufNormals, default 1)
 
 Wave 4 — Structural perf                          [rt_optimization_tuning.md]
   P1b  batched shadow masks (4 lights/RGBA8 or texture array; zero render-pass
@@ -114,7 +115,7 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 1a | landed | 811d6ca7, 29dac019, d4449803 (gbuffer branch) | no |
 | 1b | landed | 928f1a8f, 7154481e (gbuffer branch) | no |
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
-| 3 | P3 implemented, untested (2026-08-15); r_rtGISamples raise + P9 pending | rt_perf2_b working tree | no |
+| 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
 | 4 | not started | | |
 | 5 | not started | | |
 | 6 | not started | | |

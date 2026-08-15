@@ -33,6 +33,13 @@ Code release.
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba16f) uniform image2D giImage;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
+// P9: G-buffer normal/F0 written by the depth prepass (Stage 3.5). rgb = world
+// normal * 0.5 + 0.5, a = F0. a == 0 means "no usable normal" (gbufferSupported
+// false, sky/translucent, or a surface whose specular map remaps to F0 == 0) —
+// fall back to rt_ReconstructNormal. Always a valid binding: the real per-frame
+// image when vk.gbufferSupported, otherwise a 1x1 null image with a = 0
+// (VK_RT_GetNullGbufNormalView), hence the clamped texelFetch below.
+layout(set = 0, binding = 5) uniform sampler2D gbufNormalSampler;
 
 layout(set = 0, binding = 3) uniform GIParams {
     mat4  invViewProj;   // inverse view-projection for world position reconstruction
@@ -47,6 +54,7 @@ layout(set = 0, binding = 3) uniform GIParams {
     int   maxBounceLights;
     float giContrast;
     int   stochasticLights; // rchit only — declared here so the block stays in sync
+    int   useGbufNormal;    // P9 — r_rtGbufNormals, and 0 when no G-buffer exists
 } params;
 
 #include "gi_payload.glsl"
@@ -56,6 +64,7 @@ layout(location = 0) rayPayloadEXT GIPayload giPayload;
 // rt_ReconstructNormal, rt_CosineSampleHemisphere,
 // rt_WorldAnchoredSeed, rt_PixelPhiOffset
 #include "rt_indirect.glsl"
+#include "rt_gbuf_normal.glsl"
 
 void main()
 {
@@ -96,7 +105,13 @@ void main()
     vec3 camPos   = camWorld.xyz / camWorld.w;
     vec3 toCamera = normalize(camPos - worldPos);
 
-    vec3 normal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, toCamera);
+    // P9: bump-mapped shading normal from the depth prepass, falling back to the
+    // depth-gradient reconstruction when the prepass didn't write this pixel (or
+    // r_rtGbufNormals 0). The fallback keeps the full cost, so the ALU win applies
+    // to the common case only — which is the whole scene minus sky/translucents.
+    vec3 normal;
+    if (!rt_GbufNormalAt(coord, params.useGbufNormal, toCamera, normal))
+        normal = rt_ReconstructNormal(coord, size, params.invViewProj, worldPos, toCamera);
 
     // World-anchored seed + per-pixel phi for temporal stability.
     uint  baseSeed  = rt_WorldAnchoredSeed(worldPos, params.frameIndex);
