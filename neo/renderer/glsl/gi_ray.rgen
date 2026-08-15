@@ -46,6 +46,7 @@ layout(set = 0, binding = 3) uniform GIParams {
     int   checker;
     int   maxBounceLights;
     float giContrast;
+    int   stochasticLights; // rchit only — declared here so the block stays in sync
 } params;
 
 #include "gi_payload.glsl"

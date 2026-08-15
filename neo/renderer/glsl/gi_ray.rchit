@@ -18,6 +18,14 @@ Phase 6.1 Option B — Single light evaluation at secondary hit:
     2. Fire a shadow ray (missIndex=1 → gi_shadow.rmiss) to test visibility.
     3. Accumulate irradiance contribution.
 
+Wave 3 / P3 — stochastic light selection:
+  With r_rtGIStochasticLights > 0 the light loop instead importance-samples
+  1-2 lights per hit and fires shadow rays only for those, dividing by the
+  selection probability (rt_EvalDirectLightingStochastic in rt_light_eval.glsl).
+  Worst case falls from numSamples x maxBounceLights rays/pixel (4 x 16 = 64) to
+  numSamples x picks (4 x 2 = 8), which is what buys the headroom to raise
+  r_rtGISamples.  Set r_rtGIStochasticLights 0 for the legacy all-lights path.
+
   Fallback (numLights == 0, e.g. r_rtGILightBounce 0):
     Returns raw albedo (Option A behaviour) so the rgen's giStrength scale
     provides a uniform ambient lift.
@@ -60,7 +68,9 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 scissorOffset;
     ivec2 scissorExtent;
     int   checker;
-    int   maxBounceLights; // 0 = Option A fallback; otherwise caps light loop
+    int   maxBounceLights;   // 0 = Option A fallback; otherwise caps light loop
+    float giContrast;        // rgen only — present so the block matches GIParamsUBO
+    int   stochasticLights;  // P3: shadow rays per bounce hit (0 = every light)
 } params;
 
 // ---------------------------------------------------------------------------
@@ -115,14 +125,34 @@ void main()
     if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
         hitNorm = -hitNorm;
 
-    // Shared light loop (rt_light_eval.glsl). Every in-range light gets a shadow
-    // ray (budget = max, threshold 0) — P3's stochastic selection changes this in
-    // Wave 3. bounceScale rides in as contribScale, matching the old inline loop.
+    // Shared light loop (rt_light_eval.glsl). bounceScale rides in as contribScale.
     // params.maxBounceLights == 0 signals Option A fallback (bounce disabled).
-    int  n          = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
-    vec3 irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
-                                            RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
-                                            rtLightBuf.bounceScale, 0.0);
+    int n = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
+
+    vec3 irradiance;
+    if (params.stochasticLights > 0)
+    {
+        // P3: importance-sample 1-2 lights and fire only those shadow rays.
+        // The seed must differ per pixel, per GI sample and per frame — gl_HitTEXT
+        // separates the rgen's numSamples hemisphere rays (same launch ID, different
+        // hit distance), frameIndex lets temporal accumulation average the picks.
+        uint seed = rtle_hash(uint(gl_LaunchIDEXT.x) * 73856093u
+                            ^ uint(gl_LaunchIDEXT.y) * 19349663u
+                            ^ params.frameIndex     * 83492791u
+                            ^ floatBitsToUint(gl_HitTEXT));
+
+        irradiance = rt_EvalDirectLightingStochastic(hitPos, hitNorm, params.maxBounceLights,
+                                                     params.stochasticLights, GI_SHADOW_BIAS,
+                                                     rtLightBuf.bounceScale, seed);
+    }
+    else
+    {
+        // Legacy path: every in-range light gets a shadow ray (budget = max,
+        // threshold 0). Kept for A/B against the stochastic estimator.
+        irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
+                                           RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
+                                           rtLightBuf.bounceScale, 0.0);
+    }
 
     // Final bounce colour: albedo × gathered irradiance.
     // giStrength in the rgen provides an additional global scale.
