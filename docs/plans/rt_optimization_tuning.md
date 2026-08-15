@@ -91,6 +91,39 @@ chain is precisely the denoiser this needs.
   `randFloat` draw seeded from the existing world-anchored seed).
 - The same treatment applies to `reflect_ray.rchit` (shared include — see P5).
 
+**✅ Implemented (Wave 3, 2026-08-15):** `rt_EvalDirectLightingStochastic()` in
+`rt_light_eval.glsl`, driven by `r_rtGIStochasticLights` (default 2, 0 = legacy
+all-lights path for A/B). Notes for whoever tunes or extends this:
+
+- **Streaming weighted-reservoir sampling, not a CDF.** Two independent
+  single-sample reservoirs live in scalars/vectors; there is no 128-float array,
+  so the hit shader stays register-resident (a per-invocation CDF array in an
+  rchit spills to scratch and is a plausible source of the earlier crashes here).
+- Weight = luminance of the light's *unshadowed* contribution. The estimator's
+  luminance is therefore exactly `wSum` per pick, i.e. bounded by the total
+  unshadowed luminance — the `1/p` division cannot make fireflies. Only the
+  binary shadow term is noisy, which is what the temporal + à-trous chain eats.
+- `n <= picks` defers to the deterministic loop (same ray count, zero variance) —
+  the common case in Doom 3 rooms with 1-3 lights in range. Both reservoirs
+  landing on the same light reuse one trace.
+- Seed is `launchID ⊕ frameIndex ⊕ floatBitsToUint(gl_HitTEXT)`. All three matter:
+  `gl_HitTEXT` decorrelates the rgen's `numSamples` rays (same launch ID),
+  `frameIndex` is what lets temporal accumulation average the picks. Drop it and
+  the same light wins forever at each point — noise bakes into permanent blotches.
+- **Prerequisite bug fixed in the same change:** the GI descriptor set declared
+  binding 3 (GIParams UBO) as `RAYGEN` only, while `gi_ray.rchit` has read it
+  since Option B landed (`maxBounceLights`). Reading a descriptor from a stage
+  absent from `stageFlags` is undefined behaviour — garbage or a fault depending
+  on driver. Now `RAYGEN | CLOSEST_HIT`. Any future per-hit knob must ride in
+  this UBO (GI) or the light SSBO header; `rt_light_eval.glsl` itself stays
+  UBO-free because the *reflection* pipeline's binding 3 is still raygen-only.
+- Reflections were left on the deterministic path (their params UBO is raygen-only,
+  and P4's threshold already caps them at 8 rays). Extending P3 to
+  `reflect_ray.rchit` needs a seed plumbed through `ReflPayload` first.
+- **Not yet done:** raising `r_rtGISamples`. Default stays 4 so the estimator can
+  be validated against the legacy path with ray count held constant. Once stable,
+  8 samples × 2 picks = 16 rays/px, still a 4× cut from today's 64 worst case.
+
 ### P4. Reflection-hit shadow rays go to the wrong lights
 
 `reflect_ray.rchit` shadow budget (first 8 lights **in buffer order**) is spent on

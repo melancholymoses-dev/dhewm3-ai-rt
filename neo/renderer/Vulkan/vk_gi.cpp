@@ -70,6 +70,12 @@ static idCVar r_rtGIMaxBounceLights(
     "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
     "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
 
+static idCVar r_rtGIStochasticLights(
+    "r_rtGIStochasticLights", "2", CVAR_RENDERER | CVAR_INTEGER,
+    "P3: shadow rays fired per GI bounce hit (1-2). Lights are importance-sampled by "
+    "unshadowed contribution and divided by their selection probability (unbiased). "
+    "0 = legacy path, one shadow ray for every light up to r_rtGIMaxBounceLights");
+
 static idCVar r_rtGIMaxLights(
     "r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_INTEGER,
     "Max GI lights to sample per frame (1-128, capped at VK_GI_MAX_LIGHTS)");
@@ -138,7 +144,13 @@ static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffe
 //   int   checker           offset 104  size  4
 //   int   maxBounceLights   offset 108  size  4
 //   float giContrast        offset 112  size  4
-//   total: 116 bytes
+//   int   stochasticLights  offset 116  size  4
+//   total: 120 bytes
+//
+// gi_ray.rchit declares a matching block (it reads maxBounceLights, frameIndex
+// and stochasticLights), so any field added here must be mirrored in *both*
+// gi_ray.rgen and gi_ray.rchit — a prefix mismatch silently shifts every
+// offset after it.
 // ---------------------------------------------------------------------------
 
 struct GIParamsUBO
@@ -157,8 +169,9 @@ struct GIParamsUBO
     int32_t checker;
     int32_t maxBounceLights;
     float giContrast;
+    int32_t stochasticLights;
 };
-static_assert(sizeof(GIParamsUBO) == 116, "GIParamsUBO size mismatch");
+static_assert(sizeof(GIParamsUBO) == 120, "GIParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -388,7 +401,7 @@ static void VK_RT_InitGIPipeline(void)
     // binding 0: TLAS — rgen fires primary GI rays; rchit fires inline shadow rays
     // binding 1: GI RGBA16F storage image (rgen write)
     // binding 2: depth sampler (rgen read)
-    // binding 3: GI params UBO (rgen read, dynamic)
+    // binding 3: GI params UBO (rgen + rchit read, dynamic)
     // binding 4: GI light list SSBO (rchit read — Option B light evaluation)
     VkDescriptorSetLayoutBinding bindings[5] = {};
 
@@ -410,7 +423,12 @@ static void VK_RT_InitGIPipeline(void)
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
     bindings[3].descriptorCount = 1;
-    bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    // CLOSEST_HIT is required, not optional: gi_ray.rchit has read this block since
+    // Option B landed (maxBounceLights, and now P3's stochasticLights/frameIndex).
+    // Accessing a descriptor from a stage missing from stageFlags is undefined
+    // behaviour — it reads garbage or faults depending on driver, which is the
+    // likeliest cause of the crashes earlier P3 attempts hit here.
+    bindings[3].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
 
     bindings[4].binding = 4;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1367,7 +1385,33 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // The SSBO numLights is NOT modified — reflections always see the full list.
     ubo.maxBounceLights = idMath::ClampInt(0, VK_GI_MAX_LIGHTS, r_rtGIMaxBounceLights.GetInteger());
     ubo.giContrast = idMath::ClampFloat(0.0f, 1.0f, r_rtGIContrast.GetFloat());
+    // P3: shadow rays per bounce hit. 0 = legacy (one per light, up to
+    // maxBounceLights); 1-2 = importance-sampled picks. Clamped to 2 because the
+    // estimator in rt_light_eval.glsl keeps exactly two reservoirs in registers.
+    ubo.stochasticLights = idMath::ClampInt(0, 2, r_rtGIStochasticLights.GetInteger());
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
+
+    // P3 mode transitions — one line per change, so a crash/perf report says
+    // which estimator was live.
+    if (r_vkLogRT.GetInteger() >= 1)
+    {
+        static int s_lastStochastic = -1;
+        static int s_lastSamples = -1;
+        if (ubo.stochasticLights != s_lastStochastic || ubo.numSamples != s_lastSamples)
+        {
+            s_lastStochastic = ubo.stochasticLights;
+            s_lastSamples = ubo.numSamples;
+            if (ubo.stochasticLights > 0)
+                common->Printf("[GI] P3 stochastic: %d shadow ray(s)/hit x %d sample(s) = %d rays/px "
+                               "(legacy worst case %d)\n",
+                               ubo.stochasticLights, ubo.numSamples,
+                               ubo.stochasticLights * ubo.numSamples,
+                               ubo.maxBounceLights * ubo.numSamples);
+            else
+                common->Printf("[GI] P3 stochastic OFF — up to %d shadow rays/hit x %d sample(s) = %d rays/px\n",
+                               ubo.maxBounceLights, ubo.numSamples, ubo.maxBounceLights * ubo.numSamples);
+        }
+    }
 
     // DEBUG: log light counts once per second (keep for diagnostics).
     if (vkRT.giLightSsboMapped[frameIdx] != NULL && r_vkLogRT.GetInteger() >= 1)
