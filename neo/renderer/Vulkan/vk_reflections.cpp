@@ -90,7 +90,7 @@ idCVar r_rtReflectionDebugMode(
 //   float  reflBlend      offset 80  size  4  (r_rtReflectionBlend, applied at imageStore)
 //   float  grazingMax     offset 84  size  4  (r_rtSpecGrazingMax, Step 8)
 //   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
-//   pad                   offset 92  size  4
+//   int    sceneHasGlass  offset 92  size  4  (P6 — skip glass probe when 0)
 //   total: 96 bytes
 // ---------------------------------------------------------------------------
 
@@ -101,10 +101,10 @@ struct ReflParamsUBO
     uint32_t frameIndex;
     int32_t screenWidth;
     int32_t screenHeight;
-    float reflBlend;   // r_rtReflectionBlend — baked into imageStore in rgen
-    float grazingMax;  // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
-    int32_t debugMode; // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
-    float pad[1];
+    float reflBlend;       // r_rtReflectionBlend — baked into imageStore in rgen
+    float grazingMax;      // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
+    int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
+    int32_t sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry in the TLAS
 };
 static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
 
@@ -163,10 +163,14 @@ static void VK_RT_DestroyNullLightSsbo()
 // ---------------------------------------------------------------------------
 // Null G-buffer normal/F0 image (Stage 3.5, see docs/plans/gbuffer_normal_pass.md).
 // 1x1 image cleared to (0.5, 0.5, 0.5, 0.0), bound to gbufNormalSampler
-// (binding 5) whenever the real per-frame gbufNormal image doesn't exist
+// whenever the real per-frame gbufNormal image doesn't exist
 // (vk.gbufferSupported false). Alpha 0 is the same "no data" sentinel the real
-// image uses, so reflect_ray.rgen falls back to rt_ReconstructNormal exactly
+// image uses, so the consuming rgen falls back to rt_ReconstructNormal exactly
 // as it did before this feature existed.
+//
+// P9 (Wave 3): AO (binding 4) and GI (binding 5) now bind the same G-buffer and
+// share this fallback via VK_RT_GetNullGbufNormalView() below — one image, one
+// sentinel convention, three consumers.
 // ---------------------------------------------------------------------------
 static VkImage s_nullGbufImage = VK_NULL_HANDLE;
 static VkDeviceMemory s_nullGbufMemory = VK_NULL_HANDLE;
@@ -260,6 +264,17 @@ static void VK_RT_CreateNullGbufNormal(void)
         vkQueueWaitIdle(vk.graphicsQueue);
         vkFreeCommandBuffers(vk.device, vk.commandPool, 1, &tmpCmd);
     }
+}
+
+// P9: shared with the AO and GI descriptor sets (vk_ao.cpp / vk_gi.cpp), which bind
+// the same G-buffer image and need the same fallback. The create call is idempotent;
+// VK_RT_InitAO and VK_RT_InitGI both call this at init time so the one-time
+// submit+wait inside never lands mid-frame. RT shutdown tears down all three
+// subsystems together, so the shared lifetime is safe.
+VkImageView VK_RT_GetNullGbufNormalView(void)
+{
+    VK_RT_CreateNullGbufNormal();
+    return s_nullGbufView;
 }
 
 static void VK_RT_DestroyNullGbufNormal(void)
@@ -998,6 +1013,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.reflBlend = idMath::ClampFloat(0.0f, 2.0f, r_rtReflectionBlend.GetFloat());
     ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());
     ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
+    ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).

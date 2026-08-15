@@ -514,6 +514,11 @@ struct vkRTState_t
     // --------------------------------------------------------------------------
     vkReflBuffer_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM world normal + F0
 
+    // P6 (rt_optimization_tuning.md): true when any VK_MAT_FLAG_GLASS geometry is in
+    // this frame's TLAS. Lets the reflection rgen skip the per-pixel glass probe ray
+    // in glass-free scenes. Recomputed each TLAS build in vk_accelstruct.cpp.
+    bool sceneHasGlass;
+
     bool isInitialized;
 };
 

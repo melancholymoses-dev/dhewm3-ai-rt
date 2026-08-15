@@ -18,6 +18,14 @@ Phase 6.1 Option B — Single light evaluation at secondary hit:
     2. Fire a shadow ray (missIndex=1 → gi_shadow.rmiss) to test visibility.
     3. Accumulate irradiance contribution.
 
+Wave 3 / P3 — stochastic light selection:
+  With r_rtGIStochasticLights > 0 the light loop instead importance-samples
+  1-2 lights per hit and fires shadow rays only for those, dividing by the
+  selection probability (rt_EvalDirectLightingStochastic in rt_light_eval.glsl).
+  Worst case falls from numSamples x maxBounceLights rays/pixel (4 x 16 = 64) to
+  numSamples x picks (4 x 2 = 8), which is what buys the headroom to raise
+  r_rtGISamples.  Set r_rtGIStochasticLights 0 for the legacy all-lights path.
+
   Fallback (numLights == 0, e.g. r_rtGILightBounce 0):
     Returns raw albedo (Option A behaviour) so the rgen's giStrength scale
     provides a uniform ambient lift.
@@ -60,35 +68,24 @@ layout(set = 0, binding = 3) uniform GIParams {
     ivec2 scissorOffset;
     ivec2 scissorExtent;
     int   checker;
-    int   maxBounceLights; // 0 = Option A fallback; otherwise caps light loop
+    int   maxBounceLights;   // 0 = Option A fallback; otherwise caps light loop
+    float giContrast;        // rgen only — present so the block matches GIParamsUBO
+    int   stochasticLights;  // P3: shadow rays per bounce hit (0 = every light)
 } params;
 
-struct GILight {
-    vec4 posRadius;       // xyz = world pos, w = sphere pre-cull radius
-    vec4 colorIntensity;  // rgb = light colour, a = intensity
-    vec4 coneDir;         // projected: xyz=dir, w=cos(halfAngle); zeroed for point
-    vec4 boxExtents;      // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
-    uint lightType;       // 0 = point, 1 = projected/spot, 2 = player flashlight
-    uint _pad0; uint _pad1; uint _pad2;
-};
-
-layout(set = 0, binding = 4, std430) readonly buffer GILightBuffer {
-    int     numLights;
-    float   bounceScale;   // r_rtGIBounceScale from host
-    float   giRadius;      // r_rtGIRadius — max range for light evaluation
-    float   emissiveScale; // r_rtGIEmissiveScale from host
-    GILight lights[];
-} giLightBuf;
-
 // ---------------------------------------------------------------------------
-// Material table (set=1) and payload
+// Material table (set=1), payloads, and the shared light loop (P5) — declares
+// the light SSBO (set=0, binding=4) and the location-1 shadow payload.
+// Miss index 1 = gi_shadow.rmiss's slot in the GI pipeline's miss region.
 // ---------------------------------------------------------------------------
 #include "rt_material.glsl"
 #include "gi_payload.glsl"
 #include "gi_shadow_payload.glsl"
 
-layout(location = 0) rayPayloadInEXT GIPayload    giPayload;
-layout(location = 1) rayPayloadEXT   GIShadowPayload giShadow;
+layout(location = 0) rayPayloadInEXT GIPayload giPayload;
+
+#define RT_LIGHT_SHADOW_MISS_INDEX 1
+#include "rt_light_eval.glsl"
 
 hitAttributeEXT vec2 baryCoord;
 
@@ -96,7 +93,6 @@ hitAttributeEXT vec2 baryCoord;
 // Constants
 // ---------------------------------------------------------------------------
 #define GI_SHADOW_BIAS  0.5   // world-unit offset to avoid self-shadowing
-#define GI_MAX_LIGHTS   128   // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
 
 void main()
 {
@@ -116,7 +112,7 @@ void main()
     vec3 emissive = rt_EvalEmissiveRadiance(matIdx, gl_PrimitiveID, baryCoord);
     if (dot(emissive, emissive) > 0.001)
     {
-        giPayload.colour = emissive * giLightBuf.emissiveScale;
+        giPayload.colour = emissive * rtLightBuf.emissiveScale;
         return;
     }
 
@@ -129,55 +125,33 @@ void main()
     if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
         hitNorm = -hitNorm;
 
-    vec3 irradiance = vec3(0.0);
-    // Cap at both the hard shader limit and the per-frame bounce budget from the UBO.
+    // Shared light loop (rt_light_eval.glsl). bounceScale rides in as contribScale.
     // params.maxBounceLights == 0 signals Option A fallback (bounce disabled).
-    int  n          = min(giLightBuf.numLights, min(params.maxBounceLights, GI_MAX_LIGHTS));
+    int n = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
 
-    for (int i = 0; i < n; i++)
+    vec3 irradiance;
+    if (params.stochasticLights > 0)
     {
-        vec3  lightPos    = giLightBuf.lights[i].posRadius.xyz;
-        float lightRadius = giLightBuf.lights[i].posRadius.w; // Doom3 half-extent
-        vec3  lightColor  = giLightBuf.lights[i].colorIntensity.rgb;
-        float intensity   = giLightBuf.lights[i].colorIntensity.a;
+        // P3: importance-sample 1-2 lights and fire only those shadow rays.
+        // The seed must differ per pixel, per GI sample and per frame — gl_HitTEXT
+        // separates the rgen's numSamples hemisphere rays (same launch ID, different
+        // hit distance), frameIndex lets temporal accumulation average the picks.
+        uint seed = rtle_hash(uint(gl_LaunchIDEXT.x) * 73856093u
+                            ^ uint(gl_LaunchIDEXT.y) * 19349663u
+                            ^ params.frameIndex     * 83492791u
+                            ^ floatBitsToUint(gl_HitTEXT));
 
-        vec3  toLight = lightPos - hitPos;
-        float dist    = length(toLight);
-
-        // Skip lights beyond the light radius.  
-        if (dist >= lightRadius || dist < 0.01)
-            continue;
-
-        vec3 lightDir = toLight / dist;
-        float NdotL   = dot(hitNorm, lightDir);
-        if (NdotL <= 0.0)
-            continue;
-
-        // Shadow visibility test.
-        // missIndex=1 → gi_shadow.rmiss (clears occluded); default=true.
-        giShadow.occluded = true;
-        traceRayEXT(
-            tlas,
-            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-            0xFF,           // cull mask
-            0,              // sbt hit group offset (unused — skip closest hit)
-            0,              // sbt stride
-            1,              // miss index 1 → gi_shadow.rmiss
-            hitPos + hitNorm * GI_SHADOW_BIAS,
-            0.0,            // tmin
-            lightDir,
-            dist - GI_SHADOW_BIAS, // tmax: stop just before the light centre
-            1               // payload location 1
-        );
-
-        if (giShadow.occluded)
-            continue;
-
-        // Drop off light to zero at edge.
-        float t     = (dist / max(lightRadius, 1.0));
-        float atten = t < 1 ? 1.0 - t * t  : 0;
-
-        irradiance += lightColor * intensity * NdotL * atten * giLightBuf.bounceScale;
+        irradiance = rt_EvalDirectLightingStochastic(hitPos, hitNorm, params.maxBounceLights,
+                                                     params.stochasticLights, GI_SHADOW_BIAS,
+                                                     rtLightBuf.bounceScale, seed);
+    }
+    else
+    {
+        // Legacy path: every in-range light gets a shadow ray (budget = max,
+        // threshold 0). Kept for A/B against the stochastic estimator.
+        irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
+                                           RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
+                                           rtLightBuf.bounceScale, 0.0);
     }
 
     // Final bounce colour: albedo × gathered irradiance.
@@ -185,7 +159,7 @@ void main()
     // Option A fallback: if no light contributed (numLights == 0 or all failed
     // radius/NdotL checks), return raw albedo so the rgen's giStrength still
     // provides a uniform ambient lift rather than returning black.
-    if (n == 0 || giLightBuf.bounceScale == 0.0)
+    if (n == 0 || rtLightBuf.bounceScale == 0.0)
         giPayload.colour = albedo;
     else
         giPayload.colour = albedo * irradiance;
