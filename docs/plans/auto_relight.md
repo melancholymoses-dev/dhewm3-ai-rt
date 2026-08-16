@@ -4,7 +4,10 @@
 **Branch:** shaped-shadows
 **Replaces:** Stages 4a/4b of `completed/lighting_shadows_refinement.md`.
 **Companion docs:** `rt_optimization_tuning.md` (P1b shadow batching is the perf
-enabler; L1 stratified light list is the selection layer), `gbuffer_normal_pass.md`.
+enabler; L1 stratified light list is the selection layer),
+`completed/gbuffer_normal_pass.md`, `gi_albedo_target.md` (GI receiver-albedo fix
+surfaced by this doc's §0/AREA validation, 2026-08-16 — land it before §1-5, since
+synthesized panel lights would amplify the unmodulated-GI wash it fixes).
 
 ---
 
