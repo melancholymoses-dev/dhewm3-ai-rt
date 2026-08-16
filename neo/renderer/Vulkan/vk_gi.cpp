@@ -85,7 +85,25 @@ static idCVar r_rtGILightStratify(
 
 static idCVar r_rtGILightCollectRadiusScale(
     "r_rtGILightCollectRadiusScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
-    "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale");
+    "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale. "
+    "DEMOTED (portal_area_lights.md): only used by the legacy sphere collector, i.e. when "
+    "r_rtGIAreaLights is 0 or the camera is outside the world (areaNum == -1)");
+
+static idCVar r_rtGIAreaLights(
+    "r_rtGIAreaLights", "1", CVAR_RENDERER | CVAR_BOOL,
+    "portal_area_lights.md Stage 1: gather GI/vol candidate lights by walking the portal-area graph "
+    "from the camera's area (respects walls and closed doors) instead of a camera-centred sphere. "
+    "0 = legacy sphere collector (A/B comparison). The sphere path is also the automatic fallback "
+    "when the camera is outside the world (viewDef areaNum == -1)");
+
+static idCVar r_rtGIAreaHops("r_rtGIAreaHops", "2", CVAR_RENDERER | CVAR_INTEGER,
+                             "portal_area_lights.md: BFS portal-hop depth from the camera's area. "
+                             "2 = current room, neighbours, neighbours-of-neighbours");
+
+static idCVar r_rtGIMaxLightDist(
+    "r_rtGIMaxLightDist", "2048", CVAR_RENDERER | CVAR_FLOAT,
+    "portal_area_lights.md: absolute light distance safety cap within BFS-visited areas — guards "
+    "pathological mega-areas where a single area spans the whole map. Area-walk path only");
 
 static idCVar r_rtGIWhiteWeight(
     "r_rtGIWhiteWeight", "0.25", CVAR_RENDERER | CVAR_FLOAT,
@@ -975,10 +993,18 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height)
 
 // ---------------------------------------------------------------------------
 // VK_RT_UploadGILights (public)
-// Populate the per-frame GI light SSBO with all in-range world lights.
+// Populate the per-frame GI light SSBO with candidate world lights.
 // Called every frame BEFORE any RT dispatch that needs light data (reflections,
 // GI).  Calling it more than once per frame is safe — the buffer is reset then
 // refilled each call.
+//
+// Gathering (Stage 1, portal_area_lights.md): candidates come from a BFS over
+// the portal-area graph rooted at the camera's area (r_rtGIAreaHops deep,
+// closed doors block), reading each visited area's lightRefs — id's live,
+// volume-exact per-area light lists.  Lights behind sealed walls are never
+// admitted; a big room's own lights are admitted regardless of distance.
+// The legacy camera-sphere cull remains as fallback (r_rtGIAreaLights 0, or
+// viewDef->areaNum == -1 when noclipped outside the world).
 //
 // Ordering contract (L1, rt_optimization_tuning.md): lights are selected via
 // stratified distance tiers and uploaded importance-first, because consumers
@@ -1019,12 +1045,30 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     const float giRadius = lb->giRadius;
     const float lightCollectScale = idMath::ClampFloat(0.25f, 8.0f, r_rtGILightCollectRadiusScale.GetFloat());
     const float lightCollectRadius = giRadius * lightCollectScale;
-    const float distCullSq = lightCollectRadius * lightCollectRadius;
     const idVec3 camPos = viewDef->renderView.vieworg;
-    const int numLightDefs = tr.primaryWorld->lightDefs.Num();
+    idRenderWorldLocal *world = tr.primaryWorld;
+    const int numLightDefs = world->lightDefs.Num();
     const int maxLights = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtGIMaxLights.GetInteger());
 
-    // Collect candidates within radius; selection/ordering happens below (L1).
+    // Stage 1 (portal_area_lights.md): topology-aware gathering. Instead of a
+    // camera-centred Euclidean sphere (admits lights through sealed walls, goes
+    // dark in rooms larger than the sphere), BFS the portal graph from the
+    // camera's area and gather each visited area's lightRefs — the per-area light
+    // lists id's R_CreateLightRefs already maintains by pushing light volumes
+    // through the BSP / flooding portals. The sphere path remains as runtime
+    // fallback (r_rtGIAreaLights 0) and for camera-outside-world (areaNum == -1).
+    static const int kMaxGatherAreas = 4096; // BFS visited-stamp/queue capacity; Doom 3 maps have < 200 areas
+    const int areaHops = idMath::ClampInt(0, 64, r_rtGIAreaHops.GetInteger());
+    const bool useAreaWalk = r_rtGIAreaLights.GetBool() && viewDef->areaNum >= 0 &&
+                             viewDef->areaNum < world->numPortalAreas && world->portalAreas != NULL &&
+                             world->numPortalAreas <= kMaxGatherAreas;
+
+    // Area walk: distance is demoted from admission criterion to a generous
+    // safety cap (mega-area guard). Sphere fallback: distance IS the admission.
+    const float maxLightDist = Max(1.0f, r_rtGIMaxLightDist.GetFloat());
+    const float distCullSq = useAreaWalk ? maxLightDist * maxLightDist : lightCollectRadius * lightCollectRadius;
+
+    // Collect candidates (area walk or sphere); selection/ordering happens below (L1).
     struct Candidate
     {
         float distSq;
@@ -1050,31 +1094,34 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     // sees, with its classifier verdict — self-clearing so it doesn't spam.
     const bool dumpLights = r_rtGILightDump.GetBool();
     if (dumpLights)
-        common->Printf("VK RT GI light dump (collectRadius=%.1f):\n", lightCollectRadius);
+    {
+        if (useAreaWalk)
+            common->Printf("VK RT GI light dump (area walk: startArea=%d hops=%d maxDist=%.1f):\n", viewDef->areaNum,
+                           areaHops, maxLightDist);
+        else
+            common->Printf("VK RT GI light dump (camera sphere: collectRadius=%.1f):\n", lightCollectRadius);
+    }
 
     const float whiteWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtGIWhiteWeight.GetFloat());
 
-    for (int li = 0; li < numLightDefs; li++)
-    {
-        const idRenderLightLocal *lightLocal = tr.primaryWorld->lightDefs[li];
-        if (lightLocal == NULL)
-            continue;
-
+    // Per-light admission + candidate build, shared by both gather paths.
+    // gatherArea/gatherHop are BFS provenance for the dump (-1 on the sphere path).
+    const auto considerLight = [&](int li, const idRenderLightLocal *lightLocal, int gatherArea, int gatherHop) {
         const renderLight_t &p = lightLocal->parms;
 
         // suppressLightInViewID is set on worldMuzzleFlash (third-person weapon light).
         // Skip it — volumetrics should follow the first-person (muzzleFlash) light only.
         if (p.suppressLightInViewID != 0)
-            continue;
+            return;
 
         // Parallel (directional/sky) lights are infinite — no volume boundary or falloff,
         // so they cannot contribute meaningful single-scatter volumetrics.
         if (p.parallel)
-            continue;
+            return;
 
         const float dSq = (p.origin - camPos).LengthSqr();
         if (dSq > distCullSq)
-            continue;
+            return;
 
         float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
 
@@ -1104,15 +1151,16 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             const float lumDbg = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
             const float dstSq = Max(dSq, radius * radius);
             const float baseImportanceDbg = (dstSq > 1e-4f) ? intensity * lumDbg * radius * radius / dstSq : 0.0f;
-            common->Printf("  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f color=(%.2f %.2f %.2f) "
-                           "sat=%.2f imp=%.4f->%.4f -> %s\n",
+            common->Printf("  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f area=%d hop=%d "
+                           "color=(%.2f %.2f %.2f) sat=%.2f imp=%.4f->%.4f -> %s\n",
                            lightLocal->lightShader ? lightLocal->lightShader->GetName() : "<null>",
-                           VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), r, g, b,
-                           sat, baseImportanceDbg, baseImportanceDbg * satWeight, admitted ? "ADMIT" : "REJECT");
+                           VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq),
+                           gatherArea, gatherHop, r, g, b, sat, baseImportanceDbg, baseImportanceDbg * satWeight,
+                           admitted ? "ADMIT" : "REJECT");
         }
 
         if (!admitted)
-            continue;
+            return;
 
         if (numCandidates < 1024)
         {
@@ -1175,6 +1223,86 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.lightType = isProjected ? (p.allowLightInViewID != 0 ? 2u : 1u) : 0u;
             c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
+    };
+
+    int areasVisited = 0; // area-walk breadcrumb for the summary log below
+    if (useAreaWalk)
+    {
+        // BFS the portal graph from the camera's area, gathering each visited
+        // area's lightRefs chain. Visited stamps are per-gather-pass counters
+        // (NOT tr.frameCount — see feedback_per_slot_counters), so no clearing.
+        static int s_areaVisitStamp[kMaxGatherAreas];
+        static int s_lightVisitStamp[kHysteresisMaxLightIdx]; // dedupe lights spanning multiple areas
+        static int s_gatherStamp = 0;
+        s_gatherStamp++; // starts at 1, never matches the zero-initialised arrays
+
+        struct areaHop_t
+        {
+            int area;
+            int hop;
+        };
+        static areaHop_t s_bfsQueue[kMaxGatherAreas];
+        int head = 0, tail = 0;
+
+        s_areaVisitStamp[viewDef->areaNum] = s_gatherStamp;
+        s_bfsQueue[tail].area = viewDef->areaNum;
+        s_bfsQueue[tail].hop = 0;
+        tail++;
+
+        while (head < tail)
+        {
+            const areaHop_t cur = s_bfsQueue[head++];
+            const portalArea_t *area = &world->portalAreas[cur.area];
+
+            for (const areaReference_t *lref = area->lightRefs.areaNext; lref != &area->lightRefs;
+                 lref = lref->areaNext)
+            {
+                const idRenderLightLocal *light = lref->light;
+                if (light == NULL)
+                    continue;
+                const int li = light->index;
+                // Dedupe: a light's volume typically spans several areas. Indices
+                // beyond the stamp array (never in practice) skip dedupe and may
+                // burn a duplicate candidate slot — harmless.
+                if (li >= 0 && li < kHysteresisMaxLightIdx)
+                {
+                    if (s_lightVisitStamp[li] == s_gatherStamp)
+                        continue;
+                    s_lightVisitStamp[li] = s_gatherStamp;
+                }
+                considerLight(li, light, cur.area, cur.hop);
+            }
+
+            if (cur.hop >= areaHops)
+                continue;
+            for (const portal_t *portal = area->portals; portal != NULL; portal = portal->next)
+            {
+                // Closed doors: same PS_BLOCK_VIEW test the view flood uses.
+                if (portal->doublePortal->blockingBits & PS_BLOCK_VIEW)
+                    continue;
+                const int into = portal->intoArea;
+                if (into < 0 || into >= world->numPortalAreas)
+                    continue;
+                if (s_areaVisitStamp[into] == s_gatherStamp)
+                    continue;
+                s_areaVisitStamp[into] = s_gatherStamp;
+                s_bfsQueue[tail].area = into;
+                s_bfsQueue[tail].hop = cur.hop + 1;
+                tail++;
+            }
+        }
+        areasVisited = tail;
+    }
+    else
+    {
+        // Legacy/fallback: every lightDef in the world vs. the camera sphere.
+        for (int li = 0; li < numLightDefs; li++)
+        {
+            const idRenderLightLocal *lightLocal = world->lightDefs[li];
+            if (lightLocal == NULL)
+                continue;
+            considerLight(li, lightLocal, -1, -1);
+        }
     }
 
     // Self-clearing: r_rtGILightDump prints one frame's worth of lights, not every frame.
@@ -1210,10 +1338,17 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
 
         if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf(
-                "VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f collectRadius=%.1f "
-                "(legacy distance sort)\n",
-                toUpload, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius);
+        {
+            if (useAreaWalk)
+                common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
+                               "areaWalk start=%d visited=%d hops=%d (legacy distance sort)\n",
+                               toUpload, numCandidates, maxLights, numLightDefs, giRadius, viewDef->areaNum,
+                               areasVisited, areaHops);
+            else
+                common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
+                               "collectRadius=%.1f (legacy distance sort)\n",
+                               toUpload, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius);
+        }
         for (int i = 0; i < toUpload; i++)
             lb->lights[lb->numLights++] = s_candidates[i].entry;
         return;
@@ -1290,10 +1425,19 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
-                       "collectRadius=%.1f tiers=%d/%d/%d/%d take=%d/%d/%d/%d\n",
-                       numSelected, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius, tierCount[0],
-                       tierCount[1], tierCount[2], tierCount[3], take[0], take[1], take[2], take[3]);
+    {
+        if (useAreaWalk)
+            common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
+                           "areaWalk start=%d visited=%d hops=%d tiers=%d/%d/%d/%d take=%d/%d/%d/%d\n",
+                           numSelected, numCandidates, maxLights, numLightDefs, giRadius, viewDef->areaNum,
+                           areasVisited, areaHops, tierCount[0], tierCount[1], tierCount[2], tierCount[3], take[0],
+                           take[1], take[2], take[3]);
+        else
+            common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
+                           "collectRadius=%.1f tiers=%d/%d/%d/%d take=%d/%d/%d/%d\n",
+                           numSelected, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius,
+                           tierCount[0], tierCount[1], tierCount[2], tierCount[3], take[0], take[1], take[2], take[3]);
+    }
 
     for (int i = 0; i < numSelected; i++)
     {
