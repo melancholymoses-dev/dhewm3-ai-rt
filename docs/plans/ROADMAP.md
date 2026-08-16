@@ -30,15 +30,17 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 
 | Doc | Owns | Status |
 |---|---|---|
-| `gbuffer_normal_pass.md` | Normal/F0 G-buffer in the depth prepass; reflection composite pass; re-enabling reflections | **Next up** (Wave 1) |
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Live (Waves 2-4, 6) |
 | `auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | Live (Wave 5) |
 | `portal_area_lights.md` | Topology-aware GI/vol light gathering via id's portal-area lightRefs; per-room curation sidecar | Live (Wave 5, alongside §0) |
+| `gi_albedo_target.md` | Receiver-albedo G-buffer target + `gi × albedo` composite — fixes the "noticeable GI looks worse" wash (bodies underlit yellow, 2026-08-16) | Designed (Wave 5 push) |
 
 Completed / superseded docs are in `completed/` — notably
-`completed/lighting_shadows_refinement.md` (Phase 9 record: shape-aware soft shadows
-and Fresnel normalization, both landed; its Stages 3/3.5/4a/4b were redesigned into
-the live docs above).
+`completed/gbuffer_normal_pass.md` (Waves 1a/1b landed: normal/F0 G-buffer in the
+depth prepass, reflection composite; `gi_albedo_target.md` extends its G-buffer
+contract) and `completed/lighting_shadows_refinement.md` (Phase 9 record:
+shape-aware soft shadows and Fresnel normalization, both landed; its Stages
+3/3.5/4a/4b were redesigned into the live docs above).
 
 ---
 
@@ -96,6 +98,14 @@ Wave 5 — Auto-relight                             [auto_relight.md]
        lightRefs (BFS over portals, door-aware).  Fixes "big room goes dark" and
        through-wall slot waste observed 2026-08-16; Stage 3 adds the per-room
        pin/ban curation sidecar.  Independent of synthesis; feeds §0 + L1 unchanged.
+       ✅ Stage 1 implemented 2026-08-16; doorway validation passed in-game
+          (closed door blocks far room's lights, open admits them).
+  ALB  GI receiver-albedo modulation               [gi_albedo_target.md]
+       gbufAlbedo target in the G-buffer prepass + gi × albedo at composite.
+       Fixes the "noticeable GI looks worse" wash (bodies underlit yellow,
+       2026-08-16) — serves pillar 2 directly.  Do BEFORE §1-5: synthesized
+       panel lights would otherwise amplify the wash, and GI constants retune
+       after this lands anyway.
   §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
        AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
@@ -133,5 +143,5 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
 | 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
-| 5 | §0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering Stage 1 implemented, untested (2026-08-16, vk_gi.cpp collector — BFS area walk + sphere fallback); Stages 1.5/2/3 not started; §1-7 not started | rt_perf2_b working tree | no |
+| 5 | §0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering Stage 1 implemented + doorway validation passed in-game (2026-08-16, vk_gi.cpp collector — BFS area walk + sphere fallback), Stages 1.5/2/3 not started; GI albedo modulation designed, not started (gi_albedo_target.md, do before §1-5); §1-7 not started | auto-relight working tree | no |
 | 6 | not started | | |

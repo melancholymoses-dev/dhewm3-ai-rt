@@ -3,8 +3,13 @@
 **Date:** 2026-08-16
 **Branch:** rt_perf2_b
 **Status:** Stage 1 implemented 2026-08-16 (vk_gi.cpp collector: BFS area walk, CVars, dump/log
-provenance; sphere path kept as `r_rtGIAreaLights 0` + areaNum==-1 fallback), **untested in-game** —
-run the validation workflow below.  Stages 1.5 (view-stamped areas), 2, 3 not started.
+provenance; sphere path kept as `r_rtGIAreaLights 0` + areaNum==-1 fallback).
+**Doorway validation passed in-game 2026-08-16** (Command Access Junction: area 78's ~22 lights
+absent with the door closed, admitted at hop=1 once opened; provenance/dedupe confirmed via dump).
+Remaining validation: big-room check, A/B perf comparison, door-transition pop watch.
+Stages 1.5 (view-stamped areas), 2, 3 not started.  Observed follow-up candidate from the dumps:
+lights currently off (`color 0 0 0`, e.g. broken/triggered fixtures) are admitted and burn
+candidate slots — a `maxChan > 0` guard in the collector would drop them per-frame safely.
 **Companion docs:** `auto_relight.md` (§0 classifier is the admission layer this feeds),
 `rt_optimization_tuning.md` (L1 stratified selection is the ranking layer this feeds).
 
