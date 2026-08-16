@@ -60,7 +60,10 @@ Added 2026-08-15 after the "boring uniform GI lift" design review. This stage ha
 dependency on clustering/synthesis and directly fixes a live visual bug, so it lands
 before everything else in this doc — it can even ship inside Wave 4's tail.
 
-**Status: implemented 2026-08-15, untested at runtime.** Landed as
+**Status: implemented 2026-08-15, validated in-game 2026-08-15/16** (dump runs in ACO
+Offices / ACO Access Junction: ACCENT admissions confirmed, saturation weighting
+verified against hand-computed values; no AMBIENT_FILL in those halls — that class
+is rarer than assumed, see the map-grep note in the session log). Landed as
 `neo/renderer/Vulkan/vk_light_classify.cpp` (new file, `vkRTLightClass_t` enum +
 `VK_RT_ClassifyLight()` + `VK_RT_LightClassName()`, declared in `vk_raytracing.h`,
 registered in CMakeLists.txt). `VK_RT_UploadGILights` (`vk_gi.cpp`) now calls it for
