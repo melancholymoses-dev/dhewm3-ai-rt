@@ -33,6 +33,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | `gbuffer_normal_pass.md` | Normal/F0 G-buffer in the depth prepass; reflection composite pass; re-enabling reflections | **Next up** (Wave 1) |
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Live (Waves 2-4, 6) |
 | `auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | Live (Wave 5) |
+| `portal_area_lights.md` | Topology-aware GI/vol light gathering via id's portal-area lightRefs; per-room curation sidecar | Live (Wave 5, alongside §0) |
 
 Completed / superseded docs are in `completed/` — notably
 `completed/lighting_shadows_refinement.md` (Phase 9 record: shape-aware soft shadows
@@ -89,6 +90,12 @@ Wave 5 — Auto-relight                             [auto_relight.md]
        no dependency on synthesis; fixes the live "uniform white GI lift" bug (the
        GI/vol collector filters entity noShadows only, so ambient washes are IN and
        colored accents are OUT — inverted from intent; see auto_relight.md §0).
+       ✅ implemented 2026-08-15; validated in-game 2026-08-15/16 via dump.
+  AREA portal-area light gathering                 [portal_area_lights.md]
+       Replace the camera-sphere light cull with a walk of id's live per-area
+       lightRefs (BFS over portals, door-aware).  Fixes "big room goes dark" and
+       through-wall slot waste observed 2026-08-16; Stage 3 adds the per-room
+       pin/ban curation sidecar.  Independent of synthesis; feeds §0 + L1 unchanged.
   §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
        AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
@@ -126,5 +133,5 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
 | 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
-| 5 | §0 (classifier) implemented 2026-08-15, untested at runtime; §1-7 not started | rt_perf2_b working tree | no |
+| 5 | §0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering planned (portal_area_lights.md); §1-7 not started | rt_perf2_b working tree | no |
 | 6 | not started | | |
