@@ -2,7 +2,9 @@
 
 **Date:** 2026-08-16
 **Branch:** rt_perf2_b
-**Status:** planned, not started
+**Status:** Stage 1 implemented 2026-08-16 (vk_gi.cpp collector: BFS area walk, CVars, dump/log
+provenance; sphere path kept as `r_rtGIAreaLights 0` + areaNum==-1 fallback), **untested in-game** —
+run the validation workflow below.  Stages 1.5 (view-stamped areas), 2, 3 not started.
 **Companion docs:** `auto_relight.md` (§0 classifier is the admission layer this feeds),
 `rt_optimization_tuning.md` (L1 stratified selection is the ranking layer this feeds).
 
