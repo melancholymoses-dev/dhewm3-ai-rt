@@ -2246,14 +2246,14 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
             sm.blurTempMemory = VK_NULL_HANDLE;
         }
 
-        // R8 UNORM storage image
+        // R8 UNORM storage image array — one layer per shadow-casting light (P1b).
         VkImageCreateInfo imgInfo = {};
         imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imgInfo.imageType = VK_IMAGE_TYPE_2D;
         imgInfo.format = VK_FORMAT_R8_UNORM;
         imgInfo.extent = {width, height, 1};
         imgInfo.mipLevels = 1;
-        imgInfo.arrayLayers = 1;
+        imgInfo.arrayLayers = VK_RT_SHADOW_LAYERS;
         imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
         imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
         imgInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -2272,11 +2272,11 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         VkImageViewCreateInfo viewInfo = {};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = sm.image;
-        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
         viewInfo.format = VK_FORMAT_R8_UNORM;
         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.layerCount = 1;
+        viewInfo.subresourceRange.layerCount = VK_RT_SHADOW_LAYERS;
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &sm.view));
 
         // Create blur temp image (same format/size as shadow mask)
@@ -2290,16 +2290,32 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height)
         viewInfo.image = sm.blurTempImage;
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &sm.blurTempView));
 
-        // Transition both images to GENERAL layout for storage image use
-        VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
-        VK_TransitionImageLayout(cmd, sm.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                                 VK_IMAGE_ASPECT_COLOR_BIT);
-        VK_TransitionImageLayout(cmd, sm.blurTempImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                                 VK_IMAGE_ASPECT_COLOR_BIT);
-        VK_EndSingleTimeCommands(cmd);
+        // Transition both images to GENERAL layout for storage image use.
+        // VK_TransitionImageLayout() hardcodes layerCount=1, which would leave layers
+        // 1..N-1 in UNDEFINED — emit the barrier directly so every layer is covered.
+        {
+            VkCommandBuffer cmd = VK_BeginSingleTimeCommands();
+            VkImageMemoryBarrier toGeneral[2] = {};
+            for (int b = 0; b < 2; b++)
+            {
+                toGeneral[b].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                toGeneral[b].srcAccessMask = 0;
+                toGeneral[b].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+                toGeneral[b].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                toGeneral[b].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                toGeneral[b].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toGeneral[b].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                toGeneral[b].image = (b == 0) ? sm.image : sm.blurTempImage;
+                toGeneral[b].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, VK_RT_SHADOW_LAYERS};
+            }
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL,
+                                 0, NULL, 2, toGeneral);
+            VK_EndSingleTimeCommands(cmd);
+        }
 
         sm.width = width;
         sm.height = height;
+        sm.layers = VK_RT_SHADOW_LAYERS;
         vkRT.shadowDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.blurDescSetLastUpdatedFrameCount[i] = -1;
     }

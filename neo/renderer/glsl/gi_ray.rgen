@@ -55,6 +55,7 @@ layout(set = 0, binding = 3) uniform GIParams {
     float giContrast;
     int   stochasticLights; // rchit only — declared here so the block stays in sync
     int   useGbufNormal;    // P9 — r_rtGbufNormals, and 0 when no G-buffer exists
+    int   checkerPhase;     // which half of the checkerboard this dispatch traces
 } params;
 
 #include "gi_payload.glsl"
@@ -82,9 +83,14 @@ void main()
 
     // Checkerboard GI: update alternating pixels each frame to reduce RT cost.
     // Skipped pixels retain their previous GI value and are filled temporally over time.
+    //
+    // The phase comes from the CPU (params.checkerPhase), NOT from frameIndex.
+    // giBuffer is per frame-in-flight slot and the slot advances in lockstep with
+    // frameIndex, so a frameIndex-derived parity pins each slot to one half of the
+    // image permanently — see the comment on s_giCheckerPhase in vk_gi.cpp.
     if (params.checker != 0)
     {
-        int parity = (coord.x + coord.y + int(params.frameIndex)) & 1;
+        int parity = (coord.x + coord.y + params.checkerPhase) & 1;
         if (parity != 0)
             return;
     }

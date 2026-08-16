@@ -54,11 +54,11 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     float anisotropy;     // offset  96, size  4
     float maxDist;        // offset 100, size  4
     float strength;       // offset 104, size  4
-    int   scissorOffsetX; // offset 108, size  4
+    int   scissorOffsetX; // offset 108, size  4  (MARCH space — see marchScale)
     int   scissorOffsetY; // offset 112, size  4
     int   scissorExtentX; // offset 116, size  4
     int   scissorExtentY; // offset 120, size  4
-    int   screenWidth;          // offset 124, size  4
+    int   screenWidth;          // offset 124, size  4  (FULL res — depth buffer / NDC)
     int   screenHeight;         // offset 128, size  4
     float flashlightDensity;    // offset 132, size  4  (player flashlight, lightType 2)
     float flashlightAnisotropy; // offset 136, size  4
@@ -67,6 +67,11 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     float directedAnisotropy;   // offset 148, size  4
     float directedStrength;     // offset 152, size  4
     float _pad;                 // offset 156, size  4
+    // --- P8: half-res march (rt_optimization_tuning.md) ---
+    int   marchWidth;           // offset 160, size  4  volBuf dimensions (== full/marchScale)
+    int   marchHeight;          // offset 164, size  4
+    int   marchScale;           // offset 168, size  4  1 = full res, 2 = half res
+    float _pad2;                // offset 172, size  4
 } params;
 
 struct GILight {
@@ -131,11 +136,21 @@ void main()
     if (local.x >= scissorExt.x || local.y >= scissorExt.y)
         return;
 
-    ivec2 coord    = local + scissorOff;
-    ivec2 fullSize = ivec2(params.screenWidth, params.screenHeight);
+    // P8: `coord` is in MARCH space (the volBuf image, full res / marchScale).
+    // Depth and world-position reconstruction still happen at FULL res — we pick one
+    // representative full-res texel per march pixel (the top-left of the marchScale²
+    // quad).  vol_bilateral.comp uses the identical mapping when it upsamples, so the
+    // depth it compares a tap against is exactly the depth that tap was marched from.
+    ivec2 coord     = local + scissorOff;
+    ivec2 marchSize = ivec2(params.marchWidth, params.marchHeight);
+    if (coord.x >= marchSize.x || coord.y >= marchSize.y)
+        return;
+
+    ivec2 fullSize  = ivec2(params.screenWidth, params.screenHeight);
+    ivec2 fullCoord = min(coord * params.marchScale, fullSize - ivec2(1));
 
     // Sky early-out: depth 1.0 means no geometry → nothing to scatter into.
-    float depth = texelFetch(depthSampler, coord, 0).r;
+    float depth = texelFetch(depthSampler, fullCoord, 0).r;
     if (depth >= 1.0)
     {
         imageStore(volBuf, coord, vec4(0.0));
@@ -144,7 +159,7 @@ void main()
 
     // Reconstruct world-space hit position and view ray direction.
     vec3 cameraPos = params.cameraPosW.xyz;
-    vec3 hitPos    = rt_ReconstructWorldPos(coord, fullSize, params.invViewProj);
+    vec3 hitPos    = rt_ReconstructWorldPos(fullCoord, fullSize, params.invViewProj);
     vec3 toHit     = hitPos - cameraPos;
     float hitDist  = length(toHit);
 

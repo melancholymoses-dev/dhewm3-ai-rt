@@ -183,6 +183,10 @@ static void VK_GetSamplerQualityLimits(float *outMaxAnisotropy, float *outMaxLod
 
 static vkImageData_t s_fallback;
 static bool s_fallbackValid = false;
+// Second view of the same 1x1 image, declared as a 2D array.  Needed because the
+// interaction shader's shadow mask binding is a sampler2DArray (P1b): a plain 2D
+// view bound there is a view-type mismatch, not just a cosmetic difference.
+static VkImageView s_fallbackArrayView = VK_NULL_HANDLE;
 
 void VK_Image_Init(void)
 {
@@ -258,6 +262,9 @@ void VK_Image_Init(void)
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK(vkCreateImageView(vk.device, &vci, NULL, &s_fallback.view));
 
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    VK_CHECK(vkCreateImageView(vk.device, &vci, NULL, &s_fallbackArrayView));
+
     VkSamplerCreateInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
     si.magFilter = VK_FILTER_LINEAR;
@@ -321,6 +328,11 @@ void VK_Image_Shutdown(void)
         return;
     vkDestroySampler(vk.device, s_fallback.sampler, NULL);
     vkDestroyImageView(vk.device, s_fallback.view, NULL);
+    if (s_fallbackArrayView != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(vk.device, s_fallbackArrayView, NULL);
+        s_fallbackArrayView = VK_NULL_HANDLE;
+    }
     vkDestroyImage(vk.device, s_fallback.image, NULL);
     vkFreeMemory(vk.device, s_fallback.memory, NULL);
     memset(&s_fallback, 0, sizeof(s_fallback));
@@ -331,6 +343,15 @@ void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *out)
 {
     out->sampler = s_fallback.sampler;
     out->imageView = s_fallback.view;
+    out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
+// Same 1x1 white texel, but as a 2D-array view — for sampler2DArray bindings
+// (the interaction shadow mask) when the real RT image isn't available.
+void VK_Image_GetFallbackArrayDescriptorInfo(VkDescriptorImageInfo *out)
+{
+    out->sampler = s_fallback.sampler;
+    out->imageView = s_fallbackArrayView;
     out->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 

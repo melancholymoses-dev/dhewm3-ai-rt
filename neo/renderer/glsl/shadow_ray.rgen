@@ -25,7 +25,9 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
-layout(set = 0, binding = 1, r8) uniform image2D shadowMask;
+// P1b: the shadow mask is a 2D array — one layer per shadow-casting light — so all
+// lights can be traced back-to-back with no render-pass breaks in the interaction loop.
+layout(set = 0, binding = 1, r8) uniform image2DArray shadowMask;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 
 layout(set = 0, binding = 3) uniform ShadowParams {
@@ -39,6 +41,8 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     int   debugMode;            // 0=normal 1=biasDir.y 2=got-surface-normal 3=dot(biasDir,lightDir)
     ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
     ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
+    int   shadowLayer;          // P1b: array layer this light writes (0..VK_RT_SHADOW_LAYERS-1)
+    int   _padLayer;
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (xyz = world unit axis,
@@ -51,6 +55,11 @@ layout(set = 0, binding = 3) uniform ShadowParams {
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
+
+// Write this light's shadow value into its own array layer (P1b).
+void storeShadow( ivec2 coord, float value ) {
+    imageStore( shadowMask, ivec3( coord, params.shadowLayer ), vec4(value) );
+}
 
 // ---------------------------------------------------------------------------
 // Simple pseudo-random helper (Wang hash)
@@ -160,7 +169,7 @@ void main() {
     // Beyond light range — fully lit (the light interaction code handles attenuation).
     // For projected lights, lightFalloffRadius may be zero; treat that as "no cutoff".
     if ( params.lightFalloffRadius > 0.0 && dist >= params.lightFalloffRadius ) {
-        imageStore( shadowMask, coord, vec4(1.0) );
+        storeShadow( coord, 1.0 );
         return;
     }
 
@@ -195,8 +204,8 @@ void main() {
     // R8 mask, so U and V are separate modes rather than packed into R/G).
     // A spherical point light shows identical 7/8 output; an elongated fixture or
     // a projected-light aperture shows visibly different 7 vs 8.
-    if ( params.debugMode == 7 ) { imageStore( shadowMask, coord, vec4(sinConeU) ); return; }
-    if ( params.debugMode == 8 ) { imageStore( shadowMask, coord, vec4(sinConeV) ); return; }
+    if ( params.debugMode == 7 ) { storeShadow( coord, sinConeU ); return; }
+    if ( params.debugMode == 8 ) { storeShadow( coord, sinConeV ); return; }
 
     float baseBias = clamp(params.rayBias, 0.01, 8.0);
 
@@ -293,7 +302,7 @@ void main() {
 
     float tMax = dist - adaptBias;
     if ( tMax <= 0.0 ) {
-        imageStore( shadowMask, coord, vec4(1.0) );
+        storeShadow( coord, 1.0 );
         return;
     }
 
@@ -305,7 +314,7 @@ void main() {
     // ---------------------------------------------------------------------------
     if ( params.debugMode == 5 ) {
         float rawNDotL = abs( dot( biasDir, lightDir ) );
-        imageStore( shadowMask, coord, vec4( rawNDotL ) );
+        storeShadow( coord, rawNDotL );
         return;
     }
 
@@ -395,9 +404,9 @@ void main() {
         else if ( params.debugMode == 2 ) dbg = gotSurfaceNormal ? 1.0 : 0.0;
         else if ( params.debugMode == 3 ) dbg = dot( biasDir, lightDir ) * 0.5 + 0.5;
         else                              dbg = shadow;
-        imageStore( shadowMask, coord, vec4(dbg) );
+        storeShadow( coord, dbg );
         return;
     }
 
-    imageStore( shadowMask, coord, vec4(shadow) );
+    storeShadow( coord, shadow );
 }
