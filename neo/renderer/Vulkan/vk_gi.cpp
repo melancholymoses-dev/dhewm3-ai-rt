@@ -146,7 +146,8 @@ static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffe
 //   float giContrast        offset 112  size  4
 //   int   stochasticLights  offset 116  size  4
 //   int   useGbufNormal     offset 120  size  4
-//   total: 124 bytes
+//   int   checkerPhase      offset 124  size  4
+//   total: 128 bytes
 //
 // gi_ray.rchit declares a matching block (it reads maxBounceLights, frameIndex
 // and stochasticLights), so any field added here must be mirrored in *both*
@@ -172,8 +173,13 @@ struct GIParamsUBO
     float giContrast;
     int32_t stochasticLights;
     int32_t useGbufNormal;
+    // Checkerboard phase — see s_giCheckerPhase.  MUST NOT be derived from
+    // frameIndex: the frame slot advances in lockstep with tr.frameCount, so a
+    // frameIndex-based parity locks each slot to one fixed half of the image
+    // forever (the "GI checkerboard ghost" bug).
+    int32_t checkerPhase;
 };
-static_assert(sizeof(GIParamsUBO) == 124, "GIParamsUBO size mismatch");
+static_assert(sizeof(GIParamsUBO) == 128, "GIParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -1396,6 +1402,24 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
     ubo.checker = r_rtGICheckerboard.GetBool() ? 1 : 0;
+
+    // Checkerboard phase — per frame SLOT, not per frame.
+    //
+    // giBuffer is one image per frame-in-flight slot, and vk.currentFrame advances
+    // once per frame exactly as tr.frameCount does.  Deriving the parity from
+    // frameIndex therefore gives slot 0 only ever even frames and slot 1 only ever
+    // odd ones, so each slot traces one fixed half of the checkerboard *forever* and
+    // the complementary half of its image is never written again.  giBuffer is only
+    // cleared at allocation, so that half keeps whatever was last written to it —
+    // a frozen full-res frame from the last time checkerboard was off — and the
+    // temporal EMA re-injects it every frame, converging to the ghost instead of
+    // washing it out.  That was the "toggling checkerboard leaves a permanent ghost"
+    // bug.
+    //
+    // Counting per slot instead makes each slot alternate halves on successive
+    // visits, so every pixel of every slot is refreshed within two visits.
+    static uint32_t s_giCheckerPhase[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    ubo.checkerPhase = (int32_t)(s_giCheckerPhase[frameIdx]++ & 1u);
     // maxBounceLights: 0 disables Option B in rchit (Option A fallback); otherwise
     // caps the light loop so the GI pass evaluates fewer lights than reflections.
     // The SSBO numLights is NOT modified — reflections always see the full list.
