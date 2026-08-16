@@ -89,6 +89,19 @@ static idCVar r_rtGILightCollectRadiusScale(
     "r_rtGILightCollectRadiusScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
     "Camera-space GI light collection radius scale. Effective collect radius = r_rtGIRadius * scale");
 
+static idCVar r_rtGIWhiteWeight(
+    "r_rtGIWhiteWeight", "0.25", CVAR_RENDERER | CVAR_FLOAT,
+    "auto_relight.md §0: importance multiplier floor for fully desaturated (white) lights "
+    "in GI/vol light selection [0-1]. Saturated lights always score ×1.0; white lights score "
+    "×this. Lower = colored accents beat white fills more strongly for the limited light slots. "
+    "1.0 = no saturation weighting (legacy)");
+
+static idCVar r_rtGILightDump(
+    "r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
+    "auto_relight.md §0: dump every in-view lightDef to the console once — name, color, "
+    "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
+    "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
+
 static idCVar r_rtGICheckerboard(
     "r_rtGICheckerboard", "1", CVAR_RENDERER | CVAR_BOOL,
     "Enable checkerboard GI tracing (updates alternating pixels each frame for lower GI RT cost)");
@@ -1036,6 +1049,14 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     static int s_prevUploadFrameNum = -1;
     const int prevUploadFrame = s_prevUploadFrameNum;
 
+    // §0 (auto_relight.md): one-shot console dump of every light this collector
+    // sees, with its classifier verdict — self-clearing so it doesn't spam.
+    const bool dumpLights = r_rtGILightDump.GetBool();
+    if (dumpLights)
+        common->Printf("VK RT GI light dump (collectRadius=%.1f):\n", lightCollectRadius);
+
+    const float whiteWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtGIWhiteWeight.GetFloat());
+
     for (int li = 0; li < numLightDefs; li++)
     {
         const idRenderLightLocal *lightLocal = tr.primaryWorld->lightDefs[li];
@@ -1054,18 +1075,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         if (p.parallel)
             continue;
 
-        // noShadows lights are pure ambient fill with no occlusion path; they produce
-        // large uniform blobs rather than shafts and are not worth marching.
-        if (p.noShadows)
-            continue;
-
         const float dSq = (p.origin - camPos).LengthSqr();
         if (dSq > distCullSq)
             continue;
 
         float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
-        if (radius < 1.0f)
-            continue;
 
         float r = p.shaderParms[SHADERPARM_RED];
         float g = p.shaderParms[SHADERPARM_GREEN];
@@ -1073,6 +1087,37 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         float intensity = p.shaderParms[SHADERPARM_ALPHA];
         if (intensity < 0.001f)
             intensity = 1.0f;
+
+        // §0 (auto_relight.md): shared real/fake judgment — replaces the old
+        // entity-noShadows-only test, which let material-ambient washes through
+        // GI/vol while rejecting small colored accents flagged entity-noShadows.
+        const vkRTLightClass_t lightClass = VK_RT_ClassifyLight(p, lightLocal->lightShader);
+        const bool admitted = (lightClass == RT_LIGHT_REAL || lightClass == RT_LIGHT_ACCENT) &&
+                              radius >= 1.0f;
+
+        // §0: saturation weighting for ranking only — a fully white light's importance
+        // is scaled by whiteWeight, a fully saturated light is untouched. This does NOT
+        // affect admission, only which admitted lights win the limited upload slots.
+        const float maxChan = Max(r, Max(g, b));
+        const float minChan = Min(r, Min(g, b));
+        const float sat = (maxChan > 1e-4f) ? (maxChan - minChan) / maxChan : 0.0f;
+        const float satWeight = whiteWeight + (1.0f - whiteWeight) * sat;
+
+        if (dumpLights)
+        {
+            const float lumDbg = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
+            const float dstSq = Max(dSq, radius * radius);
+            const float baseImportanceDbg = (dstSq > 1e-4f) ? intensity * lumDbg * radius * radius / dstSq : 0.0f;
+            common->Printf(
+                "  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f color=(%.2f %.2f %.2f) "
+                "sat=%.2f imp=%.4f->%.4f -> %s\n",
+                lightLocal->lightShader ? lightLocal->lightShader->GetName() : "<null>",
+                VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), r, g, b, sat,
+                baseImportanceDbg, baseImportanceDbg * satWeight, admitted ? "ADMIT" : "REJECT");
+        }
+
+        if (!admitted)
+            continue;
 
         if (numCandidates < 1024)
         {
@@ -1089,7 +1134,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             // own radius the divisor stops shrinking, so nearby lights compare by
             // intensity·luminance alone.
             const float lum = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
-            c.importance = intensity * lum * radius * radius / Max(dSq, radius * radius);
+            const float baseImportance = intensity * lum * radius * radius / Max(dSq, radius * radius);
+            c.importance = baseImportance * satWeight;
             if (li < kHysteresisMaxLightIdx && prevUploadFrame >= 0 &&
                 s_lightSelectedFrame[li] == prevUploadFrame)
                 c.importance *= 1.15f; // hysteresis: incumbents survive small importance dips
@@ -1136,6 +1182,10 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
         }
     }
+
+    // Self-clearing: r_rtGILightDump prints one frame's worth of lights, not every frame.
+    if (dumpLights)
+        r_rtGILightDump.SetBool(false);
 
     // --- L1 (rt_optimization_tuning.md): stratified selection + importance ordering ---
     //

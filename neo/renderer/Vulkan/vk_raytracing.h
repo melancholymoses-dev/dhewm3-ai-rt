@@ -674,6 +674,27 @@ void VK_RT_DispatchShadowRaysForLight(VkCommandBuffer cmd, const viewDef_t *view
 void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
 
 // ---------------------------------------------------------------------------
+// Shared light classifier (auto_relight.md §0)
+//
+// Single real/fake judgment for a light, used by GI/volumetric admission
+// (vk_gi.cpp) and, later, the noShadows shadow unlock (§6).  Never test
+// parms.noShadows or lightShader->LightCastsShadows() directly in a new
+// consumer — call VK_RT_ClassifyLight so all passes agree.
+// ---------------------------------------------------------------------------
+enum vkRTLightClass_t
+{
+    RT_LIGHT_REAL = 0,   // shadow-casting map light — full GI/vol/shadow eligibility
+    RT_LIGHT_ACCENT,     // noShadows, radius < r_rtLightAccentMaxRadius — placed colored
+                         // accent; admitted to GI/vol, eligible for the noShadows unlock
+    RT_LIGHT_AMBIENT_FILL, // ambientLight material, or noShadows at/above the accent
+                           // radius threshold — semantic mapper fill; never admitted
+    RT_LIGHT_FOG_BLEND     // fogLight or blendLight material — no RT falloff/occlusion volume
+};
+
+vkRTLightClass_t VK_RT_ClassifyLight(const renderLight_t &parms, const idMaterial *lightShader);
+const char *VK_RT_LightClassName(vkRTLightClass_t cls);
+
+// ---------------------------------------------------------------------------
 // P1b — batched shadow masks
 //
 // Per-view flow (all from vk_backend.cpp):
