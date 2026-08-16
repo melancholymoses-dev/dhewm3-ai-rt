@@ -1,6 +1,6 @@
 # Auto-Relight — Engine-Synthesized Lights from Emissive Surfaces
 
-**Date:** 2026-08-10
+**Date:** 2026-08-10 (§0 light classifier added 2026-08-15)
 **Branch:** shaped-shadows
 **Replaces:** Stages 4a/4b of `completed/lighting_shadows_refinement.md`.
 **Companion docs:** `rt_optimization_tuning.md` (P1b shadow batching is the perf
@@ -53,6 +53,89 @@ logic.
   simpler, cheaper, and feeds every pipeline at once.
 
 ---
+
+## §0 — Shared light classifier (land FIRST, independent of synthesis)
+
+Added 2026-08-15 after the "boring uniform GI lift" design review. This stage has no
+dependency on clustering/synthesis and directly fixes a live visual bug, so it lands
+before everything else in this doc — it can even ship inside Wave 4's tail.
+
+### The discovery: the GI/vol light filter is inverted
+
+`VK_RT_UploadGILights` (`vk_gi.cpp`, noShadows skip at ~line 1057 — the SSBO shared by
+GI bounce lighting *and* the volumetric march) filters only **entity-level**
+`p.noShadows`. It never consults the light *material*
+(`idMaterial::LightCastsShadows()` = not fogLight / not ambientLight / not blendLight /
+not MF_NOSHADOWS — see `Material.h`). Net effect, backwards in both directions:
+
+- **Colored accent lights** (alarm reds, monitor ambers — designers habitually flag
+  them entity-noShadows) are **excluded** from GI and volumetrics.
+- **Material-ambient white washes** (`ambientLight` light shaders — no falloff origin,
+  pure paint-bucket fill; used all over alphalabs/comm maps) are **included**, and GI
+  re-integrates them as if they were physical emitters → double-counted ambient →
+  the uniform white hallway lift.
+
+The importance formula compounds it: `intensity · lum · r² / max(distSq, r²)` scores
+any light whose radius reaches the camera at pure `intensity · lum`, so big white
+fills near the camera permanently max out, and `lum` (Rec.601 luma) rates a pure red
+light at 0.3× an equal-intensity white one. The ranking is "biggest, whitest wins" —
+the exact opposite of pillar 2 (GI exists for color bleed, not luminance lift).
+
+Note the P1b shadow batch already uses the correct full test
+(`!p.noShadows && lightShader->LightCastsShadows()`) — GI/vol simply never got it.
+
+### Design: one classifier, four consumers
+
+Do **not** patch the collector inline. Write one function and make GI collection, the
+volumetric march list, the shadow batch, and the §6 unlock all call it, so the
+real-vs-fake judgment can't drift between passes:
+
+```
+VK_RT_ClassifyLight(lightDef) →
+  FOG_BLEND     fogLight || blendLight               → reject everywhere (RT-wise)
+  AMBIENT_FILL  ambientLight material, or noShadows with radius ≥ accent threshold
+                                                     → reject from GI/vol; never unlock
+  ACCENT        noShadows with radius < accent threshold (placed colored accents)
+                                                     → admit to GI/vol; §6 unlock pool
+  REAL          everything else (shadow-casting map lights)
+```
+
+Layered admission for GI/vol, replacing the single `p.noShadows` test:
+
+1. **Material class, hard reject:** `IsAmbientLight() || IsFogLight() || IsBlendLight()`
+   → out. Semantically fake; no threshold, no false positives.
+2. **noShadows admission by radius:** admit noShadows lights when
+   `radius < r_rtLightAccentMaxRadius` (default **300** — the SAME threshold and cvar
+   as §6's unlock rule; big noShadows = semantic ambient fill, small = accent).
+3. **Saturation-weighted importance (ranking only, not admission):**
+   ```
+   sat = (maxChan - minChan) / max(maxChan, 1e-4)
+   importance *= mix(r_rtGIWhiteWeight, 1.0, sat)   // default 0.25
+   ```
+   Legit white hallway lights stay in the list (they really do light bounce
+   surfaces) but lose slot/stochastic-selection fights to saturated accents. This is
+   NOT what `r_rtGIContrast` does — that subtracts min channel post-hoc but rescales
+   to preserve average brightness (tints the lift without reducing it); per-light
+   weighting reduces the white contribution before any ray is traced.
+
+Failure mode of over-filtering is *darkening* (GI is additive-only) — which is
+pillar 2's stated aesthetic, so the risk profile is asymmetric in our favor.
+
+### Log before thresholds (procedure rule)
+
+Before trusting 300/0.25: `r_rtGILightDump` prints every in-view lightDef — name,
+color, saturation, radius, entity noShadows, material class, admitted/rejected +
+which layer decided, importance before/after weighting. One alphalabs2 run answers
+whether the radius threshold cleanly separates fills from accents. A debug tint mode
+(color GI contribution by classifier class) makes the wash source visually obvious.
+
+### Deliverables
+
+- `VK_RT_ClassifyLight()` + enum (suggest `vk_raytracing.h` / a small shared cpp).
+- GI/vol collector switched to layered admission + saturation weighting.
+- `r_rtGILightDump`, classifier debug tint.
+- Expected visible result: white hallway wash drops, colored accents START appearing
+  in GI and volumetrics (they are currently filtered out entirely).
 
 ## Architecture
 
@@ -136,12 +219,20 @@ Per surviving cluster, `tr.primaryWorld->AddLightDef()`:
 ### 6. noShadows unlock for existing fixture lights (companion rule)
 
 Many mapper-placed fixture lights are `noShadows` — a 2004 stencil-budget decision the
-RT path inherits (skipped at `vk_gi.cpp:993` for GI/vol; the interaction path honors
+RT path inherits (skipped at `vk_gi.cpp` ~1057 for GI/vol; the interaction path honors
 the flag too). Engine-side rule, cvar-gated (`r_rtUnlockNoShadows`, default 0):
-lights with `noShadows` whose radius < threshold (default 300 — skip the giant ambient
-fills, which use noShadows *semantically*) get RT shadows anyway. This recovers drama
-from lights that already exist, at zero placement risk. Dedupe (§4) can feed it: a
-skipped cluster whose paired map light is noShadows is a strong unlock candidate.
+lights the §0 classifier rates **ACCENT** (noShadows, radius <
+`r_rtLightAccentMaxRadius`, default 300 — same threshold/cvar as GI/vol admission;
+the giant ambient fills that use noShadows *semantically* classify AMBIENT_FILL and
+are never unlocked) get RT shadows anyway. This recovers drama from lights that
+already exist, at zero placement risk. Dedupe (§4) can feed it: a skipped cluster
+whose paired map light is noShadows is a strong unlock candidate.
+
+Perf note: every unlocked light becomes a shadow-caster in the interaction loop
+(cheap post-P1b — that's what batching was for) *and* a volumetric candidate (NOT
+cheap — per-step ray queries per light, and P8's half-res doesn't change the per-light
+scaling). Unlocked accents ride the normal `r_rtVolMaxLights` cap; they do not get
+automatic shafts.
 
 ### 7. Weapons / projectiles / particles (def-mod scope, allowed)
 
@@ -176,9 +267,15 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
 | `r_rtAutoRelightVolMin` | 4 | top-N clusters eligible for volumetrics |
 | `r_rtUnlockNoShadows` | 0 | §6 rule, independent toggle |
 | `r_rtAutoRelightDebug` | 0 | 1 = console table; 2 = also tint lit clusters (reuse an interaction debug mode) |
+| `r_rtLightAccentMaxRadius` | 300 | §0/§6 shared: noShadows radius below which a light is ACCENT (admit to GI/vol, unlockable) vs AMBIENT_FILL |
+| `r_rtGIWhiteWeight` | 0.25 | §0: importance multiplier floor for fully desaturated lights (1.0 = no saturation weighting) |
+| `r_rtGILightDump` | 0 | §0: console dump of every in-view lightDef with classification + admission verdict |
 
 ## Debug / validation workflow (do before any tuning)
 
+0. §0 first: `r_rtGILightDump 1` on alphalabs2 → confirm the radius threshold cleanly
+   separates fills from accents *before* trusting the 300/0.25 defaults; then verify
+   the white wash drops and colored accents appear in GI/vol with the classifier on.
 1. `r_rtAutoRelight 1; r_rtAutoRelightDebug 1` → console table: per cluster, material
    name, centroid, area, score, verdict (LIT / DEDUPED-vs-light-N / BUDGET-DROPPED).
 2. **`r_showLights 1` works natively** — synthesized lights are real lightDefs and

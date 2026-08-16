@@ -301,6 +301,7 @@ static bool VK_RTAnyEffectEnabled()
 enum vkRTProfilePhase_t
 {
     VK_RTPROF_PHASE_TLAS = 0,
+    VK_RTPROF_PHASE_SHADOWS,
     VK_RTPROF_PHASE_AO,
     VK_RTPROF_PHASE_REFLECTIONS,
     VK_RTPROF_PHASE_GI,
@@ -309,6 +310,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_GI_COMPOSITE,
     VK_RTPROF_PHASE_VOL,
     VK_RTPROF_PHASE_VOL_TEMPORAL,
+    VK_RTPROF_PHASE_VOL_BILATERAL,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
     VK_RTPROF_PHASE_COUNT
 };
@@ -341,6 +343,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
     {
     case VK_RTPROF_PHASE_TLAS:
         return "TLAS";
+    case VK_RTPROF_PHASE_SHADOWS:
+        return "Shadows";
     case VK_RTPROF_PHASE_AO:
         return "AO";
     case VK_RTPROF_PHASE_REFLECTIONS:
@@ -357,6 +361,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "Vol";
     case VK_RTPROF_PHASE_VOL_TEMPORAL:
         return "VolTemporal";
+    case VK_RTPROF_PHASE_VOL_BILATERAL:
+        return "VolBilateral";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
     default:
@@ -562,20 +568,21 @@ static void VK_RTProfile_CollectAndLog(int slot)
                 totalCPUMs += s_rtProfCPUMs[slot][p];
         }
 
-        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
-                       "GIAtrous=%.3f GIComp=%.3f) CPU(total=%.3f TLAS=%.3f AO=%.3f Refl=%.3f GI=%.3f GITemp=%.3f "
-                       "GIAtrous=%.3f GIComp=%.3f) events=%u\n",
-                       recordedFrame, slot, totalMs, phaseMs[VK_RTPROF_PHASE_TLAS], phaseMs[VK_RTPROF_PHASE_AO],
-                       phaseMs[VK_RTPROF_PHASE_REFLECTIONS], phaseMs[VK_RTPROF_PHASE_GI],
-                       phaseMs[VK_RTPROF_PHASE_GI_TEMPORAL], phaseMs[VK_RTPROF_PHASE_GI_ATROUS],
-                       phaseMs[VK_RTPROF_PHASE_GI_COMPOSITE], haveCPU ? totalCPUMs : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_TLAS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_AO] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_REFLECTIONS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_TEMPORAL] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_ATROUS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_COMPOSITE] : 0.0, eventCount);
+        // Enumerate the phases rather than hand-listing them: the old fixed format
+        // string silently omitted every Vol phase, so volumetric cost was measured
+        // (it counted toward total) but never shown — which is exactly the number
+        // P8 needs. A loop can't go stale when a phase is added.
+        idStr gpuLine, cpuLine;
+        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        {
+            const char *name = VK_RTProfilePhaseName((vkRTProfilePhase_t)p);
+            gpuLine += va(" %s=%.3f", name, phaseMs[p]);
+            if (haveCPU)
+                cpuLine += va(" %s=%.3f", name, s_rtProfCPUMs[slot][p]);
+        }
+
+        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f%s) CPU(total=%.3f%s) events=%u\n", recordedFrame,
+                       slot, totalMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0, cpuLine.c_str(), eventCount);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -958,6 +965,10 @@ static const char *s_shadowPhaseTag = "unknown";
 static int s_lightIdx = -1; // current light index (for per-interaction logging)
 static const char *s_interactionPipeTag = "opaque";
 static VkRect2D s_interactionLightScissor = {{0, 0}, {0, 0}};
+// P1b — shadow mask array layer of the light currently being drawn, or -1 when the
+// light casts no shadows.  Set once per light by VK_RB_DrawInteractions; read by
+// VK_RB_DrawInteraction for every surface of that light.
+static int s_shadowMaskLayer = -1;
 
 static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 {
@@ -1057,8 +1068,13 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // Weapon depth-hack surfaces are rendered in a different depth range and should
     // not be shadowed by the world-space screen mask; this can make viewmodels look
     // ghostly or intermittently dark.
+    //
+    // P1b: s_shadowMaskLayer is this light's layer in the shadow mask array, set once
+    // per light by VK_RB_DrawInteractions.  A negative layer means the light casts no
+    // shadows at all — the mask isn't sampled rather than being cleared to white.
     int *useSM = (int *)(fsz + 2);
-    const bool hasShadowMask = VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE;
+    const bool hasShadowMask = VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE &&
+                               s_shadowMaskLayer >= 0;
     const bool isWeaponDepthHack = (din->surf && din->surf->space && din->surf->space->weaponDepthHack);
     const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
     const bool isProjectedLight = (lightDef != NULL) ? !lightDef->parms.pointLight : false;
@@ -1136,7 +1152,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     specF0ScalePtr[1] = idMath::ClampFloat(0.1f, 8.0f, r_rtSpecF0Gamma.GetFloat());
     int *reflDbgPtr = (int *)(specF0ScalePtr + 2);
     *reflDbgPtr = r_rtReflectionDebugMode.GetInteger();
-    reflDbgPtr[1] = 0; // _pad — ring memory is never cleared, so write it explicitly
+    // shadowMaskLayer (P1b) — ring memory is never cleared, so always write it.
+    reflDbgPtr[1] = (s_shadowMaskLayer >= 0) ? s_shadowMaskLayer : 0;
 
     // Write UBO descriptor
     VkDescriptorBufferInfo bufInfo = {};
@@ -1174,7 +1191,9 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         }
     }
 
-    // Binding 7: shadow mask
+    // Binding 7: shadow mask.  sampler2DArray since P1b — the fallback must be an
+    // array view too, or the descriptor's view type disagrees with the shader.
+    extern void VK_Image_GetFallbackArrayDescriptorInfo(VkDescriptorImageInfo *);
     VkDescriptorImageInfo shadowMaskInfo = {};
     if (vk.rayTracingSupported && vkRT.isInitialized && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE)
     {
@@ -1186,7 +1205,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     }
     else
     {
-        VK_Image_GetFallbackDescriptorInfo(&shadowMaskInfo);
+        VK_Image_GetFallbackArrayDescriptorInfo(&shadowMaskInfo);
     }
 
     // Binding 8: AO mask (or temporal history when temporal accumulation is active)
@@ -3440,6 +3459,75 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 }
 
 // ---------------------------------------------------------------------------
+// VK_ComputeLightScissor
+// Screen rect a light can affect, in Vulkan (Y-down) coordinates.
+//
+// vLight->scissorRect uses OpenGL Y-up window coordinates (y=0 at bottom);
+// Vulkan scissor rects are Y-down (y=0 at top), so the top edge flips:
+//   vulkan_top = framebuffer_height - 1 - opengl_top_edge
+//
+// Shared by the interaction loop and the P1b shadow batch pass so both agree on
+// exactly which pixels a light owns — the batch traces this rect and the light's
+// draws are scissored to it, which is what keeps one light's layer from being
+// sampled outside its own region.
+// ---------------------------------------------------------------------------
+
+static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
+{
+    VkRect2D lightScissor = {{0, 0}, vk.swapchainExtent}; // default: full framebuffer
+
+    if (!r_useScissor.GetBool() || r_vkLightFullScissor.GetBool())
+        return lightScissor;
+
+    int h = (int)vk.swapchainExtent.height;
+    int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
+    int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
+    int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
+
+    lightScissor.offset.x = absX1;
+    lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
+    lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
+    lightScissor.extent.height = absY2 - absY1 + 1;
+    // Intersect with the view scissor so subview (mirror) rendering stays
+    // confined to the mirror surface's screen bounds.
+    return VK_IntersectRect(lightScissor, s_viewScissor);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RB_LightDrawsInteractions
+// The filter the interaction loop applies before drawing a light.  Factored out so
+// the P1b shadow-layer assignment pass walks exactly the same set of lights, in the
+// same order — a mismatch would hand a light the wrong layer.
+// ---------------------------------------------------------------------------
+
+static bool VK_RB_LightDrawsInteractions(const viewLight_t *vLight)
+{
+    if (!vLight->lightShader)
+        return false;
+    if (vLight->lightShader->IsFogLight() || vLight->lightShader->IsBlendLight())
+        return false;
+    return vLight->localInteractions || vLight->globalInteractions || vLight->translucentInteractions;
+}
+
+// ---------------------------------------------------------------------------
+// VK_RB_AssignShadowLayers
+// P1b: hand every shadow-casting light in this view its own shadow mask array
+// layer, before any RT dispatch.  Must run before VK_RT_ShadowBatchClearLayers
+// (which clears only the layers in use) and VK_RT_DispatchShadowBatch.
+// ---------------------------------------------------------------------------
+
+static void VK_RB_AssignShadowLayers(void)
+{
+    VK_RT_ShadowBatchBegin();
+    for (const viewLight_t *vLight = backEnd.viewDef->viewLights; vLight; vLight = vLight->next)
+    {
+        if (!VK_RB_LightDrawsInteractions(vLight))
+            continue;
+        VK_RT_ShadowBatchAddLight(vLight, VK_ComputeLightScissor(vLight));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // VK_RB_DrawInteractions - per-light interaction loop
 // Mirrors RB_ARB2_DrawInteractions / RB_GLSL_DrawInteractions
 // ---------------------------------------------------------------------------
@@ -3500,42 +3588,21 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
     {
         backEnd.vLight = vLight;
 
-        if (!vLight->lightShader)
+        if (!VK_RB_LightDrawsInteractions(vLight))
             continue;
 
-        if (vLight->lightShader->IsFogLight())
-            continue;
-        if (vLight->lightShader->IsBlendLight())
-            continue;
-        if (!vLight->localInteractions && !vLight->globalInteractions && !vLight->translucentInteractions)
-            continue;
-
-        // Set scissor for this light.
-        // vLight->scissorRect uses OpenGL Y-up window coordinates (y=0 at bottom).
-        // Vulkan scissor rects use Y-down coordinates (y=0 at top).
-        // Convert: vulkan_top = framebuffer_height - 1 - opengl_top_edge
-        // Keep a copy of the rect so we can use it in vkCmdClearAttachments below.
-        VkRect2D lightScissor = {{0, 0}, vk.swapchainExtent}; // default: full framebuffer
-
+        // Set scissor for this light.  Keep a copy of the rect so we can use it in
+        // vkCmdClearAttachments below (and so it matches what the shadow batch traced).
+        const VkRect2D lightScissor = VK_ComputeLightScissor(vLight);
         if (r_useScissor.GetBool() && !r_vkLightFullScissor.GetBool())
-        {
-            int h = (int)vk.swapchainExtent.height;
-            int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
-            int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
-            int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
-
-            lightScissor.offset.x = absX1;
-            lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
-            lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
-            lightScissor.extent.height = absY2 - absY1 + 1;
-            // Intersect with the view scissor so subview (mirror) rendering stays
-            // confined to the mirror surface's screen bounds.
-            lightScissor = VK_IntersectRect(lightScissor, s_viewScissor);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
-        }
 
         // Per-interaction draws further intersect this with drawSurf->scissorRect.
         s_interactionLightScissor = lightScissor;
+
+        // P1b: which shadow mask layer this light's interactions sample.  -1 means the
+        // light casts no shadows (noShadows entity or material) — no mask is read.
+        s_shadowMaskLayer = VK_RTShadowsEnabled() ? VK_RT_GetShadowLayerForLight(vLight) : -1;
 
         // Set the file-static light index used by VK_RB_DrawInteraction logging
         s_lightIdx = lightIdx;
@@ -3556,10 +3623,15 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             for (const drawSurf_t *s = vLight->localShadows; s; s = s->nextOnLight)
                 nLocalShadow++;
             const char *lName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
-            common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d\n",
+            common->Printf("VK LIGHT[%d]: shader='%s' sc=(%d,%d %u,%u) local=%d global=%d trans=%d gs=%d ls=%d rt=%d "
+                           "smLayer=%d%s\n",
                            lightIdx, lName, (int)lightScissor.offset.x, (int)lightScissor.offset.y,
                            (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
-                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0);
+                           nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0,
+                           s_shadowMaskLayer,
+                           (s_shadowMaskLayer < 0)                              ? " (noShadows)"
+                           : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER)   ? " (serial)"
+                                                                                : " (batched)");
         }
 
         if (r_vkLogShadowBranch.GetInteger() >= 2)
@@ -3651,14 +3723,19 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             track.valid = true;
         }
 
-        // --- Per-light RT shadow dispatch ---
-        // End the current render pass, dispatch shadow rays for this light, then reopen.
+        // --- Per-light RT shadow dispatch (serial path only) ---
+        // P1b: batched lights were already traced and blurred before the render pass
+        // opened, so nothing happens here for them — that is the whole point of the
+        // change.  Only a light parked on the serial scratch layer (r_rtShadowBatch 0,
+        // or more shadow-casting lights in view than VK_RT_SHADOW_BATCH_MAX) still
+        // costs an end/reopen round-trip, because the layer is reused between lights
+        // and must be re-traced immediately before its own draws.
         // The shadow mask (VK_IMAGE_LAYOUT_GENERAL) is written by the dispatch and read
         // by the interaction fragment shader without any layout transition.
-        if (VK_RTShadowsEnabled())
+        if (VK_RTShadowsEnabled() && s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER)
         {
             vkCmdEndRenderPass(cmd);
-            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor);
+            VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor, s_shadowMaskLayer);
             VkRenderPassBeginInfo rpResume = {};
             rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rpResume.renderPass = vk.hdrRenderPassResume;
@@ -3787,6 +3864,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         }
     }
 
+    s_shadowMaskLayer = -1;
     s_cmd = VK_NULL_HANDLE;
 }
 
@@ -4446,8 +4524,10 @@ void VK_RB_DrawView(const void *data)
 
     // Rendering order matches vkDOOM3 reference and GL path (draw_common.cpp RB_STD_DrawView):
     //   1. Depth prepass — populate depth buffer for early-Z rejection
-    //   2. TLAS rebuild (if RT active) — must be outside render pass, uses the filled depth
-    //   3. Interactions — per-light: [end RP] [dispatch shadow rays] [reopen RP] [draw light]
+    //   2. TLAS rebuild + RT dispatches (if RT active) — outside the render pass, on the
+    //      filled depth: shadow batch (P1b), AO, reflections, GI, volumetrics
+    //   3. Interactions — one render pass for every light, each sampling its own shadow
+    //      mask layer (only batch-overflow lights still break the pass)
     //   4. Shader passes — unlit/2D surfaces (decals, sky, GUI overlays)
     //   5. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
     VK_SetRenderStage("DepthPrepass");
@@ -4455,9 +4535,10 @@ void VK_RB_DrawView(const void *data)
         VK_RB_FillDepthBuffer(cmdBuf);
 
     // Rebuild TLAS after the depth prepass so that depth values are populated before any
-    // RT dispatches (shadows per-light, AO once per frame) read from them.
+    // RT dispatch (shadow batch, AO, reflections, GI) reads from them.
     // The TLAS build must be outside a render pass, so we end/reopen here once.
-    // Per-light shadow dispatches do the same inside VK_RB_DrawInteractions.
+    // Since P1b the shadow rays ride along in this same block, so the interaction
+    // loop no longer breaks the render pass per light (only overflow lights do).
     if (VK_RTAnyEffectEnabled())
     {
         vkCmdEndRenderPass(cmdBuf);
@@ -4482,38 +4563,17 @@ void VK_RB_DrawView(const void *data)
                                  VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &gbufToRead);
         }
 
-        // Clear shadow mask to 1.0 (fully lit) before any per-light dispatches.
-        // Without this, pixels not covered by any light this frame retain stale shadow
-        // values from the previous frame and appear as a stuck black afterimage.
+        // P1b: assign one shadow mask array layer per shadow-casting light, then clear
+        // just those layers to 1.0 (fully lit).  Without the clear, pixels inside a
+        // light's scissor rect that it never traces retain stale values from the
+        // previous frame and appear as a stuck black afterimage.
+        // The assignment must happen before the clear (it decides which layers are in
+        // use) and before the batch dispatch and the interaction loop, both of which
+        // look up each light's layer.
         if (VK_RTShadowsEnabled())
         {
-            vkShadowMask_t &sm = vkRT.shadowMask[vk.currentFrame];
-            // Barrier: last frame's RT writes → transfer clear
-            VkImageMemoryBarrier toTransfer = {};
-            toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            toTransfer.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toTransfer.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            toTransfer.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            toTransfer.image = sm.image;
-            toTransfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 0, 0, NULL, 0, NULL, 1, &toTransfer);
-
-            VkClearColorValue clearVal = {};
-            clearVal.float32[0] = 1.0f; // fully lit
-            clearVal.float32[1] = 1.0f;
-            clearVal.float32[2] = 1.0f;
-            clearVal.float32[3] = 1.0f;
-            VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdClearColorImage(cmdBuf, sm.image, VK_IMAGE_LAYOUT_GENERAL, &clearVal, 1, &range);
-
-            // Barrier: transfer clear → RT shader writes
-            VkImageMemoryBarrier toRT = toTransfer;
-            toRT.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toRT.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                                 0, 0, NULL, 0, NULL, 1, &toRT);
+            VK_RB_AssignShadowLayers();
+            VK_RT_ShadowBatchClearLayers(cmdBuf);
         }
 
         VK_SetRenderStage("TLAS_Rebuild");
@@ -4534,6 +4594,19 @@ void VK_RB_DrawView(const void *data)
         // Reflections dispatch before GI, so this ensures reflection hit shaders
         // always see the current frame's light list.
         VK_RT_UploadGILights(backEnd.viewDef);
+
+        // P1b: trace + blur every batched light here, in one block, while the render
+        // pass is already closed for the RT work.  Runs for subviews/mirrors too —
+        // unlike the temporal passes below, the shadow mask carries no history.
+        if (VK_RTShadowsEnabled())
+        {
+            VK_SetRenderStage("RT_Shadows");
+            const uint64_t rtCpuShadowStart = VK_RTProfile_CPUStamp();
+            int rtProfShadow = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_SHADOWS);
+            VK_RT_DispatchShadowBatch(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfShadow);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADOWS, rtCpuShadowStart);
+        }
 
         // RT passes use temporal accumulation buffers that span the entire screen.
         // Mirrors and subviews re-render the view, which incorrectly replaces the
@@ -4604,8 +4677,16 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolTemporal);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_TEMPORAL, rtCpuVolTemporalStart);
 
+            // P8: at half res this pass is the upsample, not just a blur — it is where
+            // the cost the march no longer pays partly reappears, so it gets its own
+            // phase.  Comparing only Vol between r_rtVolHalfRes 1/0 would flatter the
+            // change; Vol + VolBilateral is the honest total.
             VK_SetRenderStage("RT_VolBilateral");
+            const uint64_t rtCpuVolBiStart = VK_RTProfile_CPUStamp();
+            int rtProfVolBi = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_BILATERAL);
             VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolBi);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
         }
 
         // Stage 3.5: restore gbufNormal to COLOR_ATTACHMENT_OPTIMAL before the resume

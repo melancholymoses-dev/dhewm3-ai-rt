@@ -45,6 +45,21 @@ Code release.
 idCVar r_rtVol("r_rtVol", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                "Enable volumetric light scattering (Phase 7.2). On by default.");
 
+// P8 (rt_optimization_tuning.md): march the volumetric medium at reduced resolution
+// and resolve back to full res with a depth-aware upsample.  Volumetric fog is
+// inherently low-frequency, so the march is the one pass where dropping resolution
+// costs almost nothing visually — and it is ~4x the cost of everything downstream.
+static idCVar r_rtVolHalfRes("r_rtVolHalfRes", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                             "March volumetrics at half resolution and bilateral-upsample (1), or at full "
+                             "resolution like before (0).  Takes effect on the next frame; the switch costs one "
+                             "device-idle stall to reallocate the vol images.");
+
+static idCVar r_rtVolUpsampleDepthSigma(
+    "r_rtVolUpsampleDepthSigma", "24.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "Depth falloff (world units) for the volumetric bilateral upsample when r_rtVolHalfRes is 1. "
+    "Lower = stricter edge preservation but blockier fog near silhouettes; higher = smoother but "
+    "fog can bleed across depth discontinuities. Ignored at full res.");
+
 static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
                              "Ray-march steps per pixel (safe default: 8; high-end: 16)");
 
@@ -135,8 +150,32 @@ struct VolParamsUBO
     float directedAnisotropy;   // 148
     float directedStrength;     // 152
     float _uboPad;              // 156
+    // --- P8: half-res march ---
+    // screenWidth/Height above stay FULL res (depth fetch + NDC reconstruction);
+    // these describe the volBuf the march actually writes.
+    int32_t marchWidth;         // 160
+    int32_t marchHeight;        // 164
+    int32_t marchScale;         // 168  1 = full res, 2 = half res
+    float _uboPad2;             // 172
 };
-static_assert(sizeof(VolParamsUBO) == 160, "VolParamsUBO size mismatch");
+static_assert(sizeof(VolParamsUBO) == 176, "VolParamsUBO size mismatch");
+
+// ---------------------------------------------------------------------------
+// Push-constant block for vol_bilateral.comp.  All scalars — no vec/ivec types —
+// so the layout is a plain 4-byte-packed struct with no alignment surprises.
+// ---------------------------------------------------------------------------
+struct BilateralPC
+{
+    int32_t offX, offY, extX, extY; // dispatch rect, FULL res (output space)
+    int32_t screenW, screenH;       // full-res output dimensions
+    float sigma;                    // Gaussian sigma in full-res pixels
+    int32_t marchScale;             // 1 = input is full res, 2 = half res (P8)
+    int32_t marchW, marchH;         // input (volIn) dimensions
+    float depthSigma;               // depth falloff, world units
+    float linNum;                   // -proj[14] \  viewDist = |linNum / (2*d - 1 + linAdd)|
+    float linAdd;                   //  proj[10] /
+};
+static_assert(sizeof(BilateralPC) == 52, "BilateralPC must match vol_bilateral.comp's push block");
 
 // ---------------------------------------------------------------------------
 // Forward declarations from other vk_*.cpp modules
@@ -149,6 +188,29 @@ extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **o
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
+
+// ---------------------------------------------------------------------------
+// P8 — march resolution
+//
+// The march (volBuffer) and the temporal history live at full/marchScale; the
+// bilateral pass upsamples back to full res, so everything downstream of it —
+// including the compositor — is unchanged.  s_volMarchScale caches what the images
+// were actually built at, so a mid-session r_rtVolHalfRes flip can be detected and
+// the images reallocated instead of silently running with a mismatched scale.
+// ---------------------------------------------------------------------------
+
+static int s_volMarchScale = 1;
+
+static int VK_RT_VolRequestedScale(void)
+{
+    return r_rtVolHalfRes.GetBool() ? 2 : 1;
+}
+
+static uint32_t VK_RT_VolScaleDim(uint32_t dim, int scale)
+{
+    // Round up: a 1079-tall viewport must still be fully covered at half res.
+    return Max(1u, (dim + (uint32_t)scale - 1u) / (uint32_t)scale);
+}
 
 // ---------------------------------------------------------------------------
 // Image helpers
@@ -443,10 +505,21 @@ static void VK_RT_InitVolCompositePipeline(void)
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.volCompositeDescLayout));
 
     // --- Pipeline layout ---
+    // P8: the sampled vol image is no longer guaranteed to be screen-sized (with
+    // r_rtVolBilateral 0 the compositor reads the march-res image directly), so the
+    // fragment shader can no longer derive its UV from textureSize().  Push the
+    // screen size instead.
+    VkPushConstantRange compPush = {};
+    compPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    compPush.offset = 0;
+    compPush.size = sizeof(float) * 2; // vec2 invScreenSize
+
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plInfo.setLayoutCount = 1;
     plInfo.pSetLayouts = &vkRT.volCompositeDescLayout;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges = &compPush;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.volCompositeLayout));
 
     // --- Shader modules — share gi_composite.vert.spv ---
@@ -591,7 +664,13 @@ extern idCVar r_rtAOTemporalCutThreshold; // camera-cut L-inf threshold, defined
 static VkRect2D s_volTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 // Mirrors VK_RT_ComputeViewDispatchRect from vk_temporal.cpp (static there, duplicated here).
-static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef)
+//
+// P8: `scale` divides the rect down into march space for the passes that operate on
+// the reduced-resolution images (march, temporal).  The offset floors and the extent
+// is grown to cover the rounding, so the scaled rect always covers at least the
+// full-res rect — a march pixel that any full-res pixel maps into must be written,
+// or the upsample reads a texel this frame never touched.
+static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef, int scale = 1)
 {
     const int w = (int)vk.swapchainExtent.width;
     const int h = (int)vk.swapchainExtent.height;
@@ -608,6 +687,22 @@ static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef)
 
     r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, rw);
     r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, rh);
+
+    if (scale > 1)
+    {
+        const int32_t x0 = r.offset.x / scale;
+        const int32_t y0 = r.offset.y / scale;
+        const int32_t x1 = ((int32_t)r.offset.x + (int32_t)r.extent.width + scale - 1) / scale;
+        const int32_t y1 = ((int32_t)r.offset.y + (int32_t)r.extent.height + scale - 1) / scale;
+
+        const int32_t mw = (int32_t)VK_RT_VolScaleDim((uint32_t)w, scale);
+        const int32_t mh = (int32_t)VK_RT_VolScaleDim((uint32_t)h, scale);
+
+        r.offset.x = x0;
+        r.offset.y = y0;
+        r.extent.width = (uint32_t)idMath::ClampInt(1, mw - x0, x1 - x0);
+        r.extent.height = (uint32_t)idMath::ClampInt(1, mh - y0, y1 - y0);
+    }
     return r;
 }
 
@@ -857,7 +952,11 @@ static void VK_RT_InitVolTemporalPipeline(void)
 void VK_RT_InitVolTemporal(void)
 {
     VK_RT_InitVolTemporalPipeline();
-    VK_RT_CreateVolHistoryImages(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    // P8: the EMA runs on the march result, so the history matches the march
+    // resolution, not the screen.  VK_RT_ResizeVolumetrics ran before this and has
+    // already set s_volMarchScale.
+    VK_RT_CreateVolHistoryImages(VK_RT_VolScaleDim(vk.swapchainExtent.width, s_volMarchScale),
+                                 VK_RT_VolScaleDim(vk.swapchainExtent.height, s_volMarchScale));
 }
 
 void VK_RT_ShutdownVolTemporal(void)
@@ -920,7 +1019,8 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
         return;
     }
 
-    const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef);
+    // P8: the history image lives at march resolution, so this rect must too.
+    const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef, s_volMarchScale);
     s_volTemporalDispatchRect[frameIdx] = dispatchRect;
     if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
         return;
@@ -1060,14 +1160,15 @@ static idCVar r_rtVolBilateralSigma("r_rtVolBilateralSigma", "2.0", CVAR_RENDERE
 // ---------------------------------------------------------------------------
 // VK_RT_InitVolBilateralPipeline
 // Descriptor layout mirrors vol_bilateral.comp:
-//   binding 0: STORAGE_IMAGE readonly  (volHistory / volIn)
-//   binding 1: STORAGE_IMAGE           (volBlurred / volOut)
-// Push constants: 32 bytes (offX,offY,extX,extY,screenW,screenH,sigma,pad)
+//   binding 0: STORAGE_IMAGE readonly     (volHistory / volIn — march res)
+//   binding 1: STORAGE_IMAGE              (volBlurred / volOut — full res)
+//   binding 2: COMBINED_IMAGE_SAMPLER     (depth — joint bilateral weights, P8)
+// Push constants: sizeof(BilateralPC)
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitVolBilateralPipeline(void)
 {
-    VkDescriptorSetLayoutBinding bindings[2] = {};
+    VkDescriptorSetLayoutBinding bindings[3] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1079,16 +1180,21 @@ static void VK_RT_InitVolBilateralPipeline(void)
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 2;
+    layoutCI.bindingCount = 3;
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.volBilateralDescLayout));
 
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 32; // int[6] + float + float
+    pushRange.size = sizeof(BilateralPC);
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1118,13 +1224,16 @@ static void VK_RT_InitVolBilateralPipeline(void)
     VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.volBilateralPipeline));
     vkDestroyShaderModule(vk.device, compMod, NULL);
 
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2u * (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    VkDescriptorPoolSize poolSizes[2] = {
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2u * (uint32_t)VK_MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT},
+    };
 
     VkDescriptorPoolCreateInfo poolCI = {};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
-    poolCI.poolSizeCount = 1;
-    poolCI.pPoolSizes = &poolSize;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.volBilateralDescPool));
 
     VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
@@ -1205,9 +1314,17 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     if (!vkRT.isInitialized)
         return;
-    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool() || !r_rtVolBilateral.GetBool())
+    if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool())
         return;
     if (vkRT.volBilateralPipeline == VK_NULL_HANDLE)
+        return;
+
+    // With r_rtVolBilateral 0 the pass is skipped entirely.  At half res that leaves
+    // volReadView pointing at the march-res image; the compositor handles that (it
+    // derives UV from the pushed screen size, not the image size) and the sampler's
+    // LINEAR filter gives a plain bilinear upsample.  Useful as the "no filter at
+    // all" reference — it shows what the joint bilateral is actually buying.
+    if (!r_rtVolBilateral.GetBool())
         return;
 
     const int frameIdx = vk.currentFrame;
@@ -1218,12 +1335,27 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (histImg.image == VK_NULL_HANDLE || blurredImg.image == VK_NULL_HANDLE)
         return;
 
-    // Compute dispatch rect (same helper as temporal).
+    // Input is whatever the temporal pass left as the current result: the history
+    // image when temporal is on, otherwise the raw march output.  Both are at march
+    // resolution, so the upsample source dimensions come from the image itself.
+    vkReflBuffer_t &srcImg = r_rtVolTemporal.GetBool() ? histImg : vkRT.volBuffer[frameIdx];
+    if (srcImg.image == VK_NULL_HANDLE)
+        return;
+
+    // This pass writes at FULL resolution (it is the upsample), so its rect is the
+    // unscaled one even when the source is half res.
     const VkRect2D dispatchRect = VK_RT_Vol_ComputeDispatchRect(viewDef);
     if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
         return;
 
-    // Barrier: ensure temporal compute write to volHistory is visible to our compute read.
+    const bool depthAware = (s_volMarchScale > 1);
+
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+    // Barrier: ensure the temporal (or march) compute write is visible to our read.
     {
         VkMemoryBarrier mb = {};
         mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -1233,18 +1365,46 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
                              0, NULL, 0, NULL);
     }
 
-    // Update descriptor set when resources change.
-    if (vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
+    // P8: this pass now samples depth, so it needs the same ATTACHMENT → READ_ONLY
+    // round-trip every other depth-reading RT pass does.  Only when the weights are
+    // actually used — at full res the descriptor is still bound but never read, so
+    // there is no reason to pay the transition.
+    if (depthAware)
+    {
+        VkImageMemoryBarrier depthToRead = {};
+        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthToRead.image = vk.depthImage;
+        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
+    }
+
+    // Update descriptor set when resources change.  srcImg flips between the history
+    // and the raw march buffer with r_rtVolTemporal, so key on the view, not just the
+    // frame count.
+    static VkImageView s_lastBilateralSrc[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    if (vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount ||
+        s_lastBilateralSrc[frameIdx] != srcImg.view)
     {
         VkDescriptorImageInfo inInfo = {};
-        inInfo.imageView = histImg.view;
+        inInfo.imageView = srcImg.view;
         inInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkDescriptorImageInfo outInfo = {};
         outInfo.imageView = blurredImg.view;
         outInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-        VkWriteDescriptorSet writes[2] = {};
+        VkDescriptorImageInfo depthInfo = {};
+        depthInfo.sampler = vkRT.depthSampler;
+        depthInfo.imageView = vk.depthSampledView;
+        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet writes[3] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet = vkRT.volBilateralDescSets[frameIdx];
@@ -1260,18 +1420,20 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[1].pImageInfo = &outInfo;
 
-        vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = vkRT.volBilateralDescSets[frameIdx];
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo = &depthInfo;
+
+        vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
         vkRT.volBilateralDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        s_lastBilateralSrc[frameIdx] = srcImg.view;
     }
 
     // Push constants.
-    struct BilateralPC
-    {
-        int32_t offX, offY, extX, extY;
-        int32_t screenW, screenH;
-        float sigma;
-        float pad;
-    } pc;
+    BilateralPC pc = {};
     pc.offX = (int32_t)dispatchRect.offset.x;
     pc.offY = (int32_t)dispatchRect.offset.y;
     pc.extX = (int32_t)dispatchRect.extent.width;
@@ -1279,16 +1441,25 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     pc.screenW = (int32_t)vk.swapchainExtent.width;
     pc.screenH = (int32_t)vk.swapchainExtent.height;
     pc.sigma = idMath::ClampFloat(0.5f, 8.0f, r_rtVolBilateralSigma.GetFloat());
-    pc.pad = 0.0f;
+    pc.marchScale = s_volMarchScale;
+    pc.marchW = (int32_t)srcImg.width;
+    pc.marchH = (int32_t)srcImg.height;
+    pc.depthSigma = Max(0.01f, r_rtVolUpsampleDepthSigma.GetFloat());
 
-    // Dispatch.
+    // Coefficients to invert the depth buffer back to view distance:
+    //   ndcZ = 2*d - 1,  viewZ = -proj[14] / (ndcZ + proj[10]),  dist = |viewZ|
+    // Taken from this view's projection so it tracks r_znear / fov changes.
+    pc.linNum = -viewDef->projectionMatrix[14];
+    pc.linAdd = viewDef->projectionMatrix[10];
+
+    // Dispatch (full-res output).
     const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volBilateralPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volBilateralPipelineLayout, 0, 1,
                             &vkRT.volBilateralDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.volBilateralPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
+    vkCmdPushConstants(cmd, vkRT.volBilateralPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(BilateralPC), &pc);
     vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
     // Barrier: bilateral write → fragment read (for composite).
@@ -1301,12 +1472,29 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
                              &mb, 0, NULL, 0, NULL);
     }
 
-    // Composite now reads the filtered result.
+    // Depth barrier: restore ATTACHMENT_OPTIMAL for the render pass that follows.
+    if (depthAware)
+    {
+        VkImageMemoryBarrier depthRestore = {};
+        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthRestore.dstAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthRestore.image = vk.depthImage;
+        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
+                             NULL, 0, NULL, 1, &depthRestore);
+    }
+
+    // Composite now reads the filtered, full-res result.
     vkRT.volReadView[frameIdx] = blurredImg.view;
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol Bilateral: dispatch slot=%d rect=(%d,%d %u,%u)\n", frameIdx, pc.offX, pc.offY,
-                       (unsigned)pc.extX, (unsigned)pc.extY);
+        common->Printf("VK RT Vol Bilateral: slot=%d rect=(%d,%d %u,%u) src=%dx%d scale=%d depthAware=%d\n", frameIdx,
+                       pc.offX, pc.offY, (unsigned)pc.extX, (unsigned)pc.extY, pc.marchW, pc.marchH, pc.marchScale,
+                       depthAware ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1380,14 +1568,25 @@ void VK_RT_ShutdownVolumetrics(void)
 void VK_RT_ResizeVolumetrics(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
+
+    // P8: march + temporal history at march res; the bilateral output stays full res
+    // because it is what the compositor samples.
+    s_volMarchScale = VK_RT_VolRequestedScale();
+    const uint32_t marchW = VK_RT_VolScaleDim(width, s_volMarchScale);
+    const uint32_t marchH = VK_RT_VolScaleDim(height, s_volMarchScale);
+
     VK_RT_DestroyVolImages();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.volMarchDescSetLastUpdatedFrameCount[i] = -1;
-    VK_RT_CreateVolImages(width, height);
+    VK_RT_CreateVolImages(marchW, marchH);
     if (vkRT.volTemporalPipeline != VK_NULL_HANDLE)
-        VK_RT_ResizeVolTemporal(width, height);
+        VK_RT_ResizeVolTemporal(marchW, marchH);
     if (vkRT.volBilateralPipeline != VK_NULL_HANDLE)
         VK_RT_ResizeVolBilateral(width, height);
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Vol: resize full=%ux%u march=%ux%u (scale=%d)\n", width, height, marchW, marchH,
+                       s_volMarchScale);
 }
 
 // ---------------------------------------------------------------------------
@@ -1414,6 +1613,19 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (s_lastVolDispatchFrame[frameIdx] == tr.frameCount)
         return;
     s_lastVolDispatchFrame[frameIdx] = tr.frameCount;
+
+    // P8: r_rtVolHalfRes changed since the images were built — reallocate before we
+    // record anything that references them.  vkDeviceWaitIdle mid-recording is safe
+    // (this command buffer is not submitted yet) and only happens on the frame the
+    // CVar is toggled, which is the price of making the A/B switchable at runtime
+    // instead of behind a vid_restart.
+    if (VK_RT_VolRequestedScale() != s_volMarchScale)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Vol: march scale %d -> %d, reallocating vol images\n", s_volMarchScale,
+                           VK_RT_VolRequestedScale());
+        VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    }
 
     vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
     if (vb.image == VK_NULL_HANDLE)
@@ -1518,22 +1730,25 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.directedStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
     ubo._uboPad = 0.0f;
 
-    // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI).
+    // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI), scaled into
+    // march space — the shader indexes volBuf with it.
     const int w = (int)vk.swapchainExtent.width;
     const int h = (int)vk.swapchainExtent.height;
     {
-        const idScreenRect &s = viewDef->scissor;
-        int offX = idMath::ClampInt(0, w - 1, s.x1);
-        int offY = idMath::ClampInt(0, h - 1, h - 1 - s.y2);
-        int rw = idMath::ClampInt(1, w - offX, s.x2 - s.x1 + 1);
-        int rh = idMath::ClampInt(1, h - offY, s.y2 - s.y1 + 1);
-        ubo.scissorOffsetX = offX;
-        ubo.scissorOffsetY = offY;
-        ubo.scissorExtentX = rw;
-        ubo.scissorExtentY = rh;
+        const VkRect2D marchRect = VK_RT_Vol_ComputeDispatchRect(viewDef, s_volMarchScale);
+        ubo.scissorOffsetX = (int32_t)marchRect.offset.x;
+        ubo.scissorOffsetY = (int32_t)marchRect.offset.y;
+        ubo.scissorExtentX = (int32_t)marchRect.extent.width;
+        ubo.scissorExtentY = (int32_t)marchRect.extent.height;
     }
-    ubo.screenWidth = (int32_t)vb.width;
-    ubo.screenHeight = (int32_t)vb.height;
+    // screenWidth/Height are the FULL-res dimensions: the shader fetches depth and
+    // reconstructs NDC at full res even when it writes at march res.
+    ubo.screenWidth = (int32_t)w;
+    ubo.screenHeight = (int32_t)h;
+    ubo.marchWidth = (int32_t)vb.width;
+    ubo.marchHeight = (int32_t)vb.height;
+    ubo.marchScale = s_volMarchScale;
+    ubo._uboPad2 = 0.0f;
 
     memcpy(uboMapped, &ubo, sizeof(VolParamsUBO));
 
@@ -1655,8 +1870,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: dispatch complete groups=%ux%u density=%.3f samples=%d\n", groupsX, groupsY,
-                       ubo.density, ubo.numSamples);
+        common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d density=%.3f samples=%d\n",
+                       groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.density, ubo.numSamples);
 }
 
 // ---------------------------------------------------------------------------
@@ -1697,9 +1912,17 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     write.pImageInfo = &imgInfo;
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
 
+    // P8: UV comes from the screen size, not the vol image size — they differ when
+    // the compositor is reading the march-res image directly.
+    const float invScreen[2] = {
+        1.0f / Max(1.0f, (float)vk.swapchainExtent.width),
+        1.0f / Max(1.0f, (float)vk.swapchainExtent.height),
+    };
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositeLayout, 0, 1,
                             &vkRT.volCompositeDescSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.volCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(invScreen), invScreen);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     if (r_vkLogRT.GetInteger() >= 1)

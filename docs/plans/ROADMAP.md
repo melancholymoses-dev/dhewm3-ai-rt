@@ -77,13 +77,22 @@ Wave 3 — GI quality-per-ray                       [rt_optimization_tuning.md]
 Wave 4 — Structural perf                          [rt_optimization_tuning.md]
   P1b  batched shadow masks (4 lights/RGBA8 or texture array; zero render-pass
        breaks in the interaction loop)  ← enabler for Wave 5's extra lights
+       ✅ implemented 2026-08-15 (R8 array, 7 batched layers + 1 serial;
+          r_rtShadowBatch, default 1).  Untested; profiler capture still owed.
   P8   half-res volumetric march + bilateral upsample
+       ✅ implemented 2026-08-15 (r_rtVolHalfRes, default 1; march + temporal EMA
+          at half res, joint bilateral upsample resolves to full).  Untested.
 
 Wave 5 — Auto-relight                             [auto_relight.md]
-  Synthesized real lights from emissive panels (cluster → score → dedupe →
-  AddLightDef), noShadows unlock rule, weapon/projectile def patches.
+  §0   shared light classifier (REAL/ACCENT/AMBIENT_FILL/FOG_BLEND) + layered GI/vol
+       admission + saturation-weighted importance + r_rtGILightDump.  Lands FIRST —
+       no dependency on synthesis; fixes the live "uniform white GI lift" bug (the
+       GI/vol collector filters entity noShadows only, so ambient washes are IN and
+       colored accents are OUT — inverted from intent; see auto_relight.md §0).
+  §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
+       AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
-  (Can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
+  (§1-5 can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
 
 Wave 6 — Tuning pass                              [rt_optimization_tuning.md T3-T6]
   T3 per-material F0 (mirrors ~0.9)  ·  T4 RT-vs-raster falloff match
@@ -116,6 +125,6 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 1b | landed | 928f1a8f, 7154481e (gbuffer branch) | no |
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
-| 4 | not started | | |
+| 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
 | 5 | not started | | |
 | 6 | not started | | |

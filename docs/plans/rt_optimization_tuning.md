@@ -60,6 +60,50 @@ likely the largest *structural* cost after raw ray counts.
   lights should see a large drop in total frame time even though traced-ray count is
   unchanged.
 
+  **✅ Implemented (Wave 4, 2026-08-15).** Chose the **R8 texture array**, not RGBA8
+  channel packing: it scales past 4 lights, needs no channel-extraction math, and lets
+  the blur reuse one descriptor set for every light (the layer rides in a push
+  constant). Notes for whoever tunes or extends this:
+
+  - `VK_RT_SHADOW_LAYERS` = 8 in `vk_raytracing.h`: 7 batched + **layer 7 reserved as
+    a serial scratch layer**. Lights beyond the batch budget — and *every* light when
+    `r_rtShadowBatch 0` — reuse layer 7 via the old per-light path, so they still pay a
+    render-pass break. That keeps the A/B switch and the >7-light case correct rather
+    than dropping shadows.
+  - Per-view flow lives in `vk_backend.cpp`: `VK_RB_AssignShadowLayers()` →
+    `VK_RT_ShadowBatchClearLayers()` → (TLAS) → `VK_RT_DispatchShadowBatch()` → the
+    interaction loop looks each light's layer up again. The assignment pass walks
+    `viewLights` through `VK_RB_LightDrawsInteractions()` and `VK_ComputeLightScissor()`,
+    the *same* helpers the interaction loop uses — if those two ever diverge, lights get
+    handed layers nothing traced. That is the failure mode to suspect first.
+  - Barrier count is now **constant in the light count**: one depth round-trip, one
+    RT→compute, one H→V, one →fragment, regardless of L. Traces and blur sweeps for
+    different lights need no barriers between them because they touch disjoint layers.
+  - **`noShadows` lights no longer get a layer at all** (`layer == -1` →
+    `u_UseShadowMask 0`). The single-image version had to clear the mask to white for
+    them, costing a clear plus two barriers per such light; now they cost nothing.
+  - The mask clear covers **only the layers in use this view**, not all 8 — a full-array
+    clear is ~16 MB of pure bandwidth at 1080p when the room has two lights.
+  - The clear's barrier now includes `FRAGMENT_SHADER` in its source scope. The old one
+    listed only the RT stage, which did not cover the *previous view's* interaction
+    reads — latent with one view per frame, a real hazard once a mirror subview renders
+    ahead of the main view.
+  - Interaction UBO: the old trailing `_pad` int is now `shadowMaskLayer` (offset 376);
+    `interaction.frag` binding 7 became `sampler2DArray`. That forced a 2D-**array**
+    fallback view (`VK_Image_GetFallbackArrayDescriptorInfo`) — binding the plain 2D
+    white texel there is a view-type mismatch, not a cosmetic one.
+  - **Memory cost is the tradeoff.** Mask + blur-temp, both 8-layer R8, × 2 frame
+    slots ≈ **33 MB at 1080p** (was ~8 MB), ≈ 66 MB at 1440p, ≈ 133 MB at 4K. If that
+    ever bites, `VK_RT_SHADOW_LAYERS` is the single knob — lowering it just pushes more
+    lights onto the serial path, it doesn't break anything.
+  - New profiler phase `Shadows` (`VK_RTPROF_PHASE_SHADOWS`) — the shadow cost was
+    previously invisible in the phase table. Use it for the before/after measurement.
+  - Debug: `r_vkLogRT 1` prints `VK RT SHADOW BATCH: traced=… blurred=… layers=…
+    serialOverflow=…` once per view, and each `VK LIGHT[n]` line carries
+    `smLayer=N (batched|serial|noShadows)`.
+  - **Not yet measured.** Capture the profiler table with `r_rtShadowBatch` 1 vs 0 in
+    the same spot and record it below.
+
 ### P2. Reflection rays traced for every pixel, reflective or not
 
 `reflect_ray.rgen` traces a glass-probe ray + a mirror ray per non-sky pixel, and each
@@ -70,6 +114,34 @@ vast majority of pixels (concrete/cloth, F0 ≈ 0) the result is then multiplied
 **Fix:** the G-buffer F0 early-out (`gbuffer_normal_pass.md` Step 7). Pixels with
 `F0 < 1/255` and no glass skip the reflection ray *and* its shadow rays entirely.
 In typical Doom 3 scenes this culls well over half the reflection workload.
+
+### Bug: GI checkerboard left a permanent ghost (fixed 2026-08-15)
+
+Recording it here because the mechanism generalises to any future pass that skips
+writing some pixels on some frames.
+
+`gi_ray.rgen` derived its checkerboard parity from `frameIndex` (`tr.frameCount`).
+But `giBuffer` is **one image per frame-in-flight slot**, and `vk.currentFrame`
+advances once per frame exactly as `tr.frameCount` does — so slot parity is locked to
+frame parity. Slot 0 therefore traced only `(x+y)` even, slot 1 only `(x+y)` odd,
+*forever*: the complementary half of each slot's image was never written again.
+`giBuffer` is cleared only at allocation, so that half kept whatever was last written
+to it — a frozen full-res frame from the last time checkerboard was off — and the
+temporal EMA re-injected it every frame, converging **to** the ghost rather than
+washing it out. Toggling checkerboard on after it had been off is what loaded the
+ghost with a recognisable image; moving the camera never cleared it because those
+texels were simply never written.
+
+**Fix:** the phase is now a per-slot counter (`s_giCheckerPhase` in `vk_gi.cpp`,
+passed as `checkerPhase` in the GI UBO) rather than a function of the frame index, so
+each slot alternates halves on successive visits and every pixel is refreshed within
+two visits to that slot.
+
+The rule to remember: **anything that keys "skip this pixel this frame" off a frame
+counter must key off a per-slot counter instead**, or the frame-in-flight count
+silently divides the pattern into fixed per-slot classes. Sampling *seeds* keyed off
+`frameIndex` (AO/GI/shadow/vol jitter) are fine — every pixel is still written, so
+the worst case there is reduced decorrelation, not a stuck image.
 
 ### P3. GI worst case: up to 64 traced rays per pixel
 
@@ -181,6 +253,46 @@ media is inherently low-frequency; industry standard is half or quarter resoluti
 joint bilateral upsample. `vol_bilateral.comp` already exists as a blur — extend it
 into a depth-aware upsample and march at half res: **4× cost cut** on one of the
 heavier passes, with little visible loss.
+
+**✅ Implemented (Wave 4, 2026-08-15):** `r_rtVolHalfRes` (default 1, 0 = full res
+for A/B). The march and the temporal EMA history both live at full/`marchScale`;
+`vol_bilateral.comp` became the resolve back to full res. Notes:
+
+- **The whole chain below the march moved to half res, not just the march.** The
+  temporal EMA runs on the half-res image too, so it is 4× cheaper as well, and the
+  bilateral's Gaussian footprint is walked in *source* space — a 4× tap reduction on
+  what was a 121-tap full-res kernel. The bilateral is now the only full-res pass.
+- **Depth comparison is on linearised view distance, not raw buffer values.** Raw
+  depth is wildly non-linear; a fixed threshold would be far too strict near the
+  camera and useless in the distance. `linNum`/`linAdd` in the push block are the two
+  projection coefficients (`-proj[14]`, `proj[10]`) that invert it, taken per view so
+  the weights track `r_znear`/fov changes. `r_rtVolUpsampleDepthSigma` is therefore in
+  **world units** (default 24).
+- **Fallback when every tap disagrees on depth** (thin geometry no march sample
+  landed on): weights collapse, so the shader takes the single depth-nearest tap
+  instead of dividing by ~0. Without that you get a bright halo on silhouettes, which
+  is the classic half-res-volumetrics artifact.
+- The march picks the **top-left texel of each `marchScale²` quad** as its
+  representative full-res sample, and the upsample uses the identical mapping — the
+  depth a tap is compared against is exactly the depth it was marched from. If those
+  two ever disagree the fog will creep across edges; that is the first thing to check.
+- **Latent bug fixed alongside:** `vol_composite.frag` derived its UV from
+  `textureSize(u_VolMap)`, which was only correct while the vol image was always
+  screen-sized. With `r_rtVolBilateral 0` at half res the compositor reads the
+  march-res image directly and that would have put `gl_FragCoord` into [0,2] —
+  edge-clamped garbage over most of the screen. It now takes the screen size as a
+  push constant.
+- **A/B levers:** `r_rtVolHalfRes` 1/0 for the whole change (runtime-switchable; costs
+  one device-idle stall to reallocate). `r_rtVolBilateral 0` at half res skips the
+  upsample entirely and lets the compositor's LINEAR sampler do a plain bilinear —
+  the "no filter" reference. `r_rtVolUpsampleDepthSigma` very high ≈ Gaussian upsample
+  with no edge stopping, which isolates what the depth weighting alone buys.
+- **Measure `Vol` + `VolBilateral` together**, not `Vol` alone — half res moves cost
+  from one to the other. `VolBilateral` is a new profiler phase added for this.
+  Related: the profile log used to hardcode its phase list and silently omitted every
+  Vol phase; it now enumerates them, so volumetric cost is visible at all.
+- **Not yet measured.** Expect well under the theoretical 4× on the total: the march
+  drops ~4×, but the bilateral goes up and the composite is unchanged.
 
 ### P9. Depth-reconstruction ALU in three rgens (after G-buffer)
 

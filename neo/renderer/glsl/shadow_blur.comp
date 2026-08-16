@@ -15,12 +15,17 @@ of the original Doom 3 GPL Source Code release.
 //
 // Dispatched twice per light: once horizontal (direction=0), once vertical (direction=1).
 // Reads from inputImage, writes to outputImage.
+//
+// P1b: both images are 2D arrays with one layer per shadow-casting light.  Each
+// dispatch operates on a single layer (`layer` push constant) over that light's
+// scissor rect, so all lights' H passes can be recorded back-to-back with no
+// barriers between them — they touch disjoint layers.
 // ---------------------------------------------------------------------------
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(set = 0, binding = 0, r8) uniform readonly  image2D inputImage;
-layout(set = 0, binding = 1, r8) uniform writeonly image2D outputImage;
+layout(set = 0, binding = 0, r8) uniform readonly  image2DArray inputImage;
+layout(set = 0, binding = 1, r8) uniform writeonly image2DArray outputImage;
 layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 
 layout(push_constant) uniform BlurParams {
@@ -30,11 +35,12 @@ layout(push_constant) uniform BlurParams {
     float depthAware;  // >0.5 enables depth-aware weighting
     ivec2 scissorOffset;
     ivec2 scissorExtent;
+    int   layer;       // shadow mask array layer for this light
 };
 
 void main() {
     ivec2 localCoord = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size  = imageSize(inputImage);
+    ivec2 size  = imageSize(inputImage).xy;
     ivec2 rectExtent = max(scissorExtent, ivec2(0));
 
     if (localCoord.x >= rectExtent.x || localCoord.y >= rectExtent.y)
@@ -83,12 +89,12 @@ void main() {
                 continue;
             }
         }
-        float val = imageLoad(inputImage, sampleCoord).r;
+        float val = imageLoad(inputImage, ivec3(sampleCoord, layer)).r;
         sum   += val * w;
         total += w;
     }
 
-    float centerVal = imageLoad(inputImage, coord).r;
+    float centerVal = imageLoad(inputImage, ivec3(coord, layer)).r;
     float result = (total > 0.0) ? (sum / total) : centerVal;
-    imageStore(outputImage, coord, vec4(result));
+    imageStore(outputImage, ivec3(coord, layer), vec4(result));
 }
