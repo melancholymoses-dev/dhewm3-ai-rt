@@ -84,10 +84,15 @@ Wave 4 — Structural perf                          [rt_optimization_tuning.md]
           at half res, joint bilateral upsample resolves to full).  Untested.
 
 Wave 5 — Auto-relight                             [auto_relight.md]
-  Synthesized real lights from emissive panels (cluster → score → dedupe →
-  AddLightDef), noShadows unlock rule, weapon/projectile def patches.
+  §0   shared light classifier (REAL/ACCENT/AMBIENT_FILL/FOG_BLEND) + layered GI/vol
+       admission + saturation-weighted importance + r_rtGILightDump.  Lands FIRST —
+       no dependency on synthesis; fixes the live "uniform white GI lift" bug (the
+       GI/vol collector filters entity noShadows only, so ambient washes are IN and
+       colored accents are OUT — inverted from intent; see auto_relight.md §0).
+  §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
+       AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
-  (Can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
+  (§1-5 can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
 
 Wave 6 — Tuning pass                              [rt_optimization_tuning.md T3-T6]
   T3 per-material F0 (mirrors ~0.9)  ·  T4 RT-vs-raster falloff match

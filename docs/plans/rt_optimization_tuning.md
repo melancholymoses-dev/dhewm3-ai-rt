@@ -115,6 +115,34 @@ vast majority of pixels (concrete/cloth, F0 ≈ 0) the result is then multiplied
 `F0 < 1/255` and no glass skip the reflection ray *and* its shadow rays entirely.
 In typical Doom 3 scenes this culls well over half the reflection workload.
 
+### Bug: GI checkerboard left a permanent ghost (fixed 2026-08-15)
+
+Recording it here because the mechanism generalises to any future pass that skips
+writing some pixels on some frames.
+
+`gi_ray.rgen` derived its checkerboard parity from `frameIndex` (`tr.frameCount`).
+But `giBuffer` is **one image per frame-in-flight slot**, and `vk.currentFrame`
+advances once per frame exactly as `tr.frameCount` does — so slot parity is locked to
+frame parity. Slot 0 therefore traced only `(x+y)` even, slot 1 only `(x+y)` odd,
+*forever*: the complementary half of each slot's image was never written again.
+`giBuffer` is cleared only at allocation, so that half kept whatever was last written
+to it — a frozen full-res frame from the last time checkerboard was off — and the
+temporal EMA re-injected it every frame, converging **to** the ghost rather than
+washing it out. Toggling checkerboard on after it had been off is what loaded the
+ghost with a recognisable image; moving the camera never cleared it because those
+texels were simply never written.
+
+**Fix:** the phase is now a per-slot counter (`s_giCheckerPhase` in `vk_gi.cpp`,
+passed as `checkerPhase` in the GI UBO) rather than a function of the frame index, so
+each slot alternates halves on successive visits and every pixel is refreshed within
+two visits to that slot.
+
+The rule to remember: **anything that keys "skip this pixel this frame" off a frame
+counter must key off a per-slot counter instead**, or the frame-in-flight count
+silently divides the pattern into fixed per-slot classes. Sampling *seeds* keyed off
+`frameIndex` (AO/GI/shadow/vol jitter) are fine — every pixel is still written, so
+the worst case there is reduced decorrelation, not a stuck image.
+
 ### P3. GI worst case: up to 64 traced rays per pixel
 
 `gi_ray.rgen` fires `numSamples` (4) hemisphere rays; each hit (`gi_ray.rchit:137-181`)
