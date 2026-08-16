@@ -685,6 +685,7 @@ set(src_vulkan
 
 list(APPEND src_vulkan
 	renderer/Vulkan/vk_accelstruct.cpp
+	renderer/Vulkan/vk_light_classify.cpp
 	renderer/Vulkan/vk_shadows.cpp
 	renderer/Vulkan/vk_ao.cpp
 	renderer/Vulkan/vk_temporal.cpp

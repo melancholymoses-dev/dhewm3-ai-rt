@@ -126,5 +126,5 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
 | 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
-| 5 | not started | | |
+| 5 | §0 (classifier) implemented 2026-08-15, untested at runtime; §1-7 not started | rt_perf2_b working tree | no |
 | 6 | not started | | |
