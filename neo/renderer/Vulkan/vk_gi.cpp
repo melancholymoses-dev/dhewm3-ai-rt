@@ -50,7 +50,7 @@ static idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOA
                              "Global scale applied to the GI buffer before compositing");
 
 static idCVar r_rtGIContrast(
-    "r_rtGIContrast", "0.7", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
     "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
     "0 = off, 1 = full effect");
 
@@ -60,7 +60,7 @@ idCVar r_rtGIDirectScale("r_rtGIDirectScale", "0.8", CVAR_RENDERER | CVAR_FLOAT,
                          "and keep overall brightness consistent with the original game");
 
 static idCVar r_rtGIBounceScale(
-    "r_rtGIBounceScale", "4.0", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
     "Multiplier applied to each light's irradiance contribution in the GI bounce (tunes Option B brightness)");
 
 static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
@@ -70,15 +70,13 @@ static idCVar r_rtGIMaxBounceLights(
     "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
     "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
 
-static idCVar r_rtGIStochasticLights(
-    "r_rtGIStochasticLights", "2", CVAR_RENDERER | CVAR_INTEGER,
-    "P3: shadow rays fired per GI bounce hit (1-2). Lights are importance-sampled by "
-    "unshadowed contribution and divided by their selection probability (unbiased). "
-    "0 = legacy path, one shadow ray for every light up to r_rtGIMaxBounceLights");
+static idCVar r_rtGIStochasticLights("r_rtGIStochasticLights", "2", CVAR_RENDERER | CVAR_INTEGER,
+                                     "P3: shadow rays fired per GI bounce hit (1-2). Lights are importance-sampled by "
+                                     "unshadowed contribution and divided by their selection probability (unbiased). "
+                                     "0 = legacy path, one shadow ray for every light up to r_rtGIMaxBounceLights");
 
-static idCVar r_rtGIMaxLights(
-    "r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_INTEGER,
-    "Max GI lights to sample per frame (1-128, capped at VK_GI_MAX_LIGHTS)");
+static idCVar r_rtGIMaxLights("r_rtGIMaxLights", "128", CVAR_RENDERER | CVAR_INTEGER,
+                              "Max GI lights to sample per frame (1-128, capped at VK_GI_MAX_LIGHTS)");
 
 static idCVar r_rtGILightStratify(
     "r_rtGILightStratify", "1", CVAR_RENDERER | CVAR_BOOL,
@@ -96,14 +94,13 @@ static idCVar r_rtGIWhiteWeight(
     "×this. Lower = colored accents beat white fills more strongly for the limited light slots. "
     "1.0 = no saturation weighting (legacy)");
 
-static idCVar r_rtGILightDump(
-    "r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
-    "auto_relight.md §0: dump every in-view lightDef to the console once — name, color, "
-    "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
-    "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
+static idCVar r_rtGILightDump("r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
+                              "auto_relight.md §0: dump every in-view lightDef to the console once — name, color, "
+                              "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
+                              "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
 
 static idCVar r_rtGICheckerboard(
-    "r_rtGICheckerboard", "1", CVAR_RENDERER | CVAR_BOOL,
+    "r_rtGICheckerboard", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
     "Enable checkerboard GI tracing (updates alternating pixels each frame for lower GI RT cost)");
 
 static idCVar r_rtGIAtrous("r_rtGIAtrous", "1", CVAR_RENDERER | CVAR_BOOL,
@@ -1092,8 +1089,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         // entity-noShadows-only test, which let material-ambient washes through
         // GI/vol while rejecting small colored accents flagged entity-noShadows.
         const vkRTLightClass_t lightClass = VK_RT_ClassifyLight(p, lightLocal->lightShader);
-        const bool admitted = (lightClass == RT_LIGHT_REAL || lightClass == RT_LIGHT_ACCENT) &&
-                              radius >= 1.0f;
+        const bool admitted = (lightClass == RT_LIGHT_REAL || lightClass == RT_LIGHT_ACCENT) && radius >= 1.0f;
 
         // §0: saturation weighting for ranking only — a fully white light's importance
         // is scaled by whiteWeight, a fully saturated light is untouched. This does NOT
@@ -1108,12 +1104,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             const float lumDbg = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
             const float dstSq = Max(dSq, radius * radius);
             const float baseImportanceDbg = (dstSq > 1e-4f) ? intensity * lumDbg * radius * radius / dstSq : 0.0f;
-            common->Printf(
-                "  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f color=(%.2f %.2f %.2f) "
-                "sat=%.2f imp=%.4f->%.4f -> %s\n",
-                lightLocal->lightShader ? lightLocal->lightShader->GetName() : "<null>",
-                VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), r, g, b, sat,
-                baseImportanceDbg, baseImportanceDbg * satWeight, admitted ? "ADMIT" : "REJECT");
+            common->Printf("  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f color=(%.2f %.2f %.2f) "
+                           "sat=%.2f imp=%.4f->%.4f -> %s\n",
+                           lightLocal->lightShader ? lightLocal->lightShader->GetName() : "<null>",
+                           VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), r, g, b,
+                           sat, baseImportanceDbg, baseImportanceDbg * satWeight, admitted ? "ADMIT" : "REJECT");
         }
 
         if (!admitted)
@@ -1136,8 +1131,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             const float lum = Max(0.0f, 0.299f * r + 0.587f * g + 0.114f * b);
             const float baseImportance = intensity * lum * radius * radius / Max(dSq, radius * radius);
             c.importance = baseImportance * satWeight;
-            if (li < kHysteresisMaxLightIdx && prevUploadFrame >= 0 &&
-                s_lightSelectedFrame[li] == prevUploadFrame)
+            if (li < kHysteresisMaxLightIdx && prevUploadFrame >= 0 && s_lightSelectedFrame[li] == prevUploadFrame)
                 c.importance *= 1.15f; // hysteresis: incumbents survive small importance dips
 
             c.entry.posRadius[0] = p.origin.x;
@@ -1497,8 +1491,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
             if (ubo.stochasticLights > 0)
                 common->Printf("[GI] P3 stochastic: %d shadow ray(s)/hit x %d sample(s) = %d rays/px "
                                "(legacy worst case %d)\n",
-                               ubo.stochasticLights, ubo.numSamples,
-                               ubo.stochasticLights * ubo.numSamples,
+                               ubo.stochasticLights, ubo.numSamples, ubo.stochasticLights * ubo.numSamples,
                                ubo.maxBounceLights * ubo.numSamples);
             else
                 common->Printf("[GI] P3 stochastic OFF — up to %d shadow rays/hit x %d sample(s) = %d rays/px\n",
@@ -1536,10 +1529,9 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
-    const bool resourceChanged = (s_lastGITlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
-                                 (s_lastGIStorageView[frameIdx] != gb.view) ||
-                                 (s_lastGIDepthView[frameIdx] != vk.depthSampledView) ||
-                                 (s_lastGIGbufView[frameIdx] != gbufView);
+    const bool resourceChanged =
+        (s_lastGITlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) || (s_lastGIStorageView[frameIdx] != gb.view) ||
+        (s_lastGIDepthView[frameIdx] != vk.depthSampledView) || (s_lastGIGbufView[frameIdx] != gbufView);
 
     bool refreshSet = (vkRT.giDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount) || resourceChanged;
     if (refreshSet)
