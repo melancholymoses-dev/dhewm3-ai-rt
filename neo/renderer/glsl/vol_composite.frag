@@ -29,11 +29,20 @@ Code release.
 
 layout(set = 0, binding = 0) uniform sampler2D u_VolMap;
 
+layout(push_constant) uniform PC {
+    vec2 invScreenSize;   // 1 / swapchain extent
+} pc;
+
 layout(location = 0) out vec4 fragColor;
 
 void main()
 {
-    // Divide by the actual volBuf dimensions — handles any resolution correctly.
-    vec2 uv = gl_FragCoord.xy / vec2(textureSize(u_VolMap, 0));
+    // UV must come from the SCREEN size, not textureSize(u_VolMap): since P8 the
+    // sampled image may be the half-res march buffer (r_rtVolHalfRes 1 with
+    // r_rtVolBilateral 0), in which case dividing by its own dimensions would put
+    // gl_FragCoord into [0,2] and sample edge-clamped garbage over most of the
+    // screen.  The vol image always covers the full view, just at its own
+    // resolution, so the sampler's LINEAR filter does the upsample.
+    vec2 uv = gl_FragCoord.xy * pc.invScreenSize;
     fragColor = vec4(texture(u_VolMap, uv).rgb, 1.0);
 }

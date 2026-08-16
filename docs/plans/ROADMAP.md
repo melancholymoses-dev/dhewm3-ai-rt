@@ -80,6 +80,8 @@ Wave 4 — Structural perf                          [rt_optimization_tuning.md]
        ✅ implemented 2026-08-15 (R8 array, 7 batched layers + 1 serial;
           r_rtShadowBatch, default 1).  Untested; profiler capture still owed.
   P8   half-res volumetric march + bilateral upsample
+       ✅ implemented 2026-08-15 (r_rtVolHalfRes, default 1; march + temporal EMA
+          at half res, joint bilateral upsample resolves to full).  Untested.
 
 Wave 5 — Auto-relight                             [auto_relight.md]
   Synthesized real lights from emissive panels (cluster → score → dedupe →
@@ -118,6 +120,6 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 1b | landed | 928f1a8f, 7154481e (gbuffer branch) | no |
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
-| 4 | P1b implemented, untested (2026-08-15). Remaining: P8 | rt_perf2_b working tree | no — new `Shadows` phase exists for it |
+| 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
 | 5 | not started | | |
 | 6 | not started | | |

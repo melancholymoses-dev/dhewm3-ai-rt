@@ -226,6 +226,46 @@ joint bilateral upsample. `vol_bilateral.comp` already exists as a blur — exte
 into a depth-aware upsample and march at half res: **4× cost cut** on one of the
 heavier passes, with little visible loss.
 
+**✅ Implemented (Wave 4, 2026-08-15):** `r_rtVolHalfRes` (default 1, 0 = full res
+for A/B). The march and the temporal EMA history both live at full/`marchScale`;
+`vol_bilateral.comp` became the resolve back to full res. Notes:
+
+- **The whole chain below the march moved to half res, not just the march.** The
+  temporal EMA runs on the half-res image too, so it is 4× cheaper as well, and the
+  bilateral's Gaussian footprint is walked in *source* space — a 4× tap reduction on
+  what was a 121-tap full-res kernel. The bilateral is now the only full-res pass.
+- **Depth comparison is on linearised view distance, not raw buffer values.** Raw
+  depth is wildly non-linear; a fixed threshold would be far too strict near the
+  camera and useless in the distance. `linNum`/`linAdd` in the push block are the two
+  projection coefficients (`-proj[14]`, `proj[10]`) that invert it, taken per view so
+  the weights track `r_znear`/fov changes. `r_rtVolUpsampleDepthSigma` is therefore in
+  **world units** (default 24).
+- **Fallback when every tap disagrees on depth** (thin geometry no march sample
+  landed on): weights collapse, so the shader takes the single depth-nearest tap
+  instead of dividing by ~0. Without that you get a bright halo on silhouettes, which
+  is the classic half-res-volumetrics artifact.
+- The march picks the **top-left texel of each `marchScale²` quad** as its
+  representative full-res sample, and the upsample uses the identical mapping — the
+  depth a tap is compared against is exactly the depth it was marched from. If those
+  two ever disagree the fog will creep across edges; that is the first thing to check.
+- **Latent bug fixed alongside:** `vol_composite.frag` derived its UV from
+  `textureSize(u_VolMap)`, which was only correct while the vol image was always
+  screen-sized. With `r_rtVolBilateral 0` at half res the compositor reads the
+  march-res image directly and that would have put `gl_FragCoord` into [0,2] —
+  edge-clamped garbage over most of the screen. It now takes the screen size as a
+  push constant.
+- **A/B levers:** `r_rtVolHalfRes` 1/0 for the whole change (runtime-switchable; costs
+  one device-idle stall to reallocate). `r_rtVolBilateral 0` at half res skips the
+  upsample entirely and lets the compositor's LINEAR sampler do a plain bilinear —
+  the "no filter" reference. `r_rtVolUpsampleDepthSigma` very high ≈ Gaussian upsample
+  with no edge stopping, which isolates what the depth weighting alone buys.
+- **Measure `Vol` + `VolBilateral` together**, not `Vol` alone — half res moves cost
+  from one to the other. `VolBilateral` is a new profiler phase added for this.
+  Related: the profile log used to hardcode its phase list and silently omitted every
+  Vol phase; it now enumerates them, so volumetric cost is visible at all.
+- **Not yet measured.** Expect well under the theoretical 4× on the total: the march
+  drops ~4×, but the bilateral goes up and the composite is unchanged.
+
 ### P9. Depth-reconstruction ALU in three rgens (after G-buffer)
 
 `rt_ReconstructNormal` costs 5 depth fetches + 4 `invViewProj` matrix multiplies per
