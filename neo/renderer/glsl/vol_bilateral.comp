@@ -1,30 +1,44 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan — vol_bilateral.comp — Spatial Gaussian smoothing for
-volumetric lighting.
+dhewm3-rt Vulkan — vol_bilateral.comp — Spatial filter and depth-aware
+upsample for volumetric lighting.
 
 Runs immediately after the temporal EMA resolve pass, reading the accumulated
-history image and writing a smoothed result to a separate output image.  The
-compositor then blends the filtered image rather than the raw history.
+history image and writing a smoothed, full-resolution result.  The compositor
+then blends the filtered image rather than the raw history.
 
-An 11×11 Gaussian kernel (default sigma = 3.0 px) is applied at full screen
-resolution.  Sigma is passed as a push constant so it can be tuned at runtime
-via r_rtVolBilateralSigma without a recompile.  No depth weighting — volumetric
-fog is a continuous medium so edge-stopping is not required.
+Two modes, selected by `marchScale` (P8 — see rt_optimization_tuning.md):
+
+  marchScale == 1  Input and output are both full resolution.  Pure Gaussian
+                   smoothing, no depth weighting — identical to the pre-P8
+                   behaviour, which is what makes r_rtVolHalfRes a clean A/B.
+
+  marchScale >  1  Input is the half-res march result, output is full res.
+                   Joint bilateral upsample: the Gaussian footprint is walked
+                   in *source* (march) space and each tap is additionally
+                   weighted by how well its linearised depth matches the
+                   output pixel's.  This is what stops fog bleeding across
+                   silhouettes, which is the whole risk of marching at half
+                   res.  If every tap disagrees on depth (a thin object whose
+                   silhouette no march sample landed on), the weights collapse
+                   and we fall back to the single depth-nearest tap rather
+                   than dividing by ~0 and producing a halo.
+
+Depth comparison is done on *linearised view distance*, not raw buffer values:
+raw depth is wildly non-linear, so a fixed threshold would be far too strict
+near the camera and far too loose in the distance.  linNum/linAdd carry the two
+projection coefficients needed to invert it (see vk_vol.cpp).
 
 Descriptors (set 0):
-  binding 0 — volIn  rgba16f storage image (readonly) — temporal history
-  binding 1 — volOut rgba16f storage image             — smoothed output
+  binding 0 — volIn  rgba16f storage image (readonly) — temporal history (march res)
+  binding 1 — volOut rgba16f storage image            — filtered output (full res)
+  binding 2 — depthSampler                            — full-res depth, for the
+                                                        joint bilateral weights
 
-Push constants (32 bytes, matches BilateralPC in vk_vol.cpp):
-  int offX, offY   — scissor offset
-  int extX, extY   — scissor extent
-  int screenW, screenH — full screen dimensions
-  float sigma      — Gaussian sigma in pixels (r_rtVolBilateralSigma)
-  float pad
+Push constants (52 bytes, matches BilateralPC in vk_vol.cpp).
 
-Phase 7.2 — Volumetric Lighting (denoising step 10).
+Phase 7.2 — Volumetric Lighting (denoising step 10); extended for P8.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -46,6 +60,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, rgba16f) uniform readonly image2D volIn;
 layout(set = 0, binding = 1, rgba16f) uniform image2D volOut;
+layout(set = 0, binding = 2) uniform sampler2D depthSampler;
 
 // ---------------------------------------------------------------------------
 // Push constants
@@ -56,11 +71,31 @@ layout(push_constant) uniform PC {
     int   offY;
     int   extX;
     int   extY;
-    int   screenW;
+    int   screenW;      // full-res output dimensions
     int   screenH;
-    float sigma;   // Gaussian sigma in pixels (r_rtVolBilateralSigma)
-    float pad;
+    float sigma;        // Gaussian sigma in FULL-res pixels (r_rtVolBilateralSigma)
+    int   marchScale;   // 1 = input is full res, 2 = input is half res
+    int   marchW;       // input (volIn) dimensions
+    int   marchH;
+    float depthSigma;   // depth falloff in world units (r_rtVolUpsampleDepthSigma)
+    float linNum;       // -proj[14]  \ viewDist = |linNum / (2*d - 1 + linAdd)|
+    float linAdd;       //  proj[10]  /
 } pc;
+
+// ---------------------------------------------------------------------------
+// Linearised view distance from a depth-buffer value.
+//
+// GL projection: ndcZ = (proj[10]*z + proj[14]) / -z, and the depth buffer holds
+// Vulkan [0,1] so ndcZ = 2*d - 1.  Inverting gives z = -proj[14] / (ndcZ + proj[10]);
+// the denominator is negative across the whole valid range, so clamp it away from
+// zero (which is the far plane / sky) rather than letting it blow up to Inf.
+// ---------------------------------------------------------------------------
+float viewDistance(float d)
+{
+    float den = 2.0 * d - 1.0 + pc.linAdd;
+    den = min(den, -1e-6);
+    return min(abs(pc.linNum / den), 1e6);
+}
 
 // ---------------------------------------------------------------------------
 void main()
@@ -70,34 +105,71 @@ void main()
     if (local.x >= pc.extX || local.y >= pc.extY)
         return;
 
-    ivec2 coord    = local + ivec2(pc.offX, pc.offY);
-    ivec2 maxCoord = ivec2(pc.screenW - 1, pc.screenH - 1);
+    ivec2 coord = local + ivec2(pc.offX, pc.offY);   // full-res output pixel
+    if (coord.x >= pc.screenW || coord.y >= pc.screenH)
+        return;
 
-    // Gaussian kernel: radius = ceil(2*sigma), denom = 2*sigma^2.
-    // Driven by push constant sigma (r_rtVolBilateralSigma, default 3.0).
-    // At sigma=3 this is an 11×11 kernel (121 taps), giving ~9-pixel effective
-    // smoothing — enough to suppress Monte Carlo ray-march grain.
-    const float denom  = max(2.0 * pc.sigma * pc.sigma, 0.001);
-    const int   RADIUS = min(int(ceil(2.0 * pc.sigma)), 8); // max radius 8 → 17×17
+    ivec2 maxSrc = ivec2(pc.marchW - 1, pc.marchH - 1);
+    float scale  = float(max(pc.marchScale, 1));
 
-    vec3  sumColor = vec3(0.0);
-    float sumW     = 0.0;
+    // Position of this output pixel in source space.  At scale 1 this is exactly
+    // `coord`, so the loop below reduces to the original full-res Gaussian.
+    vec2  srcF = (vec2(coord) + 0.5) / scale - 0.5;
+    ivec2 srcC = ivec2(floor(srcF + 0.5));
+
+    // Kernel radius is expressed in source pixels, so the *effective* full-res blur
+    // width stays put as the march resolution changes: halving the march res halves
+    // the source-space radius but each source pixel covers twice the screen.
+    float sigmaSrc = max(pc.sigma / scale, 0.25);
+    float denom    = max(2.0 * sigmaSrc * sigmaSrc, 0.001);
+    int   RADIUS   = clamp(int(ceil(2.0 * sigmaSrc)), 1, 8);
+
+    bool  depthAware = (pc.marchScale > 1);
+    float dstDist    = depthAware ? viewDistance(texelFetch(depthSampler, coord, 0).r) : 0.0;
+    float invDepthSigma = 1.0 / max(pc.depthSigma, 0.01);
+
+    vec3  sumColor  = vec3(0.0);
+    float sumW      = 0.0;
+    vec3  bestColor = vec3(0.0);
+    float bestDiff  = 1e30;
 
     for (int dy = -RADIUS; dy <= RADIUS; dy++)
     {
         for (int dx = -RADIUS; dx <= RADIUS; dx++)
         {
-            ivec2 sCoord = clamp(coord + ivec2(dx, dy), ivec2(0), maxCoord);
+            ivec2 sIdeal = srcC + ivec2(dx, dy);
+            ivec2 s      = clamp(sIdeal, ivec2(0), maxSrc);
 
-            vec3  sVol  = imageLoad(volIn, sCoord).rgb;
-            float dist2 = float(dx * dx + dy * dy);
+            vec3 sVol = imageLoad(volIn, s).rgb;
+
+            // Weight from the *unclamped* offset so border taps keep the same
+            // profile the pre-P8 filter gave them.
+            vec2  off   = vec2(sIdeal) - srcF;
+            float dist2 = dot(off, off);
             float w     = exp(-dist2 / denom);
+
+            if (depthAware)
+            {
+                // Same march-pixel → full-res-texel mapping vol_march.comp used.
+                ivec2 sFull = min(s * pc.marchScale, ivec2(pc.screenW - 1, pc.screenH - 1));
+                float sDist = viewDistance(texelFetch(depthSampler, sFull, 0).r);
+                float diff  = abs(sDist - dstDist);
+
+                if (diff < bestDiff)
+                {
+                    bestDiff  = diff;
+                    bestColor = sVol;
+                }
+                w *= exp(-diff * invDepthSigma);
+            }
 
             sumColor += sVol * w;
             sumW     += w;
         }
     }
 
-    vec3 result = sumColor / max(sumW, 1e-4);
+    // sumW collapses only when every tap is on the far side of a depth edge; taking
+    // the nearest-depth tap there is what keeps silhouettes from haloing.
+    vec3 result = (sumW > 1e-4) ? (sumColor / sumW) : bestColor;
     imageStore(volOut, coord, vec4(result, 1.0));
 }

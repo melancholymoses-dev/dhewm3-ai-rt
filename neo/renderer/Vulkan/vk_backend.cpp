@@ -310,6 +310,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_GI_COMPOSITE,
     VK_RTPROF_PHASE_VOL,
     VK_RTPROF_PHASE_VOL_TEMPORAL,
+    VK_RTPROF_PHASE_VOL_BILATERAL,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
     VK_RTPROF_PHASE_COUNT
 };
@@ -360,6 +361,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "Vol";
     case VK_RTPROF_PHASE_VOL_TEMPORAL:
         return "VolTemporal";
+    case VK_RTPROF_PHASE_VOL_BILATERAL:
+        return "VolBilateral";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
     default:
@@ -565,23 +568,21 @@ static void VK_RTProfile_CollectAndLog(int slot)
                 totalCPUMs += s_rtProfCPUMs[slot][p];
         }
 
-        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f TLAS=%.3f Shadows=%.3f AO=%.3f Refl=%.3f "
-                       "GI=%.3f GITemp=%.3f "
-                       "GIAtrous=%.3f GIComp=%.3f) CPU(total=%.3f TLAS=%.3f Shadows=%.3f AO=%.3f Refl=%.3f GI=%.3f "
-                       "GITemp=%.3f "
-                       "GIAtrous=%.3f GIComp=%.3f) events=%u\n",
-                       recordedFrame, slot, totalMs, phaseMs[VK_RTPROF_PHASE_TLAS], phaseMs[VK_RTPROF_PHASE_SHADOWS],
-                       phaseMs[VK_RTPROF_PHASE_AO], phaseMs[VK_RTPROF_PHASE_REFLECTIONS], phaseMs[VK_RTPROF_PHASE_GI],
-                       phaseMs[VK_RTPROF_PHASE_GI_TEMPORAL], phaseMs[VK_RTPROF_PHASE_GI_ATROUS],
-                       phaseMs[VK_RTPROF_PHASE_GI_COMPOSITE], haveCPU ? totalCPUMs : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_TLAS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_SHADOWS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_AO] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_REFLECTIONS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_TEMPORAL] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_ATROUS] : 0.0,
-                       haveCPU ? s_rtProfCPUMs[slot][VK_RTPROF_PHASE_GI_COMPOSITE] : 0.0, eventCount);
+        // Enumerate the phases rather than hand-listing them: the old fixed format
+        // string silently omitted every Vol phase, so volumetric cost was measured
+        // (it counted toward total) but never shown — which is exactly the number
+        // P8 needs. A loop can't go stale when a phase is added.
+        idStr gpuLine, cpuLine;
+        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        {
+            const char *name = VK_RTProfilePhaseName((vkRTProfilePhase_t)p);
+            gpuLine += va(" %s=%.3f", name, phaseMs[p]);
+            if (haveCPU)
+                cpuLine += va(" %s=%.3f", name, s_rtProfCPUMs[slot][p]);
+        }
+
+        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f%s) CPU(total=%.3f%s) events=%u\n", recordedFrame,
+                       slot, totalMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0, cpuLine.c_str(), eventCount);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -4676,8 +4677,16 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolTemporal);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_TEMPORAL, rtCpuVolTemporalStart);
 
+            // P8: at half res this pass is the upsample, not just a blur — it is where
+            // the cost the march no longer pays partly reappears, so it gets its own
+            // phase.  Comparing only Vol between r_rtVolHalfRes 1/0 would flatter the
+            // change; Vol + VolBilateral is the honest total.
             VK_SetRenderStage("RT_VolBilateral");
+            const uint64_t rtCpuVolBiStart = VK_RTProfile_CPUStamp();
+            int rtProfVolBi = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_BILATERAL);
             VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolBi);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
         }
 
         // Stage 3.5: restore gbufNormal to COLOR_ATTACHMENT_OPTIMAL before the resume
