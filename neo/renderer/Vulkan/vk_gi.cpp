@@ -117,6 +117,13 @@ static idCVar r_rtGILightDump("r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
                               "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
                               "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
 
+static idCVar r_rtGIAlbedo(
+    "r_rtGIAlbedo", "1", CVAR_RENDERER | CVAR_BOOL,
+    "docs/plans/gi_albedo_target.md: multiply denoised GI by the receiving surface's "
+    "albedo (gbufAlbedo G-buffer target) before composite. 0 = legacy raw-radiance "
+    "add (A/B) — dark/black materials get the same GI wash as white ones. "
+    "No-op when vk.gbufferSupported is false");
+
 static idCVar r_rtGICheckerboard(
     "r_rtGICheckerboard", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
     "Enable checkerboard GI tracing (updates alternating pixels each frame for lower GI RT cost)");
@@ -813,15 +820,16 @@ static void VK_RT_InitGICompositePipeline(void)
     colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
-    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
-    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
-    // filler so the subpass's per-attachment blend-state count always matches.
-    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    // Attachments 1-2 (gbufNormal, gbufAlbedo) are written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
+    // fillers so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[3] = {colorBlend, {}, {}};
     VK_FillSecondBlendAttachment(&blendAttachments[1]);
+    VK_FillSecondBlendAttachment(&blendAttachments[2]);
 
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
     blendState.pAttachments = blendAttachments;
 
     // Dynamic viewport and scissor (composite covers full framebuffer).
@@ -888,6 +896,7 @@ void VK_RT_InitGI(void)
     VK_RT_ResizeGI(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_InitGITemporal();
     VK_RT_InitGIAtrous();
+    VK_RT_InitGIAlbedoMod();
 }
 
 // ---------------------------------------------------------------------------
@@ -954,6 +963,7 @@ void VK_RT_ShutdownGI(void)
         vkRT.giCompositeLayout = VK_NULL_HANDLE;
     }
 
+    VK_RT_ShutdownGIAlbedoMod();
     VK_RT_ShutdownGIAtrous();
     VK_RT_ShutdownGITemporal();
     VK_RT_DestroyGIImages();
@@ -2388,4 +2398,256 @@ void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT GI Atrous: %d passes slot=%d final=%s step_max=%d\n", iters, frameIdx,
                        finalInA ? "A" : "B", 1 << (iters - 1));
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_InitGIAlbedoModPipeline (docs/plans/gi_albedo_target.md)
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitGIAlbedoModPipeline(void)
+{
+    // gi_albedo_mod.comp bindings:
+    //   binding 0: COMBINED_IMAGE_SAMPLER — denoised GI (giSrc, sampler2D)
+    //   binding 1: COMBINED_IMAGE_SAMPLER — receiver albedo (albedoSampler, sampler2D)
+    //   binding 2: STORAGE_IMAGE          — output GI (giDst, rgba16f image2D)
+    VkDescriptorSetLayoutBinding bindings[3] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 3;
+    layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.giAlbedoModDescLayout));
+
+    // Push constants: 24 bytes matching gi_albedo_mod.comp's PC block (6 int32s).
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = 24;
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.giAlbedoModDescLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.giAlbedoModPipelineLayout));
+
+    VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/gi_albedo_mod.comp.spv");
+    if (compModule == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT GI Albedo Mod: failed to load gi_albedo_mod.comp.spv — GI albedo modulation disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = compModule;
+    stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipeCI = {};
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
+    pipeCI.layout = vkRT.giAlbedoModPipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.giAlbedoModPipeline));
+    vkDestroyShaderModule(vk.device, compModule, NULL);
+
+    // Pool: 1 set per frame slot, rewritten every dispatch (giReadView/albedo/scratch
+    // all vary frame to frame — no benefit to the atrous-style "reuse if unchanged").
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount = 2 * VK_MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = 1 * VK_MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.giAlbedoModDescPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = vkRT.giAlbedoModDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.giAlbedoModDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.giAlbedoModDescSets));
+
+    common->Printf("VK RT GI Albedo Mod: pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points — GI receiver-albedo modulation
+// ---------------------------------------------------------------------------
+
+void VK_RT_InitGIAlbedoMod(void)
+{
+    VK_RT_InitGIAlbedoModPipeline();
+}
+
+void VK_RT_ShutdownGIAlbedoMod(void)
+{
+    if (vkRT.giAlbedoModPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.giAlbedoModPipeline, NULL);
+        vkRT.giAlbedoModPipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.giAlbedoModPipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.giAlbedoModPipelineLayout, NULL);
+        vkRT.giAlbedoModPipelineLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.giAlbedoModDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.giAlbedoModDescPool, NULL);
+        vkRT.giAlbedoModDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.giAlbedoModDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.giAlbedoModDescLayout, NULL);
+        vkRT.giAlbedoModDescLayout = VK_NULL_HANDLE;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchGIAlbedoMod (public)
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!vkRT.isInitialized)
+        return;
+    if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool() || !r_rtGIAlbedo.GetBool())
+        return;
+    if (!vk.gbufferSupported)
+        return; // no gbufAlbedo target to read — legacy raw-radiance composite
+    if (vkRT.giAlbedoModPipeline == VK_NULL_HANDLE)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+
+    const vkReflBuffer_t &albedoBuf = vkRT.gbufAlbedo[frameIdx];
+    if (albedoBuf.view == VK_NULL_HANDLE)
+        return;
+
+    vkReflBuffer_t &bufA = vkRT.giAtrousA[frameIdx];
+    vkReflBuffer_t &bufB = vkRT.giAtrousB[frameIdx];
+    if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT GI Albedo Mod: skip — scratch images not ready (slot %d)\n", frameIdx);
+        return;
+    }
+
+    // Scratch selection: whichever of A/B giReadView is NOT currently pointing at.
+    // Covers all upstream states — à-trous ran (giReadView is A or B already) or
+    // was skipped (giReadView is giHistory/giBuffer, matches neither, default A).
+    const bool srcIsA = (vkRT.giReadView[frameIdx] == bufA.view);
+    vkReflBuffer_t &dst = srcIsA ? bufB : bufA;
+
+    const VkRect2D dispatchRect = VK_RT_GI_ComputeDispatchRect(viewDef);
+    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+        return;
+
+    // Prior writer (à-trous compute, or temporal resolve if à-trous is disabled) may
+    // have left its last barrier targeting FRAGMENT_SHADER (for the legacy composite
+    // path); make the result visible to this dispatch's COMPUTE_SHADER read too.
+    {
+        VkMemoryBarrier srcBarrier = {};
+        srcBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        srcBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        srcBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &srcBarrier, 0, NULL, 0, NULL);
+    }
+
+    // Rewritten every call — giReadView/scratch/albedo view all vary frame to frame.
+    VkDescriptorSet ds = vkRT.giAlbedoModDescSets[frameIdx];
+
+    VkDescriptorImageInfo srcInfo = {vkRT.giSampler, vkRT.giReadView[frameIdx], VK_IMAGE_LAYOUT_GENERAL};
+    // texelFetch in the shader — filter/wrap state is irrelevant; reuse the depth
+    // sampler, same convention as gbufNormal reads elsewhere (P9).
+    VkDescriptorImageInfo albedoInfo = {vkRT.depthSampler, albedoBuf.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkDescriptorImageInfo dstInfo = {VK_NULL_HANDLE, dst.view, VK_IMAGE_LAYOUT_GENERAL};
+
+    VkWriteDescriptorSet writes[3] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = ds;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &srcInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = ds;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].pImageInfo = &albedoInfo;
+
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = ds;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[2].pImageInfo = &dstInfo;
+
+    vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
+
+    struct AlbedoModPC
+    {
+        int32_t screenWidth;
+        int32_t screenHeight;
+        int32_t scissorOffsetX;
+        int32_t scissorOffsetY;
+        int32_t scissorExtentX;
+        int32_t scissorExtentY;
+    } pc;
+    static_assert(sizeof(pc) == 24, "AlbedoModPC size mismatch");
+    pc.screenWidth = (int32_t)dst.width;
+    pc.screenHeight = (int32_t)dst.height;
+    pc.scissorOffsetX = (int32_t)dispatchRect.offset.x;
+    pc.scissorOffsetY = (int32_t)dispatchRect.offset.y;
+    pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
+    pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
+
+    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
+    const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giAlbedoModPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giAlbedoModPipelineLayout, 0, 1, &ds, 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.giAlbedoModPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 24, &pc);
+    vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    // Output becomes the new giReadView; composite reads it via FRAGMENT sampling.
+    VkMemoryBarrier dstBarrier = {};
+    dstBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    dstBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    dstBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                         &dstBarrier, 0, NULL, 0, NULL);
+
+    vkRT.giReadView[frameIdx] = dst.view;
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT GI Albedo Mod: applied slot=%d dst=%s\n", frameIdx, srcIsA ? "B" : "A");
 }

@@ -745,6 +745,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/gi_shadow.rmiss
 	renderer/glsl/gi_temporal_resolve.comp
 	renderer/glsl/gi_atrous.comp
+	renderer/glsl/gi_albedo_mod.comp
 	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit
 	renderer/glsl/glass_probe.rmiss

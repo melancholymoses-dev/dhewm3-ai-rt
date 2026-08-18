@@ -1309,15 +1309,16 @@ static void VK_RT_InitReflCompositePipeline(void)
     addBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     addBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
-    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
-    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
-    // filler so the subpass's per-attachment blend-state count always matches.
-    VkPipelineColorBlendAttachmentState addAttachments[2] = {addBlend, {}};
+    // Attachments 1-2 (gbufNormal, gbufAlbedo) are written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
+    // fillers so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState addAttachments[3] = {addBlend, {}, {}};
     VK_FillSecondBlendAttachment(&addAttachments[1]);
+    VK_FillSecondBlendAttachment(&addAttachments[2]);
 
     VkPipelineColorBlendStateCreateInfo addBlendState = {};
     addBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    addBlendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    addBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
     addBlendState.pAttachments = addAttachments;
     pipelineInfo.pColorBlendState = &addBlendState;
 
@@ -1331,12 +1332,13 @@ static void VK_RT_InitReflCompositePipeline(void)
     replaceBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
-    VkPipelineColorBlendAttachmentState replaceAttachments[2] = {replaceBlend, {}};
+    VkPipelineColorBlendAttachmentState replaceAttachments[3] = {replaceBlend, {}, {}};
     VK_FillSecondBlendAttachment(&replaceAttachments[1]);
+    VK_FillSecondBlendAttachment(&replaceAttachments[2]);
 
     VkPipelineColorBlendStateCreateInfo replaceBlendState = {};
     replaceBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    replaceBlendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    replaceBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
     replaceBlendState.pAttachments = replaceAttachments;
     pipelineInfo.pColorBlendState = &replaceBlendState;
 

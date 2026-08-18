@@ -7,6 +7,11 @@ Identical to gbuffer.frag except it alpha-tests the diffuse stage first and
 discards below threshold, matching depth_clip.frag's role in the existing
 depth-only prepass. See docs/plans/gbuffer_normal_pass.md.
 
+Also writes gbufAlbedo (attachment 2, docs/plans/gi_albedo_target.md) from the
+same diffuse sample used for the alpha test — on MC_PERFORATED materials the
+alpha-test stage IS the diffuse stage in practice, so no second stage lookup
+is needed here (contrast gbuffer.frag, which resolves SL_DIFFUSE separately).
+
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
 
@@ -45,14 +50,15 @@ layout(set=0, binding=1) uniform sampler2D u_BumpMap;
 layout(set=0, binding=2) uniform sampler2D u_DiffuseMap; // alpha test only
 layout(set=0, binding=3) uniform sampler2D u_SpecularMap;
 
-layout(location = 0) out vec4 fragColor; // attachment 0 (hdrScene) — write-masked off in the pipeline
-layout(location = 1) out vec4 outGbuf;   // attachment 1 (gbufNormal) — rgb = world normal, a = F0
+layout(location = 0) out vec4 fragColor;  // attachment 0 (hdrScene) — write-masked off in the pipeline
+layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — rgb = world normal, a = F0
+layout(location = 2) out vec4 outAlbedo;  // attachment 2 (gbufAlbedo) — rgb = diffuse sample
 
 void main() {
     // Matches depth_clip.frag's discard boundary (<=) so the depth buffer this
     // pipeline writes is pixel-identical to what depth_clip.frag would have written.
-    float alpha = texture(u_DiffuseMap, vary_TexCoord_Diffuse).a;
-    if (alpha <= u_AlphaTestThreshold) {
+    vec4 diffuseSample = texture(u_DiffuseMap, vary_TexCoord_Diffuse);
+    if (diffuseSample.a <= u_AlphaTestThreshold) {
         discard;
     }
 
@@ -68,5 +74,6 @@ void main() {
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
+    outAlbedo = vec4(diffuseSample.rgb, 1.0);
     fragColor = vec4(0.0);
 }

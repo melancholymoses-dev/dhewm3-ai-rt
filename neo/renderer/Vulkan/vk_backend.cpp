@@ -2255,22 +2255,32 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 
 // ---------------------------------------------------------------------------
 // VK_FindBumpSpecularStages (Stage 3.5 — G-buffer normal/F0 prepass)
-// Finds the first active SL_BUMP / SL_SPECULAR stage on a material and resolves
-// its image + texture matrix via the same R_SetDrawInteraction() helper the
-// interaction path uses (tr_render.cpp), so the G-buffer prepass samples exactly
-// the same bump/specular sources the light interaction shading would.
-// Falls back to flatNormalMap / blackImage (identity matrix) when no such stage
-// exists, its condition register is false, or it has no image — matching
-// RB_SubmittInteraction's fallback for the same cases.
+// Finds the first active SL_BUMP / SL_SPECULAR / SL_DIFFUSE stage on a material
+// and resolves its image + texture matrix via the same R_SetDrawInteraction()
+// helper the interaction path uses (tr_render.cpp), so the G-buffer prepass
+// samples exactly the same bump/specular/diffuse sources the light interaction
+// shading would.
+// Falls back to flatNormalMap / blackImage / whiteImage (identity matrix) when
+// no such stage exists, its condition register is false, or it has no image —
+// matching RB_SubmittInteraction's fallback for the same cases. The diffuse
+// fallback is whiteImage (docs/plans/gi_albedo_target.md): a material with no
+// diffuse stage should modulate GI by 1.0, the same as an unwritten pixel.
+//
+// outDiffuseImage/outDiffuseMatrix are only used by the MC_OPAQUE (non-clip)
+// caller — the MC_PERFORATED path already resolves its diffuse/alpha stage
+// separately for alpha testing and reuses that image for albedo (see
+// gbuffer_clip.frag; the alpha-test stage IS the diffuse stage in practice).
 // ---------------------------------------------------------------------------
 
 static void VK_FindBumpSpecularStages(const idMaterial *mat, const float *regs, idImage **outBumpImage,
-                                      idVec4 outBumpMatrix[2], idImage **outSpecImage, idVec4 outSpecMatrix[2])
+                                      idVec4 outBumpMatrix[2], idImage **outSpecImage, idVec4 outSpecMatrix[2],
+                                      idImage **outDiffuseImage, idVec4 outDiffuseMatrix[2])
 {
     extern void R_SetDrawInteraction(const shaderStage_t *, const float *, idImage **, idVec4[2], float[4]);
 
     *outBumpImage = NULL;
     *outSpecImage = NULL;
+    *outDiffuseImage = NULL;
 
     for (int i = 0; i < mat->GetNumStages(); i++)
     {
@@ -2281,6 +2291,8 @@ static void VK_FindBumpSpecularStages(const idMaterial *mat, const float *regs, 
             R_SetDrawInteraction(stage, regs, outBumpImage, outBumpMatrix, NULL);
         else if (stage->lighting == SL_SPECULAR && !*outSpecImage)
             R_SetDrawInteraction(stage, regs, outSpecImage, outSpecMatrix, NULL);
+        else if (stage->lighting == SL_DIFFUSE && !*outDiffuseImage)
+            R_SetDrawInteraction(stage, regs, outDiffuseImage, outDiffuseMatrix, NULL);
     }
 
     if (!*outBumpImage)
@@ -2294,6 +2306,12 @@ static void VK_FindBumpSpecularStages(const idMaterial *mat, const float *regs, 
         *outSpecImage = globalImages->blackImage;
         outSpecMatrix[0].Set(1.f, 0.f, 0.f, 0.f);
         outSpecMatrix[1].Set(0.f, 1.f, 0.f, 0.f);
+    }
+    if (!*outDiffuseImage)
+    {
+        *outDiffuseImage = globalImages->whiteImage;
+        outDiffuseMatrix[0].Set(1.f, 0.f, 0.f, 0.f);
+        outDiffuseMatrix[1].Set(0.f, 1.f, 0.f, 0.f);
     }
 }
 
@@ -2322,6 +2340,9 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
     const bool useGBuffer =
         r_useRayTracing.GetBool() && vk.gbufferSupported && vkPipes.gbufferPipeline != VK_NULL_HANDLE;
     int gbufBumpFound = 0, gbufBumpFallback = 0, gbufSpecFound = 0, gbufSpecFallback = 0, gbufSurfCount = 0;
+    // gi_albedo_target.md: albedo resolution breadcrumb, opaque-path only (the clip
+    // path's diffuse always resolves — it's the material's alpha-test stage).
+    int gbufAlbedoFound = 0, gbufAlbedoFallback = 0;
 
     // GL parity: when the current (non-subview) view contains mirror surfaces,
     // the depth fill pass must also guard the color buffer so previously rendered
@@ -2629,9 +2650,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             extern idCVar r_rtSpecF0Scale;
             extern idCVar r_rtSpecF0Gamma;
 
-            idImage *bumpImage, *specImage;
-            idVec4 bumpMatrix[2], specMatrix[2];
-            VK_FindBumpSpecularStages(mat, surf->shaderRegisters, &bumpImage, bumpMatrix, &specImage, specMatrix);
+            idImage *bumpImage, *specImage, *diffuseImage;
+            idVec4 bumpMatrix[2], specMatrix[2], diffuseImageMatrix[2];
+            VK_FindBumpSpecularStages(mat, surf->shaderRegisters, &bumpImage, bumpMatrix, &specImage, specMatrix,
+                                      &diffuseImage, diffuseImageMatrix);
 
             gbufSurfCount++;
             if (bumpImage != globalImages->flatNormalMap)
@@ -2642,6 +2664,13 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
                 gbufSpecFound++;
             else
                 gbufSpecFallback++;
+            if (!useClipPipeline)
+            {
+                if (diffuseImage != globalImages->whiteImage)
+                    gbufAlbedoFound++;
+                else
+                    gbufAlbedoFallback++;
+            }
 
             uint32_t uboOffset = VK_AllocUBO();
             VkGBufferUBO *ubo = (VkGBufferUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
@@ -2673,14 +2702,11 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             }
             else
             {
-                ubo->diffuseMatrixS[0] = 1.f;
-                ubo->diffuseMatrixS[1] = 0.f;
-                ubo->diffuseMatrixS[2] = 0.f;
-                ubo->diffuseMatrixS[3] = 0.f;
-                ubo->diffuseMatrixT[0] = 0.f;
-                ubo->diffuseMatrixT[1] = 1.f;
-                ubo->diffuseMatrixT[2] = 0.f;
-                ubo->diffuseMatrixT[3] = 0.f;
+                // Opaque path (gi_albedo_target.md): no alpha-test stage to reuse, so use
+                // the SL_DIFFUSE stage VK_FindBumpSpecularStages just resolved — same
+                // texture-matrix convention (R_SetDrawInteraction) as bump/specular.
+                memcpy(ubo->diffuseMatrixS, diffuseImageMatrix[0].ToFloatPtr(), 16);
+                memcpy(ubo->diffuseMatrixT, diffuseImageMatrix[1].ToFloatPtr(), 16);
             }
             // gbuffer_clip.frag compares the raw sampled alpha against a single threshold
             // (no stage-alpha-scale multiply in the shader); fold depth_clip.frag's
@@ -2703,8 +2729,9 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             bufInfo.offset = uboOffset;
             bufInfo.range = sizeof(VkGBufferUBO);
 
-            // Opaque pipeline's shader has no static reference to binding 2 (diffuse),
-            // so only push it for the clip variant — see gbuffer.frag's comment.
+            // Both pipeline variants now sample binding 2 (diffuse/albedo,
+            // gi_albedo_target.md) — the clip variant for alpha test (as before) and
+            // the opaque variant to write the receiver-albedo G-buffer target.
             VkWriteDescriptorSet writes[4] = {};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstBinding = 0;
@@ -2718,25 +2745,29 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             writes[1].pImageInfo = &bumpInfo;
 
             VkDescriptorImageInfo diffuseInfo = {};
-            uint32_t numWrites = 2;
             if (useClipPipeline)
             {
                 if (!alphaStage || !alphaStage->texture.image ||
                     !VK_Image_GetDescriptorInfo(alphaStage->texture.image, &diffuseInfo))
                     VK_Image_GetFallbackDescriptorInfo(&diffuseInfo);
-                writes[numWrites].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[numWrites].dstBinding = 2;
-                writes[numWrites].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                writes[numWrites].descriptorCount = 1;
-                writes[numWrites].pImageInfo = &diffuseInfo;
-                numWrites++;
             }
-            writes[numWrites].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[numWrites].dstBinding = 3;
-            writes[numWrites].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[numWrites].descriptorCount = 1;
-            writes[numWrites].pImageInfo = &specInfo;
-            numWrites++;
+            else
+            {
+                if (!VK_Image_GetDescriptorInfo(diffuseImage, &diffuseInfo))
+                    VK_Image_GetFallbackDescriptorInfo(&diffuseInfo);
+            }
+            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstBinding = 2;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[2].descriptorCount = 1;
+            writes[2].pImageInfo = &diffuseInfo;
+
+            writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[3].dstBinding = 3;
+            writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[3].descriptorCount = 1;
+            writes[3].pImageInfo = &specInfo;
+            uint32_t numWrites = 4;
 
             VkPipeline pipe = useClipPipeline ? vkPipes.gbufferClipPipeline : vkPipes.gbufferPipeline;
             if (pipe != activePipeline)
@@ -2843,10 +2874,14 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     // Breadcrumb for the new Stage 3.5 mechanism (see docs/plans/gbuffer_normal_pass.md) —
     // per project convention of logging new mechanisms immediately, not after they break.
+    // albedo found/fallback (gi_albedo_target.md) covers opaque-path surfaces only —
+    // the clip path's diffuse always resolves (it's the alpha-test stage itself).
     if (useGBuffer && r_vkLogRT.GetInteger() >= 1 && gbufSurfCount > 0)
     {
-        common->Printf("VK GBUFFER: %d surfaces (bump found=%d fallback=%d, spec found=%d fallback=%d)\n",
-                       gbufSurfCount, gbufBumpFound, gbufBumpFallback, gbufSpecFound, gbufSpecFallback);
+        common->Printf("VK GBUFFER: %d surfaces (bump found=%d fallback=%d, spec found=%d fallback=%d, "
+                       "albedo found=%d fallback=%d)\n",
+                       gbufSurfCount, gbufBumpFound, gbufBumpFallback, gbufSpecFound, gbufSpecFallback,
+                       gbufAlbedoFound, gbufAlbedoFallback);
     }
 }
 
@@ -4407,10 +4442,13 @@ void VK_RB_DrawView(const void *data)
         // Begin render pass (one pass for the entire EndFrame; all views composite into it)
         // clearValues[2] (gbufNormal, Stage 3.5) = {0.5, 0.5, 0.5, 0.0}: null normal, F0 0 —
         // only consumed when vk.gbufferSupported, but harmless to fill in unconditionally.
-        VkClearValue clearValues[3] = {};
+        // clearValues[3] (gbufAlbedo, gi_albedo_target.md) = {1,1,1,1}: WHITE, so a pixel
+        // the prepass never writes modulates GI by 1.0 (legacy behavior), not by 0.
+        VkClearValue clearValues[4] = {};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 128};
         clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
+        clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
 
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -4418,7 +4456,7 @@ void VK_RB_DrawView(const void *data)
         rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
         rpBegin.renderArea.extent = vk.swapchainExtent;
-        rpBegin.clearValueCount = vk.gbufferSupported ? 3 : 2;
+        rpBegin.clearValueCount = vk.gbufferSupported ? 4 : 2;
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
@@ -4548,19 +4586,25 @@ void VK_RB_DrawView(const void *data)
         // needs to sample it. Unlike the depth barrier pattern in
         // VK_RT_DispatchReflections (round-tripped per-dispatch), this is done once
         // here for the whole RT block below, since multiple RT passes will read it.
+        // gbufAlbedo (gi_albedo_target.md) rides the same round-trip — the GI albedo
+        // modulate pass at the end of the RT block needs it in SHADER_READ_ONLY too.
         if (vk.gbufferSupported)
         {
-            vkReflBuffer_t &gbuf = vkRT.gbufNormal[vk.currentFrame];
-            VkImageMemoryBarrier gbufToRead = {};
-            gbufToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            gbufToRead.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            gbufToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            gbufToRead.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            gbufToRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            gbufToRead.image = gbuf.image;
-            gbufToRead.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkReflBuffer_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
+            VkImageMemoryBarrier gbufToRead[2] = {};
+            for (int gi = 0; gi < 2; gi++)
+            {
+                gbufToRead[gi].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                gbufToRead[gi].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                gbufToRead[gi].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                gbufToRead[gi].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                gbufToRead[gi].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                gbufToRead[gi].image = gbufImages[gi]->image;
+                gbufToRead[gi].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            }
             vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &gbufToRead);
+                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                 0, NULL, 0, NULL, 2, gbufToRead);
         }
 
         // P1b: assign one shadow mask array layer per shadow-casting light, then clear
@@ -4660,6 +4704,10 @@ void VK_RB_DrawView(const void *data)
             const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
             int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
             VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
+            // gi_albedo_target.md: folded into the same profiler phase as à-trous —
+            // it's the last step of the same "turn raw radiance into what composite
+            // should add" denoise chain, and its own cost is a single small dispatch.
+            VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
 
@@ -4689,23 +4737,27 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
         }
 
-        // Stage 3.5: restore gbufNormal to COLOR_ATTACHMENT_OPTIMAL before the resume
-        // render pass reopens — its declared initialLayout for this attachment (Step 2
-        // in the plan) expects that, matching the depth-barrier round-trip symmetry.
+        // Stage 3.5: restore gbufNormal (+ gbufAlbedo, gi_albedo_target.md) to
+        // COLOR_ATTACHMENT_OPTIMAL before the resume render pass reopens — their
+        // declared initialLayout for these attachments (Step 2 in the plan) expects
+        // that, matching the depth-barrier round-trip symmetry.
         if (vk.gbufferSupported)
         {
-            vkReflBuffer_t &gbuf = vkRT.gbufNormal[vk.currentFrame];
-            VkImageMemoryBarrier gbufToAttach = {};
-            gbufToAttach.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            gbufToAttach.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            gbufToAttach.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            gbufToAttach.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            gbufToAttach.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            gbufToAttach.image = gbuf.image;
-            gbufToAttach.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(cmdBuf, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1,
-                                 &gbufToAttach);
+            vkReflBuffer_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
+            VkImageMemoryBarrier gbufToAttach[2] = {};
+            for (int gi = 0; gi < 2; gi++)
+            {
+                gbufToAttach[gi].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                gbufToAttach[gi].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                gbufToAttach[gi].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                gbufToAttach[gi].oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                gbufToAttach[gi].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                gbufToAttach[gi].image = gbufImages[gi]->image;
+                gbufToAttach[gi].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            }
+            vkCmdPipelineBarrier(cmdBuf,
+                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 2, gbufToAttach);
         }
 
         VK_SetRenderStage("ResumeRenderPass");
