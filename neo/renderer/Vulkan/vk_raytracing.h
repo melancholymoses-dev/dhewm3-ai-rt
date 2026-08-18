@@ -531,6 +531,25 @@ struct vkRTState_t
     // --------------------------------------------------------------------------
     vkReflBuffer_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM world normal + F0
 
+    // Receiver-albedo G-buffer target (docs/plans/gi_albedo_target.md): diffuse map
+    // sample written by the same prepass as gbufNormal (attachment 2). Cleared to
+    // WHITE — an unwritten pixel modulates GI by 1.0, i.e. legacy behavior.
+    // Same vk.gbufferSupported gating and lifetime as gbufNormal.
+    vkReflBuffer_t gbufAlbedo[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM diffuse albedo
+
+    // GI albedo modulate pass (gi_albedo_target.md): after temporal + à-trous,
+    // multiplies the denoised GI radiance by gbufAlbedo into whichever of
+    // giAtrousA/B is NOT the current giReadView (always allocated, otherwise
+    // idle this frame), then repoints giReadView at it. One descriptor set per
+    // frame slot, rewritten unconditionally every dispatch — unlike
+    // giAtrousDescSets there is no multi-pass reuse to cache against, since this
+    // pass runs exactly once per frame.
+    VkPipeline giAlbedoModPipeline;
+    VkPipelineLayout giAlbedoModPipelineLayout;
+    VkDescriptorSetLayout giAlbedoModDescLayout;
+    VkDescriptorPool giAlbedoModDescPool;
+    VkDescriptorSet giAlbedoModDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+
     // P6 (rt_optimization_tuning.md): true when any VK_MAT_FLAG_GLASS geometry is in
     // this frame's TLAS. Lets the reflection rgen skip the per-pixel glass probe ray
     // in glass-free scenes. Recomputed each TLAS build in vk_accelstruct.cpp.
@@ -828,6 +847,27 @@ void VK_RT_ResizeGIAtrous(uint32_t width, uint32_t height);
 // VK_RT_DispatchTemporalResolveGI.  Issues a COMPUTE_WRITE → FRAGMENT_READ
 // barrier on exit.
 void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// GI receiver-albedo modulation (docs/plans/gi_albedo_target.md)
+// ---------------------------------------------------------------------------
+
+// Create the gi_albedo_mod.comp push-descriptor compute pipeline.
+// Called from VK_RT_InitGI after the à-trous pipeline is ready.
+void VK_RT_InitGIAlbedoMod(void);
+
+// Destroy the albedo-mod pipeline.  Device must be idle before calling.
+void VK_RT_ShutdownGIAlbedoMod(void);
+
+// Multiply the denoised GI (giReadView) by gbufAlbedo into whichever of
+// giAtrousA/B giReadView is NOT currently pointing at, then repoint giReadView
+// at the result.  Must be called outside a render pass, after
+// VK_RT_DispatchAtrousGI, while gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL (the
+// backend's Stage-3.5 barrier window).  Not in-place: checkerboard keeps stale
+// giBuffer pixels and temporal reuses its resolve output as history, so both
+// would compound the multiply across frames if written back into their source.
+// No-op when r_rtGIAlbedo is 0 or the G-buffer/scratch images don't exist.
+void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Material table (Phase 5.4) — shared infrastructure for reflections, GI, shadow any-hit

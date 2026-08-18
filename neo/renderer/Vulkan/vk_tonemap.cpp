@@ -225,15 +225,17 @@ static void VK_RT_CreateHDRFramebuffers(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        // Attachment order must match vk.hdrRenderPass: {0: hdrScene, 1: depth, 2: gbufNormal}.
-        // vkRT.gbufNormal[i].view is NULL when !vk.gbufferSupported, but the framebuffer
-        // only reads the first attachmentCount entries, so the stale NULL slot is unused.
-        VkImageView attachments[3] = {vkRT.hdrScene[i].view, vk.depthView, vkRT.gbufNormal[i].view};
+        // Attachment order must match vk.hdrRenderPass: {0: hdrScene, 1: depth,
+        // 2: gbufNormal, 3: gbufAlbedo}. vkRT.gbufNormal[i]/gbufAlbedo[i].view are
+        // NULL when !vk.gbufferSupported, but the framebuffer only reads the first
+        // attachmentCount entries, so the stale NULL slots are unused.
+        VkImageView attachments[4] = {vkRT.hdrScene[i].view, vk.depthView, vkRT.gbufNormal[i].view,
+                                      vkRT.gbufAlbedo[i].view};
 
         VkFramebufferCreateInfo fbInfo = {};
         fbInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fbInfo.renderPass = vk.hdrRenderPass;
-        fbInfo.attachmentCount = vk.gbufferSupported ? 3 : 2;
+        fbInfo.attachmentCount = vk.gbufferSupported ? 4 : 2;
         fbInfo.pAttachments = attachments;
         fbInfo.width = vkRT.hdrScene[i].width;
         fbInfo.height = vkRT.hdrScene[i].height;

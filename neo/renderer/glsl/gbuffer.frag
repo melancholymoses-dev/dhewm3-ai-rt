@@ -8,6 +8,12 @@ gbufNormal attachment so the RT reflection pass can use the correct normal
 (rather than the flat geometric normal from rt_ReconstructNormal) and early-out
 on non-reflective pixels. See docs/plans/gbuffer_normal_pass.md.
 
+Also writes the material's diffuse/albedo sample to gbufAlbedo (attachment 2,
+docs/plans/gi_albedo_target.md) so the GI albedo-modulate compute pass can turn
+raw bounced radiance into a receiver-correct contribution — without this, GI
+paints incoming light directly onto every surface regardless of how much of it
+that surface would actually reflect.
+
 Used for opaque (non-alpha-tested) surfaces; see gbuffer_clip.frag for the
 MC_PERFORATED variant that additionally alpha-tests the diffuse stage.
 
@@ -46,12 +52,15 @@ layout(set=0, binding=0) uniform GBufferParams {
 };
 
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;
-// binding=2 (diffuse) intentionally not declared here: the opaque pipeline never
-// samples it, so the backend does not need to push a fallback diffuse texture.
+// gi_albedo_target.md: the opaque pipeline now samples binding 2 too, for the
+// receiver-albedo target — u_DiffuseMatrixS/T (backend-resolved SL_DIFFUSE stage,
+// or identity + whiteImage fallback) drives vary_TexCoord_Diffuse's UV here.
+layout(set=0, binding=2) uniform sampler2D u_DiffuseMap;
 layout(set=0, binding=3) uniform sampler2D u_SpecularMap;
 
-layout(location = 0) out vec4 fragColor; // attachment 0 (hdrScene) — write-masked off in the pipeline
-layout(location = 1) out vec4 outGbuf;   // attachment 1 (gbufNormal) — rgb = world normal, a = F0
+layout(location = 0) out vec4 fragColor;  // attachment 0 (hdrScene) — write-masked off in the pipeline
+layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — rgb = world normal, a = F0
+layout(location = 2) out vec4 outAlbedo;  // attachment 2 (gbufAlbedo) — rgb = diffuse sample
 
 void main() {
     vec3 T = normalize(vary_TangentWS);
@@ -69,5 +78,6 @@ void main() {
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
+    outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb, 1.0);
     fragColor = vec4(0.0);
 }

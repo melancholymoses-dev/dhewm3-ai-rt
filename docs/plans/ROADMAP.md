@@ -101,11 +101,14 @@ Wave 5 — Auto-relight                             [auto_relight.md]
        ✅ Stage 1 implemented 2026-08-16; doorway validation passed in-game
           (closed door blocks far room's lights, open admits them).
   ALB  GI receiver-albedo modulation               [gi_albedo_target.md]
-       gbufAlbedo target in the G-buffer prepass + gi × albedo at composite.
+       gbufAlbedo target in the G-buffer prepass + a gi_albedo_mod.comp pass
+       (post à-trous) multiplying denoised GI by it before composite.
        Fixes the "noticeable GI looks worse" wash (bodies underlit yellow,
        2026-08-16) — serves pillar 2 directly.  Do BEFORE §1-5: synthesized
        panel lights would otherwise amplify the wash, and GI constants retune
        after this lands anyway.
+       ✅ implemented 2026-08-16, untested in-game — validation workflow and
+          r_rtGIBounceScale/r_rtGIStrength retune still owed.
   §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
        AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
@@ -143,5 +146,5 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
 | 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
-| 5 | §0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering Stage 1 implemented + doorway validation passed in-game (2026-08-16, vk_gi.cpp collector — BFS area walk + sphere fallback), Stages 1.5/2/3 not started; GI albedo modulation designed, not started (gi_albedo_target.md, do before §1-5); §1-7 not started | auto-relight working tree | no |
+| 5 | §0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering Stage 1 implemented + doorway validation passed in-game (2026-08-16, vk_gi.cpp collector — BFS area walk + sphere fallback), Stages 1.5/2/3 not started; GI albedo modulation implemented, untested in-game (2026-08-16, gi_albedo_target.md — gbufAlbedo target + gi_albedo_mod.comp), retune owed; §1-7 not started | auto-relight working tree | no |
 | 6 | not started | | |

@@ -2,7 +2,11 @@
 
 **Date:** 2026-08-16
 **Branch:** auto-relight (folded into the Wave 5 visual-quality push)
-**Status:** designed, not started
+**Status:** implemented 2026-08-16, **untested in-game** — run the validation workflow
+below. `gbufAlbedo` G-buffer target (opaque + clip prepass variants), `gi_albedo_mod.comp`
+compute pass wired in after à-trous, `r_rtGIAlbedo` CVar (default 1, A/B against the
+legacy raw-radiance composite). Retuning `r_rtGIBounceScale`/`r_rtGIStrength` against
+reference shots (this doc's step 4) not yet done.
 **Extends:** `completed/gbuffer_normal_pass.md` (the G-buffer contract this adds a
 target to). **Companion docs:** `auto_relight.md` (whose §0/AREA validation surfaced
 the bug), ROADMAP pillar 2 ("darkness stays black") — which this fix directly serves.
@@ -54,9 +58,9 @@ operating on radiance.
 | Piece | Change |
 |---|---|
 | `vk_gbuffer.cpp/h` | Allocate per-frame `gbufAlbedo` (R8G8B8A8_UNORM), lifetime identical to `gbufNormal` |
-| HDR render pass + framebuffers | Third attachment (hdrScene=0, gbufNormal=1, **gbufAlbedo=2**). All HDR-pass pipelines already declare per-attachment blend state for 2 attachments; extend the same arrays to 3 (write-masked off everywhere except the G-buffer prepass pipelines) |
-| `gbuffer.vert/frag`, `gbuffer_clip.frag` | Sample the diffuse map, write to attachment 2. Plumbing mostly exists: `vary_TexCoord_Diffuse` + diffuse matrices are already in the shared UBO (the clip variant samples diffuse for alpha test today). Real change: the opaque variant currently declares no diffuse binding — declare it, and the backend must bind the diffuse texture for opaque prepass draws too |
-| `gi_composite.frag` | Bind `gbufAlbedo`, output `gi × albedo`. One line |
+| HDR render pass + framebuffers | Third attachment (hdrScene=0, gbufNormal=1, **gbufAlbedo=2**). All HDR-pass pipelines already declared per-attachment blend state for 2 attachments; extended the same arrays to 3 (write-masked off everywhere except the G-buffer prepass pipelines) |
+| `gbuffer.vert/frag`, `gbuffer_clip.frag` | Sample the diffuse map, write to attachment 2. Plumbing mostly existed: `vary_TexCoord_Diffuse` + diffuse matrices were already in the shared UBO (the clip variant already sampled diffuse for alpha test). Real change: the opaque variant previously declared no diffuse binding — added it, plus a backend-side `SL_DIFFUSE`-stage resolve (`VK_FindBumpSpecularStages`, extended) so the opaque prepass path has a real diffuse image/matrix instead of nothing |
+| `gi_albedo_mod.comp` (new) | **Deviation from the original one-liner-in-composite plan:** implemented as a compute pass inserted after à-trous instead of a `gi_composite.frag` edit. Multiplies `giReadView × gbufAlbedo` into whichever of `giAtrousA`/`giAtrousB` isn't currently `giReadView` (always allocated, so no new image), repoints `giReadView` at the result. Keeps `gi_composite.frag` untouched (still a pure blit) and the denoisers agnostic of albedo — matches the "operate on radiance, multiply by albedo last" ordering pillar 6 wants visible as a discrete step, not folded into the composite blit |
 
 ### Decisions (settled 2026-08-16 design discussion)
 
@@ -84,24 +88,36 @@ operating on radiance.
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `r_rtGIAlbedo` | 1 | multiply GI by receiver albedo at composite; 0 = legacy raw-radiance add (A/B) |
+| `r_rtGIAlbedo` | 1 | multiply GI by receiver albedo post-denoise; 0 = legacy raw-radiance add (A/B) |
 
-Debug: extend the existing G-buffer debug modes with an albedo-view mode
-(pillar 6 — overlay before tuning). The same view doubles as the skinned-mesh
-verification below.
+Debug (implemented): `r_vkLogRT 1` prints two breadcrumbs each frame —
+`VK GBUFFER: ... albedo found=N fallback=M` (opaque-path SL_DIFFUSE resolution:
+`fallback` means a material had no diffuse stage and got the neutral white
+default, not a bug) and `VK RT GI Albedo Mod: applied slot=S dst=A|B` (confirms
+the pass ran and which scratch buffer it wrote). **Not implemented:** a visual
+albedo-only debug view (the `r_rtReflectionDebugMode`-style overlay pillar 6
+calls for). Worth adding if the log breadcrumbs prove insufficient for chasing
+a specific bad surface — cheap to bolt on (`gbufAlbedo` is already a sampleable
+image; a debug composite mode would just blit it).
 
 ## Verify before trusting (first validation step)
 
-Confirm animated/skinned meshes (bodies!) actually go through the G-buffer
-prepass variant — they should (the depth fill draws all opaques), but the fix is
-worthless on exactly the surfaces that hurt most if they don't. The albedo debug
-view over a corpse settles it in one look: textured corpse = good; white
-(clear-color) corpse = prepass gap to fix first.
+Confirm animated/skinned meshes (bodies!) actually resolve a real diffuse
+stage through `VK_FindBumpSpecularStages`, not the white fallback — they
+already go through the G-buffer prepass (depth fill draws all opaques
+uniformly, confirmed by the pre-existing `gbufNormal` path working on bodies
+in the motivating screenshots), so the open question is stage resolution, not
+prepass coverage. `r_vkLogRT 1` while a body is on screen: `albedo found`
+should be nonzero and track roughly with `bump found` (both come from the same
+per-material stage scan) — if `albedo fallback` dominates on character
+materials specifically, the SL_DIFFUSE stage isn't being found and the fix is
+worthless on exactly the surfaces that hurt most.
 
 ## Validation workflow
 
-1. Albedo debug view: scene reads like a diffuse-map pass; corpses textured
-   (not white); sky/translucents white.
+1. `r_vkLogRT 1`, look at a body: `albedo found` nonzero, tracking `bump found`
+   (see above). Confirms the mechanism has real data to multiply by, not just
+   the white fallback everywhere.
 2. The motivating shot (ACO Lift Junction bodies by the orange grate light):
    bodies should read as dark cloth with a subtle warm tint, not a yellow wash.
    A/B with `r_rtGIAlbedo 0`.

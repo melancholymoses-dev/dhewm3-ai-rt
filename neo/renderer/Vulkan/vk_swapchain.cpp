@@ -263,20 +263,27 @@ void VK_CreateRenderPass(void)
     hdrNorm.initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     hdrNorm.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    VkAttachmentReference hdrColorRefs[2] = {
+    // Receiver-albedo attachment (docs/plans/gi_albedo_target.md): diffuse map
+    // sample written by the same prepass, multiplied onto the denoised GI by the
+    // albedo-modulate compute pass. Cleared to WHITE (vk_backend.cpp) so pixels
+    // the prepass never writes modulate GI by 1.0 — i.e. legacy behavior.
+    VkAttachmentDescription hdrAlb = hdrNorm; // same format/ops/layout contract as gbufNormal
+
+    VkAttachmentReference hdrColorRefs[3] = {
         {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // hdrScene
         {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // gbufNormal
+        {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // gbufAlbedo
     };
 
     VkSubpassDescription hdrSubpass = {};
     hdrSubpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    hdrSubpass.colorAttachmentCount = vk.gbufferSupported ? 2 : 1;
+    hdrSubpass.colorAttachmentCount = vk.gbufferSupported ? 3 : 1;
     hdrSubpass.pColorAttachments = hdrColorRefs;
     hdrSubpass.pDepthStencilAttachment = &depthRef;
     rpInfo.pSubpasses = &hdrSubpass;
 
-    VkAttachmentDescription hdrAttachments[3] = { hdrColor, hdrDepth, hdrNorm };
-    rpInfo.attachmentCount = vk.gbufferSupported ? 3 : 2;
+    VkAttachmentDescription hdrAttachments[4] = { hdrColor, hdrDepth, hdrNorm, hdrAlb };
+    rpInfo.attachmentCount = vk.gbufferSupported ? 4 : 2;
     rpInfo.pAttachments = hdrAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPass));
 
@@ -293,8 +300,9 @@ void VK_CreateRenderPass(void)
     hdrNorm.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
     // initialLayout stays COLOR_ATTACHMENT_OPTIMAL — the barrier in vk_backend.cpp
     // (Step 6) round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
+    hdrAlb = hdrNorm; // albedo rides the same LOAD + round-trip contract
 
-    VkAttachmentDescription hdrResumeAttachments[3] = { hdrColor, hdrDepth, hdrNorm };
+    VkAttachmentDescription hdrResumeAttachments[4] = { hdrColor, hdrDepth, hdrNorm, hdrAlb };
     rpInfo.pAttachments = hdrResumeAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPassResume));
 }
