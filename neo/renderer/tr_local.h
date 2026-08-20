@@ -888,8 +888,10 @@ extern idCVar r_rtAO;             // ray traced ambient occlusion
 extern idCVar r_rtAOTemporal;     // temporal denoising for AO
 extern idCVar r_rtReflections;    // ray traced reflections
 extern idCVar r_rtGI;             // ray traced global illumination (Phase 6.1)
-extern idCVar r_rtGIDirectScale;  // scaler to reduce impact of global illumination
-extern idCVar r_rtGIRadius;       // distance to allow GI
+extern idCVar r_rtGIDirectScale;     // scaler to reduce impact of global illumination
+extern idCVar r_rtGIAutoDirectScale; // derive r_rtGIDirectScale from r_rtGIStrength (see vk_gi.cpp)
+extern idCVar r_rtGIStrength;        // global scale on the GI buffer before compositing
+extern idCVar r_rtGIRadius;          // distance to allow GI
 extern idCVar r_rtShadowSamples;  // shadow rays per pixel
 extern idCVar r_rtShadowBlur;     // shadow mask blur radius (0=off, 1-8=kernel half-width)
 extern idCVar r_rtFlashlightBias; // units to push flashlight origin forward to avoid hand self-shadow

@@ -1124,13 +1124,26 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed).
-    // When GI is active, scale by r_rtGIDirectScale to compensate for the additive GI contribution
-    // and keep overall luminance consistent with the non-GI path.
+    // When GI is active, scale by the effective direct-light discount to compensate for the
+    // additive GI contribution and keep overall luminance roughly consistent with the non-GI path.
     float *lightScalePtr = (float *)(useAOPtr + 1);
     const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
                           vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
-    *lightScalePtr =
-        backEnd.overBright * (giActive ? idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat()) : 1.0f);
+
+    float effectiveDirectScale = idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat());
+    if (giActive && r_rtGIAutoDirectScale.GetBool())
+    {
+        // Anchored linear coupling (r_rtGIAutoDirectScale — tuning-comparison aid, not a design
+        // doc item): reproduces r_rtGIDirectScale's own value exactly at r_rtGIStrength's default (0.25) —
+        // so an untouched r_rtGIDirectScale still means what its description says — and relaxes
+        // toward 1.0 (no discount) as strength -> 0, matching the giActive==false branch
+        // continuously at the limit. Scene-independent approximation, not physical auto-exposure —
+        // see the CVar comments for why an exact version isn't possible.
+        const float kRefGIStrength = 0.25f; // must track r_rtGIStrength's registered default
+        const float ratio = Max(0.0f, r_rtGIStrength.GetFloat()) / kRefGIStrength;
+        effectiveDirectScale = idMath::ClampFloat(0.0f, 2.0f, 1.0f - (1.0f - effectiveDirectScale) * ratio);
+    }
+    *lightScalePtr = backEnd.overBright * (giActive ? effectiveDirectScale : 1.0f);
 
     // useReflections: 1 when RT reflection buffer is valid this frame.
     // Disabled for portal/mirror subviews: the buffer was populated from the primary

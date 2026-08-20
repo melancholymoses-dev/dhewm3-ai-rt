@@ -2720,7 +2720,7 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-        RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 16);
+        RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 64);
         RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 64);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
