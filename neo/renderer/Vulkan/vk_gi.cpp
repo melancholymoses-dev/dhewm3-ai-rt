@@ -46,8 +46,10 @@ idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI
 
 static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
-static idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
-                             "Global scale applied to the GI buffer before compositing");
+// Not static: read from vk_backend.cpp (RB_DetermineLightScale) for the
+// r_rtGIAutoDirectScale coupling below.
+idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
+                      "Global scale applied to the GI buffer before compositing");
 
 static idCVar r_rtGIContrast(
     "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
@@ -55,9 +57,28 @@ static idCVar r_rtGIContrast(
     "0 = off, 1 = full effect");
 
 idCVar r_rtGIDirectScale("r_rtGIDirectScale", "0.8", CVAR_RENDERER | CVAR_FLOAT,
-                         "Multiplier on direct interaction lighting when GI is active. "
-                         "Reduce below 1.0 (e.g. 0.7) to compensate for GI-added luminance "
-                         "and keep overall brightness consistent with the original game");
+                         "Baseline multiplier on direct interaction lighting when GI is active, at "
+                         "r_rtGIStrength's default (0.25). Reduce below 1.0 to compensate for GI-added "
+                         "luminance and keep overall brightness consistent with the original game. "
+                         "When r_rtGIAutoDirectScale is on this is the anchor value, not necessarily "
+                         "the value actually applied — see that CVar");
+
+// Tuning-comparison aid: scrubbing r_rtGIStrength alone used to require also
+// re-tuning r_rtGIDirectScale by hand to keep A/B luminance roughly matched —
+// two dials to chase for one comparison. When on, the effective direct-light
+// discount is derived from r_rtGIStrength instead of read directly from
+// r_rtGIDirectScale, anchored so it reproduces r_rtGIDirectScale's own value
+// exactly at r_rtGIStrength's default (0.25) and relaxes to 1.0 (no discount)
+// as strength -> 0, matching the giActive==false state continuously.
+// This is a scene-independent linear approximation (real GI luminance impact
+// depends on local geometry/albedo density, which this can't see) — good
+// enough to stop one dial from silently invalidating the other while you're
+// scrubbing, not a physically exact auto-exposure.
+idCVar r_rtGIAutoDirectScale(
+    "r_rtGIAutoDirectScale", "1", CVAR_RENDERER | CVAR_BOOL,
+    "Derive the effective r_rtGIDirectScale from the current r_rtGIStrength (anchored at "
+    "strength=0.25 -> r_rtGIDirectScale's value, relaxing to 1.0 as strength->0), so scrubbing "
+    "r_rtGIStrength alone stays roughly luminance-matched. 0 = use r_rtGIDirectScale as-is (manual)");
 
 static idCVar r_rtGIBounceScale(
     "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
