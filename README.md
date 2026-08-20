@@ -9,7 +9,7 @@ $\color{red}{\textbf{Do not bother that team with bug reports or feature request
 
 |  Dhewm3 |  Dhewm3-RT | 
 |:---------:|:-----------:|
-|![Dhewm3](docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg)|![VibeCoded Restoration](docs/img/Attempted_restoration_of_Ecce_Homo.jpg)|
+|<img src="docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg" width="300">|<img src="docs/img/Attempted_restoration_of_Ecce_Homo.jpg" width="300">|
 | Doom3/Dhewm3's source code | Vibe Coded Ray-Traced Additions|
 
 
@@ -31,6 +31,7 @@ There is an archived _vkDoom3_ Vulkan implementation of Dhewm-BFG edition at  ht
 I have been using Claude Code (Sonnet 4.5) and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  This has mostly worked because:
 - Doom3 is a famous C++ code base.  
 - Well-established language (C++) and frameworks (Vulkan).
+- A very clean starting point with well optimized code.  
 - Graphics Techniques are well known at this point and incorporated into training corpus.
 - Reference implementations to riff on
 - Quick build cycle, so failure and testing is rapid with quick failure modes.
@@ -39,6 +40,11 @@ I would be cautious about assuming any AI coding projects work this well in the 
 
 # Ray Tracing Changes
 
+0. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
+
+![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
+This is just a definition on the weapon to activate an existing effect.  This was already in-game but probably off for 2005 performance reasons.  Most noticeable on plasma and rockets.  
+
 1. Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.
 2. Ray Traced shadows and acceleration structures.
 ![Ray Traced Shadows](docs/img/screenshots/20260331_shadow.jpg)
@@ -46,21 +52,20 @@ I would be cautious about assuming any AI coding projects work this well in the 
 Ray Traced Shadows are in.  This shows some distinctions with how we're selecting lights - potentially some errors in math and light selection?  Top screenshot is RT, lower screenshot is original stencil.  Here the side light above the player's head casts the main shadow in RT, while the stencil has a much moodier shadow.
 
 3. Ray-Traced Ambient Occlusion with temporal filtering 
-4. Ray traced reflections
+4. Ray traced Reflections
 
 ![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
-Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.
+Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest gain.
 
 5. Global Illumination
 5a. One bounce global illumination.  Reflected surfaces can share luminance (e.g. light bouncing off a red wall illuminates a shadow)
-5b. Volumetric Lighting.  Gives light shafts more substance.  
+5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.
+![Volumetrics On](docs/img/screenshots/20260419_vol_on.jpg)
+![Volumetrics Off](docs/img/screenshots/20260415_vol_off.jpg)
+
 5c. Tone mapping 
 As part of the global illumination passes I found it was washing out the color, killing the contrast and mood.  We have added a Uchimara tone-map to try to restore that dynamic range while sticking close to the original art style while trying to enhance it.
 
-6. Tweaked lighting on projectiles for some weapons (pulse rifle, rocket launcher)
-
-![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
-This is just a definition on the weapon to activate an existing effect.  This was already in-game but probably off for 2005 performance reasons.
 
 ## Useful Cvars
 

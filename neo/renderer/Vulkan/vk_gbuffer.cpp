@@ -1,21 +1,24 @@
 /*
 ===========================================================================
 
-dhewm3-rt Vulkan — vk_gbuffer.cpp — G-buffer normal/F0 image lifetime.
+dhewm3-rt Vulkan — vk_gbuffer.cpp — G-buffer normal/F0 + albedo image lifetime.
 
-Stage 3.5 (see docs/plans/gbuffer_normal_pass.md): a thin per-frame image
-written by the depth prepass (VK_RB_FillDepthBuffer, extended in a later
-step) and sampled by the RT reflection rgen (AO/GI follow in a later
-commit). Format is R8G8B8A8_UNORM:
-  rgb = world-space bump-mapped shading normal, encoded as (n * 0.5 + 0.5)
-  a   = normalized F0 (the Stage-2 specular remap); 0 means "no G-buffer
-        data here" so consumers fall back to rt_ReconstructNormal.
+Stage 3.5 (see docs/plans/gbuffer_normal_pass.md): two thin per-frame images
+written by the depth prepass (VK_RB_FillDepthBuffer) — gbufNormal, sampled by
+the RT reflection/AO/GI rgens, and gbufAlbedo (docs/plans/gi_albedo_target.md),
+sampled by the GI albedo-modulate compute pass. Both R8G8B8A8_UNORM:
+  gbufNormal: rgb = world-space bump-mapped shading normal (n * 0.5 + 0.5),
+              a = normalized F0 (the Stage-2 specular remap); 0 means "no
+              G-buffer data here" so consumers fall back to rt_ReconstructNormal.
+  gbufAlbedo: rgb = diffuse map sample; unwritten pixels stay at the WHITE
+              clear value (vk_backend.cpp) so GI passes through unmodulated
+              rather than being killed to black.
 
-Requires VkPhysicalDeviceFeatures.independentBlend (two colour attachments
+Requires VkPhysicalDeviceFeatures.independentBlend (multiple colour attachments
 with differing per-attachment blend/write-mask state — see Step 0 in the
 plan). vk.gbufferSupported latches that check at device-creation time; when
-false, every function here is a no-op and vkRT.gbufNormal stays all-NULL,
-leaving the existing depth-only prepass path untouched.
+false, every function here is a no-op and vkRT.gbufNormal/gbufAlbedo stay
+all-NULL, leaving the existing depth-only prepass path untouched.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -46,14 +49,20 @@ idCVar r_rtGbufNormals("r_rtGbufNormals", "1", CVAR_RENDERER | CVAR_BOOL,
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGBufferImages
-// Allocates per-frame R8G8B8A8_UNORM normal/F0 buffers at the given resolution.
+// Allocates per-frame R8G8B8A8_UNORM normal/F0 buffers at the given resolution,
+// plus the receiver-albedo buffers (gi_albedo_target.md) with identical
+// lifetime: attachment 2 of the HDR render pass, written by the same prepass,
+// sampled by the GI albedo-modulate compute pass.
 // ---------------------------------------------------------------------------
 
 static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
 {
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    for (int slot = 0; slot < 2 * VK_MAX_FRAMES_IN_FLIGHT; slot++)
     {
-        vkReflBuffer_t &gb = vkRT.gbufNormal[i];
+        // First VK_MAX_FRAMES_IN_FLIGHT slots: gbufNormal; then gbufAlbedo.
+        const bool isAlbedo = slot >= VK_MAX_FRAMES_IN_FLIGHT;
+        const int i = slot % VK_MAX_FRAMES_IN_FLIGHT;
+        vkReflBuffer_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
         gb.width = width;
         gb.height = height;
 
@@ -143,15 +152,17 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GBuffer: allocated %dx%d R8G8B8A8_UNORM normal/F0 images (%d frames in flight)\n",
+        common->Printf("VK RT GBuffer: allocated %dx%d R8G8B8A8_UNORM normal/F0 + albedo images (%d frames in flight)\n",
                        width, height, VK_MAX_FRAMES_IN_FLIGHT);
 }
 
 static void VK_RT_DestroyGBufferImages(void)
 {
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    for (int slot = 0; slot < 2 * VK_MAX_FRAMES_IN_FLIGHT; slot++)
     {
-        vkReflBuffer_t &gb = vkRT.gbufNormal[i];
+        const bool isAlbedo = slot >= VK_MAX_FRAMES_IN_FLIGHT;
+        const int i = slot % VK_MAX_FRAMES_IN_FLIGHT;
+        vkReflBuffer_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
         if (gb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, gb.view, NULL);

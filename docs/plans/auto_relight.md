@@ -4,7 +4,10 @@
 **Branch:** shaped-shadows
 **Replaces:** Stages 4a/4b of `completed/lighting_shadows_refinement.md`.
 **Companion docs:** `rt_optimization_tuning.md` (P1b shadow batching is the perf
-enabler; L1 stratified light list is the selection layer), `gbuffer_normal_pass.md`.
+enabler; L1 stratified light list is the selection layer),
+`completed/gbuffer_normal_pass.md`, `gi_albedo_target.md` (GI receiver-albedo fix
+surfaced by this doc's §0/AREA validation, 2026-08-16 — land it before §1-5, since
+synthesized panel lights would amplify the unmodulated-GI wash it fixes).
 
 ---
 
@@ -59,6 +62,20 @@ logic.
 Added 2026-08-15 after the "boring uniform GI lift" design review. This stage has no
 dependency on clustering/synthesis and directly fixes a live visual bug, so it lands
 before everything else in this doc — it can even ship inside Wave 4's tail.
+
+**Status: implemented 2026-08-15, validated in-game 2026-08-15/16** (dump runs in ACO
+Offices / ACO Access Junction: ACCENT admissions confirmed, saturation weighting
+verified against hand-computed values; no AMBIENT_FILL in those halls — that class
+is rarer than assumed, see the map-grep note in the session log). Landed as
+`neo/renderer/Vulkan/vk_light_classify.cpp` (new file, `vkRTLightClass_t` enum +
+`VK_RT_ClassifyLight()` + `VK_RT_LightClassName()`, declared in `vk_raytracing.h`,
+registered in CMakeLists.txt). `VK_RT_UploadGILights` (`vk_gi.cpp`) now calls it for
+admission (replacing the old `if (p.noShadows) continue;`) and applies saturation
+weighting to importance. §6 (noShadows unlock) is a separate, not-yet-implemented
+consumer of the same classifier. Needs: a run through alphalabs2/comm1 with
+`r_rtGILightDump 1` to sanity-check the 300-unit accent/fill split against real
+level data, then a visual pass (`r_rtGI 1`, walk a hallway) to confirm the white
+wash actually drops and colored accents appear in GI/vol as intended.
 
 ### The discovery: the GI/vol light filter is inverted
 
@@ -123,19 +140,25 @@ pillar 2's stated aesthetic, so the risk profile is asymmetric in our favor.
 
 ### Log before thresholds (procedure rule)
 
-Before trusting 300/0.25: `r_rtGILightDump` prints every in-view lightDef — name,
-color, saturation, radius, entity noShadows, material class, admitted/rejected +
-which layer decided, importance before/after weighting. One alphalabs2 run answers
-whether the radius threshold cleanly separates fills from accents. A debug tint mode
-(color GI contribution by classifier class) makes the wash source visually obvious.
+Before trusting 300/0.25: `r_rtGILightDump 1` prints every in-collect-radius lightDef
+once (self-clearing) — material name, classifier verdict, entity noShadows, radius,
+distance, color, saturation, importance before/after weighting, admit/reject. One
+alphalabs2 run answers whether the radius threshold cleanly separates fills from
+accents. **Implemented as the console dump only** — a visual debug tint (color GI
+contribution by classifier class) was scoped in the original design but not built;
+add it later if the console table isn't enough to spot a wash source.
 
 ### Deliverables
 
-- `VK_RT_ClassifyLight()` + enum (suggest `vk_raytracing.h` / a small shared cpp).
-- GI/vol collector switched to layered admission + saturation weighting.
-- `r_rtGILightDump`, classifier debug tint.
-- Expected visible result: white hallway wash drops, colored accents START appearing
-  in GI and volumetrics (they are currently filtered out entirely).
+- ✅ `VK_RT_ClassifyLight()` + enum — `vk_raytracing.h` declares, `vk_light_classify.cpp`
+  defines (new file, registered in CMakeLists.txt).
+- ✅ GI/vol collector switched to layered admission + saturation weighting
+  (`vk_gi.cpp: VK_RT_UploadGILights`).
+- ✅ `r_rtGILightDump` (console table, self-clearing). ⬜ Classifier debug tint — not
+  built, see note above.
+- ⬜ **Not yet verified at runtime.** Expected visible result once tested: white
+  hallway wash drops, colored accents START appearing in GI and volumetrics (they
+  were previously filtered out entirely by the entity-noShadows-only test).
 
 ## Architecture
 
