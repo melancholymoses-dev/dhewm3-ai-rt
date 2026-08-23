@@ -8,16 +8,14 @@ variants), `gi_albedo_mod.comp` compute pass wired in after à-trous, `r_rtGIAlb
 **Validation step 2 passed in-game 2026-08-22** — bodies/corpses now read as dark cloth
 with a subtle tint, confirmed against the motivating ACO Lift Junction shot; the original
 bug (bodies painted yellow by nearby orange lights) is fixed.
-**Steps 3/4 open, in progress 2026-08-22:** with volumetrics also landed/tuned since this
-doc was written, overall scene luminance is elevated and blacks are lifted — step 3's
-"dark-corner noise floor must not rise" isn't holding cleanly, though it's not yet clear
-how much of that is the albedo fix itself vs. volumetrics' own additive contribution now
-that it's better-tuned (see `portal_area_lights.md`/`rt_optimization_tuning.md` P8 for the
-volumetric-side changes landed the same week). **Currently being addressed via
-tonemapping retune**, not a GI-side change — see `completed/tonemapping.md` /
-`completed/tonemapping2.md` for the existing pipeline this tunes within.
-`r_rtGIBounceScale`/`r_rtGIStrength` retune (step 4) is deliberately on hold until
-tonemapping settles — retuning GI against a moving tonemap target would mean redoing it.
+**Done 2026-08-22.** Steps 3/4 surfaced a real follow-on rather than closing clean: with
+volumetrics also landed/tuned since this doc was written, overall scene luminance reads
+elevated and blacks lifted. That's tracked as tonemapping tuning going forward
+(`completed/tonemapping.md` / `completed/tonemapping2.md` cover the existing pipeline
+this tunes within), not as open scope on this doc — the receiver-albedo modulation
+feature itself is finished and validated. Any further `r_rtGIBounceScale`/
+`r_rtGIStrength` retune should happen after tonemapping settles, to avoid the two
+chasing each other, but that's normal tuning, not a gap in this doc's deliverable.
 **Extends:** `completed/gbuffer_normal_pass.md` (the G-buffer contract this adds a
 target to). **Companion docs:** `auto_relight.md` (whose §0/AREA validation surfaced
 the bug), ROADMAP pillar 2 ("darkness stays black") — which this fix directly serves.

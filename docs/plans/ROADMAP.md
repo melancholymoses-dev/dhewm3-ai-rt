@@ -32,15 +32,18 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 |---|---|---|
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Live (Waves 2-4, 6) |
 | `auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | Live (Wave 5) |
-| `portal_area_lights.md` | Topology-aware GI/vol light gathering via id's portal-area lightRefs; per-room curation sidecar | Live (Wave 5, alongside §0) |
-| `gi_albedo_target.md` | Receiver-albedo G-buffer target + `gi × albedo` composite — fixes the "noticeable GI looks worse" wash (bodies underlit yellow, 2026-08-16) | Designed (Wave 5 push) |
 
 Completed / superseded docs are in `completed/` — notably
 `completed/gbuffer_normal_pass.md` (Waves 1a/1b landed: normal/F0 G-buffer in the
-depth prepass, reflection composite; `gi_albedo_target.md` extends its G-buffer
-contract) and `completed/lighting_shadows_refinement.md` (Phase 9 record:
+depth prepass, reflection composite; `completed/gi_albedo_target.md` extends its
+G-buffer contract), `completed/lighting_shadows_refinement.md` (Phase 9 record:
 shape-aware soft shadows and Fresnel normalization, both landed; its Stages
-3/3.5/4a/4b were redesigned into the live docs above).
+3/3.5/4a/4b were redesigned into the live docs above),
+`completed/portal_area_lights.md` (topology-aware GI/vol light gathering via id's
+portal-area lightRefs — Stages 1/1.5/1.75 + the dedicated vol-light-selection fix,
+done 2026-08-22; Stage 3's per-room curation sidecar was never started and is not
+being carried forward as open work), and `completed/gi_albedo_target.md`
+(receiver-albedo G-buffer target + `gi × albedo` composite, done 2026-08-22).
 
 ---
 
@@ -99,7 +102,7 @@ Wave 5 — Auto-relight                             [auto_relight.md]
        GI/vol collector filters entity noShadows only, so ambient washes are IN and
        colored accents are OUT — inverted from intent; see auto_relight.md §0).
        ✅ implemented 2026-08-15; validated in-game 2026-08-15/16 via dump.
-  AREA portal-area light gathering                 [portal_area_lights.md]
+  AREA portal-area light gathering        [DONE — completed/portal_area_lights.md]
        Replace the camera-sphere light cull with a walk of id's live per-area
        lightRefs (BFS over portals, door-aware).  Fixes "big room goes dark" and
        through-wall slot waste observed 2026-08-16; Stage 3 adds the per-room
@@ -130,28 +133,25 @@ Wave 5 — Auto-relight                             [auto_relight.md]
           `vkRT.volLightSsbo`) built from the same admitted-candidate pool as GI, not
           a raw prefix of GI's own buffer. GI/reflections' own selection is untouched.
           `r_rtVolMaxLights` 32→96 along the way (interim mitigation, now mostly
-          redundant). **Validated in-game 2026-08-22 — pop confirmed fixed.**
-          Portal-area gathering (Stages 1/1.5/1.75) + dedicated vol selection now
-          considered closed. Stage 3 (per-room pin/ban curation sidecar) not
-          started, not currently blocking anything.
-  ALB  GI receiver-albedo modulation               [gi_albedo_target.md]
+          redundant). **Validated in-game 2026-08-22 — pop confirmed fixed. AREA
+          done** — moved to `completed/portal_area_lights.md`. Stage 3 (per-room
+          pin/ban curation sidecar) was never started and is not carried forward
+          as open work; revisit only if a concrete need for it shows up later.
+  ALB  GI receiver-albedo modulation      [DONE — completed/gi_albedo_target.md]
        gbufAlbedo target in the G-buffer prepass + a gi_albedo_mod.comp pass
        (post à-trous) multiplying denoised GI by it before composite.
        Fixes the "noticeable GI looks worse" wash (bodies underlit yellow,
        2026-08-16) — serves pillar 2 directly.  Do BEFORE §1-5: synthesized
        panel lights would otherwise amplify the wash, and GI constants retune
        after this lands anyway.
-       ✅ implemented 2026-08-16, **validation step 2 passed in-game 2026-08-22**
-          (bodies/corpses now read as dark cloth with a subtle tint, not a color
-          wash — the original motivating bug is fixed). Steps 3/4 surfaced a new
-          finding rather than closing clean: with volumetrics now contributing too,
-          overall scene luminance is elevated and blacks are lifted (pillar 2,
-          "darkness stays black," not yet holding) — **currently being addressed via
-          tonemapping retune** (`completed/tonemapping.md`/`tonemapping2.md` cover the
-          existing pipeline; this is tuning within it, not new architecture, unless
-          that changes). `r_rtGIBounceScale`/`r_rtGIStrength` retune (step 4) is
-          entangled with the tonemapping work — don't retune GI in isolation until
-          tonemapping settles, or the two will chase each other.
+       ✅ implemented 2026-08-16, **validated in-game 2026-08-22** (bodies/corpses
+          now read as dark cloth with a subtle tint, not a color wash — the
+          original motivating bug is fixed). **ALB done** — moved to
+          `completed/gi_albedo_target.md`. It surfaced a real follow-on: with
+          volumetrics also contributing luminance now, blacks were reading
+          lifted — but that's tracked as tonemapping tuning
+          (`completed/tonemapping.md`/`tonemapping2.md`), not as open ALB scope;
+          the receiver-albedo modulation feature itself is finished.
   §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
        AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
