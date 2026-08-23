@@ -5,9 +5,13 @@
 **Replaces:** Stages 4a/4b of `completed/lighting_shadows_refinement.md`.
 **Companion docs:** `rt_optimization_tuning.md` (P1b shadow batching is the perf
 enabler; L1 stratified light list is the selection layer),
-`completed/gbuffer_normal_pass.md`, `gi_albedo_target.md` (GI receiver-albedo fix
-surfaced by this doc's §0/AREA validation, 2026-08-16 — land it before §1-5, since
-synthesized panel lights would amplify the unmodulated-GI wash it fixes).
+`completed/gbuffer_normal_pass.md`, `completed/gi_albedo_target.md` (GI
+receiver-albedo fix surfaced by this doc's §0/AREA validation, 2026-08-16 — landed
+before §1-5, since synthesized panel lights would amplify the unmodulated-GI wash
+it fixes), `completed/portal_area_lights.md` (the collector §0 admits into —
+BFS/area-walk gathering, done 2026-08-22; also landed the vol-specific light
+selection this doc's §6/volumetric-budget-interaction sections below now assume,
+see the 2026-08-22 note in each).
 
 ---
 
@@ -34,10 +38,18 @@ The entire consumption side already exists. A synthesized light that becomes a r
 2. **RT shadow dispatch** — per-light shadow mask; a zombie between panel and floor
    blocks the rays. Stage 1's anisotropic soft radius (`vk_shadows.cpp`) accepts the
    panel's physical extent, so the penumbra is correctly wide and soft for an LED wall.
-3. **Volumetrics** — `vol_march.comp:267-286` fires **ray-query occlusion tests toward
-   each light at every march step**, and monsters are in the TLAS as dynamic BLAS
+3. **Volumetrics** — `vol_march.comp` fires **ray-query occlusion tests toward each
+   light at every march step**, and monsters are in the TLAS as dynamic BLAS
    instances. The zombie's volumetric silhouette in the panel glow is therefore not a
-   new feature — it falls out of feeding the existing march a new light.
+   new feature — it falls out of feeding the existing march a new light. **Updated
+   2026-08-22:** volumetrics no longer reads GI's own light buffer — it has its own
+   dedicated selection (`vkRT.volLightSsbo`, built in `VK_RT_UploadGILights` from the
+   same admitted-candidate pool as GI, filtered to lights whose sphere/cone can reach
+   within `r_rtVolMaxDist` — default 512 — of the camera). A synthesized light still
+   needs no new code to reach the march, but see the Volumetric budget interaction
+   section below — this filter is a real constraint on which synthesized "hero"
+   lights actually get shafts, separate from the score-based `r_rtAutoRelightVolMin`
+   budget this doc already plans for.
 4. **GI bounce + reflections** — via `VK_RT_UploadGILights` collecting from
    `lightDefs` like any other light.
 
@@ -72,16 +84,16 @@ is rarer than assumed, see the map-grep note in the session log). Landed as
 registered in CMakeLists.txt). `VK_RT_UploadGILights` (`vk_gi.cpp`) now calls it for
 admission (replacing the old `if (p.noShadows) continue;`) and applies saturation
 weighting to importance. §6 (noShadows unlock) is a separate, not-yet-implemented
-consumer of the same classifier. Needs: a run through alphalabs2/comm1 with
-`r_rtGILightDump 1` to sanity-check the 300-unit accent/fill split against real
-level data, then a visual pass (`r_rtGI 1`, walk a hallway) to confirm the white
-wash actually drops and colored accents appear in GI/vol as intended.
+consumer of the same classifier. **Runtime validation confirmed done (2026-08-22):**
+the 300-unit accent/fill split holds up against real level data, and the white wash
+drops with colored accents appearing in GI/vol as intended.
 
 ### The discovery: the GI/vol light filter is inverted
 
-`VK_RT_UploadGILights` (`vk_gi.cpp`, noShadows skip at ~line 1057 — the SSBO shared by
-GI bounce lighting *and* the volumetric march) filters only **entity-level**
-`p.noShadows`. It never consults the light *material*
+`VK_RT_UploadGILights` (`vk_gi.cpp`) filters only **entity-level** `p.noShadows` at
+admission — the single gate every downstream consumer (GI bounce, reflections, and,
+since `portal_area_lights.md`'s 2026-08-22 fix, volumetrics' own derived selection —
+see the note below) inherits. It never consults the light *material*
 (`idMaterial::LightCastsShadows()` = not fogLight / not ambientLight / not blendLight /
 not MF_NOSHADOWS — see `Material.h`). Net effect, backwards in both directions:
 
@@ -156,9 +168,9 @@ add it later if the console table isn't enough to spot a wash source.
   (`vk_gi.cpp: VK_RT_UploadGILights`).
 - ✅ `r_rtGILightDump` (console table, self-clearing). ⬜ Classifier debug tint — not
   built, see note above.
-- ⬜ **Not yet verified at runtime.** Expected visible result once tested: white
-  hallway wash drops, colored accents START appearing in GI and volumetrics (they
-  were previously filtered out entirely by the entity-noShadows-only test).
+- ✅ **Verified at runtime (2026-08-22).** White hallway wash drops, colored accents
+  appear in GI and volumetrics (they were previously filtered out entirely by the
+  entity-noShadows-only test).
 
 ## Architecture
 
@@ -242,8 +254,9 @@ Per surviving cluster, `tr.primaryWorld->AddLightDef()`:
 ### 6. noShadows unlock for existing fixture lights (companion rule)
 
 Many mapper-placed fixture lights are `noShadows` — a 2004 stencil-budget decision the
-RT path inherits (skipped at `vk_gi.cpp` ~1057 for GI/vol; the interaction path honors
-the flag too). Engine-side rule, cvar-gated (`r_rtUnlockNoShadows`, default 0):
+RT path inherits (skipped in `VK_RT_UploadGILights`'s admission for GI/vol; the
+interaction path honors the flag too). Engine-side rule, cvar-gated
+(`r_rtUnlockNoShadows`, default 0):
 lights the §0 classifier rates **ACCENT** (noShadows, radius <
 `r_rtLightAccentMaxRadius`, default 300 — same threshold/cvar as GI/vol admission;
 the giant ambient fills that use noShadows *semantically* classify AMBIENT_FILL and
@@ -254,8 +267,9 @@ whose paired map light is noShadows is a strong unlock candidate.
 Perf note: every unlocked light becomes a shadow-caster in the interaction loop
 (cheap post-P1b — that's what batching was for) *and* a volumetric candidate (NOT
 cheap — per-step ray queries per light, and P8's half-res doesn't change the per-light
-scaling). Unlocked accents ride the normal `r_rtVolMaxLights` cap; they do not get
-automatic shafts.
+scaling). Unlocked accents ride the normal `r_rtVolMaxLights` cap *and* the
+`r_rtVolMaxDist` reachability gate (see "Volumetric budget interaction" below); they
+do not get automatic shafts.
 
 ### 7. Weapons / projectiles / particles (def-mod scope, allowed)
 
@@ -276,6 +290,16 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
   but don't get shafts. This is the "hero light" budget from the design discussion.
 - They count against the existing `r_rtVolMaxLights` cap and the stratified list
   quotas (see `rt_optimization_tuning.md` L1) like any other light — no special path.
+- **New gate, 2026-08-22 (`portal_area_lights.md`):** before any of the above, a light
+  must be within reach of `r_rtVolMaxDist` (default 512 world units) of the *camera*
+  to be selected for volumetrics at all — see "vol-specific light selection" above.
+  This is independent of `r_rtAutoRelightVolMin`'s score budget and can silently
+  defeat it: a top-scored synthesized panel picked for a shaft by score will still
+  get **no shaft** if the player is never within ~512 units of it (e.g. a screen at
+  the far end of a large room, seen but not approached). Worth a debug check once
+  §1-5 lands: dump `r_rtgilightdump 1`'s `[vol selection]` block near a synthesized
+  hero light and confirm it actually appears there, not just in `[final order]`
+  (GI's own list, which has no such distance gate).
 
 ## CVars
 
@@ -296,9 +320,10 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
 
 ## Debug / validation workflow (do before any tuning)
 
-0. §0 first: `r_rtGILightDump 1` on alphalabs2 → confirm the radius threshold cleanly
-   separates fills from accents *before* trusting the 300/0.25 defaults; then verify
-   the white wash drops and colored accents appear in GI/vol with the classifier on.
+0. ✅ **Done (2026-08-22).** §0 first: `r_rtGILightDump 1` on alphalabs2 → confirm the
+   radius threshold cleanly separates fills from accents before trusting the 300/0.25
+   defaults; then verify the white wash drops and colored accents appear in GI/vol
+   with the classifier on.
 1. `r_rtAutoRelight 1; r_rtAutoRelightDebug 1` → console table: per cluster, material
    name, centroid, area, score, verdict (LIT / DEDUPED-vs-light-N / BUDGET-DROPPED).
 2. **`r_showLights 1` works natively** — synthesized lights are real lightDefs and
