@@ -7,9 +7,134 @@ provenance; sphere path kept as `r_rtGIAreaLights 0` + areaNum==-1 fallback).
 **Doorway validation passed in-game 2026-08-16** (Command Access Junction: area 78's ~22 lights
 absent with the door closed, admitted at hop=1 once opened; provenance/dedupe confirmed via dump).
 Remaining validation: big-room check, A/B perf comparison, door-transition pop watch.
-Stages 1.5 (view-stamped areas), 2, 3 not started.  Observed follow-up candidate from the dumps:
-lights currently off (`color 0 0 0`, e.g. broken/triggered fixtures) are admitted and burn
-candidate slots — a `maxChan > 0` guard in the collector would drop them per-frame safely.
+**Latest (2026-08-22) — read this before the blow-by-blow below:** in-game dumps at a real
+hallway boundary confirmed Stage 1.75 works as designed (admission set stable across the
+threshold) and caught Stage 1.5 actually firing (view-flood union nearly doubling the candidate
+pool when a hub area becomes visible down a corridor). Neither was the full story — the actual
+volumetric on/off pop traced to `vol_march.comp` sharing GI's light buffer/ranking, so
+Stage-1.5-admitted-but-march-unreachable lights could evict genuinely nearby ones. **Fixed**:
+volumetrics now has its own dedicated, distance-filtered light selection (separate SSBO), see
+the "Real fix implemented" entry near the end of this doc. `r_rtVolMaxLights` bumped 32→96 along
+the way as an interim mitigation before the real fix landed; harmless to leave, mostly redundant
+now. **Validated in-game 2026-08-22 — confirmed fixed** (user: "vol done"). Portal-area gathering
+(Stages 1/1.5/1.75) + the dedicated vol selection are considered closed; Stage 3 (per-room
+pin/ban curation sidecar) not started, not currently blocking anything.
+**Stage 1.5 implemented 2026-08-19** (vk_gi.cpp: unions in every `portalArea_t` id's own
+view-frustum flood stamped visible this frame — `viewCount == tr.viewCount` — with the BFS
+set; zero new cost, reuses the flood the standard renderer already runs. Motivated by a
+real observed pop: standing still in area 42 looking across at area 45's lights, which sat
+just outside 2-hop range from area 42 but *inside* range from the adjacent area 49 — dump
+comparison confirmed the BFS itself was working correctly (hop-boundary cliff, not an
+adjacency bug), but a stationary "looking across the room" case has no BFS transition to
+smooth, which is exactly the case Stage 1.5 (not Stage 2) addresses. Dump/log extended:
+`hop=-1` with a real `area` means Stage-1.5-sourced; summary log reports
+`visited=N(+M viewStamp)`. **Untested in-game** — validate via dump before/after the same
+hallway/room boundary that motivated it.
+Stage 2 (temporal blend across area transitions) work was implemented then **deliberately
+reverted 2026-08-19** — a companion GI/Vol temporal camera-cut fix it depended on was still
+broken, and Stage 1.5 was judged higher priority: it covers the more common case
+(visible-but-out-of-hop-range) without needing transition detection at all. Stage 2 remains
+valuable for the residual
+case Stage 1.5 can't cover — a blind-corner room that becomes visible only after you're
+already in it — but is not planned until Stage 1.5's real-world coverage is assessed.
+**Stage 1.75 implemented 2026-08-19** (vk_gi.cpp: BFS now seeds from every portal area
+touching a `+/-r_rtGIAreaBoundsEpsilon` (default 24u) box around the camera, via
+`idRenderWorld::BoundsInAreas`, instead of the single hard `PointInArea(camera)` pick).
+Root-caused from a report of volumetric lights changing while standing still at a
+corridor/room threshold, facing perpendicular to the boundary and stepping a few inches
+left/right — same view, same wall filling the screen, but the lit fog visibly popped.
+`PointInArea` is a binary plane test: on either side of a threshold the *entire* hop
+numbering for every light in both rooms flips (a light at hop=1 from one side is hop=0
+from the other, which can cross a hop-based cutoff or the L1 importance/hysteresis
+threshold even though nothing on screen changed) — Stage 1.5's view-flood union doesn't
+help here because the portal you're straddling usually isn't the one facing your camera.
+Dump/log extended: a `[Stage 1.75]` line lists the actual seed-area set found vs. what the
+old single-point classification would have picked. **Untested in-game** — validate by
+dumping while straddling the same threshold and confirming both areas appear in the
+`seedAreas` list and the hop numbers no longer flip between the two dumps.
+**Stage 1.75 in-game dump analysis 2026-08-22:** first real before/after capture at a hallway
+threshold (`[Stage 1.75] seedAreas(2)=[42,49]` while straddling → `seedAreas(1)=[49]` a step
+later). Confirmed working as designed — both dumps reach the identical six areas (42/49/48/50/
+46/45) within `hops=2`, and neither dump has a `hop=-1` entry, so Stage 1.5 fired zero times in
+this capture. Yet the user still saw volumetric lights pop at that same threshold. Root cause is
+**downstream of the area walk, in the volumetric consumer, not in the collector**: `vol_march.comp`
+only reads a fixed prefix (`r_rtVolMaxLights` = 32) of the GI light buffer, and that buffer is
+sorted by L1 *importance*, not distance (the shader's old comment claiming "pre-sorted
+nearest-first" was wrong — fixed). Ranking all ~65 admitted candidates by importance in each dump,
+the rank-32 cutoff value itself moved from ≈0.0143 to ≈0.0212 between the two captures, because
+*unrelated* lights elsewhere in the level (area 46/45's bright fixtures) gained importance as the
+player walked deeper into area 49. That cutoff shift silently dropped `lights/
+squarelight1_snd_noflicker` in **area 50** — a light ~750-770u away whose own importance barely
+moved (0.0150→0.0144) — out of the volumetric window. Net effect: stepping through a doorway
+perturbs many lights' distances at once, which reshuffles the *global* importance ranking, which
+flips the hard rank-32 cutoff for whatever light happens to be sitting near it anywhere in the
+level, not necessarily anything near the door. No crossfade exists at that boundary, so it reads
+as a hard on/off pop.
+Diagnostic added (uncommitted as of this note, same session): the `r_rtGILightDump` output now
+also prints the final importance-sorted upload order with a `<-- VOL CUTOFF (r_rtVolMaxLights)`
+marker, so a before/after at a pop shows exactly which light crossed the line and which
+competitors pushed it. `r_rtVolMaxLights` promoted from `static` to extern (was file-local in
+vk_vol.cpp) so vk_gi.cpp can read it for the marker; its description and the shader comment were
+both corrected to stop claiming nearest-first.
+
+**Second capture 2026-08-22, same session, zig-zag hallway (three dumps a few metres apart):**
+this one caught Stage 1.5 actually firing, and it's a much bigger perturbation than the importance
+drift above. Dump 1 (`seedAreas=[42,49]`): ~65 local candidates, zero `hop=-1`. Dump 2, ~3.7s
+later in the same corridor (`seedAreas=[49]`): same ~65 local candidates *plus* `hop=-1` area 1
+(~52 lights) and area 44 (4 lights) — the candidate pool nearly doubles, purely from the view-flood
+union suddenly reaching a large hub area (area 1) that the BFS never reaches within `hops=2` in any
+of the three dumps. Dump 3, ~6.3s later: area 1 present again (area 44 now legitimately BFS-reached
+at hop=2 instead). User confirmed in-game the visible symptom is a clean **on/off at the boundary
+crossing, not per-frame flicker** — consistent with `portalArea_t::viewCount`'s binary
+frustum-through-portals test flipping once as you cross a threshold in a corridor, rather than
+noise. Zig-zag corridors are exactly where that recursive portal-clip test is most marginal
+(grazing sightlines down a passage). Area 1's burst includes lights with real importance
+(`squareishlight_snd` 0.0813, `squarelight_breakable` 0.0592) so it isn't just noise-floor padding
+— it genuinely competes for top-K slots. This is judged the dominant cause of the reported pop (the
+rank-32-drift mechanism above is real but secondary/compounding).
+**Decision: `r_rtVolMaxLights` bumped 32→64** ([vk_vol.cpp:71](../../neo/renderer/Vulkan/vk_vol.cpp))
+as the cheap, immediate mitigation — pushes the cutoff deeper into the ranked list so a ~2x
+candidate-pool swing from Stage 1.5 is less likely to evict something that was visibly
+contributing. Chosen over per-area Stage-1.5 dwell/hysteresis or a reserved Stage-1.5 sub-quota
+(both discussed, neither implemented) because it's zero-risk and sufficient as a first pass; those
+remain the follow-up if 64 still isn't enough headroom for a hub-area reveal this size.
+**64 tested in-game 2026-08-22, still some pop** — bumped again to **96** (halfway to the shader's
+hard clamp of 128, see `min(params.maxLights, giLightBuf.numLights)` in vol_march.comp) as a
+second cheap step. Flagged risk before bumping: unlike the 32→64 step, cost here isn't uniformly
+cheap — lights that fail the sphere pre-cull are nearly free, but lights actually along a visible
+march ray get a real ray-query shadow test per march step, and the Stage-1.5 hub-area-reveal
+scenario that motivates the bump is exactly the case where some of those extra candidates *are*
+on-screen/near visible rays. (Correction to a note made in-session at this point: there IS a GPU
+timer that isolates the vol march phase — `r_vkRTProfile 1/2`, see `VK_RTPROF_PHASE_VOL` in
+vk_backend.cpp, separate from `VolTemporal`/`VolBilateral`/`VolComposite`/GI. Use it before
+assuming cost, not the "we have no way to tell" claim made when 96 was picked.)
+
+**Real fix implemented same session, superseding the maxLights-bump-as-mitigation approach above:**
+re-examining the reachability math, most of Stage 1.5's area-1 burst (camera distance 600-860u)
+is provably **beyond `r_rtVolMaxDist`=512 even generously** (distance minus 1.5x sphere radius
+still exceeds 512) — those lights can never appear in the fog at all, in any frame, regardless of
+selection. They were never diluting a fair ranking; they were dead weight competing for and winning
+slots away from genuinely march-relevant nearby lights. Raising `r_rtVolMaxLights` was treating the
+symptom (not enough slots) rather than the cause (slots wasted on geometrically-impossible
+candidates). Fix: volumetrics now gets its **own dedicated light selection**, built in
+`VK_RT_UploadGILights` from the same admitted-candidate pool GI already computed (no extra
+light-gathering cost) — walks GI's own importance-ordered selection (inheriting its near/far tier
+balance and hero-light protection for free, see the distance-sort-vs-hero-light discussion above)
+and keeps only candidates whose sphere/cone can possibly reach within `r_rtVolMaxDist` of the
+camera, capped at `r_rtVolMaxLights`. Uploaded to a new `vkRT.volLightSsbo` (mirrors
+`giLightSsbo`'s layout/lifecycle) that `vol_march.comp` binding 4 now reads instead of GI's buffer
+— GI/reflections' own selection (`giLightSsbo`) is untouched, so a light legitimately useful for a
+bounce far from the camera still gets it. `r_rtGILightDump` now prints both downstream selections
+(`[final order]` = GI's, `[vol selection]` = vol's, with the skip reason implicit — reachable
+candidates make the list, others don't). Files: vk_gi.cpp (selection + SSBO create/destroy),
+vk_raytracing.h (new buffer fields), vk_vol.cpp (descriptor now points at the new buffer;
+`r_rtVolMaxDist`/`r_rtVolMaxLights` promoted from `static` to extern), vol_march.comp (comments
+only, binding is the same slot/layout). **Tested in-game 2026-08-22 — the hallway on/off pop is
+confirmed fixed.**
+
+Stage 3 not started.  Observed follow-up candidate from the dumps: lights currently off
+(`color 0 0 0`, e.g. broken/triggered fixtures) are admitted and burn candidate slots — a
+`maxChan > 0` guard in the collector would drop them per-frame safely.
 **Companion docs:** `auto_relight.md` (§0 classifier is the admission layer this feeds),
 `rt_optimization_tuning.md` (L1 stratified selection is the ranking layer this feeds).
 
@@ -165,9 +290,11 @@ exactly as today.
 hit rooms outside the BFS set (mirror showing a distant hall). Not new — the 512u
 sphere has the same hole — but the fix is cheap and id-native: the view flood
 already stamps every on-screen area (`portalArea_t::viewCount`, including through
-mirror portals). **Stage 1.5:** gather from {camera BFS set} ∪ {view-stamped
-areas}. Bounce rays don't need it (≤ giRadius=128 from visible surfaces, covered
-by hops=2 + view areas).
+mirror portals). **Stage 1.5 (✅ implemented 2026-08-19):** gather from {camera BFS
+set} ∪ {view-stamped areas}. Bounce rays don't need it (≤ giRadius=128 from visible
+surfaces, covered by hops=2 + view areas). Landed for a different motivating case
+than originally written here (stationary hop-boundary pop, not mirror sightlines)
+— same fix, same mechanism, both benefit.
 
 Harmless permissivenesses, accepted: fogged-portal closure is ignored by the
 blockingBits-only BFS (extra candidates; the fog lights themselves are
