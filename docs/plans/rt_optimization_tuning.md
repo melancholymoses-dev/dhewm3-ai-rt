@@ -294,6 +294,26 @@ for A/B). The march and the temporal EMA history both live at full/`marchScale`;
 - **Not yet measured.** Expect well under the theoretical 4× on the total: the march
   drops ~4×, but the bilateral goes up and the composite is unchanged.
 
+**Follow-up 2026-08-22 — IGN dither striping.** The march-step jitter switched from
+per-pixel `wang_hash` white noise to Interleaved Gradient Noise (Jimenez) at some point
+after the initial P8 landing, to fix volumetric beams reading as decorrelated noise
+(white noise breaks the spatial coherence a single beam needs across neighbouring
+pixels; IGN is spatially correlated within a frame, so a beam's march stays coherent).
+Traded one artifact for another: IGN is a fixed, low-discrepancy diagonal grid, and
+that same regularity is visible as diagonal striping/fringing along march edges once
+the eye locks onto the pattern. Fix: blend a small amount of the original white noise
+back into the IGN jitter (`r_rtVolWhiteNoiseMix`) — enough to break up the periodic
+grid, not enough to reintroduce the beam-decorrelation problem the switch to IGN was
+fixing in the first place. Implementation: repurposed the UBO's unused pad float at
+offset 172 (`VolParamsUBO::whiteNoiseMix`, was `_uboPad2`) — no struct size or
+descriptor change. `0` = pure IGN (original striping), `1` = pure white noise (original
+beam problem). **Tested in-game 2026-08-22: 0.25 was too strong (visible flickering,
+i.e. enough white noise to partially reintroduce the beam-decorrelation problem);
+0.025 — a full order of magnitude lower — "worked about right."** Default set to
+0.025. The gap between the initial guess and the working value suggests the effective
+range is narrow/steep near the low end; if striping reappears on a different fog
+shaft, retune in small steps from 0.025 rather than jumping back toward 0.25.
+
 ### P9. Depth-reconstruction ALU in three rgens (after G-buffer)
 
 `rt_ReconstructNormal` costs 5 depth fetches + 4 `invViewProj` matrix multiplies per

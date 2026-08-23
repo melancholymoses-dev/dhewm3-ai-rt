@@ -16,7 +16,14 @@ Descriptors (set 0):
   binding 1 — volBuf rgba16f      (output storage image)
   binding 2 — depthSampler        (reconstruct world position)
   binding 3 — VolParams UBO       (params)
-  binding 4 — GILightBuf SSBO    (pre-sorted nearest-first light list)
+  binding 4 — VolLightBuf SSBO   (vol's own light selection -- NOT GI's giLightSsbo.
+                                   Built in vk_gi.cpp from the same admitted-candidate
+                                   pool as GI, but filtered to lights that can possibly
+                                   reach within r_rtVolMaxDist of the camera before GI's
+                                   importance ranking ever runs, so a light admitted for
+                                   GI/reflections purposes that can never appear in fog
+                                   can't consume a slot here. See portal_area_lights.md
+                                   follow-up notes.)
 
 Phase 7.2 — Volumetric Lighting.
 
@@ -71,7 +78,9 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     int   marchWidth;           // offset 160, size  4  volBuf dimensions (== full/marchScale)
     int   marchHeight;          // offset 164, size  4
     int   marchScale;           // offset 168, size  4  1 = full res, 2 = half res
-    float _pad2;                // offset 172, size  4
+    // Repurposed former pad float (was _pad2, always 0) — same offset, see
+    // r_rtVolWhiteNoiseMix / the jitter blend below.
+    float whiteNoiseMix;        // offset 172, size  4  0 = pure IGN, 1 = pure white noise
 } params;
 
 struct GILight {
@@ -172,11 +181,31 @@ void main()
     vec3  marchDir = toHit / hitDist;
     float tMax     = min(hitDist, params.maxDist);
 
-    // Temporal jitter: shifts the sampling sequence within the first step.
-    // Uses the world-anchored seed helper from rt_indirect.glsl for stability.
-    uint  seed   = wang_hash(uint(coord.x) * 2053u
-                 ^ wang_hash(uint(coord.y) * 4099u + params.frameIndex * 7919u));
-    float jitter = float(wang_hash(seed)) / 4294967296.0;
+    // Spatial-coherence jitter (tried against wang_hash per-pixel noise, which
+    // decorrelates every pixel from its neighbors by design — the direct cause
+    // of volumetric beams reading as noise instead of one coherent shape, since
+    // neighboring pixels along what should be a single beam were sampling at
+    // unrelated fractional offsets along their own march).
+    //
+    // Interleaved Gradient Noise (Jimenez) instead: spatially correlated within
+    // a frame — nearby pixels get nearly the same jitter phase — but still
+    // well-distributed in aggregate. A per-frame golden-ratio rotation (same
+    // idiom as shadow_ray.rgen's phiOffset, Fix 2) varies the pattern frame to
+    // frame so the temporal EMA keeps converging instead of locking onto one
+    // static dither. Confirmed >6 samples improves shaft quality noticeably,
+    // 64 did little — consistent with decorrelation (not step count) having
+    // been the limiter.
+    //
+    // IGN's regularity is a double-edged sword: it fixed the "beams read as
+    // noise" problem, but the same fixed diagonal grid is visible as striping/
+    // fringing along march edges once the eye locks onto the pattern. Blend in
+    // a little decorrelated white noise (wang_hash, same per-pixel/per-frame
+    // seed idiom as the RT bounce shaders) to soften the grid without fully
+    // reintroducing beam decorrelation — r_rtVolWhiteNoiseMix controls how much.
+    float ign   = fract(52.9829189 * fract(dot(vec2(coord), vec2(0.06711056, 0.00583715))));
+    float white = randFloat(wang_hash(uint(coord.x) * 1973u ^ wang_hash(uint(coord.y) * 9277u) ^
+                                       wang_hash(params.frameIndex * 26699u)));
+    float jitter = fract(mix(ign, white, params.whiteNoiseMix) + float(params.frameIndex) * 0.6180339887);
 
     int   numSteps = max(1, params.numSamples);
     float logFac   = log(tMax + 1.0);
@@ -206,9 +235,10 @@ void main()
 
         vec3 stepPos = cameraPos + marchDir * stepT;
 
-        // Evaluate each of the nearest lights at this step position.
-        // The GI light list is pre-sorted nearest-first so the first maxLights
-        // entries are always the closest, giving the strongest contributions.
+        // Evaluate up to `maxLights` entries of vol's own light selection (binding 4)
+        // at this step position -- already pre-filtered CPU-side to lights that can
+        // possibly reach within r_rtVolMaxDist of the camera and importance-ordered,
+        // see portal_area_lights.md follow-up notes.
         for (int li = 0; li < maxLights; li++)
         {
             vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
