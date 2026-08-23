@@ -16,9 +16,9 @@ Stage-1.5-admitted-but-march-unreachable lights could evict genuinely nearby one
 volumetrics now has its own dedicated, distance-filtered light selection (separate SSBO), see
 the "Real fix implemented" entry near the end of this doc. `r_rtVolMaxLights` bumped 32→96 along
 the way as an interim mitigation before the real fix landed; harmless to leave, mostly redundant
-now. **Validated in-game 2026-08-22 — confirmed fixed** (user: "vol done"). Portal-area gathering
-(Stages 1/1.5/1.75) + the dedicated vol selection are considered closed; Stage 3 (per-room
-pin/ban curation sidecar) not started, not currently blocking anything.
+now. **Validated in-game 2026-08-22 — confirmed fixed** (user: "vol done"). **Doc done** —
+portal-area gathering (Stages 1/1.5/1.75) + the dedicated vol selection are complete. Stage 3
+(per-room pin/ban curation sidecar) was never started and is not carried forward as open work.
 **Stage 1.5 implemented 2026-08-19** (vk_gi.cpp: unions in every `portalArea_t` id's own
 view-frustum flood stamped visible this frame — `viewCount == tr.viewCount` — with the BFS
 set; zero new cost, reuses the flood the standard renderer already runs. Motivated by a
