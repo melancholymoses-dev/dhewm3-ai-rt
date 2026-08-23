@@ -63,11 +63,33 @@ static idCVar r_rtVolUpsampleDepthSigma(
 static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
                              "Ray-march steps per pixel (safe default: 8; high-end: 16)");
 
-static idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT,
-                             "Max ray-march distance in world units");
+// Interleaved Gradient Noise (see the jitter comment in vol_march.comp) is a fixed,
+// low-discrepancy diagonal pattern — spatially coherent by design, which is exactly
+// what fixed the original "volumetric beams read as noise" problem, but that same
+// regularity reads as visible diagonal striping/fringing along march edges once the
+// eye locks onto the grid. Blending in a little decorrelated white noise (wang_hash,
+// same per-pixel/per-frame seed idiom used elsewhere in the RT shaders) breaks up the
+// periodic pattern without fully reintroducing the beam-decorrelation problem, as
+// long as the mix stays small. 0 = pure IGN (original striping), 1 = pure white noise
+// (original beam-decorrelation problem) — default is a soften, not a replacement.
+static idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
+                                   "Fraction of white noise blended into the IGN march-step jitter to soften visible "
+                                   "dither stripes/fringes (0 = pure IGN, 1 = pure white noise). See vol_march.comp.");
 
-static idCVar r_rtVolMaxLights("r_rtVolMaxLights", "32", CVAR_RENDERER | CVAR_INTEGER,
-                               "Nearest lights evaluated per step (pre-sorted, always closest)");
+// NOT static: vk_gi.cpp's vol-specific selection pass (VK_RT_UploadGILights)
+// externs this to decide which GI candidates can possibly be marched at all,
+// before they ever compete for a vol light slot. See portal_area_lights.md
+// follow-up notes.
+idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT, "Max ray-march distance in world units");
+
+// NOT static: vk_gi.cpp externs this — it's the max entry count of the
+// dedicated, vol-only light selection (VolLightBuf, separate from GILightBuf)
+// built each frame from the same admitted-candidate pool as GI, filtered to
+// lights whose sphere/cone can possibly reach within r_rtVolMaxDist of the
+// camera, then importance-ordered. See portal_area_lights.md follow-up notes.
+idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
+                        "Max lights in the dedicated volumetric light selection (separate from "
+                        "GI's own light buffer/cap).");
 
 static idCVar r_rtVolDensity("r_rtVolDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
@@ -153,10 +175,12 @@ struct VolParamsUBO
     // --- P8: half-res march ---
     // screenWidth/Height above stay FULL res (depth fetch + NDC reconstruction);
     // these describe the volBuf the march actually writes.
-    int32_t marchWidth;         // 160
-    int32_t marchHeight;        // 164
-    int32_t marchScale;         // 168  1 = full res, 2 = half res
-    float _uboPad2;             // 172
+    int32_t marchWidth;  // 160
+    int32_t marchHeight; // 164
+    int32_t marchScale;  // 168  1 = full res, 2 = half res
+    // Repurposed former pad float (was _uboPad2, always 0) — same offset, no size
+    // change, no descriptor/assert change needed. See r_rtVolWhiteNoiseMix.
+    float whiteNoiseMix; // 172
 };
 static_assert(sizeof(VolParamsUBO) == 176, "VolParamsUBO size mismatch");
 
@@ -370,7 +394,8 @@ static void VK_RT_DestroyVolImages(void)
 //   binding 1: STORAGE_IMAGE              (volBuf write)
 //   binding 2: COMBINED_IMAGE_SAMPLER     (depth)
 //   binding 3: UNIFORM_BUFFER_DYNAMIC     (VolParamsUBO)
-//   binding 4: STORAGE_BUFFER             (GILightBuf SSBO)
+//   binding 4: STORAGE_BUFFER             (VolLightBuf SSBO -- vol's own selection,
+//                                           NOT vkRT.giLightSsbo, see vk_raytracing.h)
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitVolMarchPipeline(void)
@@ -585,15 +610,16 @@ static void VK_RT_InitVolCompositePipeline(void)
     colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
-    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
-    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
-    // filler so the subpass's per-attachment blend-state count always matches.
-    VkPipelineColorBlendAttachmentState blendAttachments[2] = {colorBlend, {}};
+    // Attachments 1-2 (gbufNormal, gbufAlbedo) are written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
+    // fillers so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState blendAttachments[3] = {colorBlend, {}, {}};
     VK_FillSecondBlendAttachment(&blendAttachments[1]);
+    VK_FillSecondBlendAttachment(&blendAttachments[2]);
 
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    blendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
     blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -1380,7 +1406,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         depthToRead.image = vk.depthImage;
         depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
     }
 
@@ -1484,8 +1511,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthRestore.image = vk.depthImage;
         depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
-                             NULL, 0, NULL, 1, &depthRestore);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                             0, NULL, 0, NULL, 1, &depthRestore);
     }
 
     // Composite now reads the filtered, full-res result.
@@ -1748,7 +1775,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.marchWidth = (int32_t)vb.width;
     ubo.marchHeight = (int32_t)vb.height;
     ubo.marchScale = s_volMarchScale;
-    ubo._uboPad2 = 0.0f;
+    ubo.whiteNoiseMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
 
     memcpy(uboMapped, &ubo, sizeof(VolParamsUBO));
 
@@ -1784,8 +1811,13 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
         uboInfo.offset = 0;
         uboInfo.range = sizeof(VolParamsUBO);
 
+        // Dedicated vol light selection (portal_area_lights.md follow-up, 2026-08-22) —
+        // NOT giLightSsbo. Same buffer layout, but filtered to lights that can
+        // possibly reach within r_rtVolMaxDist of the camera, built in vk_gi.cpp's
+        // VK_RT_UploadGILights so a GI-relevant-but-vol-unreachable light can't
+        // evict a genuinely marchable one from vol's much smaller slot budget.
         VkDescriptorBufferInfo lightSsboInfo = {};
-        lightSsboInfo.buffer = vkRT.giLightSsbo[frameIdx];
+        lightSsboInfo.buffer = vkRT.volLightSsbo[frameIdx];
         lightSsboInfo.offset = 0;
         lightSsboInfo.range = VK_WHOLE_SIZE;
 

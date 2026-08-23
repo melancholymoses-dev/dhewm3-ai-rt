@@ -137,7 +137,7 @@ static idCVar r_rtShadowDebugMode(
     "visualize RT shadow pass internals in the shadow mask: "
     "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
     "3=dot(biasDir,lightDir) mapped 0..1; "
-    "4=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
+    "5=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
     "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
     "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
     "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "

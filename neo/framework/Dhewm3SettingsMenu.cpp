@@ -2608,6 +2608,7 @@ static void DrawRTOptionsMenu()
     RTCheckbox("RT Ambient Occlusion", rtCVars.rtAO);
     RTCheckbox("RT Reflections", rtCVars.rtReflections);
     RTCheckbox("RT Global Illumination", rtCVars.rtGI);
+    RTCheckbox("RT Volumetric Lighting", rtCVars.rtVol);
     RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
     RTCheckbox("Show player shadow and reflections", rtCVars.showplayershadow);
     // ---- Shadow settings -----------------------------------------------------
@@ -2657,10 +2658,10 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(!reflOn);
     ImGui::SeparatorText("Reflection Settings");
 
-    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 12000.0f, "%.0f");
+    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
     RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
     RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
-    RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 8.0f, "%.2f");
+    RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
     ImGui::EndDisabled(); // !reflOn
 
     // ---- GI settings ---------------------------------------------------------
@@ -2683,7 +2684,7 @@ static void DrawRTOptionsMenu()
         ImGui::TextDisabled("Contrast/Scale");
 
         RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
-        RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 5.0f);
+        RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 3.0f);
         RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
         RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
         RTSliderInt("GI Stochastic Lights (0=all lights)", rtCVars.rtGIStochasticLights, 0, 2);
@@ -2710,7 +2711,7 @@ static void DrawRTOptionsMenu()
 
     ImGui::Spacing();
     ImGui::SeparatorText("GI Volumetric Lighting");
-    RTCheckbox("Enable Volumetric Lighting", rtCVars.rtVol);
+
     const bool volOn = rtCVars.rtVol && rtCVars.rtVol->GetBool();
     ImGui::BeginDisabled(!volOn);
 
@@ -2719,7 +2720,7 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-        RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 16);
+        RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 64);
         RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 64);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);

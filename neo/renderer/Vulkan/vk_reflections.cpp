@@ -40,8 +40,8 @@ of the original Doom 3 GPL Source Code release.
 
 // r_rtReflections declared in RenderSystem_init.cpp
 
-static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "10000.0", CVAR_RENDERER | CVAR_FLOAT,
-                                     "Max reflection ray travel distance in world units (default 10000.0)");
+static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2500.0", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Max reflection ray travel distance in world units (default 2500.0)");
 
 static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection radiance, applied in reflect_ray.rgen.\n"
@@ -50,22 +50,23 @@ static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.0", CVAR_RENDERER | 
                                   "over-brightness bug, which the single-pass composite no longer has.\n"
                                   "Decrease further if reflections still look overbright.");
 
-idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Scale factor applied after the power-curve remap of specular-map luminance to F0.\n"
                        "Reduces how much even bright specular texels contribute to reflections.\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3 to see the resulting F0/Fresnel mask.");
 
-idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "2.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Power exponent for remapping raw specular-map luminance to physically plausible F0.\n"
                        "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3.");
 
-idCVar r_rtSpecGrazingMax("r_rtSpecGrazingMax", "0.35", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                          "Clamp on the grazing-angle Fresnel lobe for low-F0 (rough) surfaces, applied in\n"
-                          "reflect_ray.rgen (Step 8). Real mirror-like grazing Fresnel (approaching 1.0 at\n"
-                          "NdotV~0) assumes a perfectly smooth surface; rough surfaces never reach it because of\n"
-                          "shadowing/masking this single-F0 approximation doesn't otherwise capture. Surfaces at\n"
-                          "F0 >= ~0.7 (true metal) are unaffected — the clamp only pulls in low-F0 grazing highlights.");
+idCVar r_rtSpecGrazingMax(
+    "r_rtSpecGrazingMax", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+    "Clamp on the grazing-angle Fresnel lobe for low-F0 (rough) surfaces, applied in\n"
+    "reflect_ray.rgen (Step 8). Real mirror-like grazing Fresnel (approaching 1.0 at\n"
+    "NdotV~0) assumes a perfectly smooth surface; rough surfaces never reach it because of\n"
+    "shadowing/masking this single-F0 approximation doesn't otherwise capture. Surfaces at\n"
+    "F0 >= ~0.7 (true metal) are unaffected — the clamp only pulls in low-F0 grazing highlights.");
 
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -251,8 +252,8 @@ static void VK_RT_CreateNullGbufNormal(void)
         toShaderRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         toShaderRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0,
-                             0, NULL, 0, NULL, 1, &toShaderRead);
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0,
+                             NULL, 0, NULL, 1, &toShaderRead);
 
         vkEndCommandBuffer(tmpCmd);
 
@@ -609,7 +610,8 @@ static void VK_RT_InitReflPipeline(void)
     //     + sbtHitOffset 1 → hit slot 3 → Group 7: player glass probe hit (never fires — mask 0xFE excludes player)
     //
     // SBT memory layout:
-    //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=shadow_miss  [4]=world_main  [5]=world_probe  [6]=player_main  [7]=player_probe
+    //   [0]=rgen  [1]=main_miss  [2]=probe_miss  [3]=shadow_miss  [4]=world_main  [5]=world_probe  [6]=player_main
+    //   [7]=player_probe
     // reflRgenRegion → [0] reflMissRegion → [1..3] reflHitRegion → [4..7]
     VkRayTracingShaderGroupCreateInfoKHR groups[8] = {};
 
@@ -728,7 +730,8 @@ static void VK_RT_InitReflPipeline(void)
     auto alignUp = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    // Layout: [0]=rgen [1]=main_miss [2]=probe_miss [3]=shadow_miss [4]=world_main [5]=world_probe [6]=player_main [7]=player_probe
+    // Layout: [0]=rgen [1]=main_miss [2]=probe_miss [3]=shadow_miss [4]=world_main [5]=world_probe [6]=player_main
+    // [7]=player_probe
     uint32_t sbtSize = 8 * stride;
 
     VK_CreateBuffer(sbtSize,
@@ -958,8 +961,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p gbuf=%s\n", tr.frameCount,
-                       frameIdx, rb.width, rb.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.reflPipeline,
+        common->Printf("VK RT Refl: frame=%d slot=%d size=%ux%u tlas=%p pipeline=%p gbuf=%s\n", tr.frameCount, frameIdx,
+                       rb.width, rb.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.reflPipeline,
                        (vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE) ? "on" : "off");
 
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
@@ -1035,11 +1038,10 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : s_nullGbufView;
 
-    const bool reflResourceChanged = (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
-                                     (s_lastReflStorageView[frameIdx] != rb.view) ||
-                                     (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
-                                     (s_lastReflLightSsbo[frameIdx] != lightSsbo) ||
-                                     (s_lastReflGbufView[frameIdx] != gbufView);
+    const bool reflResourceChanged =
+        (s_lastReflTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
+        (s_lastReflStorageView[frameIdx] != rb.view) || (s_lastReflDepthView[frameIdx] != vk.depthSampledView) ||
+        (s_lastReflLightSsbo[frameIdx] != lightSsbo) || (s_lastReflGbufView[frameIdx] != gbufView);
 
     if (reflResourceChanged && vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
@@ -1307,15 +1309,16 @@ static void VK_RT_InitReflCompositePipeline(void)
     addBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     addBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
-    // Second attachment (gbufNormal, Stage 3.5) is written only by the G-buffer
-    // prepass; every other pipeline on vk.hdrRenderPass supplies a write-mask-0
-    // filler so the subpass's per-attachment blend-state count always matches.
-    VkPipelineColorBlendAttachmentState addAttachments[2] = {addBlend, {}};
+    // Attachments 1-2 (gbufNormal, gbufAlbedo) are written only by the G-buffer
+    // prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
+    // fillers so the subpass's per-attachment blend-state count always matches.
+    VkPipelineColorBlendAttachmentState addAttachments[3] = {addBlend, {}, {}};
     VK_FillSecondBlendAttachment(&addAttachments[1]);
+    VK_FillSecondBlendAttachment(&addAttachments[2]);
 
     VkPipelineColorBlendStateCreateInfo addBlendState = {};
     addBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    addBlendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    addBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
     addBlendState.pAttachments = addAttachments;
     pipelineInfo.pColorBlendState = &addBlendState;
 
@@ -1329,12 +1332,13 @@ static void VK_RT_InitReflCompositePipeline(void)
     replaceBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
-    VkPipelineColorBlendAttachmentState replaceAttachments[2] = {replaceBlend, {}};
+    VkPipelineColorBlendAttachmentState replaceAttachments[3] = {replaceBlend, {}, {}};
     VK_FillSecondBlendAttachment(&replaceAttachments[1]);
+    VK_FillSecondBlendAttachment(&replaceAttachments[2]);
 
     VkPipelineColorBlendStateCreateInfo replaceBlendState = {};
     replaceBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    replaceBlendState.attachmentCount = vk.gbufferSupported ? 2 : 1;
+    replaceBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
     replaceBlendState.pAttachments = replaceAttachments;
     pipelineInfo.pColorBlendState = &replaceBlendState;
 

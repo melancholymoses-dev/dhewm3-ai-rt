@@ -1,0 +1,70 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_albedo_mod.comp — GI receiver-albedo modulation.
+
+Multiplies the denoised GI buffer (post temporal + à-trous) by the receiving
+surface's albedo, sampled from the gbufAlbedo G-buffer target written by the
+depth prepass (gbuffer.frag / gbuffer_clip.frag). Without this, the GI
+composite adds raw bounced radiance directly onto every surface regardless of
+how much of it that surface would actually reflect — a near-black material
+gets the same GI wash as a white one. See docs/plans/gi_albedo_target.md.
+
+Runs once, after the à-trous filter (or straight after temporal resolve if
+à-trous is disabled) and before the interaction render pass composites GI
+onto the framebuffer. Not in-place: the source is read-only (checkerboard
+history / à-trous ping-pong state), so the result is written to a separate
+scratch image and vk_gi.cpp repoints giReadView at it.
+
+Inputs  (set 0, binding 0) : denoised GI buffer  (COMBINED_IMAGE_SAMPLER)
+Inputs  (set 0, binding 1) : gbufAlbedo          (COMBINED_IMAGE_SAMPLER)
+Output  (set 0, binding 2) : destination image   (rgba16f STORAGE_IMAGE)
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D giSrc;
+layout(set = 0, binding = 1) uniform sampler2D albedoSampler;
+layout(set = 0, binding = 2, rgba16f) uniform image2D giDst;
+
+layout(push_constant) uniform PC {
+    int screenWidth;
+    int screenHeight;
+    int scissorOffsetX;
+    int scissorOffsetY;
+    int scissorExtentX;
+    int scissorExtentY;
+} pc;
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 ext   = ivec2(pc.scissorExtentX, pc.scissorExtentY);
+
+    if (local.x >= ext.x || local.y >= ext.y)
+        return;
+
+    ivec2 coord = local + ivec2(pc.scissorOffsetX, pc.scissorOffsetY);
+    ivec2 size  = ivec2(pc.screenWidth, pc.screenHeight);
+
+    if (coord.x < 0 || coord.y < 0 || coord.x >= size.x || coord.y >= size.y)
+        return;
+
+    vec3 gi     = texelFetch(giSrc, coord, 0).rgb;
+    // gbufAlbedo is cleared to white (vk_backend.cpp) for pixels the prepass never
+    // wrote (sky, translucents) — a plain texelFetch there returns 1.0, so those
+    // pixels pass GI through unmodulated instead of being killed to black.
+    vec3 albedo = texelFetch(albedoSampler, coord, 0).rgb;
+
+    imageStore(giDst, coord, vec4(gi * albedo, 1.0));
+}
