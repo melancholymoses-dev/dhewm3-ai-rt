@@ -17,7 +17,7 @@ feature itself is finished and validated. Any further `r_rtGIBounceScale`/
 `r_rtGIStrength` retune should happen after tonemapping settles, to avoid the two
 chasing each other, but that's normal tuning, not a gap in this doc's deliverable.
 **Extends:** `completed/gbuffer_normal_pass.md` (the G-buffer contract this adds a
-target to). **Companion docs:** `auto_relight.md` (whose §0/AREA validation surfaced
+target to). **Companion docs:** `auto_relight.md` (whose AR0/AREA validation surfaced
 the bug), ROADMAP pillar 2 ("darkness stays black") — which this fix directly serves.
 
 ---

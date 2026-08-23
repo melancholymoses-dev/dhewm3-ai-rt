@@ -135,7 +135,7 @@ confirmed fixed.**
 Stage 3 not started.  Observed follow-up candidate from the dumps: lights currently off
 (`color 0 0 0`, e.g. broken/triggered fixtures) are admitted and burn candidate slots — a
 `maxChan > 0` guard in the collector would drop them per-frame safely.
-**Companion docs:** `auto_relight.md` (§0 classifier is the admission layer this feeds),
+**Companion docs:** `auto_relight.md` (AR0 classifier is the admission layer this feeds),
 `rt_optimization_tuning.md` (L1 stratified selection is the ranking layer this feeds).
 
 ---
@@ -209,7 +209,7 @@ with:
    (CPU-local int array indexed by lightDef index — NOT tr.frameCount-keyed
    GPU state; see feedback_per_slot_counters)
 4. Each unique light then flows through the EXISTING pipeline unchanged:
-   VK_RT_ClassifyLight admission (§0) → saturation-weighted importance →
+   VK_RT_ClassifyLight admission (AR0) → saturation-weighted importance →
    L1 tier/quota/hysteresis selection → upload
 ```
 
@@ -349,7 +349,7 @@ is currently impossible. Follow-up candidates (NOT Stage 1 scope):
 
 ## Interactions with the existing stack
 
-- **§0 classifier** (`vk_light_classify.cpp`): unchanged, still the admission
+- **AR0 classifier** (`vk_light_classify.cpp`): unchanged, still the admission
   gate. Fog/blend lights have area refs too — classification rejects them after
   gathering, exactly as today.
 - **L1 stratified tiers**: unchanged. Tiering by distance *within* a

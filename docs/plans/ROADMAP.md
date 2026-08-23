@@ -96,17 +96,17 @@ Wave 4 — Structural perf                          [rt_optimization_tuning.md]
           problem IGN was originally added to fix. Tested in-game, working.
 
 Wave 5 — Auto-relight                             [auto_relight.md]
-  §0   shared light classifier (REAL/ACCENT/AMBIENT_FILL/FOG_BLEND) + layered GI/vol
+  AR0   shared light classifier (REAL/ACCENT/AMBIENT_FILL/FOG_BLEND) + layered GI/vol
        admission + saturation-weighted importance + r_rtGILightDump.  Lands FIRST —
        no dependency on synthesis; fixes the live "uniform white GI lift" bug (the
        GI/vol collector filters entity noShadows only, so ambient washes are IN and
-       colored accents are OUT — inverted from intent; see auto_relight.md §0).
+       colored accents are OUT — inverted from intent; see auto_relight.md AR0).
        ✅ implemented 2026-08-15; validated in-game 2026-08-15/16 via dump.
   AREA portal-area light gathering        [DONE — completed/portal_area_lights.md]
        Replace the camera-sphere light cull with a walk of id's live per-area
        lightRefs (BFS over portals, door-aware).  Fixes "big room goes dark" and
        through-wall slot waste observed 2026-08-16; Stage 3 adds the per-room
-       pin/ban curation sidecar.  Independent of synthesis; feeds §0 + L1 unchanged.
+       pin/ban curation sidecar.  Independent of synthesis; feeds AR0 + L1 unchanged.
        ✅ Stage 1 implemented 2026-08-16; doorway validation passed in-game
           (closed door blocks far room's lights, open admits them).
        ✅ Stage 1.5 implemented 2026-08-19 (view-flood union — fixes stationary
@@ -141,7 +141,7 @@ Wave 5 — Auto-relight                             [auto_relight.md]
        gbufAlbedo target in the G-buffer prepass + a gi_albedo_mod.comp pass
        (post à-trous) multiplying denoised GI by it before composite.
        Fixes the "noticeable GI looks worse" wash (bodies underlit yellow,
-       2026-08-16) — serves pillar 2 directly.  Do BEFORE §1-5: synthesized
+       2026-08-16) — serves pillar 2 directly.  Do BEFORE AR1-5: synthesized
        panel lights would otherwise amplify the wash, and GI constants retune
        after this lands anyway.
        ✅ implemented 2026-08-16, **validated in-game 2026-08-22** (bodies/corpses
@@ -152,10 +152,10 @@ Wave 5 — Auto-relight                             [auto_relight.md]
           lifted — but that's tracked as tonemapping tuning
           (`completed/tonemapping.md`/`tonemapping2.md`), not as open ALB scope;
           the receiver-albedo modulation feature itself is finished.
-  §1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
-       AddLightDef), §6 noShadows unlock rule, §7 weapon/projectile def patches.
+  AR1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
+       AddLightDef), AR6 noShadows unlock rule, AR7 weapon/projectile def patches.
   Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
-  (§1-5 can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
+  (AR1-5 can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
 
 Wave 6 — Tuning pass                              [rt_optimization_tuning.md T3-T6]
   T3 per-material F0 (mirrors ~0.9)  ·  T4 RT-vs-raster falloff match
@@ -173,7 +173,7 @@ prerequisite tech for any future outdoor-heavy game (Quake 4 ambitions).
 |---|---|---|
 | Bloom post-process | `bloom_plan.md` | Unimplemented; revisit after Wave 6 — tonemapped HDR pipeline it needs now exists |
 | First-person player body | `see_first_person_player_model.md` | Orthogonal to lighting arc |
-| Projectiles in reflections | `completed/reflection_enhancements.md` §3 | Sprite attempt was reverted (f37f071b); needs a new approach |
+| Projectiles in reflections | `completed/reflection_enhancements.md` AR3 | Sprite attempt was reverted (f37f071b); needs a new approach |
 | Translucent square borders over reflections | `completed/reflection_enhancements.md` (last section) | Polish |
 | Roughness-blurred reflections | — | Explicitly out of scope until G-buffer + composite prove out; interim is T2's grazing clamp + F0 gating |
 | Runtime emissive-state lights (scripted screens turning off) | `auto_relight.md` limitations | v2 of auto-relight |
@@ -189,5 +189,5 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 | 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
 | 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
 | 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
-| 5 | §0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering Stage 1 implemented + doorway validation passed in-game (2026-08-16); Stage 1.5 + 1.75 implemented 2026-08-19, **in-game dump validation 2026-08-22** — 1.75 confirmed working as designed, 1.5 confirmed firing at a zig-zag corridor and identified (not itself, but via shared-buffer slot competition) as the cause of a reported volumetric on/off pop; Stage 2 built then reverted (blocked on GI/Vol temporal cut-detection bug, superseded by Stage 1.5); Stage 3 not started, not blocking; **volumetrics given its own dedicated distance-filtered light selection 2026-08-22** (fixes the pop's actual mechanism — separate SSBO, GI's own selection untouched), **validated in-game 2026-08-22 — pop confirmed fixed**; **IGN dither striping fixed + tested in-game 2026-08-22** (`r_rtVolWhiteNoiseMix`, tuned to 0.025); GI albedo modulation implemented 2026-08-16, **partially validated 2026-08-22** — corpses/bodies confirmed reading correctly (was the original motivating bug), but surfaced a new open item: volumetric contribution is raising overall scene luminance and lifting blacks, tonemapping being retuned to compensate (pillar 2 compliance not yet fully confirmed — see ALB row above); `r_rtGIAutoDirectScale` added 2026-08-19 (GI/direct-light scale coupling, tuning UX); GI/Vol temporal camera-cut detection reverted to the original raw-matrix-diff metric (still likely false-positives on ordinary camera motion — unfixed); §1-7 not started, **in scope for this release per 2026-08-22 direction (finish all current plans, nothing deferred)** | auto-relight working tree | no |
+| 5 | AR0 implemented + validated in-game via r_rtGILightDump (2026-08-15/16); GI contrast formula fixed (gi_ray.rgen, energy-neutral extrapolation); portal-area gathering Stage 1 implemented + doorway validation passed in-game (2026-08-16); Stage 1.5 + 1.75 implemented 2026-08-19, **in-game dump validation 2026-08-22** — 1.75 confirmed working as designed, 1.5 confirmed firing at a zig-zag corridor and identified (not itself, but via shared-buffer slot competition) as the cause of a reported volumetric on/off pop; Stage 2 built then reverted (blocked on GI/Vol temporal cut-detection bug, superseded by Stage 1.5); Stage 3 not started, not blocking; **volumetrics given its own dedicated distance-filtered light selection 2026-08-22** (fixes the pop's actual mechanism — separate SSBO, GI's own selection untouched), **validated in-game 2026-08-22 — pop confirmed fixed**; **IGN dither striping fixed + tested in-game 2026-08-22** (`r_rtVolWhiteNoiseMix`, tuned to 0.025); GI albedo modulation implemented 2026-08-16, **partially validated 2026-08-22** — corpses/bodies confirmed reading correctly (was the original motivating bug), but surfaced a new open item: volumetric contribution is raising overall scene luminance and lifting blacks, tonemapping being retuned to compensate (pillar 2 compliance not yet fully confirmed — see ALB row above); `r_rtGIAutoDirectScale` added 2026-08-19 (GI/direct-light scale coupling, tuning UX); GI/Vol temporal camera-cut detection reverted to the original raw-matrix-diff metric (still likely false-positives on ordinary camera motion — unfixed); AR1-7 not started, **in scope for this release per 2026-08-22 direction (finish all current plans, nothing deferred)** | auto-relight working tree | no |
 | 6 | not started | | |
