@@ -121,6 +121,14 @@ static idCVar r_rtGIAreaHops("r_rtGIAreaHops", "2", CVAR_RENDERER | CVAR_INTEGER
                              "portal_area_lights.md: BFS portal-hop depth from the camera's area. "
                              "2 = current room, neighbours, neighbours-of-neighbours");
 
+static idCVar r_rtGIAreaBoundsEpsilon(
+    "r_rtGIAreaBoundsEpsilon", "24", CVAR_RENDERER | CVAR_FLOAT,
+    "portal_area_lights.md Stage 1.75: BFS seeds from every portal area overlapping a "
+    "+/-N unit box around the camera (world->BoundsInAreas), not just the single "
+    "PointInArea(camera) classification. Fixes hop-count popping when straddling an area "
+    "boundary plane (e.g. standing in a doorway/threshold) — a hard point classification "
+    "flips the ENTIRE hop numbering for every light on a sub-unit step. 0 = old single-area seed");
+
 static idCVar r_rtGIMaxLightDist(
     "r_rtGIMaxLightDist", "2048", CVAR_RENDERER | CVAR_FLOAT,
     "portal_area_lights.md: absolute light distance safety cap within BFS-visited areas — guards "
@@ -138,12 +146,11 @@ static idCVar r_rtGILightDump("r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
                               "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
                               "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
 
-static idCVar r_rtGIAlbedo(
-    "r_rtGIAlbedo", "1", CVAR_RENDERER | CVAR_BOOL,
-    "docs/plans/gi_albedo_target.md: multiply denoised GI by the receiving surface's "
-    "albedo (gbufAlbedo G-buffer target) before composite. 0 = legacy raw-radiance "
-    "add (A/B) — dark/black materials get the same GI wash as white ones. "
-    "No-op when vk.gbufferSupported is false");
+static idCVar r_rtGIAlbedo("r_rtGIAlbedo", "1", CVAR_RENDERER | CVAR_BOOL,
+                           "docs/plans/gi_albedo_target.md: multiply denoised GI by the receiving surface's "
+                           "albedo (gbufAlbedo G-buffer target) before composite. 0 = legacy raw-radiance "
+                           "add (A/B) — dark/black materials get the same GI wash as white ones. "
+                           "No-op when vk.gbufferSupported is false");
 
 static idCVar r_rtGICheckerboard(
     "r_rtGICheckerboard", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -250,7 +257,9 @@ extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
-extern idCVar r_rtGbufNormals; // P9 — defined in vk_gbuffer.cpp
+extern idCVar r_rtGbufNormals;  // P9 — defined in vk_gbuffer.cpp
+extern idCVar r_rtVolMaxLights; // defined in vk_vol.cpp — cap for the vol-only selection built below
+extern idCVar r_rtVolMaxDist;   // defined in vk_vol.cpp — vol march reach, used to filter that selection
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
@@ -269,6 +278,13 @@ static void VK_RT_CreateGILightSsbos(void)
         VK_CHECK(vkMapMemory(vk.device, vkRT.giLightSsboMemory[i], 0, bufSize, 0, &vkRT.giLightSsboMapped[i]));
         // Zero out so numLights=0 by default (Option A fallback until first dispatch).
         memset(vkRT.giLightSsboMapped[i], 0, bufSize);
+
+        // Dedicated vol selection buffer — same layout/size, filled separately below.
+        VK_CreateBuffer(bufSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &vkRT.volLightSsbo[i], &vkRT.volLightSsboMemory[i]);
+        VK_CHECK(vkMapMemory(vk.device, vkRT.volLightSsboMemory[i], 0, bufSize, 0, &vkRT.volLightSsboMapped[i]));
+        memset(vkRT.volLightSsboMapped[i], 0, bufSize);
     }
 }
 
@@ -290,6 +306,22 @@ static void VK_RT_DestroyGILightSsbos(void)
         {
             vkFreeMemory(vk.device, vkRT.giLightSsboMemory[i], NULL);
             vkRT.giLightSsboMemory[i] = VK_NULL_HANDLE;
+        }
+
+        if (vkRT.volLightSsboMapped[i] != NULL)
+        {
+            vkUnmapMemory(vk.device, vkRT.volLightSsboMemory[i]);
+            vkRT.volLightSsboMapped[i] = NULL;
+        }
+        if (vkRT.volLightSsbo[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, vkRT.volLightSsbo[i], NULL);
+            vkRT.volLightSsbo[i] = VK_NULL_HANDLE;
+        }
+        if (vkRT.volLightSsboMemory[i] != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, vkRT.volLightSsboMemory[i], NULL);
+            vkRT.volLightSsboMemory[i] = VK_NULL_HANDLE;
         }
     }
 }
@@ -1127,8 +1159,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     if (dumpLights)
     {
         if (useAreaWalk)
-            common->Printf("VK RT GI light dump (area walk: startArea=%d hops=%d maxDist=%.1f):\n", viewDef->areaNum,
-                           areaHops, maxLightDist);
+            common->Printf("VK RT GI light dump (area walk: startArea=%d hops=%d maxDist=%.1f, "
+                           "+ Stage 1.5 view-flood union + Stage 1.75 boundary-fuzz seed):\n",
+                           viewDef->areaNum, areaHops, maxLightDist);
         else
             common->Printf("VK RT GI light dump (camera sphere: collectRadius=%.1f):\n", lightCollectRadius);
     }
@@ -1136,7 +1169,10 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     const float whiteWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtGIWhiteWeight.GetFloat());
 
     // Per-light admission + candidate build, shared by both gather paths.
-    // gatherArea/gatherHop are BFS provenance for the dump (-1 on the sphere path).
+    // gatherArea/gatherHop are provenance for the dump: hop>=0 means BFS at that
+    // depth; hop==-1 with gatherArea>=0 means Stage 1.5 (reached via the view-flood
+    // union, not the BFS — on screen but outside hop range); gatherArea==-1 (always
+    // paired with hop==-1) means the sphere fallback path.
     const auto considerLight = [&](int li, const idRenderLightLocal *lightLocal, int gatherArea, int gatherHop) {
         const renderLight_t &p = lightLocal->parms;
 
@@ -1185,8 +1221,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             common->Printf("  %-28s cls=%-12s noShadows=%d radius=%6.1f dist=%6.1f area=%d hop=%d "
                            "color=(%.2f %.2f %.2f) sat=%.2f imp=%.4f->%.4f -> %s\n",
                            lightLocal->lightShader ? lightLocal->lightShader->GetName() : "<null>",
-                           VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq),
-                           gatherArea, gatherHop, r, g, b, sat, baseImportanceDbg, baseImportanceDbg * satWeight,
+                           VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), gatherArea,
+                           gatherHop, r, g, b, sat, baseImportanceDbg, baseImportanceDbg * satWeight,
                            admitted ? "ADMIT" : "REJECT");
         }
 
@@ -1256,7 +1292,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
     };
 
-    int areasVisited = 0; // area-walk breadcrumb for the summary log below
+    int areasVisited = 0;   // area-walk breadcrumb for the summary log below
+    int viewStampAreas = 0; // Stage 1.5 breadcrumb: areas added by the view-flood union, not the BFS
     if (useAreaWalk)
     {
         // BFS the portal graph from the camera's area, gathering each visited
@@ -1275,10 +1312,48 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         static areaHop_t s_bfsQueue[kMaxGatherAreas];
         int head = 0, tail = 0;
 
-        s_areaVisitStamp[viewDef->areaNum] = s_gatherStamp;
-        s_bfsQueue[tail].area = viewDef->areaNum;
-        s_bfsQueue[tail].hop = 0;
-        tail++;
+        // Stage 1.75 (portal_area_lights.md): seed the BFS from every area
+        // touching a small box around the camera, not just the single
+        // PointInArea(camera) classification. PointInArea is a hard plane
+        // test — standing in a doorway/threshold, a sub-unit step can flip
+        // which side you're classified on, which flips the hop number of
+        // EVERY light in both rooms (hop=0 <-> hop=1, etc.) even though nothing
+        // visible changed. Seeding both areas at hop=0 removes the flip.
+        const float boundsEps = r_rtGIAreaBoundsEpsilon.GetFloat();
+        int numSeedAreas = 0;
+        if (boundsEps > 0.0f)
+        {
+            static int s_seedAreas[64];
+            const idBounds seedBounds = idBounds(camPos).Expand(boundsEps);
+            numSeedAreas = world->BoundsInAreas(seedBounds, s_seedAreas, 64);
+            for (int i = 0; i < numSeedAreas; i++)
+            {
+                const int a = s_seedAreas[i];
+                if (a < 0 || a >= world->numPortalAreas || s_areaVisitStamp[a] == s_gatherStamp)
+                    continue;
+                s_areaVisitStamp[a] = s_gatherStamp;
+                s_bfsQueue[tail].area = a;
+                s_bfsQueue[tail].hop = 0;
+                tail++;
+            }
+        }
+        if (numSeedAreas == 0)
+        {
+            // Fallback: bounds probe found nothing (epsilon disabled, or an
+            // edge case at the world boundary) — behave exactly as before.
+            s_areaVisitStamp[viewDef->areaNum] = s_gatherStamp;
+            s_bfsQueue[tail].area = viewDef->areaNum;
+            s_bfsQueue[tail].hop = 0;
+            tail++;
+        }
+
+        if (dumpLights)
+        {
+            common->Printf("  [Stage 1.75] boundsEps=%.1f seedAreas(%d)=[", boundsEps, tail);
+            for (int i = 0; i < tail; i++)
+                common->Printf("%s%d", i ? "," : "", s_bfsQueue[i].area);
+            common->Printf("]  (PointInArea single classification would have been area=%d)\n", viewDef->areaNum);
+        }
 
         while (head < tail)
         {
@@ -1323,6 +1398,48 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             }
         }
         areasVisited = tail;
+
+        // Stage 1.5 (portal_area_lights.md): union in every area id's own view-
+        // frustum flood found actually visible this frame (portalArea_t::viewCount,
+        // stamped by FindViewLightsAndEntities — the same flood the standard
+        // renderer already runs to decide what to draw, so this costs nothing new).
+        // Fixes what the BFS alone can't: standing still, looking across a room at
+        // a light whose area is outside r_rtGIAreaHops range but plainly on screen
+        // (a mapper's big open room, or a window/doorway sightline into a room the
+        // BFS hasn't reached yet). The BFS handles the complementary case — a light
+        // behind a blind corner you can't see yet but are about to walk into.
+        // Degrades gracefully if a subview/mirror bumped tr.viewCount again since
+        // the primary view's flood by the time this runs: worst case is silently
+        // contributing nothing extra that frame (falls back to BFS-only), not a
+        // correctness bug — see feedback_per_slot_counters, same per-gather-pass
+        // stamp discipline as the BFS above (not tr.frameCount-keyed).
+        for (int a = 0; a < world->numPortalAreas; a++)
+        {
+            if (world->portalAreas[a].viewCount != tr.viewCount)
+                continue;
+            if (s_areaVisitStamp[a] == s_gatherStamp)
+                continue; // already covered by the BFS
+            s_areaVisitStamp[a] = s_gatherStamp;
+            viewStampAreas++;
+
+            const portalArea_t *vArea = &world->portalAreas[a];
+            for (const areaReference_t *lref = vArea->lightRefs.areaNext; lref != &vArea->lightRefs;
+                 lref = lref->areaNext)
+            {
+                const idRenderLightLocal *light = lref->light;
+                if (light == NULL)
+                    continue;
+                const int li = light->index;
+                if (li >= 0 && li < kHysteresisMaxLightIdx)
+                {
+                    if (s_lightVisitStamp[li] == s_gatherStamp)
+                        continue;
+                    s_lightVisitStamp[li] = s_gatherStamp;
+                }
+                considerLight(li, light, a, -1); // hop=-1: reached via view-stamp, not the BFS
+            }
+        }
+        areasVisited += viewStampAreas;
     }
     else
     {
@@ -1372,9 +1489,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         {
             if (useAreaWalk)
                 common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
-                               "areaWalk start=%d visited=%d hops=%d (legacy distance sort)\n",
+                               "areaWalk start=%d visited=%d(+%d viewStamp) hops=%d (legacy distance sort)\n",
                                toUpload, numCandidates, maxLights, numLightDefs, giRadius, viewDef->areaNum,
-                               areasVisited, areaHops);
+                               areasVisited, viewStampAreas, areaHops);
             else
                 common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
                                "collectRadius=%.1f (legacy distance sort)\n",
@@ -1382,6 +1499,29 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
         for (int i = 0; i < toUpload; i++)
             lb->lights[lb->numLights++] = s_candidates[i].entry;
+
+        // Vol-specific selection (portal_area_lights.md follow-up, 2026-08-22): same
+        // pool, walked in the same (here: distance) order, filtered to lights that
+        // can possibly reach within r_rtVolMaxDist of the camera, capped separately
+        // from GI's own maxLights. See the stratified path below for the full
+        // rationale — this legacy A/B path gets the same treatment for consistency.
+        {
+            GILightBuffer *volLb = (GILightBuffer *)vkRT.volLightSsboMapped[frameIdx];
+            volLb->numLights = 0;
+            volLb->bounceScale = lb->bounceScale;
+            volLb->giRadius = lb->giRadius;
+            volLb->emissiveScale = lb->emissiveScale;
+            const int volCutoff = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtVolMaxLights.GetInteger());
+            const float volMaxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
+            for (int i = 0; i < numCandidates && volLb->numLights < volCutoff; i++)
+            {
+                const Candidate &c = s_candidates[i];
+                const float reach = volMaxDist + c.entry.posRadius[3];
+                if (c.distSq > reach * reach)
+                    continue; // light's sphere/cone can never reach a march sample — skip, don't burn a slot
+                volLb->lights[volLb->numLights++] = c.entry;
+            }
+        }
         return;
     }
 
@@ -1459,15 +1599,73 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     {
         if (useAreaWalk)
             common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
-                           "areaWalk start=%d visited=%d hops=%d tiers=%d/%d/%d/%d take=%d/%d/%d/%d\n",
+                           "areaWalk start=%d visited=%d(+%d viewStamp) hops=%d tiers=%d/%d/%d/%d "
+                           "take=%d/%d/%d/%d\n",
                            numSelected, numCandidates, maxLights, numLightDefs, giRadius, viewDef->areaNum,
-                           areasVisited, areaHops, tierCount[0], tierCount[1], tierCount[2], tierCount[3], take[0],
-                           take[1], take[2], take[3]);
+                           areasVisited, viewStampAreas, areaHops, tierCount[0], tierCount[1], tierCount[2],
+                           tierCount[3], take[0], take[1], take[2], take[3]);
         else
             common->Printf("VK RT GI lights: upload=%d candidates=%d maxLights=%d lightDefs=%d giRadius=%.1f "
                            "collectRadius=%.1f tiers=%d/%d/%d/%d take=%d/%d/%d/%d\n",
                            numSelected, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius,
                            tierCount[0], tierCount[1], tierCount[2], tierCount[3], take[0], take[1], take[2], take[3]);
+    }
+
+    // Vol-specific selection (portal_area_lights.md follow-up, 2026-08-22): GI's own
+    // selection above (s_selected) can legitimately include a light that's admitted
+    // for bounce/reflection purposes but sits far outside anything the volumetric
+    // march can ever sample (e.g. a room revealed down a long hallway by the Stage
+    // 1.5 view-flood union — real for GI bounce off a surface near it, irrelevant to
+    // fog scattered near the camera). Previously vol_march.comp just read a raw
+    // prefix of GI's buffer, so a burst of those admitted-but-unreachable lights
+    // could silently evict a genuinely nearby, march-relevant light purely by
+    // consuming shared slots — the root cause of the hallway on/off pop. Fix: walk
+    // GI's own importance-ordered selection (so near/far tier balance and hero-light
+    // protection carry over unchanged) and keep only lights whose sphere/cone can
+    // possibly reach within r_rtVolMaxDist of the camera, into a SEPARATE buffer
+    // vol_march.comp reads instead of GI's.
+    static const Candidate *s_volSelected[VK_GI_MAX_LIGHTS];
+    int numVolSelected = 0;
+    {
+        const int volCutoff = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtVolMaxLights.GetInteger());
+        const float volMaxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
+        for (int i = 0; i < numSelected && numVolSelected < volCutoff; i++)
+        {
+            const Candidate *c = s_selected[i];
+            const float reach = volMaxDist + c->entry.posRadius[3];
+            if (c->distSq > reach * reach)
+                continue; // can never reach a march sample — skip, don't burn a vol slot
+            s_volSelected[numVolSelected++] = c;
+        }
+    }
+
+    // r_rtGILightDump's per-candidate log above shows *admission* (area/hop); this
+    // shows the two downstream selections so a before/after at a suspected pop can
+    // show exactly which light dropped and why (GI-level cut vs. vol-unreachable).
+    if (dumpLights)
+    {
+        common->Printf("  [final order] importance-sorted GI upload (%d):\n", numSelected);
+        for (int i = 0; i < numSelected; i++)
+        {
+            const Candidate *c = s_selected[i];
+            const idRenderLightLocal *ld =
+                (c->lightIdx >= 0 && c->lightIdx < numLightDefs) ? world->lightDefs[c->lightIdx] : NULL;
+            common->Printf("    #%-3d %-28s imp=%.4f tier=%d dist=%6.1f\n", i,
+                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>", c->importance, c->tier,
+                           idMath::Sqrt(c->distSq));
+        }
+        common->Printf("  [vol selection] reachable within r_rtVolMaxDist=%.0f, capped at "
+                       "r_rtVolMaxLights=%d (%d selected):\n",
+                       r_rtVolMaxDist.GetFloat(), r_rtVolMaxLights.GetInteger(), numVolSelected);
+        for (int i = 0; i < numVolSelected; i++)
+        {
+            const Candidate *c = s_volSelected[i];
+            const idRenderLightLocal *ld =
+                (c->lightIdx >= 0 && c->lightIdx < numLightDefs) ? world->lightDefs[c->lightIdx] : NULL;
+            common->Printf("    #%-3d %-28s imp=%.4f dist=%6.1f reach=%.1f\n", i,
+                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>", c->importance,
+                           idMath::Sqrt(c->distSq), c->entry.posRadius[3]);
+        }
     }
 
     for (int i = 0; i < numSelected; i++)
@@ -1477,6 +1675,14 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             s_lightSelectedFrame[s_selected[i]->lightIdx] = tr.frameCount;
     }
     s_prevUploadFrameNum = tr.frameCount;
+
+    GILightBuffer *volLb = (GILightBuffer *)vkRT.volLightSsboMapped[frameIdx];
+    volLb->numLights = 0;
+    volLb->bounceScale = lb->bounceScale;
+    volLb->giRadius = lb->giRadius;
+    volLb->emissiveScale = lb->emissiveScale;
+    for (int i = 0; i < numVolSelected; i++)
+        volLb->lights[volLb->numLights++] = s_volSelected[i]->entry;
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).

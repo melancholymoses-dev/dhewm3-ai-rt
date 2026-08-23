@@ -363,6 +363,18 @@ struct vkRTState_t
     VkDeviceMemory giLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void          *giLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // Dedicated volumetric light selection (portal_area_lights.md follow-up, 2026-08-22).
+    // Same GILightBuffer layout as giLightSsbo above, but filled with a SEPARATE
+    // selection: the same admitted-candidate pool, filtered to lights that can
+    // possibly reach within r_rtVolMaxDist of the camera, capped at r_rtVolMaxLights.
+    // Exists so a light GI legitimately wants (e.g. for a bounce far from the
+    // camera) but that can never appear in the fog can't consume a vol light slot
+    // and evict one that actually can. vol_march.comp reads this buffer, not
+    // giLightSsbo.
+    VkBuffer       volLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory volLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void          *volLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+
     VkPipeline giPipeline;
     VkPipelineLayout giPipelineLayout;
     VkDescriptorSetLayout giDescLayout;
