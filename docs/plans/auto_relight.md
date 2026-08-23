@@ -1,16 +1,16 @@
 # Auto-Relight — Engine-Synthesized Lights from Emissive Surfaces
 
-**Date:** 2026-08-10 (§0 light classifier added 2026-08-15)
+**Date:** 2026-08-10 (AR0 light classifier added 2026-08-15)
 **Branch:** shaped-shadows
 **Replaces:** Stages 4a/4b of `completed/lighting_shadows_refinement.md`.
 **Companion docs:** `rt_optimization_tuning.md` (P1b shadow batching is the perf
 enabler; L1 stratified light list is the selection layer),
 `completed/gbuffer_normal_pass.md`, `completed/gi_albedo_target.md` (GI
-receiver-albedo fix surfaced by this doc's §0/AREA validation, 2026-08-16 — landed
-before §1-5, since synthesized panel lights would amplify the unmodulated-GI wash
-it fixes), `completed/portal_area_lights.md` (the collector §0 admits into —
+receiver-albedo fix surfaced by this doc's AR0/AREA validation, 2026-08-16 — landed
+before AR1-5, since synthesized panel lights would amplify the unmodulated-GI wash
+it fixes), `completed/portal_area_lights.md` (the collector AR0 admits into —
 BFS/area-walk gathering, done 2026-08-22; also landed the vol-specific light
-selection this doc's §6/volumetric-budget-interaction sections below now assume,
+selection this doc's AR6/volumetric-budget-interaction sections below now assume,
 see the 2026-08-22 note in each).
 
 ---
@@ -69,7 +69,7 @@ logic.
 
 ---
 
-## §0 — Shared light classifier (land FIRST, independent of synthesis)
+## AR0 — Shared light classifier (land FIRST, independent of synthesis)
 
 Added 2026-08-15 after the "boring uniform GI lift" design review. This stage has no
 dependency on clustering/synthesis and directly fixes a live visual bug, so it lands
@@ -83,7 +83,7 @@ is rarer than assumed, see the map-grep note in the session log). Landed as
 `VK_RT_ClassifyLight()` + `VK_RT_LightClassName()`, declared in `vk_raytracing.h`,
 registered in CMakeLists.txt). `VK_RT_UploadGILights` (`vk_gi.cpp`) now calls it for
 admission (replacing the old `if (p.noShadows) continue;`) and applies saturation
-weighting to importance. §6 (noShadows unlock) is a separate, not-yet-implemented
+weighting to importance. AR6 (noShadows unlock) is a separate, not-yet-implemented
 consumer of the same classifier. **Runtime validation confirmed done (2026-08-22):**
 the 300-unit accent/fill split holds up against real level data, and the white wash
 drops with colored accents appearing in GI/vol as intended.
@@ -116,7 +116,7 @@ Note the P1b shadow batch already uses the correct full test
 ### Design: one classifier, four consumers
 
 Do **not** patch the collector inline. Write one function and make GI collection, the
-volumetric march list, the shadow batch, and the §6 unlock all call it, so the
+volumetric march list, the shadow batch, and the AR6 unlock all call it, so the
 real-vs-fake judgment can't drift between passes:
 
 ```
@@ -125,7 +125,7 @@ VK_RT_ClassifyLight(lightDef) →
   AMBIENT_FILL  ambientLight material, or noShadows with radius ≥ accent threshold
                                                      → reject from GI/vol; never unlock
   ACCENT        noShadows with radius < accent threshold (placed colored accents)
-                                                     → admit to GI/vol; §6 unlock pool
+                                                     → admit to GI/vol; AR6 unlock pool
   REAL          everything else (shadow-casting map lights)
 ```
 
@@ -135,7 +135,7 @@ Layered admission for GI/vol, replacing the single `p.noShadows` test:
    → out. Semantically fake; no threshold, no false positives.
 2. **noShadows admission by radius:** admit noShadows lights when
    `radius < r_rtLightAccentMaxRadius` (default **300** — the SAME threshold and cvar
-   as §6's unlock rule; big noShadows = semantic ambient fill, small = accent).
+   as AR6's unlock rule; big noShadows = semantic ambient fill, small = accent).
 3. **Saturation-weighted importance (ranking only, not admission):**
    ```
    sat = (maxChan - minChan) / max(maxChan, 1e-4)
@@ -174,27 +174,34 @@ add it later if the console table isn't enough to spot a wash source.
 
 ## Architecture
 
+Below is the `VK_AutoRelight_Generate()` pipeline (new file: `vk_auto_relight.cpp`) —
+unlabeled here since the `AR1`-`AR5` headers right after this diagram are the
+authoritative numbering; giving the diagram its own 1-6 would just be a second,
+colliding count (there is no relation between this diagram's step order and
+`portal_area_lights.md`'s unrelated Stage-1/1.5/1.75 numbering, or `AR6`/`AR7` below —
+those aren't pipeline steps, they're separate companion rules).
+
 ```
 Map load complete (tr.primaryWorld populated)
-  └─ VK_AutoRelight_Generate()              [new: vk_auto_relight.cpp]
-       1. Walk static world surfaces; keep those whose material passes the
-          emissive test (same logic as the material-table stage walk — extract
-          a shared helper so the two can't drift).
-       2. Cluster emissive triangles into physical fixtures.
-       3. Score clusters; apply budget.
-       4. Dedupe against existing map lights.
-       5. AddLightDef() one synthesized light per surviving cluster.
-       6. Log a summary table (accepted / deduped / dropped-by-budget).
+  └─ VK_AutoRelight_Generate()
+       - Walk static world surfaces; keep those whose material passes the
+         emissive test (same logic as the material-table stage walk — extract
+         a shared helper so the two can't drift).                          [AR1]
+       - Cluster emissive triangles into physical fixtures.                [AR2]
+       - Score clusters; apply budget.                                     [AR3]
+       - Dedupe against existing map lights.                               [AR4]
+       - AddLightDef() one synthesized light per surviving cluster.        [AR5]
+       - Log a summary table (accepted / deduped / dropped-by-budget).
 ```
 
-### 1. Surface harvest
+### AR1. Surface harvest
 
 Walk the world model surfaces (portal-area models, same geometry the static BLAS
 build already walks in `vk_accelstruct.cpp` — reuse that iteration pattern). For each
 surface whose material is emissive, collect triangles: world-space centroid, area,
 normal, and UV centroid (for color sampling later).
 
-### 2. Clustering (one fixture = one light)
+### AR2. Clustering (one fixture = one light)
 
 A single surface can span several physical panels (a strip of six ceiling lights is
 often one draw surface). v1 algorithm — deliberately simple:
@@ -207,7 +214,7 @@ often one draw surface). v1 algorithm — deliberately simple:
 - Reject clusters with wildly disagreeing normals (|avg normal| < 0.7 after
   normalization → a wraparound glow strip; skip, log it).
 
-### 3. Scoring and budget
+### AR3. Scoring and budget
 
 ```
 score = totalArea × emissiveLuminance × styleWeight
@@ -221,16 +228,16 @@ score = totalArea × emissiveLuminance × styleWeight
 - Keep the top `r_rtAutoRelightMax` (default **16**) clusters per map. Log what was
   dropped and its score — never truncate silently.
 
-### 4. Dedupe (critical — prevents the grey washout returning)
+### AR4. Dedupe (critical — prevents the grey washout returning)
 
 For each cluster, search existing `lightDefs` within `r_rtAutoRelightDedupeDist`
 (default **96** units) of the proposed origin. If a map light exists there and its
 color is broadly similar (hue distance below threshold, or either is near-white), the
 mappers already lit this fixture → **skip synthesis**, but optionally tag that existing
-light for the noShadows unlock (see §6). This rule is what makes auto-relight additive
+light for the noShadows unlock (see AR6). This rule is what makes auto-relight additive
 instead of double-bright.
 
-### 5. Light synthesis
+### AR5. Light synthesis
 
 Per surviving cluster, `tr.primaryWorld->AddLightDef()`:
 
@@ -251,17 +258,17 @@ Per surviving cluster, `tr.primaryWorld->AddLightDef()`:
   by auto-relight) so cleanup on map change is exact and so debug tooling can identify
   them.
 
-### 6. noShadows unlock for existing fixture lights (companion rule)
+### AR6. noShadows unlock for existing fixture lights (companion rule)
 
 Many mapper-placed fixture lights are `noShadows` — a 2004 stencil-budget decision the
 RT path inherits (skipped in `VK_RT_UploadGILights`'s admission for GI/vol; the
 interaction path honors the flag too). Engine-side rule, cvar-gated
 (`r_rtUnlockNoShadows`, default 0):
-lights the §0 classifier rates **ACCENT** (noShadows, radius <
+lights the AR0 classifier rates **ACCENT** (noShadows, radius <
 `r_rtLightAccentMaxRadius`, default 300 — same threshold/cvar as GI/vol admission;
 the giant ambient fills that use noShadows *semantically* classify AMBIENT_FILL and
 are never unlocked) get RT shadows anyway. This recovers drama from lights that
-already exist, at zero placement risk. Dedupe (§4) can feed it: a skipped cluster
+already exist, at zero placement risk. Dedupe (AR4) can feed it: a skipped cluster
 whose paired map light is noShadows is a strong unlock candidate.
 
 Perf note: every unlocked light becomes a shadow-caster in the interaction loop
@@ -271,12 +278,12 @@ scaling). Unlocked accents ride the normal `r_rtVolMaxLights` cap *and* the
 `r_rtVolMaxDist` reachability gate (see "Volumetric budget interaction" below); they
 do not get automatic shafts.
 
-### 7. Weapons / projectiles / particles (def-mod scope, allowed)
+### AR7. Weapons / projectiles / particles (def-mod scope, allowed)
 
 Muzzle flash and projectile lights are already real dynamic lights flowing through the
 RT shadow dispatch; where they're `noShadows` in defs, a small def patch (allowed per
-project owner) or the §6 unlock rule turns them into moving shadow casters — plasma
-bolts strobing shadows down a corridor. No engine work beyond §6. Particle-emitted
+project owner) or the AR6 unlock rule turns them into moving shadow casters — plasma
+bolts strobing shadows down a corridor. No engine work beyond AR6. Particle-emitted
 lights, if wanted later, are also def-side (`emitLight` style additions), not engine.
 
 ---
@@ -297,7 +304,7 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
   defeat it: a top-scored synthesized panel picked for a shaft by score will still
   get **no shaft** if the player is never within ~512 units of it (e.g. a screen at
   the far end of a large room, seen but not approached). Worth a debug check once
-  §1-5 lands: dump `r_rtgilightdump 1`'s `[vol selection]` block near a synthesized
+  AR1-5 lands: dump `r_rtgilightdump 1`'s `[vol selection]` block near a synthesized
   hero light and confirm it actually appears there, not just in `[final order]`
   (GI's own list, which has no such distance gate).
 
@@ -312,15 +319,15 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
 | `r_rtAutoRelightOffset` | 8 | origin offset off the surface |
 | `r_rtAutoRelightDedupeDist` | 96 | existing-light suppression radius |
 | `r_rtAutoRelightVolMin` | 4 | top-N clusters eligible for volumetrics |
-| `r_rtUnlockNoShadows` | 0 | §6 rule, independent toggle |
+| `r_rtUnlockNoShadows` | 0 | AR6 rule, independent toggle |
 | `r_rtAutoRelightDebug` | 0 | 1 = console table; 2 = also tint lit clusters (reuse an interaction debug mode) |
-| `r_rtLightAccentMaxRadius` | 300 | §0/§6 shared: noShadows radius below which a light is ACCENT (admit to GI/vol, unlockable) vs AMBIENT_FILL |
-| `r_rtGIWhiteWeight` | 0.25 | §0: importance multiplier floor for fully desaturated lights (1.0 = no saturation weighting) |
-| `r_rtGILightDump` | 0 | §0: console dump of every in-view lightDef with classification + admission verdict |
+| `r_rtLightAccentMaxRadius` | 300 | AR0/AR6 shared: noShadows radius below which a light is ACCENT (admit to GI/vol, unlockable) vs AMBIENT_FILL |
+| `r_rtGIWhiteWeight` | 0.25 | AR0: importance multiplier floor for fully desaturated lights (1.0 = no saturation weighting) |
+| `r_rtGILightDump` | 0 | AR0: console dump of every in-view lightDef with classification + admission verdict |
 
 ## Debug / validation workflow (do before any tuning)
 
-0. ✅ **Done (2026-08-22).** §0 first: `r_rtGILightDump 1` on alphalabs2 → confirm the
+0. ✅ **Done (2026-08-22).** AR0 first: `r_rtGILightDump 1` on alphalabs2 → confirm the
    radius threshold cleanly separates fills from accents before trusting the 300/0.25
    defaults; then verify the white wash drops and colored accents appear in GI/vol
    with the classifier on.
@@ -350,7 +357,7 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
 - **Effort:** ~2-3 days including the debug table and dedupe iteration.
 - **Risk:** Medium-low. Everything downstream is existing, tested machinery; the new
   logic is load-time CPU code with a full audit trail. The classic failure mode
-  (double-lighting → grey washout) has a dedicated rule (§4) and a debug view.
+  (double-lighting → grey washout) has a dedicated rule (AR4) and a debug view.
 - **Perf dependency:** adds up to `r_rtAutoRelightMax` interaction lights + shadow
   dispatches. Land **after** P1b (batched shadow masks) in
   `rt_optimization_tuning.md`, or start with `r_rtAutoRelightMax 6` before P1b.
