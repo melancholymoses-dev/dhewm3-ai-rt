@@ -2,11 +2,22 @@
 
 **Date:** 2026-08-16
 **Branch:** auto-relight (folded into the Wave 5 visual-quality push)
-**Status:** implemented 2026-08-16, **untested in-game** — run the validation workflow
-below. `gbufAlbedo` G-buffer target (opaque + clip prepass variants), `gi_albedo_mod.comp`
-compute pass wired in after à-trous, `r_rtGIAlbedo` CVar (default 1, A/B against the
-legacy raw-radiance composite). Retuning `r_rtGIBounceScale`/`r_rtGIStrength` against
-reference shots (this doc's step 4) not yet done.
+**Status:** implemented 2026-08-16. `gbufAlbedo` G-buffer target (opaque + clip prepass
+variants), `gi_albedo_mod.comp` compute pass wired in after à-trous, `r_rtGIAlbedo` CVar
+(default 1, A/B against the legacy raw-radiance composite).
+**Validation step 2 passed in-game 2026-08-22** — bodies/corpses now read as dark cloth
+with a subtle tint, confirmed against the motivating ACO Lift Junction shot; the original
+bug (bodies painted yellow by nearby orange lights) is fixed.
+**Steps 3/4 open, in progress 2026-08-22:** with volumetrics also landed/tuned since this
+doc was written, overall scene luminance is elevated and blacks are lifted — step 3's
+"dark-corner noise floor must not rise" isn't holding cleanly, though it's not yet clear
+how much of that is the albedo fix itself vs. volumetrics' own additive contribution now
+that it's better-tuned (see `portal_area_lights.md`/`rt_optimization_tuning.md` P8 for the
+volumetric-side changes landed the same week). **Currently being addressed via
+tonemapping retune**, not a GI-side change — see `completed/tonemapping.md` /
+`completed/tonemapping2.md` for the existing pipeline this tunes within.
+`r_rtGIBounceScale`/`r_rtGIStrength` retune (step 4) is deliberately on hold until
+tonemapping settles — retuning GI against a moving tonemap target would mean redoing it.
 **Extends:** `completed/gbuffer_normal_pass.md` (the G-buffer contract this adds a
 target to). **Companion docs:** `auto_relight.md` (whose §0/AREA validation surfaced
 the bug), ROADMAP pillar 2 ("darkness stays black") — which this fix directly serves.
@@ -118,12 +129,17 @@ worthless on exactly the surfaces that hurt most.
 1. `r_vkLogRT 1`, look at a body: `albedo found` nonzero, tracking `bump found`
    (see above). Confirms the mechanism has real data to multiply by, not just
    the white fallback everywhere.
-2. The motivating shot (ACO Lift Junction bodies by the orange grate light):
-   bodies should read as dark cloth with a subtle warm tint, not a yellow wash.
-   A/B with `r_rtGIAlbedo 0`.
-3. Pillar 2 check: dark-corner noise floor must not rise (it should *drop* —
-   dark materials now absorb GI).
-4. Then retune `r_rtGIBounceScale`/`r_rtGIStrength` against reference shots.
+2. ✅ **Passed 2026-08-22.** The motivating shot (ACO Lift Junction bodies by the
+   orange grate light): bodies should read as dark cloth with a subtle warm tint,
+   not a yellow wash. A/B with `r_rtGIAlbedo 0`.
+3. **Open 2026-08-22.** Pillar 2 check: dark-corner noise floor must not rise (it
+   should *drop* — dark materials now absorb GI). Not holding cleanly — volumetrics
+   (landed/tuned the same week) is also raising overall luminance, so it's not yet
+   isolated whether this is an albedo-fix regression, a volumetrics side-effect, or
+   both. Being addressed via tonemapping retune rather than assumed to be a GI bug.
+4. **On hold until 3 resolves.** Retune `r_rtGIBounceScale`/`r_rtGIStrength` against
+   reference shots — deliberately not started yet, since doing it against a
+   tonemap that's still moving would mean redoing it once tonemapping settles.
 
 ## Effort / risk
 
