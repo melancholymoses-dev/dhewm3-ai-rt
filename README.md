@@ -9,7 +9,7 @@ $\color{red}{\textbf{Do not bother that team with bug reports or feature request
 
 |  Dhewm3 |  Dhewm3-RT | 
 |:---------:|:-----------:|
-|<img src="docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg" width="300">|<img src="docs/img/Attempted_restoration_of_Ecce_Homo.jpg" width="300">|
+|<img src="docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg" width="300" alt="Ecce Homo">|<img src="docs/img/Attempted_restoration_of_Ecce_Homo.jpg" width="300", alt="Ecce Homo Restoration">|
 | Doom3/Dhewm3's source code | Vibe Coded Ray-Traced Additions|
 
 
