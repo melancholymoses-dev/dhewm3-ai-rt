@@ -1690,6 +1690,31 @@ void idRenderWorldLocal::GenerateAllInteractions()
     // try and do any view specific optimizations
     tr.viewDef = NULL;
 
+    // dhewm3-rt: auto-relight (docs/plans/auto_relight.md AR1-5). Must run before
+    // the interaction-generation loop below, NOT after generateAllInteractionsCalled
+    // is set true at the end of this function (where this call used to live).
+    // CreateLightDefInteractions (tr_light.cpp) skips noDynamicInteractions entities
+    // once that flag is true -- a real perf flag used on big static meshes, on the
+    // assumption that only transient/dynamic runtime lights get added post-startup.
+    // Synthesized lights are not that: they're permanent, load-time lights that
+    // should participate in the same initial bake as every hand-placed map light.
+    // Placing the call here means the loop below (which already walks the full,
+    // current lightDefs list) naturally picks up the newly-appended synthesized
+    // lights too, while the flag is still false -- and the interaction-table sizing
+    // further down sees the final light count instead of relying on its "+100"
+    // safety margin to cover lights added afterward. AR4's dedupe only needs real
+    // map lightDefs to already exist (they do -- game entities were spawned before
+    // Session.cpp called us), not for interactions to have been generated yet, so
+    // this reordering doesn't affect it. Runs once per world lifetime;
+    // VK_AutoRelight_Generate no-ops unless r_rtAutoRelight or r_rtAutoRelightDebug
+    // is set.
+    if (glConfig.isVulkan && !autoRelightGenerated)
+    {
+        extern void VK_AutoRelight_Generate(idRenderWorldLocal *world);
+        VK_AutoRelight_Generate(this);
+        autoRelightGenerated = true;
+    }
+
     for (int i = 0; i < this->lightDefs.Num(); i++)
     {
         idRenderLightLocal *ldef = this->lightDefs[i];
@@ -1739,19 +1764,6 @@ void idRenderWorldLocal::GenerateAllInteractions()
 
     // entities flagged as noDynamicInteractions will no longer make any
     generateAllInteractionsCalled = true;
-
-    // dhewm3-rt: auto-relight (docs/plans/auto_relight.md AR1-5). Must run
-    // after the loop above — every real map lightDef now exists (game
-    // entities were spawned before Session.cpp called us), which AR4's
-    // dedupe-against-existing-lights step needs. Runs once per world
-    // lifetime; VK_AutoRelight_Generate no-ops unless r_rtAutoRelight or
-    // r_rtAutoRelightDebug is set.
-    if (glConfig.isVulkan && !autoRelightGenerated)
-    {
-        extern void VK_AutoRelight_Generate(idRenderWorldLocal *world);
-        VK_AutoRelight_Generate(this);
-        autoRelightGenerated = true;
-    }
 }
 
 /*

@@ -182,17 +182,49 @@ colliding count (there is no relation between this diagram's step order and
 those aren't pipeline steps, they're separate companion rules).
 
 ```
-Map load complete (tr.primaryWorld populated)
+Map load complete (tr.primaryWorld populated), called from
+idRenderWorldLocal::GenerateAllInteractions BEFORE its own interaction-generation
+loop (2026-08-23, code review finding — see "Hook timing" below)
   └─ VK_AutoRelight_Generate()
        - Walk static world surfaces; keep those whose material passes the
          emissive test (same logic as the material-table stage walk — extract
          a shared helper so the two can't drift).                          [AR1]
        - Cluster emissive triangles into physical fixtures.                [AR2]
-       - Score clusters; apply budget.                                     [AR3]
+       - Score clusters, tag each with its resolved portal area.           [AR3a]
        - Dedupe against existing map lights.                               [AR4]
+       - Apply the per-area then map-wide budget, over whatever AR4 left
+         CANDIDATE (2026-08-23: reordered after AR4, was before — see
+         "Budget-before-dedupe" below).                                    [AR3b]
        - AddLightDef() one synthesized light per surviving cluster.        [AR5]
-       - Log a summary table (accepted / deduped / dropped-by-budget).
+       - Log a summary table (accepted / deduped / area-capped / dropped-by-budget).
 ```
+
+### Hook timing (engine integration, `RenderWorld.cpp`)
+
+`VK_AutoRelight_Generate` is called from `idRenderWorldLocal::GenerateAllInteractions`.
+
+**Finding + fix, 2026-08-23 (code review):** the call originally sat at the very end
+of `GenerateAllInteractions`, after `generateAllInteractionsCalled = true` and after
+that function's own interaction-generation loop had already run. `CreateLightDefInteractions`
+(`tr_light.cpp`) skips entities flagged `noDynamicInteractions` once that flag is
+true — a real, used perf flag for big static meshes, on the assumption that only
+transient/dynamic runtime lights (monster eye glows, projectile lights) get added
+after startup and shouldn't touch them. Auto-relight's synthesized lights are not
+that: they're permanent, load-time lights that should participate in the same
+initial interaction bake as every hand-placed map light. Under the old placement,
+**any `noDynamicInteractions`-flagged entity silently never received light/shadow
+from any synthesized light**, no matter how close, with no error or warning.
+
+Fixed by moving the call to before `GenerateAllInteractions`'s own interaction loop
+(right after `tr.viewDef = NULL`, before the `for` loop over `lightDefs`), while the
+flag is still false. Real map lightDefs already exist at that point regardless (game
+entities are spawned before `Session.cpp` calls this function), so AR4's dedupe
+precondition is unaffected. This also means the interaction-table sizing later in the
+same function sees the final light count (including synthesized ones) directly,
+instead of relying on that sizing code's "+100" safety margin to cover lights added
+afterward. **Implemented 2026-08-23, not yet re-validated in-game** — would need a
+map with `noDynamicInteractions`-flagged geometry near a synthesized light's fixture
+to actually exercise the fixed path.
 
 ### AR1. Surface harvest
 
@@ -291,6 +323,20 @@ visible, not just inferred from centroids. **Implemented 2026-08-23, not yet
 re-validated in-game against the alphalabs2 run that surfaced it** — re-run
 `r_rtAutoRelightDebug 1` there and confirm rooms other than the floorpgrate/mallight
 ones now get `LIT` entries.
+
+**Second finding + fix, 2026-08-23 (code review):** the two-stage cap above ran
+*before* AR4 dedupe — split into `AR_Score` (scoring/area-tagging only) and
+`AR_ApplyBudget` (the two-stage cap), with dedupe running in between. Under the old
+order, a room's highest-scoring fixtures could consume its entire per-area quota and
+only afterward get rejected by dedupe as already covered by a real mapper-placed
+light — plausible in practice, since the fixtures a mapper bothered to hand-light are
+often exactly the ones that would also score highest here. A room whose top scorers
+were all already-lit could end up with **zero synthesized lights** despite having
+other, genuinely-uncovered fixtures that never got a chance to compete for a slot.
+`AR_ApplyBudget` now builds its candidate list by scanning for clusters still
+`AR_VERDICT_CANDIDATE` (i.e. survived dedupe), so only fixtures that will actually
+become real lights compete for the limited slots. **Implemented 2026-08-23, not yet
+re-validated in-game.**
 
 ### AR4. Dedupe (critical — prevents the grey washout returning)
 
