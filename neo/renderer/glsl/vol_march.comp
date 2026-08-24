@@ -159,10 +159,14 @@ void main()
     ivec2 fullCoord = min(coord * params.marchScale, fullSize - ivec2(1));
 
     // Sky early-out: depth 1.0 means no geometry → nothing to scatter into.
+    // Alpha = 1.0 (full transmittance, i.e. "no fog here") — NOT 0.0. Alpha now
+    // carries path transmittance for a downstream background-attenuation
+    // composite (see the end of this shader); 0.0 would mean "fully extinguish
+    // whatever's behind this pixel", which is wrong for a no-fog/sky pixel.
     float depth = texelFetch(depthSampler, fullCoord, 0).r;
     if (depth >= 1.0)
     {
-        imageStore(volBuf, coord, vec4(0.0));
+        imageStore(volBuf, coord, vec4(0.0, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -174,7 +178,7 @@ void main()
 
     if (hitDist < 0.001)
     {
-        imageStore(volBuf, coord, vec4(0.0));
+        imageStore(volBuf, coord, vec4(0.0, 0.0, 0.0, 1.0)); // see sky early-out above re: alpha
         return;
     }
 
@@ -229,9 +233,25 @@ void main()
         float stepSize = max(tB - tA, 1e-4);
 
         // Beer-Lambert: update running transmittance and bail when negligible.
+        float transBefore = transmittance;
         transmittance *= exp(-params.density * stepSize);
         if (transmittance < 0.001)
             break;
+
+        // Self-attenuation fix (2026-08-23 — reported as a general volumetric
+        // brightness "lift"): light scattered at this step still has to travel
+        // back through every step of medium between here and the camera before
+        // it reaches the eye. Every step below was previously added at full
+        // strength regardless of how much medium sat between it and the
+        // camera — `transmittance` was computed and used only for the
+        // early-exit check above, never applied to the accumulated contribution.
+        // That's a straight energy-conservation bug: a beam through N steps of
+        // fog summed N un-attenuated contributions instead of a properly
+        // decaying series, which reads as a flat brightness lift rather than a
+        // shaped beam. Geometric mean of before/after transmittance
+        // approximates the transmittance AT stepPos (the step's midpoint,
+        // matching stepT above) rather than at either endpoint.
+        float stepTransmittance = sqrt(transBefore * transmittance);
 
         vec3 stepPos = cameraPos + marchDir * stepT;
 
@@ -330,7 +350,7 @@ void main()
                 gl_RayQueryCommittedIntersectionNoneEXT)
                 continue; // occluded — skip this light at this step
 
-            vec3 contrib = lightColor * lightIntens * phase * atten * stepSize;
+            vec3 contrib = lightColor * lightIntens * phase * atten * stepSize * stepTransmittance;
             if (isFlashlight)
                 scatter_flash    += contrib;
             else if (isDirected)
@@ -348,5 +368,16 @@ void main()
         scatter_flash    * params.flashlightDensity * params.flashlightStrength,
         vec3(0.0));
 
-    imageStore(volBuf, coord, vec4(result, 1.0));
+    // Alpha carries the total path transmittance (camera -> tMax): 1.0 = clear
+    // air, near-0.0 = the view ray is fully extinguished by the medium before
+    // it reaches the surface. Not yet consumed by vol_composite.frag's blend
+    // state (still pure additive) — that would also need the composite call
+    // moved to after the direct-lighting interaction pass so it attenuates
+    // ALL scene radiance behind the fog, not just the GI/reflection base drawn
+    // before it; tracked as a follow-up, not done here. Plumbed through now
+    // (bilateral upsample and temporal EMA already carry all 4 channels) so
+    // it's available without another pass of shader surgery, and so it can be
+    // inspected directly (e.g. temporarily view volBuf.a) to sanity-check the
+    // self-attenuation fix above.
+    imageStore(volBuf, coord, vec4(result, transmittance));
 }

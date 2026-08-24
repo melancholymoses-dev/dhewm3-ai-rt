@@ -2705,8 +2705,8 @@ static void DrawRTOptionsMenu()
     const bool giAtrousOn = rtCVars.rtGIAtrous && rtCVars.rtGIAtrous->GetBool();
     ImGui::BeginDisabled(!giAtrousOn);
     RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
-    RTSliderFloat("Luminance Edge-Stop (SigmaL)", rtCVars.rtGIAtrousSigmaL, 0.0f, 1.0f);
-    RTSliderFloat("Depth Edge-Stop (SigmaZ)", rtCVars.rtGIAtrousSigmaZ, 0.001f, 0.1f, "%.4f");
+    // RTSliderFloat("Luminance Edge-Stop (SigmaL)", rtCVars.rtGIAtrousSigmaL, 0.0f, 1.0f);
+    // RTSliderFloat("Depth Edge-Stop (SigmaZ)", rtCVars.rtGIAtrousSigmaZ, 0.001f, 0.1f, "%.4f");
     ImGui::EndDisabled(); // !giAtrousOn
 
     ImGui::Spacing();
@@ -2722,24 +2722,24 @@ static void DrawRTOptionsMenu()
         ImGui::TextDisabled("General");
         RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 64);
         RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
-        RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 64);
+        RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
         RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
         ImGui::Spacing();
         ImGui::TextDisabled("Point Lights");
-        RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.25f);
-        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 0.5f);
+        RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.1f);
+        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 2.5f);
         RTSliderFloat("Anisotropy##pt", rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
 
         // --- Right column: flashlight ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Directed");
-        RTSliderFloat("Density##dir", rtCVars.rtVolDirectedDensity, 0.0f, 0.25f);
-        RTSliderFloat("Strength##dir", rtCVars.rtVolDirectedStrength, 0.0f, .5f);
+        RTSliderFloat("Density##dir", rtCVars.rtVolDirectedDensity, 0.0f, 0.1f);
+        RTSliderFloat("Strength##dir", rtCVars.rtVolDirectedStrength, 0.0f, 2.5f);
         RTSliderFloat("Anisotropy##dir", rtCVars.rtVolDirectedAnisotropy, 0.0f, 1.0f);
         ImGui::TextDisabled("Flashlight");
-        RTSliderFloat("Density##fl", rtCVars.rtVolFlashlightDensity, 0.0f, 0.25f);
-        RTSliderFloat("Strength##fl", rtCVars.rtVolFlashlightStrength, 0.0f, 0.5f);
+        RTSliderFloat("Density##fl", rtCVars.rtVolFlashlightDensity, 0.0f, 0.1f);
+        RTSliderFloat("Strength##fl", rtCVars.rtVolFlashlightStrength, 0.0f, 2.5f);
         RTSliderFloat("Anisotropy##fl", rtCVars.rtVolFlashlightAnisotropy, 0.0f, 1.0f);
 
         ImGui::EndTable();

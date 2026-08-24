@@ -91,14 +91,52 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
-static idCVar r_rtVolDensity("r_rtVolDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+// 2026-08-23: retuned from 0.05 alongside vol_march.comp's self-attenuation fix
+// (each march step's contribution is now actually weighted by transmittance, not
+// just gated by it for early-exit — see that file's header comment). Before the
+// fix this cvar barely shaped brightness at all (it only picked the early-exit
+// cutoff distance); now it's the real Beer-Lambert extinction coefficient, so the
+// old 0.05 default crushed nearly all contribution into the first ~20 units of
+// camera, drowning out farther-field occlusion contrast in a near-camera haze
+// (reported as a flat "uniform lift", validated in-game against 0.015).
+static idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "0.10", CVAR_RENDERER | CVAR_FLOAT,
+// 2026-08-23: retuned from 0.10 alongside r_rtVolDensity above — density now also
+// acts as a real exponential decay coefficient (previously inert beyond the
+// early-exit check), so lowering it darkens the result through two compounding
+// paths at once: less decay survives per unit distance, but it ALSO still
+// multiplies the final linear scale below (unchanged pre-existing behaviour,
+// density has always done double duty as both extinction coefficient and a
+// direct brightness multiplier). Strength compensates for both. Validated in-game.
+static idCVar r_rtVolStrength("r_rtVolStrength", "0.50", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
 static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                                 "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
+
+// 2026-08-23: added alongside the self-attenuation fix (see vol_march.comp) to make
+// the per-pixel path transmittance inspectable directly instead of only visible as
+// a change in the final composited brightness. Uses the reflection composite's
+// established pattern (r_rtReflectionDebugMode / reflCompositeDebugPipeline in
+// vk_reflections.cpp): a blend-disabled (replace) pipeline variant so the debug
+// image isn't additively muddied onto the already-lit scene.
+static idCVar r_rtVolDebugMode("r_rtVolDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+                               "0=off, 1=path transmittance as greyscale (white=clear air, black=fully "
+                               "extinguished before reaching the surface), 2=raw scatter colour "
+                               "(post self-attenuation, unscaled by density/strength).");
+
+// Mode 2's raw scatter is a genuine linear-HDR value, typically tiny (0.001-0.05 —
+// volumetrics are deliberately subtle). It still lands in hdrScene before the single
+// end-of-frame Uchimura tonemap pass, whose toe curve crushes small values toward
+// black by design (that's what makes the *composited* scene's blacks read correctly).
+// Shown in isolation with no bright background to lift it, that same crush makes
+// mode 2 read as pitch black even when the underlying value is nonzero and fine.
+// This gain is a debug-only pre-multiply so mode 2 survives the crush intact; it
+// does not touch the real composite (mode 0) or mode 1 (already a 0-1 quantity).
+static idCVar r_rtVolDebugGain("r_rtVolDebugGain", "20.0", CVAR_RENDERER | CVAR_FLOAT,
+                               "Mode-2-only pre-tonemap gain so tiny raw scatter values survive "
+                               "the Uchimura toe curve instead of reading as pitch black.");
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
 static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
@@ -537,7 +575,7 @@ static void VK_RT_InitVolCompositePipeline(void)
     VkPushConstantRange compPush = {};
     compPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     compPush.offset = 0;
-    compPush.size = sizeof(float) * 2; // vec2 invScreenSize
+    compPush.size = sizeof(float) * 2 + sizeof(int32_t) + sizeof(float); // vec2 invScreenSize + int debugMode + float debugGain
 
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -644,6 +682,27 @@ static void VK_RT_InitVolCompositePipeline(void)
     pipelineInfo.renderPass = vk.hdrRenderPass;
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositePipeline));
+
+    // --- Debug variant: blend disabled (replace), so r_rtVolDebugMode's
+    // transmittance/scatter visualization isn't muddied by additive blending onto
+    // the already-lit scene. Mirrors reflCompositeDebugPipeline in vk_reflections.cpp. ---
+    VkPipelineColorBlendAttachmentState replaceBlend = {};
+    replaceBlend.blendEnable = VK_FALSE;
+    replaceBlend.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendAttachmentState replaceAttachments[3] = {replaceBlend, {}, {}};
+    VK_FillSecondBlendAttachment(&replaceAttachments[1]);
+    VK_FillSecondBlendAttachment(&replaceAttachments[2]);
+
+    VkPipelineColorBlendStateCreateInfo replaceBlendState = {};
+    replaceBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    replaceBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
+    replaceBlendState.pAttachments = replaceAttachments;
+    pipelineInfo.pColorBlendState = &replaceBlendState;
+
+    VK_CHECK(
+        vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositeDebugPipeline));
 
     vkDestroyShaderModule(vk.device, vertMod, NULL);
     vkDestroyShaderModule(vk.device, fragMod, NULL);
@@ -1578,6 +1637,11 @@ void VK_RT_ShutdownVolumetrics(void)
         vkDestroyPipeline(vk.device, vkRT.volCompositePipeline, NULL);
         vkRT.volCompositePipeline = VK_NULL_HANDLE;
     }
+    if (vkRT.volCompositeDebugPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.volCompositeDebugPipeline, NULL);
+        vkRT.volCompositeDebugPipeline = VK_NULL_HANDLE;
+    }
     if (vkRT.volCompositeLayout != VK_NULL_HANDLE)
     {
         vkDestroyPipelineLayout(vk.device, vkRT.volCompositeLayout, NULL);
@@ -1946,17 +2010,29 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
 
     // P8: UV comes from the screen size, not the vol image size — they differ when
     // the compositor is reading the march-res image directly.
-    const float invScreen[2] = {
-        1.0f / Max(1.0f, (float)vk.swapchainExtent.width),
-        1.0f / Max(1.0f, (float)vk.swapchainExtent.height),
+    struct
+    {
+        float invScreen[2];
+        int32_t debugMode;
+        float debugGain;
+    } pc = {
+        {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
+        r_rtVolDebugMode.GetInteger(),
+        Max(0.0f, r_rtVolDebugGain.GetFloat()),
     };
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositePipeline);
+    const bool debugActive = pc.debugMode >= 1 && pc.debugMode <= 2;
+    VkPipeline pipe = debugActive ? vkRT.volCompositeDebugPipeline : vkRT.volCompositePipeline;
+    if (pipe == VK_NULL_HANDLE)
+        return;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositeLayout, 0, 1,
                             &vkRT.volCompositeDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.volCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(invScreen), invScreen);
+    vkCmdPushConstants(cmd, vkRT.volCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: composite drawn frame=%d slot=%d\n", tr.frameCount, frameIdx);
+        common->Printf("VK RT Vol: composite drawn frame=%d slot=%d debugMode=%d\n", tr.frameCount, frameIdx,
+                       pc.debugMode);
 }
