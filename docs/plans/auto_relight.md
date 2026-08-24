@@ -347,6 +347,36 @@ project owner) or the AR6 unlock rule turns them into moving shadow casters — 
 bolts strobing shadows down a corridor. No engine work beyond AR6. Particle-emitted
 lights, if wanted later, are also def-side (`emitLight` style additions), not engine.
 
+**Follow-up idea (2026-08-23, not started): third-person self-shadow in volumetrics.**
+Once a muzzle flash (e.g. a plasma weapon) is a real shadow-casting light via the above,
+it already reaches `vol_march.comp`'s light list like any other light — no extra work
+needed for it to light fog/dust in front of the player. What it *won't* do is show the
+player's own third-person arm/gun mesh as a silhouette in that glow: `vol_march.comp`
+hardcodes its shadow-ray cull mask to `0xFEu` unconditionally, excluding every
+`noSelfShadow` (player-body, mask `0x01`) instance from every volumetric occlusion test,
+with no distance gate. Contrast the direct-light shadow path
+(`vk_shadows.cpp`), which only excludes the player body within `r_rtShadowPlayerExcludeDist`
+(default 30 units) of the light — beyond that it self-shadows normally.
+
+Interesting because: unlike the flashlight (mounted ~at the eye, so no parallax — see
+`froxel_probe_gi.md`'s pillar-3 note, flashlight volumetrics deprioritized for exactly
+this reason), a muzzle-flash light sits away from the camera on the gun itself, so it
+has real parallax and could plausibly rim-light the player's own arm/weapon in smoke —
+a genuine "hero light" candidate that the flashlight isn't.
+
+Not a trivial flip, though: a muzzle flash sits only a few units from the gun mesh it
+would be shadowing against — much closer than the 30-unit threshold the direct-shadow
+path uses specifically because a light that close to its own caster is the classic
+shadow-acne setup (ray origin bias vs. self-intersection). Naively dropping the `0xFEu`
+exclusion for volumetrics would likely reproduce that as flicker in the fog rather than
+a clean silhouette. Would need the same kind of distance-aware handling
+`r_rtShadowPlayerExcludeDist` already does for direct shadows (or bias tuned
+specifically for close-range self-occlusion) — and per this project's usual approach,
+should be diagnosed with a debug view of the shadow-ray hit/miss right next to the gun
+(watch it flicker) before picking a bias value, not the other way around. Revisit once
+AR6/AR7's own noShadows-unlock groundwork exists to make a muzzle flash a real light
+in the first place.
+
 ---
 
 ## Volumetric budget interaction
