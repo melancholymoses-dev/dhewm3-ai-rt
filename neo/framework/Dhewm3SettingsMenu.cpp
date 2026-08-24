@@ -2458,8 +2458,9 @@ struct RTCVars
     idCVar *rtGIEmissiveScale = nullptr;
     idCVar *rtGIAtrous = nullptr;
     idCVar *rtGIAtrousIterations = nullptr;
-    idCVar *rtGIAtrousSigmaL = nullptr;
-    idCVar *rtGIAtrousSigmaZ = nullptr;
+    // rtGIAtrousSigmaL/SigmaZ removed from the menu 2026-08-23 (never touched, no
+    // visible effect) — the r_rtGIAtrousSigmaL/r_rtGIAtrousSigmaZ cvars themselves
+    // are untouched, still console-settable, just not exposed here.
     idCVar *rtGIContrast = nullptr;
 
     // Volumetric Lighting
@@ -2478,6 +2479,13 @@ struct RTCVars
     idCVar *rtVolDirectedDensity = nullptr;
     idCVar *rtVolDirectedStrength = nullptr;
     idCVar *rtVolDirectedAnisotropy = nullptr;
+
+    // Auto-Relight (docs/plans/auto_relight.md) — experimental, off by default;
+    // regenerates on next map load, not live while playing.
+    idCVar *rtAutoRelight = nullptr;
+    idCVar *rtAutoRelightMaxPerArea = nullptr;
+    idCVar *rtAutoRelightMax = nullptr;
+    idCVar *rtAutoRelightIntensity = nullptr;
 
     // Tonemapping (Phase 8.1)
     idCVar *rtTonemap = nullptr;
@@ -2533,8 +2541,6 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
     rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
     rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
-    rtCVars.rtGIAtrousSigmaL = cvarSystem->Find("r_rtGIAtrousSigmaL");
-    rtCVars.rtGIAtrousSigmaZ = cvarSystem->Find("r_rtGIAtrousSigmaZ");
     rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
     rtCVars.rtVol = cvarSystem->Find("r_rtVol");
     rtCVars.rtVolSamples = cvarSystem->Find("r_rtVolSamples");
@@ -2551,6 +2557,10 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
     rtCVars.rtVolDirectedStrength = cvarSystem->Find("r_rtVolDirectedStrength");
     rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
+    rtCVars.rtAutoRelight = cvarSystem->Find("r_rtAutoRelight");
+    rtCVars.rtAutoRelightMaxPerArea = cvarSystem->Find("r_rtAutoRelightMaxPerArea");
+    rtCVars.rtAutoRelightMax = cvarSystem->Find("r_rtAutoRelightMax");
+    rtCVars.rtAutoRelightIntensity = cvarSystem->Find("r_rtAutoRelightIntensity");
     rtCVars.rtTonemap = cvarSystem->Find("r_rtTonemap");
     rtCVars.rtTonemapExposure = cvarSystem->Find("r_rtTonemapExposure");
     rtCVars.rtTonemapToe = cvarSystem->Find("r_rtTonemapToe");
@@ -2705,8 +2715,6 @@ static void DrawRTOptionsMenu()
     const bool giAtrousOn = rtCVars.rtGIAtrous && rtCVars.rtGIAtrous->GetBool();
     ImGui::BeginDisabled(!giAtrousOn);
     RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
-    // RTSliderFloat("Luminance Edge-Stop (SigmaL)", rtCVars.rtGIAtrousSigmaL, 0.0f, 1.0f);
-    // RTSliderFloat("Depth Edge-Stop (SigmaZ)", rtCVars.rtGIAtrousSigmaZ, 0.001f, 0.1f, "%.4f");
     ImGui::EndDisabled(); // !giAtrousOn
 
     ImGui::Spacing();
@@ -2748,6 +2756,22 @@ static void DrawRTOptionsMenu()
     ImGui::EndDisabled(); // Volumetric
 
     ImGui::EndDisabled(); // !giOn
+
+    // ---- Auto-Relight (docs/plans/auto_relight.md) ---------------------------
+    // Independent of the GI toggle above — synthesized lights feed shadows/GI/vol
+    // like any other lightDef, but the harvest/cluster/budget pass itself doesn't
+    // need GI enabled to run.
+    ImGui::Spacing();
+    ImGui::SeparatorText("Auto-Relight (Experimental)");
+    RTCheckbox("Enable Auto-Relight (synthesize lights from emissive fixtures)", rtCVars.rtAutoRelight);
+    ImGui::TextDisabled("Regenerates on next map load — not live while playing.");
+    const bool autoRelightOn = rtCVars.rtAutoRelight && rtCVars.rtAutoRelight->GetBool();
+    ImGui::BeginDisabled(!autoRelightOn);
+    RTSliderInt("Max Lights Per Area", rtCVars.rtAutoRelightMaxPerArea, 0, 16);
+    RTSliderInt("Max Lights (map-wide ceiling)", rtCVars.rtAutoRelightMax, 0, 64);
+    RTSliderFloat("Intensity (0.5=default accent, higher=easier to spot while testing)", rtCVars.rtAutoRelightIntensity,
+                  0.0f, 5.0f, "%.2f");
+    ImGui::EndDisabled(); // !autoRelightOn
 
     ImGui::Spacing();
     ImGui::SeparatorText("Tonemapping");

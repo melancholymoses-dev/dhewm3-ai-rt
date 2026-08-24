@@ -14,7 +14,11 @@ zero map editing. The pipeline:
        into physical fixtures; reject clusters whose triangle normals
        disagree too much (wraparound glow strips).
   AR3  Scoring/budget    — score = area x emissive luminance x style weight;
-       keep the top r_rtAutoRelightMax clusters map-wide.
+       keep the top r_rtAutoRelightMaxPerArea clusters PER PORTAL AREA, then
+       the top r_rtAutoRelightMax clusters map-wide as an overall ceiling
+       (2026-08-23: was a single map-wide cap, which let one or two large/
+       bright fixture clusters starve every other room's budget — see the
+       cvar comment above AR_ScoreAndBudget for the in-game finding).
   AR4  Dedupe            — drop clusters within r_rtAutoRelightDedupeDist of
        an existing, color-similar map light (the mappers already lit it).
   AR5  Light synthesis   — AddLightDef() a real point light per surviving
@@ -51,18 +55,31 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtAutoRelight("r_rtAutoRelight", "0", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtAutoRelight("r_rtAutoRelight", "1", CVAR_RENDERER | CVAR_BOOL,
                        "auto_relight.md: master toggle for engine-synthesized lights from emissive "
                        "world surfaces; regenerates on map load.");
 
-idCVar r_rtAutoRelightDebug("r_rtAutoRelightDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
+idCVar r_rtAutoRelightDebug("r_rtAutoRelightDebug", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "auto_relight.md: 0 = off; 1 = console table of every harvested cluster "
                             "(centroid/area/score/verdict/material) printed once, at the next map load. "
                             "Independent of r_rtAutoRelight so the harvest/cluster/score step can be "
                             "validated before enabling synthesis.");
 
-idCVar r_rtAutoRelightMax("r_rtAutoRelightMax", "16", CVAR_RENDERER | CVAR_INTEGER,
-                          "auto_relight.md AR3: max synthesized lights per map, kept by descending score.");
+idCVar r_rtAutoRelightMax("r_rtAutoRelightMax", "64", CVAR_RENDERER | CVAR_INTEGER,
+                          "auto_relight.md AR3: overall map-wide ceiling, applied AFTER the per-area cap below "
+                          "(safety valve for maps with many areas, not the primary budget knob anymore).");
+
+// 2026-08-23: added after in-game validation on alphalabs2 showed the single global
+// top-16-by-score cap letting two physically large/bright fixture clusters (a pulsing
+// floor grate, a wall light bank) consume the ENTIRE map's budget between them, leaving
+// every other room with zero synthesized lights despite having plenty of emissive
+// fixtures of their own (score = area * luminance * styleWeight lets sheer physical
+// size dominate). This is the primary budget knob now: score/keep top-N PER PORTAL
+// AREA (world->PointInArea on the cluster centroid) so "a few per scene" actually
+// holds as the player moves between rooms, instead of two rooms eating the whole map.
+idCVar r_rtAutoRelightMaxPerArea("r_rtAutoRelightMaxPerArea", "4", CVAR_RENDERER | CVAR_INTEGER,
+                                 "auto_relight.md AR3: max synthesized lights kept per portal area, by "
+                                 "descending score, before the map-wide r_rtAutoRelightMax ceiling is applied.");
 
 idCVar r_rtAutoRelightIntensity("r_rtAutoRelightIntensity", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                 "auto_relight.md AR5: SHADERPARM_ALPHA for synthesized lights — start dim, "
@@ -113,8 +130,7 @@ struct arCell_t
 // non-negative int key space.
 static ID_INLINE int AR_CellHashKey(int ix, int iy, int iz)
 {
-    const unsigned int h =
-        (unsigned int)ix * 73856093u ^ (unsigned int)iy * 19349663u ^ (unsigned int)iz * 83492791u;
+    const unsigned int h = (unsigned int)ix * 73856093u ^ (unsigned int)iy * 19349663u ^ (unsigned int)iz * 83492791u;
     return (int)(h & 0x7fffffff);
 }
 
@@ -284,7 +300,8 @@ enum arVerdict_t
 {
     AR_VERDICT_CANDIDATE = 0,   // not yet finalized by AR3/AR4/AR5
     AR_VERDICT_REJECTED_NORMAL, // AR2: normal spread too wide, never scored
-    AR_VERDICT_BUDGET_DROPPED,  // AR3: below the top r_rtAutoRelightMax by score
+    AR_VERDICT_AREA_CAPPED,     // AR3: below the top r_rtAutoRelightMaxPerArea within its own portal area
+    AR_VERDICT_BUDGET_DROPPED,  // AR3: below the top r_rtAutoRelightMax map-wide (after the per-area cap)
     AR_VERDICT_DEDUPED,         // AR4: an existing map light already covers this fixture
     AR_VERDICT_LIT,             // AR5: synthesized as a real light
 };
@@ -292,8 +309,8 @@ enum arVerdict_t
 struct arCluster_t
 {
     idVec3 centroid;
-    idVec3 normal;          // unit average face normal; zero if rejected
-    float normalAgreement;  // |sum area-weighted unit normals| / totalArea, in [0,1]
+    idVec3 normal;         // unit average face normal; zero if rejected
+    float normalAgreement; // |sum area-weighted unit normals| / totalArea, in [0,1]
     float totalArea;
     idVec3 mins, maxs;       // union of contributing cells' world AABB
     float tangentHalfWidth;  // half-extent along the tangent "left" axis
@@ -306,11 +323,12 @@ struct arCluster_t
     bool repIsScreen;
 
     // Filled in by AR3/AR4/AR5 — see arVerdict_t.
-    float emissiveLuma;   // AR3: average luminance of repEmissiveImage, [0,1]
-    idVec3 emissiveColor; // AR3: luminance-weighted ("bright-texel") average color, [0,1] per channel
-    float score;          // AR3: totalArea * emissiveLuma * styleWeight
-    idVec3 origin;         // AR4/AR5: centroid + normal * r_rtAutoRelightOffset
-    int dedupeMatchLightIndex; // AR4: index into world->lightDefs, or -1
+    float emissiveLuma;          // AR3: average luminance of repEmissiveImage, [0,1]
+    idVec3 emissiveColor;        // AR3: luminance-weighted ("bright-texel") average color, [0,1] per channel
+    float score;                 // AR3: totalArea * emissiveLuma * styleWeight
+    int areaNum;                 // AR3: world->PointInArea(centroid); -1 if unresolved (own pseudo-bucket)
+    idVec3 origin;               // AR4/AR5: centroid + normal * r_rtAutoRelightOffset
+    int dedupeMatchLightIndex;   // AR4: index into world->lightDefs, or -1
     qhandle_t synthesizedHandle; // AR5: AddLightDef() handle, or -1
     arVerdict_t verdict;
 };
@@ -414,6 +432,7 @@ static void AR_ClusterCells(idList<arCell_t> &cells, idHashIndex &cellHash, idLi
         cluster.emissiveLuma = 1.0f;
         cluster.emissiveColor = idVec3(1.0f, 1.0f, 1.0f);
         cluster.score = 0.0f;
+        cluster.areaNum = -1; // resolved in AR_ScoreAndBudget
         cluster.origin = cluster.centroid;
         cluster.dedupeMatchLightIndex = -1;
         cluster.synthesizedHandle = -1;
@@ -491,8 +510,8 @@ static void AR_ClusterCells(idList<arCell_t> &cells, idHashIndex &cellHash, idLi
 struct arImageStat_t
 {
     const idImage *image;
-    float luma;    // plain average luminance across sampled texels, [0,1]
-    idVec3 color;   // luminance-weighted average color ("bright-texel" bias), [0,1] per channel
+    float luma;   // plain average luminance across sampled texels, [0,1]
+    idVec3 color; // luminance-weighted average color ("bright-texel" bias), [0,1] per channel
 };
 
 static void AR_GetImageLumaColor(idList<arImageStat_t> &cache, const idImage *img, float &outLuma, idVec3 &outColor)
@@ -570,11 +589,38 @@ static void AR_GetImageLumaColor(idList<arImageStat_t> &cache, const idImage *im
     outColor = stat.color;
 }
 
+// Sorts `idx` (indices into `clusters`) by descending score, in place.
+// Cluster counts are small (tens, not thousands) — insertion sort is simple
+// and plenty fast; shared by both the per-area and map-wide passes below.
+static void AR_SortByScoreDescending(idList<arCluster_t> &clusters, idList<int> &idx)
+{
+    for (int i = 1; i < idx.Num(); i++)
+    {
+        const int key = idx[i];
+        const float keyScore = clusters[key].score;
+        int j = i - 1;
+        while (j >= 0 && clusters[idx[j]].score < keyScore)
+        {
+            idx[j + 1] = idx[j];
+            j--;
+        }
+        idx[j + 1] = key;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AR3 — scoring and budget
+//
+// Two-stage cap (2026-08-23, replacing a single map-wide top-N — see
+// r_rtAutoRelightMaxPerArea's comment above for why): first keep the top
+// r_rtAutoRelightMaxPerArea clusters WITHIN EACH PORTAL AREA (by score), then
+// take everything that survived that and apply r_rtAutoRelightMax as an
+// overall map-wide ceiling. This is what makes "a few per scene" hold as the
+// player moves between rooms, while the map-wide cap still exists as a safety
+// valve for maps with many areas.
 // ---------------------------------------------------------------------------
 
-static void AR_ScoreAndBudget(idList<arCluster_t> &clusters)
+static void AR_ScoreAndBudget(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
 {
     idList<arImageStat_t> imageStatCache;
     idList<int> candidateIdx;
@@ -589,29 +635,52 @@ static void AR_ScoreAndBudget(idList<arCluster_t> &clusters)
 
         const float styleWeight = c.repIsScreen ? 1.5f : 1.0f; // GUI/videomap: "screens are the money shot"
         c.score = c.totalArea * c.emissiveLuma * styleWeight;
+        c.areaNum = world->PointInArea(c.centroid); // -1 (unresolved) gets its own bucket below
 
         candidateIdx.Append(i);
     }
 
-    // Sort candidates by score, descending. Cluster counts are small (tens,
-    // not thousands) — insertion sort is simple and plenty fast.
-    for (int i = 1; i < candidateIdx.Num(); i++)
+    // --- Stage 1: per-area cap ---
+    // Distinct area numbers present among candidates (small set — number of
+    // rooms touched by an emissive fixture, not number of clusters).
+    idList<int> distinctAreas;
+    for (int i = 0; i < candidateIdx.Num(); i++)
     {
-        const int key = candidateIdx[i];
-        const float keyScore = clusters[key].score;
-        int j = i - 1;
-        while (j >= 0 && clusters[candidateIdx[j]].score < keyScore)
-        {
-            candidateIdx[j + 1] = candidateIdx[j];
-            j--;
-        }
-        candidateIdx[j + 1] = key;
+        const int areaNum = clusters[candidateIdx[i]].areaNum;
+        if (distinctAreas.FindIndex(areaNum) < 0)
+            distinctAreas.Append(areaNum);
     }
 
-    const int maxLights = Max(0, r_rtAutoRelightMax.GetInteger());
-    for (int rank = 0; rank < candidateIdx.Num(); rank++)
+    const int maxPerArea = Max(0, r_rtAutoRelightMaxPerArea.GetInteger());
+    idList<int> survivedPerArea;
+    idList<int> areaGroup;
+    for (int a = 0; a < distinctAreas.Num(); a++)
     {
-        arCluster_t &c = clusters[candidateIdx[rank]];
+        areaGroup.SetNum(0);
+        for (int i = 0; i < candidateIdx.Num(); i++)
+        {
+            if (clusters[candidateIdx[i]].areaNum == distinctAreas[a])
+                areaGroup.Append(candidateIdx[i]);
+        }
+
+        AR_SortByScoreDescending(clusters, areaGroup);
+
+        for (int rank = 0; rank < areaGroup.Num(); rank++)
+        {
+            if (rank < maxPerArea)
+                survivedPerArea.Append(areaGroup[rank]);
+            else
+                clusters[areaGroup[rank]].verdict = AR_VERDICT_AREA_CAPPED;
+        }
+    }
+
+    // --- Stage 2: map-wide ceiling over whatever survived stage 1 ---
+    AR_SortByScoreDescending(clusters, survivedPerArea);
+
+    const int maxLights = Max(0, r_rtAutoRelightMax.GetInteger());
+    for (int rank = 0; rank < survivedPerArea.Num(); rank++)
+    {
+        arCluster_t &c = clusters[survivedPerArea[rank]];
         if (rank >= maxLights)
             c.verdict = AR_VERDICT_BUDGET_DROPPED;
         // else: stays AR_VERDICT_CANDIDATE, handed to AR4 next.
@@ -752,17 +821,19 @@ static const char *AR_VerdictName(arVerdict_t v)
 {
     switch (v)
     {
-        case AR_VERDICT_REJECTED_NORMAL:
-            return "REJECTED";
-        case AR_VERDICT_BUDGET_DROPPED:
-            return "BUDGET-DROP";
-        case AR_VERDICT_DEDUPED:
-            return "DEDUPED";
-        case AR_VERDICT_LIT:
-            return "LIT";
-        case AR_VERDICT_CANDIDATE:
-        default:
-            return "CANDIDATE";
+    case AR_VERDICT_REJECTED_NORMAL:
+        return "REJECTED";
+    case AR_VERDICT_AREA_CAPPED:
+        return "AREA-CAP";
+    case AR_VERDICT_BUDGET_DROPPED:
+        return "BUDGET-DROP";
+    case AR_VERDICT_DEDUPED:
+        return "DEDUPED";
+    case AR_VERDICT_LIT:
+        return "LIT";
+    case AR_VERDICT_CANDIDATE:
+    default:
+        return "CANDIDATE";
     }
 }
 
@@ -789,14 +860,14 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
     int rejectedCount = 0;
     AR_ClusterCells(cells, cellHash, clusters, rejectedCount);
 
-    AR_ScoreAndBudget(clusters);
+    AR_ScoreAndBudget(world, clusters);
 
     // Dedupe is read-only (no AddLightDef side effect) — always run it so the
     // debug table previews DEDUPED verdicts even with r_rtAutoRelight 0.
     // Synthesis mutates world state, so it stays gated on the master toggle.
     AR_Dedupe(world, clusters);
 
-    int litCount = 0, budgetDroppedCount = 0, dedupedCount = 0, candidateCount = 0;
+    int litCount = 0, budgetDroppedCount = 0, areaCappedCount = 0, dedupedCount = 0, candidateCount = 0;
     if (r_rtAutoRelight.GetBool())
         AR_Synthesize(world, clusters);
 
@@ -804,20 +875,23 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
     {
         switch (clusters[i].verdict)
         {
-            case AR_VERDICT_LIT:
-                litCount++;
-                break;
-            case AR_VERDICT_BUDGET_DROPPED:
-                budgetDroppedCount++;
-                break;
-            case AR_VERDICT_DEDUPED:
-                dedupedCount++;
-                break;
-            case AR_VERDICT_CANDIDATE: // only possible when r_rtAutoRelight 0 (AR5 didn't run)
-                candidateCount++;
-                break;
-            default:
-                break;
+        case AR_VERDICT_LIT:
+            litCount++;
+            break;
+        case AR_VERDICT_AREA_CAPPED:
+            areaCappedCount++;
+            break;
+        case AR_VERDICT_BUDGET_DROPPED:
+            budgetDroppedCount++;
+            break;
+        case AR_VERDICT_DEDUPED:
+            dedupedCount++;
+            break;
+        case AR_VERDICT_CANDIDATE: // only possible when r_rtAutoRelight 0 (AR5 didn't run)
+            candidateCount++;
+            break;
+        default:
+            break;
         }
     }
 
@@ -826,23 +900,27 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
     if (r_rtAutoRelight.GetBool())
     {
         common->Printf("VK AutoRelight: %d emissive surfaces (%d skipped, no CPU geometry), %d triangles -> %d "
-                       "grid cells -> %d clusters (%d lit, %d deduped, %d budget-dropped, %d rejected: normal "
-                       "spread) in %d msec\n",
-                       emissiveSurfCount, skippedGeomSurfCount, emissiveTriCount, cells.Num(), clusters.Num(),
-                       litCount, dedupedCount, budgetDroppedCount, rejectedCount, elapsedMsec);
+                       "grid cells -> %d clusters (%d lit, %d deduped, %d area-capped, %d budget-dropped, %d "
+                       "rejected: normal spread) in %d msec\n",
+                       emissiveSurfCount, skippedGeomSurfCount, emissiveTriCount, cells.Num(), clusters.Num(), litCount,
+                       dedupedCount, areaCappedCount, budgetDroppedCount, rejectedCount, elapsedMsec);
     }
     else
     {
         common->Printf("VK AutoRelight: %d emissive surfaces (%d skipped, no CPU geometry), %d triangles -> %d "
-                       "grid cells -> %d clusters (%d would-be-lit, %d deduped, %d budget-dropped, %d rejected: "
-                       "normal spread) in %d msec [r_rtAutoRelight 0 — preview only, no synthesis]\n",
+                       "grid cells -> %d clusters (%d would-be-lit, %d deduped, %d area-capped, %d budget-dropped, "
+                       "%d rejected: normal spread) in %d msec [r_rtAutoRelight 0 — preview only, no synthesis]\n",
                        emissiveSurfCount, skippedGeomSurfCount, emissiveTriCount, cells.Num(), clusters.Num(),
-                       candidateCount, dedupedCount, budgetDroppedCount, rejectedCount, elapsedMsec);
+                       candidateCount, dedupedCount, areaCappedCount, budgetDroppedCount, rejectedCount, elapsedMsec);
     }
 
     if (r_rtAutoRelightDebug.GetInteger() >= 1)
     {
-        common->Printf("  #  verdict      score   area  tris cells agree      centroid           color       "
+        // "rm" is the portal area number (world->PointInArea on the centroid) that
+        // the per-area cap (r_rtAutoRelightMaxPerArea) groups by — -1 means
+        // unresolved (its own pseudo-bucket, see AR_ScoreAndBudget). Not to be
+        // confused with "surfA", the fixture's physical emissive surface area.
+        common->Printf("  #  verdict      score  surfA  tris cells  rm agree      centroid           color       "
                        "material\n");
         for (int i = 0; i < clusters.Num(); i++)
         {
@@ -853,8 +931,8 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
             else if (c.verdict == AR_VERDICT_LIT)
                 extra = va(" (handle %d)", c.synthesizedHandle);
 
-            common->Printf("%3d  %-11s %6.1f %7.1f %4d  %3d  %4.2f (%7.1f %7.1f %7.1f) (%3.2f %3.2f %3.2f)  %s%s\n",
-                           i, AR_VerdictName(c.verdict), c.score, c.totalArea, c.triCount, c.cellCount,
+            common->Printf("%3d  %-11s %6.1f %7.1f %4d  %3d %3d %4.2f (%7.1f %7.1f %7.1f) (%3.2f %3.2f %3.2f)  %s%s\n",
+                           i, AR_VerdictName(c.verdict), c.score, c.totalArea, c.triCount, c.cellCount, c.areaNum,
                            c.normalAgreement, c.centroid.x, c.centroid.y, c.centroid.z, c.emissiveColor.x,
                            c.emissiveColor.y, c.emissiveColor.z, c.repMaterial ? c.repMaterial->GetName() : "<none>",
                            extra.c_str());

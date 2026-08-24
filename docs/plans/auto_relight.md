@@ -262,6 +262,36 @@ brightness-threshold filter — cheaper and doesn't need a tuned cutoff. `styleW
 gained a third `outIsCinematic` out-param for this). Sort+budget is an insertion sort
 over candidates (cluster counts are tens, not thousands).
 
+**Finding + fix, 2026-08-23 (`r_rtAutoRelightDebug 1` on alphalabs2):** the single
+map-wide top-16 cap let two physically large/bright fixture clusters (a pulsing
+`floorpgrate` floor section, a `mallight` wall bank — both legitimately emissive,
+checked against their `.mtr` defs, not a classification bug) consume **all 16** budget
+slots between them (10 `LIT` + 6 `DEDUPED`), while every other room's fixtures —
+scattered across a map spanning thousands of units, clearly many rooms — scored lower
+by sheer physical size (`floorpgrate` area ~11-12k sq. units vs. a typical wall panel's
+500-4000) and all landed `BUDGET-DROP`. Net effect: two rooms got all the budget, every
+other room got zero, which isn't "a few hero lights per scene" (the design intent) —
+it's "a few hero lights for the entire level, wherever they happen to be biggest."
+
+Fixed with a **two-stage cap**, replacing the single map-wide sort:
+1. `world->PointInArea(cluster.centroid)` buckets each candidate by portal area.
+2. Within each area, keep the top `r_rtAutoRelightMaxPerArea` (new cvar, default
+   **3**) by score — everything else in that area is `AREA-CAP`, a new verdict
+   distinct from `BUDGET-DROP` so the debug table shows *why* a cluster lost (its
+   own room was oversubscribed, vs. losing to the map-wide ceiling).
+3. Everything that survives stage 1, across all areas, is sorted again and capped by
+   the existing `r_rtAutoRelightMax` (still 16) as a map-wide safety valve — unchanged
+   in spirit, now just applied after the per-area pass instead of being the only pass.
+
+This mirrors `portal_area_lights.md`'s AREA fix for GI/vol light *admission* (flat
+global candidate pool → per-area walk) — same shape of problem, applied to AR3's
+synthesis budget instead. The debug table (`r_rtAutoRelightDebug 1`) gained an `rm`
+column (the resolved portal-area number) so the per-room distribution is directly
+visible, not just inferred from centroids. **Implemented 2026-08-23, not yet
+re-validated in-game against the alphalabs2 run that surfaced it** — re-run
+`r_rtAutoRelightDebug 1` there and confirm rooms other than the floorpgrate/mallight
+ones now get `LIT` entries.
+
 ### AR4. Dedupe (critical — prevents the grey washout returning)
 
 For each cluster, search existing `lightDefs` within `r_rtAutoRelightDedupeDist`
@@ -414,7 +444,8 @@ synthesized lights competing for vol slots turns out to be a real problem in-gam
 | CVar | Default | Meaning |
 |---|---|---|
 | `r_rtAutoRelight` | 0 (flip to 1 after validation) | master toggle; regenerates on map load — ✅ implemented |
-| `r_rtAutoRelightMax` | 16 | cluster budget per map — ✅ implemented (AR3) |
+| `r_rtAutoRelightMaxPerArea` | 3 | AR3: cluster budget PER PORTAL AREA, applied before the map-wide cap — ✅ implemented 2026-08-23 (primary budget knob now, see AR3's 2026-08-23 finding) |
+| `r_rtAutoRelightMax` | 16 | AR3: overall map-wide ceiling, applied after the per-area cap — ✅ implemented (safety valve, not the primary knob anymore) |
 | `r_rtAutoRelightIntensity` | 0.5 | SHADERPARM_ALPHA for synthesized lights — ✅ implemented (AR5) |
 | `r_rtAutoRelightReach` | 160 | normal-direction radius (units) — ✅ implemented (AR5) |
 | `r_rtAutoRelightOffset` | 8 | origin offset off the surface — ✅ implemented (AR5) |
@@ -434,13 +465,15 @@ synthesized lights competing for vol slots turns out to be a real problem in-gam
    with the classifier on.
 1. ✅ **Implemented 2026-08-23.** `r_rtAutoRelight 1; r_rtAutoRelightDebug 1` → console
    table: per cluster, verdict (`LIT (handle N)` / `DEDUPED (vs light N)` /
-   `BUDGET-DROP` / `REJECTED`), score, area, tri/cell counts, normal agreement,
-   centroid, color, material name. `r_rtAutoRelightDebug 1` alone (master toggle still
-   0) previews everything through dedupe — AR5 synthesis is the only stage gated on
-   `r_rtAutoRelight`, since it's the only one with a side effect (`AddLightDef`). **Not
-   yet in-game validated** — needs a real map load to confirm the 48-unit cell size and
-   0.7 normal-agreement threshold behave sanely, per this doc's own procedure rule (see
-   AR0's "log before thresholds").
+   `AREA-CAP` / `BUDGET-DROP` / `REJECTED`), score, surface area, tri/cell counts,
+   `rm` (resolved portal-area number, added 2026-08-23 alongside the per-area budget
+   fix), normal agreement, centroid, color, material name. `r_rtAutoRelightDebug 1`
+   alone (master toggle still 0) previews everything through dedupe — AR5 synthesis is
+   the only stage gated on `r_rtAutoRelight`, since it's the only one with a side
+   effect (`AddLightDef`). **In-game validated once already** (the 2026-08-23
+   alphalabs2 run that surfaced AR3's per-area budget bug — see AR3 above); re-run
+   after that fix to confirm the `rm` column now shows lit clusters spread across
+   multiple areas instead of concentrated in one or two.
 2. **`r_showLights 1` works natively** — synthesized lights are real lightDefs and
    render their volumes in the existing debug view. Walk Mars City reception: expect
    the big wall screens and ceiling strips lit, no light inside geometry, no doubles.
