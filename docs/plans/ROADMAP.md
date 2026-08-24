@@ -168,10 +168,15 @@ Wave 6 — Tuning pass                              [rt_optimization_tuning.md T
   T5 emissive floor fix  ·  T6 final constants (record values in the doc)
 ```
 
-After Wave 6: reassess against the pillars. Candidate next arc: **sun/sky-light path**
-(parallel lights are skipped everywhere today; directional sky radiance in miss
-shaders; volumetric sun shafts) — valuable for Doom 3's Mars-surface areas and the
-prerequisite tech for any future outdoor-heavy game (Quake 4 ambitions).
+After Wave 6: reassess against the pillars. Candidate next arcs:
+- **sun/sky-light path** (parallel lights are skipped everywhere today; directional
+  sky radiance in miss shaders; volumetric sun shafts) — valuable for Doom 3's
+  Mars-surface areas and the prerequisite tech for any future outdoor-heavy game
+  (Quake 4 ambitions).
+- **world-space caching** (`froxel_probe_gi.md`, designed 2026-08-23) — froxel-grid
+  volumetrics + DDGI-style probe GI: move the expensive sampling out of screen
+  space into cached world-space structures; big perf win, deletes most of the
+  GI noise-fighting chain (and its open camera-cut bug) structurally.
 
 ## Backlog (not in the current arc, not dead)
 
@@ -183,6 +188,7 @@ prerequisite tech for any future outdoor-heavy game (Quake 4 ambitions).
 | Translucent square borders over reflections | `completed/reflection_enhancements.md` (last section) | Polish |
 | Roughness-blurred reflections | — | Explicitly out of scope until G-buffer + composite prove out; interim is T2's grazing clamp + F0 gating |
 | Runtime emissive-state lights (scripted screens turning off) | `auto_relight.md` limitations | v2 of auto-relight |
+| Froxel volumetrics + probe GI | `froxel_probe_gi.md` | Post-Wave-6 arc; needs the owed profiler checkpoints first |
 
 ## Status tracking
 
