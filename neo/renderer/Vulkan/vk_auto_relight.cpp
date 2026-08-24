@@ -13,14 +13,21 @@ zero map editing. The pipeline:
   AR2  Clustering        — union adjacent occupied grid cells (6-connectivity)
        into physical fixtures; reject clusters whose triangle normals
        disagree too much (wraparound glow strips).
-  AR3  Scoring/budget    — score = area x emissive luminance x style weight;
-       keep the top r_rtAutoRelightMaxPerArea clusters PER PORTAL AREA, then
-       the top r_rtAutoRelightMax clusters map-wide as an overall ceiling
-       (2026-08-23: was a single map-wide cap, which let one or two large/
-       bright fixture clusters starve every other room's budget — see the
-       cvar comment above AR_ScoreAndBudget for the in-game finding).
-  AR4  Dedupe            — drop clusters within r_rtAutoRelightDedupeDist of
-       an existing, color-similar map light (the mappers already lit it).
+  AR3a Scoring (AR_Score)      — score = area x emissive luminance x style
+       weight, tag each cluster with its resolved portal area.
+  AR4  Dedupe (AR_Dedupe)      — drop clusters within r_rtAutoRelightDedupeDist
+       of an existing, color-similar map light (the mappers already lit it).
+       Runs BEFORE the budget caps below (2026-08-23, code review finding —
+       used to run after: a room's highest-scoring fixtures could consume its
+       whole quota and only THEN get rejected as already-lit, starving
+       genuinely-uncovered lower-scored fixtures in the same room of a slot
+       they should have won).
+  AR3b Budget (AR_ApplyBudget) — over whatever AR4 left as CANDIDATE, keep the
+       top r_rtAutoRelightMaxPerArea clusters PER PORTAL AREA, then the top
+       r_rtAutoRelightMax clusters map-wide as an overall ceiling (2026-08-23:
+       was a single map-wide cap, which let one or two large/bright fixture
+       clusters starve every other room's budget — see the cvar comment above
+       AR_ApplyBudget for the in-game finding).
   AR5  Light synthesis   — AddLightDef() a real point light per surviving
        cluster: origin offset off the surface, a world-axis-aligned bound of
        the fixture's (tangent x2.5, normal reach) footprint as lightRadius,
@@ -623,21 +630,17 @@ static void AR_SortByScoreDescending(idList<arCluster_t> &clusters, idList<int> 
 }
 
 // ---------------------------------------------------------------------------
-// AR3 — scoring and budget
+// AR3a — scoring (no budget yet)
 //
-// Two-stage cap (2026-08-23, replacing a single map-wide top-N — see
-// r_rtAutoRelightMaxPerArea's comment above for why): first keep the top
-// r_rtAutoRelightMaxPerArea clusters WITHIN EACH PORTAL AREA (by score), then
-// take everything that survived that and apply r_rtAutoRelightMax as an
-// overall map-wide ceiling. This is what makes "a few per scene" hold as the
-// player moves between rooms, while the map-wide cap still exists as a safety
-// valve for maps with many areas.
+// Split from budgeting (2026-08-23, code review finding): scoring/area-tagging
+// has to happen before AR4 dedupe (dedupe needs c.emissiveColor), but the actual
+// CAPPING must happen AFTER dedupe — see AR_ApplyBudget's header comment for why
+// doing it in the other order silently starves rooms of lights they should get.
 // ---------------------------------------------------------------------------
 
-static void AR_ScoreAndBudget(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
+static void AR_Score(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
 {
     idList<arImageStat_t> imageStatCache;
-    idList<int> candidateIdx;
 
     for (int i = 0; i < clusters.Num(); i++)
     {
@@ -650,8 +653,39 @@ static void AR_ScoreAndBudget(idRenderWorldLocal *world, idList<arCluster_t> &cl
         const float styleWeight = c.repIsScreen ? 1.5f : 1.0f; // GUI/videomap: "screens are the money shot"
         c.score = c.totalArea * c.emissiveLuma * styleWeight;
         c.areaNum = world->PointInArea(c.centroid); // -1 (unresolved) gets its own bucket below
+    }
+}
 
-        candidateIdx.Append(i);
+// ---------------------------------------------------------------------------
+// AR3b — budget (per-area cap, then map-wide cap)
+//
+// Must run AFTER AR4 dedupe, not before (2026-08-23, code review finding — was
+// AR_ScoreAndBudget, ran before dedupe). Running the caps first let a room's
+// highest-scoring fixtures consume its per-area quota even when those exact
+// fixtures were about to be rejected by dedupe (already covered by a real
+// mapper-placed light) — a room whose brightest fixtures all happen to already
+// be hand-lit could end up with ZERO synthesized lights despite having other,
+// genuinely-uncovered fixtures that never got a chance to compete for a slot.
+// Building candidateIdx here (scanning for verdict == CANDIDATE) naturally
+// excludes anything AR4 already marked DEDUPED, so only fixtures that will
+// actually become real lights compete for the limited slots.
+//
+// Two-stage cap (2026-08-23, replacing a single map-wide top-N — see
+// r_rtAutoRelightMaxPerArea's comment above for why): first keep the top
+// r_rtAutoRelightMaxPerArea clusters WITHIN EACH PORTAL AREA (by score), then
+// take everything that survived that and apply r_rtAutoRelightMax as an
+// overall map-wide ceiling. This is what makes "a few per scene" hold as the
+// player moves between rooms, while the map-wide cap still exists as a safety
+// valve for maps with many areas.
+// ---------------------------------------------------------------------------
+
+static void AR_ApplyBudget(idList<arCluster_t> &clusters)
+{
+    idList<int> candidateIdx;
+    for (int i = 0; i < clusters.Num(); i++)
+    {
+        if (clusters[i].verdict == AR_VERDICT_CANDIDATE)
+            candidateIdx.Append(i);
     }
 
     // --- Stage 1: per-area cap ---
@@ -697,7 +731,7 @@ static void AR_ScoreAndBudget(idRenderWorldLocal *world, idList<arCluster_t> &cl
         arCluster_t &c = clusters[survivedPerArea[rank]];
         if (rank >= maxLights)
             c.verdict = AR_VERDICT_BUDGET_DROPPED;
-        // else: stays AR_VERDICT_CANDIDATE, handed to AR4 next.
+        // else: stays AR_VERDICT_CANDIDATE, handed to AR5 next.
     }
 }
 
@@ -892,12 +926,17 @@ void VK_AutoRelight_Generate(idRenderWorldLocal *world)
     int rejectedCount = 0;
     AR_ClusterCells(cells, cellHash, clusters, rejectedCount);
 
-    AR_ScoreAndBudget(world, clusters);
+    AR_Score(world, clusters);
 
     // Dedupe is read-only (no AddLightDef side effect) — always run it so the
     // debug table previews DEDUPED verdicts even with r_rtAutoRelight 0.
     // Synthesis mutates world state, so it stays gated on the master toggle.
+    // Runs BEFORE the budget caps (2026-08-23, code review finding) — see
+    // AR_ApplyBudget's header comment for why the other order silently starves
+    // rooms whose highest-scoring fixtures already have a real map light.
     AR_Dedupe(world, clusters);
+
+    AR_ApplyBudget(clusters);
 
     int litCount = 0, budgetDroppedCount = 0, areaCappedCount = 0, dedupedCount = 0, candidateCount = 0;
     if (r_rtAutoRelight.GetBool())
