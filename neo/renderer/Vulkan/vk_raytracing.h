@@ -486,6 +486,7 @@ struct vkRTState_t
     int                   volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline            volCompositePipeline;
+    VkPipeline            volCompositeDebugPipeline; // r_rtVolDebugMode >= 1: blend disabled (replace)
     VkPipelineLayout      volCompositeLayout;
     VkDescriptorSetLayout volCompositeDescLayout;
     VkDescriptorPool      volCompositeDescPool;
