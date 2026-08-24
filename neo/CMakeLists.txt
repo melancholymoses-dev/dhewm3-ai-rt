@@ -695,6 +695,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_tonemap.cpp
 	renderer/Vulkan/vk_gbuffer.cpp
 	renderer/Vulkan/vk_material_table.cpp
+	renderer/Vulkan/vk_auto_relight.cpp
 )
 
 

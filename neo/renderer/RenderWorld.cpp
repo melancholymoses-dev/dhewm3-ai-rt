@@ -148,6 +148,7 @@ idRenderWorldLocal::idRenderWorldLocal()
     mapTimeStamp = FILE_NOT_FOUND_TIMESTAMP;
 
     generateAllInteractionsCalled = false;
+    autoRelightGenerated = false; // dhewm3-rt: auto_relight.md AR1-5
 
     areaNodes = NULL;
     numAreaNodes = 0;
@@ -1738,6 +1739,19 @@ void idRenderWorldLocal::GenerateAllInteractions()
 
     // entities flagged as noDynamicInteractions will no longer make any
     generateAllInteractionsCalled = true;
+
+    // dhewm3-rt: auto-relight (docs/plans/auto_relight.md AR1-5). Must run
+    // after the loop above — every real map lightDef now exists (game
+    // entities were spawned before Session.cpp called us), which AR4's
+    // dedupe-against-existing-lights step needs. Runs once per world
+    // lifetime; VK_AutoRelight_Generate no-ops unless r_rtAutoRelight or
+    // r_rtAutoRelightDebug is set.
+    if (glConfig.isVulkan && !autoRelightGenerated)
+    {
+        extern void VK_AutoRelight_Generate(idRenderWorldLocal *world);
+        VK_AutoRelight_Generate(this);
+        autoRelightGenerated = true;
+    }
 }
 
 /*
