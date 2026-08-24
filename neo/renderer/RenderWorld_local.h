@@ -196,6 +196,12 @@ class idRenderWorldLocal : public idRenderWorld
 
     bool generateAllInteractionsCalled;
 
+    // dhewm3-rt: set once VK_AutoRelight_Generate() has run for this world
+    // instance (docs/plans/auto_relight.md AR1-5). Reset alongside
+    // generateAllInteractionsCalled so a reloaded/freed world re-synthesizes
+    // on its next GenerateAllInteractions() call.
+    bool autoRelightGenerated;
+
     //-----------------------
     // RenderWorld_load.cpp
 

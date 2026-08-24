@@ -16,9 +16,9 @@ Stage-1.5-admitted-but-march-unreachable lights could evict genuinely nearby one
 volumetrics now has its own dedicated, distance-filtered light selection (separate SSBO), see
 the "Real fix implemented" entry near the end of this doc. `r_rtVolMaxLights` bumped 32→96 along
 the way as an interim mitigation before the real fix landed; harmless to leave, mostly redundant
-now. **Validated in-game 2026-08-22 — confirmed fixed** (user: "vol done"). Portal-area gathering
-(Stages 1/1.5/1.75) + the dedicated vol selection are considered closed; Stage 3 (per-room
-pin/ban curation sidecar) not started, not currently blocking anything.
+now. **Validated in-game 2026-08-22 — confirmed fixed** (user: "vol done"). **Doc done** —
+portal-area gathering (Stages 1/1.5/1.75) + the dedicated vol selection are complete. Stage 3
+(per-room pin/ban curation sidecar) was never started and is not carried forward as open work.
 **Stage 1.5 implemented 2026-08-19** (vk_gi.cpp: unions in every `portalArea_t` id's own
 view-frustum flood stamped visible this frame — `viewCount == tr.viewCount` — with the BFS
 set; zero new cost, reuses the flood the standard renderer already runs. Motivated by a
@@ -135,7 +135,7 @@ confirmed fixed.**
 Stage 3 not started.  Observed follow-up candidate from the dumps: lights currently off
 (`color 0 0 0`, e.g. broken/triggered fixtures) are admitted and burn candidate slots — a
 `maxChan > 0` guard in the collector would drop them per-frame safely.
-**Companion docs:** `auto_relight.md` (§0 classifier is the admission layer this feeds),
+**Companion docs:** `auto_relight.md` (AR0 classifier is the admission layer this feeds),
 `rt_optimization_tuning.md` (L1 stratified selection is the ranking layer this feeds).
 
 ---
@@ -209,7 +209,7 @@ with:
    (CPU-local int array indexed by lightDef index — NOT tr.frameCount-keyed
    GPU state; see feedback_per_slot_counters)
 4. Each unique light then flows through the EXISTING pipeline unchanged:
-   VK_RT_ClassifyLight admission (§0) → saturation-weighted importance →
+   VK_RT_ClassifyLight admission (AR0) → saturation-weighted importance →
    L1 tier/quota/hysteresis selection → upload
 ```
 
@@ -349,7 +349,7 @@ is currently impossible. Follow-up candidates (NOT Stage 1 scope):
 
 ## Interactions with the existing stack
 
-- **§0 classifier** (`vk_light_classify.cpp`): unchanged, still the admission
+- **AR0 classifier** (`vk_light_classify.cpp`): unchanged, still the admission
   gate. Fog/blend lights have area refs too — classification rejects them after
   gathering, exactly as today.
 - **L1 stratified tiers**: unchanged. Tiering by distance *within* a
