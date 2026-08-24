@@ -201,6 +201,19 @@ build already walks in `vk_accelstruct.cpp` — reuse that iteration pattern). F
 surface whose material is emissive, collect triangles: world-space centroid, area,
 normal, and UV centroid (for color sampling later).
 
+✅ **Implemented 2026-08-23** in the new `vk_auto_relight.cpp` (`AR_HarvestEmissiveSurfaces`).
+Walks `world->localModels` (the `_area%i` per-portal-area models — confirmed baked in
+world space, identity origin/axis, in `RenderWorld_load.cpp::AddWorldModelEntities`, so
+no entity transform is needed). The emissive test was extracted out of
+`VK_RT_MakeMaterialEntry` into a new shared `VK_RT_MaterialIsEmissive()`
+(`vk_material_table.cpp`, declared in `vk_raytracing.h`) so the material-table and
+harvest walks can't drift apart, per this doc's original ask. Mirrors the static-BLAS
+walk's surface filters (`MF_POLYGONOFFSET`, particle/sprite/flare deforms). Triangles
+are streamed directly into grid-cell accumulators (see AR2) rather than stored
+per-triangle, so cost is independent of world triangle count. UV centroid is not
+separately tracked — color sampling (AR3/AR5) reads the emissive *image* directly via
+`R_LoadImage`, not a UV-windowed region of it (see AR3 note).
+
 ### AR2. Clustering (one fixture = one light)
 
 A single surface can span several physical panels (a strip of six ceiling lights is
@@ -213,6 +226,12 @@ often one draw surface). v1 algorithm — deliberately simple:
   width/height — feeds the soft-shadow aperture).
 - Reject clusters with wildly disagreeing normals (|avg normal| < 0.7 after
   normalization → a wraparound glow strip; skip, log it).
+
+✅ **Implemented 2026-08-23** (`AR_ClusterCells`). 6-connected flood fill over occupied
+grid cells via `idHashIndex`. Tangent-plane half-extents are approximated from the
+cluster's *cell-level* AABB corners (not a second per-triangle pass) — slightly
+generous, acceptable for v1. Rejected clusters are kept in the output list tagged
+`AR_VERDICT_REJECTED_NORMAL` (not dropped silently) so the debug table can show them.
 
 ### AR3. Scoring and budget
 
@@ -228,6 +247,21 @@ score = totalArea × emissiveLuminance × styleWeight
 - Keep the top `r_rtAutoRelightMax` (default **16**) clusters per map. Log what was
   dropped and its score — never truncate silently.
 
+✅ **Implemented 2026-08-23** (`AR_ScoreAndBudget` + `AR_GetImageLumaColor`).
+**Finding:** `idImage` does not retain CPU-side texel data after GPU upload (checked
+`Image.h`) — the "if retained" fast path never applies. Implementation always reloads
+the raw file via `R_LoadImage()` (same canonical-32-bit loader every other image path
+uses), stride-sampled for large images (bounded at ~4096 samples), cached by `idImage*`
+for the lifetime of one `VK_AutoRelight_Generate()` call only (not across map loads —
+same stale-pointer hazard the BLAS cache's `VK_RT_BeginLevelLoad` purge already guards
+against, so no cross-load cache was added). `emissiveLuminance` is the plain average
+luma of sampled texels; the AR5 "bright-texel color" is computed in the same pass as a
+**luminance-weighted** average color (brighter texels dominate) rather than a literal
+brightness-threshold filter — cheaper and doesn't need a tuned cutoff. `styleWeight`
+1.5× applies to both GUI-emissive and cinematic/videomap stages (`VK_RT_MaterialIsEmissive`
+gained a third `outIsCinematic` out-param for this). Sort+budget is an insertion sort
+over candidates (cluster counts are tens, not thousands).
+
 ### AR4. Dedupe (critical — prevents the grey washout returning)
 
 For each cluster, search existing `lightDefs` within `r_rtAutoRelightDedupeDist`
@@ -236,6 +270,15 @@ color is broadly similar (hue distance below threshold, or either is near-white)
 mappers already lit this fixture → **skip synthesis**, but optionally tag that existing
 light for the noShadows unlock (see AR6). This rule is what makes auto-relight additive
 instead of double-bright.
+
+✅ **Implemented 2026-08-23** (`AR_Dedupe` + `AR_ColorsSimilar`). Color similarity: either
+color below 0.15 saturation counts as a wildcard match (near-white always "matches" —
+favors skipping synthesis on a borderline call, the safe direction per pillar 2), else
+hue compared via normalized-color dot product (>0.85 ≈ within ~32°). Runs unconditionally
+(read-only, no `AddLightDef` side effect) even when `r_rtAutoRelight 0`, so
+`r_rtAutoRelightDebug 1` alone previews DEDUPED verdicts before the master toggle is
+flipped on. Does **not** yet tag the matched existing light for the AR6 unlock — AR6 is
+unimplemented (see below), so there's nothing to tag it for yet.
 
 ### AR5. Light synthesis
 
@@ -257,6 +300,24 @@ Per surviving cluster, `tr.primaryWorld->AddLightDef()`:
 - Mark the def (e.g. a flag in `renderLight_t` parms or a registry of defHandles owned
   by auto-relight) so cleanup on map change is exact and so debug tooling can identify
   them.
+
+✅ **Implemented 2026-08-23** (`AR_Synthesize`). **Important finding, changes the shape
+approach above:** `vk_shadows.cpp`'s anisotropic soft-shadow code, `vk_gi.cpp`, and
+`vol_march.comp` all **deliberately ignore point-light axis rotation** and read
+`lightRadius.xyz` as literal world X/Y/Z half-extents (see the explicit comment in
+`vk_shadows.cpp`: "same simplification (axis rotation ignored) ... kept consistent
+here"). So a tangent/normal-oriented ellipsoid expressed via `renderLight.axis` would
+**not** actually shape the RT penumbra for a non-axis-aligned panel — the consumers
+never look at `axis` for point lights. Implementation therefore computes the
+world-space-axis-aligned AABB of the true oriented box (±left×halfWidth, ±up×halfHeight,
+±normal×reach) and assigns that to `lightRadius` directly, leaving `renderLight.axis`
+identity. This is exact when the panel already faces a cardinal direction (the common
+case in Doom 3's blocky architecture) and slightly generous otherwise — consistent with,
+not a regression from, the simplification the rest of the RT codebase already makes for
+every other point light. Cleanup/identification: relies on the normal per-world
+`lightDefs` lifecycle (freed generically on map reload) plus the `r_rtAutoRelightDebug 1`
+console table (verdict + `AddLightDef` handle per cluster); no separate defHandle
+registry was added — nothing yet consumes it (AR6/AR7 are unimplemented).
 
 ### AR6. noShadows unlock for existing fixture lights (companion rule)
 
@@ -308,19 +369,29 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
   hero light and confirm it actually appears there, not just in `[final order]`
   (GI's own list, which has no such distance gate).
 
+**Not implemented (2026-08-23):** `r_rtAutoRelightVolMin` — AR1-5 landed without an
+auto-relight-specific volumetric sub-budget. Every synthesized light is a full `REAL`
+lightDef via `AddLightDef()`, so it already rides the existing global
+`r_rtVolMaxLights`/`r_rtVolMaxDist`/stratified-list machinery like any map light; it just
+isn't additionally capped to "top 4 by score" for volumetrics specifically the way this
+section originally specified. Enforcing that would need a way for `vk_gi.cpp`'s vol
+selection to identify+rank auto-relight lights at selection time (a defHandle registry
+this pass deliberately didn't build — see the AR5 note above). Revisit only if too many
+synthesized lights competing for vol slots turns out to be a real problem in-game.
+
 ## CVars
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `r_rtAutoRelight` | 0 (flip to 1 after validation) | master toggle; regenerates on map load |
-| `r_rtAutoRelightMax` | 16 | cluster budget per map |
-| `r_rtAutoRelightIntensity` | 0.5 | SHADERPARM_ALPHA for synthesized lights |
-| `r_rtAutoRelightReach` | 160 | normal-direction radius (units) |
-| `r_rtAutoRelightOffset` | 8 | origin offset off the surface |
-| `r_rtAutoRelightDedupeDist` | 96 | existing-light suppression radius |
-| `r_rtAutoRelightVolMin` | 4 | top-N clusters eligible for volumetrics |
-| `r_rtUnlockNoShadows` | 0 | AR6 rule, independent toggle |
-| `r_rtAutoRelightDebug` | 0 | 1 = console table; 2 = also tint lit clusters (reuse an interaction debug mode) |
+| `r_rtAutoRelight` | 0 (flip to 1 after validation) | master toggle; regenerates on map load — ✅ implemented |
+| `r_rtAutoRelightMax` | 16 | cluster budget per map — ✅ implemented (AR3) |
+| `r_rtAutoRelightIntensity` | 0.5 | SHADERPARM_ALPHA for synthesized lights — ✅ implemented (AR5) |
+| `r_rtAutoRelightReach` | 160 | normal-direction radius (units) — ✅ implemented (AR5) |
+| `r_rtAutoRelightOffset` | 8 | origin offset off the surface — ✅ implemented (AR5) |
+| `r_rtAutoRelightDedupeDist` | 96 | existing-light suppression radius — ✅ implemented (AR4) |
+| `r_rtAutoRelightVolMin` | 4 | top-N clusters eligible for volumetrics — ⬜ not implemented, see "Volumetric budget interaction" above |
+| `r_rtUnlockNoShadows` | 0 | AR6 rule, independent toggle — ⬜ AR6 not implemented |
+| `r_rtAutoRelightDebug` | 0 | ✅ implemented as 0/1 (console table); the doc's "2 = also tint lit clusters" debug-visualization mode was not built, same scope cut AR0's classifier tint took |
 | `r_rtLightAccentMaxRadius` | 300 | AR0/AR6 shared: noShadows radius below which a light is ACCENT (admit to GI/vol, unlockable) vs AMBIENT_FILL |
 | `r_rtGIWhiteWeight` | 0.25 | AR0: importance multiplier floor for fully desaturated lights (1.0 = no saturation weighting) |
 | `r_rtGILightDump` | 0 | AR0: console dump of every in-view lightDef with classification + admission verdict |
@@ -331,8 +402,15 @@ Each synthesized light the volumetric march sees costs ray queries per step. Rul
    radius threshold cleanly separates fills from accents before trusting the 300/0.25
    defaults; then verify the white wash drops and colored accents appear in GI/vol
    with the classifier on.
-1. `r_rtAutoRelight 1; r_rtAutoRelightDebug 1` → console table: per cluster, material
-   name, centroid, area, score, verdict (LIT / DEDUPED-vs-light-N / BUDGET-DROPPED).
+1. ✅ **Implemented 2026-08-23.** `r_rtAutoRelight 1; r_rtAutoRelightDebug 1` → console
+   table: per cluster, verdict (`LIT (handle N)` / `DEDUPED (vs light N)` /
+   `BUDGET-DROP` / `REJECTED`), score, area, tri/cell counts, normal agreement,
+   centroid, color, material name. `r_rtAutoRelightDebug 1` alone (master toggle still
+   0) previews everything through dedupe — AR5 synthesis is the only stage gated on
+   `r_rtAutoRelight`, since it's the only one with a side effect (`AddLightDef`). **Not
+   yet in-game validated** — needs a real map load to confirm the 48-unit cell size and
+   0.7 normal-agreement threshold behave sanely, per this doc's own procedure rule (see
+   AR0's "log before thresholds").
 2. **`r_showLights 1` works natively** — synthesized lights are real lightDefs and
    render their volumes in the existing debug view. Walk Mars City reception: expect
    the big wall screens and ceiling strips lit, no light inside geometry, no doubles.

@@ -430,6 +430,86 @@ void VK_RT_ShutdownMaterialTable(void)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_MaterialIsEmissive  (docs/plans/auto_relight.md AR1)
+//
+// Single "is this material emissive, and which image" judgment, shared between
+// VK_RT_MakeMaterialEntry (below) and the auto-relight surface harvest
+// (vk_auto_relight.cpp) so the two walks can't drift apart. Mirrors the
+// original inline stage walk exactly: an SL_AMBIENT stage counts as emissive
+// only if it's a strict additive overlay (blend one,one) with explicit UVs, or
+// a cinematic/videomap stage — cubemap-reflect SL_AMBIENT stages (visor/armour
+// rim-light) are excluded. Falls back to the diffuse image when the shader
+// HasGui() and no dedicated emissive stage was found (GUI surfaces glow via
+// their diffuse draw, not a separate stage).
+// ---------------------------------------------------------------------------
+
+bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveImage, bool *outGuiEmissive,
+                              bool *outIsCinematic)
+{
+    if (outEmissiveImage)
+        *outEmissiveImage = NULL;
+    if (outGuiEmissive)
+        *outGuiEmissive = false;
+    if (outIsCinematic)
+        *outIsCinematic = false;
+
+    if (!shader)
+        return false;
+
+    idImage *emissiveImg = NULL;
+    idImage *diffuseImg = NULL;
+    bool emissiveIsCinematic = false;
+
+    for (int i = 0; i < shader->GetNumStages(); i++)
+    {
+        const shaderStage_t *stage = shader->GetStage(i);
+        if (!stage)
+            continue;
+
+        idImage *img = stage->texture.image;
+
+        if (stage->lighting == SL_AMBIENT && !emissiveImg)
+        {
+            const int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
+            const int srcBlend = blendBits & GLS_SRCBLEND_BITS;
+            const int dstBlend = blendBits & GLS_DSTBLEND_BITS;
+            const bool isAdditive = (srcBlend == GLS_SRCBLEND_ONE && dstBlend == GLS_DSTBLEND_ONE);
+            const bool isCinematic = (stage->texture.cinematic != NULL);
+            const bool isExplicitUV = (stage->texture.texgen == TG_EXPLICIT);
+            const bool isPerforated = (shader->Coverage() == MC_PERFORATED);
+
+            if ((isCinematic || (isExplicitUV && isAdditive && !isPerforated)) && img != NULL)
+            {
+                emissiveImg = img;
+                emissiveIsCinematic = isCinematic;
+            }
+        }
+
+        if (!img)
+            continue;
+
+        if (stage->lighting == SL_DIFFUSE && !diffuseImg)
+            diffuseImg = img;
+    }
+
+    bool guiEmissive = false;
+    if (!emissiveImg && shader->HasGui() && diffuseImg)
+    {
+        emissiveImg = diffuseImg;
+        guiEmissive = true;
+    }
+
+    if (outEmissiveImage)
+        *outEmissiveImage = emissiveImg;
+    if (outGuiEmissive)
+        *outGuiEmissive = guiEmissive;
+    if (outIsCinematic)
+        *outIsCinematic = emissiveIsCinematic;
+
+    return emissiveImg != NULL;
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_MakeMaterialEntry
 //
 // Converts an idMaterial + vkBLAS_t into a VkMaterialEntry ready for upload
@@ -489,35 +569,6 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
 
         idImage *img = stage->texture.image;
 
-        if (stage->lighting == SL_AMBIENT && !(entry.flags & VK_MAT_FLAG_EMISSIVE))
-        {
-            // Treat SL_AMBIENT stages as emissive if they are strict additive overlays
-            // (blend add == one,one) with explicit UVs, or if they are
-            // cinematic/videomap stages.
-            // Cubemap-reflect stages (texgen == TG_REFLECT_CUBE, used for visor/armour
-            // rim-light on characters) share SL_AMBIENT but must NOT be treated as
-            // emissive — they are what caused the false gold outlines on marines/scientists.
-            const int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
-            const int srcBlend = blendBits & GLS_SRCBLEND_BITS;
-            const int dstBlend = blendBits & GLS_DSTBLEND_BITS;
-            const bool isAdditive = (srcBlend == GLS_SRCBLEND_ONE && dstBlend == GLS_DSTBLEND_ONE);
-            const bool isCinematic = (stage->texture.cinematic != nullptr);
-            const bool isExplicitUV = (stage->texture.texgen == TG_EXPLICIT);
-            const bool isPerforated = (shader->Coverage() == MC_PERFORATED);
-
-            if ((isCinematic || (isExplicitUV && isAdditive && !isPerforated)) && img != nullptr)
-            {
-                // Screen glow, keypad flicker, emissive decal, videomap screen.
-                // Ray tracing only marks the stage emissive when a static image exists;
-                // otherwise skip emissive classification instead of sampling slot 0's
-                // white fallback as unintended bright emission.
-                entry.emissiveTexIndex = GetOrAssignTexIndex(img);
-                entry.flags |= VK_MAT_FLAG_EMISSIVE;
-            }
-            // else: cubemap-reflect, env-blend, non-textured cinematic/helper stage, or
-            // other ambient helper stage — skip.
-        }
-
         // Skip stages with no image (e.g. vertex-program-only stages) for diffuse/normal.
         if (!img)
             continue;
@@ -530,15 +581,21 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
         // Roughness stays at 1.0 (fully diffuse) — revisit in Phase 6.
     }
 
-    // guiSurf / entity GUI materials often carry emission through GUI draw paths
-    // without a conventional static emissive stage texture. Reuse the resolved
-    // GUI/diffuse image as the emissive source when one was found, but never
-    // point emissiveTexIndex at slot 0 because that is the white fallback.
-    if (!(entry.flags & VK_MAT_FLAG_EMISSIVE) && shader->HasGui() && entry.diffuseTexIndex != 0)
+    // Emissive stage / GUI-surface fallback — shared with the auto-relight
+    // surface harvest via VK_RT_MaterialIsEmissive so the two judgments can't
+    // drift apart. Ray tracing only marks the material emissive when a static
+    // image was resolved; otherwise skip classification instead of sampling
+    // slot 0's white fallback as unintended bright emission.
     {
-        entry.emissiveTexIndex = entry.diffuseTexIndex;
-        entry.flags |= VK_MAT_FLAG_EMISSIVE;
-        entry.flags |= VK_MAT_FLAG_GUI_EMISSIVE;
+        idImage *emissiveImg = NULL;
+        bool guiEmissive = false;
+        if (VK_RT_MaterialIsEmissive(shader, &emissiveImg, &guiEmissive) && emissiveImg)
+        {
+            entry.emissiveTexIndex = GetOrAssignTexIndex(emissiveImg);
+            entry.flags |= VK_MAT_FLAG_EMISSIVE;
+            if (guiEmissive)
+                entry.flags |= VK_MAT_FLAG_GUI_EMISSIVE;
+        }
     }
 
     // Alpha threshold: default 0.5 for all MC_PERFORATED materials.

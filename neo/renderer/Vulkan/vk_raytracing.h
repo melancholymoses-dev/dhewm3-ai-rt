@@ -774,6 +774,18 @@ void VK_RT_InitMaterialTable(void);
 // Destroy all material table GPU resources.  Device must be idle before calling.
 void VK_RT_ShutdownMaterialTable(void);
 
+// Returns true if `shader` has a resolvable emissive image — an SL_AMBIENT
+// stage that is a strict additive overlay with explicit UVs, a cinematic/
+// videomap stage, or (fallback) the diffuse image of a HasGui() material.
+// Shared between VK_RT_MakeMaterialEntry (bindless emissive slot) and the
+// auto-relight surface harvest (docs/plans/auto_relight.md AR1,
+// vk_auto_relight.cpp) so the two "is this surface emissive" judgments can't
+// drift apart. outEmissiveImage/outGuiEmissive/outIsCinematic may be NULL.
+// outIsCinematic is auto_relight.md AR3's "videomap" signal (styleWeight x1.5,
+// same bucket as outGuiEmissive — both are "screens are the money shot").
+bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveImage, bool *outGuiEmissive,
+                              bool *outIsCinematic = NULL);
+
 // Build a VkMaterialEntry for one TLAS instance.
 // shader:      the representative idMaterial for this instance (may be NULL — returns defaults).
 // blas:        the BLAS built for this entity; all per-geometry addresses are written.
@@ -996,5 +1008,24 @@ void VK_RT_ShutdownGBuffer(void);
 // Called from VK_RT_ResizeTonemap (including its first call from VK_RT_InitTonemap).
 // Calls vkDeviceWaitIdle internally; do not call from a hot path.
 void VK_RT_ResizeGBuffer(uint32_t width, uint32_t height);
+
+// ---------------------------------------------------------------------------
+// Auto-relight (docs/plans/auto_relight.md AR1-5)
+//
+// Load-time CPU pass: harvests emissive world surfaces (AR1), clusters them
+// into physical fixtures (AR2), scores/budgets them (AR3), dedupes against
+// existing map lights (AR4), and synthesizes one real idRenderLight per
+// surviving cluster (AR5) via world->AddLightDef(). AR3-5 land after AR1/AR2
+// are validated in-game; until then this only harvests, clusters, and logs.
+//
+// Called exactly once per world lifetime from the end of
+// idRenderWorldLocal::GenerateAllInteractions (RenderWorld.cpp) — that point
+// is after every real map lightDef exists (game entities have been spawned),
+// which AR4's dedupe needs; calling any earlier (e.g. end of InitFromMap)
+// would dedupe against nothing. Re-armed by FreeDefs()/the constructor via
+// world->autoRelightGenerated. No-op unless r_rtAutoRelight or
+// r_rtAutoRelightDebug is nonzero.
+// ---------------------------------------------------------------------------
+void VK_AutoRelight_Generate(class idRenderWorldLocal *world);
 
 #endif // __VK_RAYTRACING_H__
