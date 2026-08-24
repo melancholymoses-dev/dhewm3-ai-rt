@@ -2486,6 +2486,7 @@ struct RTCVars
     idCVar *rtAutoRelightMaxPerArea = nullptr;
     idCVar *rtAutoRelightMax = nullptr;
     idCVar *rtAutoRelightIntensity = nullptr;
+    idCVar *rtAutoRelightDebugColor = nullptr;
 
     // Tonemapping (Phase 8.1)
     idCVar *rtTonemap = nullptr;
@@ -2561,6 +2562,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtAutoRelightMaxPerArea = cvarSystem->Find("r_rtAutoRelightMaxPerArea");
     rtCVars.rtAutoRelightMax = cvarSystem->Find("r_rtAutoRelightMax");
     rtCVars.rtAutoRelightIntensity = cvarSystem->Find("r_rtAutoRelightIntensity");
+    rtCVars.rtAutoRelightDebugColor = cvarSystem->Find("r_rtAutoRelightDebugColor");
     rtCVars.rtTonemap = cvarSystem->Find("r_rtTonemap");
     rtCVars.rtTonemapExposure = cvarSystem->Find("r_rtTonemapExposure");
     rtCVars.rtTonemapToe = cvarSystem->Find("r_rtTonemapToe");
@@ -2771,6 +2773,7 @@ static void DrawRTOptionsMenu()
     RTSliderInt("Max Lights (map-wide ceiling)", rtCVars.rtAutoRelightMax, 0, 64);
     RTSliderFloat("Intensity (0.5=default accent, higher=easier to spot while testing)", rtCVars.rtAutoRelightIntensity,
                   0.0f, 5.0f, "%.2f");
+    RTCheckbox("DEBUG: force hot pink + bright (see placement while navigating)", rtCVars.rtAutoRelightDebugColor);
     ImGui::EndDisabled(); // !autoRelightOn
 
     ImGui::Spacing();

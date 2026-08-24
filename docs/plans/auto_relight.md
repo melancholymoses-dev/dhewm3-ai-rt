@@ -349,6 +349,21 @@ every other point light. Cleanup/identification: relies on the normal per-world
 console table (verdict + `AddLightDef` handle per cluster); no separate defHandle
 registry was added — nothing yet consumes it (AR6/AR7 are unimplemented).
 
+**Added 2026-08-23 (identification, from live debugging session):** synthesized
+lights were indistinguishable from any other shader-less light in per-frame debug
+output — `rl.shader = NULL` resolves to the shared `lights/defaultPointLight`
+(`tr_lightrun.cpp`), same as engine-internal default-shaded lights generally, so
+`r_rtGILightDump`'s printed light name couldn't tell a synthesized light apart from
+"some other light nobody bothered to shader." Fixed with a new light material,
+`lights/rtAutoRelight` (`base/materials/rt_auto_relight.mtr`) — byte-identical
+falloff/stage content to `lights/defaultPointLight`, purely a distinct name.
+`AR_Synthesize` now assigns it instead of `NULL`. Every debug path that prints
+`lightShader->GetName()` (`r_rtGILightDump`, `r_showLights`) now shows
+`lights/rtAutoRelight` for a synthesized light and the fixture's real material name
+for anything else — this is the identification the debug-color override
+(`r_rtAutoRelightDebugColor`) complements: color for "spot it visually in-game",
+name for "confirm it in a log/dump".
+
 ### AR6. noShadows unlock for existing fixture lights (companion rule)
 
 Many mapper-placed fixture lights are `noShadows` — a 2004 stencil-budget decision the
@@ -455,7 +470,8 @@ synthesized lights competing for vol slots turns out to be a real problem in-gam
 | `r_rtAutoRelightDebug` | 0 | ✅ implemented as 0/1 (console table); the doc's "2 = also tint lit clusters" debug-visualization mode was not built, same scope cut AR0's classifier tint took |
 | `r_rtLightAccentMaxRadius` | 300 | AR0/AR6 shared: noShadows radius below which a light is ACCENT (admit to GI/vol, unlockable) vs AMBIENT_FILL |
 | `r_rtGIWhiteWeight` | 0.25 | AR0: importance multiplier floor for fully desaturated lights (1.0 = no saturation weighting) |
-| `r_rtGILightDump` | 0 | AR0: console dump of every in-view lightDef with classification + admission verdict |
+| `r_rtGILightDump` | 0 | AR0: console dump of every in-view lightDef with classification + admission verdict. Self-clearing (one frame). Also the answer to "what lights are active right now" — a synthesized light prints as `lights/rtAutoRelight` (its dedicated material, see AR5 2026-08-23 note), a hand-placed one prints its real material name |
+| `r_rtAutoRelightDebugColor` | 0 | AR5: DEBUG — force synthesized lights to hot pink at high intensity, so placement is obvious while navigating. Combine with `r_rtGILightDump` for a belt-and-suspenders identify (color in-game, name in the dump) |
 
 ## Debug / validation workflow (do before any tuning)
 

@@ -26,7 +26,9 @@ zero map editing. The pipeline:
        the fixture's (tangent x2.5, normal reach) footprint as lightRadius,
        average bright-texel color, r_rtAutoRelightIntensity as SHADERPARM_ALPHA.
        Always shadow-casting (noShadows = false) — see AR5 comment below for
-       why that matters.
+       why that matters. Tagged with a distinct light material
+       (lights/rtAutoRelight, base/materials/rt_auto_relight.mtr) instead of
+       the generic default, so debug dumps can identify them (2026-08-23).
 
 AR6 (noShadows unlock) and AR7 (weapon/projectile def patches) are separate
 companion rules per the doc, not implemented here.
@@ -84,6 +86,18 @@ idCVar r_rtAutoRelightMaxPerArea("r_rtAutoRelightMaxPerArea", "4", CVAR_RENDERER
 idCVar r_rtAutoRelightIntensity("r_rtAutoRelightIntensity", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                 "auto_relight.md AR5: SHADERPARM_ALPHA for synthesized lights — start dim, "
                                 "these are accents, not primary illumination.");
+
+// 2026-08-23: temporary debug visualization, not a gameplay setting — forces every
+// synthesized light to hot pink at a high fixed intensity so the AR3 placement/budget
+// decisions are trivially spottable while walking the level, the same way cranking
+// r_rtVolAnisotropy to 1 makes beams obvious. Applied only at the AR5 synthesis step
+// (below), after AR4 dedupe has already used the real emissive color for its hue
+// match, so this can't affect dedupe correctness — it only overrides what the
+// resulting light actually looks like once created.
+idCVar r_rtAutoRelightDebugColor("r_rtAutoRelightDebugColor", "0", CVAR_RENDERER | CVAR_BOOL,
+                                 "auto_relight.md: DEBUG — force all synthesized lights to hot pink at high "
+                                 "intensity, overriding r_rtAutoRelightIntensity and the fixture's real color, "
+                                 "so placement is obvious while navigating. Not for normal play.");
 
 idCVar r_rtAutoRelightReach("r_rtAutoRelightReach", "160", CVAR_RENDERER | CVAR_FLOAT,
                             "auto_relight.md AR5: synthesized light radius along the fixture's surface normal.");
@@ -772,6 +786,13 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
     const float reach = Max(1.0f, r_rtAutoRelightReach.GetFloat());
     const float intensity = r_rtAutoRelightIntensity.GetFloat();
 
+    // base/materials/rt_auto_relight.mtr — byte-identical to lights/defaultPointLight,
+    // exists purely so every debug tool that prints lightShader->GetName()
+    // (r_rtGILightDump, r_showLights, ...) shows a distinct, greppable name for
+    // synthesized lights instead of the generic default every other shader-less
+    // point light also falls back to. Looked up once, not per-cluster.
+    const idMaterial *arLightShader = declManager->FindMaterial("lights/rtAutoRelight");
+
     for (int i = 0; i < clusters.Num(); i++)
     {
         arCluster_t &c = clusters[i];
@@ -806,7 +827,18 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
         rl.shaderParms[SHADERPARM_BLUE] = c.emissiveColor.z;
         rl.shaderParms[SHADERPARM_ALPHA] = intensity;
 
-        rl.shader = NULL; // lights/defaultPointLight
+        if (r_rtAutoRelightDebugColor.GetBool())
+        {
+            // DEBUG: see r_rtAutoRelightDebugColor's comment above. Overrides the
+            // real fixture color/intensity computed above — AR4's dedupe already
+            // ran against the real color, so this can't skew that decision.
+            rl.shaderParms[SHADERPARM_RED] = 1.0f;
+            rl.shaderParms[SHADERPARM_GREEN] = 0.0f;
+            rl.shaderParms[SHADERPARM_BLUE] = 1.0f;
+            rl.shaderParms[SHADERPARM_ALPHA] = 4.0f; // well above the normal 0.5 default — unmissable
+        }
+
+        rl.shader = arLightShader; // lights/rtAutoRelight — see comment above
 
         c.synthesizedHandle = world->AddLightDef(&rl);
         c.verdict = AR_VERDICT_LIT;
