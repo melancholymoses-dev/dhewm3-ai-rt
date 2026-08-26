@@ -423,6 +423,22 @@ are never unlocked) get RT shadows anyway. This recovers drama from lights that
 already exist, at zero placement risk. Dedupe (AR4) can feed it: a skipped cluster
 whose paired map light is noShadows is a strong unlock candidate.
 
+✅ **Implemented 2026-08-26** in `vk_shadows.cpp: VK_RT_ShadowBatchAddLight` — the single
+choke point that decides shadow-layer assignment for both the batched and serial
+dispatch paths (`VK_RT_GetShadowLayerForLight` is the only downstream reader). When the
+existing `!noShadows && LightCastsShadows()` test comes back false, `r_rtUnlockNoShadows`
+is on, and `VK_RT_ClassifyLight()` rates the light `RT_LIGHT_ACCENT`, `castsShadows` is
+forced true — one-directional (can only turn a noShadows light on, never off `REAL`/
+`AMBIENT_FILL` lights are untouched). `r_rtUnlockNoShadows` cvar added in
+`vk_light_classify.cpp` next to `r_rtLightAccentMaxRadius` (same file that owns the
+classifier), extern-declared in `vk_shadows.cpp` per this codebase's existing
+cross-file-cvar convention (see `r_rtVolMaxLights` in `vk_vol.cpp`/`vk_gi.cpp`).
+GI/volumetric admission for ACCENT lights was already live independent of this cvar
+(AR0, validated 2026-08-22) — this change only affects the direct RT shadow mask.
+**Not yet re-validated in-game** — needs a run with `r_rtUnlockNoShadows 1` against a
+map with known ACCENT fixtures (alphalabs2, per AR0's validation) to confirm the
+previously-unshadowed accent lights now cast floor shadows.
+
 Perf note: every unlocked light becomes a shadow-caster in the interaction loop
 (cheap post-P1b — that's what batching was for) *and* a volumetric candidate (NOT
 cheap — per-step ray queries per light, and P8's half-res doesn't change the per-light
@@ -512,7 +528,7 @@ synthesized lights competing for vol slots turns out to be a real problem in-gam
 | `r_rtAutoRelightOffset` | 8 | origin offset off the surface — ✅ implemented (AR5) |
 | `r_rtAutoRelightDedupeDist` | 96 | existing-light suppression radius — ✅ implemented (AR4) |
 | `r_rtAutoRelightVolMin` | 4 | top-N clusters eligible for volumetrics — ⬜ not implemented, see "Volumetric budget interaction" above |
-| `r_rtUnlockNoShadows` | 0 | AR6 rule, independent toggle — ⬜ AR6 not implemented |
+| `r_rtUnlockNoShadows` | 0 | AR6 rule, independent toggle — ✅ implemented 2026-08-26 (`vk_shadows.cpp`), not yet re-validated in-game |
 | `r_rtAutoRelightDebug` | 0 | ✅ implemented as 0/1 (console table); the doc's "2 = also tint lit clusters" debug-visualization mode was not built, same scope cut AR0's classifier tint took |
 | `r_rtLightAccentMaxRadius` | 300 | AR0/AR6 shared: noShadows radius below which a light is ACCENT (admit to GI/vol, unlockable) vs AMBIENT_FILL |
 | `r_rtGIWhiteWeight` | 0.25 | AR0: importance multiplier floor for fully desaturated lights (1.0 = no saturation weighting) |

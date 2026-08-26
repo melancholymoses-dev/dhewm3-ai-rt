@@ -132,6 +132,8 @@ static idCVar r_vkRTDebugLightFilter(
 static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
+
+extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — AR6 noShadows shadow unlock
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
@@ -1209,7 +1211,15 @@ int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
     // for them rather than sampling a mask cleared to white (which is what the
     // single-image version had to do, at the cost of a clear plus two barriers).
     const renderLight_t &lp = vLight->lightDef->parms;
-    const bool castsShadows = !lp.noShadows && vLight->lightDef->lightShader->LightCastsShadows();
+    bool castsShadows = !lp.noShadows && vLight->lightDef->lightShader->LightCastsShadows();
+
+    // AR6 (auto_relight.md §6): r_rtUnlockNoShadows gives placed colored accents —
+    // ACCENT per the shared classifier (noShadows, radius < r_rtLightAccentMaxRadius) —
+    // a real shadow layer anyway. AMBIENT_FILL (semantic mapper washes) and REAL lights
+    // are untouched; this can only turn a noShadows light on, never off.
+    if (!castsShadows && r_rtUnlockNoShadows.GetBool() &&
+        VK_RT_ClassifyLight(lp, vLight->lightDef->lightShader) == RT_LIGHT_ACCENT)
+        castsShadows = true;
 
     int layer = -1;
     if (castsShadows)
