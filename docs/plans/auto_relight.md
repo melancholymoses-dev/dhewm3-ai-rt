@@ -484,6 +484,47 @@ should be diagnosed with a debug view of the shadow-ray hit/miss right next to t
 AR6/AR7's own noShadows-unlock groundwork exists to make a muzzle flash a real light
 in the first place.
 
+**✅ Debug view + cvar implemented 2026-08-26.** Confirmed the muzzle flash needed no
+AR6 groundwork — `Weapon.cpp`'s `muzzleFlash` light was never `noShadows` (only the
+separate always-on `nozzleGlow` light is), and the `muzzleflash` light material carries
+no noshadows keyword either, so it was already `RT_LIGHT_REAL` end to end. The gap is
+specifically the *player's own first-person viewmodel* self-shadowing in volumetrics —
+NPCs (sentries etc.) already self-shadow correctly since their meshes aren't
+`noSelfShadow`-flagged.
+
+Implementation (`vk_gi.cpp`, `vk_vol.cpp`, `vol_march.comp`):
+- **Identification, no new game-side data needed.** `vk_gi.cpp`'s `considerLight` (the
+  candidate builder shared by GI and vol selection) already computes
+  `p.allowLightInViewID != 0` (set only on the first-person `muzzleFlash`) and
+  `isProjected` (the flashlight is projected; muzzle flashes default `flashPointLight 1`
+  → point). `!isProjected && allowLightInViewID != 0` reliably isolates the muzzle flash
+  from the flashlight without touching any def. Stored as a new
+  `GI_LIGHT_FLAG_SELF_SHADOW` bit in `GILightEntry::flags` — repurposed an unused pad
+  slot, no SSBO size change, flows to both GI's and vol's selection automatically since
+  both copy the same `Candidate::entry`.
+- **`r_rtVolMuzzleSelfShadow`** (default 0): the real feature toggle. When on, a
+  flagged light's shadow ray in `vol_march.comp` uses cull mask `0xFF` (tests player
+  body/weapon) instead of the hardcoded `0xFE`, with `tMin` raised to
+  `r_rtVolMuzzleSelfShadowBias` (default 4.0 units) instead of the default 0.01 — the
+  bias this section flagged as necessary, now a live cvar instead of a guess. All other
+  lights are completely unaffected (mask stays `0xFE`, unconditionally, as before).
+- **`r_rtVolMuzzleSelfShadowDebug`** (default 0): the debug view. Independent of the
+  toggle above, fires a *second*, diagnostic-only ray query per march step restricted to
+  cull mask `0x01` (player-body/weapon ONLY — isolates the self-shadow signal from
+  ordinary world occlusion) and adds a hot-magenta marker to that step's contribution on
+  a hit. This is meant to be watched live while firing a weapon in fog/dust: a clean
+  silhouette reads as a stable magenta gun/arm outline; the acne failure mode this
+  section predicted reads as magenta flicker/noise instead. Safe to run with
+  `r_rtVolMuzzleSelfShadow 0` — it doesn't touch real shading, only the debug overlay.
+- **`r_rtVolMuzzleSelfShadowBias`** (default 4.0, `CVAR_ARCHIVE | CVAR_FLOAT`): shared
+  by both the real query and the debug query, so its effect on the acne pattern is
+  visible immediately in the debug view without a shader recompile.
+
+**Not yet re-validated in-game.** Needs a live run: fire a weapon into a foggy/dusty
+volume with `r_rtVolMuzzleSelfShadowDebug 1`, watch the magenta pattern at a few bias
+values, then decide whether 4.0 (or some other value) gives a clean silhouette before
+flipping `r_rtVolMuzzleSelfShadow` on for real.
+
 ---
 
 ## Volumetric budget interaction

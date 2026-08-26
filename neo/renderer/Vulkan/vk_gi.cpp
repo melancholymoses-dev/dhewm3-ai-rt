@@ -172,6 +172,12 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 #define VK_GI_MAX_LIGHTS 128
 
+// auto_relight.md AR7 follow-up: bit 0 of GILightEntry::flags marks the first-person
+// muzzle-flash light (point light + allowLightInViewID set — see considerLight below).
+// vol_march.comp reads it to decide whether this light's shadow ray is allowed to test
+// player-body/weapon geometry (r_rtVolMuzzleSelfShadow / r_rtVolMuzzleSelfShadowDebug).
+#define GI_LIGHT_FLAG_SELF_SHADOW 0x1u
+
 struct GILightEntry
 {
     float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
@@ -180,7 +186,8 @@ struct GILightEntry
     float boxExtents[4];     // point: xyz=AABB half-extents, w=0
                              // projected: w=max reach along cone axis; xyz=0
     uint32_t lightType;      // 0 = point, 1 = projected/spot
-    uint32_t pad[3];         // alignment pad to 80 bytes
+    uint32_t flags;          // GI_LIGHT_FLAG_* — see above (was an unused pad slot)
+    uint32_t pad[2];         // alignment pad to 80 bytes
 };
 
 struct GILightBuffer
@@ -1288,7 +1295,12 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             // lightType: 0=point, 1=scene directed/spot, 2=player flashlight.
             // allowLightInViewID is set on muzzleFlash (first-person weapon light).
             c.entry.lightType = isProjected ? (p.allowLightInViewID != 0 ? 2u : 1u) : 0u;
-            c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
+            // AR7 follow-up: a first-person point light with allowLightInViewID set is the
+            // muzzle flash specifically (the flashlight is projected, so it lands in the
+            // lightType==2 branch above instead) — flag it as a volumetric self-shadow
+            // candidate. See vol_march.comp's r_rtVolMuzzleSelfShadow handling.
+            c.entry.flags = (!isProjected && p.allowLightInViewID != 0) ? GI_LIGHT_FLAG_SELF_SHADOW : 0u;
+            c.entry.pad[0] = c.entry.pad[1] = 0u;
         }
     };
 

@@ -155,6 +155,30 @@ static idCVar r_rtVolFlashlightAnisotropy(
 static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                         "Final composite multiplier for flashlight scatter.");
 
+// auto_relight.md AR7 follow-up: player-viewmodel self-shadow in volumetrics.
+// vol_march.comp normally excludes ALL noSelfShadow (player-body/weapon) geometry from
+// every shadow ray unconditionally (cull mask 0xFE) -- these three control the one
+// light that's a real self-shadow candidate: the first-person muzzle flash, flagged
+// GI_LIGHT_FLAG_SELF_SHADOW in vk_gi.cpp's vol light selection.
+static idCVar r_rtVolMuzzleSelfShadow(
+    "r_rtVolMuzzleSelfShadow", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "AR7: let the player's first-person muzzle-flash light test occlusion against the "
+    "player body/weapon mesh in the volumetric march, so the viewmodel casts a shadow "
+    "silhouette into fog/dust lit by its own flash. Off by default -- validate with "
+    "r_rtVolMuzzleSelfShadowDebug first; a muzzle flash sits only a few units from its own "
+    "gun mesh, the classic shadow-acne setup.");
+static idCVar r_rtVolMuzzleSelfShadowBias(
+    "r_rtVolMuzzleSelfShadowBias", "4.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "AR7: shadow-ray tMin (world units) for the muzzle-flash self-shadow test -- used by "
+    "both the real query (r_rtVolMuzzleSelfShadow) and the debug query "
+    "(r_rtVolMuzzleSelfShadowDebug). Too small reproduces shadow acne as flicker in the fog.");
+static idCVar r_rtVolMuzzleSelfShadowDebug(
+    "r_rtVolMuzzleSelfShadowDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "AR7 debug view: fire an extra player-body-only shadow ray for the muzzle-flash light "
+    "and tint hits hot magenta in the volumetric buffer, independent of "
+    "r_rtVolMuzzleSelfShadow -- shows the self-shadow hit pattern (clean silhouette vs. "
+    "acne flicker) before enabling/tuning the real feature.");
+
 // ---------------------------------------------------------------------------
 // VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
 //
@@ -181,6 +205,17 @@ static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR
 //   float directedStrength     offset 152  size  4
 //   float _pad                 offset 156  size  4  (std140 round to 16)
 //   total: 160 bytes
+//   --- P8: half-res march ---
+//   int   marchWidth           offset 160  size  4
+//   int   marchHeight          offset 164  size  4
+//   int   marchScale           offset 168  size  4
+//   float whiteNoiseMix        offset 172  size  4  (repurposed former pad)
+//   --- AR7 follow-up: muzzle-flash volumetric self-shadow ---
+//   int   selfShadowEnable     offset 176  size  4  (r_rtVolMuzzleSelfShadow)
+//   int   selfShadowDebugMode  offset 180  size  4  (r_rtVolMuzzleSelfShadowDebug)
+//   float selfShadowBias       offset 184  size  4  (r_rtVolMuzzleSelfShadowBias)
+//   float _pad4                offset 188  size  4  (std140 round to 16)
+//   total: 192 bytes
 // ---------------------------------------------------------------------------
 
 struct VolParamsUBO
@@ -219,8 +254,13 @@ struct VolParamsUBO
     // Repurposed former pad float (was _uboPad2, always 0) — same offset, no size
     // change, no descriptor/assert change needed. See r_rtVolWhiteNoiseMix.
     float whiteNoiseMix; // 172
+    // --- AR7 follow-up: muzzle-flash volumetric self-shadow (auto_relight.md) ---
+    int32_t selfShadowEnable;    // 176  r_rtVolMuzzleSelfShadow
+    int32_t selfShadowDebugMode; // 180  r_rtVolMuzzleSelfShadowDebug
+    float   selfShadowBias;      // 184  r_rtVolMuzzleSelfShadowBias
+    float   _uboPad4;            // 188  std140 round to 16
 };
-static_assert(sizeof(VolParamsUBO) == 176, "VolParamsUBO size mismatch");
+static_assert(sizeof(VolParamsUBO) == 192, "VolParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Push-constant block for vol_bilateral.comp.  All scalars — no vec/ivec types —
@@ -1840,6 +1880,10 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.marchHeight = (int32_t)vb.height;
     ubo.marchScale = s_volMarchScale;
     ubo.whiteNoiseMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
+    ubo.selfShadowEnable = r_rtVolMuzzleSelfShadow.GetBool() ? 1 : 0;
+    ubo.selfShadowDebugMode = r_rtVolMuzzleSelfShadowDebug.GetInteger();
+    ubo.selfShadowBias = Max(0.01f, r_rtVolMuzzleSelfShadowBias.GetFloat());
+    ubo._uboPad4 = 0.0f;
 
     memcpy(uboMapped, &ubo, sizeof(VolParamsUBO));
 

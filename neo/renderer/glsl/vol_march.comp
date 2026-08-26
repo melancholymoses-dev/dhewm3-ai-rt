@@ -81,7 +81,17 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     // Repurposed former pad float (was _pad2, always 0) — same offset, see
     // r_rtVolWhiteNoiseMix / the jitter blend below.
     float whiteNoiseMix;        // offset 172, size  4  0 = pure IGN, 1 = pure white noise
+    // --- AR7 follow-up: muzzle-flash volumetric self-shadow (auto_relight.md) ---
+    int   selfShadowEnable;     // offset 176, size  4  r_rtVolMuzzleSelfShadow
+    int   selfShadowDebugMode;  // offset 180, size  4  r_rtVolMuzzleSelfShadowDebug
+    float selfShadowBias;       // offset 184, size  4  r_rtVolMuzzleSelfShadowBias
+    float _pad4;                // offset 188, size  4  std140 round to 16
 } params;
+
+// auto_relight.md AR7 follow-up: bit 0 marks the first-person muzzle-flash light (set
+// CPU-side in vk_gi.cpp's considerLight — point light + allowLightInViewID). Used
+// below to gate the self-shadow ray against player-body/weapon TLAS instances.
+#define GI_LIGHT_FLAG_SELF_SHADOW 0x1u
 
 struct GILight {
     vec4 posRadius;       // xyz = world position, w = sphere pre-cull radius
@@ -89,7 +99,8 @@ struct GILight {
     vec4 coneDir;         // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;      // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;       // 0 = point, 1 = scene projected/spot, 2 = player flashlight
-    uint _pad0; uint _pad1; uint _pad2;
+    uint flags;           // GI_LIGHT_FLAG_* (was an unused pad slot)
+    uint _pad1; uint _pad2;
 };
 
 // GILightBuffer matches the C++ GILightBuffer struct (std430).
@@ -332,12 +343,27 @@ void main()
             // Fire a ray query to test occlusion between stepPos and the light.
             float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
 
+            // AR7 follow-up (auto_relight.md): the muzzle flash is the one volumetric
+            // light with real self-shadow potential (it sits on the gun, with parallax,
+            // unlike the eye-mounted flashlight — see the doc's "why interesting" note).
+            // Every other light keeps the original unconditional player-body exclusion.
+            bool selfShadowEligible = (giLightBuf.lights[li].flags & GI_LIGHT_FLAG_SELF_SHADOW) != 0u;
+            bool selfShadowOn       = selfShadowEligible && (params.selfShadowEnable != 0);
+
+            uint  cullMask   = selfShadowOn ? 0xFFu : 0xFEu;
+            // A muzzle flash sits only a few units from its own gun mesh — much closer
+            // than tShadow usually is — so tMin needs a real bias, not the default 0.01,
+            // to avoid re-intersecting the same geometry the ray just launched from.
+            // Clamped below tShadow so the ray stays non-degenerate.
+            float shadowTMin = selfShadowOn ? clamp(params.selfShadowBias, 0.01, max(0.01, tShadow - 0.001))
+                                             : 0.01;
+
             rayQueryEXT rq;
             rayQueryInitializeEXT(
                 rq, tlas,
                 gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
-                0xFEu,  // skip player body/hands (mask 0x01); world geometry (0xFF) still hit
-                stepPos, 0.01, lightDir, tShadow);
+                cullMask,  // 0xFE skips player body/hands (mask 0x01); 0xFF (self-shadow-on) tests it too
+                stepPos, shadowTMin, lightDir, tShadow);
 
             while (rayQueryProceedEXT(rq))
             {
@@ -346,8 +372,35 @@ void main()
                     rayQueryConfirmIntersectionEXT(rq);
             }
 
-            if (rayQueryGetIntersectionTypeEXT(rq, true) !=
-                gl_RayQueryCommittedIntersectionNoneEXT)
+            bool occluded = (rayQueryGetIntersectionTypeEXT(rq, true) !=
+                              gl_RayQueryCommittedIntersectionNoneEXT);
+
+            // AR7 debug view: independent of r_rtVolMuzzleSelfShadow, fire a SECOND query
+            // restricted to player-body/weapon geometry only (mask 0x01), and tint any hit
+            // hot magenta. This isolates the self-shadow signal from ordinary world
+            // occlusion so the hit pattern (clean silhouette vs. acne flicker) can be
+            // judged before enabling or tuning the real feature.
+            if (selfShadowEligible && params.selfShadowDebugMode != 0)
+            {
+                float debugTMin = clamp(params.selfShadowBias, 0.01, max(0.01, tShadow - 0.001));
+                rayQueryEXT rqSelf;
+                rayQueryInitializeEXT(
+                    rqSelf, tlas,
+                    gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
+                    0x01u, // player body/hands ONLY
+                    stepPos, debugTMin, lightDir, tShadow);
+                while (rayQueryProceedEXT(rqSelf))
+                {
+                    if (rayQueryGetIntersectionTypeEXT(rqSelf, false) ==
+                        gl_RayQueryCandidateIntersectionTriangleEXT)
+                        rayQueryConfirmIntersectionEXT(rqSelf);
+                }
+                if (rayQueryGetIntersectionTypeEXT(rqSelf, true) !=
+                    gl_RayQueryCommittedIntersectionNoneEXT)
+                    scatter_point += vec3(4.0, 0.0, 4.0) * stepSize * stepTransmittance;
+            }
+
+            if (occluded)
                 continue; // occluded — skip this light at this step
 
             vec3 contrib = lightColor * lightIntens * phase * atten * stepSize * stepTransmittance;
