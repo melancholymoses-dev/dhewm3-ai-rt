@@ -32,6 +32,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 |---|---|---|
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Live (Waves 2-4, 6) |
 | `auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | Live (Wave 5) |
+| `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs — plus A5, the vendor-neutral bug that has made RT AO a no-op since it shipped | Live (out-of-wave; A1 blocks AMD hardware entirely) |
 
 Completed / superseded docs are in `completed/` — notably
 `completed/gbuffer_normal_pass.md` (Waves 1a/1b landed: normal/F0 G-buffer in the
