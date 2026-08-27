@@ -762,8 +762,13 @@ static void VK_RT_InitReflPipeline(void)
     vkRT.reflCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx (8 groups)\n", stride, sbtSize,
-                       (unsigned long long)sbtBase);
+        common->Printf("VK RT Refl SBT: stride=%u sbtBytes=%u base=0x%llx (8 groups) miss=0x%llx (missRecords=%u) "
+                       "hit=0x%llx (hitRecords=%u)\n",
+                       stride, sbtSize, (unsigned long long)sbtBase,
+                       (unsigned long long)vkRT.reflMissRegion.deviceAddress,
+                       (unsigned)(vkRT.reflMissRegion.size / vkRT.reflMissRegion.stride),
+                       (unsigned long long)vkRT.reflHitRegion.deviceAddress,
+                       (unsigned)(vkRT.reflHitRegion.size / vkRT.reflHitRegion.stride));
 
     // --- Descriptor pool and sets ---
     // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal

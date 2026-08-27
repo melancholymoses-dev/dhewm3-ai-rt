@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-26
 **Status:** Live — audit complete and cross-checked against a second independent
-audit. **A1 implemented** (2026-08-26), awaiting the AMD retest. A2-A7 outstanding.
+audit. **A1 and A3 implemented** (2026-08-26) — everything above the retest line
+is done and the AMD retest is the next action. A2, A4-A7 outstanding.
 **Trigger:** RT build run on an AMD Radeon 9700 XT. Every RT effect (shadows, AO,
 GI, reflections, volumetrics) produced large saturated white blobs. The same build
 is correct on NVIDIA.
@@ -192,8 +193,32 @@ These are the only two instances of the pattern in `neo/renderer/Vulkan/`.
 
 ### Fix
 
-- [ ] Split each into a real guard plus a separate log statement, matching the
+- [x] Split each into a real guard plus a separate log statement, matching the
       shape already used at `vk_ao.cpp:505-509` for the pipeline-null check.
+
+**Implemented 2026-08-26**, with one deviation from the wording above. The
+pipeline-null check logs *unconditionally*; these two do not. The sibling
+dispatchers settle it — `vk_gi.cpp:1741`, `vk_reflections.cpp:939` and
+`vk_shadows.cpp:1127`/`:1321` all return **silently** on invalid-TLAS and on a
+null mask image, and print unconditionally only for null-pipeline, which is a
+hard error rather than a transient. An invalid TLAS is normal across level-load
+frames, so an unconditional print would spam every load. Landed shape: guard
+unconditional, log gated on `r_vkLogRT >= 1` — the original author's evident
+intent, with the operator fixed.
+
+Also reordered: the `r_useRayTracing` / `r_rtAO` early-out now precedes the TLAS
+guard. Previously the TLAS check came first, which was harmless while the guard
+was dead, but with it live and logging it would report "skip — TLAS not valid"
+on frames where AO is simply switched off. Pure early-out reorder, no side
+effects between the two.
+
+Verified no other instance of the `&`-on-bool pattern remains anywhere in
+`neo/renderer/Vulkan/`.
+
+**Adjacent, not fixed:** `vk_ao.cpp:513` (`!vkRT.isInitialized`) also prints
+unconditionally where every sibling returns silently. Pre-existing and outside
+A3's scope, but it is the remaining source of per-frame AO log noise if it ever
+fires.
 
 ---
 
@@ -434,9 +459,10 @@ from "always white" to "actually occluding" mid-diagnosis would move the goalpos
 on what the AMD retest is measuring. Fix the blobs first, then fix AO, then tune.
 
 ```
-1.  A3  dead guards                      ~2 lines                   [pending]
+1.  A3  dead guards                      ~2 lines                   [DONE 2026-08-26]
 2.  A1  SBT hit-region widening          ~15 lines across 3 files   [DONE 2026-08-26]
-    → RETEST ON AMD HERE — everything above is blob-directed
+    → RETEST ON AMD HERE — everything above is blob-directed. Both landed;
+      the retest is the next action and nothing below should start before it.
 3.  A5  AO payload init 1.0 → 0.0        ~1 line + comments, then re-tune AO
 4.  A2  image clears + aoValidThisFrame  ~40 lines  (do after A5: A5 is what makes
                                           a stale AO region visible at all)

@@ -695,11 +695,20 @@ static void VK_RT_InitGIPipeline(void)
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
 
-    // 4 groups total; SBT regions:
-    //   rgen:  1 entry  (group 0)
-    //   miss:  2 entries (groups 1, 3)  — gi miss + shadow miss
-    //   hit:   1 entry  (group 2)
-    uint32_t sbtSize = 4 * stride;
+    // 4 groups total, 6 SBT records:
+    //   rgen:  1 record  (group 0)
+    //   miss:  2 records (groups 1, 3)  — gi miss + shadow miss
+    //   hit:   3 records (group 2, replicated)
+    //
+    // The hit region is 3 records wide, not 1, because TLAS instances carry a
+    // hardcoded instanceShaderBindingTableRecordOffset of 0 or 2 (2 =
+    // noSelfShadow player body/viewmodel, see vk_accelstruct.cpp). That offset is
+    // per-instance and shared by every pipeline that traces this TLAS, so the hit
+    // region must contain record 2 or an out-of-range fetch pulls a garbage
+    // shader handle. Record 1 of the region is unused padding — nothing traces
+    // with sbtRecordOffset 1 here — but it must exist for record 2 to be
+    // addressable.
+    uint32_t sbtSize = 6 * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -719,8 +728,10 @@ static void VK_RT_InitGIPipeline(void)
     memcpy(sbtData + 1 * stride, handles + 1 * handleSize, handleSize);
     // SBT slot 2 = shadow miss (group 3)
     memcpy(sbtData + 2 * stride, handles + 3 * handleSize, handleSize);
-    // SBT slot 3 = hit group (group 2)
-    memcpy(sbtData + 3 * stride, handles + 2 * handleSize, handleSize);
+    // SBT slots 3..5 = hit group (group 2), replicated so instance record
+    // offsets 0..2 all resolve to the same (only) hit group.
+    for (int i = 3; i < 6; i++)
+        memcpy(sbtData + i * stride, handles + 2 * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtGIMemory);
 
     VkBufferDeviceAddressInfo addrInfo = {};
@@ -730,15 +741,20 @@ static void VK_RT_InitGIPipeline(void)
 
     // rgen:  slot 0
     // miss:  slots 1–2 (stride * 2 region, covers gi-miss[0] and shadow-miss[1])
-    // hit:   slot 3
+    // hit:   slots 3–5 (stride * 3 region, same handle in all three)
     vkRT.giRgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.giMissRegion = {sbtBase + 1 * stride, stride, 2 * stride};
-    vkRT.giHitRegion = {sbtBase + 3 * stride, stride, stride};
+    vkRT.giHitRegion = {sbtBase + 3 * stride, stride, 3 * stride};
     vkRT.giCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit)\n",
-                       stride, sbtSize, (unsigned long long)sbtBase);
+        common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit) "
+                       "miss=0x%llx (missRecords=%u) hit=0x%llx (hitRecords=%u)\n",
+                       stride, sbtSize, (unsigned long long)sbtBase,
+                       (unsigned long long)vkRT.giMissRegion.deviceAddress,
+                       (unsigned)(vkRT.giMissRegion.size / vkRT.giMissRegion.stride),
+                       (unsigned long long)vkRT.giHitRegion.deviceAddress,
+                       (unsigned)(vkRT.giHitRegion.size / vkRT.giHitRegion.stride));
 
     // --- Descriptor pool and sets ---
     // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal

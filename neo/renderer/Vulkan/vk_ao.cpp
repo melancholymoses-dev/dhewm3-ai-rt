@@ -374,7 +374,17 @@ static void VK_RT_InitAOPipeline(void)
     auto alignUp = [](uint32_t v, uint32_t a) { return (v + a - 1) & ~(a - 1); };
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    uint32_t sbtSize = 3 * stride;
+    // 3 shader groups (rgen, miss, hit) but 5 SBT records.
+    //
+    // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
+    // 0 or 2 (2 = noSelfShadow player body/viewmodel, see vk_accelstruct.cpp).
+    // That offset is per-instance and shared by every pipeline that traces this
+    // TLAS, so the hit region here must be wide enough to contain record 2 or an
+    // out-of-range fetch pulls a garbage shader handle. Layout:
+    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle in all three)
+    // Record 3 is unused padding — nothing traces with sbtRecordOffset 1 here —
+    // but it must exist for record 4 to be addressable.
+    uint32_t sbtSize = 5 * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -387,8 +397,13 @@ static void VK_RT_InitAOPipeline(void)
 
     uint8_t *sbtData;
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtAOMemory, 0, sbtSize, 0, (void **)&sbtData));
-    for (int i = 0; i < 3; i++)
-        memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
+    // Slots 0 (rgen) and 1 (miss) take their own handles.
+    memcpy(sbtData + 0 * stride, handles + 0 * handleSize, handleSize);
+    memcpy(sbtData + 1 * stride, handles + 1 * handleSize, handleSize);
+    // Slots 2..4 all take the hit handle, so instance record offsets 0..2 resolve
+    // to the same (only) hit group.
+    for (int i = 2; i < 5; i++)
+        memcpy(sbtData + i * stride, handles + 2 * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtAOMemory);
 
     VkBufferDeviceAddressInfo addrInfo = {};
@@ -398,12 +413,17 @@ static void VK_RT_InitAOPipeline(void)
 
     vkRT.aoRgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.aoMissRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.aoHitRegion = {sbtBase + 2 * stride, stride, stride};
+    vkRT.aoHitRegion = {sbtBase + 2 * stride, stride, 3 * stride};
     vkRT.aoCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT AO SBT: stride=%u sbtBytes=%u base=0x%llx\n", stride, sbtSize,
-                       (unsigned long long)sbtBase);
+        common->Printf("VK RT AO SBT: stride=%u sbtBytes=%u base=0x%llx miss=0x%llx (missRecords=%u) hit=0x%llx "
+                       "(hitRecords=%u)\n",
+                       stride, sbtSize, (unsigned long long)sbtBase,
+                       (unsigned long long)vkRT.aoMissRegion.deviceAddress,
+                       (unsigned)(vkRT.aoMissRegion.size / vkRT.aoMissRegion.stride),
+                       (unsigned long long)vkRT.aoHitRegion.deviceAddress,
+                       (unsigned)(vkRT.aoHitRegion.size / vkRT.aoHitRegion.stride));
 
     // --- Descriptor pool and sets ---
     // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
@@ -495,13 +515,19 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("VK RT AO: skip — RT not initialized\n");
         return;
     }
-    if (!vkRT.tlas[vk.currentFrame].isValid & (r_vkLogRT.GetInteger() >= 1))
-    {
-        common->Printf("VK RT AO: skip — TLAS[%d] not valid\n", vk.currentFrame);
-        return;
-    }
     if (!r_useRayTracing.GetBool() || !r_rtAO.GetBool())
         return;
+    // Guard is unconditional; only the log is gated on r_vkLogRT. An invalid TLAS
+    // is a normal transient across level-load frames, so this stays silent by
+    // default like the equivalent guards in vk_gi.cpp / vk_reflections.cpp —
+    // but tracing against a stale TLAS handle is undefined behaviour, so the
+    // early-out itself must never depend on a logging CVar.
+    if (!vkRT.tlas[vk.currentFrame].isValid)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT AO: skip — TLAS[%d] not valid\n", vk.currentFrame);
+        return;
+    }
     if (vkRT.aoPipeline == VK_NULL_HANDLE)
     {
         common->Printf("VK RT AO: skip — pipeline is NULL\n");
@@ -520,9 +546,11 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkAOMask_t &ao = vkRT.aoMask[frameIdx];
 
-    if (ao.image == VK_NULL_HANDLE & (r_vkLogRT.GetInteger() >= 1))
+    // Same shape as the TLAS guard above: unconditional early-out, gated log.
+    if (ao.image == VK_NULL_HANDLE)
     {
-        common->Printf("VK RT AO: skip — AO image[%d] is NULL\n", frameIdx);
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT AO: skip — AO image[%d] is NULL\n", frameIdx);
         return;
     }
 

@@ -350,8 +350,17 @@ static void VK_RT_InitShadowPipeline(void)
 
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
 
-    // One handle per group
-    uint32_t sbtSize = 3 * alignUp(handleSizeAligned, baseAlignment);
+    // 3 shader groups (rgen, miss, hit) but 5 SBT records.
+    //
+    // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
+    // 0 or 2 (2 = noSelfShadow player body/viewmodel, see vk_accelstruct.cpp).
+    // That offset is per-instance and shared by every pipeline that traces this
+    // TLAS, so the hit region here must be wide enough to contain record 2 or an
+    // out-of-range fetch pulls a garbage shader handle. Layout:
+    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle in all three)
+    // Record 3 is unused padding — nothing traces with sbtRecordOffset 1 here —
+    // but it must exist for record 4 to be addressable.
+    uint32_t sbtSize = 5 * alignUp(handleSizeAligned, baseAlignment);
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -368,9 +377,14 @@ static void VK_RT_InitShadowPipeline(void)
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtMemory, 0, sbtSize, 0, (void **)&sbtData));
 
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    for (int i = 0; i < 3; i++)
+    // Slots 0 (rgen) and 1 (miss) take their own handles.
+    memcpy(sbtData + 0 * stride, handles + 0 * handleSize, handleSize);
+    memcpy(sbtData + 1 * stride, handles + 1 * handleSize, handleSize);
+    // Slots 2..4 all take the hit handle, so instance record offsets 0..2 resolve
+    // to the same (only) hit group.
+    for (int i = 2; i < 5; i++)
     {
-        memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
+        memcpy(sbtData + i * stride, handles + 2 * handleSize, handleSize);
     }
     vkUnmapMemory(vk.device, vkRT.sbtMemory);
 
@@ -382,17 +396,20 @@ static void VK_RT_InitShadowPipeline(void)
 
     vkRT.rgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.missRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.hitRegion = {sbtBase + 2 * stride, stride, stride};
+    vkRT.hitRegion = {sbtBase + 2 * stride, stride, 3 * stride};
     vkRT.callRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
         common->Printf("VK RT SBT: handleSize=%u handleAlignment=%u baseAlignment=%u stride=%u sbtTotalBytes=%u\n",
                        handleSize, handleAlignment, baseAlignment, stride, sbtSize);
-        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n", (unsigned long long)sbtBase,
-                       (unsigned long long)vkRT.rgenRegion.deviceAddress,
+        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx (missRecords=%u)  hit=0x%llx "
+                       "(hitRecords=%u)\n",
+                       (unsigned long long)sbtBase, (unsigned long long)vkRT.rgenRegion.deviceAddress,
                        (unsigned long long)vkRT.missRegion.deviceAddress,
-                       (unsigned long long)vkRT.hitRegion.deviceAddress);
+                       (unsigned)(vkRT.missRegion.size / vkRT.missRegion.stride),
+                       (unsigned long long)vkRT.hitRegion.deviceAddress,
+                       (unsigned)(vkRT.hitRegion.size / vkRT.hitRegion.stride));
         common->Printf("VK RT SBT: rgen base-alignment check: addr%%baseAlign=%llu (must be 0)\n",
                        (unsigned long long)(vkRT.rgenRegion.deviceAddress % baseAlignment));
     }
