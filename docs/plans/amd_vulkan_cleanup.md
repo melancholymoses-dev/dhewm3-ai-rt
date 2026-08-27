@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-26
 **Status:** Live — audit complete and cross-checked against a second independent
-audit, no fixes implemented yet.
+audit. **A1 implemented** (2026-08-26), awaiting the AMD retest. A2-A7 outstanding.
 **Trigger:** RT build run on an AMD Radeon 9700 XT. Every RT effect (shadows, AO,
 GI, reflections, volumetrics) produced large saturated white blobs. The same build
 is correct on NVIDIA.
@@ -97,15 +97,22 @@ This is the right shape of fix because the offset genuinely has to be
 the player — so it must stay in the TLAS, and the consumers must be able to
 absorb it. Reflections is already correct and must not be touched.
 
-- [ ] `vk_shadows.cpp`: `sbtSize` `3 → 5` strides; write hit handle to slots 2, 3, 4;
+- [x] `vk_shadows.cpp`: `sbtSize` `3 → 5` strides; write hit handle to slots 2, 3, 4;
       `hitRegion = {base + 2*stride, stride, 3*stride}`
-- [ ] `vk_ao.cpp`: same shape — `sbtSize` `3 → 5`, hit handle to slots 2, 3, 4,
+- [x] `vk_ao.cpp`: same shape — `sbtSize` `3 → 5`, hit handle to slots 2, 3, 4,
       `aoHitRegion = {base + 2*stride, stride, 3*stride}`
-- [ ] `vk_gi.cpp`: `sbtSize` `4 → 6` strides; hit handle (group 2) to slots 3, 4, 5;
+- [x] `vk_gi.cpp`: `sbtSize` `4 → 6` strides; hit handle (group 2) to slots 3, 4, 5;
       `giHitRegion = {base + 3*stride, stride, 3*stride}`
-- [ ] Extend the existing `r_vkLogRT >= 1` SBT log lines to print hit-region
+- [x] Extend the existing `r_vkLogRT >= 1` SBT log lines to print hit-region
       `size / stride` (i.e. record count) alongside the addresses, so a future
       mismatch is visible in a log rather than only on an AMD screen.
+      Added `missRecords=` / `hitRecords=` to all four pipelines, including
+      reflections (unchanged otherwise) so the four lines are directly comparable.
+
+**Implemented 2026-08-26.** Each of the three sites carries a comment explaining
+why the hit region is wider than the group count, so the next person to touch the
+SBT does not "tidy" the padding record away. Expected log now reads
+`hitRecords=3` for shadow / AO / GI and `hitRecords=4` for reflections.
 
 Cost is a few hundred bytes of SBT per pipeline. No shader changes, no TLAS
 changes.
@@ -427,8 +434,8 @@ from "always white" to "actually occluding" mid-diagnosis would move the goalpos
 on what the AMD retest is measuring. Fix the blobs first, then fix AO, then tune.
 
 ```
-1.  A3  dead guards                      ~2 lines
-2.  A1  SBT hit-region widening          ~15 lines across 3 files
+1.  A3  dead guards                      ~2 lines                   [pending]
+2.  A1  SBT hit-region widening          ~15 lines across 3 files   [DONE 2026-08-26]
     → RETEST ON AMD HERE — everything above is blob-directed
 3.  A5  AO payload init 1.0 → 0.0        ~1 line + comments, then re-tune AO
 4.  A2  image clears + aoValidThisFrame  ~40 lines  (do after A5: A5 is what makes
