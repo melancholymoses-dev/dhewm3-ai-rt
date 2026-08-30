@@ -526,6 +526,58 @@ retest build or even the pre-fix one — per the project's debug-over-theory rul
 
 ---
 
+## A9 — `rayQuery` device feature/extension never enabled  **[critical]**
+
+Found 2026-08-29 from an actual GPU-AV capture (first one that worked — see the
+log-capture note at the end of this doc). Confirmed directly by the validation
+layer, not inferred:
+
+```
+Validation Error: [ VUID-VkShaderModuleCreateInfo-pCode-08740 ]
+vkCreateShaderModule(): SPIR-V Capability RayQueryKHR was declared, but
+VkPhysicalDeviceRayQueryFeaturesKHR::rayQuery is required.
+
+Validation Error: [ VUID-VkShaderModuleCreateInfo-pCode-08742 ]
+vkCreateShaderModule(): SPIR-V Extension SPV_KHR_ray_query was declared, but
+VK_KHR_ray_query is required.
+```
+
+`vol_march.comp` is the only shader in the codebase using `GL_EXT_ray_query` /
+`rayQueryEXT` (everything else uses the full ray-tracing pipeline,
+`traceRayEXT`) — grepped to confirm. `vk_instance.cpp` never added
+`VK_KHR_ray_query` to `rtDeviceExtensions[]`, and never queried or enabled
+`VkPhysicalDeviceRayQueryFeaturesKHR::rayQuery`. So every frame, that one
+shader module was created in a state the spec calls undefined — the exact
+"AMD is strict, NVIDIA quietly tolerates it" pattern this whole doc is about,
+just in the one spot (ray *queries*, not the RT pipeline) nobody had checked.
+Leading theory for the volumetric white/light-blue wash reported after A8
+didn't fix it.
+
+### Fix
+
+- [x] `vk_instance.cpp`: added `VK_KHR_RAY_QUERY_EXTENSION_NAME` to
+      `rtDeviceExtensions[]`; threaded `VkPhysicalDeviceRayQueryFeaturesKHR`
+      through both the capability-query chain and the device-creation feature
+      chain, same shape as the existing AS/RT-pipeline feature structs.
+      **Implemented 2026-08-29.** Not yet retested.
+
+### Validation
+
+The fix is directly confirmable from the same log: `vklog.txt` should no longer
+show `VUID-VkShaderModuleCreateInfo-pCode-08740`/`-08742`. Whether it also
+explains the volumetric wash and/or the device-lost crashes is a separate,
+open question — retest both.
+
+**Note on getting GPU-AV output at all:** PowerShell's `*>` stdout redirection
+does not reliably work for this GUI-subsystem exe — it produced an empty file
+both for the user and independently for a same-machine sanity check. What
+worked: a `vk_layer_settings.txt` next to the exe with
+`khronos_validation.log_filename` pointing at an absolute path — the validation
+layer writes there directly, bypassing the app's own stdio entirely. Use this,
+not stream redirection, for any future capture.
+
+---
+
 ## Audited and found clean
 
 Recorded so this ground is not re-covered. Each of these was specifically
@@ -573,6 +625,44 @@ suspected and specifically checked.
 - **SBT base alignment.** Handle/base alignment is queried from
   `VkPhysicalDeviceRayTracingPipelinePropertiesKHR` and applied in all four
   pipelines rather than assumed.
+
+---
+
+## A10 — `primId` indexes the index buffer with no bounds check  **[critical, confirmed]**
+
+Found 2026-08-29 from a real GPU-AV capture (the first one that actually
+produced output — see A9). This is the thing A4 predicted but didn't chase:
+
+```
+Validation Error: [ VUID-RuntimeSpirv-PhysicalStorageBuffer64-11819 ]
+vkCmdTraceRaysKHR(): Out of bounds: trying to read 4 bytes at
+[0x2a4080020, 0x2a4080023) but no buffer device address was found at this range.
+Nearest below: VkBuffer size 24 bytes, range [0x2a4080000, 0x2a4080018)
+Stage = Closest Hit.
+```
+
+24 bytes = 6 × uint32 = 2 triangles. `rt_InterpolateUV`/`rt_InterpolateNormal`
+(`rt_material.glsl`) and `glass_probe.rchit` all compute `base = primId * 3`
+and read `iBuf.idx[base+0..2]` straight from a `buffer_reference` with **no
+check that `primId` is within range** — `maxVertex` only validates the vertex
+indices *read back*, after the index-buffer read already happened out of
+bounds. A4 wrote this down as a known gap; this is it firing on real geometry
+(a 2-triangle object) on AMD, which enforces `buffer_reference` bounds where
+NVIDIA apparently doesn't fault on it.
+
+### Fix
+
+- [x] Added `maxPrimId` (numTriangles-1, sentinel `0xFFFFFFFF`) to
+      `VkMaterialEntry`/`MaterialEntry` (`vk_raytracing.h`, `rt_material.glsl`;
+      struct grew 32→36 bytes) and populated it from `geomIdxSizes[g]` at all
+      four TLAS construction sites in `vk_accelstruct.cpp`, mirroring the
+      existing `maxVertex` population exactly.
+- [x] `rt_InterpolateUV`/`rt_InterpolateNormal`: check `primId <= maxPrimId`
+      **before** touching `IdxBuf`, not after.
+- [x] `glass_probe.rchit`: same `primId` check added (it had none at all,
+      GLSL SSBO), plus a `maxVertex` guard on `i0/i1/i2` it was also missing.
+
+**Implemented 2026-08-29.** Not yet retested.
 
 ---
 

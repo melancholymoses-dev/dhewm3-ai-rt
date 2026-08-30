@@ -532,6 +532,7 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
     entry.alphaThreshold = 0.5f;
     entry.maxVertex = 0xFFFFFFFFu; // sentinel: no bounds check (overridden in TLAS loop)
     entry.emissiveTexIndex = 0;
+    entry.maxPrimId = 0xFFFFFFFFu; // sentinel: no bounds check (overridden in TLAS loop)
 
     // --- Geometry addresses ---
     // Writing is now done per-geometry in the TLAS loop (vk_accelstruct.cpp)

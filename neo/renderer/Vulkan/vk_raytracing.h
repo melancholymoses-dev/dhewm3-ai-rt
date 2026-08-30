@@ -75,8 +75,12 @@ struct VkMaterialEntry
     float alphaThreshold;     // alpha test cutoff (MC_PERFORATED); default 0.5
     uint32_t maxVertex;        // numVerts-1 for this geometry; used for bounds check in rt_InterpolateUV
     uint32_t emissiveTexIndex; // bindless index of SL_AMBIENT stage image; 0 = no emissive
+    uint32_t maxPrimId;        // numTriangles-1 for this geometry; 0xFFFFFFFF = no check.
+                               // Must be checked BEFORE indexing the index buffer by primId —
+                               // maxVertex only validates the values read, after an
+                               // out-of-bounds index-buffer read has already happened.
 };
-static_assert(sizeof(VkMaterialEntry) == 32, "VkMaterialEntry size mismatch");
+static_assert(sizeof(VkMaterialEntry) == 36, "VkMaterialEntry size mismatch");
 
 // ---------------------------------------------------------------------------
 // BLAS (Bottom-Level Acceleration Structure) - one per unique mesh
