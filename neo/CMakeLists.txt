@@ -1552,6 +1552,23 @@ endif()
 		COMMENT "Copying SPIR-V shaders to exe/base/ for self-contained dev builds"
 	)
 
+	# Also copy loose def/ and materials/ overrides into <exe>/base/ so a
+	# self-contained dev build (run outside VS, without fs_basepath set to the
+	# source tree) still sees these source-of-truth overrides.
+	set(BASE_DEF_SRC_DIR "${CMAKE_SOURCE_DIR}/../base/def")
+	set(BASE_DEF_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/def")
+	set(BASE_MATERIALS_SRC_DIR "${CMAKE_SOURCE_DIR}/../base/materials")
+	set(BASE_MATERIALS_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/materials")
+	add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+		COMMAND "${CMAKE_COMMAND}" -E copy_directory
+				"${BASE_DEF_SRC_DIR}"
+				"${BASE_DEF_EXE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E copy_directory
+				"${BASE_MATERIALS_SRC_DIR}"
+				"${BASE_MATERIALS_EXE_DIR}"
+		COMMENT "Copying loose base/def and base/materials overrides to exe/base/ for self-contained dev builds"
+	)
+
 	# Deploy to the user config base dir whenever any SPV changes — not tied to
 	# the exe POST_BUILD so shader-only edits are picked up without a C++ rebuild.
 	# JM: Lingering dhewm3 reference in path
