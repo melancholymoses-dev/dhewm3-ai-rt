@@ -34,6 +34,11 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | `auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | Live (Wave 5) |
 | `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs — plus A5, the vendor-neutral bug that has made RT AO a no-op since it shipped | Live (out-of-wave; A1 blocks AMD hardware entirely) |
 
+`../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
+getting Vulkan validation/GPU-AV output out of this engine — layer settings file,
+env vars, what each VUID class means, this project's own diagnostic cvars. Load it
+before chasing any AMD-vs-NVIDIA or device-lost bug.
+
 Completed / superseded docs are in `completed/` — notably
 `completed/gbuffer_normal_pass.md` (Waves 1a/1b landed: normal/F0 G-buffer in the
 depth prepass, reflection composite; `completed/gi_albedo_target.md` extends its

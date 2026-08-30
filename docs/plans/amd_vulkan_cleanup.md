@@ -778,7 +778,8 @@ an argument:
 
 ### Instrumentation to run before touching code
 
-Both are already available and neither requires a build change:
+See `docs/vulkan_debugging.md` for the full how-to (layer settings file, env
+vars, what each VUID class means, this project's own cvars). Summary:
 
 - **`r_vkRTReflDataDiag 2`** on the AMD machine. This CVar
   (`vk_accelstruct.cpp:1718`) already validates material-table addresses, texture
@@ -787,19 +788,9 @@ Both are already available and neither requires a build change:
 - **`VK_LAYER_KHRONOS_validation` with GPU-Assisted Validation.** Plain validation
   catches A1 (`VUID-vkCmdTraceRaysKHR`-class: SBT index outside the region's
   `size`) and A3's null-image path. **GPU-AV is the only thing that catches
-  `buffer_reference` out-of-bounds and dangling-VA reads**, which is A6 — normal
-  validation cannot see those at all. The engine doesn't need to be rebuilt or
-  changed to get this — force it on via environment variables in the same shell
-  that launches the game (requires the LunarG Vulkan SDK to be installed so the
-  layer exists on the system):
-  ```powershell
-  $env:VK_INSTANCE_LAYERS = "VK_LAYER_KHRONOS_validation"
-  $env:VK_LAYER_ENABLES = "VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT"
-  & "C:\path\to\dhewm3.exe"
-  ```
-  Validation output prints to that console window as it happens (redirect with
-  `*> vklog.txt` to capture it to a file). Expect it to run much slower — GPU-AV
-  instruments every shader. Not yet run as of 2026-08-29.
+  `buffer_reference` out-of-bounds** — normal validation cannot see those at
+  all. This is how A9 and A10 were actually found. Setup and what to look for:
+  `docs/vulkan_debugging.md`.
 
 ## Open question
 
