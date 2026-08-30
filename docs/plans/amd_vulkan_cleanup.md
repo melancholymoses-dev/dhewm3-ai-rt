@@ -3,7 +3,13 @@
 **Date:** 2026-08-26
 **Status:** Live — audit complete and cross-checked against a second independent
 audit. **A1 and A3 implemented** (2026-08-26) — everything above the retest line
-is done and the AMD retest is the next action. A2, A4-A7 outstanding.
+is done. **Retest run 2026-08-29**: two symptoms reported (GI à-trous inert,
+volumetrics washed light-blue) plus a new device-lost crash — see A8 below and
+the retest note at the end of the Order of work section. **A1 is NOT confirmed
+fixed** — the retest report covers GI/volumetrics only; shadows, AO, and
+reflections were not specifically re-checked, so their pre-A1 blob behavior is
+unknown, not "gone." Do not treat A1 as closed until each of the four RT effects
+is individually re-verified. A2, A4-A7 still outstanding.
 **Trigger:** RT build run on an AMD Radeon 9700 XT. Every RT effect (shadows, AO,
 GI, reflections, volumetrics) produced large saturated white blobs. The same build
 is correct on NVIDIA.
@@ -397,6 +403,119 @@ symptom is in the right family and it should not be dismissed on symptom alone.
 
 ---
 
+## A8 — GI/vol temporal EMA has no NaN/Inf guard; a poisoned texel never recovers  **[critical, retest finding]**
+
+Found during the 2026-08-29 AMD retest, after A1+A3. Two symptoms reported: GI's
+à-trous pass reads as doing nothing (still dotty), and volumetrics washes the
+screen light-blue, both persisting for the rest of the play session. Note this is
+NOT evidence that A1 fixed shadows/AO/reflections — those weren't specifically
+re-checked this pass, see the Status line at the top of this doc. Root-caused by
+reading, not yet re-confirmed on hardware — see Validation below for the two
+zero-code experiments that would confirm it.
+
+`gi_temporal_resolve.comp` is shared verbatim by both the GI temporal stage and
+the volumetric temporal stage (`vk_vol.cpp` reuses the same `.spv`, see its own
+comment at `vk_vol.cpp:776`). It is read-modify-write on `historyImage` every
+frame:
+
+```glsl
+vec4 hist    = imageLoad(historyImage, coord);
+vec4 blended = mix(hist, current, alpha);
+imageStore(historyImage, coord, blended);
+```
+
+`alpha` is small in ordinary gameplay (`r_rtVolTemporalAlpha` default 0.15; GI's
+equivalent is comparable) — history dominates, current is a small nudge. That's
+fine for finite values, but `mix(hist, NaN, alpha)` is `NaN`, and `mix(hist, Inf,
+alpha)` saturates towards `Inf` — once either lands in `current`, the texel is
+poisoned in `historyImage` **forever**, not just for one frame: every subsequent
+frame reads back its own poisoned value as `hist` and re-blends against it. A
+plain large-but-finite outlier would at least decay geometrically (`0.85^n`); a
+non-finite one does not decay at all. The only reset path is a detected camera
+cut (`effectiveAlpha` snaps to 1.0, bypassing the history read at
+`vk_vol.cpp:1181-1197`, mirrored for GI) — which won't help if the same
+screen-space condition recurs on the next frame.
+
+Two consequences, matching the two reported symptoms from one shared shader:
+
+- **GI**: a poisoned/huge texel sits upstream of `gi_atrous.comp`. À-trous is an
+  *edge-preserving* filter by design — `wD`/`wL` correctly read a NaN or
+  multi-order-of-magnitude neighbour as a hard edge and refuse to blend across
+  it. So à-trous isn't broken; it's doing exactly what an edge-stopping filter
+  should do when fed a genuine outlier, which reads to the eye as "the filter
+  does nothing, still dots."
+- **Volumetrics**: `vol_composite.frag` additively blends `volReadView` (the
+  temporal history) onto the framebuffer. A poisoned or saturated texel reads as
+  a blown-out wash; a growing number of them over a play session (different
+  screen-space conditions triggering the upstream spike at different times) reads
+  as the reported light-blue wash across most of the screen. The specific hue
+  (light-blue, not white) is not yet explained by this theory alone — an Inf/NaN
+  additively blended per-channel should saturate toward whatever the scene's own
+  color balance is, not a consistent tint. Worth checking whether one channel is
+  saturating faster than the others (e.g. blue channel intensity/anisotropy
+  constants differ from red/green) before assuming A8 is the whole story here.
+
+**Plausible upstream trigger, not the only possible one:** `vol_march.comp`'s
+`HenyeyGreenstein()` phase function is a true singularity as the forward-scatter
+angle and anisotropy both approach 1 (an ordinary gameplay moment — staring
+straight down a fog beam at a light). The pre-existing `max(denom, 1e-4)` floor
+already let this spike into the thousands under normal play; `volBuf` is
+`rgba16f` (max representable ~65504), so a bad frame's accumulated contribution
+overflowing to `Inf` on `imageStore` is well within reach, and doesn't need to be
+identical across vendors to explain an AMD-only report — different RT hit
+ordering/jitter timing only needs to nudge one frame over the fp16 ceiling where
+NVIDIA's happened not to.
+
+### Fix
+
+- [x] `gi_temporal_resolve.comp`: reject a non-finite `current` outright (keep
+      existing `hist` rather than blend it in), and scrub `hist` itself if it was
+      already poisoned before this guard existed. Never write a non-finite value
+      into `historyImage` again.
+- [x] `vol_march.comp`: raise `HenyeyGreenstein`'s denominator floor `1e-4 → 1e-2`
+      (caps the peak ~8x lower, still visually a dramatic forward-scatter look)
+      and clamp the final per-pixel `result` to `4096.0` before `imageStore` as a
+      hard backstop independent of which upstream term caused the spike.
+
+**Implemented 2026-08-29. Retested 2026-08-29, same session, and it did NOT fix
+either symptom** — dots are still present in GI, and the volumetric wash is back
+to being reported as white (not light-blue, contradicting the previous report; no
+explanation yet for the color inconsistency between the two sessions either).
+**A8's diagnosis is likely wrong, or incomplete.** Leaving the fix in place (it's
+a correct hardening regardless — a temporal EMA should never propagate NaN/Inf
+forever, independent of whether it's this bug's cause), but it is not the
+explanation for the reported dots/blob. Do not spend more time on the
+temporal-EMA theory without new evidence pointing back at it. Two things not yet
+tried that would actually narrow this down:
+- `r_useRayTracing 0` in the same spot — if the white blob is present with RT
+  fully disabled, it's not an RT bug at all (asset/lighting/fog issue, possibly
+  present on NVIDIA too and simply not noticed). This test costs nothing and
+  hasn't been run.
+- The zero-code experiments below were never actually run to confirm the
+  mechanism before the fix went in — this whole finding was diagnosed from
+  reading, not from an isolated repro. That ordering should not repeat: next
+  hypothesis gets validated with a cvar toggle *before* a shader edit.
+
+### Validation
+
+Two zero-code experiments to run *before* trusting the fix, straight from a
+retest build or even the pre-fix one — per the project's debug-over-theory rule:
+
+- Set `r_rtVolTemporal 0` (disables only the volumetric temporal stage). If the
+  white blob disappears, that confirms the temporal-EMA-poisoning mechanism for
+  volumetrics specifically, independent of whether the fix above is correct.
+- Temporarily set `r_rtGIAtrousSigmaL`/`r_rtGIAtrousSigmaZ` very large (e.g. 100)
+  to defeat edge-stopping entirely. If the GI dots disappear (i.e. à-trous starts
+  visibly blurring), that confirms à-trous was never the broken part — it was
+  correctly refusing to blur real outliers — and points back at whatever's
+  upstream feeding it those outliers.
+- After the fix: `r_vkLogRT 1` during `VK RT Vol Temporal: camera cut ...` and
+  `VK RT GI Atrous: N passes ...` lines won't show anything new (this bug doesn't
+  log), so the observable here is purely visual — the blob/dots should stop
+  building up over a long play session rather than staying finite-but-visible.
+
+---
+
 ## Audited and found clean
 
 Recorded so this ground is not re-covered. Each of these was specifically
@@ -451,8 +570,10 @@ suspected and specifically checked.
 
 A3 first (two-line change, removes a confound). Then A1, which is the one that
 plausibly accounts for the entire symptom on its own. Re-test on the 9700 XT
-before doing anything else — if the blobs are gone, everything below the retest
-line becomes ordinary correctness work rather than urgent.
+before doing anything else — if the blobs are gone **on all four RT effects**,
+everything below the retest line becomes ordinary correctness work rather than
+urgent. (The 2026-08-29 retest only exercised GI/volumetrics — see A8 — so A1 is
+still open pending shadows/AO/reflections being checked too.)
 
 A5 sits below the retest line deliberately: it is vendor-neutral and changing AO
 from "always white" to "actually occluding" mid-diagnosis would move the goalposts
@@ -463,13 +584,60 @@ on what the AMD retest is measuring. Fix the blobs first, then fix AO, then tune
 2.  A1  SBT hit-region widening          ~15 lines across 3 files   [DONE 2026-08-26]
     → RETEST ON AMD HERE — everything above is blob-directed. Both landed;
       the retest is the next action and nothing below should start before it.
-3.  A5  AO payload init 1.0 → 0.0        ~1 line + comments, then re-tune AO
-4.  A2  image clears + aoValidThisFrame  ~40 lines  (do after A5: A5 is what makes
+      → 2026-08-29 retest covered GI/volumetrics only (NOT shadows/AO/
+        reflections — A1 unconfirmed for those): GI à-trous inert, volumetrics
+        washed light-blue, plus a new VK_ERROR_DEVICE_LOST at frame 2854 during
+        split-submit. A8 below addresses the first two; the crash is not yet
+        root-caused — see note below the list. Shadows/AO/reflections on AMD
+        still need their own explicit check.
+3.  A8  temporal EMA NaN/Inf guard        ~30 lines, 2 shader files  [DONE 2026-08-29]
+    → RETEST ON AMD AGAIN — confirm the à-trous/blob symptoms are gone before
+      continuing down this list.
+4.  A5  AO payload init 1.0 → 0.0        ~1 line + comments, then re-tune AO
+5.  A2  image clears + aoValidThisFrame  ~40 lines  (do after A5: A5 is what makes
                                           a stale AO region visible at all)
-5.  A6  vtx/idx addrs into staticSignature + free-while-resident logging
-6.  A4  robustBufferAccess               ~1 line
-7.  A7  drop trailing instances on geom overflow
+6.  A6  vtx/idx addrs into staticSignature + free-while-resident logging
+7.  A4  robustBufferAccess               ~1 line
+8.  A7  drop trailing instances on geom overflow
 ```
+
+**On the device-lost crash (2026-08-29 retest):** not yet root-caused — it needs
+data this session didn't have (the full log, not just the tail around the crash).
+Breadcrumbs show a normal frame (2854) executing the full RT chain start-to-finish
+before `SplitSubmit_AfterRTResume`'s `vkQueueSubmit` comes back
+`VK_ERROR_DEVICE_LOST`, i.e. the fault happened *during* GPU execution of that
+batch, not at record time. It surfaced deep into a play session on `mars_city1`
+(30447 interactions per the log — a large map), which is exactly the shape of
+scene A6 (stale vertex/index device addresses surviving a freed-and-reallocated
+vertex-cache buffer) is most likely to actually trigger.
+
+`"combined geom count overflow"` was greped for across the full session log on
+2026-08-29 and **not found** — A7 is ruled out as the cause of this crash. A6
+remains the live candidate.
+
+**Second crash captured, same session, with GPU-AV env vars set (`VK_INSTANCE_LAYERS`
+/ `VK_LAYER_ENABLES`, ran at ~2fps consistent with GPU-AV actually being active):**
+this time it faulted at `SplitSubmit_AfterGI` (frame 2189), not
+`SplitSubmit_AfterRTResume` (frame 2854, the first crash). Different frame,
+different exact breadcrumb, but **`RT_GI` is the stage immediately preceding the
+fault window both times** — the first crash's batch also contains RT_GI upstream
+of where it got to. GI's `.rchit` is the one shader among the four RT pipelines
+that unconditionally invokes closest-hit (and therefore fetches the
+`buffer_reference` material/vertex/index addresses A6 is about) on every ray hit,
+including opaque geometry — shadow/AO skip closest-hit entirely via
+`gl_RayFlagsSkipClosestHitShaderEXT`. Two device-losses both shadowing GI is
+exactly the pattern A6 predicts and is now the leading theory for the crash,
+ahead of "generic GPU hang."
+
+**However: no VUID / GPU-AV validation error text has been seen yet.** The pasted
+log excerpts are from the engine's own `dhewm3log.txt`, not captured stdout from
+the Vulkan loader/validation layer — those are two different output streams. If
+the validation layer produced any messages, they went to the console window,
+which likely closed with the process on crash before they could be read. **This
+needs to be re-run with stdout actually redirected** (`& "...\dhewm3.exe" *>
+vklog.txt` from PowerShell, not just watching the console) to capture whatever
+GPU-AV had to say. Until that capture exists, GPU-AV has not actually been
+checked yet, only run.
 
 ## Validation
 
@@ -499,6 +667,10 @@ an argument:
 - **A6** — the free-while-resident log should be silent in normal play. If it
   fires, capture the surrounding frames; that is the smoking gun for the whole
   dangling-VA theory and turns a latent concern into a reproducible bug.
+- **A8** — see the two zero-code experiments (`r_rtVolTemporal 0`,
+  oversized `r_rtGIAtrousSigmaL`/`Z`) in A8's own Validation subsection above;
+  run those on the pre-fix build to confirm the mechanism, then confirm the
+  fixed build shows neither symptom over a long play session.
 - **A4** — no visible change expected; this is insurance. Confirm no perf
   regression in the existing profiler phases.
 - **A7** — needs a synthetic 16k-geometry scene to exercise; not worth building
@@ -516,7 +688,18 @@ Both are already available and neither requires a build change:
   catches A1 (`VUID-vkCmdTraceRaysKHR`-class: SBT index outside the region's
   `size`) and A3's null-image path. **GPU-AV is the only thing that catches
   `buffer_reference` out-of-bounds and dangling-VA reads**, which is A6 — normal
-  validation cannot see those at all.
+  validation cannot see those at all. The engine doesn't need to be rebuilt or
+  changed to get this — force it on via environment variables in the same shell
+  that launches the game (requires the LunarG Vulkan SDK to be installed so the
+  layer exists on the system):
+  ```powershell
+  $env:VK_INSTANCE_LAYERS = "VK_LAYER_KHRONOS_validation"
+  $env:VK_LAYER_ENABLES = "VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT"
+  & "C:\path\to\dhewm3.exe"
+  ```
+  Validation output prints to that console window as it happens (redirect with
+  `*> vklog.txt` to capture it to a file). Expect it to run much slower — GPU-AV
+  instruments every shader. Not yet run as of 2026-08-29.
 
 ## Open question
 

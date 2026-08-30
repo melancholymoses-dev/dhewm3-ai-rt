@@ -133,7 +133,8 @@ float HenyeyGreenstein(float cosTheta, float g)
 {
     float g2    = g * g;
     float denom = 1.0 + g2 - 2.0 * g * cosTheta;
-    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-4), 1.5));
+ 
+    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
 }
 
 // Cauchy-with-ramp attenuation — matches the GI bounce shading model.
@@ -420,6 +421,9 @@ void main()
         scatter_directed * params.directedDensity  * params.directedStrength  +
         scatter_flash    * params.flashlightDensity * params.flashlightStrength,
         vec3(0.0));
+
+    // Clamp well under the fp16 (rgba16f) ceiling to avoid Inf.
+    result = min(result, vec3(4096.0));
 
     // Alpha carries the total path transmittance (camera -> tMax): 1.0 = clear
     // air, near-0.0 = the view ray is fully extinguished by the medium before
