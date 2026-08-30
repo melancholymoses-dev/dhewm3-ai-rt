@@ -364,18 +364,28 @@ address check and the `maxVertex` guard, and neither protects a
 `buffer_reference` read that is merely *wrong* rather than null — those loads are
 unbounded on every vendor.
 
-Why it is ranked below A1 despite being real: this failure would be intermittent
-and scene-dependent, whereas the report is "any RT effect, immediately,
-reproducibly". Worth fixing regardless, and worth *instrumenting* now because the
-instrument is nearly free.
+Why it was ranked below A1: this failure is intermittent and scene-dependent
+rather than "any RT effect, immediately." **Promoted 2026-08-29**: three separate
+device-lost crashes on AMD (see A8's crash notes) all landed at or immediately
+after `RT_GI` — the one pipeline whose `.rchit` unconditionally fetches these
+`buffer_reference` addresses on every hit — reproduced by ordinary movement in a
+large map (cache churn). This is now the leading crash theory, ahead of "generic
+GPU hang."
 
 ### Fix
 
-- [ ] Fold the geometry vtx/idx device addresses into `staticSignature` so any
-      change forces a static rewrite. This is the minimal correct fix and closes
-      the invalidation gap directly.
+- [x] Fold the geometry vtx/idx device addresses into `staticSignature` so any
+      change forces a static rewrite. **Implemented 2026-08-29**, both
+      construction sites (`vk_accelstruct.cpp`, the cache-hit reuse path and the
+      fresh-BLAS path). This is the minimal correct fix and closes the
+      invalidation gap directly. Not yet re-tested on the 9700 XT.
 - [ ] Log when a vertex-cache block is freed while its device address is still
-      resident in a live frame's address table.
+      resident in a live frame's address table. Skipped for now — doing this
+      right means cross-referencing every free against the material table's
+      resident addresses across all frames-in-flight, which is either a
+      non-trivial lookup structure or an O(n) scan on every free. The signature
+      fix above closes the actual gap; this would only be corroborating evidence
+      if the crash recurs.
 - [ ] Longer term, reconsider the non-owning-reference design — a refcount or a
       generation counter on cache blocks would make this class of bug
       structurally impossible rather than signature-dependent.

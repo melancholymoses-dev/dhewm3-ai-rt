@@ -1343,6 +1343,12 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         {
                             s_staticGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
                             s_staticGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
+                            // A6: fold into staticSignature so a freed/reallocated vertex-cache
+                            // buffer (address changes, BLAS address doesn't) forces a rewrite.
+                            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g],
+                                                                      sizeof(uint64_t));
+                            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g],
+                                                                      sizeof(uint64_t));
                         }
                     }
                     staticGeomCount += geomCount;
@@ -1452,6 +1458,11 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 {
                     s_staticGeomVtxAddrs[base + g] = (uint64_t)cached->geomVertAddrs[g];
                     s_staticGeomIdxAddrs[base + g] = (uint64_t)cached->geomIdxAddrs[g];
+                    // A6: fold into staticSignature — see the other construction site.
+                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g],
+                                                              sizeof(uint64_t));
+                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g],
+                                                              sizeof(uint64_t));
                 }
             }
             staticGeomCount += cached->geomCount;
