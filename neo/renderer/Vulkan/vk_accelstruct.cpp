@@ -1200,8 +1200,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
         inst.instanceCustomIndex = 0;
         // Player body entities get mask bit 0x01 so shadow rays can optionally
         // exclude them (e.g. when the player is directly under a light).
-        // World geometry keeps all bits set (0xFF) so it is always intersected.
-        inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+        // World geometry gets every other bit (0xFE), not 0xFF: bit 0 must stay
+        // clear so a cullMask of 0x01 isolates player geometry only (used by the
+        // vol_march.comp self-shadow debug view).
+        inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFE;
         // Player body uses SBT offset 2 → player_reflect.rchit (main) and placeholder (probe, never fires).
         // World geometry uses offset 0 → reflect_ray.rchit (main) and glass_probe.rchit (probe).
         inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
@@ -1445,7 +1447,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = 0xFF;
+            inst.mask = 0xFE; // bit 0 reserved for player geometry, see the dynamic-instance mask above
             inst.instanceShaderBindingTableRecordOffset = 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = cached->deviceAddress;
@@ -1576,7 +1578,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFF;
+            inst.mask = ent->parms.noSelfShadow ? 0x01 : 0xFE;
             inst.instanceShaderBindingTableRecordOffset = ent->parms.noSelfShadow ? 2 : 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = ent->blas->deviceAddress;
