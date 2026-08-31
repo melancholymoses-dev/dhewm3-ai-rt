@@ -1554,15 +1554,19 @@ endif()
 
 	# Also copy loose def/ and materials/ overrides into <exe>/base/ so a
 	# self-contained dev build (run outside VS, without fs_basepath set to the
-	# source tree) still sees these source-of-truth overrides.
+	# source tree) still sees these source-of-truth overrides. Not tied to the
+	# exe POST_BUILD — that only reruns when the exe relinks, so a def/mtr-only
+	# edit would otherwise be silently skipped. Same reasoning as deploy_spirv below.
 	set(BASE_DEF_SRC_DIR "${CMAKE_SOURCE_DIR}/../base/def")
 	set(BASE_DEF_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/def")
 	set(BASE_MATERIALS_SRC_DIR "${CMAKE_SOURCE_DIR}/../base/materials")
 	set(BASE_MATERIALS_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/materials")
-	add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+	add_custom_target(deploy_base_overrides ALL
+		COMMAND "${CMAKE_COMMAND}" -E make_directory "${BASE_DEF_EXE_DIR}"
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory
 				"${BASE_DEF_SRC_DIR}"
 				"${BASE_DEF_EXE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E make_directory "${BASE_MATERIALS_EXE_DIR}"
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory
 				"${BASE_MATERIALS_SRC_DIR}"
 				"${BASE_MATERIALS_EXE_DIR}"
