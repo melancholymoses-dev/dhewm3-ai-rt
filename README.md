@@ -47,11 +47,11 @@ This is just a definition on the weapon to activate an existing effect.  This wa
 
 1. Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That is essential starting point for the vendor neutral ray-tracing work. 
 2. Ray Traced shadows and acceleration structures.
-![Ray Traced Shadows](docs/img/screenshots/20260331_shadow.jpg)
-![Ray Traced Original](docs/img/screenshots/20260331_shadow_stencil.jpg)
-Ray Traced Shadows are in.  This shows some distinctions with how we're selecting lights - potentially some errors in math and light selection?  Top screenshot is RT, lower screenshot is original stencil.  Here the side light above the player's head casts the main shadow in RT, while the stencil has a much moodier shadow.
+![Ray Traced Shadows](docs/img/screenshots/20260830_shadow_on.jpg)
+![Ray Traced Original](docs/img/screenshots/20260830_shadow_off.jpg)
+Ray Traced Shadows are in.  (There was a bug around light origin that has been fixed)  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  
 
-3. Ray-Traced Ambient Occlusion with temporal filtering 
+3. Ray-Traced Ambient Occlusion with temporal filtering.  Leads to darkening in the corners.  Now running properly.   
 4. Ray traced Reflections
 
 ![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
@@ -65,11 +65,9 @@ The global illumination passes were washing out the color and killing the mood. 
 
 
 6. Volumetric Lighting 
-5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.
-![Volumetrics On](docs/img/screenshots/20260419_vol_on.jpg)
-![Volumetrics Off](docs/img/screenshots/20260415_vol_off.jpg)
-
-## Overall Impact
+5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.  Lends a lot of mood, especially for moving lights and shadows.  
+![Volumetrics On](docs/img/screenshots/20260830_vol_on.jpg)
+![Volumetrics Off](docs/img/screenshots/20260830_vol_off.jpg)
 
 
 ## Useful Cvars
@@ -85,15 +83,15 @@ The pipeline and ray-tracing can be enabled/disabled at the terminal in game or 
 | r_rtreflections   | 0, 1 | Toggle Ray-Traced Reflections |
 | r_rtgi            | 0, 1 | Toggle Ray-Traced Global Illumination |
 
-Mostly, the ray-tracing is computationally expensive, and tends to fight the original art direction - which the map design and gameplay
-was already optimized towards.  More physically based rendering tends to not be impressive given the game was built around the limitations of the engine.  
+Mostly, the ray-tracing is computationally expensive, and tends to fight the original art direction - which the map design and gameplay were already optimized towards.  
+More physically based rendering tends to not be impressive given the game was built around the limitations of the engine.  
+The various effects here tend to soften the harsh shadows of the original for a more diffuse look.
 
-The two effects I've tried that seem to actually add something are the reflections, and volumetric lighting.  Those both lean into what I liked about
-Doom 3: moody atmosphere and the play of light and shadow.  
+The two effects I've tried that seem to actually add something are the reflections, and volumetric lighting.  Those both lean into what I liked about Doom 3: moody atmosphere and the play of light and shadow.  
 
-- Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing that without ray-tracing).  Glass is 
-plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
-- Global illumination was less impressive than I hoped, but the volumetrics help.  I could see this having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
+- Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing that without ray-tracing).  
+Glass is plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
+- Global illumination was less impressive than I hoped, but the volumetrics help.  I could see GI having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
 
 ## Additional Files
 
