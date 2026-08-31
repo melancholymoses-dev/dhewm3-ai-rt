@@ -81,15 +81,32 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     // Repurposed former pad float (was _pad2, always 0) — same offset, see
     // r_rtVolWhiteNoiseMix / the jitter blend below.
     float whiteNoiseMix;        // offset 172, size  4  0 = pure IGN, 1 = pure white noise
+    // --- AR7 follow-up: muzzle-flash volumetric self-shadow (auto_relight.md) ---
+    int   selfShadowEnable;     // offset 176, size  4  r_rtVolMuzzleSelfShadow
+    int   selfShadowDebugMode;  // offset 180, size  4  r_rtVolMuzzleSelfShadowDebug
+    float selfShadowBias;       // offset 184, size  4  r_rtVolMuzzleSelfShadowBias
+    float _pad4;                // offset 188, size  4  std140 round to 16
 } params;
 
+// auto_relight.md AR7 follow-up: bit 0 marks the first-person muzzle-flash light (set
+// CPU-side in vk_gi.cpp's considerLight — point light + allowLightInViewID). Used
+// below to gate the self-shadow ray against player-body/weapon TLAS instances.
+#define GI_LIGHT_FLAG_SELF_SHADOW 0x1u
+
 struct GILight {
-    vec4 posRadius;       // xyz = world position, w = sphere pre-cull radius
+    vec4 posRadius;       // xyz = volume centre (parms.origin), w = sphere pre-cull radius
     vec4 colorIntensity;  // rgb = colour, a = intensity
     vec4 coneDir;         // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;      // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;       // 0 = point, 1 = scene projected/spot, 2 = player flashlight
-    uint _pad0; uint _pad1; uint _pad2;
+    uint flags;           // GI_LIGHT_FLAG_* (was an unused pad slot)
+    uint _pad1; uint _pad2;
+    // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. Distinct from
+    // posRadius.xyz above, which stays the volume centre because boxExtents/coneDir are
+    // relative to it. Containment/attenuation use posRadius; direction, distance and
+    // shadow-ray targeting use this. Same split as the GL path — see vk_gi.cpp's
+    // GILightEntry::emitPos.
+    vec4 emitPos;         // xyz = globalLightOrigin, w unused
 };
 
 // GILightBuffer matches the C++ GILightBuffer struct (std430).
@@ -122,7 +139,8 @@ float HenyeyGreenstein(float cosTheta, float g)
 {
     float g2    = g * g;
     float denom = 1.0 + g2 - 2.0 * g * cosTheta;
-    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-4), 1.5));
+ 
+    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
 }
 
 // Cauchy-with-ramp attenuation — matches the GI bounce shading model.
@@ -159,10 +177,14 @@ void main()
     ivec2 fullCoord = min(coord * params.marchScale, fullSize - ivec2(1));
 
     // Sky early-out: depth 1.0 means no geometry → nothing to scatter into.
+    // Alpha = 1.0 (full transmittance, i.e. "no fog here") — NOT 0.0. Alpha now
+    // carries path transmittance for a downstream background-attenuation
+    // composite (see the end of this shader); 0.0 would mean "fully extinguish
+    // whatever's behind this pixel", which is wrong for a no-fog/sky pixel.
     float depth = texelFetch(depthSampler, fullCoord, 0).r;
     if (depth >= 1.0)
     {
-        imageStore(volBuf, coord, vec4(0.0));
+        imageStore(volBuf, coord, vec4(0.0, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -174,7 +196,7 @@ void main()
 
     if (hitDist < 0.001)
     {
-        imageStore(volBuf, coord, vec4(0.0));
+        imageStore(volBuf, coord, vec4(0.0, 0.0, 0.0, 1.0)); // see sky early-out above re: alpha
         return;
     }
 
@@ -229,9 +251,25 @@ void main()
         float stepSize = max(tB - tA, 1e-4);
 
         // Beer-Lambert: update running transmittance and bail when negligible.
+        float transBefore = transmittance;
         transmittance *= exp(-params.density * stepSize);
         if (transmittance < 0.001)
             break;
+
+        // Self-attenuation fix (2026-08-23 — reported as a general volumetric
+        // brightness "lift"): light scattered at this step still has to travel
+        // back through every step of medium between here and the camera before
+        // it reaches the eye. Every step below was previously added at full
+        // strength regardless of how much medium sat between it and the
+        // camera — `transmittance` was computed and used only for the
+        // early-exit check above, never applied to the accumulated contribution.
+        // That's a straight energy-conservation bug: a beam through N steps of
+        // fog summed N un-attenuated contributions instead of a properly
+        // decaying series, which reads as a flat brightness lift rather than a
+        // shaped beam. Geometric mean of before/after transmittance
+        // approximates the transmittance AT stepPos (the step's midpoint,
+        // matching stepT above) rather than at either endpoint.
+        float stepTransmittance = sqrt(transBefore * transmittance);
 
         vec3 stepPos = cameraPos + marchDir * stepT;
 
@@ -241,7 +279,12 @@ void main()
         // see portal_area_lights.md follow-up notes.
         for (int li = 0; li < maxLights; li++)
         {
+            // Volume centre drives containment/attenuation; the emitter drives
+            // direction, distance and the shadow ray (see the GILight struct above).
+            // They differ by lightCenter, which some Doom 3 fill lights offset by
+            // thousands of units.
             vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
+            vec3  emitPos     = giLightBuf.lights[li].emitPos.xyz;
             float sphereRad   = giLightBuf.lights[li].posRadius.w;
             vec3  lightColor  = giLightBuf.lights[li].colorIntensity.rgb;
             float lightIntens = giLightBuf.lights[li].colorIntensity.a;
@@ -253,12 +296,16 @@ void main()
             vec4  cd           = giLightBuf.lights[li].coneDir;
             vec4  bx           = giLightBuf.lights[li].boxExtents;
 
-            vec3  toLight = lightPos - stepPos;
-            float dist    = length(toLight);
-
-            // Sphere pre-cull: fast reject before precise containment test.
-            if (dist > sphereRad)
+            // Sphere pre-cull: fast reject before precise containment test. Measured
+            // from the volume centre, because sphereRad is a conservative bound of the
+            // box/cone (max extent * 1.5) and is only valid about that point.
+            if (length(lightPos - stepPos) > sphereRad)
                 continue;
+
+            // Everything below that is about where the light actually *is* — direction,
+            // distance, the shadow ray — measures from the emitter instead.
+            vec3  toLight = emitPos - stepPos;
+            float dist    = length(toLight);
 
             // Precise volume containment + attenuation.
             // Point lights (lt==0) use bounding-box containment.
@@ -278,10 +325,13 @@ void main()
                 else
                     atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
 
-                // Fade to zero at the light origin to prevent singularity glow blob.
-                // The innermost 15% of the sphere radius is where the march step
-                // is so close to the origin that phase/direction noise amplifies
-                // into a visible bright sphere centred on the light entity.
+                // Fade to zero at the emitter to prevent a singularity glow blob.
+                // `dist` is measured from emitPos, which is where the singularity
+                // actually is — the innermost 15% of the sphere radius is where the
+                // march step gets close enough that phase/direction noise amplifies
+                // into a visible bright sphere. Before lightCenter was honoured this
+                // blob sat at the volume centre, i.e. in the wrong place for any light
+                // whose mapper offset the emitter.
                 float coreFade = smoothstep(0.0, sphereRad * 0.15, dist);
                 atten *= coreFade;
             }
@@ -312,12 +362,27 @@ void main()
             // Fire a ray query to test occlusion between stepPos and the light.
             float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
 
+            // AR7 follow-up (auto_relight.md): the muzzle flash is the one volumetric
+            // light with real self-shadow potential (it sits on the gun, with parallax,
+            // unlike the eye-mounted flashlight — see the doc's "why interesting" note).
+            // Every other light keeps the original unconditional player-body exclusion.
+            bool selfShadowEligible = (giLightBuf.lights[li].flags & GI_LIGHT_FLAG_SELF_SHADOW) != 0u;
+            bool selfShadowOn       = selfShadowEligible && (params.selfShadowEnable != 0);
+
+            uint  cullMask   = selfShadowOn ? 0xFFu : 0xFEu;
+            // A muzzle flash sits only a few units from its own gun mesh — much closer
+            // than tShadow usually is — so tMin needs a real bias, not the default 0.01,
+            // to avoid re-intersecting the same geometry the ray just launched from.
+            // Clamped below tShadow so the ray stays non-degenerate.
+            float shadowTMin = selfShadowOn ? clamp(params.selfShadowBias, 0.01, max(0.01, tShadow - 0.001))
+                                             : 0.01;
+
             rayQueryEXT rq;
             rayQueryInitializeEXT(
                 rq, tlas,
                 gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
-                0xFEu,  // skip player body/hands (mask 0x01); world geometry (0xFF) still hit
-                stepPos, 0.01, lightDir, tShadow);
+                cullMask,  // 0xFE skips player body/hands (mask 0x01); 0xFF (self-shadow-on) tests it too
+                stepPos, shadowTMin, lightDir, tShadow);
 
             while (rayQueryProceedEXT(rq))
             {
@@ -326,11 +391,38 @@ void main()
                     rayQueryConfirmIntersectionEXT(rq);
             }
 
-            if (rayQueryGetIntersectionTypeEXT(rq, true) !=
-                gl_RayQueryCommittedIntersectionNoneEXT)
+            bool occluded = (rayQueryGetIntersectionTypeEXT(rq, true) !=
+                              gl_RayQueryCommittedIntersectionNoneEXT);
+
+            // AR7 debug view: independent of r_rtVolMuzzleSelfShadow, fire a SECOND query
+            // restricted to player-body/weapon geometry only (mask 0x01), and tint any hit
+            // hot magenta. This isolates the self-shadow signal from ordinary world
+            // occlusion so the hit pattern (clean silhouette vs. acne flicker) can be
+            // judged before enabling or tuning the real feature.
+            if (selfShadowEligible && params.selfShadowDebugMode != 0)
+            {
+                float debugTMin = clamp(params.selfShadowBias, 0.01, max(0.01, tShadow - 0.001));
+                rayQueryEXT rqSelf;
+                rayQueryInitializeEXT(
+                    rqSelf, tlas,
+                    gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
+                    0x01u, // player body/hands ONLY
+                    stepPos, debugTMin, lightDir, tShadow);
+                while (rayQueryProceedEXT(rqSelf))
+                {
+                    if (rayQueryGetIntersectionTypeEXT(rqSelf, false) ==
+                        gl_RayQueryCandidateIntersectionTriangleEXT)
+                        rayQueryConfirmIntersectionEXT(rqSelf);
+                }
+                if (rayQueryGetIntersectionTypeEXT(rqSelf, true) !=
+                    gl_RayQueryCommittedIntersectionNoneEXT)
+                    scatter_point += vec3(4.0, 0.0, 4.0) * stepSize * stepTransmittance;
+            }
+
+            if (occluded)
                 continue; // occluded — skip this light at this step
 
-            vec3 contrib = lightColor * lightIntens * phase * atten * stepSize;
+            vec3 contrib = lightColor * lightIntens * phase * atten * stepSize * stepTransmittance;
             if (isFlashlight)
                 scatter_flash    += contrib;
             else if (isDirected)
@@ -348,5 +440,19 @@ void main()
         scatter_flash    * params.flashlightDensity * params.flashlightStrength,
         vec3(0.0));
 
-    imageStore(volBuf, coord, vec4(result, 1.0));
+    // Clamp well under the fp16 (rgba16f) ceiling to avoid Inf.
+    result = min(result, vec3(4096.0));
+
+    // Alpha carries the total path transmittance (camera -> tMax): 1.0 = clear
+    // air, near-0.0 = the view ray is fully extinguished by the medium before
+    // it reaches the surface. Not yet consumed by vol_composite.frag's blend
+    // state (still pure additive) — that would also need the composite call
+    // moved to after the direct-lighting interaction pass so it attenuates
+    // ALL scene radiance behind the fog, not just the GI/reflection base drawn
+    // before it; tracked as a follow-up, not done here. Plumbed through now
+    // (bilateral upsample and temporal EMA already carry all 4 channels) so
+    // it's available without another pass of shader surgery, and so it can be
+    // inspected directly (e.g. temporarily view volBuf.a) to sanity-check the
+    // self-attenuation fix above.
+    imageStore(volBuf, coord, vec4(result, transmittance));
 }

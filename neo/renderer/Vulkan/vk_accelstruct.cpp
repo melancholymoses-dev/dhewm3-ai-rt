@@ -1250,6 +1250,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                             matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                        // Bounds check: max valid triangle index — must be checked BEFORE the
+                        // index-buffer read, not just the vertex indices it returns (A9 follow-up).
+                        if (ent->blas->geomIdxSizes && ent->blas->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
+                            matEntry.maxPrimId = (uint32_t)(ent->blas->geomIdxSizes[g] / (3u * sizeof(uint32_t))) - 1u;
                         dynamicMatEntries[base + g] = matEntry;
 
                         // Refresh addresses from the current surface cache entry.
@@ -1337,12 +1341,22 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                         // Bounds check: max valid vertex index for rt_InterpolateUV.
                         if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                             matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                        // Bounds check: max valid triangle index — must be checked BEFORE the
+                        // index-buffer read, not just the vertex indices it returns (A9 follow-up).
+                        if (ent->blas->geomIdxSizes && ent->blas->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
+                            matEntry.maxPrimId = (uint32_t)(ent->blas->geomIdxSizes[g] / (3u * sizeof(uint32_t))) - 1u;
                         staticMatEntries[base + g] = matEntry;
                         // Write the per-geometry vertex/index address directly.
                         if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)
                         {
                             s_staticGeomVtxAddrs[base + g] = (uint64_t)ent->blas->geomVertAddrs[g];
                             s_staticGeomIdxAddrs[base + g] = (uint64_t)ent->blas->geomIdxAddrs[g];
+                            // A6: fold into staticSignature so a freed/reallocated vertex-cache
+                            // buffer (address changes, BLAS address doesn't) forces a rewrite.
+                            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g],
+                                                                      sizeof(uint64_t));
+                            staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g],
+                                                                      sizeof(uint64_t));
                         }
                     }
                     staticGeomCount += geomCount;
@@ -1447,11 +1461,18 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                 matEntry.baseGeomIdx = base + g;
                 if (cached->geomVertSizes && cached->geomVertSizes[g] >= sizeof(idDrawVert))
                     matEntry.maxVertex = (uint32_t)(cached->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                if (cached->geomIdxSizes && cached->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
+                    matEntry.maxPrimId = (uint32_t)(cached->geomIdxSizes[g] / (3u * sizeof(uint32_t))) - 1u;
                 staticMatEntries[base + g] = matEntry;
                 if (cached->geomVertAddrs && cached->geomIdxAddrs)
                 {
                     s_staticGeomVtxAddrs[base + g] = (uint64_t)cached->geomVertAddrs[g];
                     s_staticGeomIdxAddrs[base + g] = (uint64_t)cached->geomIdxAddrs[g];
+                    // A6: fold into staticSignature — see the other construction site.
+                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g],
+                                                              sizeof(uint64_t));
+                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g],
+                                                              sizeof(uint64_t));
                 }
             }
             staticGeomCount += cached->geomCount;
@@ -1576,6 +1597,8 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                     matEntry.flags |= VK_MAT_FLAG_PLAYER_BODY;
                 if (ent->blas->geomVertSizes && ent->blas->geomVertSizes[g] >= sizeof(idDrawVert))
                     matEntry.maxVertex = (uint32_t)(ent->blas->geomVertSizes[g] / sizeof(idDrawVert)) - 1u;
+                if (ent->blas->geomIdxSizes && ent->blas->geomIdxSizes[g] >= 3u * sizeof(uint32_t))
+                    matEntry.maxPrimId = (uint32_t)(ent->blas->geomIdxSizes[g] / (3u * sizeof(uint32_t))) - 1u;
                 dynamicMatEntries[base + g] = matEntry;
                 // Addresses captured during the BLAS build above — current for this frame.
                 if (ent->blas->geomVertAddrs && ent->blas->geomIdxAddrs)

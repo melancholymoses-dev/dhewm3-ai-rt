@@ -69,7 +69,8 @@ void main()
     uint64_t vtxAddr  = vtxAddrs[geomSlot];
 
     vec3 objNormal = vec3(0.0, 1.0, 0.0); // safe fallback
-    if (idxAddr != 0ul && vtxAddr != 0ul)
+    bool primOk = mat.maxPrimId == 0xFFFFFFFFu || uint(gl_PrimitiveID) <= mat.maxPrimId;
+    if (idxAddr != 0ul && vtxAddr != 0ul && primOk)
     {
         IdxBuf iBuf = IdxBuf(idxAddr);
         VtxBuf vBuf = VtxBuf(vtxAddr);
@@ -78,6 +79,11 @@ void main()
         uint i0 = iBuf.idx[base + 0u];
         uint i1 = iBuf.idx[base + 1u];
         uint i2 = iBuf.idx[base + 2u];
+
+        if (mat.maxVertex != 0xFFFFFFFFu && (i0 > mat.maxVertex || i1 > mat.maxVertex || i2 > mat.maxVertex))
+        {
+            i0 = 0u; i1 = 0u; i2 = 0u;
+        }
 
         vec3 n0 = vec3(vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_NORMAL_OFF     ],
                        vBuf.data[i0 * RT_VTX_STRIDE + RT_VTX_NORMAL_OFF + 1u],

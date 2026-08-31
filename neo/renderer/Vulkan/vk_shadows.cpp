@@ -132,6 +132,8 @@ static idCVar r_vkRTDebugLightFilter(
 static idCVar r_rtShadowPlayerExcludeDist(
     "r_rtShadowPlayerExcludeDist", "30", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "exclude player body from shadow rays when player-to-light distance is below this (0 = never exclude)");
+
+extern idCVar r_rtUnlockNoShadows; // defined in vk_light_classify.cpp — AR6 noShadows shadow unlock
 static idCVar r_rtShadowDebugMode(
     "r_rtShadowDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
     "visualize RT shadow pass internals in the shadow mask: "
@@ -348,8 +350,17 @@ static void VK_RT_InitShadowPipeline(void)
 
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
 
-    // One handle per group
-    uint32_t sbtSize = 3 * alignUp(handleSizeAligned, baseAlignment);
+    // 3 shader groups (rgen, miss, hit) but 5 SBT records.
+    //
+    // TLAS instances carry a hardcoded instanceShaderBindingTableRecordOffset of
+    // 0 or 2 (2 = noSelfShadow player body/viewmodel, see vk_accelstruct.cpp).
+    // That offset is per-instance and shared by every pipeline that traces this
+    // TLAS, so the hit region here must be wide enough to contain record 2 or an
+    // out-of-range fetch pulls a garbage shader handle. Layout:
+    //   [0]=rgen  [1]=miss  [2..4]=hit (same handle in all three)
+    // Record 3 is unused padding — nothing traces with sbtRecordOffset 1 here —
+    // but it must exist for record 4 to be addressable.
+    uint32_t sbtSize = 5 * alignUp(handleSizeAligned, baseAlignment);
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -366,9 +377,14 @@ static void VK_RT_InitShadowPipeline(void)
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtMemory, 0, sbtSize, 0, (void **)&sbtData));
 
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
-    for (int i = 0; i < 3; i++)
+    // Slots 0 (rgen) and 1 (miss) take their own handles.
+    memcpy(sbtData + 0 * stride, handles + 0 * handleSize, handleSize);
+    memcpy(sbtData + 1 * stride, handles + 1 * handleSize, handleSize);
+    // Slots 2..4 all take the hit handle, so instance record offsets 0..2 resolve
+    // to the same (only) hit group.
+    for (int i = 2; i < 5; i++)
     {
-        memcpy(sbtData + i * stride, handles + i * handleSize, handleSize);
+        memcpy(sbtData + i * stride, handles + 2 * handleSize, handleSize);
     }
     vkUnmapMemory(vk.device, vkRT.sbtMemory);
 
@@ -380,17 +396,20 @@ static void VK_RT_InitShadowPipeline(void)
 
     vkRT.rgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.missRegion = {sbtBase + 1 * stride, stride, stride};
-    vkRT.hitRegion = {sbtBase + 2 * stride, stride, stride};
+    vkRT.hitRegion = {sbtBase + 2 * stride, stride, 3 * stride};
     vkRT.callRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
         common->Printf("VK RT SBT: handleSize=%u handleAlignment=%u baseAlignment=%u stride=%u sbtTotalBytes=%u\n",
                        handleSize, handleAlignment, baseAlignment, stride, sbtSize);
-        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx  hit=0x%llx\n", (unsigned long long)sbtBase,
-                       (unsigned long long)vkRT.rgenRegion.deviceAddress,
+        common->Printf("VK RT SBT: sbtBase=0x%llx  rgen=0x%llx  miss=0x%llx (missRecords=%u)  hit=0x%llx "
+                       "(hitRecords=%u)\n",
+                       (unsigned long long)sbtBase, (unsigned long long)vkRT.rgenRegion.deviceAddress,
                        (unsigned long long)vkRT.missRegion.deviceAddress,
-                       (unsigned long long)vkRT.hitRegion.deviceAddress);
+                       (unsigned)(vkRT.missRegion.size / vkRT.missRegion.stride),
+                       (unsigned long long)vkRT.hitRegion.deviceAddress,
+                       (unsigned)(vkRT.hitRegion.size / vkRT.hitRegion.stride));
         common->Printf("VK RT SBT: rgen base-alignment check: addr%%baseAlign=%llu (must be 0)\n",
                        (unsigned long long)(vkRT.rgenRegion.deviceAddress % baseAlignment));
     }
@@ -771,14 +790,31 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // weapon/hand self-shadowing.  Identify the player's weapon light using
         // allowLightInViewID — this is set on first-person weapon lights (flashlight,
         // muzzle flash) and matches the player's viewID, so world lights are never affected.
-        idVec3 shadowOrigin = light.origin;
+        // 2026-08-30: cast from globalLightOrigin (= parms.origin + axis * lightCenter),
+        // not parms.origin.
+        //
+        // This is what makes RT shadow *silhouettes* differ in shape from the stencil
+        // path rather than merely in softness. Every GL shadow-volume site extrudes from
+        // globalLightOrigin — tr_stencilshadow.cpp:312, :1161, :1236, :1253, :1404 and
+        // tr_turboshadow.cpp:274 — and R_MakeShadowFrustums even has an explicit
+        // "globalLightOrigin isn't centered" branch (tr_stencilshadow.cpp:1171) for the
+        // offset case. Casting from parms.origin instead moves the apex of the shadow
+        // cone, which rotates and rescales the silhouette; no amount of ray-bias tuning
+        // can compensate for that, because bias moves contact points, not shape.
+        //
+        // mars_city1's light_5253 offsets its emitter by ~920 units and light_4842 by
+        // ~5800, so the two paths were casting from visibly different places.
+        //
+        // Note this is a separate light path from the GI/vol light SSBO — that one
+        // carries the same correction as GILightEntry::emitPos (vk_gi.cpp).
+        idVec3 shadowOrigin = vLight->lightDef->globalLightOrigin;
         float flashlightBias = r_rtFlashlightBias.GetFloat();
         if (flashlightBias > 0.0f && light.allowLightInViewID != 0 &&
             light.allowLightInViewID == viewDef->renderView.viewID)
         {
             // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
             const idVec3 &fwd = viewDef->renderView.viewaxis[0];
-            shadowOrigin = light.origin + fwd * flashlightBias;
+            shadowOrigin = vLight->lightDef->globalLightOrigin + fwd * flashlightBias;
         }
 
         ubo.lightOrigin[0] = shadowOrigin.x;
@@ -1209,7 +1245,15 @@ int VK_RT_ShadowBatchAddLight(const viewLight_t *vLight, VkRect2D dispatchRect)
     // for them rather than sampling a mask cleared to white (which is what the
     // single-image version had to do, at the cost of a clear plus two barriers).
     const renderLight_t &lp = vLight->lightDef->parms;
-    const bool castsShadows = !lp.noShadows && vLight->lightDef->lightShader->LightCastsShadows();
+    bool castsShadows = !lp.noShadows && vLight->lightDef->lightShader->LightCastsShadows();
+
+    // AR6 (auto_relight.md §6): r_rtUnlockNoShadows gives placed colored accents —
+    // ACCENT per the shared classifier (noShadows, radius < r_rtLightAccentMaxRadius) —
+    // a real shadow layer anyway. AMBIENT_FILL (semantic mapper washes) and REAL lights
+    // are untouched; this can only turn a noShadows light on, never off.
+    if (!castsShadows && r_rtUnlockNoShadows.GetBool() &&
+        VK_RT_ClassifyLight(lp, vLight->lightDef->lightShader) == RT_LIGHT_ACCENT)
+        castsShadows = true;
 
     int layer = -1;
     if (castsShadows)

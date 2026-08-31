@@ -48,7 +48,7 @@ idCVar r_rtTonemap("r_rtTonemap", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
                    "Enable HDR resolve with Uchimura tonemapping (Phase 8.1).");
 idCVar r_rtTonemapExposure("r_rtTonemapExposure", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Exposure scale applied before tonemapping.");
-idCVar r_rtTonemapToe("r_rtTonemapToe", "2.2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtTonemapToe("r_rtTonemapToe", "2.7", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                       "Toe strength (c). 1=linear, 2=Doom-dark, 3+=crushed blacks.");
 idCVar r_rtTonemapLinStart("r_rtTonemapLinStart", "0.3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Luminance at which the linear section begins.");
