@@ -31,7 +31,8 @@ zero map editing. The pipeline:
   AR5  Light synthesis   — AddLightDef() a real point light per surviving
        cluster: origin offset off the surface, a world-axis-aligned bound of
        the fixture's (tangent x2.5, normal reach) footprint as lightRadius,
-       average bright-texel color, r_rtAutoRelightIntensity as SHADERPARM_ALPHA.
+       average bright-texel color scaled by r_rtAutoRelightIntensity (baked into
+       the RGB parms — slot 3 on a light is TIMESCALE, not intensity; 2026-08-30).
        Always shadow-casting (noShadows = false) — see AR5 comment below for
        why that matters. Tagged with a distinct light material
        (lights/rtAutoRelight, base/materials/rt_auto_relight.mtr) instead of
@@ -91,8 +92,10 @@ idCVar r_rtAutoRelightMaxPerArea("r_rtAutoRelightMaxPerArea", "4", CVAR_RENDERER
                                  "descending score, before the map-wide r_rtAutoRelightMax ceiling is applied.");
 
 idCVar r_rtAutoRelightIntensity("r_rtAutoRelightIntensity", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                "auto_relight.md AR5: SHADERPARM_ALPHA for synthesized lights — start dim, "
-                                "these are accents, not primary illumination.");
+                                "auto_relight.md AR5: brightness scale for synthesized lights, multiplied "
+                                "into their RGB — start dim, these are accents, not primary illumination. "
+                                "(Was written to SHADERPARM_ALPHA until 2026-08-30, which made it a "
+                                "GI/volumetric-only control with no effect on direct lighting.)");
 
 // 2026-08-23: temporary debug visualization, not a gameplay setting — forces every
 // synthesized light to hot pink at a high fixed intensity so the AR3 placement/budget
@@ -856,20 +859,32 @@ static void AR_Synthesize(idRenderWorldLocal *world, idList<arCluster_t> &cluste
         rl.lightRadius.y = idMath::Fabs(left.y) * hw + idMath::Fabs(up.y) * hh + idMath::Fabs(c.normal.y) * reach;
         rl.lightRadius.z = idMath::Fabs(left.z) * hw + idMath::Fabs(up.z) * hh + idMath::Fabs(c.normal.z) * reach;
 
-        rl.shaderParms[SHADERPARM_RED] = c.emissiveColor.x;
-        rl.shaderParms[SHADERPARM_GREEN] = c.emissiveColor.y;
-        rl.shaderParms[SHADERPARM_BLUE] = c.emissiveColor.z;
-        rl.shaderParms[SHADERPARM_ALPHA] = intensity;
+        // 2026-08-30: intensity is baked into RGB rather than parked in parm3.
+        //
+        // Slot 3 on a *light* is SHADERPARM_TIMESCALE, not an intensity — see the note
+        // in vk_gi.cpp's considerLight for the full derivation. Writing intensity there
+        // only ever worked because our own GI/vol light collector was reading it back
+        // out with the same wrong assumption; the interaction path that actually draws
+        // these lights takes brightness from RGB alone (tr_render.cpp:872-874,
+        // draw_common.cpp:2079). So r_rtAutoRelightIntensity was silently a GI/vol-only
+        // control, with no effect on the direct lighting from the very fixtures it
+        // synthesizes. Baking it into RGB makes one number mean one thing everywhere.
+        rl.shaderParms[SHADERPARM_RED] = c.emissiveColor.x * intensity;
+        rl.shaderParms[SHADERPARM_GREEN] = c.emissiveColor.y * intensity;
+        rl.shaderParms[SHADERPARM_BLUE] = c.emissiveColor.z * intensity;
+        rl.shaderParms[SHADERPARM_TIMESCALE] = 1.0f; // Light.cpp:159's spawn default
 
         if (r_rtAutoRelightDebugColor.GetBool())
         {
             // DEBUG: see r_rtAutoRelightDebugColor's comment above. Overrides the
             // real fixture color/intensity computed above — AR4's dedupe already
             // ran against the real color, so this can't skew that decision.
-            rl.shaderParms[SHADERPARM_RED] = 1.0f;
+            // 4.0 is the same "well above the normal 0.5 default — unmissable" level
+            // this used to carry in parm3, now expressed in RGB like everything else.
+            const float debugIntensity = 4.0f;
+            rl.shaderParms[SHADERPARM_RED] = 1.0f * debugIntensity;
             rl.shaderParms[SHADERPARM_GREEN] = 0.0f;
-            rl.shaderParms[SHADERPARM_BLUE] = 1.0f;
-            rl.shaderParms[SHADERPARM_ALPHA] = 4.0f; // well above the normal 0.5 default — unmissable
+            rl.shaderParms[SHADERPARM_BLUE] = 1.0f * debugIntensity;
         }
 
         rl.shader = arLightShader; // lights/rtAutoRelight — see comment above

@@ -2,8 +2,12 @@
 
 **Date:** 2026-08-26
 **Status:** Live — audit complete and cross-checked against a second independent
-audit. **A1 and A3 implemented** (2026-08-26) — everything above the retest line
-is done. **Retest run 2026-08-29**: two symptoms reported (GI à-trous inert,
+audit. **The volumetric wash is solved: see A11**, and it was never an AMD bug —
+a light's `shaderParm3` is TIMESCALE, not intensity, and one mars_city1 light
+sets it to 9000. A8's NaN guard and A9's `rayQuery` enable were both hardening
+against a symptom of it. A11 also supersedes the GI-dots theory: recheck that
+before resuming any à-trous work. **A1 and A3 implemented** (2026-08-26) —
+everything above the retest line is done. **Retest run 2026-08-29**: two symptoms reported (GI à-trous inert,
 volumetrics washed light-blue) plus a new device-lost crash — see A8 below and
 the retest note at the end of the Order of work section. **A1 is NOT confirmed
 fixed** — the retest report covers GI/volumetrics only; shadows, AO, and
@@ -797,3 +801,145 @@ vars, what each VUID class means, this project's own cvars). Summary:
 Whether the AMD 9700 XT run was made with validation layers enabled. If they were
 off, a validation-enabled run on either vendor is likely to surface A1 and A3 plus
 anything both audits missed, and is worth doing before or alongside step 1.
+
+---
+
+## A11 — Light `parm3` read as an intensity multiplier; it is TIMESCALE  **[critical, confirmed, vendor-neutral]**
+
+Found 2026-08-30. **This is the actual cause of the volumetric wash** that A8
+guessed at and A9 was the leading theory for. Confirmed end-to-end from an
+`r_rtGILightDump` against the map source — not inferred.
+
+`vk_gi.cpp`'s `considerLight` read:
+
+```cpp
+float intensity = p.shaderParms[SHADERPARM_ALPHA];
+if (intensity < 0.001f) intensity = 1.0f;
+```
+
+`RenderWorld.h:61-62` aliases two names onto slot 3:
+
+```cpp
+const int SHADERPARM_ALPHA     = 3;
+const int SHADERPARM_TIMESCALE = 3;
+```
+
+Entities/models use the alpha meaning. **Lights use the other one** —
+`Light.cpp:159` spawns the map key through it explicitly:
+
+```cpp
+args->GetFloat( "shaderParm3", "1", renderLight->shaderParms[SHADERPARM_TIMESCALE] );
+```
+
+So a light's parm3 scales shader time for its material's time-driven expressions.
+It has nothing to do with brightness, and the original renderer never lets it
+reach one: `tr_render.cpp:872-874` applies `backEnd.lightScale` to
+`lightColor[0..2]` only, and `draw_common.cpp:2079` pushes the light colour
+through `qglColor3fv` — three components. `idLight`'s fade/`SetLightLevel` paths
+scale parms 0-2. A Doom 3 light has **no scalar intensity channel at all**.
+
+### The confirmed repro
+
+mars_city1, opening hangar. `light_5253`:
+
+```
+"texture" "lights/cloudscroll2"       // stage: translate time * .03 , time * .03
+"shaderParm3" "9000"                  // scroll rate for that translate
+"_color" "0.309804 0.396078 0.403922"
+"light_radius" "745 820 1800"
+```
+
+`r_rtGILightDump` line for it, and the light ranked immediately below:
+
+```
+lights/cloudscroll2  radius=1800.0 dist=465.1 color=(0.31 0.40 0.40) imp=3340.5867
+lights/squarelight1  (next highest)                                  imp=0.2433
+```
+
+Arithmetic closes: `imp = intensity·lum·r²/max(d²,r²)` = `9000 × 0.373 × 1.0` =
+3357 vs the logged 3340.
+
+Two distinct consequences from the one misread, which is why it presented as two
+separate bugs:
+
+- **Volumetrics.** `vol_march.comp`'s `contrib` line multiplies by `lightIntens`
+  directly and unbounded, and that multiplier sits *upstream* of density,
+  strength and anisotropy — which is exactly why no slider could bring the wash
+  down, and why the reported workaround was "drop density by 10x to see
+  anything." A ~9000x multiplier also comfortably explains an fp16 `volBuf`
+  overflow, i.e. A8's NaN/Inf guard was hardening against *this* light rather
+  than against a phase-function singularity.
+- **GI.** The same term feeds the importance ranking, so this light scored 1631
+  against 0.24 for the next one — it monopolised the GI/vol upload slots and the
+  stochastic light selection. Strong candidate for the "à-trous does nothing,
+  still dotty" symptom being the same bug rather than a filter problem. **Recheck
+  the GI dots before resuming any à-trous investigation.**
+
+### Blast radius
+
+40 retail light entities set `shaderParm3` outside `[0,1]`, up to **80000**,
+concentrated in the large maps — matching the in-game report that this was the
+first big area tested:
+
+```
+recycling1 level_fog 80000   hell1 light_528  30000   recycling1 light_3495 20000
+site3 archfloor_fog  20000   cpuboss light_27 18000   enpro light_2139      16000
+cpu  light_3955      10000   mars_city1 light_5253 9000
+```
+
+### Why it hid
+
+`Light.cpp:159`'s spawn default is `"1"`, so the multiplier is exactly 1.0 on
+essentially every light, and the old `< 0.001f -> 1.0f` patch covered the
+zero-timescale case. Both benign, so the read looked correct anywhere it was
+tested.
+
+### Fix
+
+- [x] `vk_gi.cpp`: `intensity` is a hard `1.0f`. The field
+      (`GILightEntry.colorIntensity.a`) and the shaders' `lightIntens` stay, so a
+      future source can drive it deliberately — it just must not inherit parm3.
+- [x] `vk_auto_relight.cpp`: the one legitimate producer on slot 3. Now bakes
+      `r_rtAutoRelightIntensity` into the RGB parms instead. Side benefit: that
+      cvar was silently a GI/volumetric-only control (the interaction path takes
+      brightness from RGB alone), so it had no effect on direct lighting from the
+      fixtures it synthesizes. One number now means one thing everywhere.
+- [x] `r_rtVolDump` added (`vk_vol.cpp`, dump site in `vk_gi.cpp`): one-shot
+      verbatim dump of the vol light SSBO read back from the mapped pointer, plus
+      every `VolParamsUBO` scalar post-clamp. Built for this hunt — the existing
+      `[vol selection]` dump prints only the *material* name, and a map reuses one
+      light material across dozens of entities, so it could not identify which
+      light survived `r_rtVolMaxLights 1`. The new dump prints each light's
+      **origin**, which is unique in the `.map`.
+
+### Method note
+
+Worth recording, because it is the counterexample to A8's ordering mistake. The
+break came from *disagreement between a model and the screen*: hand-simulating
+`vol_march.comp` against the map's own light entities predicted a final RGB of
+~0.02 where the screen showed saturation. Two orders of magnitude, on both
+vendors. That gap is what ruled out every AMD-specific theory and pointed at the
+CPU→GPU inputs, well before any dump existed. A prediction precise enough to be
+*wrong* was the load-bearing step.
+
+### Follow-ups, deliberately not done here
+
+Both are real and both were found during this hunt; neither is the wash.
+
+- **Point-light attenuation has no distance falloff.** `vol_march.comp:299-318`
+  holds `atten = 1.0` across the inner 80% of the light's box, then cliffs to 0.1
+  at the face. Compare `rt_light_eval.glsl:122`'s `1.0 - t*t`. Contribution is
+  therefore proportional to path length through the box, which is why brightness
+  tracked `r_rtVolMaxDist` linearly. Measured 1.2-2.4x hotter than a `1-t²` model
+  — real, but small next to 9000x.
+- **`light_center` is ignored throughout the Vulkan RT path.** `tr_lightrun.cpp:472`
+  folds it into `globalLightOrigin` for GL. Several large fill lights carry big
+  offsets (mars_city1 `light_4842`: `light_center "-5472 1504 1120"`), so the RT
+  path aims shadow rays and falloff at a point thousands of units from the real
+  emitter.
+- **Light projection/falloff images are ignored.** The RT path models a point
+  light as a uniform box, but e.g. `lights/squarelight1sky` has a
+  `lightFalloffImage` plus a projection stage with `zeroclamp` — outside the
+  projected image the light contributes *exactly zero*. Mappers use `*sky` fill
+  lights precisely because the projection confines them; we fill the whole
+  volume instead. This is the general form of "large areas look wrong."

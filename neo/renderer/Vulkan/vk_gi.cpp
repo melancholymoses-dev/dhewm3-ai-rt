@@ -267,6 +267,8 @@ extern idCVar r_vkLogRT;
 extern idCVar r_rtGbufNormals;  // P9 — defined in vk_gbuffer.cpp
 extern idCVar r_rtVolMaxLights; // defined in vk_vol.cpp — cap for the vol-only selection built below
 extern idCVar r_rtVolMaxDist;   // defined in vk_vol.cpp — vol march reach, used to filter that selection
+extern idCVar r_rtVolDump;      // defined in vk_vol.cpp — one-shot verbatim dump of the vol upload
+extern bool vkRT_volDumpPending; // defined in vk_vol.cpp — handoff so the params half prints too
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
@@ -1218,9 +1220,47 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         float r = p.shaderParms[SHADERPARM_RED];
         float g = p.shaderParms[SHADERPARM_GREEN];
         float b = p.shaderParms[SHADERPARM_BLUE];
-        float intensity = p.shaderParms[SHADERPARM_ALPHA];
-        if (intensity < 0.001f)
-            intensity = 1.0f;
+
+        // 2026-08-30: parm3 is the material TIMESCALE on a light, not an intensity.
+        //
+        // RenderWorld.h:61-62 aliases two names onto slot 3 — SHADERPARM_ALPHA and
+        // SHADERPARM_TIMESCALE. Entities/models use the alpha meaning; lights use the
+        // other one, and Light.cpp:159 spawns the map key through it explicitly:
+        //
+        //     args->GetFloat( "shaderParm3", "1", parms[SHADERPARM_TIMESCALE] );
+        //
+        // So a light's parm3 scales shader time for its material's time-driven
+        // expressions. lights/cloudscroll2 is `translate time * .03, time * .03`, and
+        // mars_city1's light_5253 sets shaderParm3 9000 as that texture's scroll rate.
+        // Reading it as a brightness multiplier gave that one light importance 1631
+        // against 0.24 for the next-ranked light: it monopolised the GI/vol upload
+        // slots and blew the volumetric march into a full-screen wash that no density,
+        // strength or anisotropy could pull back, since the multiplier sits upstream of
+        // all three (vol_march.comp's contrib line). 40 retail light entities set parm3
+        // outside [0,1], up to 80000 (recycling1 "level_fog") — concentrated in the big
+        // maps: recycling1, enpro, cpu, cpuboss, hell1, site3.
+        //
+        // Nothing is lost by dropping it. A Doom 3 light carries brightness entirely in
+        // its RGB registers — tr_render.cpp:872-874 applies backEnd.lightScale to
+        // lightColor[0..2] only and draw_common.cpp:2079 pushes the light colour through
+        // qglColor3fv, three components; idLight's fade/SetLightLevel paths scale parms
+        // 0-2. There is no scalar intensity channel to lose.
+        //
+        // Why this hid for so long: the spawn default above is "1", so the multiplier is
+        // exactly 1.0 on essentially every light, and the old `< 0.001f -> 1.0f` patch
+        // covered the zero-timescale case. Both benign values, so the read looked right
+        // anywhere it was tested.
+        //
+        // The one place that used slot 3 as a real intensity was our own auto-relight
+        // synthesis (vk_auto_relight.cpp) — it now bakes r_rtAutoRelightIntensity into
+        // the RGB parms instead, so brightness arrives here through the same channel for
+        // every light regardless of origin, and that cvar finally affects the direct
+        // lighting from those fixtures too rather than GI/volumetrics alone.
+        //
+        // Kept as an explicit 1.0 rather than deleted: GILightEntry.colorIntensity.a and
+        // the shaders' lightIntens stay in place for a future source to drive
+        // deliberately. The rule is only that it must not silently inherit parm3.
+        const float intensity = 1.0f;
 
         // §0 (auto_relight.md): shared real/fake judgment — replaces the old
         // entity-noShadows-only test, which let material-ambient washes through
@@ -1711,6 +1751,42 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     volLb->emissiveScale = lb->emissiveScale;
     for (int i = 0; i < numVolSelected; i++)
         volLb->lights[volLb->numLights++] = s_volSelected[i]->entry;
+
+    // r_rtVolDump: read the entries back out of the MAPPED pointer, not out of
+    // s_volSelected — the whole point is to show the bytes the march shader will
+    // actually read, so a bad copy/stride/aliasing bug shows up here rather than
+    // being masked by re-printing the source we copied from.
+    //
+    // posRadius.xyz is the light entity's origin, which uniquely identifies it in
+    // the .map (the [vol selection] dump above can only print the *material* name,
+    // and a map reuses one light material across dozens of entities).
+    if (r_rtVolDump.GetBool())
+    {
+        r_rtVolDump.SetBool(false);     // one-shot: this site always runs, so it owns the clear
+        vkRT_volDumpPending = true;     // hand off to VK_RT_DispatchVolumetrics for the params half
+        common->Printf("=== [r_rtVolDump] vol light SSBO as uploaded (frameIdx=%d) ===\n", frameIdx);
+        common->Printf("  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f\n", volLb->numLights,
+                       volLb->bounceScale, volLb->giRadius, volLb->emissiveScale);
+        common->Printf("  (GI upload for comparison: numLights=%d;  numSelected=%d, numVolSelected=%d, "
+                       "numCandidates=%d)\n",
+                       lb->numLights, numSelected, numVolSelected, numCandidates);
+        for (int i = 0; i < volLb->numLights; i++)
+        {
+            const GILightEntry &e = volLb->lights[i];
+            const int li = (i < numVolSelected) ? s_volSelected[i]->lightIdx : -1;
+            const idRenderLightLocal *ld = (li >= 0 && li < numLightDefs) ? world->lightDefs[li] : NULL;
+            common->Printf("  #%-3d type=%u flags=0x%x origin=(%.0f %.0f %.0f) sphereR=%.1f\n"
+                           "        color=(%.3f %.3f %.3f) intensity=%.3f\n"
+                           "        boxExtents=(%.1f %.1f %.1f) reach=%.1f  coneDir=(%.3f %.3f %.3f) "
+                           "cosHalf=%.3f\n"
+                           "        shader=%s\n",
+                           i, e.lightType, e.flags, e.posRadius[0], e.posRadius[1], e.posRadius[2], e.posRadius[3],
+                           e.colorIntensity[0], e.colorIntensity[1], e.colorIntensity[2], e.colorIntensity[3],
+                           e.boxExtents[0], e.boxExtents[1], e.boxExtents[2], e.boxExtents[3], e.coneDir[0],
+                           e.coneDir[1], e.coneDir[2], e.coneDir[3],
+                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>");
+        }
+    }
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).

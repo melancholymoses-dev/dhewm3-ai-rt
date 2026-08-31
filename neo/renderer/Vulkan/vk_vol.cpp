@@ -138,6 +138,35 @@ static idCVar r_rtVolDebugGain("r_rtVolDebugGain", "20.0", CVAR_RENDERER | CVAR_
                                "Mode-2-only pre-tonemap gain so tiny raw scatter values survive "
                                "the Uchimura toe curve instead of reading as pitch black.");
 
+// 2026-08-30: one-shot CPU-side dump of the exact bytes the march shader will read —
+// every scalar in VolParamsUBO plus every entry of the vol light SSBO, read back
+// from the mapped pointer after it is filled.
+//
+// Why this exists rather than another on-screen debug mode: a blown-out volumetric
+// was traced by hand against the map's own light entities (mars_city1 spawn) and the
+// shader's model predicted a final RGB of ~0.02 where the screen showed saturation —
+// two orders of magnitude apart, on both NVIDIA and AMD. That gap means the CPU→GPU
+// contract itself is suspect, and no amount of colour-coding the shader's *output*
+// can distinguish "shader math is wrong" from "shader was handed different numbers
+// than we think". This prints the inputs verbatim so the two can be told apart.
+//
+// NOT static: vk_gi.cpp's VK_RT_UploadGILights fills the vol light SSBO and dumps
+// its half. That site runs first and unconditionally (vk_backend.cpp:4655 upload,
+// :4738 dispatch), so it is the one that clears the cvar and hands off via
+// vkRT_volDumpPending below — clearing in the dispatch instead would spam a dump
+// every frame for as long as the dispatch keeps early-returning (r_rtVol 0, invalid
+// TLAS across a level load, ...), which is exactly when you'd be poking at this.
+idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
+                   "One-shot dump of the volumetric params UBO and the vol light SSBO exactly as "
+                   "uploaded (origin/extents/colour/intensity/type per light). Self-clears after "
+                   "one frame. Use when on-screen brightness disagrees with the shader's model.");
+
+// Set by vk_gi.cpp after it dumps the light half; consumed by the next
+// VK_RT_DispatchVolumetrics that actually reaches the end. Deferring rather than
+// dropping means the params half still prints on the next frame the dispatch runs,
+// so the two halves always pair up even if this frame's dispatch was skipped.
+bool vkRT_volDumpPending = false;
+
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
 static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                                      "Scatter contribution scale for scene directed/spot lights.");
@@ -2012,6 +2041,33 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d density=%.3f samples=%d\n",
                        groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.density, ubo.numSamples);
+
+    // r_rtVolDump (see the cvar's comment): the params half, armed by vk_gi.cpp after
+    // it printed the light half. The cvars are re-read and clamped into `ubo` every
+    // frame, so what prints here is post-clamp — r_rtVolAnisotropy is clamped to 0.99,
+    // which is why a slider parked at 1.0 never actually reaches g=1 (and the HG peak
+    // is non-monotonic in g: it maxes near 0.9, not 1.0).
+    if (vkRT_volDumpPending)
+    {
+        vkRT_volDumpPending = false;
+        common->Printf("=== [r_rtVolDump] VolParamsUBO as uploaded (frameIdx=%d) ===\n", frameIdx);
+        common->Printf("  camera=(%.0f %.0f %.0f)  frameIndex=%u\n", ubo.cameraPosX, ubo.cameraPosY, ubo.cameraPosZ,
+                       ubo.frameIndex);
+        common->Printf("  numSamples=%d  maxLights=%d  maxDist=%.1f  whiteNoiseMix=%.4f\n", ubo.numSamples,
+                       ubo.maxLights, ubo.maxDist, ubo.whiteNoiseMix);
+        common->Printf("  point:     density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.density, ubo.strength,
+                       ubo.anisotropy);
+        common->Printf("  directed:  density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.directedDensity,
+                       ubo.directedStrength, ubo.directedAnisotropy);
+        common->Printf("  flashlight:density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.flashlightDensity,
+                       ubo.flashlightStrength, ubo.flashlightAnisotropy);
+        common->Printf("  screen=%dx%d  march=%dx%d scale=%d  scissor=(%d,%d %dx%d)\n", ubo.screenWidth,
+                       ubo.screenHeight, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.scissorOffsetX,
+                       ubo.scissorOffsetY, ubo.scissorExtentX, ubo.scissorExtentY);
+        common->Printf("  selfShadow: enable=%d debug=%d bias=%.2f\n", ubo.selfShadowEnable, ubo.selfShadowDebugMode,
+                       ubo.selfShadowBias);
+        common->Printf("  sizeof(VolParamsUBO)=%d (GLSL std140 block expects 192)\n", (int)sizeof(VolParamsUBO));
+    }
 }
 
 // ---------------------------------------------------------------------------
