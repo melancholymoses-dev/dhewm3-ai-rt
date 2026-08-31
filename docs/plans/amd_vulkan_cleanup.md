@@ -932,11 +932,56 @@ Both are real and both were found during this hunt; neither is the wash.
   therefore proportional to path length through the box, which is why brightness
   tracked `r_rtVolMaxDist` linearly. Measured 1.2-2.4x hotter than a `1-t²` model
   — real, but small next to 9000x.
-- **`light_center` is ignored throughout the Vulkan RT path.** `tr_lightrun.cpp:472`
-  folds it into `globalLightOrigin` for GL. Several large fill lights carry big
-  offsets (mars_city1 `light_4842`: `light_center "-5472 1504 1120"`), so the RT
-  path aims shadow rays and falloff at a point thousands of units from the real
-  emitter.
+- ~~**`light_center` is ignored throughout the Vulkan RT path.**~~ **Fixed
+  2026-08-30.** `GILightEntry` gained an explicit `emitPos` (`globalLightOrigin`,
+  read straight off `idRenderLightLocal` so it cannot drift from GL's value);
+  entry size 80 → 96 bytes, `static_assert` and all three shader-side struct
+  declarations (`vol_march.comp`, `rt_light_eval.glsl`, `player_reflect.rchit`)
+  updated in lockstep — verified byte-for-byte, `emitPos` at offset 80 in all
+  four.
+
+  The split follows GL exactly: `R_SetLightProject` builds the falloff planes
+  around `parms.origin` (`tr_lightrun.cpp:440`) while `globalLightOrigin` is
+  derived separately at `:472` and drives the interaction L vector and the shadow
+  frustums. So **containment and attenuation stay measured from the volume
+  centre** (`posRadius.xyz`, which is what `boxExtents`/`coneDir` are relative to)
+  and **direction, N·L, distance and shadow-ray targeting come from `emitPos`**.
+  `vol_march.comp`'s `coreFade` singularity guard also moved to the emitter, which
+  is where the singularity actually is.
+
+  Deliberately a new field rather than reusing point lights' unused `coneDir.xyz`
+  — overloading one slot with two meanings is what made A11 cost a session. Cost
+  is 2 KB per light buffer.
+
+  `r_rtVolDump` now prints `emitPos` and `lightCenterOffset` per light, so the fix
+  is directly verifiable: mars_city1 `light_5253` should show ~920, `light_4842`
+  ~5800, and the vast majority of lights 0.0.
+
+  **Two further sites, on separate light paths that the SSBO fix does not reach:**
+
+  - `vk_shadows.cpp:793` cast shadow rays from `parms.origin`. This is the likely
+    explanation for RT-vs-stencil **shadow silhouettes differing in shape**, a
+    long-standing observation previously (and unsuccessfully) chased as a
+    self-bias problem. Every GL shadow-volume site extrudes from
+    `globalLightOrigin` (`tr_stencilshadow.cpp:312`, `:1161`, `:1236`, `:1253`,
+    `:1404`; `tr_turboshadow.cpp:274`), and `R_MakeShadowFrustums` carries an
+    explicit "globalLightOrigin isn't centered" branch at `tr_stencilshadow.cpp:1171`
+    for the offset case. Moving the apex of the shadow cone rotates and rescales
+    the silhouette — bias moves contact points, so no bias value could ever have
+    compensated. Which is itself the useful lesson: **a shape discrepancy needs a
+    geometric cause, and bias is not one.**
+  - `vk_auto_relight.cpp:791` (AR4 dedupe) measured cluster-to-light distance from
+    `parms.origin`. It is asking "is this fixture already lit by a hand-placed
+    light", which is a question about the emitter — so it missed precisely the
+    lights that sit on a fixture via an offset `lightCenter`, and would synthesize
+    a duplicate on top of one.
+
+  Deliberately **not** changed: `considerLight`'s distance cull and importance
+  ranking still measure to `parms.origin`. Those are about the light's volume
+  (does its influence reach the camera), and for a light with a large offset the
+  emitter can sit far outside a volume that still covers the viewer — origin is
+  the safer choice for culling. Flagged rather than changed, since it is a
+  behavioural tuning question rather than a correctness one.
 - **Light projection/falloff images are ignored.** The RT path models a point
   light as a uniform box, but e.g. `lights/squarelight1sky` has a
   `lightFalloffImage` plus a projection stage with `zeroclamp` — outside the

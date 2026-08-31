@@ -788,7 +788,14 @@ static void AR_Dedupe(idRenderWorldLocal *world, idList<arCluster_t> &clusters)
                 continue;
 
             const renderLight_t &lp = ldef->parms;
-            const float distSq = (lp.origin - c.origin).LengthSqr();
+            // 2026-08-30: globalLightOrigin, not parms.origin. AR4 is asking "is this
+            // fixture already lit by a hand-placed light" — that is a question about
+            // where the light emits from, and a mapper can offset the emitter from the
+            // entity by thousands of units via lightCenter (mars_city1 light_4842:
+            // ~5800). Measuring to parms.origin misses exactly the lights that ARE on
+            // the fixture but whose entity sits elsewhere, and would then synthesize a
+            // duplicate on top of one.
+            const float distSq = (ldef->globalLightOrigin - c.origin).LengthSqr();
             if (distSq > dedupeDistSq)
                 continue;
 

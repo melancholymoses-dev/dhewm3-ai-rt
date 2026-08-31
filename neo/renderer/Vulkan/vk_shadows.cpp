@@ -790,14 +790,31 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // weapon/hand self-shadowing.  Identify the player's weapon light using
         // allowLightInViewID — this is set on first-person weapon lights (flashlight,
         // muzzle flash) and matches the player's viewID, so world lights are never affected.
-        idVec3 shadowOrigin = light.origin;
+        // 2026-08-30: cast from globalLightOrigin (= parms.origin + axis * lightCenter),
+        // not parms.origin.
+        //
+        // This is what makes RT shadow *silhouettes* differ in shape from the stencil
+        // path rather than merely in softness. Every GL shadow-volume site extrudes from
+        // globalLightOrigin — tr_stencilshadow.cpp:312, :1161, :1236, :1253, :1404 and
+        // tr_turboshadow.cpp:274 — and R_MakeShadowFrustums even has an explicit
+        // "globalLightOrigin isn't centered" branch (tr_stencilshadow.cpp:1171) for the
+        // offset case. Casting from parms.origin instead moves the apex of the shadow
+        // cone, which rotates and rescales the silhouette; no amount of ray-bias tuning
+        // can compensate for that, because bias moves contact points, not shape.
+        //
+        // mars_city1's light_5253 offsets its emitter by ~920 units and light_4842 by
+        // ~5800, so the two paths were casting from visibly different places.
+        //
+        // Note this is a separate light path from the GI/vol light SSBO — that one
+        // carries the same correction as GILightEntry::emitPos (vk_gi.cpp).
+        idVec3 shadowOrigin = vLight->lightDef->globalLightOrigin;
         float flashlightBias = r_rtFlashlightBias.GetFloat();
         if (flashlightBias > 0.0f && light.allowLightInViewID != 0 &&
             light.allowLightInViewID == viewDef->renderView.viewID)
         {
             // viewaxis[0] is the forward direction in Doom3 (view looks down +X)
             const idVec3 &fwd = viewDef->renderView.viewaxis[0];
-            shadowOrigin = light.origin + fwd * flashlightBias;
+            shadowOrigin = vLight->lightDef->globalLightOrigin + fwd * flashlightBias;
         }
 
         ubo.lightOrigin[0] = shadowOrigin.x;

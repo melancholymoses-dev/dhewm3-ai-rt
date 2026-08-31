@@ -187,7 +187,23 @@ struct GILightEntry
                              // projected: w=max reach along cone axis; xyz=0
     uint32_t lightType;      // 0 = point, 1 = projected/spot
     uint32_t flags;          // GI_LIGHT_FLAG_* — see above (was an unused pad slot)
-    uint32_t pad[2];         // alignment pad to 80 bytes
+    uint32_t pad[2];         // alignment pad
+    // 2026-08-30: idRenderLightLocal::globalLightOrigin — origin + axis * lightCenter.
+    // The EMITTER. posRadius.xyz above stays the light's volume centre (parms.origin),
+    // because boxExtents/coneDir are expressed relative to that and the attenuation
+    // volume does not move when a mapper offsets lightCenter.
+    //
+    // This is the same split the GL path makes: R_SetLightProject builds the falloff
+    // planes around parms.origin (tr_lightrun.cpp:440), then globalLightOrigin is
+    // derived separately at :472 and is what the interaction shader's L vector and the
+    // shadow frustums use. Doom 3 maps lean on this — mars_city1's light_5253 offsets
+    // its emitter by ~920 units, light_4842 by ~5800 — so aiming shadow rays and N·L at
+    // parms.origin puts the apparent light source in the wrong place entirely.
+    //
+    // Deliberately a new field rather than reusing coneDir.xyz (unused for point
+    // lights): overloading one slot with two meanings is exactly what made parm3 cost
+    // a session, and 16 bytes per light is 2 KB at VK_GI_MAX_LIGHTS.
+    float emitPos[4];        // xyz = globalLightOrigin, w unused — pads to 96 bytes
 };
 
 struct GILightBuffer
@@ -198,7 +214,7 @@ struct GILightBuffer
     float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 96, "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -1316,6 +1332,15 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.posRadius[1] = p.origin.y;
             c.entry.posRadius[2] = p.origin.z;
             c.entry.posRadius[3] = radius;
+            // Emitter, see GILightEntry::emitPos. Taken from the renderer's own derived
+            // value rather than recomputed from parms, so it cannot drift from what the
+            // GL path uses (R_DeriveLightData sets it, tr_lightrun.cpp:472). The
+            // parallel-light branch there (origin + dir * 100000) is unreachable here —
+            // considerLight rejects p.parallel above.
+            c.entry.emitPos[0] = lightLocal->globalLightOrigin.x;
+            c.entry.emitPos[1] = lightLocal->globalLightOrigin.y;
+            c.entry.emitPos[2] = lightLocal->globalLightOrigin.z;
+            c.entry.emitPos[3] = 0.0f;
             c.entry.colorIntensity[0] = r;
             c.entry.colorIntensity[1] = g;
             c.entry.colorIntensity[2] = b;
@@ -1776,11 +1801,16 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             const int li = (i < numVolSelected) ? s_volSelected[i]->lightIdx : -1;
             const idRenderLightLocal *ld = (li >= 0 && li < numLightDefs) ? world->lightDefs[li] : NULL;
             common->Printf("  #%-3d type=%u flags=0x%x origin=(%.0f %.0f %.0f) sphereR=%.1f\n"
+                           "        emitPos=(%.0f %.0f %.0f) lightCenterOffset=%.1f\n"
                            "        color=(%.3f %.3f %.3f) intensity=%.3f\n"
                            "        boxExtents=(%.1f %.1f %.1f) reach=%.1f  coneDir=(%.3f %.3f %.3f) "
                            "cosHalf=%.3f\n"
                            "        shader=%s\n",
                            i, e.lightType, e.flags, e.posRadius[0], e.posRadius[1], e.posRadius[2], e.posRadius[3],
+                           e.emitPos[0], e.emitPos[1], e.emitPos[2],
+                           idVec3(e.emitPos[0] - e.posRadius[0], e.emitPos[1] - e.posRadius[1],
+                                  e.emitPos[2] - e.posRadius[2])
+                               .Length(),
                            e.colorIntensity[0], e.colorIntensity[1], e.colorIntensity[2], e.colorIntensity[3],
                            e.boxExtents[0], e.boxExtents[1], e.boxExtents[2], e.boxExtents[3], e.coneDir[0],
                            e.coneDir[1], e.coneDir[2], e.coneDir[3],
