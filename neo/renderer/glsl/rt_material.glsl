@@ -23,7 +23,7 @@ of the original Doom 3 GPL Source Code release.
 
 // ---------------------------------------------------------------------------
 // Per-instance material entry — must match VkMaterialEntry (vk_raytracing.h)
-// std430: all fields 4 bytes, total 32 bytes.
+// std430: all fields 4 bytes, total 36 bytes.
 // ---------------------------------------------------------------------------
 struct MaterialEntry {
     uint  diffuseTexIndex;   // index into matTextures[] (0 = white fallback)
@@ -34,6 +34,9 @@ struct MaterialEntry {
     float alphaThreshold;    // alpha discard threshold (MAT_FLAG_ALPHA_TESTED)
     uint  maxVertex;         // numVerts-1 for this geometry; 0xFFFFFFFF = no check
     uint  emissiveTexIndex;  // bindless index of SL_AMBIENT stage image; 0 = no emissive
+    uint  maxPrimId;         // numTriangles-1 for this geometry; 0xFFFFFFFF = no check.
+                             // Checked BEFORE indexing IdxBuf — maxVertex alone checks
+                             // the values read, after the read already happened.
 };
 
 #define MAT_FLAG_ALPHA_TESTED  0x01u
@@ -107,6 +110,9 @@ vec2 rt_InterpolateUV(uint matIdx, int primId, vec2 bary)
     if (idxAddr == 0ul || vtxAddr == 0ul)
         return vec2(0.0);
 
+    if (mat.maxPrimId != 0xFFFFFFFFu && uint(primId) > mat.maxPrimId)
+        return vec2(0.0);
+
     IdxBuf iBuf = IdxBuf(idxAddr);
     VtxBuf vBuf = VtxBuf(vtxAddr);
 
@@ -148,6 +154,9 @@ vec3 rt_InterpolateNormal(uint matIdx, int primId, vec2 bary)
     uint64_t idxAddr = idxAddrs[geomSlot];
     uint64_t vtxAddr = vtxAddrs[geomSlot];
     if (idxAddr == 0ul || vtxAddr == 0ul)
+        return vec3(0.0, 1.0, 0.0);
+
+    if (mat.maxPrimId != 0xFFFFFFFFu && uint(primId) > mat.maxPrimId)
         return vec3(0.0, 1.0, 0.0);
 
     IdxBuf iBuf = IdxBuf(idxAddr);

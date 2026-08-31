@@ -77,8 +77,9 @@ static const char *rtDeviceExtensions[] = {
     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
     VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+    VK_KHR_RAY_QUERY_EXTENSION_NAME, // vol_march.comp uses rayQueryEXT
 };
-static const int numRTDeviceExtensions = 9;
+static const int numRTDeviceExtensions = 10;
 
 // ---------------------------------------------------------------------------
 // Queue family detection
@@ -301,12 +302,16 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR supportedRtPipeline = {};
     supportedRtPipeline.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
 
+    VkPhysicalDeviceRayQueryFeaturesKHR supportedRayQuery = {};
+    supportedRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+
     supportedFeatures2.pNext = &supportedVk12;
     supportedVk12.pNext = &supportedEds;
     if (vk.rayTracingSupported)
     {
         supportedEds.pNext = &supportedAs;
         supportedAs.pNext = &supportedRtPipeline;
+        supportedRtPipeline.pNext = &supportedRayQuery;
     }
 
     vkGetPhysicalDeviceFeatures2(vk.physicalDevice, &supportedFeatures2);
@@ -325,6 +330,8 @@ static void VKimp_CreateDevice(void)
             "Vulkan RT: shaderSampledImageArrayNonUniformIndexing not supported; bindless indexing may fail.");
     if (vk.rayTracingSupported && !supportedVk12.descriptorIndexing)
         common->Warning("Vulkan RT: descriptorIndexing not supported; bindless descriptors may fail.");
+    if (vk.rayTracingSupported && !supportedRayQuery.rayQuery)
+        common->Warning("Vulkan RT: rayQuery not supported; vol_march.comp will fail.");
 
     // Device features
     VkPhysicalDeviceFeatures2 features2 = {};
@@ -369,6 +376,7 @@ static void VKimp_CreateDevice(void)
     // Chain RT feature structs if RT is supported
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures = {};
     VkPhysicalDeviceAccelerationStructureFeaturesKHR asFeatures = {};
+    VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures = {};
 
     // Extended dynamic state (required for vkCmdSetCullMode)
     VkPhysicalDeviceExtendedDynamicStateFeaturesEXT edsFeatures = {};
@@ -393,6 +401,11 @@ static void VKimp_CreateDevice(void)
         rtPipelineFeatures.rayTracingPipeline = supportedRtPipeline.rayTracingPipeline;
         *nextChain = &rtPipelineFeatures;
         nextChain = (void **)&rtPipelineFeatures.pNext;
+
+        rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+        rayQueryFeatures.rayQuery = supportedRayQuery.rayQuery;
+        *nextChain = &rayQueryFeatures;
+        nextChain = (void **)&rayQueryFeatures.pNext;
     }
 
     VkDeviceCreateInfo deviceInfo = {};

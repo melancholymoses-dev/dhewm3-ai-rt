@@ -49,12 +49,16 @@ Code release.
 #define RT_LIGHT_MAX_LIGHTS 128  // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
 
 struct RTLight {
-    vec4 posRadius;      // xyz = world pos, w = sphere pre-cull radius
+    vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
     vec4 colorIntensity; // rgb = light colour, a = intensity
     vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
     uint _pad0; uint _pad1; uint _pad2;
+    // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. See vk_gi.cpp's
+    // GILightEntry::emitPos — attenuation stays measured from the volume centre, while
+    // direction/N·L and shadow-ray targeting come from here, matching the GL split.
+    vec4 emitPos;        // xyz = globalLightOrigin, w unused
 };
 
 layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
@@ -102,14 +106,23 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
     lightDir = vec3(0.0, 0.0, 1.0);
     dist     = 0.0;
 
-    vec3  lPos   = rtLightBuf.lights[i].posRadius.xyz;
+    vec3  lPos   = rtLightBuf.lights[i].posRadius.xyz;   // volume centre
+    vec3  lEmit  = rtLightBuf.lights[i].emitPos.xyz;     // emitter (lightCenter applied)
     float lRad   = rtLightBuf.lights[i].posRadius.w;
     vec3  lColor = rtLightBuf.lights[i].colorIntensity.rgb;
     float lInt   = rtLightBuf.lights[i].colorIntensity.a;
 
-    vec3  toL = lPos - hitPos;
+    // Range test and falloff are properties of the light's VOLUME, which does not move
+    // when a mapper offsets lightCenter — so both measure from the volume centre. This
+    // mirrors GL, where R_SetLightProject builds the falloff planes around parms.origin.
+    float volDist = length(lPos - hitPos);
+    if (volDist >= lRad)
+        return false;
+
+    // Direction and shadow-ray distance are properties of where the light actually IS.
+    vec3  toL = lEmit - hitPos;
     dist      = length(toL);
-    if (dist >= lRad || dist < 0.01)
+    if (dist < 0.01)
         return false;
 
     lightDir     = toL / dist;
@@ -118,8 +131,8 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
         return false;
 
     // Quadratic falloff: zero at the edge of the light radius, hard cutoff beyond.
-    float t     = dist / max(lRad, 1.0);
-    float atten = 1.0 - t * t;   // dist < lRad above guarantees t < 1 → atten > 0
+    float t     = volDist / max(lRad, 1.0);
+    float atten = 1.0 - t * t;   // volDist < lRad above guarantees t < 1 → atten > 0
 
     contrib = lColor * (lInt * NdotL * atten * contribScale);
     return true;

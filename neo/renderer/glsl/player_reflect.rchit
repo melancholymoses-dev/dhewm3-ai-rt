@@ -50,12 +50,16 @@ hitAttributeEXT vec2 baryCoord;
 // GI light list — same buffer as reflect_ray.rchit uses for irradiance.
 // ---------------------------------------------------------------------------
 struct ReflGILight {
-    vec4 posRadius;      // xyz = world pos, w = sphere pre-cull radius
+    vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
     vec4 colorIntensity; // rgb = light colour, a = intensity
     vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
     uint _pad0; uint _pad1; uint _pad2;
+    // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. See vk_gi.cpp's
+    // GILightEntry::emitPos. Must be declared even where unused — this struct mirrors a
+    // shared SSBO layout, and omitting the field would shift every subsequent light.
+    vec4 emitPos;        // xyz = globalLightOrigin, w unused
 };
 
 layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
@@ -99,20 +103,24 @@ void main()
         int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
         for (int i = 0; i < n; i++)
         {
-            vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz;
+            vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz; // volume centre
+            vec3  lEmit  = reflLightBuf.lights[i].emitPos.xyz;   // emitter
             float lRad   = reflLightBuf.lights[i].posRadius.w;
             vec3  lColor = reflLightBuf.lights[i].colorIntensity.rgb;
             float lInt   = reflLightBuf.lights[i].colorIntensity.a;
-            vec3  toL    = lPos - hitPos;
-            float dist   = length(toL);
+            // Range/falloff from the volume centre, direction from the emitter — the
+            // same split as rt_light_eval.glsl, see GILightEntry::emitPos in vk_gi.cpp.
+            vec3  toL     = lEmit - hitPos;
+            float dist    = length(toL);
+            float volDist = length(lPos - hitPos);
             // Match reflect_ray.rchit: extend eval range beyond lRad so player
             // geometry is still reached by room lights whose origin is far away.
             float evalRadius = max(reflLightBuf.giRadius, lRad * 2.0);
-            if (dist >= evalRadius || dist < 0.01) continue;
+            if (volDist >= evalRadius || dist < 0.01) continue;
             float NdotL  = dot(hitNorm, toL / dist);
             if (NdotL <= 0.0) continue;
             // Normalized inverse-square: continuous, no hard cutoff at lRad.
-            float t = dist / lRad;
+            float t = volDist / lRad;
             float atten = 1.0 / (t * t + 1.0);
             if (atten < 0.02) continue;
             irradiance += lColor * lInt * NdotL * atten;

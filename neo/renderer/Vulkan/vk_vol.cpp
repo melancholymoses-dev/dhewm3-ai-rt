@@ -91,14 +91,81 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
-static idCVar r_rtVolDensity("r_rtVolDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+// 2026-08-23: retuned from 0.05 alongside vol_march.comp's self-attenuation fix
+// (each march step's contribution is now actually weighted by transmittance, not
+// just gated by it for early-exit — see that file's header comment). Before the
+// fix this cvar barely shaped brightness at all (it only picked the early-exit
+// cutoff distance); now it's the real Beer-Lambert extinction coefficient, so the
+// old 0.05 default crushed nearly all contribution into the first ~20 units of
+// camera, drowning out farther-field occlusion contrast in a near-camera haze
+// (reported as a flat "uniform lift", validated in-game against 0.015).
+static idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "0.10", CVAR_RENDERER | CVAR_FLOAT,
+// 2026-08-23: retuned from 0.10 alongside r_rtVolDensity above — density now also
+// acts as a real exponential decay coefficient (previously inert beyond the
+// early-exit check), so lowering it darkens the result through two compounding
+// paths at once: less decay survives per unit distance, but it ALSO still
+// multiplies the final linear scale below (unchanged pre-existing behaviour,
+// density has always done double duty as both extinction coefficient and a
+// direct brightness multiplier). Strength compensates for both. Validated in-game.
+static idCVar r_rtVolStrength("r_rtVolStrength", "0.50", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
 static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                                 "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
+
+// 2026-08-23: added alongside the self-attenuation fix (see vol_march.comp) to make
+// the per-pixel path transmittance inspectable directly instead of only visible as
+// a change in the final composited brightness. Uses the reflection composite's
+// established pattern (r_rtReflectionDebugMode / reflCompositeDebugPipeline in
+// vk_reflections.cpp): a blend-disabled (replace) pipeline variant so the debug
+// image isn't additively muddied onto the already-lit scene.
+static idCVar r_rtVolDebugMode("r_rtVolDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+                               "0=off, 1=path transmittance as greyscale (white=clear air, black=fully "
+                               "extinguished before reaching the surface), 2=raw scatter colour "
+                               "(post self-attenuation, unscaled by density/strength).");
+
+// Mode 2's raw scatter is a genuine linear-HDR value, typically tiny (0.001-0.05 —
+// volumetrics are deliberately subtle). It still lands in hdrScene before the single
+// end-of-frame Uchimura tonemap pass, whose toe curve crushes small values toward
+// black by design (that's what makes the *composited* scene's blacks read correctly).
+// Shown in isolation with no bright background to lift it, that same crush makes
+// mode 2 read as pitch black even when the underlying value is nonzero and fine.
+// This gain is a debug-only pre-multiply so mode 2 survives the crush intact; it
+// does not touch the real composite (mode 0) or mode 1 (already a 0-1 quantity).
+static idCVar r_rtVolDebugGain("r_rtVolDebugGain", "20.0", CVAR_RENDERER | CVAR_FLOAT,
+                               "Mode-2-only pre-tonemap gain so tiny raw scatter values survive "
+                               "the Uchimura toe curve instead of reading as pitch black.");
+
+// 2026-08-30: one-shot CPU-side dump of the exact bytes the march shader will read —
+// every scalar in VolParamsUBO plus every entry of the vol light SSBO, read back
+// from the mapped pointer after it is filled.
+//
+// Why this exists rather than another on-screen debug mode: a blown-out volumetric
+// was traced by hand against the map's own light entities (mars_city1 spawn) and the
+// shader's model predicted a final RGB of ~0.02 where the screen showed saturation —
+// two orders of magnitude apart, on both NVIDIA and AMD. That gap means the CPU→GPU
+// contract itself is suspect, and no amount of colour-coding the shader's *output*
+// can distinguish "shader math is wrong" from "shader was handed different numbers
+// than we think". This prints the inputs verbatim so the two can be told apart.
+//
+// NOT static: vk_gi.cpp's VK_RT_UploadGILights fills the vol light SSBO and dumps
+// its half. That site runs first and unconditionally (vk_backend.cpp:4655 upload,
+// :4738 dispatch), so it is the one that clears the cvar and hands off via
+// vkRT_volDumpPending below — clearing in the dispatch instead would spam a dump
+// every frame for as long as the dispatch keeps early-returning (r_rtVol 0, invalid
+// TLAS across a level load, ...), which is exactly when you'd be poking at this.
+idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
+                   "One-shot dump of the volumetric params UBO and the vol light SSBO exactly as "
+                   "uploaded (origin/extents/colour/intensity/type per light). Self-clears after "
+                   "one frame. Use when on-screen brightness disagrees with the shader's model.");
+
+// Set by vk_gi.cpp after it dumps the light half; consumed by the next
+// VK_RT_DispatchVolumetrics that actually reaches the end. Deferring rather than
+// dropping means the params half still prints on the next frame the dispatch runs,
+// so the two halves always pair up even if this frame's dispatch was skipped.
+bool vkRT_volDumpPending = false;
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
 static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
@@ -116,6 +183,30 @@ static idCVar r_rtVolFlashlightAnisotropy(
     "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
 static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                         "Final composite multiplier for flashlight scatter.");
+
+// auto_relight.md AR7 follow-up: player-viewmodel self-shadow in volumetrics.
+// vol_march.comp normally excludes ALL noSelfShadow (player-body/weapon) geometry from
+// every shadow ray unconditionally (cull mask 0xFE) -- these three control the one
+// light that's a real self-shadow candidate: the first-person muzzle flash, flagged
+// GI_LIGHT_FLAG_SELF_SHADOW in vk_gi.cpp's vol light selection.
+static idCVar r_rtVolMuzzleSelfShadow(
+    "r_rtVolMuzzleSelfShadow", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "AR7: let the player's first-person muzzle-flash light test occlusion against the "
+    "player body/weapon mesh in the volumetric march, so the viewmodel casts a shadow "
+    "silhouette into fog/dust lit by its own flash. Off by default -- validate with "
+    "r_rtVolMuzzleSelfShadowDebug first; a muzzle flash sits only a few units from its own "
+    "gun mesh, the classic shadow-acne setup.");
+static idCVar r_rtVolMuzzleSelfShadowBias(
+    "r_rtVolMuzzleSelfShadowBias", "4.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "AR7: shadow-ray tMin (world units) for the muzzle-flash self-shadow test -- used by "
+    "both the real query (r_rtVolMuzzleSelfShadow) and the debug query "
+    "(r_rtVolMuzzleSelfShadowDebug). Too small reproduces shadow acne as flicker in the fog.");
+static idCVar r_rtVolMuzzleSelfShadowDebug(
+    "r_rtVolMuzzleSelfShadowDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
+    "AR7 debug view: fire an extra player-body-only shadow ray for the muzzle-flash light "
+    "and tint hits hot magenta in the volumetric buffer, independent of "
+    "r_rtVolMuzzleSelfShadow -- shows the self-shadow hit pattern (clean silhouette vs. "
+    "acne flicker) before enabling/tuning the real feature.");
 
 // ---------------------------------------------------------------------------
 // VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
@@ -143,6 +234,17 @@ static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR
 //   float directedStrength     offset 152  size  4
 //   float _pad                 offset 156  size  4  (std140 round to 16)
 //   total: 160 bytes
+//   --- P8: half-res march ---
+//   int   marchWidth           offset 160  size  4
+//   int   marchHeight          offset 164  size  4
+//   int   marchScale           offset 168  size  4
+//   float whiteNoiseMix        offset 172  size  4  (repurposed former pad)
+//   --- AR7 follow-up: muzzle-flash volumetric self-shadow ---
+//   int   selfShadowEnable     offset 176  size  4  (r_rtVolMuzzleSelfShadow)
+//   int   selfShadowDebugMode  offset 180  size  4  (r_rtVolMuzzleSelfShadowDebug)
+//   float selfShadowBias       offset 184  size  4  (r_rtVolMuzzleSelfShadowBias)
+//   float _pad4                offset 188  size  4  (std140 round to 16)
+//   total: 192 bytes
 // ---------------------------------------------------------------------------
 
 struct VolParamsUBO
@@ -181,8 +283,13 @@ struct VolParamsUBO
     // Repurposed former pad float (was _uboPad2, always 0) — same offset, no size
     // change, no descriptor/assert change needed. See r_rtVolWhiteNoiseMix.
     float whiteNoiseMix; // 172
+    // --- AR7 follow-up: muzzle-flash volumetric self-shadow (auto_relight.md) ---
+    int32_t selfShadowEnable;    // 176  r_rtVolMuzzleSelfShadow
+    int32_t selfShadowDebugMode; // 180  r_rtVolMuzzleSelfShadowDebug
+    float   selfShadowBias;      // 184  r_rtVolMuzzleSelfShadowBias
+    float   _uboPad4;            // 188  std140 round to 16
 };
-static_assert(sizeof(VolParamsUBO) == 176, "VolParamsUBO size mismatch");
+static_assert(sizeof(VolParamsUBO) == 192, "VolParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Push-constant block for vol_bilateral.comp.  All scalars — no vec/ivec types —
@@ -537,7 +644,7 @@ static void VK_RT_InitVolCompositePipeline(void)
     VkPushConstantRange compPush = {};
     compPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     compPush.offset = 0;
-    compPush.size = sizeof(float) * 2; // vec2 invScreenSize
+    compPush.size = sizeof(float) * 2 + sizeof(int32_t) + sizeof(float); // vec2 invScreenSize + int debugMode + float debugGain
 
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -644,6 +751,27 @@ static void VK_RT_InitVolCompositePipeline(void)
     pipelineInfo.renderPass = vk.hdrRenderPass;
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositePipeline));
+
+    // --- Debug variant: blend disabled (replace), so r_rtVolDebugMode's
+    // transmittance/scatter visualization isn't muddied by additive blending onto
+    // the already-lit scene. Mirrors reflCompositeDebugPipeline in vk_reflections.cpp. ---
+    VkPipelineColorBlendAttachmentState replaceBlend = {};
+    replaceBlend.blendEnable = VK_FALSE;
+    replaceBlend.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendAttachmentState replaceAttachments[3] = {replaceBlend, {}, {}};
+    VK_FillSecondBlendAttachment(&replaceAttachments[1]);
+    VK_FillSecondBlendAttachment(&replaceAttachments[2]);
+
+    VkPipelineColorBlendStateCreateInfo replaceBlendState = {};
+    replaceBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    replaceBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
+    replaceBlendState.pAttachments = replaceAttachments;
+    pipelineInfo.pColorBlendState = &replaceBlendState;
+
+    VK_CHECK(
+        vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositeDebugPipeline));
 
     vkDestroyShaderModule(vk.device, vertMod, NULL);
     vkDestroyShaderModule(vk.device, fragMod, NULL);
@@ -1578,6 +1706,11 @@ void VK_RT_ShutdownVolumetrics(void)
         vkDestroyPipeline(vk.device, vkRT.volCompositePipeline, NULL);
         vkRT.volCompositePipeline = VK_NULL_HANDLE;
     }
+    if (vkRT.volCompositeDebugPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.volCompositeDebugPipeline, NULL);
+        vkRT.volCompositeDebugPipeline = VK_NULL_HANDLE;
+    }
     if (vkRT.volCompositeLayout != VK_NULL_HANDLE)
     {
         vkDestroyPipelineLayout(vk.device, vkRT.volCompositeLayout, NULL);
@@ -1776,6 +1909,10 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.marchHeight = (int32_t)vb.height;
     ubo.marchScale = s_volMarchScale;
     ubo.whiteNoiseMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
+    ubo.selfShadowEnable = r_rtVolMuzzleSelfShadow.GetBool() ? 1 : 0;
+    ubo.selfShadowDebugMode = r_rtVolMuzzleSelfShadowDebug.GetInteger();
+    ubo.selfShadowBias = Max(0.01f, r_rtVolMuzzleSelfShadowBias.GetFloat());
+    ubo._uboPad4 = 0.0f;
 
     memcpy(uboMapped, &ubo, sizeof(VolParamsUBO));
 
@@ -1904,6 +2041,33 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d density=%.3f samples=%d\n",
                        groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.density, ubo.numSamples);
+
+    // r_rtVolDump (see the cvar's comment): the params half, armed by vk_gi.cpp after
+    // it printed the light half. The cvars are re-read and clamped into `ubo` every
+    // frame, so what prints here is post-clamp — r_rtVolAnisotropy is clamped to 0.99,
+    // which is why a slider parked at 1.0 never actually reaches g=1 (and the HG peak
+    // is non-monotonic in g: it maxes near 0.9, not 1.0).
+    if (vkRT_volDumpPending)
+    {
+        vkRT_volDumpPending = false;
+        common->Printf("=== [r_rtVolDump] VolParamsUBO as uploaded (frameIdx=%d) ===\n", frameIdx);
+        common->Printf("  camera=(%.0f %.0f %.0f)  frameIndex=%u\n", ubo.cameraPosX, ubo.cameraPosY, ubo.cameraPosZ,
+                       ubo.frameIndex);
+        common->Printf("  numSamples=%d  maxLights=%d  maxDist=%.1f  whiteNoiseMix=%.4f\n", ubo.numSamples,
+                       ubo.maxLights, ubo.maxDist, ubo.whiteNoiseMix);
+        common->Printf("  point:     density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.density, ubo.strength,
+                       ubo.anisotropy);
+        common->Printf("  directed:  density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.directedDensity,
+                       ubo.directedStrength, ubo.directedAnisotropy);
+        common->Printf("  flashlight:density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.flashlightDensity,
+                       ubo.flashlightStrength, ubo.flashlightAnisotropy);
+        common->Printf("  screen=%dx%d  march=%dx%d scale=%d  scissor=(%d,%d %dx%d)\n", ubo.screenWidth,
+                       ubo.screenHeight, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.scissorOffsetX,
+                       ubo.scissorOffsetY, ubo.scissorExtentX, ubo.scissorExtentY);
+        common->Printf("  selfShadow: enable=%d debug=%d bias=%.2f\n", ubo.selfShadowEnable, ubo.selfShadowDebugMode,
+                       ubo.selfShadowBias);
+        common->Printf("  sizeof(VolParamsUBO)=%d (GLSL std140 block expects 192)\n", (int)sizeof(VolParamsUBO));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1946,17 +2110,29 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
 
     // P8: UV comes from the screen size, not the vol image size — they differ when
     // the compositor is reading the march-res image directly.
-    const float invScreen[2] = {
-        1.0f / Max(1.0f, (float)vk.swapchainExtent.width),
-        1.0f / Max(1.0f, (float)vk.swapchainExtent.height),
+    struct
+    {
+        float invScreen[2];
+        int32_t debugMode;
+        float debugGain;
+    } pc = {
+        {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
+        r_rtVolDebugMode.GetInteger(),
+        Max(0.0f, r_rtVolDebugGain.GetFloat()),
     };
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositePipeline);
+    const bool debugActive = pc.debugMode >= 1 && pc.debugMode <= 2;
+    VkPipeline pipe = debugActive ? vkRT.volCompositeDebugPipeline : vkRT.volCompositePipeline;
+    if (pipe == VK_NULL_HANDLE)
+        return;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositeLayout, 0, 1,
                             &vkRT.volCompositeDescSets[frameIdx], 0, NULL);
-    vkCmdPushConstants(cmd, vkRT.volCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(invScreen), invScreen);
+    vkCmdPushConstants(cmd, vkRT.volCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: composite drawn frame=%d slot=%d\n", tr.frameCount, frameIdx);
+        common->Printf("VK RT Vol: composite drawn frame=%d slot=%d debugMode=%d\n", tr.frameCount, frameIdx,
+                       pc.debugMode);
 }

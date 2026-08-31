@@ -20,6 +20,8 @@ If there are complex options, favour generating logs and debugging over theoreti
 
 When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
+When editting code do not leave long comments about the motivation.  Save that stuff in memories, not the code.
+
 ## Assets
 The main doom3 assets have been unzipped and are accessible at
 build_rt/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.

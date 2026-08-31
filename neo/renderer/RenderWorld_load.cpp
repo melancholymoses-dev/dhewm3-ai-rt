@@ -479,6 +479,7 @@ void idRenderWorldLocal::FreeDefs()
     int i;
 
     generateAllInteractionsCalled = false;
+    autoRelightGenerated = false; // dhewm3-rt: auto_relight.md AR1-5 — re-synthesize on next GenerateAllInteractions
 
     if (interactionTable)
     {

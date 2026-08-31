@@ -187,7 +187,9 @@ static idCVar r_vkSplitSubmitMask(
     "Debug: force extra queue submits during DrawView to bisect DEVICE_LOST stage. "
     "Bitmask: 1=after RT block, 2=after interactions, 4=after shader passes, 8=after fog, "
     "16=after TLAS, 32=after AO, 64=after reflections, 128=after RT renderpass resume, "
-    "256=after GI dispatch (outside RP), 512=after GI composite (inside RP). "
+    "256=after GI dispatch (outside RP), 512=after GI composite (inside RP), "
+    "1024=after GI temporal+atrous, before volumetrics (isolates vol march/temporal/"
+    "bilateral from GI temporal/atrous — both were previously one submit). "
     "Can be added together to trigger multiple submissions.");
 static idCVar r_vkLowPerturbationMode(
     "r_vkLowPerturbationMode", "1", CVAR_RENDERER | CVAR_INTEGER,
@@ -1119,8 +1121,13 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
     int *useAOPtr = useSM + 1;
+    // A2 (amd_vulkan_cleanup.md): aoValid, not just image != NULL. The image existing says
+    // nothing about whether anything was written into it this frame — VK_RT_DispatchAO has
+    // several early-return paths (RT off, invalid TLAS across a level load, empty scissor)
+    // that leave it untouched, and the rgen only ever writes inside the view scissor.
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
-                           vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE;
+                           vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE &&
+                           vkRT.aoValid[vk.currentFrame];
     *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed).
@@ -4723,6 +4730,12 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
+
+            if ((splitMask & 1024) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIAtrous", false))
+                    return;
+            }
 
             VK_SetRenderStage("RT_Volumetrics");
             const uint64_t rtCpuVolStart = VK_RTProfile_CPUStamp();

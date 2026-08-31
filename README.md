@@ -9,7 +9,7 @@ $\color{red}{\textbf{Do not bother that team with bug reports or feature request
 
 |  Dhewm3 |  Dhewm3-RT | 
 |:---------:|:-----------:|
-|<img src="docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg" width="300" alt="Ecce Homo">|<img src="docs/img/Attempted_restoration_of_Ecce_Homo.jpg" width="300", alt="Ecce Homo Restoration">|
+|<img src="docs/img/Elias_Garcia_Martinez_-_Ecce_Homo.jpg" width="300" alt="Ecce Homo">|<img src="docs/img/Attempted_restoration_of_Ecce_Homo.jpg" width="300" alt="Ecce Homo Restoration">|
 | Doom3/Dhewm3's source code | Vibe Coded Ray-Traced Additions|
 
 
@@ -31,10 +31,10 @@ There is an archived _vkDoom3_ Vulkan implementation of Dhewm-BFG edition at  ht
 I have been using Claude Code (Sonnet 4.5) and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  This has mostly worked because:
 - Doom3 is a famous C++ code base.  
 - Well-established language (C++) and frameworks (Vulkan).
-- A very clean starting point with well optimized code.  
-- Graphics Techniques are well known at this point and incorporated into training corpus.
-- Reference implementations to riff on
-- Quick build cycle, so failure and testing is rapid with quick failure modes.
+- It is a very clean starting point with well optimized code and no cruft.  
+- More modern graphics techniques are well known at this point and incorporated into training corpus.
+- There are good reference implementations to riff on
+- Quick build cycle, so failure and testing is rapid with quick failure modes that appear in minutes, not months.  
 - I have some experience as a software dev in other domains and can guide the LLM or correct it when hung up.
 I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear. 
 
@@ -45,56 +45,61 @@ I would be cautious about assuming any AI coding projects work this well in the 
 ![Restored plasma particle luminance.](docs/img/screenshots/20260331_restore_luminance.jpg)
 This is just a definition on the weapon to activate an existing effect.  This was already in-game but probably off for 2005 performance reasons.  Most noticeable on plasma and rockets.  
 
-1. Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.
+1. Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That is essential starting point for the vendor neutral ray-tracing work. 
 2. Ray Traced shadows and acceleration structures.
-![Ray Traced Shadows](docs/img/screenshots/20260331_shadow.jpg)
-![Ray Traced Original](docs/img/screenshots/20260331_shadow_stencil.jpg)
-Ray Traced Shadows are in.  This shows some distinctions with how we're selecting lights - potentially some errors in math and light selection?  Top screenshot is RT, lower screenshot is original stencil.  Here the side light above the player's head casts the main shadow in RT, while the stencil has a much moodier shadow.
+![Ray Traced Shadows](docs/img/screenshots/20260830_shadows_on.jpg)
+![Ray Traced Original](docs/img/screenshots/20260830_shadows_off.jpg)
+Ray Traced Shadows are in.  (There was a bug around light origin that has been fixed)  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, not that noticeable.  
 
-3. Ray-Traced Ambient Occlusion with temporal filtering 
+3. Ray-Traced Ambient Occlusion with temporal filtering.   Now running properly and leads to darkening in the corners.
+![RT Ambient Occlusion](docs/img/screenshots/20260830_AO_on.jpg)
+![RT Ambient Occlusion Off](docs/img/screenshots/20260830_AO_off.jpg)
+
 4. Ray traced Reflections
 
 ![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
-Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest gain.
+Ray Traced reflections are going.  With `g_showplayershadow` toggled on, the third person player model is visible and can be reflected.  Animations not perfectly in sync between third person and first person.   Working on including muzzle flash and particles in here.  Animated entities are visible behind you!  This could be fun for horror applications - though comes with a performance cost.  This is perhaps the biggest improvement, but could be possible without RT.
 
 5. Global Illumination
-5a. One bounce global illumination.  Reflected surfaces can share luminance (e.g. light bouncing off a red wall illuminates a shadow)
-5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.
-![Volumetrics On](docs/img/screenshots/20260419_vol_on.jpg)
-![Volumetrics Off](docs/img/screenshots/20260415_vol_off.jpg)
+One bounce global illumination.  Reflected surfaces can share luminance (e.g. light bouncing off a red wall illuminates a shadow).  This is potentially most helpful in other games (like Quake4) where the harsh lighting of Doom 3 clashes with the outdoor spaces (pitch black under bridges at midday)
 
 5c. Tone mapping 
-As part of the global illumination passes I found it was washing out the color, killing the contrast and mood.  We have added a Uchimara tone-map to try to restore that dynamic range while sticking close to the original art style while trying to enhance it.
+The global illumination passes were washing out the color and killing the mood.  We have added a Uchimara tone-map to try to restore that dynamic range while sticking close to the original art style even with all the addtional luminance.
+
+
+6. Volumetric Lighting 
+5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.  Lends a lot of mood, especially for moving lights and shadows.  
+![Volumetrics On](docs/img/screenshots/20260830_vol_on.jpg)
+![Volumetrics Off](docs/img/screenshots/20260830_vol_off.jpg)
 
 
 ## Useful Cvars
 
 The pipeline and ray-tracing can be enabled/disabled at the terminal in game or via CLI flags.  These are accessible from the Dhewm3 Settings Menu (F10) under Ray Tracing.  The defaults have been set to add noticeable effects - and where a better artist's eye is needed.  
 
-| Flag | Values | Action  |
-|------|--------|-----------|
-| r_backend         | openGL, vulkan | Switch backend.  Needs restart.|
-| r_useRayTracing   | 0, 1 | Toggle for all ray-tracing vs rasterization.  |
-| r_rtshadows       | 0, 1 | Toggle Ray-Traced Shadows  |
-| r_rtao            | 0, 1 | Toggle Ambient Occlusion |
-| r_rtreflections   | 0, 1 | Toggle Ray-Traced Reflections |
-| r_rtgi            | 0, 1 | Toggle Ray-Traced Global Illumination |
+## Overall Impact
+Mostly, the ray-tracing is computationally expensive, and tends to fight the original art direction - which the map design and gameplay were already optimized towards.  
+More physically based rendering tends to not be impressive given the game was built around the limitations of the engine.  
+The various effects here tend to soften the harsh shadows of the original for a more diffuse brighter look.
 
-- Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing those in the old engine).  Glass is 
-plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
-- Currently global illumination is pretty rough, and is improved with tone-mapping.  I could see this having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
+The two effects I've tried that seem to actually add something are the reflections, and volumetric lighting.  Those both lean into what I liked about Doom 3: moody atmosphere and the play of light and shadow.  
+
+- Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing that without ray-tracing).  
+Glass is plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
+- Global illumination was less impressive than I hoped, but the volumetrics help.  I could see GI having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
 
 ## Additional Files
 
-Part of the build process requires compiling the Vulkan shaders and copying them. 
+- Part of the build process requires compiling the Vulkan shaders and copying them. 
 Currently the compiled shaders are compiled and copied in `base/glprogs/glsl` relative to where the player's save data and config lives.
 (e.g. ~/Documents/dhewm3/)
 
-I am also exploring editing some gun definitions to cast more light.  
+- I am also editing some gun definitions to cast more light.  
 Those should be copied to `base/def` alongside the shaders to take effect in game.
 Updated Plasma Rifle particles to shed blue light on pulses.
 Updated Rockets to show light.
 
+- There is also a material for tracking added GI accent lights in logging. 
 
 # GENERAL NOTES
 
@@ -106,8 +111,7 @@ Follow the Dhewm3 Notes on patching.  As with Dhewm3, you must have the original
 This source release does not contain any game data, the game data is still
 covered by the original EULA and must be obeyed as usual.
 
-You must patch the game to the latest version (1.3.1). See the FAQ for details, including
-how to get the game data from Steam on Linux or OSX.
+You must patch the game to the latest version (1.3.1). 
 
 Note that the original _Doom 3_ and _Doom 3: Resurrection of Evil_ (together with
 _DOOM 3: BFG Edition_, which is *not* supported by dhewm3-rt) are available from the Steam Store at
@@ -130,12 +134,10 @@ The build system is based on CMake: http://cmake.org/
 
 Required libraries are not part of the tree. These are:
 
-- OpenAL (OpenAL Soft required)
+- OpenAL (OpenAL Soft required - need to have the env vars set up)
 - SDL v1.2 or 2.0 (2.0 recommended)
 - libcurl (optional, required for server downloads)
 - Optionally, on non-Windows: libbacktrace (usually linked statically)
-  - sometimes (e.g. on debian-based distros like Ubuntu) it's part of libgcc (=> always available),
-    sometimes (e.g. Arch Linux, openSUSE) it's in a separate package
   - If this is available, dhewm3 prints more useful backtraces if it crashes
 - Vulkan 1.4 (install the SDK)
 

@@ -1,0 +1,27 @@
+/***********************************************************************
+
+	rt_auto_relight.mtr
+
+	Light material used only to give auto-relight's engine-synthesized
+	lights (vk_auto_relight.cpp AR5, docs/plans/auto_relight.md) a distinct,
+	greppable name instead of the generic lights/defaultPointLight every
+	other shader-less point light falls back to. Debug tools that print
+	lightShader->GetName() -- r_rtGILightDump, r_showLights, the auto-relight
+	console table -- can then identify a synthesized light at a glance.
+
+	Deliberately byte-identical to lights/defaultPointLight (materials/lights.mtr)
+	otherwise: same falloff image, same stage. This changes nothing about how
+	the light looks, only what it's called.
+
+***********************************************************************/
+
+lights/rtAutoRelight
+{
+	lightFalloffImage	makeintensity( lights/squarelight1a.tga )
+	{
+		forceHighQuality
+		map lights/squarelight1.tga
+		colored
+		zeroClamp
+	}
+}

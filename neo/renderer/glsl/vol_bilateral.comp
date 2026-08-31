@@ -128,9 +128,12 @@ void main()
     float dstDist    = depthAware ? viewDistance(texelFetch(depthSampler, coord, 0).r) : 0.0;
     float invDepthSigma = 1.0 / max(pc.depthSigma, 0.01);
 
-    vec3  sumColor  = vec3(0.0);
+    // rgb = scatter colour, a = path transmittance (see vol_march.comp) — both
+    // carried through this filter identically, same weights, so a transmittance
+    // value never gets blended against a spatially-unrelated scatter sample.
+    vec4  sumColor  = vec4(0.0);
     float sumW      = 0.0;
-    vec3  bestColor = vec3(0.0);
+    vec4  bestColor = vec4(0.0);
     float bestDiff  = 1e30;
 
     for (int dy = -RADIUS; dy <= RADIUS; dy++)
@@ -140,7 +143,7 @@ void main()
             ivec2 sIdeal = srcC + ivec2(dx, dy);
             ivec2 s      = clamp(sIdeal, ivec2(0), maxSrc);
 
-            vec3 sVol = imageLoad(volIn, s).rgb;
+            vec4 sVol = imageLoad(volIn, s);
 
             // Weight from the *unclamped* offset so border taps keep the same
             // profile the pre-P8 filter gave them.
@@ -170,6 +173,6 @@ void main()
 
     // sumW collapses only when every tap is on the far side of a depth edge; taking
     // the nearest-depth tap there is what keeps silhouettes from haloing.
-    vec3 result = (sumW > 1e-4) ? (sumColor / sumW) : bestColor;
-    imageStore(volOut, coord, vec4(result, 1.0));
+    vec4 result = (sumW > 1e-4) ? (sumColor / sumW) : bestColor;
+    imageStore(volOut, coord, result);
 }

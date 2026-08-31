@@ -39,6 +39,12 @@ idCVar r_rtLightAccentMaxRadius(
     "(admitted to GI/volumetrics, eligible for the noShadows shadow unlock); at or above "
     "it, classed AMBIENT_FILL (semantic mapper fill — never admitted, never unlocked)");
 
+idCVar r_rtUnlockNoShadows(
+    "r_rtUnlockNoShadows", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "auto_relight.md §6: give ACCENT-classified noShadows lights (see r_rtLightAccentMaxRadius) "
+    "a real RT shadow layer instead of rendering unshadowed. Does not affect GI/volumetric "
+    "admission — ACCENT lights already participate there regardless of this cvar (§0).");
+
 // ---------------------------------------------------------------------------
 // VK_RT_ClassifyLight
 // ---------------------------------------------------------------------------

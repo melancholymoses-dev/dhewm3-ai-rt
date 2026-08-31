@@ -172,6 +172,12 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 #define VK_GI_MAX_LIGHTS 128
 
+// auto_relight.md AR7 follow-up: bit 0 of GILightEntry::flags marks the first-person
+// muzzle-flash light (point light + allowLightInViewID set — see considerLight below).
+// vol_march.comp reads it to decide whether this light's shadow ray is allowed to test
+// player-body/weapon geometry (r_rtVolMuzzleSelfShadow / r_rtVolMuzzleSelfShadowDebug).
+#define GI_LIGHT_FLAG_SELF_SHADOW 0x1u
+
 struct GILightEntry
 {
     float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
@@ -180,7 +186,24 @@ struct GILightEntry
     float boxExtents[4];     // point: xyz=AABB half-extents, w=0
                              // projected: w=max reach along cone axis; xyz=0
     uint32_t lightType;      // 0 = point, 1 = projected/spot
-    uint32_t pad[3];         // alignment pad to 80 bytes
+    uint32_t flags;          // GI_LIGHT_FLAG_* — see above (was an unused pad slot)
+    uint32_t pad[2];         // alignment pad
+    // 2026-08-30: idRenderLightLocal::globalLightOrigin — origin + axis * lightCenter.
+    // The EMITTER. posRadius.xyz above stays the light's volume centre (parms.origin),
+    // because boxExtents/coneDir are expressed relative to that and the attenuation
+    // volume does not move when a mapper offsets lightCenter.
+    //
+    // This is the same split the GL path makes: R_SetLightProject builds the falloff
+    // planes around parms.origin (tr_lightrun.cpp:440), then globalLightOrigin is
+    // derived separately at :472 and is what the interaction shader's L vector and the
+    // shadow frustums use. Doom 3 maps lean on this — mars_city1's light_5253 offsets
+    // its emitter by ~920 units, light_4842 by ~5800 — so aiming shadow rays and N·L at
+    // parms.origin puts the apparent light source in the wrong place entirely.
+    //
+    // Deliberately a new field rather than reusing coneDir.xyz (unused for point
+    // lights): overloading one slot with two meanings is exactly what made parm3 cost
+    // a session, and 16 bytes per light is 2 KB at VK_GI_MAX_LIGHTS.
+    float emitPos[4];        // xyz = globalLightOrigin, w unused — pads to 96 bytes
 };
 
 struct GILightBuffer
@@ -191,7 +214,7 @@ struct GILightBuffer
     float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 80, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 96, "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -260,6 +283,8 @@ extern idCVar r_vkLogRT;
 extern idCVar r_rtGbufNormals;  // P9 — defined in vk_gbuffer.cpp
 extern idCVar r_rtVolMaxLights; // defined in vk_vol.cpp — cap for the vol-only selection built below
 extern idCVar r_rtVolMaxDist;   // defined in vk_vol.cpp — vol march reach, used to filter that selection
+extern idCVar r_rtVolDump;      // defined in vk_vol.cpp — one-shot verbatim dump of the vol upload
+extern bool vkRT_volDumpPending; // defined in vk_vol.cpp — handoff so the params half prints too
 
 // ---------------------------------------------------------------------------
 // VK_RT_CreateGILightSsbos / VK_RT_DestroyGILightSsbos
@@ -688,11 +713,20 @@ static void VK_RT_InitGIPipeline(void)
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
 
-    // 4 groups total; SBT regions:
-    //   rgen:  1 entry  (group 0)
-    //   miss:  2 entries (groups 1, 3)  — gi miss + shadow miss
-    //   hit:   1 entry  (group 2)
-    uint32_t sbtSize = 4 * stride;
+    // 4 groups total, 6 SBT records:
+    //   rgen:  1 record  (group 0)
+    //   miss:  2 records (groups 1, 3)  — gi miss + shadow miss
+    //   hit:   3 records (group 2, replicated)
+    //
+    // The hit region is 3 records wide, not 1, because TLAS instances carry a
+    // hardcoded instanceShaderBindingTableRecordOffset of 0 or 2 (2 =
+    // noSelfShadow player body/viewmodel, see vk_accelstruct.cpp). That offset is
+    // per-instance and shared by every pipeline that traces this TLAS, so the hit
+    // region must contain record 2 or an out-of-range fetch pulls a garbage
+    // shader handle. Record 1 of the region is unused padding — nothing traces
+    // with sbtRecordOffset 1 here — but it must exist for record 2 to be
+    // addressable.
+    uint32_t sbtSize = 6 * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -712,8 +746,10 @@ static void VK_RT_InitGIPipeline(void)
     memcpy(sbtData + 1 * stride, handles + 1 * handleSize, handleSize);
     // SBT slot 2 = shadow miss (group 3)
     memcpy(sbtData + 2 * stride, handles + 3 * handleSize, handleSize);
-    // SBT slot 3 = hit group (group 2)
-    memcpy(sbtData + 3 * stride, handles + 2 * handleSize, handleSize);
+    // SBT slots 3..5 = hit group (group 2), replicated so instance record
+    // offsets 0..2 all resolve to the same (only) hit group.
+    for (int i = 3; i < 6; i++)
+        memcpy(sbtData + i * stride, handles + 2 * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtGIMemory);
 
     VkBufferDeviceAddressInfo addrInfo = {};
@@ -723,15 +759,20 @@ static void VK_RT_InitGIPipeline(void)
 
     // rgen:  slot 0
     // miss:  slots 1–2 (stride * 2 region, covers gi-miss[0] and shadow-miss[1])
-    // hit:   slot 3
+    // hit:   slots 3–5 (stride * 3 region, same handle in all three)
     vkRT.giRgenRegion = {sbtBase + 0 * stride, stride, stride};
     vkRT.giMissRegion = {sbtBase + 1 * stride, stride, 2 * stride};
-    vkRT.giHitRegion = {sbtBase + 3 * stride, stride, stride};
+    vkRT.giHitRegion = {sbtBase + 3 * stride, stride, 3 * stride};
     vkRT.giCallRegion = {0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit)\n",
-                       stride, sbtSize, (unsigned long long)sbtBase);
+        common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit) "
+                       "miss=0x%llx (missRecords=%u) hit=0x%llx (hitRecords=%u)\n",
+                       stride, sbtSize, (unsigned long long)sbtBase,
+                       (unsigned long long)vkRT.giMissRegion.deviceAddress,
+                       (unsigned)(vkRT.giMissRegion.size / vkRT.giMissRegion.stride),
+                       (unsigned long long)vkRT.giHitRegion.deviceAddress,
+                       (unsigned)(vkRT.giHitRegion.size / vkRT.giHitRegion.stride));
 
     // --- Descriptor pool and sets ---
     // COMBINED_IMAGE_SAMPLER count is doubled: depth (binding 2) + gbufNormal
@@ -1195,9 +1236,47 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         float r = p.shaderParms[SHADERPARM_RED];
         float g = p.shaderParms[SHADERPARM_GREEN];
         float b = p.shaderParms[SHADERPARM_BLUE];
-        float intensity = p.shaderParms[SHADERPARM_ALPHA];
-        if (intensity < 0.001f)
-            intensity = 1.0f;
+
+        // 2026-08-30: parm3 is the material TIMESCALE on a light, not an intensity.
+        //
+        // RenderWorld.h:61-62 aliases two names onto slot 3 — SHADERPARM_ALPHA and
+        // SHADERPARM_TIMESCALE. Entities/models use the alpha meaning; lights use the
+        // other one, and Light.cpp:159 spawns the map key through it explicitly:
+        //
+        //     args->GetFloat( "shaderParm3", "1", parms[SHADERPARM_TIMESCALE] );
+        //
+        // So a light's parm3 scales shader time for its material's time-driven
+        // expressions. lights/cloudscroll2 is `translate time * .03, time * .03`, and
+        // mars_city1's light_5253 sets shaderParm3 9000 as that texture's scroll rate.
+        // Reading it as a brightness multiplier gave that one light importance 1631
+        // against 0.24 for the next-ranked light: it monopolised the GI/vol upload
+        // slots and blew the volumetric march into a full-screen wash that no density,
+        // strength or anisotropy could pull back, since the multiplier sits upstream of
+        // all three (vol_march.comp's contrib line). 40 retail light entities set parm3
+        // outside [0,1], up to 80000 (recycling1 "level_fog") — concentrated in the big
+        // maps: recycling1, enpro, cpu, cpuboss, hell1, site3.
+        //
+        // Nothing is lost by dropping it. A Doom 3 light carries brightness entirely in
+        // its RGB registers — tr_render.cpp:872-874 applies backEnd.lightScale to
+        // lightColor[0..2] only and draw_common.cpp:2079 pushes the light colour through
+        // qglColor3fv, three components; idLight's fade/SetLightLevel paths scale parms
+        // 0-2. There is no scalar intensity channel to lose.
+        //
+        // Why this hid for so long: the spawn default above is "1", so the multiplier is
+        // exactly 1.0 on essentially every light, and the old `< 0.001f -> 1.0f` patch
+        // covered the zero-timescale case. Both benign values, so the read looked right
+        // anywhere it was tested.
+        //
+        // The one place that used slot 3 as a real intensity was our own auto-relight
+        // synthesis (vk_auto_relight.cpp) — it now bakes r_rtAutoRelightIntensity into
+        // the RGB parms instead, so brightness arrives here through the same channel for
+        // every light regardless of origin, and that cvar finally affects the direct
+        // lighting from those fixtures too rather than GI/volumetrics alone.
+        //
+        // Kept as an explicit 1.0 rather than deleted: GILightEntry.colorIntensity.a and
+        // the shaders' lightIntens stay in place for a future source to drive
+        // deliberately. The rule is only that it must not silently inherit parm3.
+        const float intensity = 1.0f;
 
         // §0 (auto_relight.md): shared real/fake judgment — replaces the old
         // entity-noShadows-only test, which let material-ambient washes through
@@ -1253,6 +1332,15 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.posRadius[1] = p.origin.y;
             c.entry.posRadius[2] = p.origin.z;
             c.entry.posRadius[3] = radius;
+            // Emitter, see GILightEntry::emitPos. Taken from the renderer's own derived
+            // value rather than recomputed from parms, so it cannot drift from what the
+            // GL path uses (R_DeriveLightData sets it, tr_lightrun.cpp:472). The
+            // parallel-light branch there (origin + dir * 100000) is unreachable here —
+            // considerLight rejects p.parallel above.
+            c.entry.emitPos[0] = lightLocal->globalLightOrigin.x;
+            c.entry.emitPos[1] = lightLocal->globalLightOrigin.y;
+            c.entry.emitPos[2] = lightLocal->globalLightOrigin.z;
+            c.entry.emitPos[3] = 0.0f;
             c.entry.colorIntensity[0] = r;
             c.entry.colorIntensity[1] = g;
             c.entry.colorIntensity[2] = b;
@@ -1288,7 +1376,12 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             // lightType: 0=point, 1=scene directed/spot, 2=player flashlight.
             // allowLightInViewID is set on muzzleFlash (first-person weapon light).
             c.entry.lightType = isProjected ? (p.allowLightInViewID != 0 ? 2u : 1u) : 0u;
-            c.entry.pad[0] = c.entry.pad[1] = c.entry.pad[2] = 0u;
+            // AR7 follow-up: a first-person point light with allowLightInViewID set is the
+            // muzzle flash specifically (the flashlight is projected, so it lands in the
+            // lightType==2 branch above instead) — flag it as a volumetric self-shadow
+            // candidate. See vol_march.comp's r_rtVolMuzzleSelfShadow handling.
+            c.entry.flags = (!isProjected && p.allowLightInViewID != 0) ? GI_LIGHT_FLAG_SELF_SHADOW : 0u;
+            c.entry.pad[0] = c.entry.pad[1] = 0u;
         }
     };
 
@@ -1683,6 +1776,47 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     volLb->emissiveScale = lb->emissiveScale;
     for (int i = 0; i < numVolSelected; i++)
         volLb->lights[volLb->numLights++] = s_volSelected[i]->entry;
+
+    // r_rtVolDump: read the entries back out of the MAPPED pointer, not out of
+    // s_volSelected — the whole point is to show the bytes the march shader will
+    // actually read, so a bad copy/stride/aliasing bug shows up here rather than
+    // being masked by re-printing the source we copied from.
+    //
+    // posRadius.xyz is the light entity's origin, which uniquely identifies it in
+    // the .map (the [vol selection] dump above can only print the *material* name,
+    // and a map reuses one light material across dozens of entities).
+    if (r_rtVolDump.GetBool())
+    {
+        r_rtVolDump.SetBool(false);     // one-shot: this site always runs, so it owns the clear
+        vkRT_volDumpPending = true;     // hand off to VK_RT_DispatchVolumetrics for the params half
+        common->Printf("=== [r_rtVolDump] vol light SSBO as uploaded (frameIdx=%d) ===\n", frameIdx);
+        common->Printf("  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f\n", volLb->numLights,
+                       volLb->bounceScale, volLb->giRadius, volLb->emissiveScale);
+        common->Printf("  (GI upload for comparison: numLights=%d;  numSelected=%d, numVolSelected=%d, "
+                       "numCandidates=%d)\n",
+                       lb->numLights, numSelected, numVolSelected, numCandidates);
+        for (int i = 0; i < volLb->numLights; i++)
+        {
+            const GILightEntry &e = volLb->lights[i];
+            const int li = (i < numVolSelected) ? s_volSelected[i]->lightIdx : -1;
+            const idRenderLightLocal *ld = (li >= 0 && li < numLightDefs) ? world->lightDefs[li] : NULL;
+            common->Printf("  #%-3d type=%u flags=0x%x origin=(%.0f %.0f %.0f) sphereR=%.1f\n"
+                           "        emitPos=(%.0f %.0f %.0f) lightCenterOffset=%.1f\n"
+                           "        color=(%.3f %.3f %.3f) intensity=%.3f\n"
+                           "        boxExtents=(%.1f %.1f %.1f) reach=%.1f  coneDir=(%.3f %.3f %.3f) "
+                           "cosHalf=%.3f\n"
+                           "        shader=%s\n",
+                           i, e.lightType, e.flags, e.posRadius[0], e.posRadius[1], e.posRadius[2], e.posRadius[3],
+                           e.emitPos[0], e.emitPos[1], e.emitPos[2],
+                           idVec3(e.emitPos[0] - e.posRadius[0], e.emitPos[1] - e.posRadius[1],
+                                  e.emitPos[2] - e.posRadius[2])
+                               .Length(),
+                           e.colorIntensity[0], e.colorIntensity[1], e.colorIntensity[2], e.colorIntensity[3],
+                           e.boxExtents[0], e.boxExtents[1], e.boxExtents[2], e.boxExtents[3], e.coneDir[0],
+                           e.coneDir[1], e.coneDir[2], e.coneDir[3],
+                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>");
+        }
+    }
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).

@@ -73,8 +73,18 @@ void main()
         return;
     }
 
-    vec4 hist    = imageLoad(historyImage, coord);
-    vec4 blended = mix(hist, current, alpha);
+    vec4 hist = imageLoad(historyImage, coord);
+
+    bool currentBad = any(isnan(current)) || any(isinf(current));
+    bool histBad    = any(isnan(hist))    || any(isinf(hist));
+
+    if (currentBad)
+    {
+        imageStore(historyImage, coord, histBad ? vec4(0.0) : hist);
+        return;
+    }
+
+    vec4 blended = mix(histBad ? vec4(0.0) : hist, current, histBad ? 1.0 : alpha);
 
     imageStore(historyImage, coord, blended);
 }
