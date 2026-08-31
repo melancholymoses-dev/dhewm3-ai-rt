@@ -173,14 +173,32 @@ the fix is the same and should land together.
 
 ### Fix
 
-- [ ] Clear the AO image to white (1.0 = unoccluded, matching the shadow mask's
+- [x] Clear the AO image to white (1.0 = unoccluded, matching the shadow mask's
       "fully lit" convention) at creation in `VK_RT_CreateAOMaskImages`.
-- [ ] Clear the reflection image to black at creation in `VK_RT_CreateReflImages`.
-- [ ] Add a per-frame `aoValidThisFrame` flag set by `VK_RT_DispatchAO` on the
-      path that actually reaches `vkCmdTraceRaysKHR`, and gate `useAO` in
+- [x] Clear the reflection image to black at creation in `VK_RT_CreateReflImages`.
+- [x] Add a per-frame validity flag set by `VK_RT_DispatchAO` on the path that
+      actually reaches `vkCmdTraceRaysKHR`, and gate `useAO` in
       `vk_backend.cpp:1122` on it rather than on image non-nullness. This is the
       durable fix — the clear only covers frame 0, the flag covers every
       early-return frame thereafter.
+
+**Implemented 2026-08-30**, immediately after A5, because A5 is what made this
+visible: while the mask was uniformly 1.0 an unwritten texel was
+indistinguishable from a correctly-neutral one.
+
+Landed as `vkRT.aoValid[VK_MAX_FRAMES_IN_FLIGHT]` (`vk_raytracing.h`), cleared at
+the very top of `VK_RT_DispatchAO` *before any early-out* and set only after
+`vkCmdTraceRaysKHR` is recorded. `vkRT` has static storage duration, so the array
+zero-initialises to `false` — the fail-safe direction, AO stays off until a real
+dispatch has happened rather than trusting an untouched image on frame 0.
+
+Both clears reuse the two-barrier `UNDEFINED → GENERAL → clear → GENERAL` shape
+from `vk_vol.cpp:407` rather than inventing a new one; both images already
+carried `VK_IMAGE_USAGE_TRANSFER_DST_BIT`, so no usage-flag change was needed.
+
+Note the flag marks *the scissor rect* as written, not the whole image — the
+creation-time clear is what makes the region outside it neutral. The two halves
+are complementary and neither alone is sufficient.
 
 ---
 
@@ -334,13 +352,29 @@ high-contrast test position rather than a general impression.
 
 ### Fix
 
-- [ ] `ao_ray.rgen`: initialize `aoPayload = 0.0` before `traceRayEXT`, matching
+- [x] `ao_ray.rgen`: initialize `aoPayload = 0.0` before `traceRayEXT`, matching
       `shadow_ray.rgen`. The miss shader already supplies 1.0.
-- [ ] Update the two stale comment lines above it to describe what the rahit
+      **Implemented 2026-08-30.**
+- [x] Update the two stale comment lines above it to describe what the rahit
       actually does (ignore all non-opaque hits), mirroring `shadow_ray.rgen`'s
-      wording so the invariant is written down at both sites.
-- [ ] Re-tune `r_rtAORadius` / `r_rtAOSamples` afterwards. Any value previously
-      settled on was tuned against a no-op and means nothing.
+      wording so the invariant is written down at both sites. Also recorded *why*
+      an opaque hit leaves the payload untouched — no closest-hit shader in any
+      group (`vk_ao.cpp:327/334/341`) plus `gl_RayFlagsSkipClosestHitShaderEXT` —
+      since that is the non-obvious step. Note `ao_ray.rahit`'s own header comment
+      already asserted "making opaque surfaces AO occluders", so the file
+      contradicted itself; it now matches.
+- [ ] Re-tune `r_rtAORadius` (default 64.0) / `r_rtAOSamples` afterwards. Any value
+      previously settled on was tuned against a no-op and means nothing.
+
+**Retest hazard — A2 is now load-bearing.** A5 was the only thing keeping A2
+invisible: while the mask was uniformly 1.0, an uncleared or never-written region
+was indistinguishable from a correctly-neutral one. With AO producing real
+occlusion, `VK_RT_CreateAOMaskImages` still never clears the image and
+`vk_backend.cpp:1122` still gates `useAO` on the image merely *existing* rather
+than on it having been written this frame. Expect garbage AO outside the view
+scissor (subviews: mirrors, cameras, security monitors) and on any frame
+`VK_RT_DispatchAO` early-returns. **If the first A5 retest shows dark blotches in
+those places, that is A2, not a bad A5 fix.**
 
 ---
 
@@ -988,3 +1022,92 @@ Both are real and both were found during this hunt; neither is the wash.
   projected image the light contributes *exactly zero*. Mappers use `*sky` fill
   lights precisely because the projection confines them; we fill the whole
   volume instead. This is the general form of "large areas look wrong."
+
+---
+
+## A12 — Far-field shadow instability: depth precision, amplified by a world-space jitter seed  **[confirmed by experiment, vendor-neutral]**
+
+Investigated 2026-08-30 after a report of small view-angle changes producing
+wildly different shadows on distant geometry (mars_city1 Command HQ, looking out
+at the Mars terrain). A long-standing symptom — weeks were spent on it early in
+the project and the eventual "fix" was never understood.
+
+**Not** caused by `light_center` (A11's follow-up): that is a static per-light
+correction and introduces no view dependence at all.
+
+### Mechanism
+
+Doom 3 uses the infinite-far-Z projection, non-reversed — `projectionMatrix[10] =
+-0.999f`, `[14] = -2*zNear` (`tr_main.cpp:1034-1035`), `r_znear` default 3.
+Window depth is `0.9995 - zNear/d`, so world-position error per depth ULP grows
+as **d²/zNear**:
+
+```
+   dist   windowZ    1-windowZ   ΔWorld/ULP   1/8-unit cells
+   1000  0.996500     3.50e-03      0.0199        0.2
+   3000  0.998500     1.50e-03      0.1788        1.4
+   5000  0.998900     1.10e-03      0.4967        4.0
+  10000  0.999200     8.00e-04      1.9868       15.9
+  20000  0.999350     6.50e-04      7.9473       63.6
+```
+
+`D24_UNORM` and `D32_SFLOAT` are **identical** here (~6e-8 ULP): non-reversed Z
+parks the whole far field just below 1.0, exactly where float32 has no mantissa
+left to spend. A wider depth format buys nothing; reversed-Z is what would.
+
+`shadow_ray.rgen:163` builds its ray origin from `reconstructWorldPos`, so at
+10k units the origin wanders ~2 units against a `baseBias` clamped to `[0.01, 8.0]`.
+
+### The amplifier
+
+`shadow_ray.rgen:339`, labelled "Fix 1: world-space seed":
+
+```glsl
+ivec3 wCell = ivec3( floor( worldPos * 8.0 ) );
+uint  wSeed = wang_hash( uint(wCell.x) * 2053u ^ ... );
+```
+
+A **1/8-unit** world grid, hashed to seed the soft-shadow cone directions. At 10k
+units one depth ULP moves `worldPos` ~2 units ≈ **16 cells**, and a 16-cell jump
+through `wang_hash` is fully decorrelated — a completely different cone sample.
+Cell instability crosses 1.0 at roughly **2,500-3,000 units**: stable below,
+noise above.
+
+**This is why the original fix was never understood: Fix 1 is simultaneously the
+fix and the bug.** It was introduced to stop shadows *swimming* as the camera
+moves — a near-field problem — by anchoring the seed to world space, which it
+does perfectly. It then inverts into worst-case behaviour at range because it
+keys off the one quantity whose precision collapses with distance. No bias value
+could ever have addressed it, which matches the earlier failed attempts.
+
+### Experimental results (2026-08-30)
+
+Three zero-code discriminators were proposed; two were run.
+
+- **`r_znear 24` — FIXED the flickering.** Confirms depth precision as the root
+  cause (error is `d²·ulp/zNear`, so 3 → 24 cuts far-field jitter 8x). Produced
+  black splotches on nearby geometry, as expected: geometry inside 24 units gets
+  clipped, so its reconstruction is garbage. Diagnostic only, not a setting.
+  - Had to be re-applied after every camera cut. **That is not a renderer bug** —
+    `r_znear` is game-owned: `Game_local.cpp:4532` sets it to 1.0 on entering a
+    cinematic ("so that transitioning into/out of the player's head doesn't clip
+    through the view") and 3.0 on the exit paths at `:4520`/`:4590`/`:4626`.
+    Mirrored in `d3xp/Game_local.cpp:4839` etc. Any renderer-side znear change
+    must account for the game stomping it.
+- **`r_rtShadowDebugMode 2` (got-surface-normal) — clean, no flicker near or far.**
+  This **exonerates the depth-derived normal reconstruction**, which had been the
+  secondary hypothesis (shadows never received the P9 G-buffer normal that AO, GI
+  and reflections all consume — `shadow_ray.rgen` still uses central differences
+  at `:235-268`). Position, not normal.
+- **`r_rtShadowSoftRadiusScale 0` — NOT YET RUN.** This is the one that still
+  matters, and it decides the fix:
+  - If hard shadows are stable at range → the `wCell` seed is the dominant term,
+    and the cheap fix is distance-aware cell scaling (scale the grid with view
+    distance so cell size tracks reconstruction error), leaving the projection
+    alone.
+  - If hard shadows still flicker → it is raw position/bias error, and reversed-Z
+    is required — a much larger change touching the projection matrix, the depth
+    compare op, and every depth consumer.
+
+  Both remaining hypotheses are consistent with the `r_znear` result, so that
+  experiment cannot separate them. Run this before writing any fix.

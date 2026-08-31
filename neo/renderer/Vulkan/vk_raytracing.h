@@ -214,6 +214,11 @@ struct vkRTState_t
 
     // AO image and pipeline
     vkAOMask_t aoMask[VK_MAX_FRAMES_IN_FLIGHT];
+    // A2 (amd_vulkan_cleanup.md): set by VK_RT_DispatchAO only once vkCmdTraceRaysKHR has
+    // been recorded for this slot, cleared before every early-out. The interaction pass
+    // must gate on this rather than on aoMask[].image being non-null — an image can exist
+    // and still hold nothing written this frame.
+    bool aoValid[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler aoMaskSampler; // nearest-clamp, used when sampling AO in the lighting pass
 
     VkPipeline aoPipeline;

@@ -162,7 +162,20 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &ao.view));
 
-        // Transition UNDEFINED → GENERAL so the rgen shader can imageStore immediately
+        // Transition UNDEFINED → GENERAL and clear to WHITE so the rgen shader can
+        // imageStore immediately.
+        //
+        // A2 (amd_vulkan_cleanup.md): white = 1.0 = unoccluded, matching the shadow
+        // mask's "fully lit" convention. Every other RT image gets a clear at creation
+        // (vk_gi.cpp:429, vk_temporal.cpp:1005, vk_tonemap.cpp:162, vk_vol.cpp:407) —
+        // this one was the exception, and the interaction shader samples the mask
+        // full-screen whenever the image merely exists. The AO rgen only writes inside
+        // the view scissor, so anything outside it (subviews: mirrors, cameras, security
+        // monitors) was never touched. Uninitialised VRAM read as an AO multiplier
+        // darkens or saturates the lighting arbitrarily.
+        //
+        // This was invisible until A5 landed the same day: while the mask was uniformly
+        // 1.0, an unwritten texel was indistinguishable from a correctly-neutral one.
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         {
             VkCommandBufferAllocateInfo cbAlloc = {};
@@ -177,16 +190,34 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             vkBeginCommandBuffer(tmpCmd, &beginInfo);
 
+            VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
             VkImageMemoryBarrier barrier = {};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
             barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier.image = ao.image;
-            barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier);
+            barrier.subresourceRange = subRange;
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL,
+                                 0, NULL, 1, &barrier);
+
+            VkClearColorValue clearWhite = {};
+            clearWhite.float32[0] = clearWhite.float32[1] = 1.0f;
+            clearWhite.float32[2] = clearWhite.float32[3] = 1.0f;
+            vkCmdClearColorImage(tmpCmd, ao.image, VK_IMAGE_LAYOUT_GENERAL, &clearWhite, 1, &subRange);
+
+            VkImageMemoryBarrier barrier2 = {};
+            barrier2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier2.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barrier2.image = ao.image;
+            barrier2.subresourceRange = subRange;
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier2);
 
             vkEndCommandBuffer(tmpCmd);
 
@@ -510,6 +541,14 @@ void VK_RT_ResizeAOMask(uint32_t width, uint32_t height)
 
 void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
+    // A2 (amd_vulkan_cleanup.md): clear validity for this slot before ANY early-out, and
+    // set it only once the trace has actually been recorded. The creation-time clear
+    // covers frame 0; this covers every frame thereafter where the dispatch bails
+    // (RT off, invalid TLAS across a level load, empty scissor, null image) and would
+    // otherwise leave the interaction shader sampling a stale or unwritten mask while
+    // believing it valid — vk_backend.cpp only checked that the image existed.
+    vkRT.aoValid[vk.currentFrame] = false;
+
     if (!vkRT.isInitialized)
     {
         common->Printf("VK RT AO: skip — RT not initialized\n");
@@ -776,6 +815,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     vkCmdTraceRaysKHR(cmd, &vkRT.aoRgenRegion, &vkRT.aoMissRegion, &vkRT.aoHitRegion, &vkRT.aoCallRegion,
                       dispatchRect.extent.width, dispatchRect.extent.height, 1);
+    // A2: the trace is recorded — the mask is valid for this frame. Note this marks the
+    // scissor rect as written, not the whole image; the creation-time clear is what makes
+    // the region outside it neutral rather than garbage.
+    vkRT.aoValid[frameIdx] = true;
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: traceRaysKHR recorded\n");
 
