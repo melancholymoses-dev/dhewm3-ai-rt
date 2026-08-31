@@ -47,11 +47,14 @@ This is just a definition on the weapon to activate an existing effect.  This wa
 
 1. Vulkan rendering pipeline.  This kept the original GL pipeline that can be toggled back to, and created a Vulkan pipeline in parallel.  That is essential starting point for the vendor neutral ray-tracing work. 
 2. Ray Traced shadows and acceleration structures.
-![Ray Traced Shadows](docs/img/screenshots/20260830_shadow_on.jpg)
-![Ray Traced Original](docs/img/screenshots/20260830_shadow_off.jpg)
-Ray Traced Shadows are in.  (There was a bug around light origin that has been fixed)  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  
+![Ray Traced Shadows](docs/img/screenshots/20260830_shadows_on.jpg)
+![Ray Traced Original](docs/img/screenshots/20260830_shadows_off.jpg)
+Ray Traced Shadows are in.  (There was a bug around light origin that has been fixed)  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, not that noticeable.  
 
-3. Ray-Traced Ambient Occlusion with temporal filtering.  Leads to darkening in the corners.  Now running properly.   
+3. Ray-Traced Ambient Occlusion with temporal filtering.   Now running properly and leads to darkening in the corners.
+![RT Ambient Occlusion](docs/img/screenshots/20260830_AO_on.jpg)
+![RT Ambient Occlusion Off](docs/img/screenshots/20260830_AO_off.jpg)
+
 4. Ray traced Reflections
 
 ![Ray Traced Reflection](docs/img/screenshots/20260415_reflection.jpg)
@@ -74,18 +77,10 @@ The global illumination passes were washing out the color and killing the mood. 
 
 The pipeline and ray-tracing can be enabled/disabled at the terminal in game or via CLI flags.  These are accessible from the Dhewm3 Settings Menu (F10) under Ray Tracing.  The defaults have been set to add noticeable effects - and where a better artist's eye is needed.  
 
-| Flag | Values | Action  |
-|------|--------|-----------|
-| r_backend         | openGL, vulkan | Switch backend.  Needs restart.|
-| r_useRayTracing   | 0, 1 | Toggle for all ray-tracing vs rasterization.  |
-| r_rtshadows       | 0, 1 | Toggle Ray-Traced Shadows  |
-| r_rtao            | 0, 1 | Toggle Ambient Occlusion |
-| r_rtreflections   | 0, 1 | Toggle Ray-Traced Reflections |
-| r_rtgi            | 0, 1 | Toggle Ray-Traced Global Illumination |
-
+## Overall Impact
 Mostly, the ray-tracing is computationally expensive, and tends to fight the original art direction - which the map design and gameplay were already optimized towards.  
 More physically based rendering tends to not be impressive given the game was built around the limitations of the engine.  
-The various effects here tend to soften the harsh shadows of the original for a more diffuse look.
+The various effects here tend to soften the harsh shadows of the original for a more diffuse brighter look.
 
 The two effects I've tried that seem to actually add something are the reflections, and volumetric lighting.  Those both lean into what I liked about Doom 3: moody atmosphere and the play of light and shadow.  
 
