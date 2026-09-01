@@ -1,0 +1,218 @@
+# RT Roadmap — 2026AugRoadmap
+
+**Date:** 2026-08-10 (Waves 1-6 planned); **status reviewed 2026-08-31**
+**This is the entry point.** If you (human or LLM) are wondering what to work on or
+which plan doc is authoritative, start here. Detailed designs live in the live docs
+below; this file owns the *ordering* and the *status*.
+
+**2026-08-31 review: this roadmap (Waves 1-6) is mostly done.** Every wave below has
+landed and been validated in-game except the two items called out in
+**Wave 7** — parallel/sun lights and projected light cookies (fan blades, grates,
+window blinds) — which are the actual open work now. Two smaller loose ends found
+during this review, not blocking either Wave 7 item:
+- **Wave 6 tuning (T3-T6)** in `rt_optimization_tuning.md` was never started (no
+  per-material F0, no falloff-mode A/B, no final constants pass recorded). Low
+  urgency — the base it tunes is stable — but it's the one item from the *original*
+  six waves that isn't actually done, despite the "mostly done" framing above.
+- **`amd_vulkan_cleanup.md`** still has A12 (far-field shadow flicker) waiting on one
+  more zero-code experiment (`r_rtShadowSoftRadiusScale 0`) to pick between a cheap
+  fix and a reversed-Z projection change, and its own status header is stale — A2/A5
+  landed in commit `398095ee` without the doc text being updated to say so.
+
+When the next roadmap cycle starts (post-Wave-7), this file should be moved to
+`completed/` and a fresh entry-point doc started at this same path.
+
+---
+
+## Design pillars (the taste contract)
+
+Decided after review of the shipped RT features against Doom 3's art direction.
+Every stage below serves these; anything that fights them gets cut or demoted.
+
+1. **Shadows are the feature.** Soft, shaped, from more lights (including dynamic
+   weapon/projectile lights). This is where "dynamic lighting" actually lives.
+2. **Darkness stays black.** GI may tint lit regions (color bleed, corner-spill from
+   bright sources); it must never lift the noise floor of dark ones.
+3. **Light the air sparingly.** Volumetrics from hero lights only — flashlight plus a
+   budgeted handful of fixtures/panels.
+4. **Reflections are set dressing.** Mirrors, glass, screens, the odd hero surface —
+   gated by F0, never a global material property. The assets carry no PBR data;
+   don't pretend they do.
+5. **No map editing.** Everything is engine-side rules + budgets + debug overlays.
+   Small def-file mods (weapon/projectile lights) are allowed.
+6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
+   constants get tuned from the overlay, not by eye on the final composite.
+
+## Live documents
+
+| Doc | Owns | Status |
+|---|---|---|
+| `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Waves 2-4 done; **Wave 6 (T3-T6) not started** |
+| `completed/auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | **Done** (Wave 5) — moved to `completed/` |
+| `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs, `parm3`-as-timescale, far-field shadow flicker | Nearly done — A1/A3/A5/A8/A11 landed; **A12 has one experiment left** to pick its fix; A2/A4/A6/A7 minor/latent, not blocking |
+| `rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — spec only, not started | **Wave 7** |
+| `rt_parallel_sun_lights.md` | Admit parallel ("sun") lights to GI/vol/reflections — currently rejected outright in `considerLight` on a premise that turned out to be false; direct lighting/shadows already support them — spec only, not started | **Wave 7** |
+
+`../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
+getting Vulkan validation/GPU-AV output out of this engine — layer settings file,
+env vars, what each VUID class means, this project's own diagnostic cvars. Load it
+before chasing any AMD-vs-NVIDIA or device-lost bug.
+
+Completed / superseded docs are in `completed/` — notably
+`completed/gbuffer_normal_pass.md` (Waves 1a/1b landed: normal/F0 G-buffer in the
+depth prepass, reflection composite; `completed/gi_albedo_target.md` extends its
+G-buffer contract), `completed/lighting_shadows_refinement.md` (Phase 9 record:
+shape-aware soft shadows and Fresnel normalization, both landed; its Stages
+3/3.5/4a/4b were redesigned into the live docs above),
+`completed/portal_area_lights.md` (topology-aware GI/vol light gathering via id's
+portal-area lightRefs — Stages 1/1.5/1.75 + the dedicated vol-light-selection fix,
+done 2026-08-22; Stage 3's per-room curation sidecar was never started and is not
+being carried forward as open work), `completed/gi_albedo_target.md`
+(receiver-albedo G-buffer target + `gi × albedo` composite, done 2026-08-22), and
+`completed/auto_relight.md` (Wave 5 — synthesized panel lights + noShadows unlock,
+AR0-AR7 all landed, moved here 2026-08-31).
+
+---
+
+## Order of operations
+
+Rationale in brief: the G-buffer is both the reflection-correctness fix *and* the
+biggest reflection perf win; quick perf items buy the sample-count headroom that
+kills GI noise (1→4 samples was a huge visual win — Wave 3 makes 8+ affordable);
+invasive restructures come next; new lights (auto-relight) land on the fast base;
+constants get tuned **last**, because Waves 1/3/5 each change what the constants mean.
+
+```
+Wave 1 — G-buffer + reflection composite         [gbuffer_normal_pass.md]
+  1a  Commit 1: independentBlend, image, render pass/framebuffer/pipeline plumbing,
+      prepass writes normal+F0, debug modes 2-4.  NO visible change; validate via overlays.
+  1b  Commit 2: rgen reads G-buffer, F0 early-out, refl_composite pass, delete
+      interaction.frag reflection block, re-enable reflections.
+      → fixes: grate-mirror bug, N×-per-light reflection brightness, grazing blowout
+        (T1/T2 land here), most of reflection GPU cost (P2).
+
+Wave 2 — Perf quick wins (independent, small)     [rt_optimization_tuning.md]
+  P7   TLAS PREFER_FAST_BUILD                  (~1 line)
+  P6   sceneHasGlass probe skip                (~20 lines)
+  P4   shadow-ray threshold in reflect rchit   (~5 lines)
+  P1a  per-light blur skip for small rects
+  L1   stratified light tiers + importance sort + hysteresis  (CPU only)
+  P5   shared rt_light_eval.glsl               (prep for P3)
+
+Wave 3 — GI quality-per-ray                       [rt_optimization_tuning.md]
+  P3   stochastic light selection at bounce hits (1-2 lights, importance-weighted)
+       ✅ implemented 2026-08-15 (r_rtGIStochasticLights, default 2)
+  →    then RAISE r_rtGISamples with the freed budget — the noise-reduction payoff
+       (deliberately deferred: validate P3 at samples=4 first)
+  P9   AO/GI rgen read G-buffer normals (G-buffer commit 3)
+       ✅ implemented 2026-08-15 (r_rtGbufNormals, default 1)
+
+Wave 4 — Structural perf                          [rt_optimization_tuning.md]
+  P1b  batched shadow masks (4 lights/RGBA8 or texture array; zero render-pass
+       breaks in the interaction loop)  ← enabler for Wave 5's extra lights
+       ✅ implemented 2026-08-15 (R8 array, 7 batched layers + 1 serial;
+          r_rtShadowBatch, default 1).  Untested; profiler capture still owed.
+  P8   half-res volumetric march + bilateral upsample
+       ✅ implemented 2026-08-15 (r_rtVolHalfRes, default 1; march + temporal EMA
+          at half res, joint bilateral upsample resolves to full).  Untested.
+       ✅ IGN dither striping fixed 2026-08-22 (rt_optimization_tuning.md P8
+          follow-up): march-step jitter blends a small amount of white noise back
+          into the IGN pattern (`r_rtVolWhiteNoiseMix`, tuned in-game to 0.025 —
+          0.25 was too strong, caused visible flickering) to break up the IGN
+          grid's diagonal striping without reintroducing the beam-decorrelation
+          problem IGN was originally added to fix. Tested in-game, working.
+
+Wave 5 — Auto-relight                             [auto_relight.md]
+  AR0   shared light classifier (REAL/ACCENT/AMBIENT_FILL/FOG_BLEND) + layered GI/vol
+       admission + saturation-weighted importance + r_rtGILightDump.  Lands FIRST —
+       no dependency on synthesis; fixes the live "uniform white GI lift" bug (the
+       GI/vol collector filters entity noShadows only, so ambient washes are IN and
+       colored accents are OUT — inverted from intent; see auto_relight.md AR0).
+       ✅ implemented 2026-08-15; validated in-game 2026-08-15/16 via dump.
+  AREA portal-area light gathering        [DONE — completed/portal_area_lights.md]
+       Replace the camera-sphere light cull with a walk of id's live per-area
+       lightRefs (BFS over portals, door-aware).  Fixes "big room goes dark" and
+       through-wall slot waste observed 2026-08-16; Stage 3 adds the per-room
+       pin/ban curation sidecar.  Independent of synthesis; feeds AR0 + L1 unchanged.
+       ✅ Stage 1 implemented 2026-08-16; doorway validation passed in-game
+          (closed door blocks far room's lights, open admits them).
+       ✅ Stage 1.5 implemented 2026-08-19 (view-flood union — fixes stationary
+          "looking across the room at an out-of-hop-range light" pop, confirmed
+          via dump comparison to be a hop-boundary cliff, not an adjacency bug),
+          untested in-game. Stage 2 (transition blend) built then reverted —
+          depended on a still-broken GI/Vol temporal camera-cut fix and was
+          superseded in priority by Stage 1.5's broader coverage.
+       ✅ Stage 1.75 implemented 2026-08-19 (BFS seeds from every area touching a
+          box around the camera via BoundsInAreas, not the single hard
+          PointInArea pick — fixes hop numbers flipping wholesale when standing
+          at a threshold/boundary and stepping slightly left/right while facing
+          straight at the dividing wall).
+       ✅ In-game dump validation 2026-08-22: Stage 1.75 confirmed working as designed
+          (admission set stable across a real hallway threshold); Stage 1.5 confirmed
+          actually firing at a zig-zag corridor (view-flood union nearly doubling the
+          candidate pool when a hub area becomes visible down the hall). Root cause of
+          the reported volumetric on/off pop wasn't either stage directly — it was
+          `vol_march.comp` sharing GI's light buffer/ranking, so a Stage-1.5-admitted
+          light that can never appear in fog (too far for `r_rtVolMaxDist`) could evict
+          a genuinely nearby, march-relevant one purely by winning a shared slot.
+       ✅ Vol-specific light selection implemented 2026-08-22 (portal_area_lights.md):
+          volumetrics now reads a dedicated, distance-filtered selection (new
+          `vkRT.volLightSsbo`) built from the same admitted-candidate pool as GI, not
+          a raw prefix of GI's own buffer. GI/reflections' own selection is untouched.
+          `r_rtVolMaxLights` 32→96 along the way (interim mitigation, now mostly
+          redundant). **Validated in-game 2026-08-22 — pop confirmed fixed. AREA
+          done** — moved to `completed/portal_area_lights.md`. Stage 3 (per-room
+          pin/ban curation sidecar) was never started and is not carried forward
+          as open work; revisit only if a concrete need for it shows up later.
+  ALB  GI receiver-albedo modulation      [DONE — completed/gi_albedo_target.md]
+       gbufAlbedo target in the G-buffer prepass + a gi_albedo_mod.comp pass
+       (post à-trous) multiplying denoised GI by it before composite.
+       Fixes the "noticeable GI looks worse" wash (bodies underlit yellow,
+       2026-08-16) — serves pillar 2 directly.  Do BEFORE AR1-5: synthesized
+       panel lights would otherwise amplify the wash, and GI constants retune
+       after this lands anyway.
+       ✅ implemented 2026-08-16, **validated in-game 2026-08-22** (bodies/corpses
+          now read as dark cloth with a subtle tint, not a color wash — the
+          original motivating bug is fixed). **ALB done** — moved to
+          `completed/gi_albedo_target.md`. It surfaced a real follow-on: with
+          volumetrics also contributing luminance now, blacks were reading
+          lifted — but that's tracked as tonemapping tuning
+          (`completed/tonemapping.md`/`tonemapping2.md`), not as open ALB scope;
+          the receiver-albedo modulation feature itself is finished.
+  AR1-5 Synthesized real lights from emissive panels (cluster → score → dedupe →
+       AddLightDef), AR6 noShadows unlock rule, AR7 weapon/projectile def patches.
+  Delivers: panels casting shadowed light, zombie silhouettes in volumetric glow.
+  (AR1-5 can be tried earlier with r_rtAutoRelightMax 6 if impatient — P1b makes it cheap.)
+  ✅ AR1-5 implemented 2026-08-23 (r_rtAutoRelight, default 0; r_rtAutoRelightDebug
+     console table). Not yet validated in-game — see auto_relight.md's per-AR-stage
+     notes for implementation findings (VK_RT_MaterialIsEmissive extracted as a shared
+     helper; the GenerateAllInteractions hook point; the R_LoadImage CPU-reload for
+     AR3 luminance; the world-axis lightRadius simplification for AR5, since RT
+     shadow/GI/vol consumers ignore point-light axis rotation). AR6/AR7 not started.
+
+
+
+## Backlog (not in the current arc, not dead)
+
+| Item | Doc | Note |
+|---|---|---|
+| Bloom post-process | `bloom_plan.md` | Unimplemented; revisit after Wave 6 — tonemapped HDR pipeline it needs now exists |
+| First-person player body | `see_first_person_player_model.md` | Orthogonal to lighting arc |
+| Projectiles in reflections | `completed/reflection_enhancements.md` AR3 | Sprite attempt was reverted (f37f071b); needs a new approach |
+| Translucent square borders over reflections | `completed/reflection_enhancements.md` (last section) | Polish |
+| Roughness-blurred reflections | — | Explicitly out of scope until G-buffer + composite prove out; interim is T2's grazing clamp + F0 gating |
+| Runtime emissive-state lights (scripted screens turning off) | `completed/auto_relight.md` limitations | v2 of auto-relight |
+| Froxel volumetrics + probe GI | `froxel_probe_gi.md` | Post-Wave-7 arc; needs the owed profiler checkpoints first |
+
+## Status tracking
+
+Update this table as waves land (and move fully-finished docs to `completed/`).
+
+| Wave | Status | Landed in commit(s) | Profiler checkpoint taken? |
+|---|---|---|---|
+| 1a | landed | 811d6ca7, 29dac019, d4449803 (gbuffer branch) | no |
+| 1b | landed | 928f1a8f, 7154481e (gbuffer branch) | no |
+| 2 | implemented, uncommitted (2026-08-14) | gbuffer branch working tree | no |
+| 3 | P3 running; P9 implemented, untested (2026-08-15). Remaining: raise r_rtGISamples | rt_perf2_b working tree | no |
+| 4 | P1b + P8 implemented (2026-08-15); P1b runs, P8 untested | rt_perf2_b working tree | no — new `Shadows` / `VolBilateral` phases exist for it |
+| 5 | **Done, moved to `completed/auto_relight.md` (2026-08-31).** AR0 + portal-area gathering (Stages 1/1.5/1.75) + vol-specific light selection + GI albedo modulation all implemented and validated in-game through 2026-08-22 (see the doc's own history for the pop-fix and IGN-dither-fix chain); AR1-5 synthesis implemented 2026-08-23; AR6 (noShadows unlock) implemented 2026-08-26, not yet re-validated in-game; AR7 (weapon/muzzle-flash self-shadow) implemented with its own debug view. Two loose ends noted, not blocking: tonemapping retune for volumetrics lifting blacks (tracked in `completed/tonemapping.md`/`tonemapping2.md`), and GI/Vol temporal camera-cut detection still using the original raw-matrix-diff metric (likely false-positives on ordinary camera motion). | auto-relight working tree, 2026-08-23 through 2026-08-26 | no |
