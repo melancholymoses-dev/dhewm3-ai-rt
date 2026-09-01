@@ -524,6 +524,8 @@ Implementation (`vk_gi.cpp`, `vk_vol.cpp`, `vol_march.comp`):
 volume with `r_rtVolMuzzleSelfShadowDebug 1`, watch the magenta pattern at a few bias
 values, then decide whether 4.0 (or some other value) gives a clean silhouette before
 flipping `r_rtVolMuzzleSelfShadow` on for real.
+Decision: Leaving this off.  So much is moving it's barely noticeable - and we're using the third person
+animations which differ from first person.
 
 ---
 
