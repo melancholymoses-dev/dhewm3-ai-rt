@@ -96,7 +96,7 @@ void main()
         // The reflected colour is tinted by the glass diffuse texture.
         // The remaining 95 % continues straight through (no refraction).
         // Glass tint is left unlit — it is a transmission colour, not a surface.
-        const float F0      = 0.05;
+        const float F0      = 0.1;
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);

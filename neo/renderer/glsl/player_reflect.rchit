@@ -8,20 +8,12 @@ Player body instances (noSelfShadow entities) are routed to this hit group via
 instanceShaderBindingTableRecordOffset = 2 in the TLAS.  The world hit group
 (offset 0) is kept clean and never sees player geometry.
 
-Two cases based on ray travel distance:
-
-  Close range (< PLAYER_REFLECT_SKIP_DIST):
-    Ray is most likely fired from a floor or wall surface adjacent to the
-    player's own body — e.g. a reflective floor directly under the player's
-    feet.  Return transmittance = 1.0 so the rgen bounce loop fires a
-    continuation ray straight through the player model, preventing the
-    player's dark geometry from appearing as blotches in floor reflections.
-
-  Mirror distance (>= PLAYER_REFLECT_SKIP_DIST):
-    Ray arrived from a reflective surface far enough away that the player
-    body is a genuine scene element — e.g. a wall mirror.  Sample the
-    diffuse texture and return it normally so the player appears in the
-    reflection.
+Lighting now uses the same shadowed rt_light_eval.glsl loop as reflect_ray.rchit
+(shares this pipeline's SBT, so RT_LIGHT_SHADOW_MISS_INDEX is 2 here too) instead
+of a hand-rolled unshadowed distance/NdotL sum — the old loop had no occlusion
+test at all, so any light in range lit the player reflection at full strength
+even through walls, reading as a flat, too-bright reflection regardless of the
+room's actual lighting.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -40,47 +32,32 @@ Code release.
 #extension GL_EXT_shader_explicit_arithmetic_types_int64   : require
 #extension GL_EXT_nonuniform_qualifier                     : enable
 
+// TLAS needed to fire shadow rays from this hit shader.
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+
 #include "rt_material.glsl"
 #include "reflect_payload.glsl"
+#include "gi_shadow_payload.glsl"
 
 layout(location = 0) rayPayloadInEXT ReflPayload reflPayload;
+
+// Shared light loop (P5) — declares the light SSBO (set=0, binding=4) and the
+// location-1 shadow payload. Miss index 2 = gi_shadow.rmiss's slot in this
+// pipeline (this hit group shares reflect_ray.rchit's pipeline/SBT).
+#define RT_LIGHT_SHADOW_MISS_INDEX 2
+#include "rt_light_eval.glsl"
+
 hitAttributeEXT vec2 baryCoord;
 
-// ---------------------------------------------------------------------------
-// GI light list — same buffer as reflect_ray.rchit uses for irradiance.
-// ---------------------------------------------------------------------------
-struct ReflGILight {
-    vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
-    vec4 colorIntensity; // rgb = light colour, a = intensity
-    vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
-    vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
-    uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
-    uint _pad0; uint _pad1; uint _pad2;
-    // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. See vk_gi.cpp's
-    // GILightEntry::emitPos. Must be declared even where unused — this struct mirrors a
-    // shared SSBO layout, and omitting the field would shift every subsequent light.
-    vec4 emitPos;        // xyz = globalLightOrigin, w unused
-};
-
-layout(set = 0, binding = 4, std430) readonly buffer ReflLightBuf {
-    int        numLights;
-    float      bounceScale;
-    float      giRadius;    // r_rtGIRadius — max range for light evaluation
-    float      emissiveScale; // r_rtGIEmissiveScale — layout compatibility
-    ReflGILight lights[];
-} reflLightBuf;
-
-// Reflection rays originating within this distance of the player body are
-// treated as pass-through (transmittance = 1.0) to prevent self-occlusion
-// blotches in floor / adjacent-surface reflections.
-// Value should exceed the player's bounding height (~56 units in Doom3 scale).
-const float PLAYER_REFLECT_SKIP_DIST = 10.0;
-#define REFL_MAX_LIGHTS 128
+// Same budget/bias constants as reflect_ray.rchit — see that file for rationale.
+#define REFL_MAX_SHADOW_LIGHTS 8
+#define REFL_SHADOW_BIAS       0.5
+#define REFL_SHADOW_MIN_LUM    0.02
+#define REFL_AMBIENT           0.01
 
 void main()
-{   
-
-    // Mirror distance: look up diffuse texture and apply per-light irradiance.
+{
+    // Mirror distance: look up diffuse texture and apply per-light shadowed irradiance.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
     if (matIdx >= uint(materials.length()))
     {
@@ -91,40 +68,17 @@ void main()
 
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
 
-    if (reflLightBuf.numLights > 0)
+    if (rtLightBuf.numLights > 0)
     {
         vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
         vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
         if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
             hitNorm = -hitNorm;
 
-        const float kAmbient = 0.01;
-        vec3 irradiance = vec3(kAmbient);
-        int n = min(reflLightBuf.numLights, REFL_MAX_LIGHTS);
-        for (int i = 0; i < n; i++)
-        {
-            vec3  lPos   = reflLightBuf.lights[i].posRadius.xyz; // volume centre
-            vec3  lEmit  = reflLightBuf.lights[i].emitPos.xyz;   // emitter
-            float lRad   = reflLightBuf.lights[i].posRadius.w;
-            vec3  lColor = reflLightBuf.lights[i].colorIntensity.rgb;
-            float lInt   = reflLightBuf.lights[i].colorIntensity.a;
-            // Range/falloff from the volume centre, direction from the emitter — the
-            // same split as rt_light_eval.glsl, see GILightEntry::emitPos in vk_gi.cpp.
-            vec3  toL     = lEmit - hitPos;
-            float dist    = length(toL);
-            float volDist = length(lPos - hitPos);
-            // Match reflect_ray.rchit: extend eval range beyond lRad so player
-            // geometry is still reached by room lights whose origin is far away.
-            float evalRadius = max(reflLightBuf.giRadius, lRad * 2.0);
-            if (volDist >= evalRadius || dist < 0.01) continue;
-            float NdotL  = dot(hitNorm, toL / dist);
-            if (NdotL <= 0.0) continue;
-            // Normalized inverse-square: continuous, no hard cutoff at lRad.
-            float t = volDist / lRad;
-            float atten = 1.0 / (t * t + 1.0);
-            if (atten < 0.02) continue;
-            irradiance += lColor * lInt * NdotL * atten;
-        }
+        vec3 irradiance = vec3(REFL_AMBIENT) +
+                          rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
+                                                REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
+                                                1.0, REFL_SHADOW_MIN_LUM);
         reflPayload.colour = diffuse.rgb * irradiance;
     }
     else
