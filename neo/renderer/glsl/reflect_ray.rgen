@@ -241,7 +241,7 @@ void main()
         // also apply this radiance using that unrelated surface's F0/normal —
         // glass_refl_overlay.frag already fully composites it. Magnitude is
         // unaffected; that pass takes abs(alpha).
-        const float GLASS_F0 = 0.1;
+        const float GLASS_F0 = 0.15;
         float cosTheta = clamp(abs(dot(normalize(reflNormal), normalize(reflDir))), 0.0, 1.0);
         float oneMinusCos = 1.0 - cosTheta;
         float glassWeight =
