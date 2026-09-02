@@ -265,8 +265,11 @@ struct vkRTState_t
 
     // Per-slot history validity and camera-state cache for cut detection.
     // Reset to false when the slot's images are recreated or the pipeline is (re)initialised.
+    // See VK_RT_DetectCameraCut (vk_temporal.cpp) — position/orientation deltas,
+    // not a raw inverse-view-projection matrix diff (rt_temporal_cut_detection.md).
     bool aoHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
-    float aoPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
+    idVec3 aoPrevCamPos[VK_MAX_FRAMES_IN_FLIGHT];
+    idVec3 aoPrevCamFwd[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // Atrous spatial filter (Step 5.2b)
@@ -320,12 +323,13 @@ struct vkRTState_t
     // giReadView: updated each frame to point at giHistory when temporal is
     //   active, or giBuffer when r_rtGITemporal is off.  The composite pass
     //   and any future interaction-shader sampling should read from giReadView.
-    // giHistoryValid / giPrevInvViewProj: camera-cut detection state (same
-    //   convention as aoHistoryValid / aoPrevInvViewProj).
+    // giHistoryValid / giPrevCamPos / giPrevCamFwd: camera-cut detection state
+    //   (same convention as aoHistoryValid / aoPrevCamPos / aoPrevCamFwd).
     // --------------------------------------------------------------------------
     vkReflBuffer_t giHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated GI history
     bool           giHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
-    float          giPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
+    idVec3         giPrevCamPos[VK_MAX_FRAMES_IN_FLIGHT];
+    idVec3         giPrevCamFwd[VK_MAX_FRAMES_IN_FLIGHT];
     VkImageView    giReadView[VK_MAX_FRAMES_IN_FLIGHT];             // composite reads from here
 
     VkPipeline            giTemporalPipeline;
@@ -504,7 +508,8 @@ struct vkRTState_t
     // Volumetric temporal EMA (Phase 7.2 — step 8)
     vkReflBuffer_t volHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated history
     bool           volHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
-    float          volPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16];
+    idVec3         volPrevCamPos[VK_MAX_FRAMES_IN_FLIGHT];
+    idVec3         volPrevCamFwd[VK_MAX_FRAMES_IN_FLIGHT];
     VkImageView    volReadView[VK_MAX_FRAMES_IN_FLIGHT]; // → history when on, → volBuffer when off
 
     VkPipeline            volTemporalPipeline;
@@ -734,6 +739,32 @@ enum vkRTLightClass_t
 
 vkRTLightClass_t VK_RT_ClassifyLight(const renderLight_t &parms, const idMaterial *lightShader);
 const char *VK_RT_LightClassName(vkRTLightClass_t cls);
+
+// ---------------------------------------------------------------------------
+// Shared camera-cut detection (rt_temporal_cut_detection.md)
+//
+// Used by the AO/GI/volumetric temporal EMA passes (vk_temporal.cpp, vk_vol.cpp)
+// to decide whether to blend with history or replace it outright. Tests the
+// camera's actual position/orientation delta rather than a raw inverse-view-
+// projection matrix diff — that matrix is ill-conditioned under Doom 3's
+// infinite-far-Z projection (amd_vulkan_cleanup.md A12) and was firing on
+// ordinary mouselook (confirmed in-game: maxDiff ~472 vs. a 0.5 threshold,
+// even standing still).
+//
+// prevPos/prevFwd are updated in place to the current frame's values on every
+// call, regardless of historyValid — callers own the per-slot storage
+// (vkRT.{ao,gi,vol}PrevCamPos/Fwd) and pass historyValid from their own
+// per-slot flag (vkRT.{ao,gi,vol}HistoryValid).
+// ---------------------------------------------------------------------------
+struct vkRTCameraCutResult_t
+{
+    bool  isCut;
+    float posDelta;   // world units moved since the last call for this slot
+    float angleDelta; // degrees rotated since the last call for this slot
+};
+
+vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &prevPos, idVec3 &prevFwd,
+                                            bool historyValid, const char *tag);
 
 // ---------------------------------------------------------------------------
 // P1b — batched shadow masks

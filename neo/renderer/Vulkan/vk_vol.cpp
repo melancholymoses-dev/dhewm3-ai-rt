@@ -813,8 +813,6 @@ static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.15", CVAR_RENDERER
                                    "Vol EMA blend factor: 0=history only, 1=current only. "
                                    "0.1-0.2 recommended; lower = smoother but more ghosting.");
 
-extern idCVar r_rtAOTemporalCutThreshold; // camera-cut L-inf threshold, defined in vk_temporal.cpp
-
 static VkRect2D s_volTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 // Mirrors VK_RT_ComputeViewDispatchRect from vk_temporal.cpp (static there, duplicated here).
@@ -1004,7 +1002,8 @@ static void VK_RT_CreateVolHistoryImages(uint32_t width, uint32_t height)
         if (!VK_RT_AllocVolHistoryImage(vkRT.volHistory[i], width, height))
             common->Warning("VK RT Vol Temporal: failed to allocate history slot %d", i);
         vkRT.volHistoryValid[i] = false;
-        memset(vkRT.volPrevInvViewProj[i], 0, sizeof(vkRT.volPrevInvViewProj[i]));
+        vkRT.volPrevCamPos[i].Zero();
+        vkRT.volPrevCamFwd[i].Zero();
         vkRT.volReadView[i] = vkRT.volHistory[i].view;
     }
 }
@@ -1188,43 +1187,19 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
         return;
     }
 
-    // --- Camera-cut detection (same L-inf convention as GI temporal) ---
-    float invVP[16];
-    {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-        idMat4 inv = vpMat.Inverse();
-        memcpy(invVP, inv.ToFloatPtr(), 16 * sizeof(float));
-    }
+    // --- Camera-cut detection ---
+    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.volPrevCamPos[frameIdx], vkRT.volPrevCamFwd[frameIdx],
+                                                      vkRT.volHistoryValid[frameIdx], "Vol");
 
     float effectiveAlpha = 1.0f;
     if (vkRT.volHistoryValid[frameIdx])
     {
-        float maxDiff = 0.0f;
-        for (int i = 0; i < 16; i++)
-        {
-            float d = fabsf(invVP[i] - vkRT.volPrevInvViewProj[frameIdx][i]);
-            if (d > maxDiff)
-                maxDiff = d;
-        }
-        float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
-        if (maxDiff <= cutThresh)
+        if (!cut.isCut)
             effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtVolTemporalAlpha.GetFloat());
         else if (r_vkLogRT.GetInteger() >= 1)
-            common->Printf("VK RT Vol Temporal: camera cut slot=%d maxDiff=%.4f — resetting history\n", frameIdx,
-                           maxDiff);
+            common->Printf("VK RT Vol Temporal: camera cut slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
+                           frameIdx, cut.posDelta, cut.angleDelta);
     }
-    memcpy(vkRT.volPrevInvViewProj[frameIdx], invVP, sizeof(invVP));
     vkRT.volHistoryValid[frameIdx] = true;
 
     // --- Update descriptor set ---

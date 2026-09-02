@@ -4675,7 +4675,23 @@ void VK_RB_DrawView(const void *data)
         // RT passes use temporal accumulation buffers that span the entire screen.
         // Mirrors and subviews re-render the view, which incorrectly replaces the
         // main view's history buffers with their alternate perspective, causing ghosting.
-        if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror)
+        //
+        // 2026-08-31 (rt_temporal_cut_detection.md follow-up): Doom 3 submits the 2D
+        // GUI/HUD overlay as a second RC_DRAW_VIEW every frame (this function's own
+        // comment above), with a renderView that's never populated (no camera makes
+        // sense for a 2D pass) — neither isSubview nor isMirror, so it was passing this
+        // guard and re-running AO/Refl/GI/Vol against a degenerate view every frame.
+        // First attempt gated on viewEntitys != NULL (tr_local.h's documented "is this
+        // view solely 2D" signal) — wrong: viewEntitys only chains actual game entities
+        // (R_SetEntityDefViewEntity, tr_light.cpp:441), NOT the static world/brush
+        // geometry (rendered via the separate worldSpace viewEntity), so any ordinary
+        // corridor with zero monsters/items on screen also has viewEntitys == NULL and
+        // was being wrongly skipped too — surfaced as GI ghosting at disoccluded edges
+        // during camera motion (AO/Vol far less visibly, same root cause). Use the
+        // actual confirmed signature instead: the GUI overlay's viewaxis is the zero
+        // vector, which no real camera (with or without visible entities) ever has.
+        const bool hasRealCamera = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f;
+        if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror && hasRealCamera)
         {
             VK_SetRenderStage("RT_AO");
             const uint64_t rtCpuAOStart = VK_RTProfile_CPUStamp();

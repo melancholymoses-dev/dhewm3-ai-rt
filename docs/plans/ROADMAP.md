@@ -48,7 +48,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs, `parm3`-as-timescale, far-field shadow flicker | Nearly done — A1/A3/A5/A8/A11 landed; **A12 has one experiment left** to pick its fix; A2/A4/A6/A7 minor/latent, not blocking |
 | `rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — spec only, not started | **Wave 7** |
 | `rt_parallel_sun_lights.md` | Admit parallel ("sun") lights to GI/vol/reflections — currently rejected outright in `considerLight` on a premise that turned out to be false; direct lighting/shadows already support them — spec only, not started | **Wave 7** |
-| `rt_temporal_cut_detection.md` | Fix GI/AO/vol temporal camera-cut detection — currently compares raw inverse-view-projection matrix elements against a fixed epsilon, which is ill-conditioned (worse under the infinite-far-Z projection A12 already flagged) and fires on ordinary mouselook, not just real cuts. Spec only, not started | **Wave 7 — do first** |
+| `rt_temporal_cut_detection.md` | Fix GI/AO/vol temporal camera-cut detection (ill-conditioned matrix diff → position/angle test) **and** a deeper bug it exposed: the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` per frame was slipping past the mirror/subview guard and re-running AO/Refl/GI/Vol every frame — AO with no dedup guard at all, so it was a real duplicated ray trace, not just corrupted state | ✅ **Implemented 2026-08-31**, not yet re-validated in-game |
 
 `../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
 getting Vulkan validation/GPU-AV output out of this engine — layer settings file,
@@ -67,17 +67,29 @@ Wave 6 — Tuning pass                              [rt_optimization_tuning.md T
 
 Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.md, new]
   This is the actual open arc as of 2026-08-31 — everything above has landed.
-  TEMPORAL  Do this one first, ahead of COOKIE/SUN below — it's a correctness bug
-          undermining GI/AO/vol quality that's already shipped, not new coverage.
-          Camera-cut detection compares raw inverse-view-projection matrix elements
-          against a fixed epsilon; that matrix is ill-conditioned under Doom 3's
-          infinite-far-Z projection (same root cause A12 already diagnosed for
-          shadow rays), so ordinary mouselook reads as a "cut" almost every frame
-          and temporal accumulation barely ever actually runs. Fix: test camera
+  TEMPORAL  ✅ Implemented 2026-08-31. Was a correctness bug undermining GI/AO/vol
+          quality that's already shipped, not new coverage. Camera-cut detection
+          compared raw inverse-view-projection matrix elements against a fixed
+          epsilon; that matrix is ill-conditioned under Doom 3's infinite-far-Z
+          projection (same root cause A12 already diagnosed for shadow rays), so
+          ordinary mouselook read as a "cut" almost every frame (confirmed via
+          log: maxDiff ~472 vs. a 0.5 threshold, even standing still) and temporal
+          accumulation barely ever actually ran. Fixed by testing camera
           position/orientation deltas directly instead of matrix elements — see
-          `rt_temporal_cut_detection.md`. Also unblocks `portal_area_lights.md`'s
-          shelved Stage 2 (transition blend), which depended on this being fixed.
-          ⬜ NOT STARTED.
+          `rt_temporal_cut_detection.md`. That fix's own diagnostic logging then
+          caught a second, deeper bug: Doom 3's 2D GUI/HUD overlay is a second
+          `RC_DRAW_VIEW` every frame with a fully zeroed camera, and it was
+          slipping past the mirror/subview guard to re-run AO/Refl/GI/Vol every
+          frame — AO has no dedup guard at all, so this was a genuine duplicated
+          ray trace (real GPU cost), not just corrupted temporal state. First fix
+          attempt (`viewEntitys != NULL`) was itself wrong — that only chains game
+          entities, not static world geometry, so it wrongly skipped every ordinary
+          empty-of-entities room too (caused visible GI ghosting, caught and
+          reverted same day). Actual fix tests the camera directly: the overlay's
+          `viewaxis` is the zero vector, which no real camera ever has
+          (`vk_backend.cpp`). Not yet re-validated in-game. Also
+          unblocks `portal_area_lights.md`'s shelved Stage 2 (transition blend),
+          which depended on this being fixed.
   COOKIE  Projected light cookie/gobo textures — the classic Doom 3 fan-blade-shadow-
           in-a-light-shaft effect is a rotating material texture on a spot light
           (`lights/fanlightgrate`), not geometry; our RT path already admits these
