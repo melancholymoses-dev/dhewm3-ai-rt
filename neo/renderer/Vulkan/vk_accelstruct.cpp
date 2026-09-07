@@ -623,8 +623,8 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             // reflection rays can hit it.  Translucent non-glass surfaces (smoke,
             // particles, flares) also carry noshadows+translucent but should be
             // excluded — the RT pipeline would render them as opaque white boxes.
-            const bool isWindowGlass = surf->shader->Coverage() == MC_TRANSLUCENT &&
-                                       surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
+            const bool isWindowGlass =
+                surf->shader->Coverage() == MC_TRANSLUCENT && surf->shader->GetSurfaceType() == SURFTYPE_GLASS;
             if (surf->shader->TestMaterialFlag(MF_NOSHADOWS) && !isWindowGlass)
                 continue;
             const deform_t def = surf->shader->Deform();
@@ -682,8 +682,7 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
         validSurfUseGpu[validCount] = haveGpuGeom;
         if (r_vkLogRT.GetInteger() >= 2)
         {
-            common->Printf("VK RT BLAS SURF: model='%s' surf=%d shader='%s' cov=%d noshadow=%d\n",
-                           model->Name(), s,
+            common->Printf("VK RT BLAS SURF: model='%s' surf=%d shader='%s' cov=%d noshadow=%d\n", model->Name(), s,
                            surf->shader ? surf->shader->GetName() : "<null>",
                            surf->shader ? (int)surf->shader->Coverage() : -1,
                            surf->shader ? (int)surf->shader->TestMaterialFlag(MF_NOSHADOWS) : -1);
@@ -1447,7 +1446,7 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             inst.transform.matrix[2][3] = m[14];
 
             inst.instanceCustomIndex = 0; // patched below
-            inst.mask = 0xFE; // bit 0 reserved for player geometry, see the dynamic-instance mask above
+            inst.mask = 0xFE;             // bit 0 reserved for player geometry, see the dynamic-instance mask above
             inst.instanceShaderBindingTableRecordOffset = 0;
             inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
             inst.accelerationStructureReference = cached->deviceAddress;
@@ -1471,10 +1470,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
                     s_staticGeomVtxAddrs[base + g] = (uint64_t)cached->geomVertAddrs[g];
                     s_staticGeomIdxAddrs[base + g] = (uint64_t)cached->geomIdxAddrs[g];
                     // A6: fold into staticSignature — see the other construction site.
-                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g],
-                                                              sizeof(uint64_t));
-                    staticSignature = VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g],
-                                                              sizeof(uint64_t));
+                    staticSignature =
+                        VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomVtxAddrs[base + g], sizeof(uint64_t));
+                    staticSignature =
+                        VK_RT_HashFnv1a64_Bytes(staticSignature, &s_staticGeomIdxAddrs[base + g], sizeof(uint64_t));
                 }
             }
             staticGeomCount += cached->geomCount;
@@ -2049,7 +2048,8 @@ void VK_RT_BeginLevelLoad(void)
     }
     // Temporal history from the old level is meaningless for the new one.
     vkRT.aoHistoryValid = false;
-
+    vkRT.giHistoryValid = false;
+    vkRT.volHistoryValid = false;
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n",
                        s_modelBLASCacheCount);

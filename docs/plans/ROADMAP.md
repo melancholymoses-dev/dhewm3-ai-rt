@@ -39,16 +39,23 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
    constants get tuned from the overlay, not by eye on the final composite.
 
+
+## Completed 
+| Doc | Owns | Status |
+|---|---|---|
+| `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs, `parm3`-as-timescale, far-field shadow flicker | Nearly done — A1/A3/A5/A8/A11 landed; **A12 has one experiment left** to pick its fix; A2/A4/A6/A7 minor/latent, not blocking |
+| `completed/auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | **Done** (Wave 5) — moved to `completed/` |
+| `rt_parallel_sun_lights.md` | Admit parallel ("sun") lights to GI/vol/reflections — currently rejected outright in `considerLight` on a premise that turned out to be false; direct lighting/shadows already support them — spec only, not started.  Not pursuing. | **Wave 7** |
+| `rt_temporal_cut_detection.md` | Fix GI/AO/vol temporal camera-cut detection (ill-conditioned matrix diff → position/angle test) **and** a deeper bug it exposed: the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` per frame was slipping past the mirror/subview guard and re-running AO/Refl/GI/Vol every frame — AO with no dedup guard at all, so it was a real duplicated ray trace, not just corrupted state | ✅ **Implemented 2026-08-31**, validated in-game |
+
+
 ## Live documents
 
 | Doc | Owns | Status |
 |---|---|---|
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Waves 2-4 done; **Wave 6 (T3-T6) not started** |
-| `completed/auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | **Done** (Wave 5) — moved to `completed/` |
-| `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs, `parm3`-as-timescale, far-field shadow flicker | Nearly done — A1/A3/A5/A8/A11 landed; **A12 has one experiment left** to pick its fix; A2/A4/A6/A7 minor/latent, not blocking |
 | `rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — spec only, not started | **Wave 7** |
-| `rt_parallel_sun_lights.md` | Admit parallel ("sun") lights to GI/vol/reflections — currently rejected outright in `considerLight` on a premise that turned out to be false; direct lighting/shadows already support them — spec only, not started | **Wave 7** |
-| `rt_temporal_cut_detection.md` | Fix GI/AO/vol temporal camera-cut detection (ill-conditioned matrix diff → position/angle test) **and** a deeper bug it exposed: the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` per frame was slipping past the mirror/subview guard and re-running AO/Refl/GI/Vol every frame — AO with no dedup guard at all, so it was a real duplicated ray trace, not just corrupted state | ✅ **Implemented 2026-08-31**, not yet re-validated in-game |
+
 
 `../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
 getting Vulkan validation/GPU-AV output out of this engine — layer settings file,
@@ -98,22 +105,12 @@ Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.m
           needed (light projection planes, animated texture matrix, bindless image)
           already exists in the shared frontend and material table, this is wiring,
           not new math. ⬜ NOT STARTED.
-  SUN     Parallel/directional ("sun") lights for GI/volumetrics/reflections —
-          seen rarely from inside the Mars base (windows/skylights). Smaller than
-          COOKIE, and smaller than originally scoped here: `considerLight` rejects
-          them on a stated premise ("infinite, no volume boundary") that doesn't
-          match the GL reference path — a Doom 3 parallel light is a normal
-          box-bounded point light that fakes direction via a 100,000-unit-distant
-          `globalLightOrigin`, and direct lighting/RT shadows already use that value
-          today with no exclusion. The fix is closer to "stop rejecting them" than
-          "build a new containment model" — see `rt_parallel_sun_lights.md` for the
-          full trace through `tr_lightrun.cpp`/`vk_shadows.cpp`. ⬜ NOT STARTED.
 
 After Wave 7: reassess against the pillars. Candidate next arc:
 - **world-space caching** (`froxel_probe_gi.md`, designed 2026-08-23) — froxel-grid
   volumetrics + DDGI-style probe GI: move the expensive sampling out of screen
   space into cached world-space structures; big perf win, deletes most of the
-  GI noise-fighting chain (and its open camera-cut bug) structurally.
+  GI noise-fighting chain structurally.
 
 ## Backlog (not in the current arc, not dead)
 
