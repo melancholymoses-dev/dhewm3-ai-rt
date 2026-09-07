@@ -13,9 +13,15 @@ here are justified by perf numbers we have not actually captured yet.
 The two most expensive RT features (volumetrics, GI) currently recompute their
 sampling **per screen pixel, per frame**, and then fight the resulting noise with
 screen-space machinery (checkerboard, temporal EMA, à-trous, bilateral upsample).
-Screen-space temporal reuse is fragile — it reprojects, ghosts, and resets on
-camera cuts (the GI/Vol camera-cut detection bug is still open precisely because
-of this).
+Screen-space temporal reuse is fragile — it ghosts under motion and resets on
+camera cuts. The specific bugs behind that have since been fixed (the 2026-08-31
+camera-cut false-positive fix, `rt_temporal_cut_detection.md`, and a 2026-09-06
+fix for AO/GI/Vol history accidentally being duplicated per frame-in-flight slot
+instead of shared — which halved the real update rate and doubled ghosting; see
+`vk_raytracing.h`'s temporal EMA resolve comment), but the underlying fragility
+is structural, not a lingering bug: none of the three passes reproject history
+with motion vectors, so any screen-space EMA still ghosts under camera/object
+motion by design.
 
 Both features can instead cache their expensive result in **world space**, where
 temporal reuse is trivially valid (a world position doesn't move when the camera
@@ -94,9 +100,16 @@ temporal integration — reproject cell center into last frame's grid, blend). T
 is far more robust than screen-space EMA because a 3D fetch miss just means "new
 territory, take current sample" — no ghosting trails on geometry edges. Jitter the
 per-cell sample position within the cell per frame (reuse the IGN +
-`r_rtVolWhiteNoiseMix` blend — the striping lesson from P8 transfers directly, and
-per [feedback_per_slot_counters] any frame-rotation term must key off a per-slot
-counter, not `tr.frameCount`, if grids end up per-frame-in-flight).
+`r_rtVolWhiteNoiseMix` blend — the striping lesson from P8 transfers directly).
+Any frame-rotation *index* term (e.g. which quarter of Z slices updates this
+frame) must key off a per-slot counter, not `tr.frameCount`, if that bookkeeping
+ends up per-frame-in-flight (per [feedback_per_slot_counters]) — but the froxel
+grid's own accumulated EMA buffer should be a single image shared across both
+slots, not duplicated per slot. AO/GI/Vol's screen-space history made exactly
+that mistake (fixed 2026-09-06): giving each frame-in-flight slot its own
+history meant each one only updated every other frame, silently halving the
+real update rate. Same fix applies here if needed — one grid, ordered by
+submission order plus an explicit barrier, not per-slot isolation.
 
 Update rotation (e.g. ¼ of Z slices per frame, `r_rtVolFroxelRotate`) is a
 Stage F2 option once F1's full-rate cost is measured — don't build it speculatively.
@@ -156,8 +169,9 @@ color bleed), much better fit for this codebase.
   carries all short-range contact darkening that sparse probes can't represent.
 - **Dies (in probe mode):** `gi_ray.rgen` per-pixel dispatch, checkerboarding
   and `checkerPhase`, `gi_temporal_resolve.comp`, `gi_atrous.comp` — the entire
-  noise-fighting chain, including its open camera-cut bug, which probe GI
-  side-steps structurally (probes don't care about camera cuts).
+  noise-fighting chain (its camera-cut and per-slot-history bugs are fixed as of
+  2026-09-06, but probe GI still side-steps the whole class structurally —
+  probes don't care about camera cuts or motion at all).
 
 ### Probe placement + scheduling — reuse the portal-area work
 

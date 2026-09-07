@@ -20,11 +20,14 @@ read/write conflict across the double-buffer boundary.
 
 Camera-cut detection
 --------------------
-On the first use of a slot, or whenever the per-slot cached invViewProj
-matrix differs from the current frame's matrix by more than
-r_rtAOTemporalCutThreshold, alpha is forced to 1.0 so history is replaced
-entirely with the current frame.  This prevents stale history from
-ghosting through level transitions and teleport cuts.
+On the first use of a slot, or whenever the camera has moved/rotated more than
+r_rtTemporalCutPosThreshold / r_rtTemporalCutAngleThreshold since the last frame
+this slot was used (VK_RT_DetectCameraCut), alpha is forced to 1.0 so history is
+replaced entirely with the current frame.  This prevents stale history from
+ghosting through level transitions and teleport cuts.  See
+rt_temporal_cut_detection.md for why this is a position/angle test rather than
+an inverse-view-projection matrix diff (the earlier approach fired on ordinary
+mouselook, not just real cuts).
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -54,9 +57,15 @@ idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.3", CVAR_RENDERER | CVAR_FL
                          "EMA blend factor: 0=use only history, 1=use only current frame (reset). "
                          "Lower values are smoother but ghost more during movement.");
 
-idCVar r_rtAOTemporalCutThreshold("r_rtAOTemporalCutThreshold", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                "Max L-inf distance between consecutive invViewProj matrices before "
-                                "history is discarded (camera cut / teleport detection).");
+idCVar r_rtTemporalCutPosThreshold("r_rtTemporalCutPosThreshold", "6", CVAR_RENDERER | CVAR_FLOAT,
+                                 "Max world units the camera can move in one frame before AO/GI/vol "
+                                 "temporal history is discarded (camera cut / teleport detection). "
+                                 "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
+
+idCVar r_rtTemporalCutAngleThreshold("r_rtTemporalCutAngleThreshold", "4", CVAR_RENDERER | CVAR_FLOAT,
+                                   "Max degrees the camera can rotate in one frame before AO/GI/vol "
+                                   "temporal history is discarded (camera cut / teleport detection). "
+                                   "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
 
 idCVar r_rtAtrousIterations("r_rtAtrousIterations", "4", CVAR_RENDERER | CVAR_INTEGER,
                             "Atrous spatial AO filter passes after EMA (0=off, 2 or 4 recommended). "
@@ -75,6 +84,49 @@ idCVar r_rtAtrousSigmaLuminance("r_rtAtrousSigmaLuminance", "0.1", CVAR_RENDERER
 extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
+
+// ---------------------------------------------------------------------------
+// VK_RT_DetectCameraCut — shared by AO/GI (this file) and volumetrics
+// (vk_vol.cpp). See the declaration in vk_raytracing.h and
+// rt_temporal_cut_detection.md for why this tests position/angle deltas
+// instead of a raw inverse-view-projection matrix diff.
+// ---------------------------------------------------------------------------
+vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &prevPos, idVec3 &prevFwd,
+                                            bool historyValid, const char *tag)
+{
+    const idVec3 &pos = viewDef->renderView.vieworg;
+    const idVec3 &fwd = viewDef->renderView.viewaxis[0]; // forward, unit length
+
+    vkRTCameraCutResult_t result = {true, 0.0f, 0.0f};
+    if (historyValid)
+    {
+        result.posDelta = (pos - prevPos).Length();
+
+        float cosAngle = idMath::ClampFloat(-1.0f, 1.0f, fwd * prevFwd);
+        result.angleDelta = RAD2DEG(idMath::ACos(cosAngle));
+
+        const float posThresh   = Max(0.0f, r_rtTemporalCutPosThreshold.GetFloat());
+        const float angleThresh = Max(0.0f, r_rtTemporalCutAngleThreshold.GetFloat());
+        result.isCut = (result.posDelta > posThresh) || (result.angleDelta > angleThresh);
+
+        // Raw-vector dump for whichever pass detects a cut — this is what caught the
+        // 2026-08-31 degenerate-2D-view bug (see the viewEntitys != NULL guard added
+        // to vk_backend.cpp the same day): posDelta/angleDelta identical every frame,
+        // on both slots, only explainable by prevPos/prevFwd alternating with a
+        // genuine (0,0,0) view rather than by a threshold that's merely too tight.
+        if (result.isCut && r_vkLogRT.GetInteger() >= 2)
+        {
+            common->Printf("VK RT CutDbg %s: pos=(%.2f %.2f %.2f) prevPos=(%.2f %.2f %.2f) "
+                           "fwd=(%.3f %.3f %.3f) prevFwd=(%.3f %.3f %.3f) posDelta=%.3f angleDelta=%.3f\n",
+                           tag, pos.x, pos.y, pos.z, prevPos.x, prevPos.y, prevPos.z, fwd.x, fwd.y, fwd.z,
+                           prevFwd.x, prevFwd.y, prevFwd.z, result.posDelta, result.angleDelta);
+        }
+    }
+
+    prevPos = pos;
+    prevFwd = fwd;
+    return result;
+}
 
 static VkRect2D s_temporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
@@ -240,27 +292,23 @@ static void VK_RT_FreeHistoryImage(vkAOMask_t &img)
 
 static void VK_RT_CreateHistoryImages(uint32_t width, uint32_t height)
 {
+    // Single shared history image now (see vk_raytracing.h) — both frame-in-flight
+    // slots' descriptor sets and aoReadView entries point at the same image.
+    if (!VK_RT_AllocHistoryImage(vkRT.aoHistory, width, height))
+        common->Warning("VK RT Temporal: failed to allocate history image");
+    // History is not valid yet — first dispatch will fill it with alpha=1.0
+    vkRT.aoHistoryValid = false;
+    vkRT.aoPrevCamPos.Zero();
+    vkRT.aoPrevCamFwd.Zero();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (!VK_RT_AllocHistoryImage(vkRT.aoHistory[i], width, height))
-        {
-            common->Warning("VK RT Temporal: failed to allocate history image slot %d", i);
-        }
-        // History is not valid yet — first dispatch will fill it with alpha=1.0
-        vkRT.aoHistoryValid[i] = false;
-        memset(vkRT.aoPrevInvViewProj[i], 0, sizeof(vkRT.aoPrevInvViewProj[i]));
         // Default: backend samples aoHistory directly until Atrous updates aoReadView
-        vkRT.aoReadView[i] = vkRT.aoHistory[i].view;
-    }
+        vkRT.aoReadView[i] = vkRT.aoHistory.view;
 }
 
 static void VK_RT_DestroyHistoryImages(void)
 {
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        VK_RT_FreeHistoryImage(vkRT.aoHistory[i]);
-        vkRT.aoHistoryValid[i] = false;
-    }
+    VK_RT_FreeHistoryImage(vkRT.aoHistory);
+    vkRT.aoHistoryValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -400,10 +448,8 @@ void VK_RT_ResizeTemporal(uint32_t width, uint32_t height)
 
     // Force descriptor refresh — old image views are dead.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
         vkRT.temporalDescSetLastUpdatedFrameCount[i] = -1;
-        vkRT.aoHistoryValid[i] = false;
-    }
+    vkRT.aoHistoryValid = false;
     VK_RT_ResizeAtrous(width, height);
 }
 
@@ -431,7 +477,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
 
     vkAOMask_t &current = vkRT.aoMask[frameIdx];
-    vkAOMask_t &history = vkRT.aoHistory[frameIdx];
+    vkAOMask_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
 
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
@@ -440,53 +486,41 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
     }
 
-    // --- Camera-cut detection ---
-    // Build the current invViewProj (same convention as AO dispatch)
-    float invVP[16];
+    // History is shared across both frame-in-flight slots, so this frame's read/write
+    // must be ordered after whatever last touched it (last frame's compute write, or
+    // this frame's own downstream fragment/Atrous read of last frame's result).
+    // Submission order (single queue, one command buffer per frame) already sequences
+    // the two; this barrier supplies the memory-visibility guarantee ordering alone
+    // doesn't give.
     {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-        idMat4 inv = vpMat.Inverse();
-        memcpy(invVP, inv.ToFloatPtr(), 16 * sizeof(float));
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
     }
+
+    // --- Camera-cut detection ---
+    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.aoPrevCamPos, vkRT.aoPrevCamFwd,
+                                                      vkRT.aoHistoryValid, "AO");
 
     // First-frame or cut: use alpha=1.0 to avoid NaN/stale history.
     float effectiveAlpha = 1.0f;
-    if (vkRT.aoHistoryValid[frameIdx])
+    if (vkRT.aoHistoryValid)
     {
-        // L-inf distance between the previous and current invViewProj matrices.
-        float maxDiff = 0.0f;
-        for (int i = 0; i < 16; i++)
-        {
-            float d = fabsf(invVP[i] - vkRT.aoPrevInvViewProj[frameIdx][i]);
-            if (d > maxDiff)
-                maxDiff = d;
-        }
-        float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
-        if (maxDiff <= cutThresh)
+        if (!cut.isCut)
         {
             effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtAOTemporalAlpha.GetFloat());
         }
         else if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK RT Temporal: camera cut detected slot=%d maxDiff=%.4f — resetting history\n", frameIdx,
-                           maxDiff);
+            common->Printf("VK RT Temporal: camera cut detected slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
+                           frameIdx, cut.posDelta, cut.angleDelta);
         }
     }
 
-    // Store current matrix for next time this slot is used.
-    memcpy(vkRT.aoPrevInvViewProj[frameIdx], invVP, sizeof(invVP));
-    vkRT.aoHistoryValid[frameIdx] = true;
+    vkRT.aoHistoryValid = true;
 
     // --- Update descriptor set (once per frame slot) ---
     // Important: descriptors bind specific VkImageViews. Re-check every frame
@@ -579,8 +613,9 @@ static void VK_RT_CreateScratchImages(uint32_t width, uint32_t height)
     {
         if (!VK_RT_AllocHistoryImage(vkRT.aoScratch[i], width, height))
             common->Warning("VK RT Atrous: failed to allocate scratch image slot %d", i);
-        // aoReadView points at aoHistory by default; DispatchAtrousAO updates it each frame
-        vkRT.aoReadView[i] = vkRT.aoHistory[i].view;
+        // aoReadView points at aoHistory (single shared image) by default; DispatchAtrousAO
+        // updates it each frame
+        vkRT.aoReadView[i] = vkRT.aoHistory.view;
     }
 }
 
@@ -758,8 +793,8 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
     if (iters == 0)
     {
         // No Atrous: ensure backend samples the up-to-date EMA history directly
-        if (vkRT.aoHistory[frameIdx].view != VK_NULL_HANDLE)
-            vkRT.aoReadView[frameIdx] = vkRT.aoHistory[frameIdx].view;
+        if (vkRT.aoHistory.view != VK_NULL_HANDLE)
+            vkRT.aoReadView[frameIdx] = vkRT.aoHistory.view;
         return;
     }
 
@@ -769,7 +804,7 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
         return;
     }
 
-    vkAOMask_t &history = vkRT.aoHistory[frameIdx];
+    vkAOMask_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
     vkAOMask_t &scratch = vkRT.aoScratch[frameIdx];
 
     if (history.image == VK_NULL_HANDLE || scratch.image == VK_NULL_HANDLE)
@@ -1046,25 +1081,24 @@ static void VK_RT_FreeGIHistoryImage(vkReflBuffer_t &img)
 
 static void VK_RT_CreateGIHistoryImages(uint32_t width, uint32_t height)
 {
+    // Single shared history image now (see vk_raytracing.h) — both frame-in-flight
+    // slots' descriptor sets and giReadView entries point at the same image.
+    if (!VK_RT_AllocGIHistoryImage(vkRT.giHistory, width, height))
+        common->Warning("VK RT GI Temporal: failed to allocate GI history image");
+    vkRT.giHistoryValid = false;
+    vkRT.giPrevCamPos.Zero();
+    vkRT.giPrevCamFwd.Zero();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (!VK_RT_AllocGIHistoryImage(vkRT.giHistory[i], width, height))
-            common->Warning("VK RT GI Temporal: failed to allocate GI history image slot %d", i);
-        vkRT.giHistoryValid[i] = false;
-        memset(vkRT.giPrevInvViewProj[i], 0, sizeof(vkRT.giPrevInvViewProj[i]));
         // Default: composite reads history (will be refreshed from first dispatch)
-        vkRT.giReadView[i] = vkRT.giHistory[i].view;
-    }
+        vkRT.giReadView[i] = vkRT.giHistory.view;
 }
 
 static void VK_RT_DestroyGIHistoryImages(void)
 {
+    VK_RT_FreeGIHistoryImage(vkRT.giHistory);
+    vkRT.giHistoryValid = false;
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        VK_RT_FreeGIHistoryImage(vkRT.giHistory[i]);
-        vkRT.giHistoryValid[i] = false;
-        vkRT.giReadView[i]     = VK_NULL_HANDLE;
-    }
+        vkRT.giReadView[i] = VK_NULL_HANDLE;
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,10 +1225,8 @@ void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height)
     VK_RT_CreateGIHistoryImages(width, height); // also resets giReadView → giHistory
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
         vkRT.giTemporalDescSetLastUpdatedFrameCount[i] = -1;
-        vkRT.giHistoryValid[i] = false;
-    }
+    vkRT.giHistoryValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,7 +1260,7 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
 
     vkReflBuffer_t &current = vkRT.giBuffer[frameIdx];
-    vkReflBuffer_t &history = vkRT.giHistory[frameIdx];
+    vkReflBuffer_t &history = vkRT.giHistory; // single shared image — see vk_raytracing.h
 
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
@@ -1237,48 +1269,36 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
     }
 
-    // --- Camera-cut detection (same L-inf convention as AO temporal) ---
-    float invVP[16];
+    // History is shared across both frame-in-flight slots — see the identical
+    // barrier in VK_RT_DispatchTemporalResolveAO for why this is needed.
     {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv   = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0],vp[1],vp[2],vp[3]),   idVec4(vp[4],vp[5],vp[6],vp[7]),
-                     idVec4(vp[8],vp[9],vp[10],vp[11]),  idVec4(vp[12],vp[13],vp[14],vp[15]));
-        idMat4 inv = vpMat.Inverse();
-        memcpy(invVP, inv.ToFloatPtr(), 16 * sizeof(float));
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
     }
 
+    // --- Camera-cut detection ---
+    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.giPrevCamPos, vkRT.giPrevCamFwd,
+                                                      vkRT.giHistoryValid, "GI");
+
     float effectiveAlpha = 1.0f;
-    if (vkRT.giHistoryValid[frameIdx])
+    if (vkRT.giHistoryValid)
     {
-        float maxDiff = 0.0f;
-        for (int i = 0; i < 16; i++)
-        {
-            float d = fabsf(invVP[i] - vkRT.giPrevInvViewProj[frameIdx][i]);
-            if (d > maxDiff) maxDiff = d;
-        }
-        float cutThresh = Max(0.0f, r_rtAOTemporalCutThreshold.GetFloat());
-        if (maxDiff <= cutThresh)
+        if (!cut.isCut)
         {
             effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtGITemporalAlpha.GetFloat());
         }
         else if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK RT GI Temporal: camera cut slot=%d maxDiff=%.4f — resetting history\n",
-                           frameIdx, maxDiff);
+            common->Printf("VK RT GI Temporal: camera cut slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
+                           frameIdx, cut.posDelta, cut.angleDelta);
         }
     }
 
-    memcpy(vkRT.giPrevInvViewProj[frameIdx], invVP, sizeof(invVP));
-    vkRT.giHistoryValid[frameIdx] = true;
+    vkRT.giHistoryValid = true;
 
     // --- Update descriptor set (once per frame slot) ---
     if (vkRT.giTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)

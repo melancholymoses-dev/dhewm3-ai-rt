@@ -248,11 +248,20 @@ struct vkRTState_t
     // --------------------------------------------------------------------------
     // Temporal EMA resolve (Step 5.2)
     //
-    // One history image per frame-in-flight slot — safe because the per-slot fence
-    // guarantees the previous use of the same slot is complete before we start the
-    // next frame using that slot.  Never share history images between slots.
+    // Single shared history image, NOT one per frame-in-flight slot. The EMA
+    // recurrence (history = mix(history, current, alpha)) is inherently sequential
+    // across frames; giving each of the two in-flight slots its own history meant
+    // each one only updated every other frame, doubling the effective time constant
+    // and the screen-space ghosting under motion (see rt_temporal_cut_detection.md's
+    // sibling doc on cut detection for the related per-pass history discussion).
+    // Safe without per-slot isolation because every frame's RT work goes through one
+    // command buffer submitted to vk.graphicsQueue (vk_backend.cpp), so submission
+    // order already places last frame's write before this frame's read/write;
+    // VK_RT_DispatchTemporalResolveAO issues an explicit barrier for the memory
+    // dependency that ordering alone doesn't cover. aoMask (current) stays per-slot
+    // below — it's freshly written every frame with no cross-frame dependency.
     // --------------------------------------------------------------------------
-    vkAOMask_t aoHistory[VK_MAX_FRAMES_IN_FLIGHT]; // accumulated EMA history, R8_UNORM
+    vkAOMask_t aoHistory; // accumulated EMA history, R8_UNORM
 
     // Temporal compute pipeline (temporal_resolve.comp)
     VkPipeline temporalPipeline;
@@ -263,10 +272,13 @@ struct vkRTState_t
     VkDescriptorSet temporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int temporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Per-slot history validity and camera-state cache for cut detection.
-    // Reset to false when the slot's images are recreated or the pipeline is (re)initialised.
-    bool aoHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
-    float aoPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
+    // History validity and camera-state cache for cut detection — single instance,
+    // matching aoHistory itself now being single instance (see above).
+    // See VK_RT_DetectCameraCut (vk_temporal.cpp) — position/orientation deltas,
+    // not a raw inverse-view-projection matrix diff (rt_temporal_cut_detection.md).
+    bool aoHistoryValid;
+    idVec3 aoPrevCamPos;
+    idVec3 aoPrevCamFwd;
 
     // --------------------------------------------------------------------------
     // Atrous spatial filter (Step 5.2b)
@@ -290,10 +302,10 @@ struct vkRTState_t
     VkDescriptorSet atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][2];
     int atrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // View sampled by the interaction pass.  Initialised to aoHistory[i].view at
+    // View sampled by the interaction pass.  Initialised to aoHistory.view at
     // CreateHistoryImages; updated at end of each DispatchAtrousAO to whichever
     // image holds the final Atrous output (history if even pass count, scratch if odd).
-    // Falls back to aoHistory[i].view when Atrous is disabled (r_rtAtrousIterations 0).
+    // Falls back to aoHistory.view when Atrous is disabled (r_rtAtrousIterations 0).
     VkImageView aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
@@ -315,17 +327,19 @@ struct vkRTState_t
     // --------------------------------------------------------------------------
     // GI temporal EMA accumulation (Phase 6.2)
     //
-    // giHistory: RGBA16F per-slot accumulation buffer.  gi_temporal_resolve.comp
-    //   blends giBuffer (raw current frame) into giHistory each frame.
-    // giReadView: updated each frame to point at giHistory when temporal is
-    //   active, or giBuffer when r_rtGITemporal is off.  The composite pass
+    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot — see the
+    //   AO temporal comment above for why. gi_temporal_resolve.comp blends giBuffer
+    //   (raw current frame) into it.
+    // giReadView: per-slot; updated each frame to point at giHistory when temporal
+    //   is active, or giBuffer when r_rtGITemporal is off.  The composite pass
     //   and any future interaction-shader sampling should read from giReadView.
-    // giHistoryValid / giPrevInvViewProj: camera-cut detection state (same
-    //   convention as aoHistoryValid / aoPrevInvViewProj).
+    // giHistoryValid / giPrevCamPos / giPrevCamFwd: camera-cut detection state,
+    //   single instance alongside giHistory (same convention as AO's).
     // --------------------------------------------------------------------------
-    vkReflBuffer_t giHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated GI history
-    bool           giHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
-    float          giPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16]; // column-major, GL convention
+    vkReflBuffer_t giHistory; // RGBA16F accumulated GI history
+    bool           giHistoryValid;
+    idVec3         giPrevCamPos;
+    idVec3         giPrevCamFwd;
     VkImageView    giReadView[VK_MAX_FRAMES_IN_FLIGHT];             // composite reads from here
 
     VkPipeline            giTemporalPipeline;
@@ -502,9 +516,11 @@ struct vkRTState_t
     VkDescriptorSet       volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Volumetric temporal EMA (Phase 7.2 — step 8)
-    vkReflBuffer_t volHistory[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F accumulated history
-    bool           volHistoryValid[VK_MAX_FRAMES_IN_FLIGHT];
-    float          volPrevInvViewProj[VK_MAX_FRAMES_IN_FLIGHT][16];
+    // volHistory is single shared, not per-slot — see the AO temporal comment above.
+    vkReflBuffer_t volHistory; // RGBA16F accumulated history
+    bool           volHistoryValid;
+    idVec3         volPrevCamPos;
+    idVec3         volPrevCamFwd;
     VkImageView    volReadView[VK_MAX_FRAMES_IN_FLIGHT]; // → history when on, → volBuffer when off
 
     VkPipeline            volTemporalPipeline;
@@ -627,7 +643,7 @@ void VK_RT_ResizeTemporal(uint32_t width, uint32_t height);
 // Called from VK_RT_DispatchAO after the AO ray dispatch ends.
 // On entry aoMask[currentFrame] has been written and a memory barrier
 // (RAY_TRACING → COMPUTE|FRAGMENT) has already been issued by the AO dispatch.
-// On exit aoHistory[currentFrame] contains the blended result and a
+// On exit aoHistory contains the blended result and a
 // (COMPUTE_WRITE → COMPUTE|FRAGMENT_READ) barrier is issued so either Atrous
 // or the interaction pass can consume it.
 void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
@@ -734,6 +750,32 @@ enum vkRTLightClass_t
 
 vkRTLightClass_t VK_RT_ClassifyLight(const renderLight_t &parms, const idMaterial *lightShader);
 const char *VK_RT_LightClassName(vkRTLightClass_t cls);
+
+// ---------------------------------------------------------------------------
+// Shared camera-cut detection (rt_temporal_cut_detection.md)
+//
+// Used by the AO/GI/volumetric temporal EMA passes (vk_temporal.cpp, vk_vol.cpp)
+// to decide whether to blend with history or replace it outright. Tests the
+// camera's actual position/orientation delta rather than a raw inverse-view-
+// projection matrix diff — that matrix is ill-conditioned under Doom 3's
+// infinite-far-Z projection (amd_vulkan_cleanup.md A12) and was firing on
+// ordinary mouselook (confirmed in-game: maxDiff ~472 vs. a 0.5 threshold,
+// even standing still).
+//
+// prevPos/prevFwd are updated in place to the current frame's values on every
+// call, regardless of historyValid — callers own the per-slot storage
+// (vkRT.{ao,gi,vol}PrevCamPos/Fwd) and pass historyValid from their own
+// per-slot flag (vkRT.{ao,gi,vol}HistoryValid).
+// ---------------------------------------------------------------------------
+struct vkRTCameraCutResult_t
+{
+    bool  isCut;
+    float posDelta;   // world units moved since the last call for this slot
+    float angleDelta; // degrees rotated since the last call for this slot
+};
+
+vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &prevPos, idVec3 &prevFwd,
+                                            bool historyValid, const char *tag);
 
 // ---------------------------------------------------------------------------
 // P1b — batched shadow masks
@@ -858,7 +900,7 @@ void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height);
 // Must be called after VK_RT_DispatchGI (outside a render pass).
 // On entry giBuffer[currentFrame] is in GENERAL with a shader-write → shader-read barrier
 // already issued by VK_RT_DispatchGI.
-// On exit giHistory[currentFrame] contains the blended result; giReadView[currentFrame]
+// On exit giHistory contains the blended result; giReadView[currentFrame]
 // is set to giHistory.view and a (COMPUTE_WRITE → FRAGMENT_READ) barrier is issued.
 void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
