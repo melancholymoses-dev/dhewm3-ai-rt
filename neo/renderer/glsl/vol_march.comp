@@ -115,6 +115,8 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
     float  bounceScale;
     float  giRadius;
     float  emissiveScale;
+    float  reflAmbientScale;
+    float  _pad0[3];
     GILight lights[];
 } giLightBuf;
 
