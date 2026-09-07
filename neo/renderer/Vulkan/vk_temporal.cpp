@@ -292,28 +292,23 @@ static void VK_RT_FreeHistoryImage(vkAOMask_t &img)
 
 static void VK_RT_CreateHistoryImages(uint32_t width, uint32_t height)
 {
+    // Single shared history image now (see vk_raytracing.h) — both frame-in-flight
+    // slots' descriptor sets and aoReadView entries point at the same image.
+    if (!VK_RT_AllocHistoryImage(vkRT.aoHistory, width, height))
+        common->Warning("VK RT Temporal: failed to allocate history image");
+    // History is not valid yet — first dispatch will fill it with alpha=1.0
+    vkRT.aoHistoryValid = false;
+    vkRT.aoPrevCamPos.Zero();
+    vkRT.aoPrevCamFwd.Zero();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (!VK_RT_AllocHistoryImage(vkRT.aoHistory[i], width, height))
-        {
-            common->Warning("VK RT Temporal: failed to allocate history image slot %d", i);
-        }
-        // History is not valid yet — first dispatch will fill it with alpha=1.0
-        vkRT.aoHistoryValid[i] = false;
-        vkRT.aoPrevCamPos[i].Zero();
-        vkRT.aoPrevCamFwd[i].Zero();
         // Default: backend samples aoHistory directly until Atrous updates aoReadView
-        vkRT.aoReadView[i] = vkRT.aoHistory[i].view;
-    }
+        vkRT.aoReadView[i] = vkRT.aoHistory.view;
 }
 
 static void VK_RT_DestroyHistoryImages(void)
 {
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        VK_RT_FreeHistoryImage(vkRT.aoHistory[i]);
-        vkRT.aoHistoryValid[i] = false;
-    }
+    VK_RT_FreeHistoryImage(vkRT.aoHistory);
+    vkRT.aoHistoryValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -453,10 +448,8 @@ void VK_RT_ResizeTemporal(uint32_t width, uint32_t height)
 
     // Force descriptor refresh — old image views are dead.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
         vkRT.temporalDescSetLastUpdatedFrameCount[i] = -1;
-        vkRT.aoHistoryValid[i] = false;
-    }
+    vkRT.aoHistoryValid = false;
     VK_RT_ResizeAtrous(width, height);
 }
 
@@ -484,7 +477,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
 
     vkAOMask_t &current = vkRT.aoMask[frameIdx];
-    vkAOMask_t &history = vkRT.aoHistory[frameIdx];
+    vkAOMask_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
 
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
@@ -493,13 +486,28 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
     }
 
+    // History is shared across both frame-in-flight slots, so this frame's read/write
+    // must be ordered after whatever last touched it (last frame's compute write, or
+    // this frame's own downstream fragment/Atrous read of last frame's result).
+    // Submission order (single queue, one command buffer per frame) already sequences
+    // the two; this barrier supplies the memory-visibility guarantee ordering alone
+    // doesn't give.
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
+
     // --- Camera-cut detection ---
-    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.aoPrevCamPos[frameIdx], vkRT.aoPrevCamFwd[frameIdx],
-                                                      vkRT.aoHistoryValid[frameIdx], "AO");
+    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.aoPrevCamPos, vkRT.aoPrevCamFwd,
+                                                      vkRT.aoHistoryValid, "AO");
 
     // First-frame or cut: use alpha=1.0 to avoid NaN/stale history.
     float effectiveAlpha = 1.0f;
-    if (vkRT.aoHistoryValid[frameIdx])
+    if (vkRT.aoHistoryValid)
     {
         if (!cut.isCut)
         {
@@ -512,7 +520,7 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         }
     }
 
-    vkRT.aoHistoryValid[frameIdx] = true;
+    vkRT.aoHistoryValid = true;
 
     // --- Update descriptor set (once per frame slot) ---
     // Important: descriptors bind specific VkImageViews. Re-check every frame
@@ -605,8 +613,9 @@ static void VK_RT_CreateScratchImages(uint32_t width, uint32_t height)
     {
         if (!VK_RT_AllocHistoryImage(vkRT.aoScratch[i], width, height))
             common->Warning("VK RT Atrous: failed to allocate scratch image slot %d", i);
-        // aoReadView points at aoHistory by default; DispatchAtrousAO updates it each frame
-        vkRT.aoReadView[i] = vkRT.aoHistory[i].view;
+        // aoReadView points at aoHistory (single shared image) by default; DispatchAtrousAO
+        // updates it each frame
+        vkRT.aoReadView[i] = vkRT.aoHistory.view;
     }
 }
 
@@ -784,8 +793,8 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
     if (iters == 0)
     {
         // No Atrous: ensure backend samples the up-to-date EMA history directly
-        if (vkRT.aoHistory[frameIdx].view != VK_NULL_HANDLE)
-            vkRT.aoReadView[frameIdx] = vkRT.aoHistory[frameIdx].view;
+        if (vkRT.aoHistory.view != VK_NULL_HANDLE)
+            vkRT.aoReadView[frameIdx] = vkRT.aoHistory.view;
         return;
     }
 
@@ -795,7 +804,7 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
         return;
     }
 
-    vkAOMask_t &history = vkRT.aoHistory[frameIdx];
+    vkAOMask_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
     vkAOMask_t &scratch = vkRT.aoScratch[frameIdx];
 
     if (history.image == VK_NULL_HANDLE || scratch.image == VK_NULL_HANDLE)
@@ -1072,26 +1081,24 @@ static void VK_RT_FreeGIHistoryImage(vkReflBuffer_t &img)
 
 static void VK_RT_CreateGIHistoryImages(uint32_t width, uint32_t height)
 {
+    // Single shared history image now (see vk_raytracing.h) — both frame-in-flight
+    // slots' descriptor sets and giReadView entries point at the same image.
+    if (!VK_RT_AllocGIHistoryImage(vkRT.giHistory, width, height))
+        common->Warning("VK RT GI Temporal: failed to allocate GI history image");
+    vkRT.giHistoryValid = false;
+    vkRT.giPrevCamPos.Zero();
+    vkRT.giPrevCamFwd.Zero();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (!VK_RT_AllocGIHistoryImage(vkRT.giHistory[i], width, height))
-            common->Warning("VK RT GI Temporal: failed to allocate GI history image slot %d", i);
-        vkRT.giHistoryValid[i] = false;
-        vkRT.giPrevCamPos[i].Zero();
-        vkRT.giPrevCamFwd[i].Zero();
         // Default: composite reads history (will be refreshed from first dispatch)
-        vkRT.giReadView[i] = vkRT.giHistory[i].view;
-    }
+        vkRT.giReadView[i] = vkRT.giHistory.view;
 }
 
 static void VK_RT_DestroyGIHistoryImages(void)
 {
+    VK_RT_FreeGIHistoryImage(vkRT.giHistory);
+    vkRT.giHistoryValid = false;
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        VK_RT_FreeGIHistoryImage(vkRT.giHistory[i]);
-        vkRT.giHistoryValid[i] = false;
-        vkRT.giReadView[i]     = VK_NULL_HANDLE;
-    }
+        vkRT.giReadView[i] = VK_NULL_HANDLE;
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,10 +1225,8 @@ void VK_RT_ResizeGITemporal(uint32_t width, uint32_t height)
     VK_RT_CreateGIHistoryImages(width, height); // also resets giReadView → giHistory
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
         vkRT.giTemporalDescSetLastUpdatedFrameCount[i] = -1;
-        vkRT.giHistoryValid[i] = false;
-    }
+    vkRT.giHistoryValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,7 +1260,7 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
 
     vkReflBuffer_t &current = vkRT.giBuffer[frameIdx];
-    vkReflBuffer_t &history = vkRT.giHistory[frameIdx];
+    vkReflBuffer_t &history = vkRT.giHistory; // single shared image — see vk_raytracing.h
 
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
@@ -1264,12 +1269,23 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
         return;
     }
 
+    // History is shared across both frame-in-flight slots — see the identical
+    // barrier in VK_RT_DispatchTemporalResolveAO for why this is needed.
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
+
     // --- Camera-cut detection ---
-    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.giPrevCamPos[frameIdx], vkRT.giPrevCamFwd[frameIdx],
-                                                      vkRT.giHistoryValid[frameIdx], "GI");
+    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.giPrevCamPos, vkRT.giPrevCamFwd,
+                                                      vkRT.giHistoryValid, "GI");
 
     float effectiveAlpha = 1.0f;
-    if (vkRT.giHistoryValid[frameIdx])
+    if (vkRT.giHistoryValid)
     {
         if (!cut.isCut)
         {
@@ -1282,7 +1298,7 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
         }
     }
 
-    vkRT.giHistoryValid[frameIdx] = true;
+    vkRT.giHistoryValid = true;
 
     // --- Update descriptor set (once per frame slot) ---
     if (vkRT.giTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)

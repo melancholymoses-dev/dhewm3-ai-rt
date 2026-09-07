@@ -2046,9 +2046,9 @@ void VK_RT_BeginLevelLoad(void)
         vkRT.blurDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.temporalDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.atrousDescSetLastUpdatedFrameCount[i] = -1;
-        // Temporal history from the old level is meaningless for the new one.
-        vkRT.aoHistoryValid[i] = false;
     }
+    // Temporal history from the old level is meaningless for the new one.
+    vkRT.aoHistoryValid = false;
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT: BeginLevelLoad — cleared %d model BLAS cache entries, freed TLAS\n",
