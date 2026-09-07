@@ -87,6 +87,11 @@ static idCVar r_rtGIBounceScale(
 static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Multiplier on emissive surface (SL_AMBIENT) contribution to GI and reflections");
 
+static idCVar r_rtReflAmbientScale(
+    "r_rtReflAmbientScale", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+    "Fraction of a shadowed light's contribution reflect_ray/player_reflect still add (0 = hard "
+    "shadow, 1 = unshadowed)");
+
 static idCVar r_rtGIMaxBounceLights(
     "r_rtGIMaxBounceLights", "16", CVAR_RENDERER | CVAR_INTEGER,
     "Max uploaded lights evaluated by GI bounce shading (GI pass only; reflections unaffected)");
@@ -209,12 +214,14 @@ struct GILightEntry
 struct GILightBuffer
 {
     int32_t numLights;
-    float bounceScale;   // r_rtGIBounceScale — per-light irradiance multiplier
-    float giRadius;      // r_rtGIRadius — hit-point light evaluation window (shader-side)
-    float emissiveScale; // r_rtGIEmissiveScale — emissive surface contribution multiplier
+    float bounceScale;       // r_rtGIBounceScale — per-light irradiance multiplier
+    float giRadius;          // r_rtGIRadius — hit-point light evaluation window (shader-side)
+    float emissiveScale;     // r_rtGIEmissiveScale — emissive surface contribution multiplier
+    float reflAmbientScale;  // r_rtReflAmbientScale — reflections only, see rt_light_eval.glsl
+    float pad[3];            // pads header to 32 bytes (RTLight's std430 base alignment is 16)
     GILightEntry lights[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 16 + VK_GI_MAX_LIGHTS * 96, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96, "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -1145,6 +1152,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     lb->bounceScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIBounceScale.GetFloat());
     lb->giRadius = Max(1.0f, r_rtGIRadius.GetFloat());
     lb->emissiveScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIEmissiveScale.GetFloat());
+    lb->reflAmbientScale = idMath::ClampFloat(0.0f, 1.0f, r_rtReflAmbientScale.GetFloat());
 
     const float giRadius = lb->giRadius;
     const float lightCollectScale = idMath::ClampFloat(0.25f, 8.0f, r_rtGILightCollectRadiusScale.GetFloat());

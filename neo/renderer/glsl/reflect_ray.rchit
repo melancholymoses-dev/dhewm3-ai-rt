@@ -136,7 +136,8 @@ void main()
         vec3 irradiance = vec3(REFL_AMBIENT) +
                           rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
                                                 REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
-                                                1.0, REFL_SHADOW_MIN_LUM);
+                                                1.0, REFL_SHADOW_MIN_LUM,
+                                                rtLightBuf.reflAmbientScale);
         reflPayload.colour = diffuse.rgb * irradiance;
     }
     else

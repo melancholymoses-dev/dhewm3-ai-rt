@@ -63,9 +63,11 @@ struct RTLight {
 
 layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
     int     numLights;
-    float   bounceScale;   // r_rtGIBounceScale (GI bounce hits only; reflections pass 1.0)
-    float   giRadius;      // r_rtGIRadius — max range for light evaluation
-    float   emissiveScale; // r_rtGIEmissiveScale — emissive surface multiplier
+    float   bounceScale;      // r_rtGIBounceScale (GI bounce hits only; reflections pass 1.0)
+    float   giRadius;         // r_rtGIRadius — max range for light evaluation
+    float   emissiveScale;    // r_rtGIEmissiveScale — emissive surface multiplier
+    float   reflAmbientScale; // r_rtReflAmbientScale — occluded-light lerp weight, reflections only
+    float   _pad0[3];
     RTLight lights[];
 } rtLightBuf;
 
@@ -177,9 +179,13 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 //   contribScale — per-light multiplier (GI: bounceScale; reflections: 1.0)
 //   minShadowLum — P4: skip the shadow ray (but keep the contribution) when the
 //                  unshadowed contribution luminance is below this
+//   ambientScale — weight given to a light's contribution when it IS occluded
+//                  (0 = hard shadow, same as omitting it; pass rtLightBuf.reflAmbientScale
+//                  from reflect_ray/player_reflect, 0.0 from gi_ray to leave GI untouched)
 // ---------------------------------------------------------------------------
 vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
-                           float shadowBias, float contribScale, float minShadowLum)
+                           float shadowBias, float contribScale, float minShadowLum,
+                           float ambientScale)
 {
     vec3 irradiance  = vec3(0.0);
     int  n           = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
@@ -198,7 +204,10 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
             {
                 shadowsUsed++;
                 if (rt_TraceLightShadow(hitPos, hitNorm, lightDir, dist, shadowBias))
+                {
+                    irradiance += contrib * ambientScale;
                     continue;
+                }
             }
         }
 
@@ -236,7 +245,7 @@ vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, i
     int k = clamp(picks, 1, 2);
     if (n <= k)
         return rt_EvalDirectLighting(hitPos, hitNorm, maxLights, RT_LIGHT_MAX_LIGHTS,
-                                     shadowBias, contribScale, 0.0);
+                                     shadowBias, contribScale, 0.0, 0.0);
 
     // Two independent single-sample reservoirs, held in scalars/vectors.
     float wSum = 0.0;
