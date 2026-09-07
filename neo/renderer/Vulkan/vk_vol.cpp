@@ -997,26 +997,24 @@ static void VK_RT_FreeVolHistoryImage(vkReflBuffer_t &img)
 
 static void VK_RT_CreateVolHistoryImages(uint32_t width, uint32_t height)
 {
+    // Single shared history image now (see vk_raytracing.h) — both frame-in-flight
+    // slots' descriptor sets and volReadView entries point at the same image.
+    if (!VK_RT_AllocVolHistoryImage(vkRT.volHistory, width, height))
+        common->Warning("VK RT Vol Temporal: failed to allocate history image");
+    vkRT.volHistoryValid = false;
+    vkRT.volPrevCamPos.Zero();
+    vkRT.volPrevCamFwd.Zero();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        if (!VK_RT_AllocVolHistoryImage(vkRT.volHistory[i], width, height))
-            common->Warning("VK RT Vol Temporal: failed to allocate history slot %d", i);
-        vkRT.volHistoryValid[i] = false;
-        vkRT.volPrevCamPos[i].Zero();
-        vkRT.volPrevCamFwd[i].Zero();
-        vkRT.volReadView[i] = vkRT.volHistory[i].view;
-    }
+        vkRT.volReadView[i] = vkRT.volHistory.view;
 }
 
 static void VK_RT_DestroyVolHistoryImages(void)
 {
+    VK_RT_FreeVolHistoryImage(vkRT.volHistory);
+    vkRT.volHistoryValid = false;
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
-        VK_RT_FreeVolHistoryImage(vkRT.volHistory[i]);
-        vkRT.volHistoryValid[i] = false;
         // Fall back to raw volBuffer so composite doesn't reference freed history.
         vkRT.volReadView[i] = vkRT.volBuffer[i].view;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,10 +1141,8 @@ void VK_RT_ResizeVolTemporal(uint32_t width, uint32_t height)
     VK_RT_DestroyVolHistoryImages();
     VK_RT_CreateVolHistoryImages(width, height);
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-    {
         vkRT.volTemporalDescSetLastUpdatedFrameCount[i] = -1;
-        vkRT.volHistoryValid[i] = false;
-    }
+    vkRT.volHistoryValid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1179,7 +1175,7 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
         return;
 
     vkReflBuffer_t &current = vkRT.volBuffer[frameIdx];
-    vkReflBuffer_t &history = vkRT.volHistory[frameIdx];
+    vkReflBuffer_t &history = vkRT.volHistory; // single shared image — see vk_raytracing.h
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -1187,12 +1183,24 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
         return;
     }
 
+    // History is shared across both frame-in-flight slots — see the identical
+    // barrier in VK_RT_DispatchTemporalResolveAO (vk_temporal.cpp) for why this
+    // is needed.
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    }
+
     // --- Camera-cut detection ---
-    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.volPrevCamPos[frameIdx], vkRT.volPrevCamFwd[frameIdx],
-                                                      vkRT.volHistoryValid[frameIdx], "Vol");
+    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.volPrevCamPos, vkRT.volPrevCamFwd,
+                                                      vkRT.volHistoryValid, "Vol");
 
     float effectiveAlpha = 1.0f;
-    if (vkRT.volHistoryValid[frameIdx])
+    if (vkRT.volHistoryValid)
     {
         if (!cut.isCut)
             effectiveAlpha = idMath::ClampFloat(0.0f, 1.0f, r_rtVolTemporalAlpha.GetFloat());
@@ -1200,7 +1208,7 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
             common->Printf("VK RT Vol Temporal: camera cut slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
                            frameIdx, cut.posDelta, cut.angleDelta);
     }
-    vkRT.volHistoryValid[frameIdx] = true;
+    vkRT.volHistoryValid = true;
 
     // --- Update descriptor set ---
     if (vkRT.volTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
@@ -1458,7 +1466,7 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     const int frameIdx = vk.currentFrame;
 
-    vkReflBuffer_t &histImg = vkRT.volHistory[frameIdx];
+    vkReflBuffer_t &histImg = vkRT.volHistory; // single shared image — see vk_raytracing.h
     vkReflBuffer_t &blurredImg = vkRT.volBlurred[frameIdx];
 
     if (histImg.image == VK_NULL_HANDLE || blurredImg.image == VK_NULL_HANDLE)
