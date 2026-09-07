@@ -6,6 +6,8 @@
 base (rare, but present — e.g. mars_city1-style exterior shots) getting GI bounce,
 volumetric shafts, and reflections, matching what direct lighting already does.
 
+Not pursued.  Already handled correctly.  
+
 ---
 
 ## The surprise: this is a much smaller fix than it looks
