@@ -1256,7 +1256,15 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         if (dSq > distCullSq)
             return;
 
-        float radius = Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
+        // p.parallel already excluded above.
+        const bool isProjected = !p.pointLight;
+
+        // Light.cpp only fills in lightRadius for point lights (Light.cpp:115-123);
+        // a real projected/spot light's lightRadius is always (0,0,0). Reading it
+        // unconditionally here made every projected light's radius 0 — failing the
+        // admit gate below and zeroing its importance even if admitted.
+        float radius = isProjected ? (p.axis * p.target).Length()
+                                    : Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
 
         float r = p.shaderParms[SHADERPARM_RED];
         float g = p.shaderParms[SHADERPARM_GREEN];
@@ -1371,7 +1379,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.colorIntensity[2] = b;
             c.entry.colorIntensity[3] = intensity;
             // Fill volume geometry: AABB half-extents for point lights, cone for projected.
-            const bool isProjected = (!p.pointLight && !p.parallel);
+            // isProjected computed earlier alongside the admission-time radius fix.
             if (!isProjected)
             {
                 c.entry.boxExtents[0] = p.lightRadius.x;

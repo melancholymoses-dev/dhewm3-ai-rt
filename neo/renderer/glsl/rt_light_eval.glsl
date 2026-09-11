@@ -113,13 +113,36 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
     float lRad   = rtLightBuf.lights[i].posRadius.w;
     vec3  lColor = rtLightBuf.lights[i].colorIntensity.rgb;
     float lInt   = rtLightBuf.lights[i].colorIntensity.a;
+    uint  lType  = rtLightBuf.lights[i].lightType;
 
     // Range test and falloff are properties of the light's VOLUME, which does not move
     // when a mapper offsets lightCenter — so both measure from the volume centre. This
     // mirrors GL, where R_SetLightProject builds the falloff planes around parms.origin.
-    float volDist = length(lPos - hitPos);
-    if (volDist >= lRad)
-        return false;
+    // Point lights (lType 0) get the sphere/quadratic test below; projected/flashlight
+    // lights (1/2) need cone containment too, or they light a full sphere around
+    // themselves instead of their actual cone — same test vol_march.comp already uses.
+    float atten;
+    if (lType == 0u)
+    {
+        float volDist = length(lPos - hitPos);
+        if (volDist >= lRad)
+            return false;
+        float t = volDist / max(lRad, 1.0);
+        atten = 1.0 - t * t;   // volDist < lRad above guarantees t < 1 → atten > 0
+    }
+    else
+    {
+        vec4  cd        = rtLightBuf.lights[i].coneDir;
+        vec4  bx        = rtLightBuf.lights[i].boxExtents;
+        vec3  toPoint   = hitPos - lPos;
+        float alongCone = dot(toPoint, cd.xyz);
+        if (alongCone <= 0.0 || alongCone > bx.w)
+            return false;
+        float cosAngle = alongCone / max(length(toPoint), 0.001);
+        if (cosAngle < cd.w)
+            return false;
+        atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+    }
 
     // Direction and shadow-ray distance are properties of where the light actually IS.
     vec3  toL = lEmit - hitPos;
@@ -131,10 +154,6 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
     float NdotL  = dot(hitNorm, lightDir);
     if (NdotL <= 0.0)
         return false;
-
-    // Quadratic falloff: zero at the edge of the light radius, hard cutoff beyond.
-    float t     = volDist / max(lRad, 1.0);
-    float atten = 1.0 - t * t;   // volDist < lRad above guarantees t < 1 → atten > 0
 
     contrib = lColor * (lInt * NdotL * atten * contribScale);
     return true;
