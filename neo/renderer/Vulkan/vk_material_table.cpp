@@ -104,6 +104,12 @@ static uint32_t GetOrAssignTexIndex(idImage *img)
     return idx;
 }
 
+// rt_projected_light_cookies.md Stage 1 — see declaration in vk_raytracing.h.
+uint32_t VK_RT_GetOrAssignTexIndex(idImage *img)
+{
+    return GetOrAssignTexIndex(img);
+}
+
 // ---------------------------------------------------------------------------
 // RebuildBindlessDescriptors
 //
