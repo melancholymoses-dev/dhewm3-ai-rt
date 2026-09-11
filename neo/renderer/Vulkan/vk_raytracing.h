@@ -838,6 +838,13 @@ void VK_RT_ShutdownMaterialTable(void);
 bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveImage, bool *outGuiEmissive,
                               bool *outIsCinematic = NULL);
 
+// Public wrapper around the material table's bindless-slot assignment
+// (vk_material_table.cpp's file-local GetOrAssignTexIndex), for callers
+// outside that file that need to register an image into the same bindless
+// array RT hit shaders sample by index — e.g. rt_projected_light_cookies.md's
+// light-cookie image (vk_gi.cpp). img == NULL returns slot 0 (white fallback).
+uint32_t VK_RT_GetOrAssignTexIndex(idImage *img);
+
 // Build a VkMaterialEntry for one TLAS instance.
 // shader:      the representative idMaterial for this instance (may be NULL — returns defaults).
 // blas:        the BLAS built for this entity; all per-geometry addresses are written.

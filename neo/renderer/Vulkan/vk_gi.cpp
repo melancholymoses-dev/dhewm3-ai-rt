@@ -177,6 +177,10 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 
 #define VK_GI_MAX_LIGHTS 128
 
+// rt_projected_light_cookies.md Stage 1 — GILightEntry::flags bit for "this
+// light has a cookie entry at the same index in GILightBuffer::cookies[]".
+#define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
+
 struct GILightEntry
 {
     float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
@@ -185,7 +189,7 @@ struct GILightEntry
     float boxExtents[4];     // point: xyz=AABB half-extents, w=0
                              // projected: w=max reach along cone axis; xyz=0
     uint32_t lightType;      // 0 = point, 1 = projected/spot
-    uint32_t flags;          // unused pad slot
+    uint32_t flags;          // GI_LIGHT_FLAG_* bitmask
     uint32_t pad[2];         // alignment pad
     // 2026-08-30: idRenderLightLocal::globalLightOrigin — origin + axis * lightCenter.
     // The EMITTER. posRadius.xyz above stays the light's volume centre (parms.origin),
@@ -205,6 +209,20 @@ struct GILightEntry
     float emitPos[4];        // xyz = globalLightOrigin, w unused — pads to 96 bytes
 };
 
+// rt_projected_light_cookies.md Stage 1 — one entry per GILightEntry slot,
+// same index, meaningful only when that entry's flags has HAS_COOKIE set.
+// planeS/planeT already have the stage's texture matrix folded in — sampling
+// is just two dot products plus a divide, no matrix multiply at hit time.
+struct GILightCookie
+{
+    float planeS[4];
+    float planeT[4];
+    float planeQ[4];
+    uint32_t imageIndex; // bindless slot, vk_material_table.cpp
+    uint32_t pad[3];
+};
+static_assert(sizeof(GILightCookie) == 64, "GILightCookie size mismatch");
+
 struct GILightBuffer
 {
     int32_t numLights;
@@ -214,8 +232,12 @@ struct GILightBuffer
     float reflAmbientScale;  // r_rtReflAmbientScale — reflections only, see rt_light_eval.glsl
     float pad[3];            // pads header to 32 bytes (RTLight's std430 base alignment is 16)
     GILightEntry lights[VK_GI_MAX_LIGHTS];
+    // Stage 1 is CPU-only: GLSL mirrors don't declare this yet, but the SSBO
+    // range already covers it (rt_projected_light_cookies.md).
+    GILightCookie cookies[VK_GI_MAX_LIGHTS];
 };
-static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96, "GILightBuffer size mismatch");
+static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96 + VK_GI_MAX_LIGHTS * 64,
+              "GILightBuffer size mismatch");
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
@@ -1182,6 +1204,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         int tier;         // L1: distance tier 0-3 (0-128 / 128-320 / 320-768 / 768+)
         int lightIdx;     // index into lightDefs — stable identity for hysteresis
         GILightEntry entry;
+        GILightCookie cookie; // valid only when entry.flags & GI_LIGHT_FLAG_HAS_COOKIE
     };
 
     // Use a fixed-size stack buffer — numLightDefs can be in the hundreds.
@@ -1380,6 +1403,87 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             c.entry.lightType = isProjected ? (p.allowLightInViewID != 0 ? 2u : 1u) : 0u;
             c.entry.flags = 0u;
             c.entry.pad[0] = c.entry.pad[1] = 0u;
+
+            if (dumpLights)
+                common->Printf("    type: pointLight=%d parallel=%d isProjected=%d lightType=%u\n", p.pointLight ? 1 : 0,
+                               p.parallel ? 1 : 0, isProjected ? 1 : 0, c.entry.lightType);
+
+            // rt_projected_light_cookies.md Stage 1 — light-cookie stage detection.
+            // Deliberately NOT gated on isProjected — see project_light_cookie_stage1
+            // memory for why point lights need this too (fanblade3 is one).
+            // Registers are evaluated fresh rather than read from a cached
+            // viewLight; idRenderLightLocal has no shaderRegisters of its own.
+            if (lightLocal->lightShader != NULL)
+            {
+                const idMaterial *lightShader = lightLocal->lightShader;
+                const int numRegs = lightShader->GetNumRegisters();
+                float *regs = (float *)_alloca(sizeof(float) * numRegs);
+                lightShader->EvaluateRegisters(regs, p.shaderParms, viewDef, p.referenceSound);
+
+                int chosenStage = -1;
+                int numPassing = 0;
+                for (int s = 0; s < lightShader->GetNumStages(); s++)
+                {
+                    const shaderStage_t *stage = lightShader->GetStage(s);
+                    if (!regs[stage->conditionRegister])
+                        continue;
+                    if (!stage->texture.image)
+                        continue;
+                    numPassing++;
+                    if (chosenStage < 0)
+                        chosenStage = s; // v1: first passing stage — see doc note on multi-stage lights
+                }
+
+                if (chosenStage >= 0)
+                {
+                    const shaderStage_t *stage = lightShader->GetStage(chosenStage);
+                    const idPlane &sPlane = lightLocal->lightProject[0];
+                    const idPlane &tPlane = lightLocal->lightProject[1];
+                    const idPlane &qPlane = lightLocal->lightProject[2];
+
+                    if (stage->texture.hasMatrix)
+                    {
+                        float m[16];
+                        RB_GetShaderTextureMatrix(regs, &stage->texture, m);
+                        // Fold texture matrix into the planes (S'=m00*S+m01*T+m03*Q, etc).
+                        for (int comp = 0; comp < 4; comp++)
+                        {
+                            c.cookie.planeS[comp] = m[0] * sPlane[comp] + m[4] * tPlane[comp] + m[12] * qPlane[comp];
+                            c.cookie.planeT[comp] = m[1] * sPlane[comp] + m[5] * tPlane[comp] + m[13] * qPlane[comp];
+                        }
+                    }
+                    else
+                    {
+                        for (int comp = 0; comp < 4; comp++)
+                        {
+                            c.cookie.planeS[comp] = sPlane[comp];
+                            c.cookie.planeT[comp] = tPlane[comp];
+                        }
+                    }
+                    for (int comp = 0; comp < 4; comp++)
+                        c.cookie.planeQ[comp] = qPlane[comp];
+                    c.cookie.imageIndex = VK_RT_GetOrAssignTexIndex(stage->texture.image);
+                    c.cookie.pad[0] = c.cookie.pad[1] = c.cookie.pad[2] = 0u;
+                    c.entry.flags |= GI_LIGHT_FLAG_HAS_COOKIE;
+                }
+
+                if (dumpLights)
+                {
+                    if (chosenStage >= 0)
+                        common->Printf("    cookie: stages=%d passing=%d chosen=%d image=%s\n",
+                                       lightShader->GetNumStages(), numPassing, chosenStage,
+                                       lightShader->GetStage(chosenStage)->texture.image->imgName.c_str());
+                    else
+                        common->Printf("    cookie: stages=%d passing=%d chosen=none\n", lightShader->GetNumStages(),
+                                       numPassing);
+                    if (numPassing > 1)
+                        common->Printf("    cookie: %d stages passed condition simultaneously on '%s' — v1 only "
+                                       "uses the first (stage %d); real Doom3 draws them as separate additive "
+                                       "interaction passes, so this is an incomplete v1 for this fixture, not a "
+                                       "bug — see rt_projected_light_cookies.md Stage 1 note\n",
+                                       numPassing, lightShader->GetName(), chosenStage);
+                }
+            }
         }
     };
 
@@ -1589,7 +1693,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                                toUpload, numCandidates, maxLights, numLightDefs, giRadius, lightCollectRadius);
         }
         for (int i = 0; i < toUpload; i++)
-            lb->lights[lb->numLights++] = s_candidates[i].entry;
+        {
+            const int idx = lb->numLights++;
+            lb->lights[idx] = s_candidates[i].entry;
+            lb->cookies[idx] = s_candidates[i].cookie;
+        }
 
         // Vol-specific selection (portal_area_lights.md follow-up, 2026-08-22): same
         // pool, walked in the same (here: distance) order, filtered to lights that
@@ -1610,7 +1718,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                 const float reach = volMaxDist + c.entry.posRadius[3];
                 if (c.distSq > reach * reach)
                     continue; // light's sphere/cone can never reach a march sample — skip, don't burn a slot
-                volLb->lights[volLb->numLights++] = c.entry;
+                const int idx = volLb->numLights++;
+                volLb->lights[idx] = c.entry;
+                volLb->cookies[idx] = c.cookie;
             }
         }
         return;
@@ -1761,7 +1871,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 
     for (int i = 0; i < numSelected; i++)
     {
-        lb->lights[lb->numLights++] = s_selected[i]->entry;
+        const int idx = lb->numLights++;
+        lb->lights[idx] = s_selected[i]->entry;
+        lb->cookies[idx] = s_selected[i]->cookie;
         if (s_selected[i]->lightIdx < kHysteresisMaxLightIdx)
             s_lightSelectedFrame[s_selected[i]->lightIdx] = tr.frameCount;
     }
@@ -1773,7 +1885,11 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     volLb->giRadius = lb->giRadius;
     volLb->emissiveScale = lb->emissiveScale;
     for (int i = 0; i < numVolSelected; i++)
-        volLb->lights[volLb->numLights++] = s_volSelected[i]->entry;
+    {
+        const int idx = volLb->numLights++;
+        volLb->lights[idx] = s_volSelected[i]->entry;
+        volLb->cookies[idx] = s_volSelected[i]->cookie;
+    }
 
     // r_rtVolDump: read the entries back out of the MAPPED pointer, not out of
     // s_volSelected — the whole point is to show the bytes the march shader will

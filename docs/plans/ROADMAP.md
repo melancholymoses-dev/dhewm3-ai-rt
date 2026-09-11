@@ -104,7 +104,9 @@ Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.m
           dropped. See `rt_projected_light_cookies.md` for the full spec — data
           needed (light projection planes, animated texture matrix, bindless image)
           already exists in the shared frontend and material table, this is wiring,
-          not new math. ⬜ NOT STARTED.
+          not new math. 🔶 Stage 1 (CPU admission + dump validation) landed and
+          in-game validated 2026-09-08; Stages 2-4 (shader read, volumetrics,
+          cleanup) NOT STARTED.
 
 After Wave 7: reassess against the pillars. Candidate next arc:
 - **world-space caching** (`froxel_probe_gi.md`, designed 2026-08-23) — froxel-grid

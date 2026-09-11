@@ -1,8 +1,10 @@
 # RT Projected Light Cookies (fan blades, grates, window blinds)
 
 **Date:** 2026-08-31
-**Status:** Spec only — not started. Not yet linked from ROADMAP.md; add a row there
-before picking this up.
+**Status:** Stage 1 (CPU plumbing + dump validation) implemented and in-game validated
+2026-09-08 (`r_rtGILightDump 1` in mars_city1: `lights/fanblade3` correctly resolves
+`stages=1 passing=1 image=lights/fanblade3`). Stages 2-4 (shader wiring) not started.
+Linked from ROADMAP.md Wave 7 (COOKIE).
 **Motivates:** visible fan-blade shadows in volumetric light shafts, plus every other
 patterned projected light in the retail maps (window blinds, grates, cage lights).
 
@@ -129,12 +131,42 @@ non-cookie lights (the vast majority) don't pay for it.
 
 ## Phasing
 
-**Stage 1 — CPU plumbing + dump validation.**
-Add `GILightCookieBuf`, the admission-time stage walk, bindless registration. Extend the
-existing `r_rtGILightDump` to print `cookie=<image name>@stage<i>` per admitted light so
-we can confirm in a log that `fanlightgrate`/`fanblade3` are actually picked up, before
-touching any shader — matches the project's debug-before-theory rule, and catches a
-wrong-stage or condition-register bug for free.
+**Stage 1 — CPU plumbing + dump validation. ✅ Implemented.**
+Admission-time stage walk and bindless registration are in `vk_gi.cpp::considerLight`;
+`r_rtGILightDump` now prints a `cookie:` line per admitted projected light (stages
+passed/chosen/image). No shader touched yet, as planned. Implementation deviated from
+this doc in a few ways worth knowing before Stage 2/3 — see the project memory
+`project_light_cookie_stage1` for full detail:
+
+- No standalone `GILightCookieBuf` SSBO — `GILightCookie cookies[VK_GI_MAX_LIGHTS]` was
+  added directly inside `GILightBuffer` instead (after `lights[]`), giving free 1:1 index
+  alignment with each of GI's and Vol's independently-ordered final selections. GLSL
+  mirrors don't declare it yet; the SSBO range already covers the bytes.
+- `GILightCookie` stores 3 world-space planes (S/T/Q) with the stage's texture matrix
+  already folded in, not a separate 2×3 matrix — sampling is 2 dot products + a divide,
+  no matrix multiply needed at hit time.
+- Registers are evaluated fresh every time (`EvaluateRegisters`), not read from a cached
+  viewLight — `idRenderLightLocal` has no `shaderRegisters` of its own, only its
+  per-frame `viewLight` does, and most GI/vol-admitted lights aren't real view-lights
+  that frame.
+- **Known gap, not yet fixed**: `lights/fanlightgrate` (unlike `fanlightgrateSC`) has two
+  *always-simultaneously-active* stages (blade + grate), and real Doom 3 draws both as
+  separate additive passes. This doc's "first passing stage" v1 assumption only holds for
+  the `SC` variant's mutually-exclusive `global0` pairs. Dump logging now reports
+  `passing=N` so this can be confirmed on real data before Stage 2 locks in a
+  single-image-per-light shader model; if it's a real problem the fix is a small fixed
+  stage cap (2), not a redesign.
+- **Scope correction found via first in-game dump**: retail `lights/fanblade3` fixtures
+  (e.g. mars_city1 `light_5268`) have no `light_target` key — they're authored as *point*
+  lights, shaped entirely by the material's `rotate` stage. This doc's title/framing
+  ("projected light cookies") is misleading: cookie detection must NOT be gated on
+  `isProjected`. Point lights get a real `lightProject[4]` too (`R_DeriveLightData`'s
+  box-to-unit-cube map, `Q` always 1), so the same S/T/Q sample works unchanged — the gate
+  was simply wrong and has been removed. Practical effect: this generalizes to nearly
+  every light with a stage image, not just a handful of fan/grate fixtures — most other
+  materials' stages are plain gradients so will sample the same as today, but Stage 2/3
+  should expect a much wider set of lights carrying `GI_LIGHT_FLAG_HAS_COOKIE` than the
+  doc originally implied.
 
 **Stage 2 — direct lighting.**
 Wire `rt_SampleLightCookie` into `rt_LightContribAt` (shared by `gi_ray.rchit` and
