@@ -54,7 +54,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | Doc | Owns | Status |
 |---|---|---|
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Waves 2-4 done; **Wave 6 (T3-T6) not started** |
-| `rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — spec only, not started | **Wave 7** |
+| `rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — Stages 1-3 landed and in-game validated (rotating fan-blade shadows visible in reflections, GI and volumetric light shafts); Stage 4 (cleanup/generalize) not started | **Wave 7** |
 
 
 `../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
@@ -104,9 +104,21 @@ Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.m
           dropped. See `rt_projected_light_cookies.md` for the full spec — data
           needed (light projection planes, animated texture matrix, bindless image)
           already exists in the shared frontend and material table, this is wiring,
-          not new math. 🔶 Stage 1 (CPU admission + dump validation) landed and
-          in-game validated 2026-09-08; Stages 2-4 (shader read, volumetrics,
-          cleanup) NOT STARTED.
+          not new math. ✅ Stage 1 (CPU admission + dump validation) landed and
+          in-game validated 2026-09-08. Stage 2 (direct-lighting shader read, both
+          gi_ray.rchit and reflect_ray.rchit via rt_light_eval.glsl) landed
+          2026-09-10 and in-game validated the same day (reflections show a rotating
+          cookie pattern on a real fanblade3 fixture; direct camera view is
+          unaffected by design — that stays on the untouched raster path). Stage 3
+          (volumetrics, vol_march.comp) landed 2026-09-11 and in-game validated
+          2026-09-12 — volumetric light shafts visibly follow the rotating fan
+          blades. Two real bugs found/fixed getting there: an `#include` pulling in
+          a ray-tracing-pipeline-only built-in (`gl_WorldToObjectEXT`) into a
+          compute shader, and a missing `VK_SHADER_STAGE_COMPUTE_BIT` on the shared
+          bindless-texture descriptor binding that silently zeroed out *all*
+          volumetric lighting, not just cookie-lit areas (see project memory
+          `project_light_cookie_stage3`). 🔶 Stage 4 (cleanup/generalize — confirm
+          ordinary non-fan lights are unaffected) NOT STARTED.
 
 After Wave 7: reassess against the pillars. Candidate next arc:
 - **world-space caching** (`froxel_probe_gi.md`, designed 2026-08-23) — froxel-grid

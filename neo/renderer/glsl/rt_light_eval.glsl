@@ -16,6 +16,7 @@
 
   Includer contract (before #include of this file):
     - declare:  layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+    - include:  rt_material.glsl (set=1 matTextures[4096] — cookie sampling)
     - include:  gi_shadow_payload.glsl
     - define:   RT_LIGHT_SHADOW_MISS_INDEX  (index of gi_shadow.rmiss in the
                 pipeline's miss-shader region: 1 for the GI pipeline, 2 for the
@@ -30,6 +31,12 @@
   contribution at the hit point is below it get that contribution added without
   spending a shadow ray, so the per-hit shadow budget flows to lights that
   actually matter there (the light list is sorted for the camera, not the hit).
+
+  Stage 2 (rt_projected_light_cookies.md): rt_LightContribAt multiplies in
+  rt_SampleLightCookie (rt_light_cookie.glsl) for any light with
+  GI_LIGHT_FLAG_HAS_COOKIE set — this needs rt_material.glsl's set=1
+  matTextures[4096] already declared, so the includer contract below gains that
+  requirement too.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -48,18 +55,25 @@ Code release.
 
 #define RT_LIGHT_MAX_LIGHTS 128  // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
 
+// rt_projected_light_cookies.md — GILightEntry::flags bit for "this light has a
+// cookie entry at the same index in RTLightBuf::cookies[]". Must match vk_gi.cpp.
+#define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
+
 struct RTLight {
     vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
     vec4 colorIntensity; // rgb = light colour, a = intensity
     vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
-    uint _pad0; uint _pad1; uint _pad2;
+    uint flags;          // GI_LIGHT_FLAG_* bitmask
+    uint _pad1; uint _pad2;
     // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. See vk_gi.cpp's
     // GILightEntry::emitPos — attenuation stays measured from the volume centre, while
     // direction/N·L and shadow-ray targeting come from here, matching the GL split.
     vec4 emitPos;        // xyz = globalLightOrigin, w unused
 };
+
+#include "rt_light_cookie.glsl"
 
 layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
     int     numLights;
@@ -68,15 +82,14 @@ layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
     float   emissiveScale;    // r_rtGIEmissiveScale — emissive surface multiplier
     float   reflAmbientScale; // r_rtReflAmbientScale — occluded-light lerp weight, reflections only
     float   _pad0[3];
-    RTLight lights[];
+    RTLight lights[RT_LIGHT_MAX_LIGHTS];
+    // Stage 2: 1:1 with lights[] by index, meaningful only when that light's
+    // flags has GI_LIGHT_FLAG_HAS_COOKIE set (vk_gi.cpp's GILightBuffer::cookies).
+    RTLightCookie cookies[RT_LIGHT_MAX_LIGHTS];
 } rtLightBuf;
 
 layout(location = 1) rayPayloadEXT GIShadowPayload rtLightShadow;
 
-float rt_LightLuminance(vec3 c)
-{
-    return dot(c, vec3(0.299, 0.587, 0.114));
-}
 
 // Local Wang hash — rt_indirect.glsl has the same primitive but pulls in
 // depthSampler, which hit shaders don't bind.  Prefixed to avoid a clash if a
@@ -156,6 +169,16 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
         return false;
 
     contrib = lColor * (lInt * NdotL * atten * contribScale);
+
+    // Stage 2: gobo/cookie pattern (fan blades, grates, window blinds) — see
+    // rt_light_cookie.glsl. Sampled at hitPos, the same point the raster path's
+    // projective texgen would sample for this pixel.
+    if ((rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
+    {
+        vec3 cookie = rt_SampleLightCookie(rtLightBuf.cookies[i], hitPos);
+        contrib = rt_ApplyLightCookie(contrib, cookie);
+    }
+
     return true;
 }
 

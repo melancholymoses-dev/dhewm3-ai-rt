@@ -3,8 +3,17 @@
 **Date:** 2026-08-31
 **Status:** Stage 1 (CPU plumbing + dump validation) implemented and in-game validated
 2026-09-08 (`r_rtGILightDump 1` in mars_city1: `lights/fanblade3` correctly resolves
-`stages=1 passing=1 image=lights/fanblade3`). Stages 2-4 (shader wiring) not started.
-Linked from ROADMAP.md Wave 7 (COOKIE).
+`stages=1 passing=1 image=lights/fanblade3`). Stage 2 (direct lighting) implemented
+2026-09-10, validated in-game the same day via `RT_LIGHT_COOKIE_DEBUG` on a real
+`lights/fanblade3` fixture in mars_city1 (reflections only — see Stage 2 note; the
+debug tint's first iteration had its own bug, also fixed same day, see project memory
+`feedback_cookie_debug_tint_bug`). Stage 3 (volumetrics) implemented 2026-09-11 and
+**in-game validated 2026-09-12** — volumetric light shafts visibly follow the rotating
+fan blades. Two real bugs found and fixed en route (a compute-shader-incompatible
+`#include`, and a missing `VK_SHADER_STAGE_COMPUTE_BIT` on the shared bindless-texture
+binding that silently killed all volumetric lighting, not just cookies — see project
+memory `project_light_cookie_stage3`). Stage 4 not started. Linked from ROADMAP.md
+Wave 7 (COOKIE).
 **Motivates:** visible fan-blade shadows in volumetric light shafts, plus every other
 patterned projected light in the retail maps (window blinds, grates, cage lights).
 
@@ -168,17 +177,60 @@ this doc in a few ways worth knowing before Stage 2/3 — see the project memory
   should expect a much wider set of lights carrying `GI_LIGHT_FLAG_HAS_COOKIE` than the
   doc originally implied.
 
-**Stage 2 — direct lighting.**
-Wire `rt_SampleLightCookie` into `rt_LightContribAt` (shared by `gi_ray.rchit` and
-`reflect_ray.rchit` via `rt_light_eval.glsl`). Debug overlay: tint any shaded point whose
-cookie luminance is below ~0.05 magenta, so the blade silhouette on a wall/floor can be
-visually confirmed moving frame-to-frame before trusting the full composite. Validate
-against a known fanlightgrate fixture in-game.
+**Stage 2 — direct lighting. ✅ Implemented, not yet in-game validated.**
+`rt_SampleLightCookie` (new `rt_light_cookie.glsl`) is wired into `rt_LightContribAt`
+(shared by `gi_ray.rchit`, `reflect_ray.rchit` and `player_reflect.rchit` via
+`rt_light_eval.glsl`), gated on `GI_LIGHT_FLAG_HAS_COOKIE`. Debug overlay implemented as
+a compile-time toggle (`RT_LIGHT_COOKIE_DEBUG` in `rt_light_eval.glsl`, default 0) rather
+than a runtime cvar — flip to 1 and rebuild to tint any shaded point whose cookie
+luminance is below `RT_LIGHT_COOKIE_DEBUG_LUM_THRESHOLD` (0.05) magenta. A cvar-driven
+toggle was considered and rejected: `reflect_ray.rchit`/`player_reflect.rchit` cannot read
+the params UBO (binding 3 is raygen-only, see this file's includer contract) so a runtime
+flag would need cross-pipeline payload plumbing for a throwaway validation aid — not
+worth it. Not yet validated in-game (this session cannot build/run — see project memory
+`project_light_cookie_stage2`); validate against a known fanlightgrate/fanblade3 fixture
+next session before proceeding to Stage 3.
 
-**Stage 3 — volumetrics.**
-Same sampling in `vol_march.comp`'s per-step light loop for `lightType` 1 and 2, reusing
-`GILightCookieBuf`. This is the actual "see the blades in the light shaft" payoff.
-Watch for two things specific to volumetrics:
+Implementation deviated from this doc in ways worth knowing before Stage 3 — see the
+project memory `project_light_cookie_stage2` for full detail:
+- `RTLightBuf`'s `lights[]` changed from an unsized trailing array to a fixed-size
+  `lights[RT_LIGHT_MAX_LIGHTS]`, with `cookies[RT_LIGHT_MAX_LIGHTS]` appended after it
+  (GLSL disallows two unsized arrays in one block, and cookies must be reachable by
+  index, not just trailing bytes). This shrank the SSBO's required minimum bound size and
+  broke `vk_reflections.cpp`'s 16-byte null-light fallback buffer — fixed by sizing that
+  buffer to the real `GILightBuffer` size via a new `VK_RT_GetGILightBufferSize()`
+  accessor, not by keeping the old unsized-array trick.
+- `GILightEntry::flags` (CPU) was already correctly plumbed in Stage 1, but the GLSL
+  mirror (`RTLight` in `rt_light_eval.glsl`) had never been updated to read it — the byte
+  offset was declared `_pad0` and silently discarded. Renamed to `flags`, no layout change.
+
+**Stage 3 — volumetrics. ✅ Implemented and in-game validated 2026-09-12.**
+Same sampling wired into `vol_march.comp`'s per-step light loop, applied to *any*
+cookie-flagged light reachable by the march (not gated on `lightType`, matching Stage
+1/2's finding that point lights need this too — `fanblade3` is one). This is the actual
+"see the blades in the light shaft" payoff, and it's confirmed working — volumetric
+light following the rotating fan blades, visible in-game.
+
+Deviations from this doc, and a refactor done while implementing — see project memory
+`project_light_cookie_stage3` for full detail:
+- No standalone `GILightCookieBuf` — same as Stage 2, `cookies[]` lives inside the
+  existing `GILightBuffer`/`GILightBuf`, now mirrored in `vol_march.comp` too
+  (`RTLightCookie cookies[RT_LIGHT_MAX_LIGHTS]`, fixed-size like Stage 2's `lights[]`).
+- `vol_march.comp` had no set=1 (material table) binding at all before this — it's a
+  compute shader that never sampled a material texture. Added by extending its
+  pipeline layout to 2 sets and reusing the existing shared `vkRT.matDescLayout`/
+  `matDescSet` (same object every RT hit shader already binds), not a new descriptor
+  set — `vk_vol.cpp`'s `VK_RT_InitVolMarchPipeline` and its dispatch call both updated.
+- Refactored `rt_light_cookie.glsl` to own `rt_LightLuminance` and the
+  `RT_LIGHT_COOKIE_DEBUG` toggle (moved out of `rt_light_eval.glsl`) plus a new shared
+  `rt_ApplyLightCookie(contrib, cookie, threshold)` helper, so Stage 2 (direct
+  lighting/reflections) and Stage 3 (volumetrics) share one debug-tint implementation
+  instead of drifting. Each caller passes its own `threshold` — a "meaningful
+  contribution" is a very different absolute magnitude in a single NdotL-lit hit point
+  vs. one exponential march step (further scaled by stepSize/stepTransmittance/phase) —
+  `vol_march.comp`'s constant is a first guess (`0.0001`), not yet tuned against a build.
+
+Watch for two things specific to volumetrics once validated:
 - **Temporal EMA ghosting.** `r_rtVolTemporal`'s EMA (`vk_vol.cpp:803`) blends toward
   history; a fast-rotating blade pattern will trail/smear more than the existing
   flashlight-cone content it was tuned against. May need a faster blend factor when a
@@ -216,14 +268,23 @@ light, not just the fan fixture.
   Not observed as necessary for the retail fan materials; revisit only if a specific
   fixture needs it.
 
-## Files touched (expected)
+## Files touched (expected → actual)
 
-- `neo/renderer/Vulkan/vk_gi.cpp` — `considerLight` cookie admission, dump line
-- `neo/renderer/Vulkan/vk_material_table.cpp` — public bindless-registration wrapper
-- `neo/renderer/Vulkan/vk_vol.cpp` — `GILightCookieBuf` allocation/upload, descriptor binding
-- `neo/renderer/Vulkan/vk_raytracing.h` — new SSBO handle + struct decl
-- `neo/renderer/glsl/rt_light_cookie.glsl` — new, shared sampling helper (add to
-  `GLSL_INCLUDES` in CMakeLists per project convention)
-- `neo/renderer/glsl/rt_light_eval.glsl`, `gi_ray.rchit`, `reflect_ray.rchit` — direct path
-- `neo/renderer/glsl/vol_march.comp` — volumetric path
-- `neo/CMakeLists.txt` — new glsl include
+- `neo/renderer/Vulkan/vk_gi.cpp` — `considerLight` cookie admission, dump line (Stage 1);
+  `VK_RT_GetGILightBufferSize()` accessor (Stage 2)
+- `neo/renderer/Vulkan/vk_material_table.cpp` — public bindless-registration wrapper (Stage 1)
+- `neo/renderer/Vulkan/vk_reflections.cpp` — null-light-SSBO fallback resized (Stage 2,
+  not in original plan — see Stage 2 deviation note)
+- ~~`vk_raytracing.h` new SSBO handle~~ — not needed; cookies live inside the existing
+  `GILightBuffer`/`RTLightBuf`, no new binding (Stage 1 deviation)
+- `neo/renderer/glsl/rt_light_cookie.glsl` — new, shared sampling helper (Stage 2), added
+  to `GLSL_INCLUDES` in CMakeLists
+- `neo/renderer/glsl/rt_light_eval.glsl` — `RTLightCookie`/`cookies[]` mirror, `flags`
+  field, cookie multiply in `rt_LightContribAt`, debug tint (Stage 2)
+- `gi_ray.rchit`, `reflect_ray.rchit`, `player_reflect.rchit` — get the cookie multiply for
+  free via `rt_light_eval.glsl` (Stage 2); no direct edits needed
+- `neo/renderer/glsl/vol_march.comp` — volumetric path (Stage 3): new set=1 material-table
+  include, fixed-size `lights[]`/`cookies[]` mirror, per-step cookie multiply
+- `neo/renderer/Vulkan/vk_vol.cpp` — vol march pipeline layout extended to 2 sets
+  (Stage 3, not in original plan — needed matDescLayout for bindless texture access)
+- `neo/CMakeLists.txt` — new glsl include (Stage 2)
