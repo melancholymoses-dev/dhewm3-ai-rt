@@ -232,12 +232,22 @@ struct GILightBuffer
     float reflAmbientScale;  // r_rtReflAmbientScale — reflections only, see rt_light_eval.glsl
     float pad[3];            // pads header to 32 bytes (RTLight's std430 base alignment is 16)
     GILightEntry lights[VK_GI_MAX_LIGHTS];
-    // Stage 1 is CPU-only: GLSL mirrors don't declare this yet, but the SSBO
-    // range already covers it (rt_projected_light_cookies.md).
+    // Stage 2: mirrored in GLSL as RTLightBuf::cookies[RT_LIGHT_MAX_LIGHTS]
+    // (rt_light_eval.glsl), 1:1 with lights[] by index.
     GILightCookie cookies[VK_GI_MAX_LIGHTS];
 };
 static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96 + VK_GI_MAX_LIGHTS * 64,
               "GILightBuffer size mismatch");
+
+// Stage 2: RTLightBuf's lights[]/cookies[] are now fixed-size arrays in the
+// GLSL mirror (previously lights[] was an unsized trailing array, tolerant of
+// a small stand-in buffer). Any fallback/null buffer bound to that binding
+// must now be at least this many bytes or descriptor validation fails against
+// the shader's declared block size — see VK_RT_GetGILightBufferSize callers.
+uint32_t VK_RT_GetGILightBufferSize(void)
+{
+    return (uint32_t)sizeof(GILightBuffer);
+}
 
 // ---------------------------------------------------------------------------
 // GI UBO layout matching gi_ray.rgen GIParams block (std140)
