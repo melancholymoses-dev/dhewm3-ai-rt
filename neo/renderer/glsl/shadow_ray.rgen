@@ -232,8 +232,7 @@ void main() {
     vec3 camPos   = camWorld.xyz / camWorld.w;
     vec3 toCamera = normalize( camPos - worldPos ); // always points away from surface
 
-    // Reconstruct surface normal from depth-buffer gradients using central
-    // differences (more stable than forward differences on steep surfaces).
+    // Reconstruct surface normal from depth-buffer gradients using central differences.
     // Sample all four screen neighbours; use whichever pairs are on the same
     // surface (small depth delta).  Fall back to the camera direction when
     // the reconstruction is degenerate.
@@ -243,10 +242,9 @@ void main() {
     float depthD = texelFetch( depthSampler, coord + ivec2( 0,  1), 0 ).r;
     float depthU = texelFetch( depthSampler, coord + ivec2( 0, -1), 0 ).r;
 
-    // Build tangent vectors; prefer central differences, fall back to
+    // Build tangent vectors; fall back to
     // one-sided when the opposite neighbour is on a different surface.
-    const float kEdge = 0.01; // depth threshold — wider than before so steep
-                              // surfaces are not misclassified as edges
+    const float kEdge = 0.01; 
     vec3 posR = reconstructWorldPos( coord + ivec2( 1,  0), size );
     vec3 posL = reconstructWorldPos( coord + ivec2(-1,  0), size );
     vec3 posD = reconstructWorldPos( coord + ivec2( 0,  1), size );
@@ -281,16 +279,13 @@ void main() {
         biasDir          = n;
         gotSurfaceNormal = true;
     } else {
-        // Degenerate cross product — surface is edge-on or all neighbours are
-        // on different surfaces. Camera-facing is the most stable fallback for
-        // visible geometry.
+        // surface is edge-on or all neighbours are on different surfaces. 
+        // Camera-facing is the most stable fallback for visible geometry.
         biasDir = toCamera;
         gotSurfaceNormal = false;
     }
 
     // Adaptive bias: scale up when light is nearly tangent to the surface.
-    // Use abs(dot) for stability so tiny sign changes around 0 don't flip the
-    // bias factor frame-to-frame.
     float nDotL       = max( 0.2, abs(dot( biasDir, lightDir )) );
     float adaptBias   = baseBias / nDotL;
 
@@ -322,17 +317,12 @@ void main() {
     // Fix 1 — world-anchored seed
     //   Seed from quantised world position so the same world point always gets
     //   the same random sample regardless of where it projects on screen.
-    //   Camera movement no longer changes the seed → no temporal shimmer from
-    //   camera rotation.  Cell size 0.125 wu (factor 8) keeps the step smaller
-    //   than one pixel's projected footprint at typical game distances.
+    //   Camera movement no longer changes the seed.  Cell size 0.125 wu (factor 8) 
+    //   keeps the step smaller than one pixel's projected footprint at typical game distances.
     //
     // Fix 2 — per-pixel blue-noise phi offset
     //   Pixels that share a world cell (same wSeed) would otherwise fire
-    //   identical rays.  A screen-space golden-ratio offset rotates the
-    //   azimuthal angle of each pixel's cone sample independently.  Using the
-    //   golden ratio (0.618…) as the per-frame increment gives a
-    //   low-discrepancy sequence so successive frames cover the phi circle
-    //   evenly — making the temporal blur (or future TAA) maximally effective.
+    //   identical rays.  Use a low-discrepency sequence to sample azimuthal angle.
     // ---------------------------------------------------------------------------
 
     // Fix 1: world-space seed
@@ -357,12 +347,7 @@ void main() {
         vec3 rayDir = jitterDirectionAniso( lightDir, tRight, tFwd, sinConeU, sinConeV, seed, phiOffset );
 
         // Clamp jittered direction to the upper hemisphere relative to the
-        // surface normal.  For nearby lights the cone can be very wide (e.g.
-        // ±42° for dist=3, radius=2) and some sampled directions will point
-        // below the surface plane.  No origin bias prevents self-intersection
-        // when the ray direction itself aims into the surface.
-        // biasDir is the surface normal (or camera fallback) — always faces
-        // away from the surface toward the lit side.
+        // surface normal.  
         if ( dot(rayDir, biasDir) < 0.01 ) {
             rayDir = lightDir; // fall back to hard shadow direction for this sample
         }

@@ -12,8 +12,8 @@ debug tint's first iteration had its own bug, also fixed same day, see project m
 fan blades. Two real bugs found and fixed en route (a compute-shader-incompatible
 `#include`, and a missing `VK_SHADER_STAGE_COMPUTE_BIT` on the shared bindless-texture
 binding that silently killed all volumetric lighting, not just cookies — see project
-memory `project_light_cookie_stage3`). Stage 4 not started. Linked from ROADMAP.md
-Wave 7 (COOKIE).
+memory `project_light_cookie_stage3`). Stage 4 (cleanup) done 2026-09-12 — debug-tint
+scaffolding removed. All four stages complete. Linked from ROADMAP.md Wave 7 (COOKIE).
 **Motivates:** visible fan-blade shadows in volumetric light shafts, plus every other
 patterned projected light in the retail maps (window blinds, grates, cage lights).
 
@@ -243,13 +243,21 @@ Watch for two things specific to volumetrics once validated:
   at low `r_rtVolSamples`. Check with the color-coded overlay before assuming it needs
   more samples.
 
-**Stage 4 — cleanup/generalize.**
-Confirm ordinary non-fan projected lights (wall sconces, simple spot fixtures) are
-unaffected — most just have a plain gradient stage, so the cookie multiply should be a
-near-no-op. Any visible darkening regression there means the stage-selection heuristic
-(first passing stage) picked the wrong stage or a falloff-only texture that shouldn't be
-treated as a cookie — worth an explicit before/after screenshot pair of a plain corridor
-light, not just the fan fixture.
+**Stage 4 — cleanup/generalize. ✅ Done 2026-09-12.**
+Removed the debug-tint scaffolding entirely now that Stages 2/3 are in-game validated:
+`RT_LIGHT_COOKIE_DEBUG`, both per-file threshold constants, and the tint branch in
+`rt_ApplyLightCookie` are gone from `rt_light_cookie.glsl` — it's back to the three
+plain helpers (`RTLightCookie`, `rt_SampleLightCookie`, `rt_ApplyLightCookie`,
+`rt_LightLuminance`), no `#if` branches. `rt_LightLuminance` stayed (moved there during
+Stage 3) since `rt_light_eval.glsl`'s shadow-budget/stochastic-selection code depends on
+it independent of cookies.
+
+Confirming ordinary non-fan lights are unaffected: not done as an explicit before/after
+screenshot pair, but reasonably covered by evidence already gathered during Stage 2/3
+validation — `biground1`, `squarelight1`, `spot01`, `lanternglow` etc. all carried
+`GI_LIGHT_FLAG_HAS_COOKIE` and contributed to both reflections and volumetrics
+throughout those sessions with no reported darkening. Worth a real screenshot pair if a
+darkening regression is ever suspected later, but not blocking.
 
 ---
 

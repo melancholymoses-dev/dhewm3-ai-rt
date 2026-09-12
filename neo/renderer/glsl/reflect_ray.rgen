@@ -233,14 +233,10 @@ void main()
     if (glassProbe.hitT > 0.01)
     {
         // Glass: encode Schlick Fresnel for the camera-facing glass interface.
-        // glass_refl_overlay.frag (drawn per MC_TRANSLUCENT surface, unrelated to
-        // refl_composite.frag below) consumes this as a physically-motivated glass
-        // weight. Alpha is stored NEGATED as a sentinel: the depth buffer at a
+        // Alpha is stored NEGATED as a sentinel: the depth buffer at a
         // glass pixel belongs to the opaque surface *behind* the glass (glass
         // never writes depth), so refl_composite.frag's fullscreen pass must not
-        // also apply this radiance using that unrelated surface's F0/normal —
-        // glass_refl_overlay.frag already fully composites it. Magnitude is
-        // unaffected; that pass takes abs(alpha).
+        // also apply this radiance.
         const float GLASS_F0 = 0.15;
         float cosTheta = clamp(abs(dot(normalize(reflNormal), normalize(reflDir))), 0.0, 1.0);
         float oneMinusCos = 1.0 - cosTheta;
@@ -250,13 +246,8 @@ void main()
         return;
     }
 
-    // Opaque surface: compute Schlick Fresnel once here — not per-light, the
-    // N-lights-= N x over-brightness bug this G-buffer effort exists to fix
-    // (see docs/plans/gbuffer_normal_pass.md Step 8) — using the G-buffer/fallback
-    // normal and view direction already established above. grazingMax clamps the
-    // grazing-angle lobe for low-F0 (rough) surfaces: physically, rough surfaces
-    // never reach mirror-like grazing Fresnel because of shadowing/masking this
-    // single-F0 approximation doesn't otherwise capture.
+    // Opaque surface: compute Schlick Fresnel once here using the G-buffer/fallback
+    // normal and view direction already established above.
     float NdotV   = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
     float grazing = mix(params.grazingMax, 1.0, smoothstep(0.3, 0.7, f0));
     float fresnel = f0 + (grazing - f0) * pow(1.0 - NdotV, 5.0);

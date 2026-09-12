@@ -1,5 +1,5 @@
 /* rt_light_cookie.glsl — light cookie/gobo sampling (rt_projected_light_cookies.md
-  Stage 2/3). Shared by rt_light_eval.glsl's rt_LightContribAt (GI bounce +
+  Stages 2-4). Shared by rt_light_eval.glsl's rt_LightContribAt (GI bounce +
   reflections) and vol_march.comp's per-step light loop (volumetrics): samples the
   light material's chosen stage image through the world-space S/T/Q projection
   planes vk_gi.cpp derives per light from R_SetLightProject, with the stage's
@@ -36,12 +36,9 @@ struct RTLightCookie {
 };
 
 // rt_SampleLightCookie — only ever called once the caller has confirmed
-// GI_LIGHT_FLAG_HAS_COOKIE, so there is no "no cookie" case to special-case
-// here. Zeroclamp semantics match real Doom 3's projected-light interaction
+// GI_LIGHT_FLAG_HAS_COOKIE. Zeroclamp semantics match real Doom 3's projected-light interaction
 // pass: behind the near plane or outside the [0,1] S/T box is black, not a
-// passthrough — a hit point can be within a point light's sphere pre-cull
-// radius yet outside its (non-uniform) box extents on one axis, and Doom 3
-// does not light that point at all in that case.
+// passthrough.  Ensure bounding box for light is respected.  
 vec3 rt_SampleLightCookie(RTLightCookie c, vec3 worldPos)
 {
     vec4 p = vec4(worldPos, 1.0);
@@ -56,16 +53,11 @@ vec3 rt_SampleLightCookie(RTLightCookie c, vec3 worldPos)
     return texture(matTextures[nonuniformEXT(c.imageIndex)], uv).rgb;
 }
 
+// Used by rt_light_eval.glsl's shadow-budget/stochastic-selection weighting,
+// not just cookie code — kept here since both files already include this file.
 float rt_LightLuminance(vec3 c)
 {
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
-
-
-// rt_ApplyLightCookie — multiplies a cookie sample into a light's contribution,
-// Centralised here so gi_ray/reflect_ray (via rt_light_eval.glsl) and
-// vol_march.comp render identical debug output and can't drift apart.
-vec3 rt_ApplyLightCookie(vec3 preCookieContrib, vec3 cookie)
-    return preCookieContrib * cookie;
 
 #endif // RT_LIGHT_COOKIE_GLSL
