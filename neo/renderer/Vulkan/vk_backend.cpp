@@ -4659,6 +4659,12 @@ void VK_RB_DrawView(const void *data)
         // always see the current frame's light list.
         VK_RT_UploadGILights(backEnd.viewDef);
 
+        // rt_projected_light_cookies.md: light collection above may have just
+        // registered a brand-new cookie image (VK_RT_GetOrAssignTexIndex) — this
+        // runs after VK_RT_RebuildTLAS's own bindless flush, so without a second
+        // flush here that slot stays unwritten until next frame's TLAS rebuild.
+        VK_RT_FlushBindlessTextures();
+
         // P1b: trace + blur every batched light here, in one block, while the render
         // pass is already closed for the RT work.  Runs for subviews/mirrors too —
         // unlike the temporal passes below, the shadow mask carries no history.

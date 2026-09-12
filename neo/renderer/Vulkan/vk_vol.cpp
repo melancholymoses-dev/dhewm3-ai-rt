@@ -94,7 +94,7 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
 static idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "0.50", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
 static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.45", CVAR_RENDERER | CVAR_FLOAT,
@@ -412,12 +412,16 @@ static void VK_RT_DestroyVolImages(void)
 // VK_RT_InitVolMarchPipeline
 // Compute pipeline for vol_march.comp — reads TLAS + depth, writes volBuf.
 // Descriptor layout mirrors vol_march.comp bindings:
-//   binding 0: ACCELERATION_STRUCTURE_KHR (TLAS)
-//   binding 1: STORAGE_IMAGE              (volBuf write)
-//   binding 2: COMBINED_IMAGE_SAMPLER     (depth)
-//   binding 3: UNIFORM_BUFFER_DYNAMIC     (VolParamsUBO)
-//   binding 4: STORAGE_BUFFER             (VolLightBuf SSBO -- vol's own selection,
-//                                           NOT vkRT.giLightSsbo, see vk_raytracing.h)
+//   set 0, binding 0: ACCELERATION_STRUCTURE_KHR (TLAS)
+//   set 0, binding 1: STORAGE_IMAGE              (volBuf write)
+//   set 0, binding 2: COMBINED_IMAGE_SAMPLER     (depth)
+//   set 0, binding 3: UNIFORM_BUFFER_DYNAMIC     (VolParamsUBO)
+//   set 0, binding 4: STORAGE_BUFFER             (VolLightBuf SSBO -- vol's own selection,
+//                                                  NOT vkRT.giLightSsbo, see vk_raytracing.h)
+//   set 1: vkRT.matDescLayout — shared material table (rt_material.glsl), same set
+//          every RT hit shader binds. Stage 3 (rt_projected_light_cookies.md) added
+//          this so vol_march.comp can sample a light's cookie image; only its
+//          bindless matTextures[4096] is actually used here.
 // ---------------------------------------------------------------------------
 
 static void VK_RT_InitVolMarchPipeline(void)
@@ -457,10 +461,13 @@ static void VK_RT_InitVolMarchPipeline(void)
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.volMarchDescLayout));
 
     // --- Pipeline layout ---
+    // set=1 is the shared material table (matDescLayout) — see VK_RT_InitMaterialTable,
+    // which vk_backend.cpp guarantees runs before VK_RT_InitVolumetrics.
+    VkDescriptorSetLayout volMarchLayouts[2] = {vkRT.volMarchDescLayout, vkRT.matDescLayout};
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 1;
-    plInfo.pSetLayouts = &vkRT.volMarchDescLayout;
+    plInfo.setLayoutCount = 2;
+    plInfo.pSetLayouts = volMarchLayouts;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.volMarchPipelineLayout));
 
     // --- Compute shader module ---
@@ -725,7 +732,7 @@ static void VK_RT_InitVolCompositePipeline(void)
 static idCVar r_rtVolTemporal("r_rtVolTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
                               "Enable temporal EMA accumulation for volumetrics (requires r_rtVol 1).");
 
-static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.15", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                    "Vol EMA blend factor: 0=history only, 1=current only. "
                                    "0.1-0.2 recommended; lower = smoother but more ghosting.");
 
@@ -1901,6 +1908,10 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 0, 1,
                             &vkRT.volMarchDescSets[frameIdx], 1, &uboOff);
+    // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless
+    // textures) — Stage 3 (rt_projected_light_cookies.md) light-cookie sampling.
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1, &vkRT.matDescSet, 0,
+                            NULL);
 
     uint32_t groupsX = ((uint32_t)ubo.scissorExtentX + 7) / 8;
     uint32_t groupsY = ((uint32_t)ubo.scissorExtentY + 7) / 8;

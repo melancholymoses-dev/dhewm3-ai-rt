@@ -838,6 +838,13 @@ void VK_RT_ShutdownMaterialTable(void);
 bool VK_RT_MaterialIsEmissive(const idMaterial *shader, idImage **outEmissiveImage, bool *outGuiEmissive,
                               bool *outIsCinematic = NULL);
 
+// Public wrapper around the material table's bindless-slot assignment
+// (vk_material_table.cpp's file-local GetOrAssignTexIndex), for callers
+// outside that file that need to register an image into the same bindless
+// array RT hit shaders sample by index — e.g. rt_projected_light_cookies.md's
+// light-cookie image (vk_gi.cpp). img == NULL returns slot 0 (white fallback).
+uint32_t VK_RT_GetOrAssignTexIndex(idImage *img);
+
 // Build a VkMaterialEntry for one TLAS instance.
 // shader:      the representative idMaterial for this instance (may be NULL — returns defaults).
 // blas:        the BLAS built for this entity; all per-geometry addresses are written.
@@ -965,6 +972,13 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
                                const uint64_t *staticGeomVtx, const uint64_t *staticGeomIdx, uint32_t staticGeomCount,
                                const uint64_t *dynGeomVtx, const uint64_t *dynGeomIdx, uint32_t dynamicGeomCount,
                                bool rewriteStaticGeoms);
+
+// rt_projected_light_cookies.md: flush a pending bindless-descriptor rebuild
+// (no-op if nothing is dirty). Callers that register a texture via
+// VK_RT_GetOrAssignTexIndex AFTER this frame's VK_RT_UploadMatTableFrame call
+// (vk_gi.cpp's light-cookie collection, which runs after VK_RT_RebuildTLAS)
+// must call this afterward or the new slot stays unwritten until next frame.
+void VK_RT_FlushBindlessTextures(void);
 
 // ---------------------------------------------------------------------------
 // Volumetric Lighting (Phase 7.2)
