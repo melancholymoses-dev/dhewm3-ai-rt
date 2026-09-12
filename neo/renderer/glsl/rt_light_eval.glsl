@@ -122,7 +122,6 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
 
     vec3  lPos   = rtLightBuf.lights[i].posRadius.xyz;   // volume centre
     vec3  lEmit  = rtLightBuf.lights[i].emitPos.xyz;     // emitter (lightCenter applied)
-    float lRad   = rtLightBuf.lights[i].posRadius.w;
     vec3  lColor = rtLightBuf.lights[i].colorIntensity.rgb;
     float lInt   = rtLightBuf.lights[i].colorIntensity.a;
     uint  lType  = rtLightBuf.lights[i].lightType;
@@ -130,17 +129,27 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
     // Range test and falloff are properties of the light's VOLUME, which does not move
     // when a mapper offsets lightCenter — so both measure from the volume centre. This
     // mirrors GL, where R_SetLightProject builds the falloff planes around parms.origin.
-    // Point lights (lType 0) get the sphere/quadratic test below; projected/flashlight
-    // lights (1/2) need cone containment too, or they light a full sphere around
-    // themselves instead of their actual cone — same test vol_march.comp already uses.
+    // Point lights (lType 0) get box containment below; projected/flashlight lights
+    // (1/2) need cone containment instead, or they light a full sphere around
+    // themselves instead of their actual cone — same tests vol_march.comp already uses.
     float atten;
     if (lType == 0u)
     {
-        float volDist = length(lPos - hitPos);
-        if (volDist >= lRad)
+        // Box-normalized L∞ containment (1.0 = face, 1.5 = outer limit) — a plain
+        // posRadius.w sphere test here treated every point light as spherical even
+        // when boxExtents is non-cubical (a very common case — most light_radius
+        // keys aren't uniform per axis), over-lighting past the box on its shorter
+        // axes as long as the wider sphere pre-cull radius still covered that point.
+        vec4  bx        = rtLightBuf.lights[i].boxExtents;
+        vec3  localAbs  = abs(hitPos - lPos);
+        vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
+        float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
+        if (maxNorm >= 1.5)
             return false;
-        float t = volDist / max(lRad, 1.0);
-        atten = 1.0 - t * t;   // volDist < lRad above guarantees t < 1 → atten > 0
+        if (maxNorm <= 1.0)
+            atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
+        else
+            atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
     }
     else
     {

@@ -171,6 +171,27 @@ static void RebuildBindlessDescriptors(void)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_FlushBindlessTextures (public)
+//
+// rt_projected_light_cookies.md: VK_RT_UploadGILights (vk_gi.cpp's light
+// collection) runs AFTER VK_RT_RebuildTLAS's call to VK_RT_UploadMatTableFrame
+// each frame, and can register a not-yet-seen light-cookie image via
+// VK_RT_GetOrAssignTexIndex — the only other place s_bindlessDirty gets
+// flushed is the NEXT frame's VK_RT_UploadMatTableFrame, so without this call
+// a brand-new cookie fixture's image reads an unwritten/fallback descriptor
+// slot for one frame (visible as a black/wrong cookie the first time a
+// fixture using that image is admitted). Binding 3 already has
+// UPDATE_AFTER_BIND + PARTIALLY_BOUND set specifically so a second
+// vkUpdateDescriptorSets later in the same frame is valid.
+// ---------------------------------------------------------------------------
+
+void VK_RT_FlushBindlessTextures(void)
+{
+    if (s_bindlessDirty)
+        RebuildBindlessDescriptors();
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_InitMaterialTable
 // ---------------------------------------------------------------------------
 

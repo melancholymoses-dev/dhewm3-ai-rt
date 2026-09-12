@@ -973,6 +973,13 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
                                const uint64_t *dynGeomVtx, const uint64_t *dynGeomIdx, uint32_t dynamicGeomCount,
                                bool rewriteStaticGeoms);
 
+// rt_projected_light_cookies.md: flush a pending bindless-descriptor rebuild
+// (no-op if nothing is dirty). Callers that register a texture via
+// VK_RT_GetOrAssignTexIndex AFTER this frame's VK_RT_UploadMatTableFrame call
+// (vk_gi.cpp's light-cookie collection, which runs after VK_RT_RebuildTLAS)
+// must call this afterward or the new slot stays unwritten until next frame.
+void VK_RT_FlushBindlessTextures(void);
+
 // ---------------------------------------------------------------------------
 // Volumetric Lighting (Phase 7.2)
 // ---------------------------------------------------------------------------

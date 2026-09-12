@@ -94,7 +94,7 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
 static idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "0.50", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
 static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.45", CVAR_RENDERER | CVAR_FLOAT,
@@ -732,7 +732,7 @@ static void VK_RT_InitVolCompositePipeline(void)
 static idCVar r_rtVolTemporal("r_rtVolTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
                               "Enable temporal EMA accumulation for volumetrics (requires r_rtVol 1).");
 
-static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.15", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtVolTemporalAlpha("r_rtVolTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                    "Vol EMA blend factor: 0=history only, 1=current only. "
                                    "0.1-0.2 recommended; lower = smoother but more ghosting.");
 
@@ -1910,8 +1910,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.volMarchDescSets[frameIdx], 1, &uboOff);
     // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless
     // textures) — Stage 3 (rt_projected_light_cookies.md) light-cookie sampling.
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1,
-                            &vkRT.matDescSet, 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1, &vkRT.matDescSet, 0,
+                            NULL);
 
     uint32_t groupsX = ((uint32_t)ubo.scissorExtentX + 7) / 8;
     uint32_t groupsY = ((uint32_t)ubo.scissorExtentY + 7) / 8;
