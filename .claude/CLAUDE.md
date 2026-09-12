@@ -20,7 +20,7 @@ If there are complex options, favour generating logs and debugging over theoreti
 
 When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
-When editing code do not leave long comments about the motivation.  Save that stuff in memories, not the code.
+Do not leave long comments inside functions.  Stay brief with crucial info.  Save long motivation inmemories, not the code.
 
 ## Assets
 The main doom3 assets have been unzipped and are accessible at

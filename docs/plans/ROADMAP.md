@@ -1,149 +1,80 @@
-# RT Roadmap — 2026SepRoadmap
+# RT Roadmap
 
-**Date:** 2026-08-10 (Waves 1-6 planned); **status reviewed 2026-08-31**
-**This is the entry point.** If you (human or LLM) are wondering what to work on or
-which plan doc is authoritative, start here. Detailed designs live in the live docs
-below; this file owns the *ordering* and the *status*.
-See completed/202608_ROADMAP.md for the priorplanning.  
-
-- **Wave 6 tuning (T3-T6)** in `rt_optimization_tuning.md` was never started (no
-  per-material F0, no falloff-mode A/B, no final constants pass recorded). Low
-  urgency — the base it tunes is stable — but it's the one item from the *original*
-  six waves that isn't actually done, despite the "mostly done" framing above.
-- **`amd_vulkan_cleanup.md`** still has A12 (far-field shadow flicker) waiting on one
-  more zero-code experiment (`r_rtShadowSoftRadiusScale 0`) to pick between a cheap
-  fix and a reversed-Z projection change, and its own status header is stale — A2/A5
-  landed in commit `398095ee` without the doc text being updated to say so.
-
-When the next roadmap cycle starts (post-Wave-7), this file should be moved to
-`completed/` and a fresh entry-point doc started at this same path.
+**Status reviewed:** 2026-09-11
+**This is the entry point.** If you're wondering what to work on or which plan doc
+is authoritative, start here. This file owns *ordering* and *status*; detailed
+designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
 
 ---
 
 ## Design pillars (the taste contract)
 
-Decided after review of the shipped RT features against Doom 3's art direction.
 Every stage below serves these; anything that fights them gets cut or demoted.
 
-1. **Shadows are the feature.** Soft, shaped, from more lights (including dynamic
-   weapon/projectile lights). This is where "dynamic lighting" actually lives.
-2. **Darkness stays black.** GI may tint lit regions (color bleed, corner-spill from
-   bright sources); it must never lift the noise floor of dark ones.
-3. **Light the air sparingly.** Volumetrics from hero lights only — flashlight plus a
-   budgeted handful of fixtures/panels.
+1. **Shadows are the feature.** Soft, shaped, from more lights. This is where
+   "dynamic lighting" actually lives.
+2. **Darkness stays black.** GI may tint lit regions; it must never lift the noise
+   floor of dark ones.
+3. **Light the air sparingly.** Volumetrics from hero lights only.
 4. **Reflections are set dressing.** Mirrors, glass, screens, the odd hero surface —
    gated by F0, never a global material property. The assets carry no PBR data;
    don't pretend they do.
-5. **No map editing.** Everything is engine-side rules + budgets + debug overlays.
-   Small def-file mods (weapon/projectile lights) are allowed.
+5. **No map editing.** Engine-side rules + budgets + debug overlays. Small def-file
+   mods are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
    constants get tuned from the overlay, not by eye on the final composite.
 
+---
 
-## Completed 
-| Doc | Owns | Status |
-|---|---|---|
-| `amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness: SBT hit-region overrun, image init, dead guards, stale geometry VAs, `parm3`-as-timescale, far-field shadow flicker | Nearly done — A1/A3/A5/A8/A11 landed; **A12 has one experiment left** to pick its fix; A2/A4/A6/A7 minor/latent, not blocking |
-| `completed/auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | **Done** (Wave 5) — moved to `completed/` |
-| `rt_parallel_sun_lights.md` | Admit parallel ("sun") lights to GI/vol/reflections — currently rejected outright in `considerLight` on a premise that turned out to be false; direct lighting/shadows already support them — spec only, not started.  Not pursuing. | **Wave 7** |
-| `rt_temporal_cut_detection.md` | Fix GI/AO/vol temporal camera-cut detection (ill-conditioned matrix diff → position/angle test) **and** a deeper bug it exposed: the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` per frame was slipping past the mirror/subview guard and re-running AO/Refl/GI/Vol every frame — AO with no dedup guard at all, so it was a real duplicated ray trace, not just corrupted state | ✅ **Implemented 2026-08-31**, validated in-game |
-| `completed/20260905_rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — all 4 stages, rotating fan-blade shadows visible in reflections, GI and volumetric light shafts | ✅ **Done 2026-09-12**, in-game validated, moved to `completed/` |
+## Current arc
 
+| # | Item | Doc | Status |
+|---|---|---|---|
+| 1 | **Reflection gating rework** — reflections cost ~17 rays/pixel across most of the screen to produce sub-1% radiance. Cull to glass/mirrors, make those actually look like reflections. Pillar 4 is currently violated in both directions. | `20260911_reflection_gating.md` | ⬜ Next |
+| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | ⬜ Queued behind #1 |
+
+Reflection gating goes first: it's small, it subsumes the never-started tuning
+item T3 (per-material F0), and it frees GPU budget that the froxel/probe arc will
+want. It also needs a profiler checkpoint, which the froxel doc lists as its own
+precondition — one measurement pass serves both.
+
+---
 
 ## Live documents
 
-| Doc | Owns | Status |
-|---|---|---|
-| `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Waves 2-4 done; **Wave 6 (T3-T6) not started** |
+| Doc | Owns |
+|---|---|
+| `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done; **T3-T6 not started** (T3 is absorbed into the reflection rework above). |
+| `20260906_froxel_probe_gi.md` | World-space caching arc (arc #2). |
+| `20260906_bloom_plan.md` | Bloom post-process — unimplemented; the tonemapped HDR pipeline it needs now exists. |
+| `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
+| `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
+---
 
-`../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
-getting Vulkan validation/GPU-AV output out of this engine — layer settings file,
-env vars, what each VUID class means, this project's own diagnostic cvars. Load it
-before chasing any AMD-vs-NVIDIA or device-lost bug.
+## Completed
 
+All in `completed/`. Waves 1-7 of the original roadmap are done.
 
+| Doc | Owns |
+|---|---|
+| `20260826_amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness. A1/A3/A5/A8/A11 landed; **A12 (far-field shadow flicker) has one zero-code experiment left** — `r_rtShadowSoftRadiusScale 0` picks between a cheap fix and a reversed-Z projection change. A2/A4/A6/A7 minor/latent. |
+| `20260831_rt_temporal_cut_detection.md` | Camera-cut detection rewritten to test camera position/orientation instead of ill-conditioned matrix elements; also fixed the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` re-running AO/Refl/GI/Vol every frame. |
+| `20260905_rt_projected_light_cookies.md` | Projected-light cookie/gobo textures in direct lighting, reflections, GI and volumetrics. All 4 stages, in-game validated. |
+| `20260810_auto_relight.md` | Synthesized shadow-casting lights from emissive panels. |
+| `20260808_gbuffer_normal_pass.md` | G-buffer normal/F0 prepass. |
+| `20260816_portal_area_lights.md` | Stage 2 (transition blend) was shelved on the temporal bug, now unblocked — not currently scheduled. |
+| `20260831_rt_parallel_sun_lights.md` | Sun/parallel lights in GI/vol/reflections. **Not pursuing.** |
 
-Wave 6 — Tuning pass                              [rt_optimization_tuning.md T3-T6]
-  T3 per-material F0 (mirrors ~0.9)  ·  T4 RT-vs-raster falloff match
-  T5 emissive floor fix  ·  T6 final constants (record values in the doc)
-  ⬜ NOT STARTED (2026-08-31 review) — no per-material F0 field on VkMaterialEntry,
-     no falloff-mode A/B, no final constants recorded. Lower urgency than Wave 7:
-     the base it tunes is stable and this is optimization/polish, not a missing
-     feature. Pick up whenever a tuning pass is wanted; nothing below depends on it.
-
-Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.md, new]
-  This is the actual open arc as of 2026-08-31 — everything above has landed.
-  TEMPORAL  ✅ Implemented 2026-08-31. Was a correctness bug undermining GI/AO/vol
-          quality that's already shipped, not new coverage. Camera-cut detection
-          compared raw inverse-view-projection matrix elements against a fixed
-          epsilon; that matrix is ill-conditioned under Doom 3's infinite-far-Z
-          projection (same root cause A12 already diagnosed for shadow rays), so
-          ordinary mouselook read as a "cut" almost every frame (confirmed via
-          log: maxDiff ~472 vs. a 0.5 threshold, even standing still) and temporal
-          accumulation barely ever actually ran. Fixed by testing camera
-          position/orientation deltas directly instead of matrix elements — see
-          `rt_temporal_cut_detection.md`. That fix's own diagnostic logging then
-          caught a second, deeper bug: Doom 3's 2D GUI/HUD overlay is a second
-          `RC_DRAW_VIEW` every frame with a fully zeroed camera, and it was
-          slipping past the mirror/subview guard to re-run AO/Refl/GI/Vol every
-          frame — AO has no dedup guard at all, so this was a genuine duplicated
-          ray trace (real GPU cost), not just corrupted temporal state. First fix
-          attempt (`viewEntitys != NULL`) was itself wrong — that only chains game
-          entities, not static world geometry, so it wrongly skipped every ordinary
-          empty-of-entities room too (caused visible GI ghosting, caught and
-          reverted same day). Actual fix tests the camera directly: the overlay's
-          `viewaxis` is the zero vector, which no real camera ever has
-          (`vk_backend.cpp`). Not yet re-validated in-game. Also
-          unblocks `portal_area_lights.md`'s shelved Stage 2 (transition blend),
-          which depended on this being fixed.
-  COOKIE  ✅ Done 2026-09-12. Projected light cookie/gobo textures — the classic
-          Doom 3 fan-blade-shadow-in-a-light-shaft effect is a rotating material
-          texture on a spot light (`lights/fanlightgrate`), not geometry; our RT
-          path already admits these lights but renders them as a smooth cone with
-          the texture silently dropped. See
-          `completed/20260905_rt_projected_light_cookies.md` for the full spec — data
-          needed (light projection planes, animated texture matrix, bindless image)
-          already exists in the shared frontend and material table, this is wiring,
-          not new math. ✅ Stage 1 (CPU admission + dump validation) landed and
-          in-game validated 2026-09-08. Stage 2 (direct-lighting shader read, both
-          gi_ray.rchit and reflect_ray.rchit via rt_light_eval.glsl) landed
-          2026-09-10 and in-game validated the same day (reflections show a rotating
-          cookie pattern on a real fanblade3 fixture; direct camera view is
-          unaffected by design — that stays on the untouched raster path). Stage 3
-          (volumetrics, vol_march.comp) landed 2026-09-11 and in-game validated
-          2026-09-12 — volumetric light shafts visibly follow the rotating fan
-          blades. Two real bugs found/fixed getting there: an `#include` pulling in
-          a ray-tracing-pipeline-only built-in (`gl_WorldToObjectEXT`) into a
-          compute shader, and a missing `VK_SHADER_STAGE_COMPUTE_BIT` on the shared
-          bindless-texture descriptor binding that silently zeroed out *all*
-          volumetric lighting, not just cookie-lit areas (see project memory
-          `project_light_cookie_stage3`). Stage 4 (cleanup) done 2026-09-12 —
-          debug-tint scaffolding removed from rt_light_cookie.glsl. All 4 stages
-          complete.
-
-After Wave 7: reassess against the pillars. Candidate next arc:
-- **world-space caching** (`froxel_probe_gi.md`, designed 2026-08-23) — froxel-grid
-  volumetrics + DDGI-style probe GI: move the expensive sampling out of screen
-  space into cached world-space structures; big perf win, deletes most of the
-  GI noise-fighting chain structurally.
+---
 
 ## Backlog (not in the current arc, not dead)
 
 | Item | Doc | Note |
 |---|---|---|
-| Bloom post-process | `bloom_plan.md` | Unimplemented; revisit after Wave 6 — tonemapped HDR pipeline it needs now exists |
-| First-person player body | `see_first_person_player_model.md` | Orthogonal to lighting arc |
-| Projectiles in reflections | `completed/reflection_enhancements.md` AR3 | Sprite attempt was reverted (f37f071b); needs a new approach |
-| Translucent square borders over reflections | `completed/reflection_enhancements.md` (last section) | Polish |
-| Roughness-blurred reflections | — | Explicitly out of scope until G-buffer + composite prove out; interim is T2's grazing clamp + F0 gating |
-| Runtime emissive-state lights (scripted screens turning off) | `completed/auto_relight.md` limitations | v2 of auto-relight |
-| Froxel volumetrics + probe GI | `froxel_probe_gi.md` | Post-Wave-7 arc; needs the owed profiler checkpoints first |
-
-## Status tracking
-
-Update this table as waves land (and move fully-finished docs to `completed/`).
-
-| Wave | Status | Landed in commit(s) | Profiler checkpoint taken? |
-| 6 | **not started** (2026-08-31 review confirms — no per-material F0 field exists on `VkMaterialEntry`) | | |
-| 7 | **✅ done** (2026-09-12) — TEMPORAL and COOKIE both landed and in-game validated; SUN (`rt_parallel_sun_lights.md`) explicitly not pursuing | | |
+| Tuning items T4-T6 | `rt_optimization_tuning.md` | Falloff-mode A/B, emissive floor, final constants pass. Stable base; polish. |
+| A12 far-field shadow flicker | `completed/20260826_amd_vulkan_cleanup.md` | One experiment away from a decision. |
+| Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |
+| Roughness-blurred reflections | — | Reconsider *after* the gating rework — a small, high-F0 pixel set makes this affordable for the first time. |
+| Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight. |
+| Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Polish. |
