@@ -90,7 +90,6 @@ layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
 
 layout(location = 1) rayPayloadEXT GIShadowPayload rtLightShadow;
 
-
 // Local Wang hash — rt_indirect.glsl has the same primitive but pulls in
 // depthSampler, which hit shaders don't bind.  Prefixed to avoid a clash if a
 // future includer ends up with both.
@@ -170,13 +169,12 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
 
     contrib = lColor * (lInt * NdotL * atten * contribScale);
 
-    // Stage 2: gobo/cookie pattern (fan blades, grates, window blinds) — see
-    // rt_light_cookie.glsl. Sampled at hitPos, the same point the raster path's
-    // projective texgen would sample for this pixel.
+    // Stage 2: gobo/cookie pattern (fan blades, grates, window blinds). Sampled at hitPos,
+    // the same point the raster path's  projective texgen would sample for this pixel.
     if ((rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
     {
         vec3 cookie = rt_SampleLightCookie(rtLightBuf.cookies[i], hitPos);
-        contrib = rt_ApplyLightCookie(contrib, cookie);
+        contrib = contrib * cookie;
     }
 
     return true;

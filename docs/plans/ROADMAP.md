@@ -47,6 +47,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | `completed/auto_relight.md` | Synthesized shadow-casting lights from emissive panels; noShadows unlock; zombie-vs-LED-wall shot | **Done** (Wave 5) — moved to `completed/` |
 | `rt_parallel_sun_lights.md` | Admit parallel ("sun") lights to GI/vol/reflections — currently rejected outright in `considerLight` on a premise that turned out to be false; direct lighting/shadows already support them — spec only, not started.  Not pursuing. | **Wave 7** |
 | `rt_temporal_cut_detection.md` | Fix GI/AO/vol temporal camera-cut detection (ill-conditioned matrix diff → position/angle test) **and** a deeper bug it exposed: the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` per frame was slipping past the mirror/subview guard and re-running AO/Refl/GI/Vol every frame — AO with no dedup guard at all, so it was a real duplicated ray trace, not just corrupted state | ✅ **Implemented 2026-08-31**, validated in-game |
+| `completed/20260905_rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — all 4 stages, rotating fan-blade shadows visible in reflections, GI and volumetric light shafts | ✅ **Done 2026-09-12**, in-game validated, moved to `completed/` |
 
 
 ## Live documents
@@ -54,7 +55,6 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | Doc | Owns | Status |
 |---|---|---|
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6, profiler checkpoints | Waves 2-4 done; **Wave 6 (T3-T6) not started** |
-| `rt_projected_light_cookies.md` | Projected-light material textures (fan blades, grates, window blinds) sampled in direct lighting + volumetrics — Stages 1-3 landed and in-game validated (rotating fan-blade shadows visible in reflections, GI and volumetric light shafts); Stage 4 (cleanup/generalize) not started | **Wave 7** |
 
 
 `../vulkan_debugging.md` (one level up, not a plan) is the reference for actually
@@ -97,11 +97,12 @@ Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.m
           (`vk_backend.cpp`). Not yet re-validated in-game. Also
           unblocks `portal_area_lights.md`'s shelved Stage 2 (transition blend),
           which depended on this being fixed.
-  COOKIE  Projected light cookie/gobo textures — the classic Doom 3 fan-blade-shadow-
-          in-a-light-shaft effect is a rotating material texture on a spot light
-          (`lights/fanlightgrate`), not geometry; our RT path already admits these
-          lights but renders them as a smooth cone with the texture silently
-          dropped. See `rt_projected_light_cookies.md` for the full spec — data
+  COOKIE  ✅ Done 2026-09-12. Projected light cookie/gobo textures — the classic
+          Doom 3 fan-blade-shadow-in-a-light-shaft effect is a rotating material
+          texture on a spot light (`lights/fanlightgrate`), not geometry; our RT
+          path already admits these lights but renders them as a smooth cone with
+          the texture silently dropped. See
+          `completed/20260905_rt_projected_light_cookies.md` for the full spec — data
           needed (light projection planes, animated texture matrix, bindless image)
           already exists in the shared frontend and material table, this is wiring,
           not new math. ✅ Stage 1 (CPU admission + dump validation) landed and
@@ -117,8 +118,9 @@ Wave 7 — Remaining light coverage + a bug fix     [rt_temporal_cut_detection.m
           compute shader, and a missing `VK_SHADER_STAGE_COMPUTE_BIT` on the shared
           bindless-texture descriptor binding that silently zeroed out *all*
           volumetric lighting, not just cookie-lit areas (see project memory
-          `project_light_cookie_stage3`). 🔶 Stage 4 (cleanup/generalize — confirm
-          ordinary non-fan lights are unaffected) NOT STARTED.
+          `project_light_cookie_stage3`). Stage 4 (cleanup) done 2026-09-12 —
+          debug-tint scaffolding removed from rt_light_cookie.glsl. All 4 stages
+          complete.
 
 After Wave 7: reassess against the pillars. Candidate next arc:
 - **world-space caching** (`froxel_probe_gi.md`, designed 2026-08-23) — froxel-grid
@@ -144,4 +146,4 @@ Update this table as waves land (and move fully-finished docs to `completed/`).
 
 | Wave | Status | Landed in commit(s) | Profiler checkpoint taken? |
 | 6 | **not started** (2026-08-31 review confirms — no per-material F0 field exists on `VkMaterialEntry`) | | |
-| 7 | **not started** — new arc as of 2026-08-31; see `rt_projected_light_cookies.md` (COOKIE) and this table's Wave 7 entry (SUN, not yet speced) | | |
+| 7 | **✅ done** (2026-09-12) — TEMPORAL and COOKIE both landed and in-game validated; SUN (`rt_parallel_sun_lights.md`) explicitly not pursuing | | |

@@ -153,7 +153,6 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
 
 #define VOL_SHADOW_BIAS 0.5
 
-
 // ---------------------------------------------------------------------------
 // Henyey-Greenstein phase function.
 // cosTheta: dot(marchDir, toLightDir).
@@ -414,7 +413,7 @@ void main()
             if ((giLightBuf.lights[li].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
             {
                 vec3 cookie = rt_SampleLightCookie(giLightBuf.cookies[li], stepPos);
-                contrib = rt_ApplyLightCookie(contrib, cookie);
+                contrib = contrib * cookie;
             }
 
             if (isFlashlight)
