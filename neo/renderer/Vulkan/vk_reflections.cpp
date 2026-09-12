@@ -117,14 +117,23 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern bool VK_AllocUBOForShadow(VkBuffer *outBuf, uint32_t *outOffset, void **outMapped);
+// Stage 2 (rt_projected_light_cookies.md): vk_gi.cpp's GILightBuffer::lights[]/
+// cookies[] are fixed-size in the GLSL mirror now (rt_light_eval.glsl), so the
+// null-light fallback below must be sized to match, not just big enough for
+// the header fields.
+extern uint32_t VK_RT_GetGILightBufferSize(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 
 // ---------------------------------------------------------------------------
-// Null light SSBO — 16-byte buffer with numLights = 0, bound when the GI
-// light SSBO is not yet available (GI not initialised, first frame, etc.).
-// The rchit shader checks numLights <= 0 and falls back to raw albedo.
+// Null light SSBO — zeroed buffer with numLights = 0, bound when the GI light
+// SSBO is not yet available (GI not initialised, first frame, etc.). Sized to
+// match GILightBuffer exactly (not just its header) because RTLightBuf's
+// lights[]/cookies[] are fixed-size arrays in the GLSL mirror — a smaller
+// buffer bound here would be undersized against the shader's declared block.
+// The rchit shader checks numLights <= 0 and falls back to raw albedo before
+// ever indexing lights[]/cookies[], so the zeroed body is never read.
 // ---------------------------------------------------------------------------
 static VkBuffer s_nullLightSsbo = VK_NULL_HANDLE;
 static VkDeviceMemory s_nullLightSsboMemory = VK_NULL_HANDLE;
@@ -134,16 +143,15 @@ static void VK_RT_CreateNullLightSsbo()
     if (s_nullLightSsbo != VK_NULL_HANDLE)
         return;
 
-    // Mirrors the GILightBuffer header: { int numLights; float bounceScale; float giRadius; float emissiveScale; }
-    const int32_t nullData[4] = {0, 0, 0, 0}; // numLights = 0
+    const VkDeviceSize bufSize = VK_RT_GetGILightBufferSize();
 
-    VK_CreateBuffer(sizeof(nullData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    VK_CreateBuffer(bufSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &s_nullLightSsbo,
                     &s_nullLightSsboMemory);
 
     void *mapped;
-    vkMapMemory(vk.device, s_nullLightSsboMemory, 0, sizeof(nullData), 0, &mapped);
-    memcpy(mapped, nullData, sizeof(nullData));
+    vkMapMemory(vk.device, s_nullLightSsboMemory, 0, bufSize, 0, &mapped);
+    memset(mapped, 0, bufSize); // numLights = 0 (first 4 bytes); rest never read
     vkUnmapMemory(vk.device, s_nullLightSsboMemory);
 }
 

@@ -104,6 +104,12 @@ static uint32_t GetOrAssignTexIndex(idImage *img)
     return idx;
 }
 
+// rt_projected_light_cookies.md Stage 1 — see declaration in vk_raytracing.h.
+uint32_t VK_RT_GetOrAssignTexIndex(idImage *img)
+{
+    return GetOrAssignTexIndex(img);
+}
+
 // ---------------------------------------------------------------------------
 // RebuildBindlessDescriptors
 //
@@ -162,6 +168,27 @@ static void RebuildBindlessDescriptors(void)
     }
 
     s_bindlessDirty = false;
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_FlushBindlessTextures (public)
+//
+// rt_projected_light_cookies.md: VK_RT_UploadGILights (vk_gi.cpp's light
+// collection) runs AFTER VK_RT_RebuildTLAS's call to VK_RT_UploadMatTableFrame
+// each frame, and can register a not-yet-seen light-cookie image via
+// VK_RT_GetOrAssignTexIndex — the only other place s_bindlessDirty gets
+// flushed is the NEXT frame's VK_RT_UploadMatTableFrame, so without this call
+// a brand-new cookie fixture's image reads an unwritten/fallback descriptor
+// slot for one frame (visible as a black/wrong cookie the first time a
+// fixture using that image is admitted). Binding 3 already has
+// UPDATE_AFTER_BIND + PARTIALLY_BOUND set specifically so a second
+// vkUpdateDescriptorSets later in the same frame is valid.
+// ---------------------------------------------------------------------------
+
+void VK_RT_FlushBindlessTextures(void)
+{
+    if (s_bindlessDirty)
+        RebuildBindlessDescriptors();
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +264,12 @@ void VK_RT_InitMaterialTable(void)
     bindings[3].binding = 3;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = VK_MAT_MAX_TEXTURES;
-    bindings[3].stageFlags = bindings[0].stageFlags;
+    // Stage 3 (rt_projected_light_cookies.md): vol_march.comp — a COMPUTE shader,
+    // not part of the ray-tracing pipeline — now samples this binding too, for
+    // per-step light-cookie sampling. bindings[0].stageFlags only covers RT
+    // pipeline stages, so add COMPUTE_BIT explicitly here rather than widening
+    // the SSBO bindings (0-2), which nothing outside the RT pipeline reads.
+    bindings[3].stageFlags = bindings[0].stageFlags | VK_SHADER_STAGE_COMPUTE_BIT;
 
     // All four bindings get UPDATE_AFTER_BIND so that vkUpdateDescriptorSets
     // can be called while command buffers that reference this set are in flight
