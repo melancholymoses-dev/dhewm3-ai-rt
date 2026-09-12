@@ -66,7 +66,31 @@ idCVar r_rtSpecGrazingMax(
     "reflect_ray.rgen (Step 8). Real mirror-like grazing Fresnel (approaching 1.0 at\n"
     "NdotV~0) assumes a perfectly smooth surface; rough surfaces never reach it because of\n"
     "shadowing/masking this single-F0 approximation doesn't otherwise capture. Surfaces at\n"
-    "F0 >= ~0.7 (true metal) are unaffected — the clamp only pulls in low-F0 grazing highlights.");
+    "F0 >= ~0.7 (true metal) are unaffected — the clamp only pulls in low-F0 grazing highlights.\n"
+    "Still the hard ceiling; r_rtSpecGrazingGain scales the low-F0 lobe below it (R2).");
+
+idCVar r_rtSpecGrazingGain(
+    "r_rtSpecGrazingGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+    "R2: grazing-angle Fresnel ceiling for low-F0 surfaces, as a multiple of F0 (itself clamped\n"
+    "by r_rtSpecGrazingMax). At 4.0 an F0 0.005 painted-metal floor tops out at 2% instead of the\n"
+    "flat 25% the old fixed ceiling gave it, so it reads matte from every angle.\n"
+    "Set very high (e.g. 100) to restore the pre-R2 flat-ceiling behaviour.");
+
+idCVar r_rtReflectionMinWeight(
+    "r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+    "R1: skip the reflection ray and its shadow rays when the pixel's final Fresnel weight falls\n"
+    "below this. Exact rather than heuristic — every input to the weight is known before the\n"
+    "trace, so this culls only pixels whose radiance would have been multiplied to nothing.\n"
+    "Set to 0.004 (1/255) for the pre-R1 behaviour. Glass pixels always trace.");
+
+idCVar r_rtReflectionMode(
+    "r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+    "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
+    "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
+    "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
+    "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
+    "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight.\n"
+    "Use r_rtReflections 0 to turn the feature off entirely.");
 
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -92,7 +116,13 @@ idCVar r_rtReflectionDebugMode(
 //   float  grazingMax     offset 84  size  4  (r_rtSpecGrazingMax, Step 8)
 //   int    debugMode      offset 88  size  4  (r_rtReflectionDebugMode, Step 9)
 //   int    sceneHasGlass  offset 92  size  4  (P6 — skip glass probe when 0)
-//   total: 96 bytes
+//   float  minWeight      offset 96  size  4  (r_rtReflectionMinWeight, R1)
+//   float  grazingGain    offset 100 size  4  (r_rtSpecGrazingGain, R2)
+//   int    rectOriginX    offset 104 size  4  (R6 launch-grid origin)
+//   int    rectOriginY    offset 108 size  4
+//   int    reflMode       offset 112 size  4  (r_rtReflectionMode)
+//   total: 116 bytes, padded to 128 — std140 rounds the block up to a multiple of
+//   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
 struct ReflParamsUBO
@@ -106,8 +136,14 @@ struct ReflParamsUBO
     float grazingMax;      // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
     int32_t debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled in rgen (Step 9)
     int32_t sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry in the TLAS
+    float minWeight;       // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
+    float grazingGain;     // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
+    int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
+    int32_t rectOriginY;
+    int32_t reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
+    float _pad[3];         // std140 block rounds to 128; range must cover it
 };
-static_assert(sizeof(ReflParamsUBO) == 96, "ReflParamsUBO size mismatch");
+static_assert(sizeof(ReflParamsUBO) == 128, "ReflParamsUBO size mismatch");
 
 // ---------------------------------------------------------------------------
 // Forward declarations (defined in other files)
@@ -961,6 +997,70 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 // the interaction fragment shader (barrier issued before returning).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// VK_RT_GlassScreenRect (R6)
+// Union of the screen rects of every SURFTYPE_GLASS surface in the view,
+// converted to Vulkan (Y-down) framebuffer pixels. Returns false when the view
+// holds no glass, in which case the caller skips the trace dispatch outright.
+//
+// Uses the frontend's per-surface scissorRect, so no projection work is needed.
+// Y-flip convention matches VK_ComputeDrawSurfScissor in vk_backend.cpp; the
+// reflection buffer is swapchain-sized (VK_RT_ResizeReflections), so the two
+// share a coordinate space.
+// ---------------------------------------------------------------------------
+
+static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX,
+                                  int32_t *outY, uint32_t *outW, uint32_t *outH)
+{
+    if (!viewDef || !viewDef->drawSurfs)
+        return false;
+
+    idScreenRect glassRect;
+    glassRect.Clear();
+    bool found = false;
+
+    for (int i = 0; i < viewDef->numDrawSurfs; i++)
+    {
+        const drawSurf_t *surf = viewDef->drawSurfs[i];
+        if (!surf || !surf->material)
+            continue;
+        if (surf->material->GetSurfaceType() != SURFTYPE_GLASS)
+            continue;
+        if (surf->scissorRect.IsEmpty())
+            continue;
+        glassRect.Union(surf->scissorRect);
+        found = true;
+    }
+
+    if (!found || glassRect.IsEmpty())
+        return false;
+
+    // glass_refl_overlay.frag samples this buffer bilinearly, so the traced region
+    // must extend past the glass fragments themselves.
+    glassRect.Expand();
+    glassRect.Expand();
+
+    const int w = (int)bufW;
+    const int h = (int)bufH;
+    const int absX1 = viewDef->viewport.x1 + glassRect.x1;
+    const int absY1 = viewDef->viewport.y1 + glassRect.y1; // GL bottom edge
+    const int absY2 = viewDef->viewport.y1 + glassRect.y2; // GL top edge
+
+    const int rw = glassRect.x2 - glassRect.x1 + 1;
+    const int rh = absY2 - absY1 + 1;
+    if (rw <= 0 || rh <= 0)
+        return false;
+
+    const int x = idMath::ClampInt(0, w - 1, absX1);
+    const int y = idMath::ClampInt(0, h - 1, h - 1 - absY2); // GL top -> VK top
+
+    *outX = x;
+    *outY = y;
+    *outW = (uint32_t)idMath::ClampInt(1, w - x, rw);
+    *outH = (uint32_t)idMath::ClampInt(1, h - y, rh);
+    return true;
+}
+
 void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     if (!vkRT.isInitialized)
@@ -1051,6 +1151,22 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());
     ubo.debugMode = r_rtReflectionDebugMode.GetInteger();
     ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
+    ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
+    ubo.grazingGain = Max(1.0f, r_rtSpecGrazingGain.GetFloat());
+
+    // R6: glass-only mode traces just the glass screen rect. Debug modes 2-4 visualise
+    // the whole G-buffer, so they force the legacy full-screen grid.
+    const bool debugActive = (ubo.debugMode >= 2 && ubo.debugMode <= 4);
+    const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !debugActive;
+    int32_t rectX = 0, rectY = 0;
+    uint32_t rectW = rb.width, rectH = rb.height;
+    bool haveWork = true;
+    if (glassOnly)
+        haveWork = VK_RT_GlassScreenRect(viewDef, rb.width, rb.height, &rectX, &rectY, &rectW, &rectH);
+
+    ubo.rectOriginX = rectX;
+    ubo.rectOriginY = rectY;
+    ubo.reflMode = glassOnly ? 1 : 2;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).
@@ -1182,10 +1298,15 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.matDescSet, 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: dispatch %ux%u maxDist=%.1f\n", rb.width, rb.height, ubo.maxDist);
+        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f%s\n", haveWork ? rectW : 0,
+                       haveWork ? rectH : 0, rectX, rectY, ubo.reflMode, ubo.maxDist,
+                       haveWork ? "" : " — no glass in view, skipped");
 
-    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
-                      rb.width, rb.height, 1);
+    // R6: with no glass on screen there is nothing to trace at all. Skipping the
+    // dispatch (rather than tracing and culling per pixel) is the point of the mode.
+    if (haveWork)
+        vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
+                          rectW, rectH, 1);
 
     // --- Barrier: reflection write -> fragment shader read ---
     {
@@ -1442,6 +1563,14 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
 
     const int debugMode = r_rtReflectionDebugMode.GetInteger();
     const bool debugActive = (debugMode >= 2 && debugMode <= 4);
+
+    // R6: in glass-only mode this fullscreen pass has nothing to add — opaque pixels
+    // are never traced, and glass pixels are composited per-surface by
+    // glass_refl_overlay.frag. Running it would also read texels outside the traced
+    // rect, which hold stale content from earlier frames.
+    if (r_rtReflectionMode.GetInteger() == 1 && !debugActive)
+        return;
+
     VkPipeline pipe = debugActive ? vkRT.reflCompositeDebugPipeline : vkRT.reflCompositePipeline;
     if (pipe == VK_NULL_HANDLE)
         return;
