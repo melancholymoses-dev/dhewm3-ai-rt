@@ -51,21 +51,21 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 idCVar r_rtAOTemporal("r_rtAOTemporal", "1", CVAR_RENDERER | CVAR_BOOL,
-                    "Enable temporal EMA accumulation for AO (requires r_rtAO 1)");
+                      "Enable temporal EMA accumulation for AO (requires r_rtAO 1)");
 
-idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.3", CVAR_RENDERER | CVAR_FLOAT,
-                         "EMA blend factor: 0=use only history, 1=use only current frame (reset). "
-                         "Lower values are smoother but ghost more during movement.");
+idCVar r_rtAOTemporalAlpha("r_rtAOTemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+                           "EMA blend factor: 0=use only history, 1=use only current frame (reset). "
+                           "Lower values are smoother but ghost more during movement.");
 
 idCVar r_rtTemporalCutPosThreshold("r_rtTemporalCutPosThreshold", "6", CVAR_RENDERER | CVAR_FLOAT,
-                                 "Max world units the camera can move in one frame before AO/GI/vol "
-                                 "temporal history is discarded (camera cut / teleport detection). "
-                                 "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
-
-idCVar r_rtTemporalCutAngleThreshold("r_rtTemporalCutAngleThreshold", "4", CVAR_RENDERER | CVAR_FLOAT,
-                                   "Max degrees the camera can rotate in one frame before AO/GI/vol "
+                                   "Max world units the camera can move in one frame before AO/GI/vol "
                                    "temporal history is discarded (camera cut / teleport detection). "
                                    "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
+
+idCVar r_rtTemporalCutAngleThreshold("r_rtTemporalCutAngleThreshold", "4", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Max degrees the camera can rotate in one frame before AO/GI/vol "
+                                     "temporal history is discarded (camera cut / teleport detection). "
+                                     "Shared by all three temporal passes — see rt_temporal_cut_detection.md.");
 
 idCVar r_rtAtrousIterations("r_rtAtrousIterations", "4", CVAR_RENDERER | CVAR_INTEGER,
                             "Atrous spatial AO filter passes after EMA (0=off, 2 or 4 recommended). "
@@ -105,7 +105,7 @@ vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &pr
         float cosAngle = idMath::ClampFloat(-1.0f, 1.0f, fwd * prevFwd);
         result.angleDelta = RAD2DEG(idMath::ACos(cosAngle));
 
-        const float posThresh   = Max(0.0f, r_rtTemporalCutPosThreshold.GetFloat());
+        const float posThresh = Max(0.0f, r_rtTemporalCutPosThreshold.GetFloat());
         const float angleThresh = Max(0.0f, r_rtTemporalCutAngleThreshold.GetFloat());
         result.isCut = (result.posDelta > posThresh) || (result.angleDelta > angleThresh);
 
@@ -118,8 +118,8 @@ vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &pr
         {
             common->Printf("VK RT CutDbg %s: pos=(%.2f %.2f %.2f) prevPos=(%.2f %.2f %.2f) "
                            "fwd=(%.3f %.3f %.3f) prevFwd=(%.3f %.3f %.3f) posDelta=%.3f angleDelta=%.3f\n",
-                           tag, pos.x, pos.y, pos.z, prevPos.x, prevPos.y, prevPos.z, fwd.x, fwd.y, fwd.z,
-                           prevFwd.x, prevFwd.y, prevFwd.z, result.posDelta, result.angleDelta);
+                           tag, pos.x, pos.y, pos.z, prevPos.x, prevPos.y, prevPos.z, fwd.x, fwd.y, fwd.z, prevFwd.x,
+                           prevFwd.y, prevFwd.z, result.posDelta, result.angleDelta);
         }
     }
 
@@ -502,8 +502,8 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
     }
 
     // --- Camera-cut detection ---
-    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.aoPrevCamPos, vkRT.aoPrevCamFwd,
-                                                      vkRT.aoHistoryValid, "AO");
+    vkRTCameraCutResult_t cut =
+        VK_RT_DetectCameraCut(viewDef, vkRT.aoPrevCamPos, vkRT.aoPrevCamFwd, vkRT.aoHistoryValid, "AO");
 
     // First-frame or cut: use alpha=1.0 to avoid NaN/stale history.
     float effectiveAlpha = 1.0f;
@@ -515,8 +515,9 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
         }
         else if (r_vkLogRT.GetInteger() >= 1)
         {
-            common->Printf("VK RT Temporal: camera cut detected slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
-                           frameIdx, cut.posDelta, cut.angleDelta);
+            common->Printf(
+                "VK RT Temporal: camera cut detected slot=%d posDelta=%.3f angleDelta=%.3f — resetting history\n",
+                frameIdx, cut.posDelta, cut.angleDelta);
         }
     }
 
@@ -583,9 +584,9 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
     vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n", frameIdx,
-                   effectiveAlpha, dispatchRect.offset.x, dispatchRect.offset.y,
-                   (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height);
+        common->Printf("VK RT Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n", frameIdx, effectiveAlpha,
+                       dispatchRect.offset.x, dispatchRect.offset.y, (unsigned int)dispatchRect.extent.width,
+                       (unsigned int)dispatchRect.extent.height);
 
     // --- Barrier: compute write to aoHistory → fragment and/or next compute read ---
     // Include COMPUTE_SHADER in dst so the Atrous pass (if enabled) can read
@@ -940,10 +941,9 @@ static idCVar r_rtGITemporal("r_rtGITemporal", "1", CVAR_RENDERER | CVAR_BOOL,
                              "Enable temporal EMA accumulation for GI (requires r_rtGI 1). "
                              "Accumulates 6-10 frames of 1-sample GI to suppress noise.");
 
-static idCVar r_rtGITemporalAlpha("r_rtGITemporalAlpha", "0.15", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGITemporalAlpha("r_rtGITemporalAlpha", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                   "GI EMA blend factor: 0=use only history, 1=use only current frame. "
                                   "0.1-0.2 recommended; lower = smoother but more ghosting.");
-
 
 // Per-frame dispatch rect cache (parallel to s_temporalDispatchRect for AO)
 static VkRect2D s_giTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
@@ -954,19 +954,19 @@ static VkRect2D s_giTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
 {
-    img.width  = width;
+    img.width = width;
     img.height = height;
 
     VkImageCreateInfo imgCI = {};
-    imgCI.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imgCI.imageType     = VK_IMAGE_TYPE_2D;
-    imgCI.format        = VK_FORMAT_R16G16B16A16_SFLOAT;
-    imgCI.extent        = {width, height, 1};
-    imgCI.mipLevels     = 1;
-    imgCI.arrayLayers   = 1;
-    imgCI.samples       = VK_SAMPLE_COUNT_1_BIT;
-    imgCI.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    imgCI.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imgCI.imageType = VK_IMAGE_TYPE_2D;
+    imgCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgCI.extent = {width, height, 1};
+    imgCI.mipLevels = 1;
+    imgCI.arrayLayers = 1;
+    imgCI.samples = VK_SAMPLE_COUNT_1_BIT;
+    imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imgCI.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(vk.device, &imgCI, NULL, &img.image));
 
@@ -994,26 +994,26 @@ static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint3
     }
 
     VkMemoryAllocateInfo allocI = {};
-    allocI.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocI.allocationSize  = memReq.size;
+    allocI.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocI.allocationSize = memReq.size;
     allocI.memoryTypeIndex = memTypeIdx;
     VK_CHECK(vkAllocateMemory(vk.device, &allocI, NULL, &img.memory));
     VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
 
     VkImageViewCreateInfo viewCI = {};
-    viewCI.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewCI.image            = img.image;
-    viewCI.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    viewCI.format           = VK_FORMAT_R16G16B16A16_SFLOAT;
+    viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewCI.image = img.image;
+    viewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK(vkCreateImageView(vk.device, &viewCI, NULL, &img.view));
 
     // Transition UNDEFINED → GENERAL and clear to black (same pattern as giBuffer init).
     {
         VkCommandBufferAllocateInfo cbAlloc = {};
-        cbAlloc.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cbAlloc.commandPool        = vk.commandPool;
-        cbAlloc.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cbAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cbAlloc.commandPool = vk.commandPool;
+        cbAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cbAlloc.commandBufferCount = 1;
         VkCommandBuffer tmpCmd = VK_NULL_HANDLE;
         VK_CHECK(vkAllocateCommandBuffers(vk.device, &cbAlloc, &tmpCmd));
@@ -1026,29 +1026,29 @@ static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint3
         VkImageSubresourceRange subRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
         VkImageMemoryBarrier b1 = {};
-        b1.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b1.srcAccessMask    = 0;
-        b1.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
-        b1.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
-        b1.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
-        b1.image            = img.image;
+        b1.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b1.srcAccessMask = 0;
+        b1.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b1.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b1.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b1.image = img.image;
         b1.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &b1);
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
+                             NULL, 1, &b1);
 
         VkClearColorValue clearBlack = {};
         vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
 
         VkImageMemoryBarrier b2 = {};
-        b2.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b2.srcAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
-        b2.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        b2.oldLayout        = VK_IMAGE_LAYOUT_GENERAL;
-        b2.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
-        b2.image            = img.image;
+        b2.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b2.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b2.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        b2.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        b2.image = img.image;
         b2.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &b2);
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL,
+                             0, NULL, 1, &b2);
 
         vkEndCommandBuffer(tmpCmd);
 
@@ -1058,9 +1058,9 @@ static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint3
         VK_CHECK(vkCreateFence(vk.device, &fenceCI, NULL, &fence));
 
         VkSubmitInfo submitI = {};
-        submitI.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitI.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitI.commandBufferCount = 1;
-        submitI.pCommandBuffers    = &tmpCmd;
+        submitI.pCommandBuffers = &tmpCmd;
         vkQueueSubmit(vk.graphicsQueue, 1, &submitI, fence);
         vkWaitForFences(vk.device, 1, &fence, VK_TRUE, UINT64_MAX);
         vkDestroyFence(vk.device, fence, NULL);
@@ -1072,10 +1072,22 @@ static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint3
 
 static void VK_RT_FreeGIHistoryImage(vkReflBuffer_t &img)
 {
-    if (img.view   != VK_NULL_HANDLE) { vkDestroyImageView(vk.device, img.view,   NULL); img.view   = VK_NULL_HANDLE; }
-    if (img.image  != VK_NULL_HANDLE) { vkDestroyImage    (vk.device, img.image,  NULL); img.image  = VK_NULL_HANDLE; }
-    if (img.memory != VK_NULL_HANDLE) { vkFreeMemory      (vk.device, img.memory, NULL); img.memory = VK_NULL_HANDLE; }
-    img.width  = 0;
+    if (img.view != VK_NULL_HANDLE)
+    {
+        vkDestroyImageView(vk.device, img.view, NULL);
+        img.view = VK_NULL_HANDLE;
+    }
+    if (img.image != VK_NULL_HANDLE)
+    {
+        vkDestroyImage(vk.device, img.image, NULL);
+        img.image = VK_NULL_HANDLE;
+    }
+    if (img.memory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, img.memory, NULL);
+        img.memory = VK_NULL_HANDLE;
+    }
+    img.width = 0;
     img.height = 0;
 }
 
@@ -1110,33 +1122,33 @@ static void VK_RT_InitGITemporalPipeline(void)
     // Same descriptor layout as AO temporal (2 storage images) but compiled
     // against the rgba16f shader; cannot share pipelines across formats.
     VkDescriptorSetLayoutBinding bindings[2] = {};
-    bindings[0].binding        = 0;
+    bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[0].descriptorCount= 1;
-    bindings[0].stageFlags     = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding        = 1;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount= 1;
-    bindings[1].stageFlags     = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
-    layoutCI.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutCI.bindingCount = 2;
-    layoutCI.pBindings    = bindings;
+    layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &vkRT.giTemporalDescLayout));
 
     // Push constant: alpha (float) + 3 pad floats + ivec2 offset + ivec2 extent = 32 bytes
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushRange.offset     = 0;
-    pushRange.size       = 32;
+    pushRange.offset = 0;
+    pushRange.size = 32;
 
     VkPipelineLayoutCreateInfo plCI = {};
-    plCI.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plCI.setLayoutCount         = 1;
-    plCI.pSetLayouts            = &vkRT.giTemporalDescLayout;
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &vkRT.giTemporalDescLayout;
     plCI.pushConstantRangeCount = 1;
-    plCI.pPushConstantRanges    = &pushRange;
+    plCI.pPushConstantRanges = &pushRange;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &vkRT.giTemporalPipelineLayout));
 
     VkShaderModule compModule = VK_LoadSPIRV("glprogs/glsl/gi_temporal_resolve.comp.spv");
@@ -1147,34 +1159,34 @@ static void VK_RT_InitGITemporalPipeline(void)
     }
 
     VkPipelineShaderStageCreateInfo stageCI = {};
-    stageCI.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stageCI.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     stageCI.module = compModule;
-    stageCI.pName  = "main";
+    stageCI.pName = "main";
 
     VkComputePipelineCreateInfo pipeCI = {};
-    pipeCI.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipeCI.stage  = stageCI;
+    pipeCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeCI.stage = stageCI;
     pipeCI.layout = vkRT.giTemporalPipelineLayout;
     VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipeCI, NULL, &vkRT.giTemporalPipeline));
     vkDestroyShaderModule(vk.device, compModule, NULL);
 
     VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 * VK_MAX_FRAMES_IN_FLIGHT};
     VkDescriptorPoolCreateInfo poolCI = {};
-    poolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets       = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
     poolCI.poolSizeCount = 1;
-    poolCI.pPoolSizes    = &poolSize;
+    poolCI.pPoolSizes = &poolSize;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &vkRT.giTemporalDescPool));
 
     VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         layouts[i] = vkRT.giTemporalDescLayout;
     VkDescriptorSetAllocateInfo dsAlloc = {};
-    dsAlloc.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsAlloc.descriptorPool     = vkRT.giTemporalDescPool;
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.giTemporalDescPool;
     dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
-    dsAlloc.pSetLayouts        = layouts;
+    dsAlloc.pSetLayouts = layouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.giTemporalDescSets));
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.giTemporalDescSetLastUpdatedFrameCount[i] = -1;
@@ -1281,8 +1293,8 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
     }
 
     // --- Camera-cut detection ---
-    vkRTCameraCutResult_t cut = VK_RT_DetectCameraCut(viewDef, vkRT.giPrevCamPos, vkRT.giPrevCamFwd,
-                                                      vkRT.giHistoryValid, "GI");
+    vkRTCameraCutResult_t cut =
+        VK_RT_DetectCameraCut(viewDef, vkRT.giPrevCamPos, vkRT.giPrevCamFwd, vkRT.giHistoryValid, "GI");
 
     float effectiveAlpha = 1.0f;
     if (vkRT.giHistoryValid)
@@ -1304,27 +1316,27 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
     if (vkRT.giTemporalDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount)
     {
         VkDescriptorImageInfo currInfo = {};
-        currInfo.imageView   = current.view;
+        currInfo.imageView = current.view;
         currInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkDescriptorImageInfo histInfo = {};
-        histInfo.imageView   = history.view;
+        histInfo.imageView = history.view;
         histInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet writes[2] = {};
-        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet          = vkRT.giTemporalDescSets[frameIdx];
-        writes[0].dstBinding      = 0;
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = vkRT.giTemporalDescSets[frameIdx];
+        writes[0].dstBinding = 0;
         writes[0].descriptorCount = 1;
-        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[0].pImageInfo      = &currInfo;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].pImageInfo = &currInfo;
 
-        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet          = vkRT.giTemporalDescSets[frameIdx];
-        writes[1].dstBinding      = 1;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = vkRT.giTemporalDescSets[frameIdx];
+        writes[1].dstBinding = 1;
         writes[1].descriptorCount = 1;
-        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[1].pImageInfo      = &histInfo;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &histInfo;
 
         vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
         vkRT.giTemporalDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
@@ -1333,44 +1345,43 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
     // --- Push constants (same layout as AO temporal) ---
     struct
     {
-        float   alpha;
-        float   pad[3];
+        float alpha;
+        float pad[3];
         int32_t scissorOffsetX;
         int32_t scissorOffsetY;
         int32_t scissorExtentX;
         int32_t scissorExtentY;
     } pc;
-    pc.alpha          = effectiveAlpha;
-    pc.pad[0]         = pc.pad[1] = pc.pad[2] = 0.0f;
+    pc.alpha = effectiveAlpha;
+    pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
     pc.scissorOffsetX = (int32_t)dispatchRect.offset.x;
     pc.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     pc.scissorExtentX = (int32_t)dispatchRect.extent.width;
     pc.scissorExtentY = (int32_t)dispatchRect.extent.height;
 
     // --- Dispatch ---
-    const uint32_t groupsX = (dispatchRect.extent.width  + 7) / 8;
+    const uint32_t groupsX = (dispatchRect.extent.width + 7) / 8;
     const uint32_t groupsY = (dispatchRect.extent.height + 7) / 8;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giTemporalPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giTemporalPipelineLayout,
-                            0, 1, &vkRT.giTemporalDescSets[frameIdx], 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giTemporalPipelineLayout, 0, 1,
+                            &vkRT.giTemporalDescSets[frameIdx], 0, NULL);
     vkCmdPushConstants(cmd, vkRT.giTemporalPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, &pc);
     vkCmdDispatch(cmd, groupsX, groupsY, 1);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GI Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n",
-                       frameIdx, effectiveAlpha,
-                       dispatchRect.offset.x, dispatchRect.offset.y,
-                       (unsigned int)dispatchRect.extent.width, (unsigned int)dispatchRect.extent.height);
+        common->Printf("VK RT GI Temporal: dispatch slot=%d alpha=%.3f rect=(%d,%d %u,%u)\n", frameIdx, effectiveAlpha,
+                       dispatchRect.offset.x, dispatchRect.offset.y, (unsigned int)dispatchRect.extent.width,
+                       (unsigned int)dispatchRect.extent.height);
 
     // --- Barrier: compute write to giHistory → fragment shader read ---
     {
         VkMemoryBarrier mb = {};
-        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
         mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &mb, 0, NULL, 0, NULL);
     }
 
     // Composite pass samples the accumulated history (not the raw per-frame buffer).

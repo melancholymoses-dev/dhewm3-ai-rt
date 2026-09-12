@@ -17,6 +17,36 @@ scaffolding removed. All four stages complete. Linked from ROADMAP.md Wave 7 (CO
 **Motivates:** visible fan-blade shadows in volumetric light shafts, plus every other
 patterned projected light in the retail maps (window blinds, grates, cage lights).
 
+**Post-completion code review (2026-09-12)** found and fixed two more real bugs, and
+flagged one accepted-as-is limitation — see project memory `project_light_cookie_stage3`
+for full detail:
+- **Bindless-descriptor flush ordering.** `vk_gi.cpp`'s light collection
+  (`VK_RT_UploadGILights`) runs after `VK_RT_RebuildTLAS`'s own bindless flush each
+  frame, so a light-cookie image seen for the first time this session registered a new
+  slot that stayed unwritten until the *next* frame's flush — a one-frame black/wrong
+  cookie on first admission, most visible right after level load when most lights'
+  cookie images (including `lights/defaultPointLight`'s `squarelight1.tga`) register at
+  once. This was actually flagged as an open item back in the Stage 1 note and never
+  circled back to. Fixed with a new `VK_RT_FlushBindlessTextures()` call right after
+  light collection in `vk_backend.cpp`.
+- **Point lights never checked `boxExtents`.** `rt_light_eval.glsl`'s `rt_LightContribAt`
+  used a pure sphere/quadratic falloff for point lights (`lType == 0`), so a non-cubical
+  point light (very common — most `light_radius` keys aren't uniform per axis) kept
+  lighting hit points past its box on the shorter axes, as long as the wider sphere
+  pre-cull radius still covered them. `vol_march.comp` already had the correct fix (a
+  box-normalized L∞ containment test); ported the identical test into
+  `rt_light_eval.glsl` for parity between GI/reflections and volumetrics. This is a real
+  shape change for non-cubical point lights in GI/reflections (box-ish falloff instead
+  of spherical) — not yet visually re-confirmed in-game.
+- **Accepted as-is**: `lights/fanlightgrate` (the non-`SC` variant) has two
+  always-simultaneously-active stages (blade + grate); the "first passing stage" v1
+  heuristic only samples the blade, silently dropping the grate overlay for that one
+  fixture. Already called out as a known gap in the Stage 1 note and the doc's original
+  "explicitly out of scope" section (multi-stage accumulation); still true, still a
+  small well-scoped fix if it's ever worth it (fixed 2-stage cap, not a redesign), but
+  not implemented — narrow visual impact (blade pattern still shows) for a fixture-count
+  of one known material.
+
 ---
 
 ## The actual effect, and why it's currently invisible

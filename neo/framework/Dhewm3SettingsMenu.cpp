@@ -2718,7 +2718,7 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(!giAtrousOn);
     RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
     ImGui::EndDisabled(); // !giAtrousOn
-
+    ImGui::EndDisabled(); // !giOn
     ImGui::Spacing();
     ImGui::SeparatorText("GI Volumetric Lighting");
 
@@ -2756,8 +2756,6 @@ static void DrawRTOptionsMenu()
     }
 
     ImGui::EndDisabled(); // Volumetric
-
-    ImGui::EndDisabled(); // !giOn
 
     // ---- Auto-Relight (docs/plans/auto_relight.md) ---------------------------
     // Independent of the GI toggle above — synthesized lights feed shadows/GI/vol
