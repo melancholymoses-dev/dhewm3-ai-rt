@@ -1,0 +1,220 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — vol_froxel_fill.comp — froxel grid in-scattering fill.
+
+One invocation per froxel cell.  Evaluates the same light model as
+vol_march.comp's per-step loop (sphere pre-cull, box/cone containment,
+Henyey-Greenstein phase, cookie/gobo, rayQueryEXT occlusion against the TLAS)
+at the cell's jittered centre, and writes the result as a scattering
+coefficient per unit length — the path integral itself belongs to
+vol_froxel_integrate.comp, not here.
+
+Output (rgba16f 3D image):
+  rgb — in-scattered radiance per unit length, with each light's per-class
+        density*strength already folded in (the integrate pass is class-blind).
+  a   — extinction coefficient at the cell.  Uniform (global density) today;
+        stored per cell so a spatially varying medium needs no format change.
+
+Descriptors (set 0):
+  binding 0 — TLAS                 (ray queries for shadow tests)
+  binding 1 — froxelScatter rgba16f 3D  (output storage image)
+  binding 2 — VolFroxelParams UBO  (declared by vol_froxel_common.glsl)
+  binding 3 — VolLightBuf SSBO     (vol's own light selection -- NOT GI's
+                                    giLightSsbo; see vk_vol.cpp)
+
+Descriptors (set 1): shared vkRT.matDescLayout/matDescSet, for cookie
+  sampling.  Only matTextures[4096] is used; see the declaration below for why
+  rt_material.glsl is deliberately not included.
+
+20260906_froxel_probe_gi.md Part A, chunk F0.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_nonuniform_qualifier : enable
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 1, rgba16f) uniform image3D froxelScatter;
+
+#include "vol_froxel_common.glsl"
+
+#define RT_LIGHT_MAX_LIGHTS 128 // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
+#define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
+
+// Source of truth for this layout is GILightEntry in vk_gi.cpp; vol_march.comp
+// declares the same struct. Keep all three in step until F5 retires the march.
+struct GILight {
+    vec4 posRadius;      // xyz = volume centre, w = sphere pre-cull radius
+    vec4 colorIntensity; // rgb = colour, a = intensity
+    vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
+    vec4 boxExtents;     // point: xyz=AABB half-extents; projected: w=max reach
+    uint lightType;      // 0 = point, 1 = scene projected/spot, 2 = player flashlight
+    uint flags;          // GI_LIGHT_FLAG_* bitmask
+    uint _pad1; uint _pad2;
+    vec4 emitPos;        // xyz = globalLightOrigin (distinct from posRadius.xyz)
+};
+
+// set=1 binding=3: the shared bindless array. Deliberately NOT
+// `#include "rt_material.glsl"` — that file's rt_InterpolateNormal uses
+// gl_WorldToObjectEXT, a ray-tracing-PIPELINE-only built-in that does not exist
+// in a compute shader. Same reasoning (and the same one-binding declaration) as
+// vol_march.comp.
+layout(set = 1, binding = 3) uniform sampler2D matTextures[4096];
+
+#include "rt_light_cookie.glsl"
+
+layout(set = 0, binding = 3, std430) readonly buffer GILightBuf {
+    int    numLights;
+    float  bounceScale;
+    float  giRadius;
+    float  emissiveScale;
+    float  reflAmbientScale;
+    float  _pad0[3];
+    GILight lights[RT_LIGHT_MAX_LIGHTS];
+    RTLightCookie cookies[RT_LIGHT_MAX_LIGHTS];
+} giLightBuf;
+
+#define VOL_SHADOW_BIAS 0.5
+
+// Identical to vol_march.comp's.
+float HenyeyGreenstein(float cosTheta, float g)
+{
+    float g2    = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
+}
+
+void main()
+{
+    ivec3 cell = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 dims = fp.gridDim.xyz;
+    if (any(greaterThanEqual(cell, dims)))
+        return;
+
+    vec3 rayDir;
+    vec3 cellPos = vf_CellWorldPos(cell, vf_CellJitter(cell), rayDir);
+
+    int maxLights = min(fp.misc.y, giLightBuf.numLights);
+
+    vec3 scatter = vec3(0.0);
+
+    for (int li = 0; li < maxLights; li++)
+    {
+        // Volume centre drives containment/attenuation; the emitter drives
+        // direction, distance and the shadow ray. They differ by lightCenter,
+        // which some Doom 3 fill lights offset by thousands of units.
+        vec3  lightPos    = giLightBuf.lights[li].posRadius.xyz;
+        vec3  emitPos     = giLightBuf.lights[li].emitPos.xyz;
+        float sphereRad   = giLightBuf.lights[li].posRadius.w;
+        vec3  lightColor  = giLightBuf.lights[li].colorIntensity.rgb;
+        float lightIntens = giLightBuf.lights[li].colorIntensity.a;
+        if (lightIntens < 0.001) lightIntens = 1.0;
+
+        uint lt           = giLightBuf.lights[li].lightType;
+        bool isFlashlight = (lt == 2u);
+        bool isDirected   = (lt == 1u);
+        vec4 cd           = giLightBuf.lights[li].coneDir;
+        vec4 bx           = giLightBuf.lights[li].boxExtents;
+
+        // Sphere pre-cull from the volume centre — sphereRad bounds the box/cone
+        // about that point, not about the emitter.
+        if (length(lightPos - cellPos) > sphereRad)
+            continue;
+
+        vec3  toLight = emitPos - cellPos;
+        float dist    = length(toLight);
+
+        float atten;
+        if (lt == 0u)
+        {
+            // Point light: box-normalized L-inf distance (1.0 = face, 1.5 = outer limit).
+            vec3  localAbs  = abs(cellPos - lightPos);
+            vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
+            float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
+
+            if (maxNorm >= 1.5) continue;
+
+            if (maxNorm <= 1.0)
+                atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
+            else
+                atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
+
+            // Fade out at the emitter: without it the singularity reads as a
+            // bright sphere sitting at globalLightOrigin.
+            atten *= smoothstep(0.0, sphereRad * 0.15, dist);
+        }
+        else
+        {
+            // Projected light (scene directed lt==1, flashlight lt==2): cone containment.
+            vec3  toCell    = cellPos - lightPos;
+            float alongCone = dot(toCell, cd.xyz);
+            if (alongCone <= 0.0 || alongCone > bx.w)
+                continue;
+            float cosAngle = alongCone / max(length(toCell), 0.001);
+            if (cosAngle < cd.w)
+                continue;
+            atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+        }
+
+        if (atten < 0.001)
+            continue;
+
+        vec3  lightDir = toLight / max(dist, 0.001);
+        float cosTheta = dot(rayDir, lightDir);
+
+        float localAniso = isFlashlight ? fp.anisos.z
+                         : isDirected   ? fp.anisos.y
+                                        : fp.anisos.x;
+        float phase = HenyeyGreenstein(cosTheta, localAniso);
+
+        float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
+
+        rayQueryEXT rq;
+        rayQueryInitializeEXT(
+            rq, tlas,
+            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT,
+            0xFEu, // skip player body/hands (mask 0x01)
+            cellPos, 0.01, lightDir, tShadow);
+
+        while (rayQueryProceedEXT(rq))
+        {
+            if (rayQueryGetIntersectionTypeEXT(rq, false) ==
+                gl_RayQueryCandidateIntersectionTriangleEXT)
+                rayQueryConfirmIntersectionEXT(rq);
+        }
+
+        if (rayQueryGetIntersectionTypeEXT(rq, true) !=
+            gl_RayQueryCommittedIntersectionNoneEXT)
+            continue; // occluded
+
+        // Per-class density*strength is folded in here, not at the end: the
+        // integrate pass walks a single class-blind scattering field.
+        float classScale = isFlashlight ? (fp.densities.z * fp.strengths.z)
+                         : isDirected   ? (fp.densities.y * fp.strengths.y)
+                                        : (fp.densities.x * fp.strengths.x);
+
+        vec3 contrib = lightColor * lightIntens * phase * atten * classScale;
+
+        if ((giLightBuf.lights[li].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
+            contrib *= rt_SampleLightCookie(giLightBuf.cookies[li], cellPos);
+
+        scatter += contrib;
+    }
+
+    // Clamp well under the fp16 ceiling to avoid Inf.
+    scatter = min(max(scatter, vec3(0.0)), vec3(4096.0));
+
+    imageStore(froxelScatter, cell, vec4(scatter, fp.densities.x));
+}
