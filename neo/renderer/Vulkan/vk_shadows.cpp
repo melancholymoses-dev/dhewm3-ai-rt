@@ -42,7 +42,7 @@ struct ShadowParamsUBO
     int32_t screenWidth;      // full framebuffer width  // offset 112
     int32_t screenHeight;     // full framebuffer height // offset 116
     int32_t shadowLayer;      // P1b: shadow mask array layer for this light // offset 120
-    int32_t _pad0;            // std140 vec4-alignment padding // offset 124
+    float biasErrCoeff;       // was _pad0 — depth-reconstruction bias floor, 3*ulp/znear // offset 124
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
@@ -930,6 +930,13 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
             ubo.frameIndex = 0u;
         }
         ubo.rayBias = r_rtShadowRayBias.GetFloat();
+        // A12: worldPos reconstruction error is d^2*ulp/znear; without this floor the
+        // 0.15 bias is swamped past d~2739 (d~1581 at the cinematic znear 1) and the
+        // origin self-shadows. 3x margin. Stays sub-pixel until d~10000.
+        {
+            extern idCVar r_znear;
+            ubo.biasErrCoeff = 1.8e-7f / Max(0.001f, r_znear.GetFloat());
+        }
         ubo.debugMode = r_rtShadowDebugMode.GetInteger();
         ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
         ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;

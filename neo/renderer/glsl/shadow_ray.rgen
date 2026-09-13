@@ -42,7 +42,7 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
     ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
     int   shadowLayer;          // P1b: array layer this light writes (0..VK_RT_SHADOW_LAYERS-1)
-    int   _padLayer;
+    float biasErrCoeff;         // A12: bias floor vs depth-reconstruction error (3*ulp/znear)
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (xyz = world unit axis,
@@ -287,7 +287,10 @@ void main() {
 
     // Adaptive bias: scale up when light is nearly tangent to the surface.
     float nDotL       = max( 0.2, abs(dot( biasDir, lightDir )) );
-    float adaptBias   = baseBias / nDotL;
+    // A12: floor the bias at the depth-reconstruction error (grows as d^2), else the
+    // origin sinks below the surface at range and self-shadows.
+    float camDist     = length( worldPos - camPos );
+    float adaptBias   = max( baseBias / nDotL, params.biasErrCoeff * camDist * camDist );
 
     // Keep the biased origin in front of the light so the ray segment only
     // covers [surface, light]. Overshooting the light creates false occlusion

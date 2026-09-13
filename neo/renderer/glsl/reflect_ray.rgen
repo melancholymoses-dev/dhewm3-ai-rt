@@ -10,15 +10,11 @@ For every non-sky pixel:
   1. Reconstruct world-space position and the mirror-reflected view direction.
      Early-out on pixels with no glass in front and F0 ~ 0 (skips the reflect
      ray + shadow rays — the perf win this buffer exists for).
-  2. Compute the Schlick Fresnel term ONCE per pixel (not per-light, the bug
-     this whole effort exists to fix — see Step 8) using the bump-mapped
-     shading normal (not the flat geometric normal rt_ReconstructNormal derives
-     from depth gradients). R1: this happens BEFORE the trace, and a pixel whose
-     weight lands under r_rtReflectionMinWeight returns here — an exact cull,
-     since nothing in the weight depends on the trace result. R2: the grazing
-     ceiling scales with F0 (r_rtSpecGrazingGain) rather than being a flat
-     r_rtSpecGrazingMax for every rough surface, which is what kept near-matte
-     geometry both expensive and visibly sheened.
+  2. Compute the Schlick Fresnel term ONCE per pixel (not per-light — the bug this
+     effort exists to fix, Step 8) from the bump-mapped shading normal. R1 does this
+     BEFORE the trace and returns early under r_rtReflectionMinWeight — an exact cull,
+     since nothing in the weight depends on the trace. R2 scales the grazing ceiling
+     with F0 (r_rtSpecGrazingGain) instead of a flat r_rtSpecGrazingMax.
   3. Trace rays using a short bounce loop (max 2 iterations).
      - On an opaque hit, rchit writes colour + transmittance=0 → stop.
      - On a glass hit, rchit writes F0*tint + transmittance=0.96 + nextOrigin/Dir
@@ -86,8 +82,7 @@ layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
 
 void main()
 {
-    // R6: the launch grid covers only the glass screen rect in glass-only mode, so
-    // pixel coordinates are grid position + rect origin. Full-screen modes pass (0,0).
+    // R6: glass-only launches only over the glass rect; full-screen modes pass (0,0).
     ivec2 coord = ivec2(gl_LaunchIDEXT.xy) + ivec2(params.rectOriginX, params.rectOriginY);
     ivec2 size  = params.screenSize;
 
@@ -152,9 +147,8 @@ void main()
     // room beyond the glass.
     // P6: skipped wholesale when the TLAS holds no glass geometry — the probe
     // can't hit anything, and this saves a full-screen ray dispatch in most rooms.
-    // R6: in glass-only mode the launch rect is derived from SURFTYPE_GLASS surfaces
-    // actually in the view, which is a stricter test than sceneHasGlass (that flag is
-    // set for any MC_TRANSLUCENT geometry) — so don't let it veto the probe here.
+    // R6: the glass-only launch rect comes from real SURFTYPE_GLASS surfaces in view,
+    // a stricter test than sceneHasGlass (any MC_TRANSLUCENT) — don't let it veto.
     float distToSurface = length(worldPos - camPos);
     glassProbe.hitT = 0.0;
     if (params.sceneHasGlass != 0 || params.reflMode == 1)
@@ -172,8 +166,7 @@ void main()
         );
     }
 
-    // R6 glass-only: opaque geometry never reflects, so a pixel with no glass in
-    // front of it is done here — no G-buffer F0, no Fresnel, no bounce ray.
+    // R6 glass-only: no glass in front means done — no F0, Fresnel, or bounce ray.
     if (params.reflMode == 1 && glassProbe.hitT <= 0.01)
     {
         imageStore(reflImage, coord, vec4(0.0));
@@ -218,16 +211,14 @@ void main()
     // Mirror-reflect view direction around surface normal
     vec3 reflDir  = reflect(viewDir, reflNormal);
 
-    // R1/R2: the opaque Fresnel weight depends only on f0, the normal and the view
-    // direction — all known here — so compute it before tracing and cull on the
-    // result. Glass is exempt: its weight comes from the interface, not surface F0.
+    // R1: the weight depends only on f0/normal/viewDir — all known pre-trace — so cull
+    // on it here. Glass is exempt; its weight comes from the interface, not surface F0.
     float fresnel = 0.0;
     if (!isGlass)
     {
         float NdotV = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
-        // R2: ceiling scales with F0 instead of a flat grazingMax for everything, so
-        // a near-matte surface stays near-matte at glancing angles. grazingMax remains
-        // the hard cap; max() keeps the lobe monotonic when f0 exceeds it.
+        // R2: ceiling scales with F0 so near-matte stays near-matte at glancing angles.
+        // grazingMax is still the hard cap; max() keeps the lobe monotonic above it.
         float grazingLow = max(f0, min(f0 * params.grazingGain, params.grazingMax));
         float grazing    = mix(grazingLow, 1.0, smoothstep(0.3, 0.7, f0));
         fresnel = f0 + (grazing - f0) * pow(1.0 - NdotV, 5.0);
@@ -292,8 +283,7 @@ void main()
         return;
     }
 
-    // Opaque surface: `fresnel` was computed above the trace loop (R1) — reusing it
-    // here is what makes the pre-trace cull exact rather than an approximation.
+    // Opaque: reusing R1's pre-trace `fresnel` is what makes that cull exact.
     // refl_composite.frag adds this straight through (no further Fresnel math there);
     // alpha carries F0 for potential future consumers (non-negative — "not glass").
     imageStore(reflImage, coord, vec4(accum * params.reflBlend * fresnel, f0));
