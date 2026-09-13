@@ -65,6 +65,12 @@ it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were se
 - **Grazing-angle tuning has a narrow reach.** The Schlick tail `pow(1-NdotV,5)` is
   ≤ 0.0007 until ~40° off-normal, so grazing knobs only affect near-silhouette pixels —
   useful for floors viewed along, a no-op on wall panels.
+- **Engine-wide rule: any ray origin built from `rt_ReconstructWorldPos` must floor its
+  bias at `d^2*ulp/znear`.** A fixed bias is a distance-limited bias. This caused A12 in
+  both AO and shadows; GI and volumetrics share the same reconstruction and the same
+  latent exposure. Check the bias before reaching for a new G-buffer target — and note
+  `r_znear` is game-owned and drops to 1.0 in cinematics, cutting every safe distance by
+  sqrt(3).
 
 ---
 
@@ -101,7 +107,7 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 | Item | Doc | Note |
 |---|---|---|
 | Tuning items T4-T6 | `rt_optimization_tuning.md` | Falloff-mode A/B, emissive floor, final constants pass. Stable base; polish. **T3 is dropped** — see decisions above. |
-| A12 far-field shadow/aliasing flicker | `completed/20260826_amd_vulkan_cleanup.md` | **Decided 2026-09-12.** `r_rtShadowSoftRadiusScale 0` still flickers → raw depth-reconstruction error, not the `wCell` jitter seed; cheap fix ruled out. Proposed fix is an **R32F linear-depth G-buffer target** (2048x precision at 10k wu, fixes all six shaders that reconstruct world position from depth) in preference to reversed-Z. Ready to implement. |
+| ~~A12 far-field flicker~~ | `completed/20260826_amd_vulkan_cleanup.md` | ✅ **Fixed 2026-09-12, in-game validated.** Ray-origin bias was swamped by depth-reconstruction error (`d^2*ulp/znear`) past d~2739 in shadows and d~5000 in AO — worse in cut-scenes, where the game drops `r_znear` to 1.0. Shadow bias now floors at the error term; AO fades out, band scaled by `sqrt(znear/3)`. Linear-depth G-buffer **not needed** and deferred. |
 | Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |
 | Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
 | Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight. |
