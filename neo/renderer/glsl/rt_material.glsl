@@ -45,6 +45,9 @@ struct MaterialEntry {
 #define MAT_FLAG_PLAYER_BODY   0x08u  // noSelfShadow entity — player/weapon model
 #define MAT_FLAG_EMISSIVE      0x10u  // SL_AMBIENT stage present — surface emits its own light
 #define MAT_FLAG_GUI_EMISSIVE  0x20u  // guiSurf/entity GUI surface — emissive boost path
+// R4: MC_TRANSLUCENT *and* SURFTYPE_GLASS. MAT_FLAG_GLASS alone is every translucent
+// (smoke, force fields, liquids), which must not act as a reflection plane.
+#define MAT_FLAG_REAL_GLASS    0x40u
 
 // ---------------------------------------------------------------------------
 // set=1 bindings

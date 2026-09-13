@@ -1089,6 +1089,21 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        rb.width, rb.height, (void *)vkRT.tlas[frameIdx].handle, (void *)vkRT.reflPipeline,
                        (vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE) ? "on" : "off");
 
+    // R6: resolve the launch rect before anything else — a glass-free view must not pay
+    // the depth transitions, UBO upload or descriptor churn either. Safe to return here
+    // because the depth barrier pair below is symmetric (ATTACHMENT on entry and exit).
+    const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
+    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= 4);
+    const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !reflDebugActive;
+    int32_t rectX = 0, rectY = 0;
+    uint32_t rectW = rb.width, rectH = rb.height;
+    if (glassOnly && !VK_RT_GlassScreenRect(viewDef, rb.width, rb.height, &rectX, &rectY, &rectW, &rectH))
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Refl: no glass in view — dispatch skipped entirely\n");
+        return;
+    }
+
     // --- Depth barrier: ATTACHMENT → READ_ONLY for rgen depth sampling ---
     VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
     if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
@@ -1143,16 +1158,6 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.sceneHasGlass = vkRT.sceneHasGlass ? 1 : 0;
     ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
     ubo.grazingGain = Max(1.0f, r_rtSpecGrazingGain.GetFloat());
-
-    // R6: glass-only traces just the glass rect. Debug modes 2-4 visualise the whole
-    // G-buffer, so they force the full-screen grid.
-    const bool debugActive = (ubo.debugMode >= 2 && ubo.debugMode <= 4);
-    const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !debugActive;
-    int32_t rectX = 0, rectY = 0;
-    uint32_t rectW = rb.width, rectH = rb.height;
-    bool haveWork = true;
-    if (glassOnly)
-        haveWork = VK_RT_GlassScreenRect(viewDef, rb.width, rb.height, &rectX, &rectY, &rectW, &rectH);
 
     ubo.rectOriginX = rectX;
     ubo.rectOriginY = rectY;
@@ -1288,14 +1293,11 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.matDescSet, 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f%s\n", haveWork ? rectW : 0,
-                       haveWork ? rectH : 0, rectX, rectY, ubo.reflMode, ubo.maxDist,
-                       haveWork ? "" : " — no glass in view, skipped");
+        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f\n", rectW, rectH, rectX, rectY,
+                       ubo.reflMode, ubo.maxDist);
 
-    // R6: no glass on screen — skip the dispatch entirely, not just cull per pixel.
-    if (haveWork)
-        vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
-                          rectW, rectH, 1);
+    vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
+                      rectH, 1);
 
     // --- Barrier: reflection write -> fragment shader read ---
     {
@@ -1534,6 +1536,15 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     if (rb.image == VK_NULL_HANDLE || vkRT.reflSampler == VK_NULL_HANDLE)
         return;
 
+    const int debugMode = r_rtReflectionDebugMode.GetInteger();
+    const bool debugActive = (debugMode >= 2 && debugMode <= 4);
+
+    // R6: glass-only has nothing for this pass — opaque is never traced and glass is
+    // composited per-surface. It would also read stale texels outside the traced rect.
+    // Checked before the descriptor write so the skipped path costs nothing.
+    if (r_rtReflectionMode.GetInteger() == 1 && !debugActive)
+        return;
+
     // Update the descriptor set for this frame slot. The reflection image may
     // have been recreated (resize), so always write it before drawing.
     VkDescriptorImageInfo imgInfo = {};
@@ -1549,14 +1560,6 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imgInfo;
     vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
-
-    const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool debugActive = (debugMode >= 2 && debugMode <= 4);
-
-    // R6: glass-only has nothing for this pass — opaque is never traced and glass is
-    // composited per-surface. It would also read stale texels outside the traced rect.
-    if (r_rtReflectionMode.GetInteger() == 1 && !debugActive)
-        return;
 
     VkPipeline pipe = debugActive ? vkRT.reflCompositeDebugPipeline : vkRT.reflCompositePipeline;
     if (pipe == VK_NULL_HANDLE)

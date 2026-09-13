@@ -34,7 +34,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R6 landed 2026-09-12**, awaiting in-game validation |
-| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | ⬜ Next up. Its owed profiler checkpoint is now taken (below). |
+| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | ⬜ **Next up.** Profiler checkpoint taken (below); doc detailed to implementation level 2026-09-12 — start at Part A chunk F0. |
 
 ### Measured RT budget (Mars City, 2026-09-11)
 
