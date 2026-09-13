@@ -1111,3 +1111,87 @@ Three zero-code discriminators were proposed; two were run.
 
   Both remaining hypotheses are consistent with the `r_znear` result, so that
   experiment cannot separate them. Run this before writing any fix.
+
+### Experiment run 2026-09-12 — the seed is not the cause
+
+`r_rtShadowSoftRadiusScale 0`: still flickering. `jitterDirectionAniso` returns `dir`
+unmodified when both cone sines are zero (`shadow_ray.rgen:132`), so at radius 0 the
+`wCell` seed has zero influence — it is ruled out, and distance-aware cell scaling with
+it.
+
+This was initially read as proving raw position error *in the shadow pass*. That was
+wrong on both counts: the experiment leaves the normal path intact as well as the
+position, and the flicker turned out not to be the shadow pass at all. See below.
+
+### RESOLVED 2026-09-12 — origin bias vs depth-reconstruction error, in AO *and* shadows
+
+**Root cause, one mechanism, two passes.** Both AO and shadows lift their ray origin off
+the surface by a fixed bias, and both build that origin from `reconstructWorldPos`, whose
+error grows as `d^2 * ulp / znear`. Past the distance where error exceeds the bias, the
+origin sinks *below* the surface, rays hit the surface they started on, and the pixel
+reads fully occluded — flipping per-pixel as the camera moves. That is the black speckle.
+
+Onset distances with the shipped biases:
+
+| pass | bias | znear 3 | znear 1 (cinematic) |
+|---|---|---|---|
+| shadows, light head-on | 0.15 | **2739** | **1581** |
+| shadows, grazing | 0.75 | 6124 | 3536 |
+| AO | 0.50 | 5000 | 2887 |
+
+Shadows failed *earlier* than AO, so the original A12 report was real — it was simply
+indistinguishable from the AO artifact until AO was fixed first. Isolation was by pass
+toggle (`r_rtAO 0`), not by the debug modes.
+
+This also explains the 2026-08-30 `r_znear 24` result exactly: crossover is
+`d^2*ulp/znear = bias`, so 3 -> 24 moves AO's from 5000 to ~14000. And it explains why
+cut-scenes were far worse than first-person play — the game stomps `r_znear` to 1.0 for
+cinematics (`Game_local.cpp:4532`), cutting every onset distance by sqrt(3).
+
+**Fixes (landed, in-game validated):**
+
+- `shadow_ray.rgen` — `adaptBias = max(baseBias/nDotL, biasErrCoeff * camDist^2)`, with
+  `biasErrCoeff = 1.8e-7/znear` (3x margin) passed in the old `_pad0` UBO slot, so no
+  layout change.
+- `ao_ray.rgen` — distance fade `r_rtAOFadeStart` 2000 / `r_rtAOFadeEnd` 3000, band scaled
+  by `sqrt(znear/3)` on the CPU so cinematics stay safe. Past the end AO stores 1.0 and
+  traces no rays; inside the band bias scales as `max(0.5, 6e-8*d^2)`.
+
+Scaling bias with `d^2` is safe rather than a fudge: bias is only visible once it exceeds
+the pixel footprint, which grows as `d`, and the two do not cross until d ~ 10200.
+
+Result: "some imperfections but they require standing in weird spots and working to find
+the error, rather than being glaringly wrong."
+
+### Residual / still open
+
+- **Shadows have no distance fade.** They now trace at any range with a growing bias; past
+  d ~ 10200 the bias exceeds a pixel and contact shadows could visibly detach. Doom 3
+  interiors do not reach that; a long outdoor vista might.
+- **`shadow_ray.rgen` still builds normals from depth central differences** at five points
+  per pixel. Differencing over a one-pixel baseline turns a 0.02 % position error into a
+  65 % tangent error at 10k wu, and `crossLen > 1e-4` then flips the pixel to a
+  camera-direction fallback. It is the only RT pass not consuming the already-allocated
+  G-buffer normal. Cheap to fix (one descriptor binding); the first move if range flicker
+  ever returns.
+- **The 2026-08-30 "normals exonerated" note is unsafe.** `r_rtShadowDebugMode 2` reports a
+  *boolean* (reconstruction succeeded vs fell back), not normal accuracy. Untested, not
+  cleared.
+- **GI and volumetrics** share `rt_ReconstructWorldPos` and have the same latent exposure.
+  Neither has shown an artifact. If one does, check its origin bias against
+  `d^2*ulp/znear` **first** — that is the cheap fix — before reaching for the target below.
+
+### Deferred — linear depth in the G-buffer
+
+Not needed for the AO fix, kept for if GI/vol show the same failure. Store view-space
+linear depth in an R32F target and reconstruct as `camPos + pixelRayDir * linearDepth`:
+f32 ULP is 0.001 wu at 10k versus 2.0 today, ~2000x. Preferred over reversed-Z (which
+touches the projection matrix, every pipeline's depth compare op, clear values and depth
+bounds tests) — but **costed at ~13 sites**: a fourth colour attachment on the shared HDR
+render pass forces a blend-attachment state onto every pipeline targeting it. Not the
+"small" change it first appears. Widening `gbufNormal` to RGBA32F and octahedral-encoding
+the normal to free a channel avoids the attachment-count problem entirely and is the
+cheaper route if this is ever needed.
+
+This is **not** a depth-format change: `vk_swapchain.cpp:82` already picks
+`D32_SFLOAT_S8_UINT`. The bits exist; they are all spent encoding "just below 1.0".

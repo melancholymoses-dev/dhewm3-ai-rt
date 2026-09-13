@@ -42,10 +42,12 @@ void main()
 {
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
-    // Not a valid or not a glass surface — signal miss and let the rgen
-    // fall back to the depth-reconstructed surface.
+    // Not a valid or not a real glass surface — signal miss and let the rgen
+    // fall back to the depth-reconstructed surface. R4: MAT_FLAG_REAL_GLASS, not
+    // MAT_FLAG_GLASS — the latter is every MC_TRANSLUCENT, so a liquid or force
+    // field in front of a pane would otherwise hijack the reflection plane.
     if (matIdx >= uint(materials.length()) ||
-        (materials[matIdx].flags & MAT_FLAG_GLASS) == 0u)
+        (materials[matIdx].flags & MAT_FLAG_REAL_GLASS) == 0u)
     {
         glassProbe.hitT = 0.0;
         return;

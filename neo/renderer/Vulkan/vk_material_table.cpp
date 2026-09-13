@@ -587,7 +587,13 @@ VkMaterialEntry VK_RT_MakeMaterialEntry(const idMaterial *shader, const vkBLAS_t
         entry.flags |= VK_MAT_FLAG_ALPHA_TESTED;
 
     if (shader->Coverage() == MC_TRANSLUCENT)
+    {
         entry.flags |= VK_MAT_FLAG_GLASS;
+        // R4: same SURFTYPE_GLASS discriminator the BLAS filter and the compositing
+        // overlay already use — only these may act as a reflection plane.
+        if (shader->GetSurfaceType() == SURFTYPE_GLASS)
+            entry.flags |= VK_MAT_FLAG_REAL_GLASS;
+    }
 
     if (shader->GetCullType() == CT_TWO_SIDED)
         entry.flags |= VK_MAT_FLAG_TWO_SIDED;
