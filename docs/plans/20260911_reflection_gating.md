@@ -311,7 +311,17 @@ CPU-side, in `vk_material_table.cpp` alongside the existing flag classification:
 **Validate:** debug mode 3 (F0 greyscale) should go near-uniformly black except glass
 panes and mirrors. If a whole room lights up, a classification rule is too loose.
 
-### R4 — Fix the glass probe's scope
+### R4 — Fix the glass probe's scope ✅ *implemented 2026-09-12*
+
+Landed after a Copilot review flagged that R6 left the probe accepting any
+`MC_TRANSLUCENT`. `VK_MAT_FLAG_REAL_GLASS` (0x40) is set from
+`MC_TRANSLUCENT && SURFTYPE_GLASS` and consumed by `sceneHasGlass` and both glass-probe
+shaders. Severity was raised by R6: the probe is now the *only* source of reflections, so
+a wrong hit is no longer one artifact among many.
+
+The rejection had to go in **`glass_probe.rahit`**, not the rchit — the rchit only sees
+the closest accepted hit, so rejecting there would let a liquid or force field in front of
+a pane hide the pane entirely instead of merely mis-reflecting it.
 
 - Add `VK_MAT_FLAG_REAL_GLASS`, set only for `MC_TRANSLUCENT && SURFTYPE_GLASS` —
   the same discriminator the BLAS filter and the compositing overlay already use.

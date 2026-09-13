@@ -1822,11 +1822,13 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // TLAS?  When not, the reflection rgen skips its per-pixel glass probe ray —
     // a full-screen ray dispatch saved in most rooms.
     {
+        // R4: REAL_GLASS, not GLASS — the latter is every MC_TRANSLUCENT, so P6's
+        // "skip the probe in glass-free rooms" almost never fired.
         bool hasGlass = false;
         for (uint32_t i = 0; i < staticGeomCount && !hasGlass; i++)
-            hasGlass = (staticMatEntries[i].flags & VK_MAT_FLAG_GLASS) != 0;
+            hasGlass = (staticMatEntries[i].flags & VK_MAT_FLAG_REAL_GLASS) != 0;
         for (uint32_t i = 0; i < dynamicGeomCount && !hasGlass; i++)
-            hasGlass = (dynamicMatEntries[i].flags & VK_MAT_FLAG_GLASS) != 0;
+            hasGlass = (dynamicMatEntries[i].flags & VK_MAT_FLAG_REAL_GLASS) != 0;
         if (hasGlass != vkRT.sceneHasGlass && r_vkLogRT.GetInteger() >= 1)
             common->Printf("VK RT TLAS: sceneHasGlass %d -> %d (frame=%d)\n", vkRT.sceneHasGlass ? 1 : 0,
                            hasGlass ? 1 : 0, tr.frameCount);
