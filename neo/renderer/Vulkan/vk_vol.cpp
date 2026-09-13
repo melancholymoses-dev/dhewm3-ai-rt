@@ -63,6 +63,11 @@ static idCVar r_rtVolUpsampleDepthSigma(
 static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
                              "Ray-march steps per pixel (safe default: 8; high-end: 16)");
 
+// NOT static, from here down through the flashlight block: vk_vol_froxel.cpp externs
+// every medium/phase/strength knob so the froxel fill evaluates the identical light
+// model as the march. That is what makes an r_rtVolFroxel 0/1 A/B meaningful — same
+// constants, different sampling structure. See 20260906_froxel_probe_gi.md Part A.
+
 // Interleaved Gradient Noise (see the jitter comment in vol_march.comp) is a fixed,
 // low-discrepancy diagonal pattern — spatially coherent by design, which is exactly
 // what fixed the original "volumetric beams read as noise" problem, but that same
@@ -72,7 +77,7 @@ static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER
 // periodic pattern without fully reintroducing the beam-decorrelation problem, as
 // long as the mix stays small. 0 = pure IGN (original striping), 1 = pure white noise
 // (original beam-decorrelation problem) — default is a soften, not a replacement.
-static idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
                                    "Fraction of white noise blended into the IGN march-step jitter to soften visible "
                                    "dither stripes/fringes (0 = pure IGN, 1 = pure white noise). See vol_march.comp.");
 
@@ -91,13 +96,13 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
-static idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                              "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
                               "Final composite scale for point-light scatter");
 
-static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.45", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.45", CVAR_RENDERER | CVAR_FLOAT,
                                 "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
 
 static idCVar r_rtVolDebugMode("r_rtVolDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -117,20 +122,20 @@ idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
 bool vkRT_volDumpPending = false;
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
-static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                                      "Scatter contribution scale for scene directed/spot lights.");
-static idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.1", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.1", CVAR_RENDERER | CVAR_FLOAT,
                                       "Final composite multiplier for scene directed light scatter.");
-static idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                         "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
 
 // Player flashlight (lightType 2, allowLightInViewID set).
-static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                                        "Scatter contribution scale for the player flashlight.");
-static idCVar r_rtVolFlashlightAnisotropy(
+idCVar r_rtVolFlashlightAnisotropy(
     "r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
     "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
-static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                         "Final composite multiplier for flashlight scatter.");
 
 // ---------------------------------------------------------------------------
@@ -1569,10 +1574,15 @@ void VK_RT_InitVolumetrics(void)
     VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_InitVolTemporal();
     VK_RT_InitVolBilateral();
+    // Froxel grid (20260906_froxel_probe_gi.md Part A). Last, so it can assume
+    // volSampler and the march resources exist; its own images are screen-size
+    // independent and so take no part in VK_RT_ResizeVolumetrics.
+    VK_RT_InitVolFroxel();
 }
 
 void VK_RT_ShutdownVolumetrics(void)
 {
+    VK_RT_ShutdownVolFroxel();
     VK_RT_ShutdownVolBilateral();
     VK_RT_ShutdownVolTemporal();
 

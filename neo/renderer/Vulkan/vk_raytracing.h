@@ -199,6 +199,18 @@ struct vkAOMask_t
 // Same storage layout as vkAOMask_t; format baked at alloc time.
 typedef vkAOMask_t vkReflBuffer_t;
 
+// Volumetric froxel grid: a 3D image (20260906_froxel_probe_gi.md Part A).
+// Separate from vkReflBuffer_t only because it needs a depth extent.
+struct vkFroxelGrid_t
+{
+    VkImage image;
+    VkDeviceMemory memory;
+    VkImageView view;
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+};
+
 // Global RT state
 struct vkRTState_t
 {
@@ -544,6 +556,26 @@ struct vkRTState_t
     VkDescriptorPool      volBilateralDescPool;
     VkDescriptorSet       volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // --------------------------------------------------------------------------
+    // Volumetric froxel grid (20260906_froxel_probe_gi.md Part A)
+    //
+    // World-space-cached replacement for the per-pixel march, selected by
+    // r_rtVolFroxel.  froxelScatter holds per-cell in-scattering (rgb, per unit
+    // length) + extinction (a); froxelIntegrated (F2) holds the accumulated
+    // camera->cell integral.  Both are per frame-in-flight slot because each is
+    // written and consumed inside the same frame.  The froxel-space EMA history
+    // (F4) will be a SINGLE shared image, not per slot — per-slot history is what
+    // silently halved the AO/GI/Vol update rate before the 2026-09-06 fix.
+    // --------------------------------------------------------------------------
+    vkFroxelGrid_t froxelScatter[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkPipeline            froxelFillPipeline;
+    VkPipelineLayout      froxelFillPipelineLayout;
+    VkDescriptorSetLayout froxelFillDescLayout;
+    VkDescriptorPool      froxelFillDescPool;
+    VkDescriptorSet       froxelFillDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   froxelFillDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // HDR scene buffer and Uchimura tonemap pipeline (Phase 8.1)
@@ -1045,6 +1077,26 @@ void VK_RT_ResizeVolBilateral(uint32_t width, uint32_t height);
 // Sets volReadView[currentFrame] to volBlurred when r_rtVolBilateral is on.
 // Must be called outside the render pass, immediately after DispatchTemporalResolveVol.
 void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// ---------------------------------------------------------------------------
+// Volumetric froxel grid (20260906_froxel_probe_gi.md Part A)
+// ---------------------------------------------------------------------------
+
+// Allocate the froxel grid images and create the fill pipeline.
+// Called from VK_RT_InitVolumetrics, after the material table exists.
+void VK_RT_InitVolFroxel(void);
+
+// Destroy all froxel resources.  Device must be idle before calling.
+void VK_RT_ShutdownVolFroxel(void);
+
+// True when r_rtVolFroxel selects the froxel path and its pipeline is usable.
+// The march/temporal/bilateral passes will consult this to stand down (F2).
+bool VK_RT_VolFroxelActive(void);
+
+// Fill the froxel grid: one invocation per cell, same light model as
+// vol_march.comp's per-step loop.  Must be called outside a render pass, after
+// the TLAS build.  Does not touch depth.  Nothing reads the grid until F1/F2.
+void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Tonemapping (Phase 8.1)

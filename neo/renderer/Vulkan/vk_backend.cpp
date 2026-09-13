@@ -313,6 +313,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_VOL,
     VK_RTPROF_PHASE_VOL_TEMPORAL,
     VK_RTPROF_PHASE_VOL_BILATERAL,
+    VK_RTPROF_PHASE_VOL_FROXEL_FILL,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
     VK_RTPROF_PHASE_COUNT
 };
@@ -365,6 +366,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "VolTemporal";
     case VK_RTPROF_PHASE_VOL_BILATERAL:
         return "VolBilateral";
+    case VK_RTPROF_PHASE_VOL_FROXEL_FILL:
+        return "FroxelFill";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
     default:
@@ -4783,6 +4786,17 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolBi);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
+
+            // Froxel grid (20260906_froxel_probe_gi.md Part A), r_rtVolFroxel 1.
+            // F0: fills the grid; nothing reads it, so this runs ALONGSIDE the
+            // march rather than replacing it — that is what lets F1's overlay
+            // compare the two at the same depth. F2 makes it exclusive.
+            VK_SetRenderStage("RT_VolFroxelFill");
+            const uint64_t rtCpuFroxelFillStart = VK_RTProfile_CPUStamp();
+            int rtProfFroxelFill = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_FILL);
+            VK_RT_DispatchVolFroxelFill(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelFill);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_FILL, rtCpuFroxelFillStart);
         }
 
         // Stage 3.5: restore gbufNormal (+ gbufAlbedo, gi_albedo_target.md) to
