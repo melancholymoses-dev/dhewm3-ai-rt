@@ -10,16 +10,18 @@ For every non-sky pixel:
   1. Reconstruct world-space position and the mirror-reflected view direction.
      Early-out on pixels with no glass in front and F0 ~ 0 (skips the reflect
      ray + shadow rays — the perf win this buffer exists for).
-  2. Trace rays using a short bounce loop (max 2 iterations).
+  2. Compute the Schlick Fresnel term ONCE per pixel (not per-light — the bug this
+     effort exists to fix, Step 8) from the bump-mapped shading normal. R1 does this
+     BEFORE the trace and returns early under r_rtReflectionMinWeight — an exact cull,
+     since nothing in the weight depends on the trace. R2 scales the grazing ceiling
+     with F0 (r_rtSpecGrazingGain) instead of a flat r_rtSpecGrazingMax.
+  3. Trace rays using a short bounce loop (max 2 iterations).
      - On an opaque hit, rchit writes colour + transmittance=0 → stop.
      - On a glass hit, rchit writes F0*tint + transmittance=0.96 + nextOrigin/Dir
        so the loop fires a continuation ray straight through the glass.
      - On a miss, rmiss writes sky colour + transmittance=0 → stop.
-  3. Compute the Schlick Fresnel term ONCE per pixel (not per-light, the bug
-     this whole effort exists to fix — see Step 8) using the bump-mapped
-     shading normal (not the flat geometric normal rt_ReconstructNormal derives
-     from depth gradients), and write the Fresnel-weighted radiance to the
-     reflection RGBA16F buffer. Glass pixels are the exception: they store raw
+  4. Write the Fresnel-weighted radiance to the reflection RGBA16F buffer.
+     Glass pixels are the exception: they store raw
      radiance + glassWeight in NEGATED alpha, a sentinel telling
      refl_composite.frag to skip them — they're composited separately by
      glass_refl_overlay.frag, since the depth/G-buffer at a glass pixel belongs
@@ -63,6 +65,11 @@ layout(set = 0, binding = 3) uniform ReflParams {
     float  grazingMax;    // r_rtSpecGrazingMax — grazing-angle Fresnel clamp (Step 8)
     int    debugMode;     // r_rtReflectionDebugMode — 2/3/4 handled here (see docs/plans/gbuffer_normal_pass.md)
     int    sceneHasGlass; // P6 — 0 when no MAT_FLAG_GLASS geometry is in the TLAS; skips the glass probe
+    float  minWeight;     // r_rtReflectionMinWeight — pre-trace Fresnel cull (R1)
+    float  grazingGain;   // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
+    int    rectOriginX;   // R6 — launch-grid origin, added to gl_LaunchIDEXT below
+    int    rectOriginY;
+    int    reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
 } params;
 
 #include "reflect_payload.glsl"
@@ -75,7 +82,8 @@ layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
 
 void main()
 {
-    ivec2 coord = ivec2(gl_LaunchIDEXT.xy);
+    // R6: glass-only launches only over the glass rect; full-screen modes pass (0,0).
+    ivec2 coord = ivec2(gl_LaunchIDEXT.xy) + ivec2(params.rectOriginX, params.rectOriginY);
     ivec2 size  = params.screenSize;
 
     // G-buffer normal/F0 (Stage 3.5) + debug modes (Step 9). Checked first, before
@@ -139,9 +147,11 @@ void main()
     // room beyond the glass.
     // P6: skipped wholesale when the TLAS holds no glass geometry — the probe
     // can't hit anything, and this saves a full-screen ray dispatch in most rooms.
+    // R6: the glass-only launch rect comes from real SURFTYPE_GLASS surfaces in view,
+    // a stricter test than sceneHasGlass (any MC_TRANSLUCENT) — don't let it veto.
     float distToSurface = length(worldPos - camPos);
     glassProbe.hitT = 0.0;
-    if (params.sceneHasGlass != 0)
+    if (params.sceneHasGlass != 0 || params.reflMode == 1)
     {
         traceRayEXT(
             topLevelAS,
@@ -156,6 +166,13 @@ void main()
         );
     }
 
+    // R6 glass-only: no glass in front means done — no F0, Fresnel, or bounce ray.
+    if (params.reflMode == 1 && glassProbe.hitT <= 0.01)
+    {
+        imageStore(reflImage, coord, vec4(0.0));
+        return;
+    }
+
     // EARLY-OUT: opaque, non-reflective pixel with no glass in front of it — skip
     // the reflect ray + shadow rays entirely. This is the perf win the G-buffer
     // exists for. Placed after the glass probe: glass reflections don't depend on
@@ -167,7 +184,8 @@ void main()
     }
 
     vec3 reflOrigin, reflNormal;
-    if (glassProbe.hitT > 0.01)
+    bool isGlass = glassProbe.hitT > 0.01;
+    if (isGlass)
     {
         // Glass surface found between camera and depth surface.
         reflOrigin = glassProbe.hitPos;
@@ -192,6 +210,25 @@ void main()
 
     // Mirror-reflect view direction around surface normal
     vec3 reflDir  = reflect(viewDir, reflNormal);
+
+    // R1: the weight depends only on f0/normal/viewDir — all known pre-trace — so cull
+    // on it here. Glass is exempt; its weight comes from the interface, not surface F0.
+    float fresnel = 0.0;
+    if (!isGlass)
+    {
+        float NdotV = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
+        // R2: ceiling scales with F0 so near-matte stays near-matte at glancing angles.
+        // grazingMax is still the hard cap; max() keeps the lobe monotonic above it.
+        float grazingLow = max(f0, min(f0 * params.grazingGain, params.grazingMax));
+        float grazing    = mix(grazingLow, 1.0, smoothstep(0.3, 0.7, f0));
+        fresnel = f0 + (grazing - f0) * pow(1.0 - NdotV, 5.0);
+
+        if (fresnel * params.reflBlend < params.minWeight)
+        {
+            imageStore(reflImage, coord, vec4(0.0));
+            return;
+        }
+    }
 
     // Bias origin off surface to avoid self-intersection
     vec3 origin = reflOrigin + reflNormal * 0.5;
@@ -230,7 +267,7 @@ void main()
         }
     }
 
-    if (glassProbe.hitT > 0.01)
+    if (isGlass)
     {
         // Glass: encode Schlick Fresnel for the camera-facing glass interface.
         // Alpha is stored NEGATED as a sentinel: the depth buffer at a
@@ -246,12 +283,7 @@ void main()
         return;
     }
 
-    // Opaque surface: compute Schlick Fresnel once here using the G-buffer/fallback
-    // normal and view direction already established above.
-    float NdotV   = clamp(dot(reflNormal, -viewDir), 0.0, 1.0);
-    float grazing = mix(params.grazingMax, 1.0, smoothstep(0.3, 0.7, f0));
-    float fresnel = f0 + (grazing - f0) * pow(1.0 - NdotV, 5.0);
-
+    // Opaque: reusing R1's pre-trace `fresnel` is what makes that cull exact.
     // refl_composite.frag adds this straight through (no further Fresnel math there);
     // alpha carries F0 for potential future consumers (non-negative — "not glass").
     imageStore(reflImage, coord, vec4(accum * params.reflBlend * fresnel, f0));

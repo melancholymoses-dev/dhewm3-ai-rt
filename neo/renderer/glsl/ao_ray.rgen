@@ -44,7 +44,7 @@ layout(set = 0, binding = 3) uniform AOParams {
     ivec2 screenSize;   // full framebuffer (width, height)
     ivec2 scissorOffset;
     ivec2 scissorExtent;
-    ivec2 pad2;
+    vec2  aoFade;       // x = r_rtAOFadeStart, y = r_rtAOFadeEnd (was pad2 — same offset/size)
 } params;
 
 layout(location = 0) rayPayloadEXT float aoPayload;
@@ -89,6 +89,17 @@ void main()
     vec4 camWorld = params.invViewProj * camClip;
     vec3 camPos   = camWorld.xyz / camWorld.w;
     vec3 toCamera = normalize(camPos - worldPos);
+
+    // Distance fade (A12): worldPos reconstruction error is 2e-8*d^2, which swamps the
+    // 0.5 origin bias below past d=5000 and makes AO read solid black. Fade out first —
+    // AO is invisible at this range, so the skipped rays cost nothing.
+    float camDist  = length(worldPos - camPos);
+    float aoWeight = 1.0 - smoothstep(params.aoFade.x, params.aoFade.y, camDist);
+    if (aoWeight <= 0.0)
+    {
+        imageStore(aoImage, coord, vec4(1.0));   // fully unoccluded, no rays traced
+        return;
+    }
 
     // P9: bump-mapped shading normal from the depth prepass; the depth-gradient
     // reconstruction stays as the fallback for pixels the prepass didn't write
@@ -135,8 +146,9 @@ void main()
         if (dot(dir, normal) < 0.01)
             dir = normal;
 
-        // Origin bias: lift off surface along normal
-        const float bias = 0.5;
+        // Lift off surface; scales with reconstruction error (3x 2e-8*d^2) so the
+        // origin stays above the surface through the fade band.
+        float bias  = max(0.5, 6.0e-8 * camDist * camDist);
         vec3 origin = worldPos + normal * bias;
 
         // Initialize to 0.0 (occluded), mirroring shadow_ray.rgen's handling of the
@@ -173,6 +185,7 @@ void main()
         unoccluded += aoPayload;
     }
 
-    float ao = unoccluded / float(N);
+    // Blend to unoccluded across the fade band so AO doesn't pop at the cutoff.
+    float ao = mix(1.0, unoccluded / float(N), aoWeight);
     imageStore(aoImage, coord, vec4(ao));
 }

@@ -57,6 +57,15 @@ void main()
         return;
     }
 
+    // R4: only real glass may be a reflection plane. Ignore here rather than reject in
+    // the rchit — the rchit only sees the *closest* accepted hit, so rejecting there
+    // would let a liquid or force field in front of a pane hide the pane entirely.
+    if ((mat.flags & MAT_FLAG_REAL_GLASS) == 0u)
+    {
+        ignoreIntersectionEXT;
+        return;
+    }
+
     if ((mat.flags & MAT_FLAG_ALPHA_TESTED) != 0u)
     {
         // Perforated surface — test alpha so the probe passes through holes.
@@ -69,5 +78,5 @@ void main()
         }
     }
 
-    // Glass or any other non-opaque surface: accept and let glass_probe.rchit decide.
+    // Real glass, passed the alpha test: accept — glass_probe.rchit records the hit.
 }
