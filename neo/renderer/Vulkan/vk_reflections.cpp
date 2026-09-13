@@ -71,17 +71,13 @@ idCVar r_rtSpecGrazingMax(
 
 idCVar r_rtSpecGrazingGain(
     "r_rtSpecGrazingGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-    "R2: grazing-angle Fresnel ceiling for low-F0 surfaces, as a multiple of F0 (itself clamped\n"
-    "by r_rtSpecGrazingMax). At 4.0 an F0 0.005 painted-metal floor tops out at 2% instead of the\n"
-    "flat 25% the old fixed ceiling gave it, so it reads matte from every angle.\n"
-    "Set very high (e.g. 100) to restore the pre-R2 flat-ceiling behaviour.");
+    "Grazing-angle Fresnel ceiling for low-F0 surfaces, as a multiple of F0 (still capped by\n"
+    "r_rtSpecGrazingMax). Only affects legacy mode 2. Set very high for pre-R2 behaviour.");
 
 idCVar r_rtReflectionMinWeight(
     "r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-    "R1: skip the reflection ray and its shadow rays when the pixel's final Fresnel weight falls\n"
-    "below this. Exact rather than heuristic — every input to the weight is known before the\n"
-    "trace, so this culls only pixels whose radiance would have been multiplied to nothing.\n"
-    "Set to 0.004 (1/255) for the pre-R1 behaviour. Glass pixels always trace.");
+    "Skip the reflection ray and its shadow rays when the pixel's final Fresnel weight is below\n"
+    "this. Only affects legacy mode 2; glass always traces. 0.004 = pre-R1 behaviour.");
 
 idCVar r_rtReflectionMode(
     "r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
@@ -999,14 +995,9 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 
 // ---------------------------------------------------------------------------
 // VK_RT_GlassScreenRect (R6)
-// Union of the screen rects of every SURFTYPE_GLASS surface in the view,
-// converted to Vulkan (Y-down) framebuffer pixels. Returns false when the view
-// holds no glass, in which case the caller skips the trace dispatch outright.
-//
-// Uses the frontend's per-surface scissorRect, so no projection work is needed.
-// Y-flip convention matches VK_ComputeDrawSurfScissor in vk_backend.cpp; the
-// reflection buffer is swapchain-sized (VK_RT_ResizeReflections), so the two
-// share a coordinate space.
+// Union of every SURFTYPE_GLASS surface's frontend scissorRect, in Vulkan Y-down
+// pixels. False = no glass in view, caller skips the dispatch. Y-flip matches
+// VK_ComputeDrawSurfScissor; the reflection buffer is swapchain-sized.
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX,
@@ -1035,8 +1026,7 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
     if (!found || glassRect.IsEmpty())
         return false;
 
-    // glass_refl_overlay.frag samples this buffer bilinearly, so the traced region
-    // must extend past the glass fragments themselves.
+    // 2px pad: glass_refl_overlay.frag samples this buffer bilinearly.
     glassRect.Expand();
     glassRect.Expand();
 
@@ -1154,8 +1144,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.minWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtReflectionMinWeight.GetFloat());
     ubo.grazingGain = Max(1.0f, r_rtSpecGrazingGain.GetFloat());
 
-    // R6: glass-only mode traces just the glass screen rect. Debug modes 2-4 visualise
-    // the whole G-buffer, so they force the legacy full-screen grid.
+    // R6: glass-only traces just the glass rect. Debug modes 2-4 visualise the whole
+    // G-buffer, so they force the full-screen grid.
     const bool debugActive = (ubo.debugMode >= 2 && ubo.debugMode <= 4);
     const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !debugActive;
     int32_t rectX = 0, rectY = 0;
@@ -1302,8 +1292,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        haveWork ? rectH : 0, rectX, rectY, ubo.reflMode, ubo.maxDist,
                        haveWork ? "" : " — no glass in view, skipped");
 
-    // R6: with no glass on screen there is nothing to trace at all. Skipping the
-    // dispatch (rather than tracing and culling per pixel) is the point of the mode.
+    // R6: no glass on screen — skip the dispatch entirely, not just cull per pixel.
     if (haveWork)
         vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion,
                           rectW, rectH, 1);
@@ -1564,10 +1553,8 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
     const int debugMode = r_rtReflectionDebugMode.GetInteger();
     const bool debugActive = (debugMode >= 2 && debugMode <= 4);
 
-    // R6: in glass-only mode this fullscreen pass has nothing to add — opaque pixels
-    // are never traced, and glass pixels are composited per-surface by
-    // glass_refl_overlay.frag. Running it would also read texels outside the traced
-    // rect, which hold stale content from earlier frames.
+    // R6: glass-only has nothing for this pass — opaque is never traced and glass is
+    // composited per-surface. It would also read stale texels outside the traced rect.
     if (r_rtReflectionMode.GetInteger() == 1 && !debugActive)
         return;
 

@@ -16,9 +16,12 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 2. **Darkness stays black.** GI may tint lit regions; it must never lift the noise
    floor of dark ones.
 3. **Light the air sparingly.** Volumetrics from hero lights only.
-4. **Reflections are set dressing.** Mirrors, glass, screens, the odd hero surface —
-   gated by F0, never a global material property. The assets carry no PBR data;
-   don't pretend they do.
+4. **Reflections are set dressing.** Glass and mirrors, plus the odd hero surface by
+   explicit opt-in. Gated by *surface type*, not by a value derived from specular maps —
+   that was tried and failed (2026-09-12): Doom 3's specular maps encode a Blinn-Phong
+   highlight concentrated on panel seams and trim, so an F0 remap puts sharp mirror
+   specks on exactly the wrong geometry. The assets carry no PBR data; don't pretend
+   they do.
 5. **No map editing.** Engine-side rules + budgets + debug overlays. Small def-file
    mods are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
@@ -30,13 +33,38 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 1 | **Reflection gating rework** — reflections cost ~17 rays/pixel across most of the screen to produce sub-1% radiance. Cull to glass/mirrors, make those actually look like reflections. Pillar 4 is currently violated in both directions. | `20260911_reflection_gating.md` | ⬜ Next |
-| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | ⬜ Queued behind #1 |
+| 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R6 landed 2026-09-12**, awaiting in-game validation |
+| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | ⬜ Next up. Its owed profiler checkpoint is now taken (below). |
 
-Reflection gating goes first: it's small, it subsumes the never-started tuning
-item T3 (per-material F0), and it frees GPU budget that the froxel/probe arc will
-want. It also needs a profiler checkpoint, which the froxel doc lists as its own
-precondition — one measurement pass serves both.
+### Measured RT budget (Mars City, 2026-09-11)
+
+`r_vkRTProfile 1`, median ms per phase. This is the checkpoint the froxel arc was
+waiting on, and it sets the ordering.
+
+| GI | Refl (before) | Vol | AO | denoise chain | TLAS | **RT total** |
+|---|---|---|---|---|---|---|
+| 4.41 | 3.24 | 1.53 | 1.17 | ~0.65 | 0.15 | **11.93** |
+
+**GI is the largest single cost**, which is why the froxel/probe arc is next and why
+it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were second at
+27 % of the budget.
+
+### Decisions taken 2026-09-12
+
+- **Reflections are glass-only.** `r_rtReflectionMode 1` (default) dispatches rays only
+  over the union screen rect of the view's `SURFTYPE_GLASS` surfaces, and skips
+  `vkCmdTraceRaysKHR` entirely when the view holds no glass. Mode 2 keeps the old
+  full-screen path for A/B.
+- **Per-material F0 (tuning item T3) is dropped, not deferred.** With opaque geometry
+  never reflecting there is nothing for a material F0 table to classify. If a specific
+  hero surface is wanted later it returns as a small opt-in list.
+- **Threshold tuning cannot fix reflection looks.** Max achievable F0 under the spec-map
+  remap is 0.2, and the worst artifacts (mirror specks on rack edges, unlit fixture
+  housings) are the *highest*-F0 pixels in the scene while any weight threshold culls
+  from the bottom. There is no setting between "all on with artifacts" and "all off".
+- **Grazing-angle tuning has a narrow reach.** The Schlick tail `pow(1-NdotV,5)` is
+  ≤ 0.0007 until ~40° off-normal, so grazing knobs only affect near-silhouette pixels —
+  useful for floors viewed along, a no-op on wall panels.
 
 ---
 
@@ -72,9 +100,9 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 
 | Item | Doc | Note |
 |---|---|---|
-| Tuning items T4-T6 | `rt_optimization_tuning.md` | Falloff-mode A/B, emissive floor, final constants pass. Stable base; polish. |
-| A12 far-field shadow flicker | `completed/20260826_amd_vulkan_cleanup.md` | One experiment away from a decision. |
+| Tuning items T4-T6 | `rt_optimization_tuning.md` | Falloff-mode A/B, emissive floor, final constants pass. Stable base; polish. **T3 is dropped** — see decisions above. |
+| A12 far-field shadow/aliasing flicker | `completed/20260826_amd_vulkan_cleanup.md` | **Decided 2026-09-12.** `r_rtShadowSoftRadiusScale 0` still flickers → raw depth-reconstruction error, not the `wCell` jitter seed; cheap fix ruled out. Proposed fix is an **R32F linear-depth G-buffer target** (2048x precision at 10k wu, fixes all six shaders that reconstruct world position from depth) in preference to reversed-Z. Ready to implement. |
 | Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |
-| Roughness-blurred reflections | — | Reconsider *after* the gating rework — a small, high-F0 pixel set makes this affordable for the first time. |
+| Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
 | Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight. |
 | Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Polish. |

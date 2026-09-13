@@ -1111,3 +1111,66 @@ Three zero-code discriminators were proposed; two were run.
 
   Both remaining hypotheses are consistent with the `r_znear` result, so that
   experiment cannot separate them. Run this before writing any fix.
+
+### Experiment run 2026-09-12 — the seed is not the cause
+
+`r_rtShadowSoftRadiusScale 0`: still flickering. `jitterDirectionAniso` returns `dir`
+unmodified when both cone sines are zero (`shadow_ray.rgen:132`), so at radius 0 the
+`wCell` seed has zero influence — it is ruled out, and distance-aware cell scaling with
+it.
+
+This was initially read as proving raw position error *in the shadow pass*. That was
+wrong on both counts: the experiment leaves the normal path intact as well as the
+position, and the flicker turned out not to be the shadow pass at all. See below.
+
+### Resolved 2026-09-12 — it was AO, not shadows
+
+Isolated by toggling each RT pass: `r_rtAO 0` stops the flicker. The shadow pass was
+never the source, and the two sections above chased the wrong pass.
+
+`ao_ray.rgen` lifted its ray origin off the surface by a hardcoded `bias = 0.5`, against
+a reconstruction error of `2e-8 * d^2` — which reaches 0.5 wu at exactly **d = 5000**.
+Past that the origin sinks below the surface, every hemisphere ray hits the surface it
+started on, AO reads fully occluded, and it flips per-pixel as the camera moves. That is
+the black speckle. It also explains the `r_znear` result quantitatively: crossover is
+`2e-8*d^2 = 0.5*(znear/3)`, so znear 24 moves it from 5000 to ~14000.
+
+AO already consumes the G-buffer normal, so position was its only bad term.
+
+**Fix (landed):** distance fade in `ao_ray.rgen` — `r_rtAOFadeStart` 2500 /
+`r_rtAOFadeEnd` 4000. Past the end AO stores 1.0 and traces no rays; inside the band the
+bias scales as `max(0.5, 6e-8*d^2)` and the result blends to 1.0. AO contributes nothing
+visible at that range, so this costs no image quality and saves the rays.
+
+Note the game stomps `r_znear` to 1.0 during cinematics (`Game_local.cpp:4532`), which
+drops the safe limit to ~2900 — hence the conservative defaults.
+
+### Still open
+
+- **Shadow far-field flicker** (the original A12 symptom) was never reproduced separately
+  from the AO artifact. Re-test before assuming it exists.
+- **`shadow_ray.rgen` is the only RT pass not consuming the G-buffer normal** — it builds
+  normals from depth central differences at five points per pixel. Differencing over a
+  one-pixel baseline turns a 0.02 % position error into a 65 % tangent error at 10k wu, and
+  `crossLen > 1e-4` then flips the pixel to a camera-direction fallback. Untested, cheap
+  to fix (one descriptor binding), and the obvious first move if shadow flicker survives.
+- **The 2026-08-30 "normals exonerated" note is unsafe.** `r_rtShadowDebugMode 2` reports
+  a *boolean* (reconstruction succeeded vs fell back), not normal accuracy. Treat the
+  normal hypothesis as untested, not cleared.
+- **GI and volumetrics** share the same `rt_ReconstructWorldPos`. Neither has shown an
+  artifact yet; if one does, the R32F linear-depth G-buffer target below becomes worth it.
+
+### Deferred — linear depth in the G-buffer
+
+Not needed for the AO fix, kept for if GI/vol show the same failure. Store view-space
+linear depth in an R32F target and reconstruct as `camPos + pixelRayDir * linearDepth`:
+f32 ULP is 0.001 wu at 10k versus 2.0 today, ~2000x. Preferred over reversed-Z (which
+touches the projection matrix, every pipeline's depth compare op, clear values and depth
+bounds tests) — but **costed at ~13 sites**: a fourth colour attachment on the shared HDR
+render pass forces a blend-attachment state onto every pipeline targeting it. Not the
+"small" change it first appears. Widening `gbufNormal` to RGBA32F and octahedral-encoding
+the normal to free a channel avoids the attachment-count problem entirely and is the
+cheaper route if this is ever needed.
+
+This is **not** a depth-format change: `vk_swapchain.cpp:82` already picks
+`D32_SFLOAT_S8_UINT`. The bits exist; they are all spent encoding "just below 1.0".

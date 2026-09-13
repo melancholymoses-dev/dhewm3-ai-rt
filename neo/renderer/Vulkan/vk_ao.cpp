@@ -32,6 +32,15 @@ of the original Doom 3 GPL Source Code release.
 static idCVar r_rtAORadius("r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
                            "Max AO ray length in world units (default 64)");
 
+// Distance fade — depth-reconstruction error (2e-8*d^2) exceeds AO's 0.5 origin bias
+// past d=5000, sinking the origin below the surface (black speckle).
+static idCVar r_rtAOFadeStart("r_rtAOFadeStart", "2000.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "Camera distance (world units) where RT AO starts fading out.");
+static idCVar r_rtAOFadeEnd("r_rtAOFadeEnd", "3000.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "Distance where RT AO is fully faded and its rays are skipped. Keep below\n"
+                            "5000*(r_znear/3) or the black-speckle artifact returns. Set both very high\n"
+                            "to restore pre-fade behaviour.");
+
 // ---------------------------------------------------------------------------
 // UBO layout matching ao_ray.rgen AOParams block (std140)
 //
@@ -60,7 +69,8 @@ struct AOParamsUBO
     int32_t scissorOffsetY;
     int32_t scissorExtentX;
     int32_t scissorExtentY;
-    int32_t pad1[2];
+    float fadeStart; // was pad1[2] — vec2 matches ivec2 std140 layout, offset 104
+    float fadeEnd;
 };
 static_assert(sizeof(AOParamsUBO) == 112, "AOParamsUBO size mismatch");
 
@@ -216,8 +226,8 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
             barrier2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier2.image = ao.image;
             barrier2.subresourceRange = subRange;
-            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier2);
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 0, 0, NULL, 0, NULL, 1, &barrier2);
 
             vkEndCommandBuffer(tmpCmd);
 
@@ -661,9 +671,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         {
             s_lastUseGbuf = ubo.useGbufNormal;
             common->Printf("[P9] AO/GI normals: %s\n",
-                           ubo.useGbufNormal ? "G-buffer (bump-mapped)"
-                                             : (vk.gbufferSupported ? "depth-gradient reconstruction (r_rtGbufNormals 0)"
-                                                                    : "depth-gradient reconstruction (no G-buffer)"));
+                           ubo.useGbufNormal
+                               ? "G-buffer (bump-mapped)"
+                               : (vk.gbufferSupported ? "depth-gradient reconstruction (r_rtGbufNormals 0)"
+                                                      : "depth-gradient reconstruction (no G-buffer)"));
         }
     }
     ubo.screenWidth = (int32_t)ao.width;
@@ -672,6 +683,16 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
     ubo.scissorExtentY = (int32_t)dispatchRect.extent.height;
+
+    // Scale the band by sqrt(znear/3): reconstruction error is d^2*ulp/znear, so the
+    // safe distance shrinks when the game drops r_znear to 1.0 for cinematics
+    // (Game_local.cpp:4532). Without this AO breaks at d~2887 in cut-scenes.
+    {
+        extern idCVar r_znear;
+        const float znScale = idMath::Sqrt(Max(0.001f, r_znear.GetFloat()) / 3.0f);
+        ubo.fadeStart = Max(0.0f, r_rtAOFadeStart.GetFloat()) * znScale;
+        ubo.fadeEnd = Max(ubo.fadeStart + 1.0f, r_rtAOFadeEnd.GetFloat() * znScale);
+    }
 
     memcpy(uboMapped, &ubo, sizeof(AOParamsUBO));
 
@@ -709,10 +730,9 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     const bool haveGbuf = vk.gbufferSupported && vkRT.gbufNormal[frameIdx].view != VK_NULL_HANDLE;
     VkImageView gbufView = haveGbuf ? vkRT.gbufNormal[frameIdx].view : VK_RT_GetNullGbufNormalView();
 
-    const bool aoResourceChanged = (s_lastAOTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) ||
-                                   (s_lastAOStorageView[frameIdx] != ao.view) ||
-                                   (s_lastAODepthView[frameIdx] != vk.depthSampledView) ||
-                                   (s_lastAOGbufView[frameIdx] != gbufView);
+    const bool aoResourceChanged =
+        (s_lastAOTlasHandle[frameIdx] != vkRT.tlas[frameIdx].handle) || (s_lastAOStorageView[frameIdx] != ao.view) ||
+        (s_lastAODepthView[frameIdx] != vk.depthSampledView) || (s_lastAOGbufView[frameIdx] != gbufView);
 
     if (aoResourceChanged && vkRT.aoDescSetLastUpdatedFrameCount[frameIdx] == tr.frameCount &&
         r_vkLogRT.GetInteger() >= 1)
