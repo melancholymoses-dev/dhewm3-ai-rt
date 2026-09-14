@@ -596,6 +596,54 @@ struct vkRTState_t
     int                   froxelResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
+    // GI irradiance probes (20260906_froxel_probe_gi.md Part B)
+    //
+    // The two atlases are SINGLE, not per frame-in-flight slot: they are an EMA
+    // accumulator over world-space probes, and per-slot history is what silently
+    // halved the AO/GI/Vol update rate before the 2026-09-06 fix.  The scratch
+    // image is per slot — it holds one frame's rays with no cross-frame meaning,
+    // so per-slot is simply correct there.
+    //
+    // giProbeDescLayout is bound at TWO different set indices: set 2 of the GI
+    // ray-tracing pipeline (for gi_probe_trace.rgen) and set 0 of the blend and
+    // border compute pipelines.  gi_probe_common.glsl declares its contents once
+    // for all of them, keyed on a GIPROBE_SET define.
+    // --------------------------------------------------------------------------
+    vkReflBuffer_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED
+    vkReflBuffer_t giProbeDistance;   // rg16f visibility moments (mean, mean^2), SHARED
+    vkReflBuffer_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT]; // rgba16f, raysPerProbe x probesPerFrame
+    VkSampler      giProbeSampler;                           // bilinear-clamp for atlas fetches
+
+    VkBuffer       giProbeStateSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory giProbeStateSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void          *giProbeStateSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkBuffer       giProbeParamsUbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory giProbeParamsUboMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void          *giProbeParamsUboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkDescriptorSetLayout giProbeDescLayout;
+    VkDescriptorPool      giProbeDescPool;
+    VkDescriptorSet       giProbeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   giProbeDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Second raygen record in the GI SBT — gi_probe_trace.rgen.  Same pipeline,
+    // same miss/hit regions; only the raygen region differs from giRgenRegion.
+    VkStridedDeviceAddressRegionKHR giProbeRgenRegion;
+
+    VkPipeline       giProbeBlendPipeline;
+    VkPipelineLayout giProbeBlendPipelineLayout;
+    VkPipeline       giProbeBorderPipeline;
+    VkPipelineLayout giProbeBorderPipelineLayout;
+
+    VkPipeline            giProbeResolvePipeline;
+    VkPipelineLayout      giProbeResolvePipelineLayout;
+    VkDescriptorSetLayout giProbeResolveDescLayout;
+    VkDescriptorPool      giProbeResolveDescPool;
+    VkDescriptorSet       giProbeResolveDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   giProbeResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // --------------------------------------------------------------------------
     // HDR scene buffer and Uchimura tonemap pipeline (Phase 8.1)
     //
     // hdrScene: RGBA16F per-slot image used as the colour attachment for all
@@ -1130,6 +1178,52 @@ void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDe
 // actually usable.  vk_vol.cpp reads this to switch the volumetric composite to
 // its replace (non-additive) pipeline while an overlay is up.
 int VK_RT_VolFroxelDebugMode(void);
+
+// ---------------------------------------------------------------------------
+// GI irradiance probes (20260906_froxel_probe_gi.md Part B)
+// ---------------------------------------------------------------------------
+
+// Create giProbeDescLayout and its descriptor sets ONLY.  Must run before
+// VK_RT_InitGIPipeline, which bakes that layout into the GI pipeline layout as
+// set 2 so gi_probe_trace.rgen can share the pipeline with gi_ray.rgen.
+// Idempotent.
+void VK_RT_InitGIProbeLayout(void);
+
+// Allocate the probe atlases/scratch/state and create the blend, border and
+// resolve pipelines.  Called from VK_RT_InitGI, after the GI RT pipeline exists.
+void VK_RT_InitGIProbe(void);
+
+// Destroy all probe resources.  Device must be idle before calling.
+void VK_RT_ShutdownGIProbe(void);
+
+// giProbeDescLayout / this frame's probe descriptor set — vk_gi.cpp needs both
+// to build the GI pipeline layout and to keep set 2 bound for every launch of
+// that pipeline, including the per-pixel one.
+VkDescriptorSetLayout VK_RT_GIProbeDescLayout(void);
+VkDescriptorSet VK_RT_GIProbeDescSet(int frameIdx);
+
+// True when r_rtGIProbes selects the probe path and its whole chain is usable.
+// G2 wires this to stand the per-pixel rgen and the denoise chain down.
+bool VK_RT_GIProbeActive(void);
+
+// r_rtGIProbeDebug, but 0 unless the probe resolve pipeline and atlases exist.
+int VK_RT_GIProbeDebugMode(void);
+
+// Fire r_rtGIProbeRays rays for each of r_rtGIProbeUpdatesPerFrame probes into
+// the scratch image, using the second raygen group of the GI pipeline.  Must be
+// called outside a render pass, AFTER VK_RT_DispatchGI — it reuses the GIParams
+// dynamic-UBO binding that function establishes for gi_ray.rchit.
+void VK_RT_DispatchGIProbeTrace(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Fold the scratch rays into the octahedral atlases (EMA) and fill their
+// borders.  Must follow VK_RT_DispatchGIProbeTrace in the same frame.
+void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  G0/G1 run
+// this only while r_rtGIProbeDebug selects an overlay; G2 adds the real
+// per-pixel resolve.
+// Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
+void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
 // Tonemapping (Phase 8.1)

@@ -1,0 +1,155 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_probe_blend.comp — scratch rays -> octahedral atlases.
+
+One workgroup per updated probe; one invocation per octahedral INTERIOR texel.
+The distance map is the larger of the two (16x16 interior vs 8x8), so the
+workgroup is sized for it and the low 8x8 corner of each workgroup does the
+irradiance texel as well.
+
+Both maps are a weighted average over this probe's rays of a quantity, weighted
+by how well each ray's direction agrees with the texel's own direction:
+
+  irradiance — weight = max(0, dot(texelDir, rayDir)).  The stored value is the
+      cosine-weighted MEAN incoming radiance, i.e. E/pi, not E.  That is the
+      same quantity gi_ray.rgen's per-pixel average produces, so r_rtGIStrength
+      keeps its meaning across the r_rtGIProbes A/B instead of needing a
+      silent factor of pi.  Back-face hits are excluded: the inside of a wall
+      is not a light source.
+  distance  — weight = pow(max(0, dot), distSharpness), a much tighter lobe
+      because these moments have to carry geometry EDGES, not a smooth
+      irradiance field.  Back-face distances DO count — that surface is real
+      occlusion regardless of which side was hit.
+
+EMA against the atlas' existing contents, EXCEPT for a probe that has not been
+traced since it entered the window: there the previous contents belong to a
+different probe entirely (storage is toroidal, see gi_probe_common.glsl) and
+blending against them would drag a stale room's colour across the map.  The CPU
+uploads GIPROBE_FLAG_TRACED as it stood BEFORE this frame's trace precisely so
+this test can be made here.
+
+Descriptors (set 0):
+  binding 0 — probe ray scratch rgba16f (read)
+  binding 1 — irradiance atlas rgba16f (read/write)
+  binding 2 — GIProbeParams UBO   (declared by gi_probe_common.glsl)
+  binding 3 — probe state SSBO    (declared by gi_probe_common.glsl)
+  binding 4 — distance atlas rg16f (read/write)
+
+20260906_froxel_probe_gi.md Part B, chunk G1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+// 16x16 = 256 threads = the distance map's interior, and a multiple of the
+// irradiance map's 8x8.  Also the cooperative loader width for the ray cache.
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D probeScratch;
+layout(set = 0, binding = 1, rgba16f) uniform image2D irradianceAtlas;
+layout(set = 0, binding = 4, rg16f) uniform image2D distanceAtlas;
+
+#define GIPROBE_SET 0
+#include "gi_probe_common.glsl"
+
+// Hard cap on r_rtGIProbeRays, enforced CPU-side too.  Caching the probe's rays
+// in shared memory turns 256 threads x N global loads into N, which is the
+// difference between this pass being free and it being the cost of the arc.
+#define GIPROBE_MAX_RAYS 256
+
+shared vec4 s_ray[GIPROBE_MAX_RAYS]; // rgb = radiance, a = signed hit distance
+shared vec3 s_dir[GIPROBE_MAX_RAYS];
+
+void main()
+{
+    int slot = int(gl_WorkGroupID.x);
+    if (slot >= max(gp.rays.y, 0))
+        return;
+
+    int numRays = clamp(gp.rays.x, 1, GIPROBE_MAX_RAYS);
+    int tid = int(gl_LocalInvocationIndex);
+
+    // Must match gi_probe_trace.rgen's rotation seed exactly — the directions
+    // are regenerated here rather than stored.
+    mat3 rot = gip_RandomRotation(uint(gp.rays.w) * 2654435761u + uint(gp.rays.z));
+
+    for (int r = tid; r < numRays; r += 256)
+    {
+        s_ray[r] = imageLoad(probeScratch, ivec2(r, slot));
+        s_dir[r] = normalize(rot * gip_SphericalFibonacci(r, numRays));
+    }
+    barrier();
+
+    ivec3 absCell = gip_ScheduledCell(slot);
+    int storageIdx = gip_StorageIndex(absCell);
+    bool hadHistory = (probeState.probes[storageIdx].flags & GIPROBE_FLAG_TRACED) != 0u;
+    float alpha = hadHistory ? clamp(1.0 - gp.tune.x, 0.0, 1.0) : 1.0;
+
+    ivec2 lid = ivec2(gl_LocalInvocationID.xy);
+
+    // ---- Irradiance (8x8 interior) ----
+    int irrSide = max(gp.atlas.z, 3);
+    int irrInterior = irrSide - 2;
+    if (lid.x < irrInterior && lid.y < irrInterior)
+    {
+        vec3 texelDir = gip_TexelDirection(lid, irrSide);
+
+        vec3 sum = vec3(0.0);
+        float sumW = 0.0;
+        for (int r = 0; r < numRays; r++)
+        {
+            if (s_ray[r].a < 0.0)
+                continue; // back face — not incoming light
+            float w = max(0.0, dot(texelDir, s_dir[r]));
+            if (w <= 0.0)
+                continue;
+            sum += s_ray[r].rgb * w;
+            sumW += w;
+        }
+
+        vec3 value = (sumW > 1e-6) ? (sum / sumW) : vec3(0.0);
+
+        ivec2 t = gip_InteriorTexel(storageIdx, lid, irrSide);
+        vec3 prev = imageLoad(irradianceAtlas, t).rgb;
+        imageStore(irradianceAtlas, t, vec4(mix(prev, value, alpha), 1.0));
+    }
+
+    // ---- Visibility moments (16x16 interior) ----
+    int distSide = max(gp.atlas.w, 3);
+    int distInterior = distSide - 2;
+    if (lid.x < distInterior && lid.y < distInterior)
+    {
+        vec3 texelDir = gip_TexelDirection(lid, distSide);
+        float sharpness = max(gp.debug.z, 1.0);
+        float maxDist = max(gp.tune.w, 1.0);
+
+        float sumD = 0.0;
+        float sumD2 = 0.0;
+        float sumW = 0.0;
+        for (int r = 0; r < numRays; r++)
+        {
+            float w = pow(max(0.0, dot(texelDir, s_dir[r])), sharpness);
+            if (w < 1e-6)
+                continue;
+            float d = min(abs(s_ray[r].a), maxDist);
+            sumD += d * w;
+            sumD2 += d * d * w;
+            sumW += w;
+        }
+
+        vec2 value = (sumW > 1e-6) ? vec2(sumD / sumW, sumD2 / sumW) : vec2(maxDist, maxDist * maxDist);
+
+        ivec2 t = gip_InteriorTexel(storageIdx, lid, distSide);
+        vec2 prev = imageLoad(distanceAtlas, t).rg;
+        imageStore(distanceAtlas, t, vec4(mix(prev, value, alpha), 0.0, 0.0));
+    }
+}
