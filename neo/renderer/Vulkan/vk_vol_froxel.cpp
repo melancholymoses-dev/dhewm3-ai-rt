@@ -14,10 +14,14 @@ Three passes, added over chunks F0-F2 of 20260906_froxel_probe_gi.md Part A:
   2. integrate (F2)            — per-column front-to-back Beer-Lambert
   3. resolve   (F1 debug, F2)  — trilinear fetch into vkRT.volBuffer
 
-F0 scope: the grid is allocated and filled, and nothing reads it.  The march
-remains the only thing feeding the composite, so enabling r_rtVolFroxel here
-costs GPU time and changes no pixels — that is deliberate, it isolates the
-world-position mapping for validation before anything depends on it.
+r_rtVolFroxel 1 selects this path and stands the march, the volumetric temporal
+EMA and the bilateral upsample down (VK_RT_VolFroxelActive) — exactly one of the
+two paths writes vkRT.volBuffer.  Measured 2026-09-13: 1.63 -> 0.29 ms median,
+and the grid's 64 slices over [znear, dFar] integrate more accurately than the
+march's 8 steps over [0, r_rtVolMaxDist], whose last step spanned ~300 units.
+
+r_rtVolFroxelDebug hosts the overlays; r_rtVolFroxelDump prints the grid range,
+the slice table and a CPU mirror of the ray reconstruction.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -133,7 +137,7 @@ struct VolFroxelParamsUBO
     float invViewProj[16];  //   0
     float cameraPosW[4];    //  64  xyz = camera world position
     float camForwardW[4];   //  80  xyz = viewaxis[0]
-    int32_t gridDim[4];     //  96  xyz = Nx,Ny,Nz   w = cluster shift (F3)
+    int32_t gridDim[4];     //  96  xyz = Nx,Ny,Nz   w = unused (std140 pad)
     float depthParams[4];   // 112  x=dNear y=dFar z=linNum w=linAdd
     float rangeParams[4];   // 128  x=logRange y=1/logRange z=maxDist w=unused
     float densities[4];     // 144  x=point y=directed z=flashlight w=whiteNoiseMix
@@ -403,7 +407,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.gridDim[0] = (int32_t)grid.width;
     ubo.gridDim[1] = (int32_t)grid.height;
     ubo.gridDim[2] = (int32_t)grid.depth;
-    ubo.gridDim[3] = 0; // cluster shift, F3
+    ubo.gridDim[3] = 0; // unused — F3's cluster cull was dropped 2026-09-13
 
     const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
     const float density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());

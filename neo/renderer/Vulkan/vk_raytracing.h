@@ -1108,12 +1108,12 @@ void VK_RT_InitVolFroxel(void);
 void VK_RT_ShutdownVolFroxel(void);
 
 // True when r_rtVolFroxel selects the froxel path and its pipeline is usable.
-// The march/temporal/bilateral passes will consult this to stand down (F2).
+// The march/temporal/bilateral passes consult this to stand down.
 bool VK_RT_VolFroxelActive(void);
 
 // Fill the froxel grid: one invocation per cell, same light model as
 // vol_march.comp's per-step loop.  Must be called outside a render pass, after
-// the TLAS build.  Does not touch depth.  Nothing reads the grid until F1/F2.
+// the TLAS build.  Does not touch depth.
 void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // Accumulate the filled grid front-to-back, one thread per grid column.

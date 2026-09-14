@@ -124,9 +124,9 @@ bool vkRT_volDumpPending = false;
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
 idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
                               "Scatter contribution scale for scene directed/spot lights.");
-idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.1", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.9", CVAR_RENDERER | CVAR_FLOAT,
                                "Final composite multiplier for scene directed light scatter.");
-idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.6", CVAR_RENDERER | CVAR_FLOAT,
                                  "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
 
 // Player flashlight (lightType 2, allowLightInViewID set).
