@@ -2,16 +2,23 @@
   froxel passes (20260906_froxel_probe_gi.md, Part A).
 
   The grid is camera-frustum shaped: X/Y follow screen position, Z slices are
-  PLANAR (constant view-space depth) and exponentially distributed with the same
-  spacing vol_march.comp's per-pixel march uses, so an A/B between the two
-  compares like with like.
+  PLANAR (constant view-space depth) and exponentially distributed between the
+  near plane and a far anchor derived from the medium's own extinction:
 
-    dist(zc) = exp((zc / Nz) * log(maxDist + 1)) - 1      zc in [0, Nz]
-    zc(dist) = log(dist + 1) / log(maxDist + 1) * Nz
+    dist(zc) = dNear * (dFar/dNear)^(zc / Nz)             zc in [0, Nz]
+    zc(dist) = log(dist / dNear) / log(dFar / dNear) * Nz
 
   Planar (not radial) slices are what make the resolve cheap: a pixel's slice
   coordinate is a scalar function of its linear depth, with no per-pixel ray
   length involved.
+
+  NOTE this is deliberately NOT the same distribution vol_march.comp steps with
+  (8 steps over [0, r_rtVolMaxDist]).  The march's last step spans ~300 units at
+  the default maxDist and misses lights inside it; anchoring both ends and
+  spending all Nz slices on the range that actually scatters is most of why the
+  froxel path integrates more accurately.  An A/B against the march therefore
+  compares two different integrators, not one sampling rate against another —
+  expect a brightness difference at identical tuning constants.
 
   Includer contract: declares the set=0 binding=2 params UBO below, so every
   froxel pass must place its params block there.  Needs no other bindings — in
@@ -36,7 +43,7 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     mat4  invViewProj;  //   0  GL-convention clip Z, see vf_RayDirForUV
     vec4  cameraPosW;   //  64  xyz = camera world position
     vec4  camForwardW;  //  80  xyz = viewaxis[0]
-    ivec4 gridDim;      //  96  xyz = Nx,Ny,Nz   w = cluster shift (F3)
+    ivec4 gridDim;      //  96  xyz = Nx,Ny,Nz   w = unused (std140 pad)
     vec4  depthParams;  // 112  x=dNear y=dFar z=linNum w=linAdd
     vec4  rangeParams;  // 128  x=logRange=log(dFar/dNear) y=1/logRange z=maxDist w=unused
     vec4  densities;    // 144  x=point y=directed z=flashlight w=whiteNoiseMix

@@ -109,11 +109,19 @@ void main()
     int   mode = fp.misc.z;
     ivec3 dims = max(fp.gridDim.xyz, ivec3(1));
 
-    // Continuous grid column for this pixel's ray, and its sub-cell position.
-    vec2  uv     = (vec2(fullCoord) + 0.5) / vec2(fullSize);
-    vec2  gridXY = uv * vec2(dims.xy);
-    ivec2 cellXY = clamp(ivec2(floor(gridXY)), ivec2(0), dims.xy - ivec2(1));
-    vec2  jitXY  = clamp(gridXY - vec2(cellXY), vec2(0.0), vec2(1.0));
+    vec2 uv = (vec2(fullCoord) + 0.5) / vec2(fullSize);
+
+    // Integer cell column and sub-cell position — needed only by the overlays,
+    // which index the grid directly. Mode 0 samples it as a texture and wants uv
+    // alone, so this stays out of the shipping path.
+    ivec2 cellXY = ivec2(0);
+    vec2  jitXY  = vec2(0.0);
+    if (mode != 0)
+    {
+        vec2 gridXY = uv * vec2(dims.xy);
+        cellXY = clamp(ivec2(floor(gridXY)), ivec2(0), dims.xy - ivec2(1));
+        jitXY  = clamp(gridXY - vec2(cellXY), vec2(0.0), vec2(1.0));
+    }
 
     float depth = texelFetch(depthSampler, fullCoord, 0).r;
     bool  isSky = (depth >= 1.0);
