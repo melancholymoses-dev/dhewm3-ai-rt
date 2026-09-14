@@ -309,6 +309,9 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_GI,
     VK_RTPROF_PHASE_GI_TEMPORAL,
     VK_RTPROF_PHASE_GI_ATROUS,
+    VK_RTPROF_PHASE_GI_PROBE_TRACE,
+    VK_RTPROF_PHASE_GI_PROBE_BLEND,
+    VK_RTPROF_PHASE_GI_PROBE_RESOLVE,
     VK_RTPROF_PHASE_GI_COMPOSITE,
     VK_RTPROF_PHASE_VOL,
     VK_RTPROF_PHASE_VOL_TEMPORAL,
@@ -360,6 +363,12 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "GITemporal";
     case VK_RTPROF_PHASE_GI_ATROUS:
         return "GIAtrous";
+    case VK_RTPROF_PHASE_GI_PROBE_TRACE:
+        return "ProbeTrace";
+    case VK_RTPROF_PHASE_GI_PROBE_BLEND:
+        return "ProbeBlend";
+    case VK_RTPROF_PHASE_GI_PROBE_RESOLVE:
+        return "ProbeResolve";
     case VK_RTPROF_PHASE_GI_COMPOSITE:
         return "GIComposite";
     case VK_RTPROF_PHASE_VOL:
@@ -4767,6 +4776,35 @@ void VK_RB_DrawView(const void *data)
                 if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIAtrous", false))
                     return;
             }
+
+            // Probe GI (20260906_froxel_probe_gi.md Part B). The trace MUST come
+            // after VK_RT_DispatchGI: it reuses the GIParams dynamic-UBO binding
+            // that call establishes, because gi_ray.rchit is shared between the
+            // two raygens and reads that block.
+            VK_SetRenderStage("RT_GI_ProbeTrace");
+            const uint64_t rtCpuProbeTraceStart = VK_RTProfile_CPUStamp();
+            int rtProfProbeTrace = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_TRACE);
+            VK_RT_DispatchGIProbeTrace(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeTrace);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_TRACE, rtCpuProbeTraceStart);
+
+            VK_SetRenderStage("RT_GI_ProbeBlend");
+            const uint64_t rtCpuProbeBlendStart = VK_RTProfile_CPUStamp();
+            int rtProfProbeBlend = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_BLEND);
+            VK_RT_DispatchGIProbeBlend(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeBlend);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_BLEND, rtCpuProbeBlendStart);
+
+            // Last in the GI chain, for the same reason the froxel resolve is
+            // last in the vol chain: it overwrites giBuffer and claims
+            // giReadView, so running it before the temporal/a-trous passes had
+            // read giBuffer would feed an overlay into their history.
+            VK_SetRenderStage("RT_GI_ProbeResolve");
+            const uint64_t rtCpuProbeResStart = VK_RTProfile_CPUStamp();
+            int rtProfProbeRes = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_RESOLVE);
+            VK_RT_DispatchGIProbeResolve(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeRes);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_RESOLVE, rtCpuProbeResStart);
 
             VK_SetRenderStage("RT_Volumetrics");
             const uint64_t rtCpuVolStart = VK_RTProfile_CPUStamp();

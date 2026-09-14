@@ -96,6 +96,12 @@ hitAttributeEXT vec2 baryCoord;
 
 void main()
 {
+    // B.2: hit geometry fields, written before any early-out so every return path
+    // leaves a complete payload. hitDist feeds the probe visibility moments,
+    // backface feeds probe classification (G4).
+    giPayload.hitDist  = gl_HitTEXT;
+    giPayload.backface = (gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT) ? 1.0 : 0.0;
+
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
     if (matIdx >= uint(materials.length()))

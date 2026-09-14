@@ -30,4 +30,11 @@ void main()
     // Very dim ambient: open sky contributes almost nothing to GI.
     // Tweak if outdoor areas need a sky ambient boost.
     giPayload.colour = mix(vec3(0.005), vec3(0.015), max(0.0, up));
+
+    // B.2: a miss is "nothing out to the ray's full reach". gl_RayTmaxEXT is the
+    // tmax the caller passed (giRadius for the per-pixel rgen, maxRayDist for the
+    // probe rgen), so probes record the open direction at its true length rather
+    // than at whatever constant this shader happened to know about.
+    giPayload.hitDist  = gl_RayTmaxEXT;
+    giPayload.backface = 0.0;
 }

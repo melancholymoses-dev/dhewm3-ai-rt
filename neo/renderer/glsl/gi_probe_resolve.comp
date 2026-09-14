@@ -1,0 +1,180 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_probe_resolve.comp — probe atlas -> screen.
+
+Writes vkRT.giBuffer and vk_gi_probe.cpp repoints giReadView at it, so
+gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
+
+  mode 0 — the real resolve (G2).  Not implemented yet: G0/G1 dispatch this
+           shader only while an overlay is selected.
+
+  mode 1 — probe spheres tinted by the irradiance they have stored, in the
+           direction the sphere is seen from.  This is the convergence readout
+           for G1: a probe in a red-lit room must read red within ~16 frames.
+  mode 4 — probe state.  green = traced since it entered the window,
+           red = never traced (its atlas tile is stale or empty and the G2
+           resolve must fall back rather than darken), blue = classified inside
+           geometry (G4).
+
+Both overlays ADD onto the lit scene rather than replacing it: the thing being
+checked in G0 is where the probes sit in the world, and a black background makes
+that much harder to judge than the room around them does.
+
+Descriptors (set 0):
+  binding 0 — irradiance atlas (sampler2D)
+  binding 1 — giBuffer rgba16f 2D (write)
+  binding 2 — GIProbeParams UBO       (declared by gi_probe_common.glsl)
+  binding 3 — probe state SSBO        (declared by gi_probe_common.glsl)
+  binding 4 — distance atlas (sampler2D)
+  binding 5 — depthSampler
+  binding 6 — gbufNormalSampler
+
+20260906_froxel_probe_gi.md Part B, chunk G0.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D irradianceAtlas;
+layout(set = 0, binding = 1, rgba16f) uniform image2D giOut;
+layout(set = 0, binding = 4) uniform sampler2D distanceAtlas;
+layout(set = 0, binding = 5) uniform sampler2D depthSampler;
+layout(set = 0, binding = 6) uniform sampler2D gbufNormalSampler;
+
+#define GIPROBE_SET 0
+#include "gi_probe_common.glsl"
+// Satisfies rt_indirect.glsl's includer contract (a sampler2D named
+// depthSampler, declared above).
+#include "rt_indirect.glsl"
+#include "rt_gbuf_normal.glsl"
+
+// ---------------------------------------------------------------------------
+// Ray vs the probe lattice.
+//
+// Stepping the ray and testing the NEAREST lattice point at each step, rather
+// than iterating the whole grid: at spacing/2 steps no sphere of radius <
+// spacing/2 can be stepped over, and each test is an analytic ray-sphere so the
+// result is exact rather than a marched approximation.
+// ---------------------------------------------------------------------------
+bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 hitCell, out vec3 hitNormal)
+{
+    hitCell = ivec3(0);
+    hitNormal = vec3(0.0);
+
+    float spacing = max(gp.gridOrigin.w, 1.0);
+    float step = spacing * 0.5;
+    float r2 = radius * radius;
+    float best = tMax;
+    bool found = false;
+
+    // 256 steps * spacing/2 covers 8192 units at the 64-unit default, well past
+    // any Doom 3 room; the loop exits on tMax long before that indoors.
+    for (int i = 0; i < 256; i++)
+    {
+        float t = float(i) * step;
+        if (t > tMax)
+            break;
+
+        vec3 p = ro + rd * t;
+        ivec3 cell = ivec3(round(p / spacing));
+        if (!gip_CellInGrid(cell))
+            continue;
+
+        vec3 c = gip_ProbePos(cell);
+        vec3 oc = c - ro;
+        float tca = dot(oc, rd);
+        float d2 = dot(oc, oc) - tca * tca;
+        if (d2 > r2)
+            continue;
+
+        float t0 = tca - sqrt(max(0.0, r2 - d2));
+        if (t0 < 0.0 || t0 >= best)
+            continue;
+
+        best = t0;
+        hitCell = cell;
+        hitNormal = normalize((ro + rd * t0) - c);
+        found = true;
+    }
+
+    return found;
+}
+
+void main()
+{
+    ivec2 local = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 rectOff = gp.rect.xy;
+    ivec2 rectExt = gp.rect.zw;
+    if (local.x >= rectExt.x || local.y >= rectExt.y)
+        return;
+
+    ivec2 coord = local + rectOff;
+    ivec2 outSize = gp.screen.zw;
+    if (coord.x >= outSize.x || coord.y >= outSize.y)
+        return;
+
+    int mode = gp.misc.x;
+    ivec2 fullSize = gp.screen.xy;
+    ivec2 fullCoord = min(coord, fullSize - ivec2(1));
+
+    vec3 outColour = vec3(0.0);
+
+    if (mode == 1 || mode == 4)
+    {
+        vec2 uv = (vec2(fullCoord) + 0.5) / vec2(fullSize);
+        vec3 ro = gp.cameraPosW.xyz;
+        vec3 rd = gip_RayDirForUV(uv);
+
+        // Spheres are occluded by the world: a probe behind a wall must not show
+        // through it, or the overlay reads as "probes everywhere" and says
+        // nothing about placement.
+        float depth = texelFetch(depthSampler, fullCoord, 0).r;
+        float tMax = 1.0e6;
+        if (depth < 1.0)
+            tMax = length(rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj) - ro);
+
+        ivec3 cell;
+        vec3 n;
+        if (gip_TraceProbeSphere(ro, rd, tMax, max(gp.debug.y, 0.25), cell, n))
+        {
+            uint flags = probeState.probes[gip_StorageIndex(cell)].flags;
+
+            if (mode == 4)
+            {
+                if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
+                    outColour = vec3(0.0, 0.3, 1.0);
+                else if ((flags & GIPROBE_FLAG_TRACED) != 0u)
+                    outColour = vec3(0.0, 1.0, 0.0);
+                else
+                    outColour = vec3(1.0, 0.0, 0.0);
+
+                // Cheap lambert against the view so the spheres read as spheres
+                // and a lattice is legible as a lattice.
+                outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
+            }
+            else
+            {
+                vec2 auv = gip_AtlasUV(gip_StorageIndex(cell), n, gp.atlas.z);
+                outColour = texture(irradianceAtlas, auv).rgb * gp.debug.x;
+
+                // An untraced probe has nothing to show; magenta says "no data"
+                // rather than letting a black tile read as "this room is dark".
+                if ((flags & GIPROBE_FLAG_TRACED) == 0u)
+                    outColour = vec3(0.4, 0.0, 0.4);
+            }
+        }
+    }
+
+    imageStore(giOut, coord, vec4(max(outColour, vec3(0.0)), 1.0));
+}
