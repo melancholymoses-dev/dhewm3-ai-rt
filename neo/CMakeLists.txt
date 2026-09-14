@@ -692,6 +692,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_reflections.cpp
 	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_vol.cpp
+	renderer/Vulkan/vk_vol_froxel.cpp
 	renderer/Vulkan/vk_tonemap.cpp
 	renderer/Vulkan/vk_gbuffer.cpp
 	renderer/Vulkan/vk_material_table.cpp
@@ -763,6 +764,9 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/vol_march.comp
 	renderer/glsl/vol_composite.frag
 	renderer/glsl/vol_bilateral.comp
+	renderer/glsl/vol_froxel_fill.comp
+	renderer/glsl/vol_froxel_integrate.comp
+	renderer/glsl/vol_froxel_resolve.comp
 	renderer/glsl/tonemap.comp
 )
 
@@ -786,6 +790,7 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_cookie.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_common.glsl"
 )
 
 set(SPIRV_BINARIES "")

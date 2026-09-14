@@ -313,6 +313,9 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_VOL,
     VK_RTPROF_PHASE_VOL_TEMPORAL,
     VK_RTPROF_PHASE_VOL_BILATERAL,
+    VK_RTPROF_PHASE_VOL_FROXEL_FILL,
+    VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE,
+    VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
     VK_RTPROF_PHASE_COUNT
 };
@@ -365,6 +368,12 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "VolTemporal";
     case VK_RTPROF_PHASE_VOL_BILATERAL:
         return "VolBilateral";
+    case VK_RTPROF_PHASE_VOL_FROXEL_FILL:
+        return "FroxelFill";
+    case VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE:
+        return "FroxelIntegrate";
+    case VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE:
+        return "FroxelResolve";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
     default:
@@ -4783,6 +4792,34 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DispatchVolBilateral(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolBi);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_BILATERAL, rtCpuVolBiStart);
+
+            // Froxel grid (20260906_froxel_probe_gi.md Part A), r_rtVolFroxel 1.
+            // Exclusive with the march as of F2: VK_RT_VolFroxelActive() stands the
+            // three passes above down, so exactly one path writes volBuffer.
+            VK_SetRenderStage("RT_VolFroxelFill");
+            const uint64_t rtCpuFroxelFillStart = VK_RTProfile_CPUStamp();
+            int rtProfFroxelFill = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_FILL);
+            VK_RT_DispatchVolFroxelFill(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelFill);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_FILL, rtCpuFroxelFillStart);
+
+            VK_SetRenderStage("RT_VolFroxelIntegrate");
+            const uint64_t rtCpuFroxelIntStart = VK_RTProfile_CPUStamp();
+            int rtProfFroxelInt = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE);
+            VK_RT_DispatchVolFroxelIntegrate(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelInt);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE, rtCpuFroxelIntStart);
+
+            // Stays after the temporal EMA even though that pass now stands down in
+            // froxel mode: the resolve overwrites volBuffer, and running it before
+            // temporal read it would feed this frame's result into the march's
+            // history the moment anyone flips r_rtVolFroxel back off.
+            VK_SetRenderStage("RT_VolFroxelResolve");
+            const uint64_t rtCpuFroxelResStart = VK_RTProfile_CPUStamp();
+            int rtProfFroxelRes = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE);
+            VK_RT_DispatchVolFroxelResolve(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfFroxelRes);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE, rtCpuFroxelResStart);
         }
 
         // Stage 3.5: restore gbufNormal (+ gbufAlbedo, gi_albedo_target.md) to
