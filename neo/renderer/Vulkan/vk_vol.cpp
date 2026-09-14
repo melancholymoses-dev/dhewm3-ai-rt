@@ -63,6 +63,11 @@ static idCVar r_rtVolUpsampleDepthSigma(
 static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER,
                              "Ray-march steps per pixel (safe default: 8; high-end: 16)");
 
+// NOT static, from here down through the flashlight block: vk_vol_froxel.cpp externs
+// every medium/phase/strength knob so the froxel fill evaluates the identical light
+// model as the march. That is what makes an r_rtVolFroxel 0/1 A/B meaningful — same
+// constants, different sampling structure. See 20260906_froxel_probe_gi.md Part A.
+
 // Interleaved Gradient Noise (see the jitter comment in vol_march.comp) is a fixed,
 // low-discrepancy diagonal pattern — spatially coherent by design, which is exactly
 // what fixed the original "volumetric beams read as noise" problem, but that same
@@ -72,9 +77,9 @@ static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER
 // periodic pattern without fully reintroducing the beam-decorrelation problem, as
 // long as the mix stays small. 0 = pure IGN (original striping), 1 = pure white noise
 // (original beam-decorrelation problem) — default is a soften, not a replacement.
-static idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
-                                   "Fraction of white noise blended into the IGN march-step jitter to soften visible "
-                                   "dither stripes/fringes (0 = pure IGN, 1 = pure white noise). See vol_march.comp.");
+idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVAR_FLOAT,
+                            "Fraction of white noise blended into the IGN march-step jitter to soften visible "
+                            "dither stripes/fringes (0 = pure IGN, 1 = pure white noise). See vol_march.comp.");
 
 // NOT static: vk_gi.cpp's vol-specific selection pass (VK_RT_UploadGILights)
 // externs this to decide which GI candidates can possibly be marched at all,
@@ -91,14 +96,14 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
-static idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
-                             "Global scattering density (extinction + scattering coefficient)");
+idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
+                      "Global scattering density (extinction + scattering coefficient)");
 
-static idCVar r_rtVolStrength("r_rtVolStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT,
-                              "Final composite scale for point-light scatter");
+idCVar r_rtVolStrength("r_rtVolStrength", "0.85", CVAR_RENDERER | CVAR_FLOAT,
+                       "Final composite scale for point-light scatter");
 
-static idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.45", CVAR_RENDERER | CVAR_FLOAT,
-                                "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
+idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.35", CVAR_RENDERER | CVAR_FLOAT,
+                         "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
 
 static idCVar r_rtVolDebugMode("r_rtVolDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
                                "0=off, 1=path transmittance as greyscale (white=clear air, black=fully "
@@ -117,21 +122,20 @@ idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
 bool vkRT_volDumpPending = false;
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
-static idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
-                                     "Scatter contribution scale for scene directed/spot lights.");
-static idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.1", CVAR_RENDERER | CVAR_FLOAT,
-                                      "Final composite multiplier for scene directed light scatter.");
-static idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                        "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
+idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+                              "Scatter contribution scale for scene directed/spot lights.");
+idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.9", CVAR_RENDERER | CVAR_FLOAT,
+                               "Final composite multiplier for scene directed light scatter.");
+idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+                                 "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
 
 // Player flashlight (lightType 2, allowLightInViewID set).
-static idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
-                                       "Scatter contribution scale for the player flashlight.");
-static idCVar r_rtVolFlashlightAnisotropy(
-    "r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
-    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
-static idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                        "Final composite multiplier for flashlight scatter.");
+idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
+                                "Scatter contribution scale for the player flashlight.");
+idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
+                                   "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
+idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
+                                 "Final composite multiplier for flashlight scatter.");
 
 // ---------------------------------------------------------------------------
 // VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
@@ -249,6 +253,13 @@ static int s_volMarchScale = 1;
 
 static int VK_RT_VolRequestedScale(void)
 {
+    // Froxel mode forces full res: its resolve is a single trilinear fetch per
+    // pixel, so marching at half res saves nothing, and the bilateral upsample a
+    // half-res buffer would need is exactly what the grid's own trilinear filter
+    // replaces. Toggling r_rtVolFroxel therefore triggers the same one-frame
+    // realloc that toggling r_rtVolHalfRes does.
+    if (VK_RT_VolFroxelActive())
+        return 1;
     return r_rtVolHalfRes.GetBool() ? 2 : 1;
 }
 
@@ -1077,6 +1088,13 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
     if (!vkRT.isInitialized)
         return;
 
+    // Froxel path: skip. A screen-space EMA on top of a froxel resolve would
+    // double-smooth and re-import exactly the motion ghosting this arc exists to
+    // remove — froxel-space accumulation is F4's job. The resolve points
+    // volReadView at volBuffer itself, so nothing downstream is left dangling.
+    if (VK_RT_VolFroxelActive())
+        return;
+
     const int frameIdx = vk.currentFrame;
 
     if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool() || !r_rtVolTemporal.GetBool())
@@ -1376,6 +1394,11 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     if (!r_useRayTracing.GetBool() || !r_rtVol.GetBool())
         return;
+    // Froxel path: skip. This pass is a depth-aware upsample, and the grid's own
+    // trilinear filter already does that job in XY — running both would just blur
+    // an already-full-res image.
+    if (VK_RT_VolFroxelActive())
+        return;
     if (vkRT.volBilateralPipeline == VK_NULL_HANDLE)
         return;
 
@@ -1569,10 +1592,15 @@ void VK_RT_InitVolumetrics(void)
     VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_InitVolTemporal();
     VK_RT_InitVolBilateral();
+    // Froxel grid (20260906_froxel_probe_gi.md Part A). Last, so it can assume
+    // volSampler and the march resources exist; its own images are screen-size
+    // independent and so take no part in VK_RT_ResizeVolumetrics.
+    VK_RT_InitVolFroxel();
 }
 
 void VK_RT_ShutdownVolumetrics(void)
 {
+    VK_RT_ShutdownVolFroxel();
     VK_RT_ShutdownVolBilateral();
     VK_RT_ShutdownVolTemporal();
 
@@ -1692,6 +1720,13 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                            VK_RT_VolRequestedScale());
         VK_RT_ResizeVolumetrics(vk.swapchainExtent.width, vk.swapchainExtent.height);
     }
+
+    // Froxel path owns volBuffer this frame (20260906_froxel_probe_gi.md F2).
+    // Placed AFTER the scale-realloc block above on purpose: that check is what
+    // reallocates the images back to full res on the frame r_rtVolFroxel flips,
+    // and it has to run even though the march itself is about to stand down.
+    if (VK_RT_VolFroxelActive())
+        return;
 
     vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
     if (vb.image == VK_NULL_HANDLE)
@@ -2024,6 +2059,18 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         r_rtVolDebugMode.GetInteger(),
         Max(0.0f, r_rtVolDebugGain.GetFloat()),
     };
+
+    // Froxel overlays (20260906_froxel_probe_gi.md F1) arrive already composed in
+    // volBuffer.rgb, so the fragment shader's mode 2 — "show rgb as-is under the
+    // replace pipeline" — is exactly the right display path. Gain is 1.0 because
+    // the resolve has already applied r_rtVolFroxelDebugGain where it matters
+    // (mode 1); modes 2 and 3 output normalised ramps that must not be scaled.
+    const int froxelDebug = VK_RT_VolFroxelDebugMode();
+    if (froxelDebug != 0)
+    {
+        pc.debugMode = 2;
+        pc.debugGain = 1.0f;
+    }
 
     const bool debugActive = pc.debugMode >= 1 && pc.debugMode <= 2;
     VkPipeline pipe = debugActive ? vkRT.volCompositeDebugPipeline : vkRT.volCompositePipeline;
