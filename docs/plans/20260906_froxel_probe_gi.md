@@ -1,9 +1,12 @@
 # Froxel Volumetrics + Probe GI — world-space caching arc
 
 **Date:** 2026-08-23 · **Detailed for implementation:** 2026-09-12
-**Status:** Arc #2 in ROADMAP.md — next up. The owed profiler checkpoint is taken
+**Status:** Arc #2 in ROADMAP.md. The owed profiler checkpoint is taken
 (Mars City 2026-09-11: GI 4.41 / Refl 3.24 / Vol 1.53 / AO 1.17 / denoise ~0.65 ms).
-**Part A (froxels) is ready to start. Part B (probes) starts only after A lands.**
+**Part A: F0-F2 landed and validated, F3 dropped, F4/F5 open.
+Part B: G0/G1 landed and validated 2026-09-13. Next is G2 (resolve switch)** — with
+the distance-atlas overlay noted under G1 done first, since G3 depends on data
+nothing has yet looked at.
 
 ---
 
@@ -494,20 +497,93 @@ per-pixel GI is pixel-identical, then build on it.
 
 ## B.5 Chunks
 
-### G0 — payload + storage + placement overlay, no tracing
+### G0 — payload + storage + placement overlay, no tracing ✅ **landed + in-game validated 2026-09-13**
 The B.2 payload edit (landed and verified first); allocate atlases, scratch image and
 the probe-state SSBO; implement grid anchoring (snap the grid origin to a multiple of
 spacing near the camera so probes do not swim); `r_rtGIProbeDebug 1/4` drawing probe
 positions; `r_rtGIProbeDump`.
 - **Exit:** per-pixel GI unchanged; probe spheres sit on a stable world-space lattice
   that does not slide when the camera moves; dump memory matches B.1's numbers.
+- ✅ Mode 4 green and world-locked; dump matches B.1 exactly (16384 probes, 128×128
+  tiles, irradiance 1280×1280 / 12.5 MiB, distance 2304×2304 / 20.2 MiB, 35.2 MiB
+  total, `sizeof(GIProbeParamsUBO)` 240/240).
+- **As built, deviating from B.1/B.5:**
+  - **Probe bindings live in their own set 2, not `giDescLayout` bindings 6-8.**
+    `gi_ray.rgen` then never sees them, and — the deciding reason — set 0's params
+    block is a UNIFORM_BUFFER_**DYNAMIC**, so folding probe params in beside it would
+    put two dynamic offsets in one `vkCmdBindDescriptorSets`. One
+    `giProbeDescLayout` object is bound at **two different set indices**: set 2 of the
+    RT pipeline, set 0 of the blend/border compute pipelines. `gi_probe_common.glsl`
+    keys on a `GIPROBE_SET` define so the binding contract is written once.
+  - **The lattice is absolute and storage is toroidal.** A probe's world position is
+    `cell * spacing` on an infinite lattice — `baseCell` only says which window is
+    resident — and its atlas tile is `cell mod gridDim`. Scrolling therefore leaves
+    every surviving probe on its own tile and invalidates only the slab that wrapped.
+    B.1's "snapped, scrolling" grid without this needs the whole atlas rewritten per
+    scroll.
+  - The G0 overlay lives in `gi_probe_resolve.comp` (debug modes only) rather than a
+    separate shader, mirroring what F1 did for the froxel resolve. It **adds** onto
+    the lit scene instead of replacing it: what G0 is checking is where probes sit in
+    the world, and a black background makes that harder to judge, not easier. No GI
+    composite debug/replace pipeline was needed.
+  - `TRACED`/`INSIDE` flags are CPU-owned and uploaded pre-trace, because the blend
+    pass needs "did this probe have history *before* this frame" and only the CPU
+    knows both the schedule and the scroll.
 
-### G1 — tracing into the atlas
+### G1 — tracing into the atlas ✅ **landed + in-game validated 2026-09-13**
 Second rgen group + SBT offset; `gi_probe_trace.rgen` (spherical-Fibonacci directions
 with a per-update random rotation); `gi_probe_blend.comp` with EMA; `gi_probe_border.comp`.
-Round-robin scheduling only — **the update index must come from a per-slot counter**.
+Round-robin scheduling only.
 - **Exit:** debug mode 1 shows probes converging to plausible room colours within
-  ~16 frames; a probe in a red-lit room reads red; composite still untouched.
+  ~16 frames; a probe in a red-lit room reads red; composite still untouched. ✅ all three.
+- **Scheduling: a SINGLE cursor advanced once per frame, not per-slot.** The
+  per-slot rule exists because a `tr.frameCount`-derived index aliases with
+  `vk.currentFrame` and pins each slot to one fixed subset of a *per-slot* resource
+  forever. The probe atlases are a single shared pair, so there is nothing to pin —
+  and two per-slot counters would be actively wrong here, each walking the same
+  stride onto the same probes and leaving the rest never updated.
+- **Validation (what was actually tested, and what was not):**
+  - **Octahedral handedness is proven offline, not by eye.** The question reduces to
+    one property: the blend writes texel *i* via `decode`, the resolve reads
+    direction *d* via `encode`, so a *globally* mirrored map is harmless and only a
+    MISMATCH tilts the stored lighting. A CPU transcription of
+    `gip_OctEncode`/`Decode`/`TexelDirection`/`AtlasUV` round-trips to 4.4e-16 over
+    the sphere, and texel→dir→texel lands back on the same centre for both sides
+    (10 and 18). Re-run it after any edit to that file; it needs no engine build.
+  - Also checked: trace and blend regenerate ray directions independently rather
+    than storing them, and their `gip_RandomRotation` seed expressions are
+    byte-identical.
+  - **Not tested at all: the distance/visibility atlas.** Every check above reads
+    the irradiance atlas. Its *addressing* is proven (side-18 round-trip, error 0.0)
+    and it shares `gip_BorderSource`, but the `pow(dot, sharpness)` lobe and whether
+    the stored distances are in a sane range are unverified, and nothing consumes
+    them until G3. A debug mode 5 tinting spheres by mean distance / `maxRayDist`
+    is the cheap fix, and belongs before G3's Chebyshev work.
+- **Findings that shape G2/G3 tuning:**
+  - **Glass stops a probe ray and returns near-black.** `gi_ray.rahit` discards only
+    *alpha-tested* geometry and explicitly accepts everything else; `rchit` then
+    returns glass's diffuse albedo × irradiance. So a probe behind a window reads
+    dark and a brightly lit room does not bleed through the glass at all. There is
+    no specular anywhere in this path — mirrors and polished metal likewise
+    contribute only their (usually dark) diffuse albedo.
+  - **The shared `rchit` is a high-variance estimator with only the EMA behind it.**
+    At `r_rtGIStochasticLights 2` each hit samples 1-2 lights and divides by the
+    selection probability; the per-pixel path pays for that with a three-pass
+    denoise chain, probes have one EMA. Visible as colour flicker at
+    `r_rtGIProbeHysteresis 0`, damped but not gone at 0.97. Probe ray budget and
+    stochastic light count trade against each other differently than they do
+    per-pixel — that is a G6 retune item, not a bug.
+  - **Emissive surfaces short-circuit** in `rchit` at `r_rtGIEmissiveScale`, ignoring
+    albedo and lighting, so a glowing panel dominates nearby probes far more than the
+    wall beside it. Good for Doom 3 (which lights heavily with emissive panels), but
+    it means probe brightness does not track `r_rtGIDirectScale` the way the
+    per-pixel path's does.
+  - **Constant trap:** `gi_probe_trace.rgen` uses `max(rays.x, 1)` and
+    `gi_probe_blend.comp` uses `clamp(rays.x, 1, GIPROBE_MAX_RAYS)` when generating
+    spherical-Fibonacci directions. They agree only because the CPU clamps
+    `r_rtGIProbeRays` to `VK_GIPROBE_MAX_RAYS` and both caps are 256. Move one
+    without the other and the two shaders silently generate DIFFERENT directions —
+    the atlas fills with plausible-looking garbage and nothing errors.
 - The scratch ray image is the debugging surface here — dump/visualize it before
   chasing an atlas bug.
 
@@ -537,6 +613,14 @@ statistics from the blend pass); mark probes whose rays are mostly backface hits
 inside-geometry and give them zero weight in the resolve.
 - **Exit:** debug mode 4 shows no active probes buried in geometry in the test rooms;
   mode 3's residual leaks drop further.
+- The input already exists: G1's blend pass reads the sign bit of the scratch alpha
+  (negative = back face) and currently just *excludes* those rays from the
+  irradiance. Counting them per probe is the classification statistic.
+- Note mode 4 **cannot** show a buried probe today — the overlay depth-occludes
+  spheres behind geometry, so a probe inside a wall is invisible by construction, and
+  `insideGeometry` reads 0 only because nothing sets it. Angled geometry (ramps,
+  sloped ceilings, the AREA diagonals) buries proportionally more probes than
+  axis-aligned rooms do, so those are the rooms to judge G4 in.
 
 ### G5 — scheduling
 Priority queue instead of round-robin: probes in areas reached by the portal BFS

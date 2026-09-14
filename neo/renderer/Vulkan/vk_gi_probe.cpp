@@ -263,23 +263,57 @@ static int32_t VK_RT_GIProbeRequestedUpdates(int32_t probeCount)
     return idMath::ClampInt(1, probeCount, r_rtGIProbeUpdatesPerFrame.GetInteger());
 }
 
+// Geometry the last allocation attempt FAILED at, as {Nx, Ny, Nz, rays, updates}.
+// Same purpose as s_froxelDimFailed in vk_vol_froxel.cpp: a failed realloc zeroes
+// s_probeDim, which would make this predicate true forever and call
+// VK_RT_CreateProbeResources — and with it vkDeviceWaitIdle — every frame.
+static int32_t s_probeGeomFailed[5] = {0, 0, 0, 0, 0};
+
+static void VK_RT_GIProbeLatchFailure(const int32_t dim[3], int32_t rays, int32_t updates)
+{
+    s_probeGeomFailed[0] = dim[0];
+    s_probeGeomFailed[1] = dim[1];
+    s_probeGeomFailed[2] = dim[2];
+    s_probeGeomFailed[3] = rays;
+    s_probeGeomFailed[4] = updates;
+    common->Warning("VK RT GIProbe: resource allocation failed at %dx%dx%d, %d rays x %d updates — probe path "
+                    "stood down (per-pixel GI is unaffected)",
+                    dim[0], dim[1], dim[2], rays, updates);
+}
+
 static bool VK_RT_GIProbeGeometryChanged(void)
 {
     int32_t want[3];
     VK_RT_GIProbeRequestedDims(want);
     const int32_t probes = want[0] * want[1] * want[2];
-    return want[0] != s_probeDim[0] || want[1] != s_probeDim[1] || want[2] != s_probeDim[2] ||
-           VK_RT_GIProbeRequestedRays() != s_probeRays || VK_RT_GIProbeRequestedUpdates(probes) != s_probeUpdates;
+    const int32_t rays = VK_RT_GIProbeRequestedRays();
+    const int32_t updates = VK_RT_GIProbeRequestedUpdates(probes);
+
+    if (want[0] == s_probeGeomFailed[0] && want[1] == s_probeGeomFailed[1] && want[2] == s_probeGeomFailed[2] &&
+        rays == s_probeGeomFailed[3] && updates == s_probeGeomFailed[4])
+        return false; // already known-bad, do not retry every frame
+
+    return want[0] != s_probeDim[0] || want[1] != s_probeDim[1] || want[2] != s_probeDim[2] || rays != s_probeRays ||
+           updates != s_probeUpdates;
 }
 
 // ---------------------------------------------------------------------------
 // 2D image lifecycle
 // ---------------------------------------------------------------------------
 
+static void VK_RT_FreeProbeImage(vkReflBuffer_t &img);
+
+// Non-fatal for the same reason VK_RT_AllocFroxelImage is: at
+// VK_GIPROBE_MAX_PROBES the distance atlas is 4608x4608 (85 MiB), the irradiance
+// atlas 2560x2560 (52 MiB), and the scratch image 128 MiB per slot — all from
+// CVar values the clamps accept. A refusal must stand the probe path down, not
+// terminate the renderer.
 static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, VkFormat format)
 {
     img.width = w;
     img.height = h;
+
+    VkResult vkr = VK_SUCCESS;
 
     VkImageCreateInfo imgCI = {};
     imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -292,7 +326,14 @@ static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, V
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
     imgCI.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VK_CHECK(vkCreateImage(vk.device, &imgCI, NULL, &img.image));
+    VK_CHECK_NONFATAL(vkCreateImage(vk.device, &imgCI, NULL, &img.image), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT GIProbe: vkCreateImage failed (%d) for a %ux%u probe image", (int)vkr, w, h);
+        img.image = VK_NULL_HANDLE;
+        VK_RT_FreeProbeImage(img);
+        return false;
+    }
 
     VkMemoryRequirements memReq;
     vkGetImageMemoryRequirements(vk.device, img.image, &memReq);
@@ -312,8 +353,7 @@ static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, V
     if (memTypeIdx == UINT32_MAX)
     {
         common->Warning("VK RT GIProbe: no device-local memory type for a probe image");
-        vkDestroyImage(vk.device, img.image, NULL);
-        img.image = VK_NULL_HANDLE;
+        VK_RT_FreeProbeImage(img);
         return false;
     }
 
@@ -321,8 +361,24 @@ static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, V
     allocI.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocI.allocationSize = memReq.size;
     allocI.memoryTypeIndex = memTypeIdx;
-    VK_CHECK(vkAllocateMemory(vk.device, &allocI, NULL, &img.memory));
-    VK_CHECK(vkBindImageMemory(vk.device, img.image, img.memory, 0));
+    VK_CHECK_NONFATAL(vkAllocateMemory(vk.device, &allocI, NULL, &img.memory), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT GIProbe: out of device memory (%d) for a %ux%u probe image (%.1f MiB) — lower "
+                        "r_rtGIProbeCountX/Y/Z, r_rtGIProbeRays or r_rtGIProbeUpdatesPerFrame",
+                        (int)vkr, w, h, (double)memReq.size / (1024.0 * 1024.0));
+        img.memory = VK_NULL_HANDLE;
+        VK_RT_FreeProbeImage(img);
+        return false;
+    }
+
+    VK_CHECK_NONFATAL(vkBindImageMemory(vk.device, img.image, img.memory, 0), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT GIProbe: vkBindImageMemory failed (%d)", (int)vkr);
+        VK_RT_FreeProbeImage(img);
+        return false;
+    }
 
     VkImageViewCreateInfo viewCI = {};
     viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -330,7 +386,14 @@ static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, V
     viewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewCI.format = format;
     viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK_CHECK(vkCreateImageView(vk.device, &viewCI, NULL, &img.view));
+    VK_CHECK_NONFATAL(vkCreateImageView(vk.device, &viewCI, NULL, &img.view), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT GIProbe: vkCreateImageView failed (%d)", (int)vkr);
+        img.view = VK_NULL_HANDLE;
+        VK_RT_FreeProbeImage(img);
+        return false;
+    }
 
     // UNDEFINED -> GENERAL + clear, so a probe read before its first trace sees
     // black rather than garbage. Every probe starts with TRACED clear, so the
@@ -453,6 +516,8 @@ static void VK_RT_DestroyProbeResources(void)
     s_probeUpdates = 0;
     s_tilesX = s_tilesY = 0;
     s_windowValid = false;
+    for (int i = 0; i < 5; i++)
+        s_probeGeomFailed[i] = 0;
 }
 
 // Allocates (or reallocates) every probe resource at the currently requested
@@ -481,6 +546,8 @@ static void VK_RT_CreateProbeResources(void)
                                VK_FORMAT_R16G16_SFLOAT))
     {
         VK_RT_DestroyProbeResources();
+        // Latch AFTER the destroy — it clears s_probeGeomFailed on the way out.
+        VK_RT_GIProbeLatchFailure(dim, rays, updates);
         return;
     }
 
@@ -493,6 +560,7 @@ static void VK_RT_CreateProbeResources(void)
                                    VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             VK_RT_DestroyProbeResources();
+            VK_RT_GIProbeLatchFailure(dim, rays, updates);
             return;
         }
 
