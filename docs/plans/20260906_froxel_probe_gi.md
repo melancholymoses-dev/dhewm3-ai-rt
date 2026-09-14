@@ -200,9 +200,9 @@ hasRealCamera`, which is the correct guard for the GUI overlay's degenerate seco
 |---|---|---|
 | `r_rtVolFroxel` | `0` | 0 = march (current), 1 = froxel grid |
 | `r_rtVolFroxelResX/Y/Z` | `160 / 90 / 64` | grid dimensions; change forces a realloc |
-| `r_rtVolFroxelDebug` | `0` | 1 = slice view, 2 = per-cell light count, 3 = cell-world-pos hash, 4 = cell age (F4) |
+| `r_rtVolFroxelDebug` | `0` | 1 = slice view, 2 = per-cell light count, 3 = grid-mapping error, 4 = cell age (F4) |
 | `r_rtVolFroxelDebugSlice` | `32` | which Z slice mode 1 shows |
-| `r_rtVolFroxelDebugGain` | `20.0` | pre-tonemap gain for overlays, mirrors `r_rtVolDebugGain` |
+| `r_rtVolFroxelDebugGain` | `20.0` | mode-1-only pre-tonemap gain, mirrors `r_rtVolDebugGain`; modes 2/3 emit normalised ramps and ignore it |
 | `r_rtVolFroxelTemporal` | `1` | froxel-space EMA (F4) |
 | `r_rtVolFroxelAlpha` | `0.1` | EMA blend, current-frame weight (F4) |
 | `r_rtVolFroxelRotate` | `1` | update 1/N of Z slices per frame (F4); 1 = full rate |
@@ -218,7 +218,7 @@ same containment tests, so an A/B at identical settings is meaningful.
 Each chunk is one working session, ends compiling, and leaves the default path
 unchanged until F5.
 
-### F0 — grid + fill, nothing reads it
+### F0 — grid + fill, nothing reads it ✅ **written 2026-09-12, not yet run**
 Allocate the 3D images; write `vol_froxel_common.glsl` (slice↔distance, cell→world);
 port `vol_march.comp`'s light loop verbatim into `vol_froxel_fill.comp` (containment,
 Cauchy, HG phase, `rayQueryEXT` occlusion, cookies) evaluated at the jittered cell
@@ -228,31 +228,164 @@ centre; wire the dispatch + profiler phase; implement `r_rtVolFroxelDump`.
   and the default path renders identically (nothing reads the grid yet).
 - **Log breadcrumbs from the start** (grid dims, cells dispatched, lights in the
   selection) — not after it breaks.
+- **Deviations as built:** (a) the F3 cluster SSBO is not bound as a dummy — F3 adds
+  binding 4 when it needs it; (b) XY jitter is fixed at the cell centre and only Z is
+  jittered, because XY jitter without F4's EMA to average it is pure added noise;
+  (c) the fill runs *alongside* the march rather than replacing it, so F1 can compare
+  them in the same frame. Ten vol tuning CVars lost their `static` so both paths read
+  one set of constants.
 
-### F1 — overlays
+### F1 — overlays ✅ **written 2026-09-12, not yet run**
 `vol_froxel_resolve.comp` with the debug modes only: when
 `r_rtVolFroxelDebug != 0` it overwrites `volBuffer` and the composite's debug
-(non-blending) pipeline displays it.
-- **Exit:** mode 1 on slice N visually matches the march's brightness at that depth
-  (stand still, compare against `r_rtVolDebugMode 2`); mode 3's world-pos hash is
-  stable under camera rotation for cells at the same world location; mode 2 shows
-  plausible light counts (high near fixtures, zero in sealed corridors).
-- This is the chunk that proves the world-position mapping. Do not proceed past a
-  mode-1/march mismatch.
+(non-blending) pipeline displays it. The resolve must run *after* the temporal EMA
+has consumed `volBuffer`, or the overlay lands in the march's history.
+- **Mode 1** — one Z slice of the scatter grid, masked to where that slice is in
+  front of the surface. Unmasked, a slice at 200 units seen through a wall at 50
+  shows the room beyond and reads as a mismatch against the march, which stops at
+  the surface.
+- **Mode 2** — per-cell light count at the pixel's own depth slice (the fill writes
+  the count into alpha in place of extinction under this mode). This is the baseline
+  F3's cluster cull must reproduce exactly.
+- **Mode 3** — grid-mapping error: evaluate the cell world position at exactly this
+  pixel's ray and the surface's depth, and compare against `rt_ReconstructWorldPos`.
+  Same ray, same planar depth, so the only residual is float precision.
+  *(Supersedes the original "cell world-pos hash, stable under rotation" idea — that
+  was wrong: the grid is frustum-anchored, so cell indices necessarily change as the
+  camera turns and a hash colour is expected to change with them. A direct comparison
+  against the known-good depth reconstruction tests the same thing decisively.)*
+- **Exit:** mode 3 is green (sub-unit error) everywhere in range — a hue that tracks
+  distance, or that flips with camera yaw, means the clip-space convention or the
+  planar-depth division is wrong; mode 1 on slice N matches the march's structure at
+  that depth (stand still, compare against `r_rtVolDebugMode 2`); mode 2 shows
+  plausible counts — high near fixtures, black in sealed corridors.
+- This is the chunk that proves the world-position mapping. **Mode 3 is the gate.**
+  Do not proceed to F2 while it is anything but green.
+- ✅ **Mode 3 passes as of 2026-09-13** (Command Access Junction): green screen-wide
+  in range, blue beyond `r_rtVolMaxDist`, black sky. The F0 mapping is proven.
+- **Mode 2 first run (Mars City Reception) showed a screen-wide 0-vs-N checkerboard**
+  — surface-straddling cells, see F2 below. Overlay changed to take the column max,
+  which is immune to the straddle and is the better statistic for catching an F3
+  cluster-cull regression anyway. The underlying effect is a real F2 work item.
+- **Reading overlays: set `r_rtVolHalfRes 0` first.** At half res the composite
+  bilinearly upscales the resolve's output, so colours between blocks are
+  interpolation rather than measurements — a heatmap read at half res shows counts
+  that were never computed.
+- **First run came back saturated red screen-wide, and the cause was real:** Doom 3's projection has an infinite far plane (`proj[10] = -0.999`), so NDC
+  z asymptotes to +0.999 and never reaches +1. The ray was built as
+  `normalize(pFar - pNear)` with `pFar` unprojected at ndcZ = +1 — which resolves to
+  6000 units *behind* the eye, so every ray pointed backwards and every cell position
+  flew off to infinity. Fixed by building the ray as `normalize(pNear - eye)`. The
+  dump now prints the centre/corner ray's `dot(dir, forward)` and the near-plane
+  distance so the same class of fault is visible in the log alone. No other shader
+  was affected — they all unproject at the pixel's actual depth.
 
 ### F2 — integrate + real resolve, A/B
 `vol_froxel_integrate.comp`; resolve's non-debug path (linearize depth → slice
 coordinate → one trilinear `texture()`, clamped to the pixel's own depth slice so
 cells behind geometry never contribute); `r_rtVolFroxel 1` routes the frame graph.
+- **Retune the slice curve's RANGE, not its shape.** Keep the exponential; its
+  justification is cell **isotropy** — XY cell size grows linearly with distance, so
+  Z spacing ∝ d is what keeps cells cubical, and anisotropic cells are what alias.
+  (The current `exp(zc/Nz·log(maxDist+1)) − 1` already gives spacing ∝ `(d+1)`, i.e.
+  the textbook `n·(D/n)^(zc/Nz)` with the origin regularized. Shape is fine.)
+  **Do not hump the distribution**: mid-range-dense would make mid cells thin-in-Z
+  but wide-in-XY while leaving far cells at ~150 units deep, and the straddle
+  artifact is worst at the far end. Note also that inverse-square falloff is measured
+  from the *light*, not the eye, so it argues for nothing here.
+
+  Both ends of the range are misallocated:
+  - **Far — the big one.** At `r_rtVolDensity 0.015`, `T(d) = exp(-0.015d)`, so
+    `maxDist 512` is **7.7 optical depths**: T = 0.050 at 200, 0.023 at 250,
+    0.00046 at 512. The outer half of the grid is in near-total extinction and
+    contributes nothing. Derive the far anchor from the medium instead —
+    `d_far = min(maxDist, -ln(T_min)/density)`, T_min ≈ 0.02. Must be derived, not
+    a constant: raising density shortens the useful range and lowering it extends it.
+  - **Near.** Slices 0–14 cover the first 3 units (znear) — ~22 % of the slices and
+    of the fill's ray queries on ~0.6 % of the path. Not *dead* (the integrate pass
+    accumulates from slice 0, so they feed the integral the visible slices carry, and
+    the march samples that air too — its `t` starts at 0, not znear), just badly
+    allocated. Anchor at znear.
+
+  Combined, 64 slices over [3, 261] rather than [0, 512] takes the far cell from
+  ~50 units deep to ~18 — ~3× finer, aimed straight at the straddle below, and
+  nothing visible is lost because what is cut sits below T = 0.02. Re-measure after;
+  this moves every slice, so it belongs with the integrate pass rather than between
+  two overlay checks. Nothing consumes the grid until F2, so it is free to change.
+- **The final partial cell must be weighted by the fraction of it in front of the
+  surface — this is now confirmed, not speculative.** F1's mode 2 measured it: the
+  cell containing the surface straddles it, the per-cell jitter lands the sample
+  behind the wall about half the time, every light is then occluded, and the result
+  was a screen-wide 0-vs-N checkerboard. It scales with distance, because the
+  exponential slice curve makes far cells ~150 units deep at the default
+  160×90×**64**. Raising `ResZ` shrinks the error but does not remove it.
 - **Exit:** side-by-side screenshots march vs froxel on the fan-blade cookie shot and
   a Mars City corridor; profiler capture with `FroxelFill/Integrate/Resolve` vs
   `Vol/VolTemporal/VolBilateral` (compare the **sums** — comparing `Vol` alone
   flatters the change); no fog visible in front of walls.
 - **Expected regression:** beam edges are softer than the march's. Quantify it here;
   raising `r_rtVolFroxelResX/Y` is the first mitigation and its cost is linear.
+- ✅ **Landed and measured 2026-09-13. In-game validated; visually better, not just
+  cheaper** ("looks kinda incredible, smoother"). Like-for-like adjacent frames
+  26700 → 26730, near-identical view:
 
-### F3 — clustered per-cell light lists
-Only if F2's capture shows the fill's light loop dominating.
+  | | march | froxel |
+  |---|---|---|
+  | Vol / FroxelFill | 1.012 | 0.130 |
+  | VolTemporal / Integrate | 0.022 | 0.026 |
+  | VolBilateral / Resolve | 0.261 | 0.059 |
+  | **sum** | **1.295 ms** | **0.215 ms** |
+
+  Median across the capture 1.63 → 0.29 ms (5.6×), worst case 3.61 → 0.49 (7.3×).
+  **Variance improved more than the mean**: the march's `Vol` swung 0.73–3.32 ms
+  (4.6× spread), the froxel total 0.20–0.49 (2.5×), and `FroxelIntegrate` is
+  scene-independent at 0.023–0.026 — 14400 columns regardless of view.
+- **The fog got denser, and that is the froxel path being MORE correct.** The march
+  takes 8 exponentially-spaced steps over [0,512]; its last step spans 217→512 units
+  evaluated at a single point near 364, so a light at ~250 units is missed entirely.
+  64 slices over [3,261] makes far cells ~18 units deep and captures it. The march
+  was systematically under-integrating the far half of every ray, and
+  **`r_rtVolDensity` was tuned against that error** — so the same constant now reads
+  denser. Re-tune against the new integrator; this is not a regression to undo. It
+  also explains "smoother": fewer lights popping as sparse far steps slide past them.
+- **F3 (clustered light lists) is NOT worth doing — see below.**
+- **XY resolution is the affordable quality lever.** Fill measures ~0.228 ns/cell:
+  240×135×64 costs 0.47 ms fill / 0.55 total / 66 MiB, 320×180×64 costs 0.84 / 0.92 /
+  118 MiB. Even the latter stays under the march's *median*. Memory is the binding
+  constraint, not time. Note this is an XY problem (beam/fan edge crispness); raising
+  `ResZ` addresses the straddle instead.
+- **Written 2026-09-13.** As built:
+  - The integrate pass anchors its stored value at cell **centres**, not faces. That
+    is what makes the straddle weighting fall out of the resolve's trilinear fetch
+    for free: sampling at exactly the surface's depth linearly interpolates the
+    integral to that depth. Face-anchored values would have needed an explicit
+    fractional term.
+  - Segment lengths are divided by `cos` to the view axis. Slices are planar, so the
+    ray through a cell is longer than the slice's depth extent everywhere but the
+    screen centre — skipping this under-integrates the whole periphery by ~30 % at
+    the edges of a 90° FOV.
+  - `VK_RT_VolFroxelActive()` requires **all three** pipelines, so a shader that
+    fails to load falls back to the march rather than standing it down and leaving
+    the screen fogless.
+  - `volReadView` is claimed at the top of the resolve rather than after its
+    dispatch: temporal/bilateral no longer run to update it, so any early-out would
+    otherwise leave the composite reading their stale — and differently sized —
+    output.
+  - `dFar` now ~261 rather than 512 at default density, so **mode 3's blue
+    out-of-range region gets noticeably larger**. That is the retune working, not a
+    regression.
+
+### F3 — clustered per-cell light lists — ❌ **DROPPED 2026-09-13**
+The trigger condition is met but the payoff is gone. F2's capture does show the fill
+dominating (60–85 % of froxel cost, swinging 0.115→0.423 ms with light count) — but
+the *whole* froxel path is now 0.29 ms median. A perfect cluster cull halving the
+fill saves ~0.1 ms against GI at 4.3 ms and Shadows at 1.4–6.1 ms. That budget buys
+far more as XY resolution, which is visible on the fan-blade shot; a cluster cull is
+not. Revisit only if a future scene pushes the vol light selection far past the ~7
+lights these captures saw, or if XY resolution is raised enough to make the fill
+dominant again in absolute terms.
+
+Original scope, if it ever returns:
 `vol_froxel_cluster.comp`: one thread per cluster (default cluster = 8×8×8 cells →
 20×12×8 = 1920 clusters, 16 B each), tests each of the ≤128 vol lights against the
 cluster's world AABB, writes a `uvec4` bitmask; fill iterates only set bits.

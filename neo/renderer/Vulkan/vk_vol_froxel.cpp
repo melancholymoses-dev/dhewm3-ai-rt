@@ -45,14 +45,48 @@ static idCVar r_rtVolFroxel("r_rtVolFroxel", "0", CVAR_RENDERER | CVAR_INTEGER,
                             "Volumetric sampling structure: 0 = per-pixel ray march (vol_march.comp), "
                             "1 = froxel grid. F0: the grid is filled but nothing reads it yet.");
 
-static idCVar r_rtVolFroxelResX("r_rtVolFroxelResX", "160", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtVolFroxelResX("r_rtVolFroxelResX", "240", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid width in cells. Raising this is the first mitigation for soft "
                                 "shaft edges; cost is linear. Change forces a device-idle realloc.");
-static idCVar r_rtVolFroxelResY("r_rtVolFroxelResY", "90", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtVolFroxelResY("r_rtVolFroxelResY", "135", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid height in cells. Change forces a device-idle realloc.");
 static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "64", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid depth in slices, exponentially distributed out to "
                                 "r_rtVolMaxDist. Change forces a device-idle realloc.");
+
+// Overlays (F1). All three replace the composite rather than adding to it —
+// VK_RT_CompositeVolumetrics switches to the replace pipeline while any of them
+// is active, same as r_rtVolDebugMode does for the march.
+static idCVar r_rtVolFroxelDebug("r_rtVolFroxelDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                 "Froxel grid overlay: 0=off, 1=one Z slice of the scatter grid "
+                                 "(r_rtVolFroxelDebugSlice), 2=per-cell light-count heatmap at the pixel's own "
+                                 "depth slice, 3=grid-mapping error vs the depth-reconstructed world position "
+                                 "(green=agreement). Requires r_rtVolFroxel 1.");
+
+static idCVar r_rtVolFroxelDebugSlice("r_rtVolFroxelDebugSlice", "32", CVAR_RENDERER | CVAR_INTEGER,
+                                      "Which Z slice r_rtVolFroxelDebug 1 displays. r_rtVolFroxelDump prints the "
+                                      "slice->distance table to pick one with.");
+
+static idCVar r_rtVolFroxelDebugGain("r_rtVolFroxelDebugGain", "20.0", CVAR_RENDERER | CVAR_FLOAT,
+                                     "Mode-1-only pre-tonemap gain, so the tiny raw scatter values survive the "
+                                     "Uchimura toe curve instead of reading as black. Mirrors r_rtVolDebugGain; "
+                                     "modes 2 and 3 output normalised ramps and ignore it.");
+
+// F2: the grid's far anchor is DERIVED from the medium, not taken from
+// r_rtVolMaxDist. At r_rtVolDensity 0.015, maxDist 512 is 7.7 optical depths —
+// T = exp(-0.015*512) = 0.0005, so the outer half of the grid sat in near-total
+// extinction contributing nothing while consuming half the slice budget. Cutting
+// the far anchor to where transmittance reaches this floor, and the near anchor
+// to znear, takes the far cell from ~50 world units deep to ~18 at the same 64
+// slices — which is aimed straight at the surface-straddle error.
+//
+// Must stay derived rather than a constant: raising density shortens the useful
+// range, lowering it extends the range back out toward r_rtVolMaxDist.
+static idCVar r_rtVolFroxelFarTransmittance(
+    "r_rtVolFroxelFarTransmittance", "0.02", CVAR_RENDERER | CVAR_FLOAT,
+    "Transmittance floor that sets the froxel grid's far plane: the grid ends where "
+    "exp(-density*d) falls to this, capped by r_rtVolMaxDist. Lower = longer range, "
+    "coarser cells. 0 disables the derivation and uses r_rtVolMaxDist directly.");
 
 static idCVar r_rtVolFroxelDump("r_rtVolFroxelDump", "0", CVAR_RENDERER | CVAR_BOOL,
                                 "One-shot dump of the froxel grid: dimensions, memory, the slice->distance "
@@ -100,16 +134,17 @@ struct VolFroxelParamsUBO
     float cameraPosW[4];    //  64  xyz = camera world position
     float camForwardW[4];   //  80  xyz = viewaxis[0]
     int32_t gridDim[4];     //  96  xyz = Nx,Ny,Nz   w = cluster shift (F3)
-    float depthParams[4];   // 112  x=maxDist y=log(maxDist+1) z=linNum w=linAdd
-    float densities[4];     // 128  x=point y=directed z=flashlight w=whiteNoiseMix
-    float strengths[4];     // 144  x=point y=directed z=flashlight w=temporalAlpha
-    float anisos[4];        // 160  x=point y=directed z=flashlight w=unused
-    int32_t misc[4];        // 176  x=frameIndex y=maxLights z=debugMode w=debugSlice
-    int32_t screen[4];      // 192  x=screenW y=screenH z=marchW w=marchH (resolve)
-    int32_t rect[4];        // 208  resolve dispatch rect, march space
-    float prevViewProj[16]; // 224  F4 reprojection; identity until then
+    float depthParams[4];   // 112  x=dNear y=dFar z=linNum w=linAdd
+    float rangeParams[4];   // 128  x=logRange y=1/logRange z=maxDist w=unused
+    float densities[4];     // 144  x=point y=directed z=flashlight w=whiteNoiseMix
+    float strengths[4];     // 160  x=point y=directed z=flashlight w=temporalAlpha
+    float anisos[4];        // 176  x=point y=directed z=flashlight w=unused
+    int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
+    int32_t screen[4];      // 208  x=screenW y=screenH z=outW w=outH (resolve target)
+    int32_t rect[4];        // 224  resolve dispatch rect, resolve-target space
+    float prevViewProj[16]; // 240  F4 reprojection; identity until then
 };
-static_assert(sizeof(VolFroxelParamsUBO) == 288, "VolFroxelParamsUBO size mismatch");
+static_assert(sizeof(VolFroxelParamsUBO) == 304, "VolFroxelParamsUBO size mismatch");
 
 // Cached dimensions the images were actually built at, so a mid-session res
 // cvar change can be detected and the grid reallocated rather than silently
@@ -236,8 +271,8 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
         b2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
         b2.image = g.image;
         b2.subresourceRange = subRange;
-        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0,
-                             NULL, 1, &b2);
+        vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL,
+                             0, NULL, 1, &b2);
 
         vkEndCommandBuffer(tmpCmd);
 
@@ -282,7 +317,10 @@ static void VK_RT_FreeFroxelImage(vkFroxelGrid_t &g)
 static void VK_RT_DestroyFroxelImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
         VK_RT_FreeFroxelImage(vkRT.froxelScatter[i]);
+        VK_RT_FreeFroxelImage(vkRT.froxelIntegrated[i]);
+    }
     s_froxelDim[0] = s_froxelDim[1] = s_froxelDim[2] = 0;
 }
 
@@ -298,12 +336,15 @@ static void VK_RT_CreateFroxelImages(void)
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        if (!VK_RT_AllocFroxelImage(vkRT.froxelScatter[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]))
+        if (!VK_RT_AllocFroxelImage(vkRT.froxelScatter[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]) ||
+            !VK_RT_AllocFroxelImage(vkRT.froxelIntegrated[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]))
         {
             VK_RT_DestroyFroxelImages();
             return;
         }
         vkRT.froxelFillDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.froxelIntegrateDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.froxelResolveDescSetLastUpdatedFrameCount[i] = -1;
     }
 
     s_froxelDim[0] = dim[0];
@@ -311,8 +352,164 @@ static void VK_RT_CreateFroxelImages(void)
     s_froxelDim[2] = dim[2];
 
     const double cells = (double)dim[0] * (double)dim[1] * (double)dim[2];
-    common->Printf("VK RT Froxel: grid %dx%dx%d (%.0f cells, %.1f MiB x%d slots)\n", dim[0], dim[1], dim[2], cells,
-                   cells * 8.0 / (1024.0 * 1024.0), VK_MAX_FRAMES_IN_FLIGHT);
+    common->Printf("VK RT Froxel: grid %dx%dx%d (%.0f cells, %.1f MiB/image, 2 images x%d slots)\n", dim[0], dim[1],
+                   dim[2], cells, cells * 8.0 / (1024.0 * 1024.0), VK_MAX_FRAMES_IN_FLIGHT);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_BuildFroxelParams
+//
+// One params block shared by every froxel pass, so the fill's cell positions and
+// the resolve's lookups cannot drift apart.  Returns false if the view produced
+// a singular view-projection.
+// ---------------------------------------------------------------------------
+
+static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid_t &grid, VolFroxelParamsUBO &ubo)
+{
+    memset(&ubo, 0, sizeof(ubo));
+
+    // invViewProj — same construction as the march's, kept identical so cell
+    // positions and march step positions agree (that is what F1's overlay tests).
+    {
+        const float *proj = viewDef->projectionMatrix;
+        const float *mv = viewDef->worldSpace.modelViewMatrix;
+        float vp[16];
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++)
+            {
+                vp[c * 4 + r] = 0.0f;
+                for (int k = 0; k < 4; k++)
+                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
+            }
+        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
+                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
+        idMat4 invVP = vpMat.Inverse();
+        memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
+
+        for (int i = 0; i < 16; i++)
+            if (ubo.invViewProj[i] != ubo.invViewProj[i])
+                return false;
+    }
+
+    const idVec3 camPos = viewDef->renderView.vieworg;
+    const idVec3 &camFwd = viewDef->renderView.viewaxis[0];
+    ubo.cameraPosW[0] = camPos.x;
+    ubo.cameraPosW[1] = camPos.y;
+    ubo.cameraPosW[2] = camPos.z;
+    ubo.camForwardW[0] = camFwd.x;
+    ubo.camForwardW[1] = camFwd.y;
+    ubo.camForwardW[2] = camFwd.z;
+
+    ubo.gridDim[0] = (int32_t)grid.width;
+    ubo.gridDim[1] = (int32_t)grid.height;
+    ubo.gridDim[2] = (int32_t)grid.depth;
+    ubo.gridDim[3] = 0; // cluster shift, F3
+
+    const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
+    const float density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+
+    // Near anchor = the real near plane, read from the projection rather than from
+    // r_znear: znear is game-owned and drops to 1.0 in cinematics, and the matrix
+    // is authoritative for the frame we are actually rendering.
+    //   ndcZ = -proj[10] + proj[14]/d  =>  d(ndcZ = -1) = proj[14] / (proj[10] - 1)
+    float dNear = viewDef->projectionMatrix[14] / (viewDef->projectionMatrix[10] - 1.0f);
+    if (!(dNear > 0.01f) || dNear != dNear)
+        dNear = 1.0f; // degenerate projection — fall back rather than emit a NaN grid
+
+    // Far anchor derived from the medium (see r_rtVolFroxelFarTransmittance).
+    float dFar = maxDist;
+    const float tFloor = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFroxelFarTransmittance.GetFloat());
+    if (tFloor > 1e-5f && density > 1e-5f)
+        dFar = Min(maxDist, -idMath::Log(tFloor) / density);
+    dFar = Max(dFar, dNear * 2.0f); // never invert or collapse the range
+
+    const float logRange = Max(idMath::Log(dFar / dNear), 1e-4f);
+
+    ubo.depthParams[0] = dNear;
+    ubo.depthParams[1] = dFar;
+    // Depth linearization constants — same idiom as BilateralPC in vk_vol.cpp.
+    ubo.depthParams[2] = -viewDef->projectionMatrix[14];
+    ubo.depthParams[3] = viewDef->projectionMatrix[10];
+
+    ubo.rangeParams[0] = logRange;
+    ubo.rangeParams[1] = 1.0f / logRange;
+    ubo.rangeParams[2] = maxDist;
+    ubo.rangeParams[3] = 0.0f;
+
+    ubo.densities[0] = density;
+    ubo.densities[1] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDirectedDensity.GetFloat());
+    ubo.densities[2] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolFlashlightDensity.GetFloat());
+    ubo.densities[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
+
+    ubo.strengths[0] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
+    ubo.strengths[1] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
+    ubo.strengths[2] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
+    ubo.strengths[3] = 0.0f; // temporal alpha, F4
+
+    ubo.anisos[0] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
+    ubo.anisos[1] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
+    ubo.anisos[2] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
+    ubo.anisos[3] = Max(0.0f, r_rtVolFroxelDebugGain.GetFloat());
+
+    ubo.misc[0] = (int32_t)tr.frameCount;
+    ubo.misc[1] = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
+    // The fill reads the debug mode too: mode 2 makes it write a light count into
+    // alpha instead of extinction.
+    ubo.misc[2] = idMath::ClampInt(0, 3, r_rtVolFroxelDebug.GetInteger());
+    ubo.misc[3] = idMath::ClampInt(0, (int)grid.depth - 1, r_rtVolFroxelDebugSlice.GetInteger());
+
+    // screen.xy = full res (depth fetch / NDC), screen.zw = the volBuffer the
+    // resolve writes. In froxel mode that is full res too — VK_RT_VolRequestedScale
+    // forces r_rtVolHalfRes off, because the resolve is a single trilinear fetch.
+    const vkReflBuffer_t &vb = vkRT.volBuffer[vk.currentFrame];
+    ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
+    ubo.screen[1] = (int32_t)vk.swapchainExtent.height;
+    ubo.screen[2] = (int32_t)Max(1u, vb.width);
+    ubo.screen[3] = (int32_t)Max(1u, vb.height);
+
+    // Resolve dispatch rect: the view scissor, GL Y-up -> Vulkan Y-down, scaled
+    // into the output image. Mirrors VK_RT_Vol_ComputeDispatchRect in vk_vol.cpp
+    // (static there, and this needs the same conversion).
+    {
+        const int fullW = (int)vk.swapchainExtent.width;
+        const int fullH = (int)vk.swapchainExtent.height;
+        const idScreenRect &s = viewDef->scissor;
+
+        int x0 = idMath::ClampInt(0, fullW - 1, s.x1);
+        int y0 = idMath::ClampInt(0, fullH - 1, fullH - 1 - s.y2);
+        int rw = s.x2 - s.x1 + 1;
+        int rh = s.y2 - s.y1 + 1;
+
+        if (rw <= 0 || rh <= 0)
+        {
+            // Degenerate scissor — dispatch nothing rather than the whole screen.
+            ubo.rect[0] = ubo.rect[1] = ubo.rect[2] = ubo.rect[3] = 0;
+        }
+        else
+        {
+            rw = idMath::ClampInt(1, fullW - x0, rw);
+            rh = idMath::ClampInt(1, fullH - y0, rh);
+
+            const int outW = ubo.screen[2];
+            const int outH = ubo.screen[3];
+            const int scale = Max(1, fullW / Max(1, outW));
+
+            const int sx0 = x0 / scale;
+            const int sy0 = y0 / scale;
+            const int sx1 = (x0 + rw + scale - 1) / scale;
+            const int sy1 = (y0 + rh + scale - 1) / scale;
+
+            ubo.rect[0] = sx0;
+            ubo.rect[1] = sy0;
+            ubo.rect[2] = idMath::ClampInt(0, outW - sx0, sx1 - sx0);
+            ubo.rect[3] = idMath::ClampInt(0, outH - sy0, sy1 - sy0);
+        }
+    }
+
+    // prevViewProj: identity until F4 reprojection needs it.
+    ubo.prevViewProj[0] = ubo.prevViewProj[5] = ubo.prevViewProj[10] = ubo.prevViewProj[15] = 1.0f;
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -417,18 +614,232 @@ static void VK_RT_InitFroxelFillPipeline(void)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_InitFroxelIntegratePipeline
+//
+// Descriptor layout mirrors vol_froxel_integrate.comp:
+//   set 0, binding 0: STORAGE_IMAGE          (froxelScatter, 3D, read)
+//   set 0, binding 1: STORAGE_IMAGE          (froxelIntegrated, 3D, write)
+//   set 0, binding 2: UNIFORM_BUFFER_DYNAMIC (VolFroxelParamsUBO)
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitFroxelIntegratePipeline(void)
+{
+    VkDescriptorSetLayoutBinding bindings[3] = {};
+
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 3;
+    layoutInfo.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.froxelIntegrateDescLayout));
+
+    VkPipelineLayoutCreateInfo plInfo = {};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts = &vkRT.froxelIntegrateDescLayout;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.froxelIntegratePipelineLayout));
+
+    VkShaderModule compMod = VK_LoadSPIRV("glprogs/glsl/vol_froxel_integrate.comp.spv");
+    if (compMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Froxel: failed to load vol_froxel_integrate.comp.spv — froxel resolve disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stage = {};
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = compMod;
+    stage.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.stage = stage;
+    pipelineInfo.layout = vkRT.froxelIntegratePipelineLayout;
+    VK_CHECK(
+        vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.froxelIntegratePipeline));
+
+    vkDestroyShaderModule(vk.device, compMod, NULL);
+
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
+    poolSizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.froxelIntegrateDescPool));
+
+    VkDescriptorSetLayout allocLayouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        allocLayouts[i] = vkRT.froxelIntegrateDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.froxelIntegrateDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = allocLayouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.froxelIntegrateDescSets));
+
+    common->Printf("VK RT Froxel: integrate pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_InitFroxelResolvePipeline
+//
+// Descriptor layout mirrors vol_froxel_resolve.comp:
+//   set 0, binding 0: STORAGE_IMAGE          (froxelScatter, 3D, read)
+//   set 0, binding 1: STORAGE_IMAGE          (volBuffer, 2D, write)
+//   set 0, binding 2: UNIFORM_BUFFER_DYNAMIC (VolFroxelParamsUBO)
+//   set 0, binding 3: COMBINED_IMAGE_SAMPLER (depth)
+//   set 0, binding 4: COMBINED_IMAGE_SAMPLER (froxelIntegrated, sampler3D)
+//
+// No set 1 — the resolve samples no materials.  Binding 4's trilinear filter is
+// the whole of the real path: it replaces vol_bilateral.comp's depth-aware
+// upsample in XY, and performs the final partial cell's fractional weighting
+// in Z.
+// ---------------------------------------------------------------------------
+
+static void VK_RT_InitFroxelResolvePipeline(void)
+{
+    VkDescriptorSetLayoutBinding bindings[5] = {};
+
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[4].binding = 4;
+    bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 5;
+    layoutInfo.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.froxelResolveDescLayout));
+
+    // Own trilinear/clamp sampler rather than borrowing vkRT.volSampler: that one
+    // is created at the END of VK_RT_InitVolMarchPipeline and is left NULL if the
+    // march shader fails to load, which would silently take the froxel path down
+    // with it.
+    if (vkRT.froxelSampler == VK_NULL_HANDLE)
+    {
+        VkSamplerCreateInfo si = {};
+        si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        VK_CHECK(vkCreateSampler(vk.device, &si, NULL, &vkRT.froxelSampler));
+    }
+
+    VkPipelineLayoutCreateInfo plInfo = {};
+    plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plInfo.setLayoutCount = 1;
+    plInfo.pSetLayouts = &vkRT.froxelResolveDescLayout;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.froxelResolvePipelineLayout));
+
+    VkShaderModule compMod = VK_LoadSPIRV("glprogs/glsl/vol_froxel_resolve.comp.spv");
+    if (compMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT Froxel: failed to load vol_froxel_resolve.comp.spv — overlays disabled");
+        return;
+    }
+
+    VkPipelineShaderStageCreateInfo stage = {};
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = compMod;
+    stage.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo = {};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.stage = stage;
+    pipelineInfo.layout = vkRT.froxelResolvePipelineLayout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.froxelResolvePipeline));
+
+    vkDestroyShaderModule(vk.device, compMod, NULL);
+
+    VkDescriptorPoolSize poolSizes[3] = {};
+    poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
+    poolSizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[2] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolInfo.poolSizeCount = 3;
+    poolInfo.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.froxelResolveDescPool));
+
+    VkDescriptorSetLayout allocLayouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        allocLayouts[i] = vkRT.froxelResolveDescLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = vkRT.froxelResolveDescPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = allocLayouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.froxelResolveDescSets));
+
+    common->Printf("VK RT Froxel: resolve pipeline initialized\n");
+}
+
+// ---------------------------------------------------------------------------
 // Public lifecycle
 // ---------------------------------------------------------------------------
 
 void VK_RT_InitVolFroxel(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
         vkRT.froxelFillDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.froxelIntegrateDescSetLastUpdatedFrameCount[i] = -1;
+        vkRT.froxelResolveDescSetLastUpdatedFrameCount[i] = -1;
+    }
 
     VK_RT_InitFroxelFillPipeline();
     if (vkRT.froxelFillPipeline == VK_NULL_HANDLE)
         return;
 
+    VK_RT_InitFroxelIntegratePipeline();
+    VK_RT_InitFroxelResolvePipeline();
     VK_RT_CreateFroxelImages();
 }
 
@@ -455,16 +866,84 @@ void VK_RT_ShutdownVolFroxel(void)
         vkRT.froxelFillPipelineLayout = VK_NULL_HANDLE;
     }
 
+    if (vkRT.froxelIntegrateDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.froxelIntegrateDescPool, NULL);
+        vkRT.froxelIntegrateDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.froxelIntegrateDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.froxelIntegrateDescLayout, NULL);
+        vkRT.froxelIntegrateDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.froxelIntegratePipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.froxelIntegratePipeline, NULL);
+        vkRT.froxelIntegratePipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.froxelIntegratePipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.froxelIntegratePipelineLayout, NULL);
+        vkRT.froxelIntegratePipelineLayout = VK_NULL_HANDLE;
+    }
+
+    if (vkRT.froxelSampler != VK_NULL_HANDLE)
+    {
+        vkDestroySampler(vk.device, vkRT.froxelSampler, NULL);
+        vkRT.froxelSampler = VK_NULL_HANDLE;
+    }
+
+    if (vkRT.froxelResolveDescPool != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorPool(vk.device, vkRT.froxelResolveDescPool, NULL);
+        vkRT.froxelResolveDescPool = VK_NULL_HANDLE;
+    }
+    if (vkRT.froxelResolveDescLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyDescriptorSetLayout(vk.device, vkRT.froxelResolveDescLayout, NULL);
+        vkRT.froxelResolveDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.froxelResolvePipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.froxelResolvePipeline, NULL);
+        vkRT.froxelResolvePipeline = VK_NULL_HANDLE;
+    }
+    if (vkRT.froxelResolvePipelineLayout != VK_NULL_HANDLE)
+    {
+        vkDestroyPipelineLayout(vk.device, vkRT.froxelResolvePipelineLayout, NULL);
+        vkRT.froxelResolvePipelineLayout = VK_NULL_HANDLE;
+    }
+
     VK_RT_DestroyFroxelImages();
 }
 
+// True when the froxel path OWNS the volumetric result this frame. vk_vol.cpp
+// reads this to stand the march, the temporal EMA and the bilateral upsample
+// down, and to force the volBuffer back to full resolution.
+//
+// Requires the whole chain — fill, integrate and resolve — because standing the
+// march down while any link is missing would silently leave volBuffer empty and
+// the screen fogless, rather than falling back to the path that works.
 bool VK_RT_VolFroxelActive(void)
 {
     if (!vkRT.isInitialized || !r_useRayTracing.GetBool() || !r_rtVol.GetBool())
         return false;
     if (r_rtVolFroxel.GetInteger() != 1)
         return false;
-    return vkRT.froxelFillPipeline != VK_NULL_HANDLE;
+    return vkRT.froxelFillPipeline != VK_NULL_HANDLE && vkRT.froxelIntegratePipeline != VK_NULL_HANDLE &&
+           vkRT.froxelResolvePipeline != VK_NULL_HANDLE;
+}
+
+// Non-zero only while an overlay is actually being drawn — vk_vol.cpp reads this
+// to switch the composite to its replace pipeline, so the visualization is not
+// muddied by additively blending onto the already-lit scene.
+int VK_RT_VolFroxelDebugMode(void)
+{
+    if (!VK_RT_VolFroxelActive())
+        return 0;
+    if (vkRT.froxelResolvePipeline == VK_NULL_HANDLE)
+        return 0;
+    return idMath::ClampInt(0, 3, r_rtVolFroxelDebug.GetInteger());
 }
 
 // ---------------------------------------------------------------------------
@@ -512,82 +991,15 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     void *uboMapped;
     VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
 
-    VolFroxelParamsUBO ubo = {};
-
-    // invViewProj — same construction as the march's, kept identical so cell
-    // positions and march step positions agree (that is what F1's overlay tests).
+    VolFroxelParamsUBO ubo;
+    if (!VK_RT_BuildFroxelParams(viewDef, grid, ubo))
     {
-        const float *proj = viewDef->projectionMatrix;
-        const float *mv = viewDef->worldSpace.modelViewMatrix;
-        float vp[16];
-        for (int r = 0; r < 4; r++)
-            for (int c = 0; c < 4; c++)
-            {
-                vp[c * 4 + r] = 0.0f;
-                for (int k = 0; k < 4; k++)
-                    vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
-            }
-        idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
-                     idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
-        idMat4 invVP = vpMat.Inverse();
-        memcpy(ubo.invViewProj, invVP.ToFloatPtr(), 16 * sizeof(float));
-
-        for (int i = 0; i < 16; i++)
-            if (ubo.invViewProj[i] != ubo.invViewProj[i])
-            {
-                common->Warning("VK RT Froxel: invViewProj NaN — skipping fill");
-                return;
-            }
+        common->Warning("VK RT Froxel: invViewProj NaN — skipping fill");
+        return;
     }
 
     const idVec3 camPos = viewDef->renderView.vieworg;
     const idVec3 &camFwd = viewDef->renderView.viewaxis[0];
-    ubo.cameraPosW[0] = camPos.x;
-    ubo.cameraPosW[1] = camPos.y;
-    ubo.cameraPosW[2] = camPos.z;
-    ubo.camForwardW[0] = camFwd.x;
-    ubo.camForwardW[1] = camFwd.y;
-    ubo.camForwardW[2] = camFwd.z;
-
-    ubo.gridDim[0] = (int32_t)grid.width;
-    ubo.gridDim[1] = (int32_t)grid.height;
-    ubo.gridDim[2] = (int32_t)grid.depth;
-    ubo.gridDim[3] = 0; // cluster shift, F3
-
-    const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    ubo.depthParams[0] = maxDist;
-    ubo.depthParams[1] = idMath::Log(maxDist + 1.0f);
-    // Depth linearization constants (resolve, F2) — same idiom as BilateralPC.
-    ubo.depthParams[2] = -viewDef->projectionMatrix[14];
-    ubo.depthParams[3] = viewDef->projectionMatrix[10];
-
-    ubo.densities[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
-    ubo.densities[1] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDirectedDensity.GetFloat());
-    ubo.densities[2] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolFlashlightDensity.GetFloat());
-    ubo.densities[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
-
-    ubo.strengths[0] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
-    ubo.strengths[1] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
-    ubo.strengths[2] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
-    ubo.strengths[3] = 0.0f; // temporal alpha, F4
-
-    ubo.anisos[0] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
-    ubo.anisos[1] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
-    ubo.anisos[2] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
-    ubo.anisos[3] = 0.0f;
-
-    ubo.misc[0] = (int32_t)tr.frameCount;
-    ubo.misc[1] = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
-    ubo.misc[2] = 0; // debug mode, F1
-    ubo.misc[3] = 0; // debug slice, F1
-
-    ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
-    ubo.screen[1] = (int32_t)vk.swapchainExtent.height;
-    ubo.screen[2] = (int32_t)vk.swapchainExtent.width;
-    ubo.screen[3] = (int32_t)vk.swapchainExtent.height;
-
-    // prevViewProj: identity until F4 reprojection needs it.
-    ubo.prevViewProj[0] = ubo.prevViewProj[5] = ubo.prevViewProj[10] = ubo.prevViewProj[15] = 1.0f;
 
     memcpy(uboMapped, &ubo, sizeof(VolFroxelParamsUBO));
 
@@ -698,8 +1110,45 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        cells, cells * 8.0 / (1024.0 * 1024.0), VK_MAX_FRAMES_IN_FLIGHT);
         common->Printf("  camera=(%.0f %.0f %.0f)  forward=(%.3f %.3f %.3f)\n", camPos.x, camPos.y, camPos.z, camFwd.x,
                        camFwd.y, camFwd.z);
-        common->Printf("  maxDist=%.1f  logFac=%.4f  linNum=%.4f  linAdd=%.4f\n", ubo.depthParams[0],
-                       ubo.depthParams[1], ubo.depthParams[2], ubo.depthParams[3]);
+        common->Printf("  grid range: dNear=%.3f dFar=%.1f (r_rtVolMaxDist=%.1f, T floor=%.4f)  logRange=%.4f\n",
+                       ubo.depthParams[0], ubo.depthParams[1], ubo.rangeParams[2],
+                       r_rtVolFroxelFarTransmittance.GetFloat(), ubo.rangeParams[0]);
+        common->Printf("  linNum=%.4f  linAdd=%.4f  (transmittance at dFar = %.5f)\n", ubo.depthParams[2],
+                       ubo.depthParams[3], idMath::Exp(-ubo.densities[0] * ubo.depthParams[1]));
+
+        // CPU mirror of vf_RayDirForUV, so a broken unprojection is visible in the
+        // log instead of only as a wrong-looking overlay. GLSL reads the matrix
+        // column-major, hence m[col*4+row].
+        //
+        // nearDist must be r_znear (3.0 by default, 1.0 in cinematics) and centre
+        // zFac must be ~1.0. The infinite far plane (linAdd ~ -0.999) is why the
+        // ray cannot be built from an ndcZ=+1 unprojection — see vf_RayDirForUV.
+        {
+            const auto unproject = [&](float nx, float ny, float nz) -> idVec3 {
+                const float *m = ubo.invViewProj;
+                const float v[4] = {nx, ny, nz, 1.0f};
+                float r[4];
+                for (int row = 0; row < 4; row++)
+                {
+                    r[row] = 0.0f;
+                    for (int col = 0; col < 4; col++)
+                        r[row] += m[col * 4 + row] * v[col];
+                }
+                const float invW = (idMath::Fabs(r[3]) > 1e-8f) ? 1.0f / r[3] : 0.0f;
+                return idVec3(r[0] * invW, r[1] * invW, r[2] * invW);
+            };
+
+            idVec3 centreDir = unproject(0.0f, 0.0f, -1.0f) - camPos;
+            const float nearDist = centreDir.Length();
+            centreDir.Normalize();
+
+            idVec3 cornerDir = unproject(-1.0f, 1.0f, -1.0f) - camPos;
+            cornerDir.Normalize();
+
+            common->Printf("  near-plane dist=%.3f (expect r_znear)  centre zFac=%.4f (expect ~1.0)  "
+                           "corner zFac=%.4f\n",
+                           nearDist, centreDir * camFwd, cornerDir * camFwd);
+        }
         common->Printf("  point:      density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[0], ubo.strengths[0],
                        ubo.anisos[0]);
         common->Printf("  directed:   density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[1], ubo.strengths[1],
@@ -709,17 +1158,360 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("  maxLights=%d  volLights=%d  whiteNoiseMix=%.4f\n", ubo.misc[1],
                        vkRT.volLightSsboMapped[frameIdx] ? *(const int *)vkRT.volLightSsboMapped[frameIdx] : -1,
                        ubo.densities[3]);
-        common->Printf("  slice -> planar view distance (cell centres):\n");
+        // Cell depth is what the surface-straddle error scales with, so print it
+        // next to the distance rather than making the reader difference the column.
+        common->Printf("  slice -> planar view distance (cell centres), and cell depth:\n");
         const int nz = (int)grid.depth;
         const int stride = Max(1, nz / 16);
+        const float dNearDump = ubo.depthParams[0];
+        const float logRangeDump = ubo.rangeParams[0];
         for (int z = 0; z < nz; z += stride)
         {
-            const float zc = ((float)z + 0.5f) / (float)nz;
-            const float d = idMath::Exp(zc * ubo.depthParams[1]) - 1.0f;
-            common->Printf("    z=%3d  d=%9.2f\n", z, d);
+            const float dC = dNearDump * idMath::Exp(((float)z + 0.5f) / (float)nz * logRangeDump);
+            const float dA = dNearDump * idMath::Exp((float)z / (float)nz * logRangeDump);
+            const float dB = dNearDump * idMath::Exp(((float)z + 1.0f) / (float)nz * logRangeDump);
+            common->Printf("    z=%3d  d=%9.2f  depth=%7.2f\n", z, dC, dB - dA);
         }
-        common->Printf("    z=%3d  d=%9.2f (far face)\n", nz, ubo.depthParams[0]);
-        common->Printf("  sizeof(VolFroxelParamsUBO)=%d (GLSL std140 block expects 288)\n",
+        common->Printf("    z=%3d  d=%9.2f (far face)\n", nz, ubo.depthParams[1]);
+        common->Printf("  sizeof(VolFroxelParamsUBO)=%d (GLSL std140 block expects 304)\n",
                        (int)sizeof(VolFroxelParamsUBO));
     }
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchVolFroxelIntegrate (public)
+//
+// One invocation per grid COLUMN — 14400 of them at the 160x90 default, against
+// the march's ~500k per-pixel integrations.  Reads no depth, so no layout
+// round-trip.  Must follow the fill's compute->compute barrier.
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!VK_RT_VolFroxelActive())
+        return;
+    if (!vkRT.tlas[vk.currentFrame].isValid)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+
+    static int s_lastIntegrateFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastIntegrateFrame[frameIdx] == tr.frameCount)
+        return;
+    s_lastIntegrateFrame[frameIdx] = tr.frameCount;
+
+    vkFroxelGrid_t &src = vkRT.froxelScatter[frameIdx];
+    vkFroxelGrid_t &dst = vkRT.froxelIntegrated[frameIdx];
+    if (src.image == VK_NULL_HANDLE || dst.image == VK_NULL_HANDLE)
+        return;
+
+    VkBuffer uboBuf;
+    uint32_t uboOff;
+    void *uboMapped;
+    VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
+
+    VolFroxelParamsUBO ubo;
+    if (!VK_RT_BuildFroxelParams(viewDef, src, ubo))
+    {
+        common->Warning("VK RT Froxel: invViewProj NaN — skipping integrate");
+        return;
+    }
+    memcpy(uboMapped, &ubo, sizeof(VolFroxelParamsUBO));
+
+    static VkImageView s_lastSrcView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastDstView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    const bool resourceChanged = (s_lastSrcView[frameIdx] != src.view) || (s_lastDstView[frameIdx] != dst.view);
+
+    if (vkRT.froxelIntegrateDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount || resourceChanged)
+    {
+        VkDescriptorSet ds = vkRT.froxelIntegrateDescSets[frameIdx];
+
+        VkDescriptorImageInfo srcInfo = {};
+        srcInfo.imageView = src.view;
+        srcInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo dstInfo = {};
+        dstInfo.imageView = dst.view;
+        dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorBufferInfo uboInfo = {};
+        uboInfo.buffer = uboBuf;
+        uboInfo.offset = 0;
+        uboInfo.range = sizeof(VolFroxelParamsUBO);
+
+        VkWriteDescriptorSet writes[3] = {};
+
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = ds;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].pImageInfo = &srcInfo;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = ds;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &dstInfo;
+
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = ds;
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        writes[2].pBufferInfo = &uboInfo;
+
+        vkUpdateDescriptorSets(vk.device, 3, writes, 0, NULL);
+        vkRT.froxelIntegrateDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        s_lastSrcView[frameIdx] = src.view;
+        s_lastDstView[frameIdx] = dst.view;
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelIntegratePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelIntegratePipelineLayout, 0, 1,
+                            &vkRT.froxelIntegrateDescSets[frameIdx], 1, &uboOff);
+
+    const uint32_t groupsX = (src.width + 7) / 8;
+    const uint32_t groupsY = (src.height + 7) / 8;
+    vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    // Compute write -> compute sampled read (resolve). SHADER_READ covers the
+    // sampler3D fetch; the image stays in GENERAL throughout.
+    {
+        VkMemoryBarrier memBarrier = {};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &memBarrier, 0, NULL, 0, NULL);
+    }
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Froxel: integrate frame=%d slot=%d columns=%ux%u dNear=%.2f dFar=%.1f\n", tr.frameCount,
+                       frameIdx, src.width, src.height, ubo.depthParams[0], ubo.depthParams[1]);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_DispatchVolFroxelResolve (public)
+//
+// F1: runs only while an overlay is selected, and writes the overlay into
+// vkRT.volBuffer[currentFrame] so vol_composite.frag can display it with no
+// knowledge of the grid.  volReadView is repointed at volBuffer because the
+// temporal/bilateral passes will have aimed it at their own outputs earlier in
+// the frame.
+//
+// Ordering note: this runs AFTER the temporal EMA has consumed volBuffer, so
+// overwriting it here cannot poison the history — the march refills volBuffer at
+// the top of the next frame, before temporal reads it again.
+//
+// Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
+// ---------------------------------------------------------------------------
+
+void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
+{
+    if (!VK_RT_VolFroxelActive())
+        return;
+    if (!vkRT.tlas[vk.currentFrame].isValid)
+        return;
+
+    const int frameIdx = vk.currentFrame;
+
+    static int s_lastResolveFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+    if (s_lastResolveFrame[frameIdx] == tr.frameCount)
+        return;
+    s_lastResolveFrame[frameIdx] = tr.frameCount;
+
+    vkFroxelGrid_t &grid = vkRT.froxelScatter[frameIdx];
+    vkFroxelGrid_t &integrated = vkRT.froxelIntegrated[frameIdx];
+    vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
+    if (grid.image == VK_NULL_HANDLE || integrated.image == VK_NULL_HANDLE || vb.image == VK_NULL_HANDLE)
+        return;
+
+    // Claim volReadView up front, not after the dispatch: temporal and bilateral
+    // stand down in froxel mode, so whatever they last pointed it at (volHistory
+    // or volBlurred) would otherwise persist — and at the old half resolution —
+    // through any early-out below. A stale volBuffer is the right failure here;
+    // a stale differently-sized image is not.
+    vkRT.volReadView[frameIdx] = vb.view;
+
+    VkImageAspectFlags depthAspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (vk.depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT || vk.depthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+        vk.depthFormat == VK_FORMAT_D16_UNORM_S8_UINT)
+        depthAspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+    // --- Depth barrier: ATTACHMENT -> READ_ONLY for compute sampling ---
+    {
+        VkImageMemoryBarrier depthToRead = {};
+        depthToRead.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthToRead.image = vk.depthImage;
+        depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
+    }
+
+    VkBuffer uboBuf;
+    uint32_t uboOff;
+    void *uboMapped;
+    VK_AllocUBOForShadow(&uboBuf, &uboOff, &uboMapped);
+
+    VolFroxelParamsUBO ubo;
+    if (!VK_RT_BuildFroxelParams(viewDef, grid, ubo))
+    {
+        common->Warning("VK RT Froxel: invViewProj NaN — skipping resolve");
+        VkImageMemoryBarrier restore = {};
+        restore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        restore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        restore.dstAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        restore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        restore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        restore.image = vk.depthImage;
+        restore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                             0, NULL, 0, NULL, 1, &restore);
+        return;
+    }
+    memcpy(uboMapped, &ubo, sizeof(VolFroxelParamsUBO));
+
+    // --- Update descriptor set ---
+    static VkImageView s_lastGridView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastIntView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastVolView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+    static VkImageView s_lastDepthView[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+    const bool resourceChanged = (s_lastGridView[frameIdx] != grid.view) ||
+                                 (s_lastIntView[frameIdx] != integrated.view) || (s_lastVolView[frameIdx] != vb.view) ||
+                                 (s_lastDepthView[frameIdx] != vk.depthSampledView);
+
+    if (vkRT.froxelResolveDescSetLastUpdatedFrameCount[frameIdx] != tr.frameCount || resourceChanged)
+    {
+        VkDescriptorSet ds = vkRT.froxelResolveDescSets[frameIdx];
+
+        VkDescriptorImageInfo gridInfo = {};
+        gridInfo.imageView = grid.view;
+        gridInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorImageInfo volInfo = {};
+        volInfo.imageView = vb.view;
+        volInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorBufferInfo uboInfo = {};
+        uboInfo.buffer = uboBuf;
+        uboInfo.offset = 0;
+        uboInfo.range = sizeof(VolFroxelParamsUBO);
+
+        VkDescriptorImageInfo depthInfo = {};
+        depthInfo.sampler = vkRT.depthSampler;
+        depthInfo.imageView = vk.depthSampledView;
+        depthInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+        VkDescriptorImageInfo integratedInfo = {};
+        integratedInfo.sampler = vkRT.froxelSampler;
+        integratedInfo.imageView = integrated.view;
+        integratedInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet writes[5] = {};
+
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = ds;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].pImageInfo = &gridInfo;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = ds;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &volInfo;
+
+        writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet = ds;
+        writes[2].dstBinding = 2;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+        writes[2].pBufferInfo = &uboInfo;
+
+        writes[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet = ds;
+        writes[3].dstBinding = 3;
+        writes[3].descriptorCount = 1;
+        writes[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].pImageInfo = &depthInfo;
+
+        writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet = ds;
+        writes[4].dstBinding = 4;
+        writes[4].descriptorCount = 1;
+        writes[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].pImageInfo = &integratedInfo;
+
+        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+        vkRT.froxelResolveDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
+        s_lastGridView[frameIdx] = grid.view;
+        s_lastIntView[frameIdx] = integrated.view;
+        s_lastVolView[frameIdx] = vb.view;
+        s_lastDepthView[frameIdx] = vk.depthSampledView;
+    }
+
+    // We are about to overwrite volBuffer. VK_RT_VolFroxelActive stands the march
+    // and the temporal EMA down whenever this runs, so today nothing else in the
+    // frame touches it — but this image is the hand-off point between two paths
+    // and the barrier is what keeps that true if the ordering is ever revisited.
+    {
+        VkMemoryBarrier volBarrier = {};
+        volBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        volBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        volBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &volBarrier, 0, NULL, 0, NULL);
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelResolvePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelResolvePipelineLayout, 0, 1,
+                            &vkRT.froxelResolveDescSets[frameIdx], 1, &uboOff);
+
+    const uint32_t groupsX = ((uint32_t)ubo.rect[2] + 7) / 8;
+    const uint32_t groupsY = ((uint32_t)ubo.rect[3] + 7) / 8;
+    if (groupsX > 0 && groupsY > 0)
+        vkCmdDispatch(cmd, groupsX, groupsY, 1);
+
+    // Compute write -> fragment read (composite).
+    {
+        VkMemoryBarrier memBarrier = {};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1,
+                             &memBarrier, 0, NULL, 0, NULL);
+    }
+
+    // --- Depth barrier: restore ATTACHMENT_OPTIMAL ---
+    {
+        VkImageMemoryBarrier depthRestore = {};
+        depthRestore.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        depthRestore.dstAccessMask =
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthRestore.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthRestore.image = vk.depthImage;
+        depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                             0, NULL, 0, NULL, 1, &depthRestore);
+    }
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT Froxel: resolve frame=%d slot=%d mode=%d slice=%d rect=(%d,%d %dx%d) out=%ux%u\n",
+                       tr.frameCount, frameIdx, ubo.misc[2], ubo.misc[3], ubo.rect[0], ubo.rect[1], ubo.rect[2],
+                       ubo.rect[3], vb.width, vb.height);
 }

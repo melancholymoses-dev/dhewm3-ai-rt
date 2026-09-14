@@ -569,6 +569,8 @@ struct vkRTState_t
     // silently halved the AO/GI/Vol update rate before the 2026-09-06 fix.
     // --------------------------------------------------------------------------
     vkFroxelGrid_t froxelScatter[VK_MAX_FRAMES_IN_FLIGHT];
+    vkFroxelGrid_t froxelIntegrated[VK_MAX_FRAMES_IN_FLIGHT];
+    VkSampler      froxelSampler; // trilinear + clamp; the resolve's whole filter story
 
     VkPipeline            froxelFillPipeline;
     VkPipelineLayout      froxelFillPipelineLayout;
@@ -576,6 +578,22 @@ struct vkRTState_t
     VkDescriptorPool      froxelFillDescPool;
     VkDescriptorSet       froxelFillDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int                   froxelFillDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    VkPipeline            froxelIntegratePipeline;
+    VkPipelineLayout      froxelIntegratePipelineLayout;
+    VkDescriptorSetLayout froxelIntegrateDescLayout;
+    VkDescriptorPool      froxelIntegrateDescPool;
+    VkDescriptorSet       froxelIntegrateDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   froxelIntegrateDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Resolve: grid -> vkRT.volBuffer, so nothing downstream of the volumetric
+    // composite has to learn about the grid.
+    VkPipeline            froxelResolvePipeline;
+    VkPipelineLayout      froxelResolvePipelineLayout;
+    VkDescriptorSetLayout froxelResolveDescLayout;
+    VkDescriptorPool      froxelResolveDescPool;
+    VkDescriptorSet       froxelResolveDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int                   froxelResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // HDR scene buffer and Uchimura tonemap pipeline (Phase 8.1)
@@ -1097,6 +1115,21 @@ bool VK_RT_VolFroxelActive(void);
 // vol_march.comp's per-step loop.  Must be called outside a render pass, after
 // the TLAS build.  Does not touch depth.  Nothing reads the grid until F1/F2.
 void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Accumulate the filled grid front-to-back, one thread per grid column.
+// Must be called outside a render pass, after VK_RT_DispatchVolFroxelFill.
+void VK_RT_DispatchVolFroxelIntegrate(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// Grid -> vkRT.volBuffer, and repoints volReadView at volBuffer so the composite
+// reads it.  One trilinear fetch per pixel when r_rtVolFroxel is 1; also hosts
+// the r_rtVolFroxelDebug overlays.
+// Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
+void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// r_rtVolFroxelDebug, but 0 unless the froxel path and its resolve pipeline are
+// actually usable.  vk_vol.cpp reads this to switch the volumetric composite to
+// its replace (non-additive) pipeline while an overlay is up.
+int VK_RT_VolFroxelDebugMode(void);
 
 // ---------------------------------------------------------------------------
 // Tonemapping (Phase 8.1)

@@ -1,0 +1,107 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — vol_froxel_integrate.comp — froxel column integration.
+
+One invocation per grid COLUMN (x,y).  Walks the Z slices front to back
+accumulating Beer-Lambert transmittance and in-scattering — exactly the loop
+vol_march.comp runs per screen pixel, done once per column instead.  At the
+160x90 default that is 14400 columns against the march's ~500k pixels.
+
+Output (rgba16f 3D image):
+  rgb — in-scattering accumulated from the camera to the cell CENTRE
+  a   — path transmittance from the camera to the cell CENTRE
+
+Anchored at cell CENTRES, not faces, because the resolve fetches this image
+with a trilinear sampler: the sample point of a texel is its centre, so that is
+where the stored value has to be correct for interpolation between two texels
+to mean anything.  It is also what makes the surface-straddle problem go away
+in the resolve — fetching at exactly the surface's depth linearly interpolates
+the integral to that depth, which is the fractional weighting of the final
+partial cell, for free.
+
+Segment lengths are divided by cos(angle to the view axis): slices are PLANAR,
+so the ray length through a cell is longer than the slice's depth extent
+everywhere except the exact screen centre.  At a 90-degree horizontal FOV the
+screen edge runs ~1.4x, so skipping this would under-integrate the whole
+periphery.
+
+Descriptors (set 0):
+  binding 0 — froxelScatter rgba16f 3D     (read)
+  binding 1 — froxelIntegrated rgba16f 3D  (write)
+  binding 2 — VolFroxelParams UBO          (declared by vol_froxel_common.glsl)
+
+20260906_froxel_probe_gi.md Part A, chunk F2.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly  image3D froxelScatter;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image3D froxelIntegrated;
+
+#include "vol_froxel_common.glsl"
+
+void main()
+{
+    ivec2 column = ivec2(gl_GlobalInvocationID.xy);
+    ivec3 dims   = max(fp.gridDim.xyz, ivec3(1));
+    if (column.x >= dims.x || column.y >= dims.y)
+        return;
+
+    // Planar slices -> the ray through this column is longer than the slice
+    // depth by 1/cos. Same column centre the fill used, so the two agree.
+    vec2  uv    = (vec2(column) + 0.5) / vec2(dims.xy);
+    vec3  dir   = vf_RayDirForUV(uv);
+    float invZFac = 1.0 / max(dot(dir, fp.camForwardW.xyz), 1e-4);
+
+    vec3  accum = vec3(0.0);
+    float trans = 1.0;
+
+    for (int z = 0; z < dims.z; z++)
+    {
+        vec4  cellData = imageLoad(froxelScatter, ivec3(column, z));
+        vec3  inscat   = cellData.rgb; // per unit length, class scales folded in
+        float sigma    = max(cellData.a, 0.0);
+
+        float dA = vf_SliceToDist(float(z));
+        float dC = vf_SliceToDist(float(z) + 0.5);
+        float dB = vf_SliceToDist(float(z) + 1.0);
+
+        // Front half of the cell, up to the centre — that is where the stored
+        // value has to land.
+        {
+            float segLen    = max(dC - dA, 0.0) * invZFac;
+            float transAfter = trans * exp(-sigma * segLen);
+            // Geometric mean approximates the transmittance at the segment's
+            // midpoint rather than at either end — same approximation, and the
+            // same reason, as vol_march.comp's stepTransmittance.
+            accum += inscat * segLen * sqrt(trans * transAfter);
+            trans = transAfter;
+        }
+
+        imageStore(froxelIntegrated, ivec3(column, z),
+                   vec4(min(accum, vec3(4096.0)), trans));
+
+        // Back half, carried into the next cell.
+        {
+            float segLen     = max(dB - dC, 0.0) * invZFac;
+            float transAfter = trans * exp(-sigma * segLen);
+            accum += inscat * segLen * sqrt(trans * transAfter);
+            trans = transAfter;
+        }
+
+        // No early-out on low transmittance: every texel must be written, or the
+        // resolve trilinearly samples whatever the previous frame left behind.
+    }
+}

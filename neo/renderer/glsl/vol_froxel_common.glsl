@@ -37,14 +37,15 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     vec4  cameraPosW;   //  64  xyz = camera world position
     vec4  camForwardW;  //  80  xyz = viewaxis[0]
     ivec4 gridDim;      //  96  xyz = Nx,Ny,Nz   w = cluster shift (F3)
-    vec4  depthParams;  // 112  x=maxDist y=log(maxDist+1) z=linNum w=linAdd
-    vec4  densities;    // 128  x=point y=directed z=flashlight w=whiteNoiseMix
-    vec4  strengths;    // 144  x=point y=directed z=flashlight w=temporalAlpha
-    vec4  anisos;       // 160  x=point y=directed z=flashlight w=unused
-    ivec4 misc;         // 176  x=frameIndex y=maxLights z=debugMode w=debugSlice
-    ivec4 screen;       // 192  x=screenW y=screenH z=marchW w=marchH  (resolve)
-    ivec4 rect;         // 208  resolve dispatch rect, march space
-    mat4  prevViewProj; // 224  F4 reprojection; identity until then
+    vec4  depthParams;  // 112  x=dNear y=dFar z=linNum w=linAdd
+    vec4  rangeParams;  // 128  x=logRange=log(dFar/dNear) y=1/logRange z=maxDist w=unused
+    vec4  densities;    // 144  x=point y=directed z=flashlight w=whiteNoiseMix
+    vec4  strengths;    // 160  x=point y=directed z=flashlight w=temporalAlpha
+    vec4  anisos;       // 176  x=point y=directed z=flashlight w=unused
+    ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
+    ivec4 screen;       // 208  x=screenW y=screenH z=outW w=outH  (resolve target)
+    ivec4 rect;         // 224  resolve dispatch rect, resolve-target space
+    mat4  prevViewProj; // 240  F4 reprojection; identity until then
 } fp;
 
 // ---------------------------------------------------------------------------
@@ -69,24 +70,37 @@ float vf_randFloat(uint seed)
 // ---------------------------------------------------------------------------
 // Slice <-> planar view distance.  zc is a CONTINUOUS slice coordinate: cell
 // centre is float(cell.z) + 0.5, so zc spans [0, Nz] across the whole grid.
+//
+//   dist(zc) = dNear * (dFar/dNear)^(zc/Nz) = dNear * exp(zc/Nz * logRange)
+//
+// Spacing is therefore proportional to distance, which is what keeps cells
+// roughly CUBICAL: a cell's XY world size already grows linearly with distance
+// (perspective), and anisotropic cells are what alias.  That — not any
+// inverse-square argument — is why the curve is exponential.  Do not make the
+// distribution humped: mid-dense would leave the far cells, where the
+// surface-straddle error is worst, exactly as coarse as they are now.
+//
+// The range is anchored at BOTH ends (F2).  It used to run [0, maxDist], which
+// put ~22% of the slices inside r_znear and the outer half of the grid below
+// 2% transmittance.  See VK_RT_BuildFroxelParams for how dNear/dFar are derived.
 // ---------------------------------------------------------------------------
 float vf_SliceToDist(float zc)
 {
     float nz = float(max(fp.gridDim.z, 1));
-    return exp(clamp(zc / nz, 0.0, 1.0) * fp.depthParams.y) - 1.0;
-}
-
-float vf_DistToSlice(float dist)
-{
-    float nz = float(max(fp.gridDim.z, 1));
-    return log(max(dist, 0.0) + 1.0) / max(fp.depthParams.y, 1e-6) * nz;
+    return fp.depthParams.x * exp(clamp(zc / nz, 0.0, 1.0) * fp.rangeParams.x);
 }
 
 // Normalised W texture coordinate (0..1) for a planar view distance — what the
 // resolve feeds to a trilinear sampler3D fetch.
 float vf_DistToTexW(float dist)
 {
-    return clamp(log(max(dist, 0.0) + 1.0) / max(fp.depthParams.y, 1e-6), 0.0, 1.0);
+    float dNear = max(fp.depthParams.x, 1e-4);
+    return clamp(log(max(dist, dNear) / dNear) * fp.rangeParams.y, 0.0, 1.0);
+}
+
+float vf_DistToSlice(float dist)
+{
+    return vf_DistToTexW(dist) * float(max(fp.gridDim.z, 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -105,17 +119,24 @@ float vf_LinearDepth(float depth)
 // Clip-space convention copied from rt_ReconstructWorldPos: the projection
 // matrix is GL-convention (Z in [-1,1]) and the viewport has negative height,
 // hence the Y flip.  Do not substitute Vulkan [0,1] Z here.
+//
+// The direction is near-plane-minus-EYE, never near-minus-far, because Doom 3
+// builds an INFINITE far plane: R_SetupProjection leaves proj[10] at -0.999 and
+// proj[14] at -2*znear, so ndcZ = -proj[10] + proj[14]/d asymptotes to +0.999 as
+// d goes to infinity and never reaches +1.  Unprojecting ndcZ = +1 therefore
+// lands at d = proj[14]/(1 + proj[10]) = -6/0.001 = -6000 — six thousand units
+// BEHIND the eye.  That made pFar - pNear point backwards, dot(rayDir, forward)
+// negative, its clamp pin zFac at 1e-4, and every cell position fly off to
+// infinity: overlay mode 3 came back saturated red on first run (2026-09-13).
 // ---------------------------------------------------------------------------
 vec3 vf_RayDirForUV(vec2 uv)
 {
     vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - 2.0 * uv.y);
 
     vec4 nearH = fp.invViewProj * vec4(ndc, -1.0, 1.0);
-    vec4 farH  = fp.invViewProj * vec4(ndc,  1.0, 1.0);
     vec3 pNear = nearH.xyz / nearH.w;
-    vec3 pFar  = farH.xyz  / farH.w;
 
-    return normalize(pFar - pNear);
+    return normalize(pNear - fp.cameraPosW.xyz);
 }
 
 // ---------------------------------------------------------------------------

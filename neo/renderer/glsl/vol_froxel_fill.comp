@@ -109,6 +109,10 @@ void main()
     int maxLights = min(fp.misc.y, giLightBuf.numLights);
 
     vec3 scatter = vec3(0.0);
+    // Debug mode 2 only: how many lights actually reached this cell (survived the
+    // cull AND the occlusion ray). Written to alpha in place of extinction — see
+    // the imageStore at the end.
+    int litCount = 0;
 
     for (int li = 0; li < maxLights; li++)
     {
@@ -211,10 +215,15 @@ void main()
             contrib *= rt_SampleLightCookie(giLightBuf.cookies[li], cellPos);
 
         scatter += contrib;
+        litCount++;
     }
 
     // Clamp well under the fp16 ceiling to avoid Inf.
     scatter = min(max(scatter, vec3(0.0)), vec3(4096.0));
 
-    imageStore(froxelScatter, cell, vec4(scatter, fp.densities.x));
+    // Alpha is the extinction coefficient, except under debug mode 2 where it
+    // carries the light count instead (uniform branch, no divergence cost).
+    float alphaOut = (fp.misc.z == 2) ? float(litCount) : fp.densities.x;
+
+    imageStore(froxelScatter, cell, vec4(scatter, alphaOut));
 }
