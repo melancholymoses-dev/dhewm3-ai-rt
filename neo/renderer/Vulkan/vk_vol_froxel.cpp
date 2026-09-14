@@ -45,9 +45,9 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-static idCVar r_rtVolFroxel("r_rtVolFroxel", "0", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtVolFroxel("r_rtVolFroxel", "1", CVAR_RENDERER | CVAR_INTEGER,
                             "Volumetric sampling structure: 0 = per-pixel ray march (vol_march.comp), "
-                            "1 = froxel grid. F0: the grid is filled but nothing reads it yet.");
+                            "1 = froxel grid");
 
 static idCVar r_rtVolFroxelResX("r_rtVolFroxelResX", "240", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid width in cells. Raising this is the first mitigation for soft "
