@@ -1,0 +1,229 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — vol_froxel_resolve.comp — froxel grid -> screen.
+
+Writes vkRT.volBuffer so that nothing downstream of the volumetric composite
+has to change: vol_composite.frag keeps sampling one 2D image and knows
+nothing about the grid.
+
+  mode 0 — the real resolve (F2): one trilinear fetch of the integrated grid at
+           the pixel's own depth.  rgb = in-scattering, a = path transmittance,
+           matching vol_march.comp's output convention exactly so the composite
+           cannot tell the two paths apart.
+
+  mode 1 — one Z slice of the scatter grid, masked to where that slice is in
+           front of the surface.  The mapping check against vol_march.comp:
+           pick a slice, note its distance from r_rtVolFroxelDump, and compare
+           the structure against r_rtVolDebugMode 2 at the same spot.
+  mode 2 — light count, colour-ramped: the MAX over the column of cells in
+           front of the surface, i.e. how many lights survive the cull and the
+           occlusion ray anywhere along this view ray.  Black = no light reaches
+           any cell in the column; blue 1, teal 3, green 4, yellow 6, red 8+.
+           This is the baseline F3's cluster cull must reproduce.
+
+           NOTE while reading any overlay: with r_rtVolHalfRes 1 the resolve
+           writes a half-res image that the composite bilinearly upscales, so
+           colours BETWEEN blocks are interpolation, not measurements.  Set
+           r_rtVolHalfRes 0 to read exact values.
+  mode 3 — grid-mapping error.  Evaluates the cell world position at exactly
+           this pixel's ray and the surface's depth, and compares it against
+           rt_ReconstructWorldPos.  This is the decisive test of everything F0
+           introduced (clip-space convention, the planar-depth division, the
+           slice curve, the linearization constants) and it does not depend on
+           the grid's contents at all.
+             green      — agreement, sub-unit error
+             yellow/red — error 1..8+ units
+             black      — sky, nothing to compare against
+             blue       — surface beyond r_rtVolMaxDist, legitimately off-grid
+
+Descriptors (set 0):
+  binding 0 — froxelScatter rgba16f 3D   (read)
+  binding 1 — volBuf rgba16f 2D          (write)
+  binding 2 — VolFroxelParams UBO        (declared by vol_froxel_common.glsl)
+  binding 3 — depthSampler
+
+20260906_froxel_probe_gi.md Part A, chunk F1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image3D froxelScatter;
+layout(set = 0, binding = 1, rgba16f) uniform image2D volBuf;
+layout(set = 0, binding = 3) uniform sampler2D depthSampler;
+// The integrated grid, sampled TRILINEARLY — that filter is the whole point:
+// it subsumes vol_bilateral.comp's depth-aware upsample in XY and performs the
+// final partial cell's fractional weighting in Z.
+layout(set = 0, binding = 4) uniform sampler3D froxelIntegrated;
+
+#include "vol_froxel_common.glsl"
+// Satisfies rt_indirect.glsl's includer contract (a sampler2D named
+// depthSampler, declared above) — this file wants its rt_ReconstructWorldPos as
+// the independent reference for mode 3. vol_froxel_common.glsl cannot include
+// it for the same reason in reverse: the fill pass has no depth binding.
+#include "rt_indirect.glsl"
+
+// black -> blue -> green -> yellow -> red, t in [0,1]
+vec3 vf_Ramp(float t)
+{
+    t = clamp(t, 0.0, 1.0);
+    if (t < 0.25) return mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), t / 0.25);
+    if (t < 0.50) return mix(vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 0.0), (t - 0.25) / 0.25);
+    if (t < 0.75) return mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 1.0, 0.0), (t - 0.50) / 0.25);
+    return mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), (t - 0.75) / 0.25);
+}
+
+void main()
+{
+    ivec2 local   = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 rectOff = fp.rect.xy;
+    ivec2 rectExt = fp.rect.zw;
+    if (local.x >= rectExt.x || local.y >= rectExt.y)
+        return;
+
+    ivec2 coord   = local + rectOff;
+    ivec2 outSize = fp.screen.zw;
+    if (coord.x >= outSize.x || coord.y >= outSize.y)
+        return;
+
+    // Same output-space -> full-res mapping vol_march.comp uses: one
+    // representative full-res texel per output pixel, the top-left of the quad.
+    // In froxel mode the scale is 1 (r_rtVolHalfRes is forced off — the resolve
+    // is one trilinear fetch, so marching at half res buys nothing and the
+    // bilateral upsample it would need is pure loss).
+    ivec2 fullSize  = fp.screen.xy;
+    int   scale     = max(1, fullSize.x / max(outSize.x, 1));
+    ivec2 fullCoord = min(coord * scale, fullSize - ivec2(1));
+
+    int   mode = fp.misc.z;
+    ivec3 dims = max(fp.gridDim.xyz, ivec3(1));
+
+    // Continuous grid column for this pixel's ray, and its sub-cell position.
+    vec2  uv     = (vec2(fullCoord) + 0.5) / vec2(fullSize);
+    vec2  gridXY = uv * vec2(dims.xy);
+    ivec2 cellXY = clamp(ivec2(floor(gridXY)), ivec2(0), dims.xy - ivec2(1));
+    vec2  jitXY  = clamp(gridXY - vec2(cellXY), vec2(0.0), vec2(1.0));
+
+    float depth = texelFetch(depthSampler, fullCoord, 0).r;
+    bool  isSky = (depth >= 1.0);
+    float dFar  = fp.depthParams.y;
+    // Sky has no surface, so nothing bounds the column: treat it as "beyond the
+    // grid", which is what the grid's own far face means anyway.
+    float surfDist = isSky ? (dFar * 2.0) : vf_LinearDepth(depth);
+
+    // Alpha is path transmittance (1.0 = clear air), matching vol_march.comp's
+    // convention so the composite and any future background-attenuation pass see
+    // the same thing from either path.
+    vec4 outValue = vec4(0.0, 0.0, 0.0, 1.0);
+
+    if (mode == 0)
+    {
+        // ---- The real resolve ----
+        // One trilinear fetch of the integrated grid at the pixel's own depth.
+        // Because the integrate pass anchors its values at cell CENTRES, sampling
+        // at exactly the surface's depth interpolates the integral to that depth —
+        // which IS the fractional weighting of the final, surface-straddling cell.
+        // Cells behind the surface are never reached, so fog cannot appear in
+        // front of a wall.
+        //
+        // Residual error: the straddling cell's single scatter sample may sit
+        // behind the surface (occluded -> zero), losing the real scattering in the
+        // part of the cell that is in front. That darkens rather than leaks, and
+        // it is the per-cell jitter noise that F4's froxel-space EMA averages out.
+        float texW = vf_DistToTexW(min(surfDist, dFar));
+        outValue = texture(froxelIntegrated, vec3(uv, texW));
+        outValue.rgb = max(outValue.rgb, vec3(0.0));
+    }
+    else if (mode == 1)
+    {
+        int   z        = clamp(fp.misc.w, 0, dims.z - 1);
+        float zDist    = vf_SliceToDist(float(z) + 0.5);
+        vec4  cellData = imageLoad(froxelScatter, ivec3(cellXY, z));
+
+        // Masked to where the slice is actually visible. Unmasked, a slice at
+        // 200 units seen through a wall at 50 shows the room beyond and reads as
+        // a mismatch against the march, which stops at the surface.
+        if (zDist <= surfDist)
+            outValue.rgb = cellData.rgb * fp.anisos.w;
+    }
+    else if (mode == 2)
+    {
+        // MAX over the visible column, not the single cell at the pixel's own
+        // depth. Probing that one cell produced a screen-wide checkerboard on
+        // first run (2026-09-13): the cell containing the surface straddles it,
+        // the per-cell jitter puts the sample behind the wall about half the
+        // time, and every light is then occluded -> count 0 next to a neighbour
+        // reading 4. Worse with distance, because the exponential slice curve
+        // makes the far cells ~150 units deep.
+        //
+        // That straddle is a real effect, not an overlay artifact — F2's resolve
+        // has to weight the final partial cell by the fraction of it in front of
+        // the surface. But it makes a single-cell probe unreadable, and a column
+        // max is the better statistic for this overlay's actual job anyway: a
+        // cluster-cull regression (F3) anywhere in the column shows up in it.
+        int   zEnd = clamp(int(floor(vf_DistToSlice(min(surfDist, dFar)))), 0, dims.z);
+        float best = 0.0;
+        for (int z = 0; z < zEnd; z++)
+            best = max(best, imageLoad(froxelScatter, ivec3(cellXY, z)).a);
+
+        // Black stays black at zero lights so unlit air is unambiguous; the ramp
+        // saturates at 8 reaching lights, well past what any Doom 3 cell shows.
+        outValue.rgb = (best < 0.5) ? vec3(0.0) : vf_Ramp(best / 8.0);
+    }
+    else if (mode == 3)
+    {
+        if (isSky)
+        {
+            outValue.rgb = vec3(0.0);
+        }
+        else if (surfDist > dFar)
+        {
+            // Legitimately outside the grid — blue, not an error. Bright enough to
+            // survive the tonemap's toe: at 0.25 this crushed to visually the same
+            // black as the sky case, which is the ambiguity the green pass colour
+            // exists to avoid.
+            outValue.rgb = vec3(0.0, 0.35, 1.0);
+        }
+        else
+        {
+            float zc  = vf_DistToSlice(surfDist);
+            ivec3 cell = ivec3(cellXY, clamp(int(floor(zc)), 0, dims.z - 1));
+            vec3  jit  = vec3(jitXY, clamp(zc - float(cell.z), 0.0, 1.0));
+
+            vec3 dir;
+            vec3 cellPos = vf_CellWorldPos(cell, jit, dir);
+            vec3 refPos  = rt_ReconstructWorldPos(fullCoord, fullSize, fp.invViewProj);
+
+            // Evaluated at the same ray and the same planar depth, so the only
+            // difference left is float precision: sub-unit everywhere is a pass.
+            // A hue that tracks distance, or that flips with camera yaw, means the
+            // clip-space convention or the planar-depth division is wrong.
+            //
+            // Flat green for a pass rather than a ramp bottoming out at black:
+            // black already means "sky" here, and a pass state that looks like the
+            // not-tested state is not a gate.
+            float err = length(cellPos - refPos);
+            outValue.rgb = (err < 1.0) ? vec3(0.0, 1.0, 0.0)
+                                       : mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0),
+                                             clamp((err - 1.0) / 7.0, 0.0, 1.0));
+        }
+    }
+
+    // Overlays force alpha to 1.0 ("clear air"): a downstream background-
+    // attenuation pass must never read an overlay frame as fully extinguished.
+    if (mode != 0)
+        outValue.a = 1.0;
+
+    imageStore(volBuf, coord, outValue);
+}
