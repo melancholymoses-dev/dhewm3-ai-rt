@@ -1369,7 +1369,8 @@ void Mem_EnableLeakTest(const char *name)
 #undef Mem_Alloc16
 #undef Mem_Free16
 
-// size of this struct must be a multiple of 16 bytes
+// size of this struct must be a multiple of 16 bytes, because Mem_Alloc16 hands
+// back (16-aligned base + sizeof(debugMemory_t)). 24 on 32-bit, 40 on 64-bit.
 typedef struct debugMemory_s
 {
     const char *fileName;
@@ -1378,7 +1379,10 @@ typedef struct debugMemory_s
     int size;
     struct debugMemory_s *prev;
     struct debugMemory_s *next;
+    byte pad[8];
 } debugMemory_t;
+
+static_assert((sizeof(debugMemory_t) & 15) == 0, "debugMemory_t must be a multiple of 16 bytes");
 
 static debugMemory_t *mem_debugMemory = NULL;
 static char mem_leakName[256] = "";
@@ -1519,7 +1523,7 @@ typedef enum
 
 void Mem_DumpCompressed(const char *fileName, memorySortType_t memSort, int numFrames)
 {
-    int numBlocks, totalSize, r, j;
+    int numBlocks, totalSize, r;
     debugMemory_t *b;
     allocInfo_t *a, *nexta, *allocInfo = NULL, *sortedAllocInfo = NULL, *prevSorted, *nextSorted;
     idStr module, funcName;
@@ -1543,10 +1547,6 @@ void Mem_DumpCompressed(const char *fileName, memorySortType_t memSort, int numF
         for (a = allocInfo; a; a = a->next)
         {
             if (a->lineNumber != b->lineNumber)
-            {
-                continue;
-            }
-            if (j < MAX_CALLSTACK_DEPTH)
             {
                 continue;
             }
@@ -1866,7 +1866,7 @@ void *Mem_Alloc16(const int size, const char *fileName, const int lineNumber)
     }
     void *mem = Mem_AllocDebugMemory(size, fileName, lineNumber, true);
     // make sure the memory is 16 byte aligned
-    assert((((int)mem) & 15) == 0);
+    assert((((intptr_t)mem) & 15) == 0);
     return mem;
 }
 
@@ -1882,7 +1882,7 @@ void Mem_Free16(void *ptr, const char *fileName, const int lineNumber)
         return;
     }
     // make sure the memory is 16 byte aligned
-    assert((((int)ptr) & 15) == 0);
+    assert((((intptr_t)ptr) & 15) == 0);
     Mem_FreeDebugMemory(ptr, fileName, lineNumber, true);
 }
 

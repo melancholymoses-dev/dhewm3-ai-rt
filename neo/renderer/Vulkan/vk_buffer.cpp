@@ -110,7 +110,16 @@ struct vkBufferData_t
 {
     VkBuffer buf;
     VkDeviceMemory mem;
+    VkDeviceSize size;
 };
+
+// Live vertex-cache buffer accounting. A steadily climbing live count/bytes is a
+// leak; a high drain volume with a flat live count is just churn.
+static int s_bufferLiveCount = 0;
+static VkDeviceSize s_bufferLiveBytes = 0;
+
+static idCVar r_vkLogBufferGarbage("r_vkLogBufferGarbage", "0", CVAR_RENDERER | CVAR_BOOL,
+                                   "log vertex-cache buffer alloc/free accounting every drain");
 
 // ---------------------------------------------------------------------------
 // Buffer garbage list — deferred destruction after the per-frame fence fires,
@@ -129,18 +138,22 @@ static void VK_DestroyBufferData(vkBufferData_t *bd)
         vkDestroyBuffer(vk.device, bd->buf, NULL);
     if (bd->mem != VK_NULL_HANDLE)
         vkFreeMemory(vk.device, bd->mem, NULL);
+    s_bufferLiveCount--;
+    s_bufferLiveBytes -= bd->size;
     delete bd;
 }
 
 void VK_Buffer_DrainGarbage(uint32_t frameIdx)
 {
-    for (int i = 0; i < s_bufferGarbageCount[frameIdx]; i++)
+    const int ringDrained = s_bufferGarbageCount[frameIdx];
+    for (int i = 0; i < ringDrained; i++)
     {
         VK_DestroyBufferData(s_bufferGarbage[frameIdx][i]);
     }
     s_bufferGarbageCount[frameIdx] = 0;
 
-    for (int i = 0; i < s_bufferGarbageOverflow[frameIdx].Num(); i++)
+    const int overflowDrained = s_bufferGarbageOverflow[frameIdx].Num();
+    for (int i = 0; i < overflowDrained; i++)
     {
         VK_DestroyBufferData(s_bufferGarbageOverflow[frameIdx][i]);
     }
@@ -148,7 +161,16 @@ void VK_Buffer_DrainGarbage(uint32_t frameIdx)
 
     if (s_bufferGarbageOverflowCount[frameIdx] > 0)
     {
+        common->Warning("VK: buffer garbage ring overflowed slot %u by %u (ring max %d); live %d bufs / %d KB",
+                        frameIdx, s_bufferGarbageOverflowCount[frameIdx], VK_BUFFER_GARBAGE_MAX, s_bufferLiveCount,
+                        (int)(s_bufferLiveBytes >> 10));
         s_bufferGarbageOverflowCount[frameIdx] = 0;
+    }
+
+    if (r_vkLogBufferGarbage.GetBool() && (ringDrained || overflowDrained))
+    {
+        common->Printf("VK buf drain slot %u: ring %d, overflow %d -> live %d bufs / %d KB\n", frameIdx, ringDrained,
+                       overflowDrained, s_bufferLiveCount, (int)(s_bufferLiveBytes >> 10));
     }
 }
 
@@ -178,13 +200,25 @@ void VK_VertexCache_Alloc(vertCache_t *block, const void *data, int size, bool i
              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
     vkBufferData_t *bd = new vkBufferData_t;
+    bd->size = (VkDeviceSize)size;
     VK_CreateBuffer((VkDeviceSize)size, usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &bd->buf, &bd->mem);
     VK_UploadBuffer(bd->buf, data, (VkDeviceSize)size);
+    s_bufferLiveCount++;
+    s_bufferLiveBytes += bd->size;
     block->backendData = bd;
 }
 
 void VK_VertexCache_Free(vertCache_t *block)
 {
+    // Mirrors GL_VertexCache_Free: the CPU-side copy from idVertexCache::Alloc is
+    // owned by the block whether or not a device buffer was ever created for it,
+    // so release it ahead of the early-outs below.
+    if (block->virtMem)
+    {
+        Mem_Free(block->virtMem);
+        block->virtMem = NULL;
+    }
+
     if (!vk.isInitialized)
         return;
 
