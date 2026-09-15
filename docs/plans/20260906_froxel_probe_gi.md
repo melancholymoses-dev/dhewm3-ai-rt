@@ -4,9 +4,8 @@
 **Status:** Arc #2 in ROADMAP.md. The owed profiler checkpoint is taken
 (Mars City 2026-09-11: GI 4.41 / Refl 3.24 / Vol 1.53 / AO 1.17 / denoise ~0.65 ms).
 **Part A: F0-F2 landed and validated, F3 dropped, F4/F5 open.
-Part B: G0/G1 landed and validated 2026-09-13. Next is G2 (resolve switch)** — with
-the distance-atlas overlay noted under G1 done first, since G3 depends on data
-nothing has yet looked at.
+Part B: G0/G1 landed and validated 2026-09-13. G2 written 2026-09-13, not yet
+run. Next is in-game A/B + profiler for G2, then G3 (leak hardening).**
 
 ---
 
@@ -435,7 +434,7 @@ subsystem-scale change.
 | Probe placement | **One camera-anchored uniform grid**, snapped to probe spacing, scrolling with the camera — not per-area grids | Per-area grids need a per-pixel "which grid" lookup before any interpolation can happen. A flat 3D index is one `ivec3`. Per-area placement returns in G5 *if* density proves to be the leak lever |
 | Grid defaults | 32×32×16 probes at 64 units → 2048×2048×1024 unit coverage | Doom 3 interiors are small; 64 units ≈ one large step. Cvar-tunable |
 | Irradiance storage | Octahedral 8×8 interior + 1-texel border = 10×10 per probe, tiled 128×128 probes → 1280×1280 `rgba16f` (13 MiB) | Standard DDGI; border makes bilinear sampling seamless |
-| Visibility storage | 16×16 + border = 18×18, tiled → 2304×2304 `rg16f` (21 MiB), r = mean distance, g = mean² | Chebyshev needs both moments; higher res than irradiance because it carries the geometry detail |
+| Visibility storage | 16×16 + border = 18×18, tiled → 2304×2304 `rg16f` (21 MiB), r = mean(d/D), g = mean((d/D)²), **normalised by `r_rtGIProbeMaxRayDist`** | Chebyshev needs both moments; higher res than irradiance because it carries the geometry detail. Raw units overflow `rg16f` — see G1 |
 | Ray shading | **Reuse `gi_ray.rchit` unmodified** | It already returns `albedo · irradiance` — outgoing radiance at the hit — which is exactly a probe's incoming radiance. Same P3 stochastic light selection, AR0 admission, `rt_light_eval.glsl`, so a bounce "sees" the same scene as today |
 | Pipeline | **Second raygen group in the existing GI RT pipeline**, selected by offsetting the SBT raygen region | Avoids a second pipeline + SBT + material-set duplication. Requires `giDescLayout` to gain bindings 6-8, unused by the per-pixel rgen |
 | Ray→atlas path | rgen writes a scratch 2D image (raysPerProbe × probesPerFrame), a separate blend compute scatters into the atlas | No atomics, standard DDGI two-step, and the scratch image is directly inspectable in G1 |
@@ -492,7 +491,7 @@ per-pixel GI is pixel-identical, then build on it.
 | `r_rtGIProbeHysteresis` | `0.97` | atlas EMA: history weight |
 | `r_rtGIProbeNormalBias` | `8.0` | receiver offset along the normal before probe lookup |
 | `r_rtGIProbeVisibility` | `1` | Chebyshev visibility weighting (G3) |
-| `r_rtGIProbeDebug` | `0` | 1 = probe spheres tinted by stored irradiance, 2 = per-pixel probe weights, 3 = leak detector, 4 = probe state (active/inside-geometry/never-traced) |
+| `r_rtGIProbeDebug` | `0` | 1 = probe spheres tinted by stored irradiance, 2 = per-pixel probe weights, 3 = leak detector, 4 = probe state (active/inside-geometry/never-traced), 5 = distance-atlas mean (G2) |
 | `r_rtGIProbeDump` | `0` | one-shot: grid origin/dims, memory, active/inactive counts, per-area occupancy, update queue depth |
 
 ## B.5 Chunks
@@ -558,7 +557,21 @@ Round-robin scheduling only.
     and it shares `gip_BorderSource`, but the `pow(dot, sharpness)` lobe and whether
     the stored distances are in a sane range are unverified, and nothing consumes
     them until G3. A debug mode 5 tinting spheres by mean distance / `maxRayDist`
-    is the cheap fix, and belongs before G3's Chebyshev work.
+    is the cheap fix, and belongs before G3's Chebyshev work. ✅ **shipped with
+    G2 as `r_rtGIProbeDebug 5`**: blue→red ramp of the stored mean, plus
+    magenta where `mean2 < mean²`, which is algebraically impossible for a real
+    second moment and so separates "mistuned lobe" from "broken moments".
+  - **Writing that overlay found the bug it was for, before it was ever run.**
+    The atlas is `rg16f`, max finite value 65504; the blend pass stored the
+    second moment in raw world units, so a miss-dominated probe at the default
+    `r_rtGIProbeMaxRayDist 512` stored `512² = 262144` — **`+inf`**. G3's
+    Chebyshev test would have been built directly on it. Fixed by storing both
+    moments normalised by `maxRayDist`, i.e. `mean(d/D)` and `mean((d/D)²)`,
+    each in [0,1]; Chebyshev is scale-invariant provided G3 divides the
+    receiver→probe distance by the same `D`. The irradiance atlas was never
+    affected — radiance is O(1). Consequence to remember: changing
+    `r_rtGIProbeMaxRayDist` now re-scales the atlas and the EMA needs about a
+    full refresh to wash the old encoding out.
 - **Findings that shape G2/G3 tuning:**
   - **Glass stops a probe ray and returns near-black.** `gi_ray.rahit` discards only
     *alpha-tested* geometry and explicitly accepts everything else; `rchit` then
@@ -587,7 +600,7 @@ Round-robin scheduling only.
 - The scratch ray image is the debugging surface here — dump/visualize it before
   chasing an atlas bug.
 
-### G2 — resolve switch
+### G2 — resolve switch ✅ **written 2026-09-13, not yet run**
 `gi_probe_resolve.comp`: reconstruct position + normal (G-buffer normal, fall back to
 `rt_ReconstructNormal`), offset by `r_rtGIProbeNormalBias`, fetch the 8 surrounding
 probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, write
@@ -597,11 +610,47 @@ probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, w
   `GIAtrous` should read ~0; `ProbeTrace/Blend/Resolve` are the new cost).
 - **Expected regressions:** contact darkening is gone (AO's job now) and light bleeds
   through thin walls — that is G3's whole purpose. Do not tune constants here.
+- **As built:**
+  - **`gi_albedo_mod` moved to AFTER the probe resolve** in `vk_backend.cpp`.
+    It is the one downstream pass that consumes the resolve's output, and the
+    resolve has to stay after temporal/à-trous (G1's rule: an overlay written
+    before them lands in their history). It shares the `GIAtrous` profiler
+    phase as before — two begin/end pairs on one phase accumulate. The
+    per-pixel path is unchanged by the move: albedo mod skips itself whenever a
+    probe *overlay* owns `giBuffer`, which is the only case the reorder
+    touches.
+  - **`VK_RT_DispatchGI` is NOT stood down, only its `vkCmdTraceRaysKHR` is.**
+    The probe trace is a second raygen in that same pipeline and reaches
+    `gi_ray.rchit`, which reads set 0's GIParams/TLAS/light SSBO — the UBO
+    build, `s_giParamsOffset` publication and descriptor refresh are what make
+    the probe launch legal. `GI` therefore reports the barriers, not ~0 exactly.
+  - The resolve applies **`r_rtGIStrength` *and* `r_rtGIContrast`**, identically
+    to `gi_ray.rgen`, so the A/B compares sampling structures rather than two
+    tone curves. `r_rtGIContrast` lost its `static` for this; `GIProbeParams`
+    grew a `tune2` vec4 (240 → 256 bytes) with three slots reserved for G3.
+  - **No-data case: black, deliberately.** An untraced probe's atlas tile still
+    belongs to whichever probe last occupied it (toroidal storage), so it is
+    another room, not "black" — it is excluded, and if all 8 are excluded the
+    pixel gets zero GI. The risk table's "must fall back, not darken" has no
+    better option available at this stage: the only in-grid data is wrong-room.
+    This is bounded — it is the first ~16 frames after a map load, and the
+    scroll-invalidated slab is always at the far edge of the window, never near
+    the camera. `r_rtGIProbeDebug 4` locates it if it ever shows up in play.
+  - Temporal's probe early-out also clears `giHistoryValid`, so flipping
+    `r_rtGIProbes` back to 0 resumes from the current frame instead of blending
+    against a history that is arbitrarily many frames old.
 
 ### G3 — leak hardening (mandatory, pillar 2)
 Chebyshev visibility weighting from the distance moments; **ship the leak overlay
 first**: mode 3 = "GI present where direct light is zero", color-coded per pixel;
 mode 2 = per-pixel probe weights. Then tune density/bias against the overlay.
+- **The moments are normalised by `r_rtGIProbeMaxRayDist` (see G1).** Divide the
+  receiver→probe distance by the same `D` before the Chebyshev ratio, or the
+  test is wrong by a factor of 512. G2 reserved `tune2.yzw` in `GIProbeParams`
+  for whatever tuning this needs.
+- The `tune2` slots and `r_rtGIProbeVisibility` (`misc.z`) are already plumbed
+  through to the resolve and unused; the weighting goes in
+  `gip_SampleIrradiance`, right after the wrapped-cosine term.
 - **Exit:** the overlay is clean in the sealed-room and closed-door cases of the
   2026-08-22 test walk. If leaks survive at sane densities, fall back to per-area
   probe isolation (a probe contributes only to pixels in areas its own area reaches

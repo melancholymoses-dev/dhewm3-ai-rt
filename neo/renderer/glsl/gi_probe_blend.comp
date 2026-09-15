@@ -22,6 +22,16 @@ by how well each ray's direction agrees with the texel's own direction:
       irradiance field.  Back-face distances DO count — that surface is real
       occlusion regardless of which side was hit.
 
+      Both moments are stored NORMALISED by maxRayDist, i.e. r = mean(d/D) and
+      g = mean((d/D)^2), each in [0,1].  Raw units do not fit: the atlas is
+      rg16f, whose maximum finite value is 65504, and the second moment of a
+      miss-dominated probe at the default r_rtGIProbeMaxRayDist 512 is 512^2 =
+      262144 — it stored +inf, and G3's Chebyshev test would have been built on
+      it.  Chebyshev is scale-invariant as long as the receiver distance is
+      divided by the same D, which is the contract for G3.  Changing
+      r_rtGIProbeMaxRayDist therefore re-scales the atlas; the EMA washes the
+      old encoding out over roughly a full refresh.
+
 EMA against the atlas' existing contents, EXCEPT for a probe that has not been
 traced since it entered the window: there the previous contents belong to a
 different probe entirely (storage is toroidal, see gi_probe_common.glsl) and
@@ -34,7 +44,8 @@ Descriptors (set 0):
   binding 1 — irradiance atlas rgba16f (read/write)
   binding 2 — GIProbeParams UBO   (declared by gi_probe_common.glsl)
   binding 3 — probe state SSBO    (declared by gi_probe_common.glsl)
-  binding 4 — distance atlas rg16f (read/write)
+  binding 4 — distance atlas rg16f (read/write), both channels normalised by
+              maxRayDist
 
 20260906_froxel_probe_gi.md Part B, chunk G1.
 
@@ -140,13 +151,15 @@ void main()
             float w = pow(max(0.0, dot(texelDir, s_dir[r])), sharpness);
             if (w < 1e-6)
                 continue;
-            float d = min(abs(s_ray[r].a), maxDist);
+            // Normalised to [0,1] — see the header: the raw second moment
+            // overflows rg16f at the default maxRayDist.
+            float d = min(abs(s_ray[r].a), maxDist) / maxDist;
             sumD += d * w;
             sumD2 += d * d * w;
             sumW += w;
         }
 
-        vec2 value = (sumW > 1e-6) ? vec2(sumD / sumW, sumD2 / sumW) : vec2(maxDist, maxDist * maxDist);
+        vec2 value = (sumW > 1e-6) ? vec2(sumD / sumW, sumD2 / sumW) : vec2(1.0, 1.0);
 
         ivec2 t = gip_InteriorTexel(storageIdx, lid, distSide);
         vec2 prev = imageLoad(distanceAtlas, t).rg;

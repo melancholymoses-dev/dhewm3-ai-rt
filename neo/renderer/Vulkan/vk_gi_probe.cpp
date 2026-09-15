@@ -20,8 +20,11 @@ Four passes:
   2. blend   (G1) — gi_probe_blend.comp, scratch rays -> octahedral irradiance
                     and visibility atlases, with an EMA.
   3. border  (G1) — gi_probe_border.comp, octahedral seam fill.
-  4. resolve (G2) — gi_probe_resolve.comp, per-pixel 8-probe fetch -> giBuffer.
-                    G0/G1 ship only its debug overlays.
+  4. resolve (G2) — gi_probe_resolve.comp, per-pixel 8-probe fetch -> giBuffer,
+                    and every debug overlay.  Under r_rtGIProbes 1 this stands
+                    the per-pixel rgen launch, the temporal EMA and the a-trous
+                    chain down; gi_albedo_mod and gi_composite are unchanged and
+                    still run after it.
 
 The lattice is ABSOLUTE (cell * spacing) and storage is TOROIDAL
 (cell mod gridDim), so the window can follow the camera without probes sliding
@@ -55,8 +58,9 @@ Code release.
 static idCVar r_rtGIProbes("r_rtGIProbes", "0", CVAR_RENDERER | CVAR_INTEGER,
                            "Global illumination sampling structure: 0 = per-pixel GI rays "
                            "(gi_ray.rgen + denoise chain), 1 = world-space irradiance probes. "
-                           "The probe resolve lands in G2; until then this only keeps the probe "
-                           "atlases updated so the overlays have something to show.");
+                           "At 1 the per-pixel launch, r_rtGITemporal and r_rtGIAtrous are stood "
+                           "down; contact darkening becomes AO's job alone and thin-wall leaks are "
+                           "expected until G3's Chebyshev visibility lands.");
 
 static idCVar r_rtGIProbeSpacing("r_rtGIProbeSpacing", "64", CVAR_RENDERER | CVAR_FLOAT,
                                  "World units between probes. Doom 3 interiors are small; 64 is "
@@ -91,7 +95,10 @@ static idCVar r_rtGIProbeVisibility("r_rtGIProbeVisibility", "1", CVAR_RENDERER 
 
 static idCVar r_rtGIProbeMaxRayDist("r_rtGIProbeMaxRayDist", "512", CVAR_RENDERER | CVAR_FLOAT,
                                     "Probe ray length, and the value a miss records in the visibility "
-                                    "moments. Independent of r_rtGIRadius, which is the per-pixel path's.");
+                                    "moments. Independent of r_rtGIRadius, which is the per-pixel path's. "
+                                    "Also the unit the distance atlas is normalised by (rg16f cannot hold "
+                                    "a raw second moment), so changing it re-scales the atlas and the EMA "
+                                    "needs about a full refresh to wash the old encoding out.");
 
 static idCVar r_rtGIProbeDistSharpness("r_rtGIProbeDistSharpness", "50.0", CVAR_RENDERER | CVAR_FLOAT,
                                        "Cosine-power lobe width for the visibility moments. Much tighter "
@@ -101,7 +108,9 @@ static idCVar r_rtGIProbeDistSharpness("r_rtGIProbeDistSharpness", "50.0", CVAR_
 static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
                                "Probe overlay: 0=off, 1=probe spheres tinted by stored irradiance, "
                                "2=per-pixel probe weights (G3), 3=leak detector (G3), "
-                               "4=probe state (green=traced, red=never traced, blue=inside geometry).");
+                               "4=probe state (green=traced, red=never traced, blue=inside geometry), "
+                               "5=distance atlas (blue->red ramp of mean hit distance / "
+                               "r_rtGIProbeMaxRayDist; magenta = impossible second moment).");
 
 static idCVar r_rtGIProbeDebugGain("r_rtGIProbeDebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
                                    "Mode-1-only gain, so stored irradiance survives the Uchimura toe "
@@ -135,6 +144,7 @@ extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
 extern idCVar r_rtGI;
 extern idCVar r_rtGIStrength; // vk_gi.cpp — shared so an r_rtGIProbes A/B is at matched strength
+extern idCVar r_rtGIContrast; // ditto: the resolve applies the same contrast push gi_ray.rgen does
 extern idCVar r_rtGbufNormals;
 
 // ---------------------------------------------------------------------------
@@ -159,8 +169,9 @@ struct GIProbeParamsUBO
     int32_t screen[4];     // 192  x=screenW y=screenH z=outW w=outH
     int32_t rect[4];       // 208  resolve dispatch rect, output-image space
     float debug[4];        // 224  x=debugGain y=probeRadius z=distSharpness w=unused
+    float tune2[4];        // 240  x=giContrast  y/z/w reserved (G3 Chebyshev)
 };
-static_assert(sizeof(GIProbeParamsUBO) == 240, "GIProbeParamsUBO size mismatch");
+static_assert(sizeof(GIProbeParamsUBO) == 256, "GIProbeParamsUBO size mismatch");
 
 // Mirrors GIProbeState in gi_probe_common.glsl. std430 gives vec3 a 16-byte
 // alignment, so the trailing uint packs into the same 16 bytes.
@@ -746,7 +757,7 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     ubo.tune[2] = idMath::ClampFloat(0.0f, 4.0f, r_rtGIStrength.GetFloat());
     ubo.tune[3] = Max(1.0f, r_rtGIProbeMaxRayDist.GetFloat());
 
-    ubo.misc[0] = idMath::ClampInt(0, 4, r_rtGIProbeDebug.GetInteger());
+    ubo.misc[0] = idMath::ClampInt(0, 5, r_rtGIProbeDebug.GetInteger());
     ubo.misc[1] = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     ubo.misc[2] = r_rtGIProbeVisibility.GetBool() ? 1 : 0;
 
@@ -788,6 +799,8 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     // overlay exists to rule out.
     ubo.debug[1] = idMath::ClampFloat(0.25f, s_spacing * 0.49f, r_rtGIProbeDebugRadius.GetFloat());
     ubo.debug[2] = Max(1.0f, r_rtGIProbeDistSharpness.GetFloat());
+
+    ubo.tune2[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtGIContrast.GetFloat());
 
     return true;
 }
@@ -1109,7 +1122,7 @@ int VK_RT_GIProbeDebugMode(void)
         return 0;
     if (vkRT.giProbeResolvePipeline == VK_NULL_HANDLE || vkRT.giProbeIrradiance.image == VK_NULL_HANDLE)
         return 0;
-    return idMath::ClampInt(0, 4, r_rtGIProbeDebug.GetInteger());
+    return idMath::ClampInt(0, 5, r_rtGIProbeDebug.GetInteger());
 }
 
 // True when the probe path OWNS the GI result — G2 wires this to stand the
@@ -1176,6 +1189,20 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
 
     s_lastUpdateFrame = tr.frameCount;
     s_lastUboValid = false;
+
+    // One line per handover, unconditionally: a perf capture or a "GI went
+    // black" report has to say which sampling structure was live without
+    // needing r_vkLogRT turned on first.
+    {
+        static int s_lastOwner = -1;
+        const int owner = VK_RT_GIProbeActive() ? 1 : 0;
+        if (owner != s_lastOwner)
+        {
+            s_lastOwner = owner;
+            common->Printf("VK RT GIProbe: GI is now %s (r_rtGIProbes %d) — per-pixel rgen/temporal/a-trous %s\n",
+                           owner ? "PROBE" : "per-pixel", owner, owner ? "stood down" : "live");
+        }
+    }
 
     const float spacing = idMath::ClampFloat(8.0f, 512.0f, r_rtGIProbeSpacing.GetFloat());
     VK_RT_GIProbeAnchor(viewDef, spacing);
@@ -1302,8 +1329,11 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
                        outUbo.tune[0], outUbo.tune[1], outUbo.debug[2]);
         common->Printf("  maintain=%d  probeResolveActive=%d  debugMode=%d\n", VK_RT_GIProbeMaintain() ? 1 : 0,
                        VK_RT_GIProbeActive() ? 1 : 0, outUbo.misc[0]);
-        common->Printf("  sizeof(GIProbeParamsUBO)=%d (GLSL std140 block expects 240)\n",
+        common->Printf("  sizeof(GIProbeParamsUBO)=%d (GLSL std140 block expects 256)\n",
                        (int)sizeof(GIProbeParamsUBO));
+        common->Printf("  resolve: giStrength=%.3f giContrast=%.3f normalBias=%.1f (mode 0 owns giBuffer=%d)\n",
+                       outUbo.tune[2], outUbo.tune2[0], outUbo.tune[1],
+                       (VK_RT_GIProbeActive() && outUbo.misc[0] == 0) ? 1 : 0);
     }
 
     return true;
@@ -1471,12 +1501,15 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // ---------------------------------------------------------------------------
 // VK_RT_DispatchGIProbeResolve (public)
 //
-// G0/G1: runs only while an overlay is selected, and writes the overlay into
-// vkRT.giBuffer so gi_composite.frag can display it with no knowledge of
-// probes.  giReadView is repointed at giBuffer because temporal/a-trous/albedo
-// mod will have aimed it at their own outputs earlier in the frame.
+// Writes vkRT.giBuffer and repoints giReadView at it, so gi_composite.frag
+// keeps sampling one 2D image and knows nothing about probes.  giReadView has
+// to be re-pointed because temporal/a-trous aimed it at their own outputs
+// earlier in the frame (they stand down under r_rtGIProbes 1, but the overlays
+// run with the per-pixel path live).
 //
-// G2 adds mode 0 and this becomes the shipping path.
+// Mode 0 is the shipping G2 resolve; any other mode is an overlay, and
+// VK_RT_DispatchGIAlbedoMod skips so a measurement reaches the composite
+// unmodulated.
 //
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 // ---------------------------------------------------------------------------
@@ -1485,11 +1518,6 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
     const int debugMode = VK_RT_GIProbeDebugMode();
     if (debugMode == 0 && !VK_RT_GIProbeActive())
-        return;
-    // G0/G1: only the overlays are implemented. Without this the probe path
-    // would claim giBuffer and blank the screen's GI the moment anyone sets
-    // r_rtGIProbes 1 before G2 lands.
-    if (debugMode == 0)
         return;
 
     const int frameIdx = vk.currentFrame;
@@ -1619,6 +1647,7 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GIProbe: resolve frame=%d slot=%d mode=%d rect=(%d,%d %dx%d)\n", tr.frameCount, frameIdx,
-                       ubo.misc[0], ubo.rect[0], ubo.rect[1], ubo.rect[2], ubo.rect[3]);
+        common->Printf("VK RT GIProbe: resolve frame=%d slot=%d %s(mode=%d) rect=(%d,%d %dx%d)\n", tr.frameCount,
+                       frameIdx, (ubo.misc[0] == 0) ? "shipping" : "overlay", ubo.misc[0], ubo.rect[0], ubo.rect[1],
+                       ubo.rect[2], ubo.rect[3]);
 }
