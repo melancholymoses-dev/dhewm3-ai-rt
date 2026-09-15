@@ -115,6 +115,13 @@ vec3 gip_ProbePos(ivec3 absCell)
     return gip_LatticePos(absCell) + probeState.probes[gip_StorageIndex(absCell)].offset;
 }
 
+// Same, for callers that already hold the storage index — the resolve does, and
+// gip_StorageIndex is three integer modulos it would otherwise redo per corner.
+vec3 gip_ProbePosAt(ivec3 absCell, int storageIdx)
+{
+    return gip_LatticePos(absCell) + probeState.probes[storageIdx].offset;
+}
+
 bool gip_CellInGrid(ivec3 absCell)
 {
     ivec3 l = absCell - gp.baseCell.xyz;
@@ -190,14 +197,22 @@ vec3 gip_TexelDirection(ivec2 interior, int side)
     return gip_OctDecode(uv * 2.0 - 1.0);
 }
 
-// Normalised UV for a bilinear fetch of `dir` in this probe's tile.  oct == 0
-// lands on the boundary between the border and the first interior texel, which
-// is what makes the border the wrapped neighbour a bilinear tap needs.
-vec2 gip_AtlasUV(int storageIdx, vec3 dir, int side)
+// Normalised UV for a bilinear fetch, with the octahedral coordinate already
+// computed.  oct == 0 lands on the boundary between the border and the first
+// interior texel, which is what makes the border the wrapped neighbour a
+// bilinear tap needs.
+//
+// Split out because the resolve fetches EIGHT probes in the same direction (the
+// receiver's normal): encode once, vary only the tile.
+vec2 gip_AtlasUVOct(int storageIdx, vec2 oct, int side)
 {
-    vec2 oct = gip_OctEncode(normalize(dir)) * 0.5 + 0.5;
     vec2 texel = vec2(gip_TileOrigin(storageIdx, side)) + 1.0 + oct * float(max(side - 2, 1));
     return texel / vec2(gip_AtlasSize(side));
+}
+
+vec2 gip_AtlasUV(int storageIdx, vec3 dir, int side)
+{
+    return gip_AtlasUVOct(storageIdx, gip_OctEncode(normalize(dir)) * 0.5 + 0.5, side);
 }
 
 // Border texel -> the interior texel it mirrors.  The octahedron's seam folds

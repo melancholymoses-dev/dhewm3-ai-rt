@@ -151,6 +151,10 @@ bool gip_SampleIrradiance(vec3 worldPos, vec3 normal, out vec3 irradiance)
     vec3 sum = vec3(0.0);
     float sumW = 0.0;
 
+    // All eight fetches are in the receiver's normal direction; only the tile
+    // differs, so the octahedral encode is hoisted out of the loop.
+    vec2 oct = gip_OctEncode(normalize(normal)) * 0.5 + 0.5;
+
     for (int i = 0; i < 8; i++)
     {
         ivec3 off = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
@@ -177,7 +181,7 @@ bool gip_SampleIrradiance(vec3 worldPos, vec3 normal, out vec3 irradiance)
         // a probe behind the surface contributes almost nothing, but never
         // exactly nothing, or the interpolation goes discontinuous at grazing
         // angles and shows as banding.
-        vec3 toProbe = gip_ProbePos(cell) - worldPos;
+        vec3 toProbe = gip_ProbePosAt(cell, idx) - worldPos;
         float lenSq = dot(toProbe, toProbe);
         vec3 dirToProbe = (lenSq > 1e-8) ? (toProbe * inversesqrt(lenSq)) : normal;
         float wrapped = max(1e-4, (dot(dirToProbe, normal) + 1.0) * 0.5);
@@ -189,8 +193,7 @@ bool gip_SampleIrradiance(vec3 worldPos, vec3 normal, out vec3 irradiance)
         if (weight < crush)
             weight *= (weight * weight) / (crush * crush);
 
-        vec2 auv = gip_AtlasUV(idx, normal, gp.atlas.z);
-        sum += texture(irradianceAtlas, auv).rgb * weight;
+        sum += texture(irradianceAtlas, gip_AtlasUVOct(idx, oct, gp.atlas.z)).rgb * weight;
         sumW += weight;
     }
 
