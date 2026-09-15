@@ -3,9 +3,11 @@
 **Date:** 2026-08-23 · **Detailed for implementation:** 2026-09-12
 **Status:** Arc #2 in ROADMAP.md. The owed profiler checkpoint is taken
 (Mars City 2026-09-11: GI 4.41 / Refl 3.24 / Vol 1.53 / AO 1.17 / denoise ~0.65 ms).
-**Part A: F0-F2 landed and validated, F3 dropped, F4/F5 open.
+**Part A: F0-F2 landed and validated, F3 and F4 dropped, F5 open.
 Part B: G0-G2 landed and validated (G2 measured 2026-09-14, GI chain 4.91 → 0.71 ms).
-Next is G3 (leak hardening) — mandatory, pillar 2.**
+G3 and G4's classification written 2026-09-14; the G3 overlay gate is the open item,
+and it cannot be judged until G4 is in (a buried probe's moments are meaningless, so
+Chebyshev cannot reason about it). G4 relocation deferred pending that read.**
 
 ---
 
@@ -395,16 +397,26 @@ cluster's world AABB, writes a `uvec4` bitmask; fill iterates only set bits.
   unchanged from F2's brute-force counts in every test room — a cluster-cull bug
   shows up there as missing lights, which is exactly what that overlay is for.
 
-### F4 — froxel-space temporal + rotation
-EMA against `froxelHistory` (single shared image, ordered by submission + an explicit
-barrier — **not** per-slot), reprojecting the cell centre through `prevViewProj` into
-the previous grid; a fetch outside the previous frustum falls back to the current
-sample (no ghost trail, unlike screen-space). Per-cell jitter already exists from F0.
-Optional `r_rtVolFroxelRotate`: update 1/N of Z slices per frame — its index **must**
+### F4 — froxel-space temporal + rotation — ❌ **DROPPED 2026-09-14**
+F2 shipped without it and looks good enough; the noise F4 exists to suppress was
+never observed. Dropping it is not merely "not needed", it **protects a property
+F2 turned out to have for free**: with no EMA and no history, `vol_froxel_fill.comp`
+re-evaluates the light SSBO from scratch every frame at full grid, so volumetrics
+tracks **flickering and moving lights frame-for-frame with zero lag** — which
+Doom 3 leans on heavily. F4 would have spent that. `r_rtVolFroxelRotate` is worse
+than neutral here: a slice rotation beating against a flicker rate aliases in
+depth. Revisit only if a measured noise problem appears, and then with adaptive
+blending (see G5) rather than a flat EMA.
+
+Consequence: the two A.9 mitigations that named F4 (cell-centre shadow aliasing,
+fast-turn frustum invalidation) now stand unmitigated — neither has been observed,
+so they are risks on paper, not open bugs.
+
+Original scope, if it ever returns: EMA against `froxelHistory` (single shared
+image, ordered by submission + an explicit barrier — **not** per-slot),
+reprojecting the cell centre through `prevViewProj`; a fetch outside the previous
+frustum falls back to the current sample. `r_rtVolFroxelRotate`'s index **must**
 key off a per-slot counter, not `tr.frameCount`.
-- **Exit:** debug mode 4 (cell age) shows every cell refreshing at the expected rate;
-  walking through a doorway produces no visible trail; the disocclusion case (spin
-  180°) converges within a few frames.
 
 ### F5 — retire decision
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the
@@ -491,7 +503,9 @@ per-pixel GI is pixel-identical, then build on it.
 | `r_rtGIProbeHysteresis` | `0.97` | atlas EMA: history weight |
 | `r_rtGIProbeNormalBias` | `8.0` | receiver offset along the normal before probe lookup |
 | `r_rtGIProbeVisibility` | `1` | Chebyshev visibility weighting (G3) |
-| `r_rtGIProbeDebug` | `0` | 1 = probe spheres tinted by stored irradiance, 2 = per-pixel probe weights, 3 = leak detector, 4 = probe state (active/inside-geometry/never-traced), 5 = distance-atlas mean (G2) |
+| `r_rtGIProbeDebug` | `0` | 1 = probe spheres tinted by stored irradiance, 2 = probe weights / Chebyshev rejection, 3 = leak detector (Chebyshev vs ray-traced truth), 4 = probe state (active/inside-geometry/never-traced), 5 = distance-atlas mean |
+| `r_rtGIProbeViewBias` | `8.0` | receiver offset toward the eye, on top of the normal bias (G3) |
+| `r_rtGIProbeInsideThreshold` | `0.25` | backface fraction above which a probe is classified buried (G4); 0 disables |
 | `r_rtGIProbeDump` | `0` | one-shot: grid origin/dims, memory, active/inactive counts, per-area occupancy, update queue depth |
 
 ## B.5 Chunks
@@ -678,42 +692,163 @@ probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, w
     `r_rtGIProbes` back to 0 resumes from the current frame instead of blending
     against a history that is arbitrarily many frames old.
 
-### G3 — leak hardening (mandatory, pillar 2)
+### G3 — leak hardening (mandatory, pillar 2) ✅ **written 2026-09-14, not yet run**
 Chebyshev visibility weighting from the distance moments; **ship the leak overlay
-first**: mode 3 = "GI present where direct light is zero", color-coded per pixel;
-mode 2 = per-pixel probe weights. Then tune density/bias against the overlay.
-- **The moments are normalised by `r_rtGIProbeMaxRayDist` (see G1).** Divide the
-  receiver→probe distance by the same `D` before the Chebyshev ratio, or the
-  test is wrong by a factor of 512. G2 reserved `tune2.yzw` in `GIProbeParams`
-  for whatever tuning this needs.
-- The `tune2` slots and `r_rtGIProbeVisibility` (`misc.z`) are already plumbed
-  through to the resolve and unused; the weighting goes in
-  `gip_SampleIrradiance`, right after the wrapped-cosine term.
+first**: mode 3 = leak detector, mode 2 = per-pixel probe weights. Then tune
+density/bias against the overlay.
+- **The moments are normalised by `r_rtGIProbeMaxRayDist` (see G1).** The
+  receiver→probe distance is divided by the same `D` before the ratio; the `D²`
+  in the variance then cancels the `D²` in the squared difference. Getting this
+  wrong is silent — the test either does nothing or blacks everything out.
+- **Mode 3 is NOT "GI present where direct light is zero" as B.5 specified.**
+  That was a proxy, and a weak one: the resolve has no direct-light buffer, and
+  evaluating the light list without shadows *overestimates* lit-ness, so it would
+  miss exactly the leaks it exists to find. Instead mode 3 traces a **ray query
+  from the receiver to each of the 8 probes** for ground-truth visibility and
+  colour-codes the disagreement with Chebyshev's estimate:
+  - **green** — they agree, whatever the verdict.
+  - **red** — ray says occluded, Chebyshev let it through → **leak**, pillar 2.
+  - **blue** — ray says visible, Chebyshev blocked it → over-darkening; lost
+    energy, not a pillar violation.
+
+  Weighted by each probe's trilinear share, so the colour says "how much of this
+  pixel's GI is wrong", not merely "something disagreed". This is strictly
+  stronger than the proxy: it measures the mechanism, and it validates the
+  approximation against truth rather than against a correlate.
+  **`r_rtGIProbeVisibility 0` shows the raw leak surface** with no mitigation —
+  the before-picture to tune against; `1` shows the residual. Costs up to 8 ray
+  queries per pixel, overlay only.
+- **This put the TLAS in the resolve descriptor set (binding 7).** Only mode 3
+  reads it, but the shader references it statically, so it must be a live handle
+  on every dispatch — the resolve now requires a valid TLAS, the same
+  requirement `VK_RT_DispatchGI` already had, so a frame without one already had
+  no GI.
+- **Added `r_rtGIProbeViewBias` (default 8.0, `tune2.y`)** alongside
+  `r_rtGIProbeNormalBias`. Without a view bias a wall seen at a grazing angle
+  reads as its own occluder and Chebyshev over-darkens it. Clamped below half
+  spacing: a larger bias walks the sample into the next lattice cell, so the
+  trilinear weights would describe a point the receiver is not at. **These two
+  biases are the tuning levers** — mode 3 blue along walls means raise the view
+  bias, red means it went too far.
+- Chebyshev is floored at **0.05, not 0** (`GIPROBE_VIS_FLOOR`). At zero the
+  interpolation goes discontinuous across the wall and the seam reads worse than
+  the residual leak. Same constant DDGI uses.
+- Mode 3's pass/fail threshold is `cheb > 0.5`, a classification for the overlay
+  only — it does not appear in the resolve.
+- **First run, 2026-09-14 — two fixes, one real and one overlay-only:**
+  - **REAL, shipping path.** When no probe ray landed in a distance texel's
+    lobe, `gi_probe_blend.comp` wrote `vec2(1.0, 1.0)` — mean = `maxRayDist`,
+    variance 0, i.e. "nothing in the way". `gip_Chebyshev` returns 1.0
+    unconditionally for that, so **the fallback for missing data was the
+    leak-permissive one.** At `r_rtGIProbeRays 128` against a 16×16 interior
+    there are *fewer rays than texels* (~3 rays per `pow(dot,50)` lobe, and a
+    few per cent of texels get zero), so this fired constantly. Now the texel
+    keeps its history instead; an as-yet-unwritten one reads mean 0 → fully
+    occluded, which is the conservative direction.
+  - **Overlay-only.** `gip_ProbeOccluded` passed `gl_RayFlagsOpaqueEXT` and
+    confirmed every candidate, forcing perforated and translucent geometry to
+    read solid — but `gi_ray.rahit`, which built the moments, *discards*
+    alpha-tested geometry below threshold, so grating holes and decals do not
+    occlude a probe ray. Mars City's floors are grating, so the overlay reported
+    a screen of "leaks" that were Chebyshev being correct. Now only opaque
+    geometry occludes. Residual mismatch, accepted: rahit accepts non-alpha-
+    tested non-opaque geometry (glass), which now reads visible — that turns a
+    real leak green or blue rather than inventing a red one, and for a leak
+    detector under-reporting on rare geometry beats crying wolf on every floor.
+  - **Reading rule that falls out of this:** red on *opaque* geometry is a real
+    leak; the earlier wall red is real and still open. Blue is always real.
+    Green over perforated geometry can now hide a real over-darkening.
+- **Exit (unchanged):** the overlay is clean in the sealed-room and closed-door
+  cases of the 2026-08-22 test walk. If leaks survive at sane densities, fall
+  back to per-area probe isolation (a probe contributes only to pixels in areas
+  its own area reaches through open portals — the same BFS set
+  `VK_RT_UploadGILights` already walks).
 - **Exit:** the overlay is clean in the sealed-room and closed-door cases of the
   2026-08-22 test walk. If leaks survive at sane densities, fall back to per-area
   probe isolation (a probe contributes only to pixels in areas its own area reaches
   through open portals — the same BFS set `VK_RT_UploadGILights` already walks).
 
-### G4 — probe relocation + classification
-Offset probes out of walls (small per-probe world offset, driven by the backface
-statistics from the blend pass); mark probes whose rays are mostly backface hits as
-inside-geometry and give them zero weight in the resolve.
+### G4 — probe classification ✅ **written 2026-09-14, not yet run** · relocation deferred
+Mark probes whose rays are mostly backface hits as inside-geometry and give them zero
+weight in the resolve. **Split from relocation deliberately** — classification alone
+may be enough, and it removes the confound that makes G3 unjudgeable: a buried probe's
+distance moments describe the inside of a brush, so Chebyshev cannot reason about it
+at all. Relocation (a small per-probe world offset) stays available if the overlay
+still shows buried probes carrying weight.
 - **Exit:** debug mode 4 shows no active probes buried in geometry in the test rooms;
   mode 3's residual leaks drop further.
-- The input already exists: G1's blend pass reads the sign bit of the scratch alpha
-  (negative = back face) and currently just *excludes* those rays from the
-  irradiance. Counting them per probe is the classification statistic.
-- Note mode 4 **cannot** show a buried probe today — the overlay depth-occludes
-  spheres behind geometry, so a probe inside a wall is invisible by construction, and
-  `insideGeometry` reads 0 only because nothing sets it. Angled geometry (ramps,
-  sloped ceilings, the AREA diagonals) buries proportionally more probes than
-  axis-aligned rooms do, so those are the rooms to judge G4 in.
+- The input already existed: G1's blend pass reads the sign bit of the scratch alpha
+  (negative = back face) and just *excluded* those rays from the irradiance. Counting
+  them per probe is the whole statistic — nothing new is traced.
+- Angled geometry (ramps, sloped ceilings, the AREA diagonals) buries proportionally
+  more probes than axis-aligned rooms do, so those are the rooms to judge G4 in.
+- **As built:**
+  - **`GIProbeState` ownership is now split, and the split is the design.** `flags`
+    and `offset` stay CPU-owned and re-uploaded every frame (the blend pass needs
+    "did this probe have history *before* this frame", which only the CPU knows).
+    `backface` is the one GPU-written field. The CPU reads it back **before** its own
+    memcpy — the frame fence has already retired that submission, the same guarantee
+    the existing upload relies on — then copies the value straight back out so its
+    upload never clobbers the measurement. Struct grew 16 → **32 bytes**.
+  - `r_rtGIProbeInsideThreshold` (default **0.25**, matching RTXGI) with a **dead
+    band**: set above the threshold, cleared below 0.75× it, so a probe sitting on
+    the boundary cannot flip-flop between frames. 0 disables classification.
+  - The backface fraction is EMA'd with the same alpha as the maps, and taken
+    outright when a probe has no history — otherwise a scrolled-in probe would spend
+    a full convergence inheriting its predecessor's verdict. Scroll invalidation
+    clears it for the same reason.
+  - **Mode 4 now x-rays buried probes.** The old overlay depth-occluded spheres, so
+    a probe inside a wall was invisible *by construction* — it could never show the
+    thing G4 classifies. Mode 4 alone traces past the surface and draws a probe if it
+    is in front of geometry **or** flagged inside; x-rayed spheres are drawn at half
+    brightness so "buried in that wall" still reads differently from "in front of
+    it". Modes 1 and 5 keep the depth clamp.
+  - Every probe excluded is one the resolve can no longer fall back on, so a runaway
+    threshold surfaces as black GI. The inside count is logged when it moves and the
+    dump reports mean/max backface fraction against the threshold.
 
-### G5 — scheduling
+### G5 — scheduling, and dynamic-light latency
 Priority queue instead of round-robin: probes in areas reached by the portal BFS
 update first; a portal-state change (door opens) jumps its areas' probes to the front.
 - **Exit:** opening a door relights the room behind it within a few frames rather than
   a full rotation; dump shows queue depth and the priority bumps.
+
+**Probe GI cannot currently track a flickering or moving light, by ~2 orders of
+magnitude.** At the defaults, 16384 probes ÷ 1024 per frame = 16 frames between
+updates for a given probe, and `r_rtGIProbeHysteresis 0.97` is alpha 0.03 per
+*update*, so τ = (1/0.03) × 16 ≈ **533 frames ≈ 8.9 s at 60 fps**. A 10 Hz
+flicker converges to its mean. Direct lighting still flickers correctly (pillar 1
+is untouched), so the symptom is that a light dropping to black leaves a steady
+bounce glow behind — a **pillar-2** problem, not just fidelity. The same wall
+applies to a moving light: the EMA lags in *world* space, so the glow stays where
+the light was and decays over seconds. World-space reuse did not remove ghosting,
+it changed its coordinate system — screen-space ghosts follow the camera, these
+follow the world.
+
+The hysteresis is doing **two jobs and only one is wanted**: it suppresses
+*estimator* noise (128 rays, `r_rtGIStochasticLights 2` sampling 1-2 lights per
+hit and dividing by the selection probability — G1 measured the colour flicker
+that appears without it) and low-passes the *scene* purely as a side effect. So
+"lower the hysteresis" is not the lever. **Two fixes, in this order:**
+
+1. **Make each update low-variance enough that heavy smoothing is unnecessary.**
+   G2's measurement is what makes this affordable: the trace is latency-bound
+   (131 k rays in 0.048 ms, ~3x the per-pixel per-ray rate) and the arc freed
+   4.2 ms. 4096 probes/frame x 256 rays ≈ 1 M rays ≈ 1 ms at the per-pixel path's
+   measured throughput — a 4-frame rotation, and with a narrower estimator tail
+   alpha ~0.5 becomes affordable: τ ≈ 8 frames ≈ 130 ms. Enough for a door or a
+   slow pulse; still not a 10 Hz strobe.
+2. **Adaptive hysteresis in `gi_probe_blend.comp`** — the standard DDGI answer
+   and a few lines. Compare the new value against `prev` and boost alpha when the
+   relative change is large, so a probe *snaps* to a genuine lighting change while
+   still smoothing small noise. RTXGI ships this. The tuning risk is that
+   stochastic light selection also produces occasional large spikes, so the
+   threshold must sit above the estimator's own tail — which is why fix 1 comes
+   first.
+
+Trigger-wise this is the same mechanism as the portal bump above: a light whose
+colour changed this frame should jump its neighbouring probes to the front of the
+queue, so it belongs here rather than in G6.
 
 ### G6 — retire decision + retune
 `r_rtGIStrength`, `r_rtGIContrast` and the `r_rtGIAutoDirectScale` coupling all change
@@ -728,7 +863,8 @@ last**. Decide the per-pixel path's fate, flip the default, update ROADMAP.md.
 | Loss of contact darkening | Corners and creases read flat vs today | AO carries it; retune AO strength in G6, not earlier |
 | Camera-anchored grid pops as it scrolls | Visible lighting shift when the grid origin snaps | Snap to `spacing` multiples and clear only the newly-entered slab; the cleared probes are "never traced", not black — the resolve must fall back, not darken |
 | Second rgen in a shared pipeline mis-indexes the SBT | Device lost, or probes get per-pixel GI's behaviour | Raygen region = `sbtBase + groupIndex·handleAlignedSize`, `size = handleAlignedSize`. Verify with a probe rgen that writes a constant before wiring the real one |
-| Probe count × ray count blows the budget on large maps | `ProbeTrace` dominates | `r_rtGIProbeUpdatesPerFrame` is the throttle; convergence time degrades gracefully, cost does not |
+| Probe count × ray count blows the budget on large maps | `ProbeTrace` dominates | `r_rtGIProbeUpdatesPerFrame` is the throttle; convergence time degrades gracefully, cost does not. **Measured false in G2** — the trace is 0.048 ms and latency-bound; the resolve is 74 % of the chain and no probe CVar affects it |
+| Flickering / moving lights: the EMA low-passes them away (τ ≈ 8.9 s at defaults), leaving a bounce glow where a light went dark or used to be | Room does not go fully black when its light flickers off; a moving light drags a lagging world-space glow | G5's two fixes — narrow the estimator first, then adaptive hysteresis. **Pillar 2**, so it is not optional polish. Note volumetrics does *not* have this problem: F4 was dropped and the froxel fill has no history at all |
 
 ---
 
