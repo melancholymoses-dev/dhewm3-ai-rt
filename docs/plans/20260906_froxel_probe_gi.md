@@ -4,8 +4,8 @@
 **Status:** Arc #2 in ROADMAP.md. The owed profiler checkpoint is taken
 (Mars City 2026-09-11: GI 4.41 / Refl 3.24 / Vol 1.53 / AO 1.17 / denoise ~0.65 ms).
 **Part A: F0-F2 landed and validated, F3 dropped, F4/F5 open.
-Part B: G0/G1 landed and validated 2026-09-13. G2 written 2026-09-13, not yet
-run. Next is in-game A/B + profiler for G2, then G3 (leak hardening).**
+Part B: G0-G2 landed and validated (G2 measured 2026-09-14, GI chain 4.91 → 0.71 ms).
+Next is G3 (leak hardening) — mandatory, pillar 2.**
 
 ---
 
@@ -558,9 +558,15 @@ Round-robin scheduling only.
     the stored distances are in a sane range are unverified, and nothing consumes
     them until G3. A debug mode 5 tinting spheres by mean distance / `maxRayDist`
     is the cheap fix, and belongs before G3's Chebyshev work. ✅ **shipped with
-    G2 as `r_rtGIProbeDebug 5`**: blue→red ramp of the stored mean, plus
-    magenta where `mean2 < mean²`, which is algebraically impossible for a real
-    second moment and so separates "mistuned lobe" from "broken moments".
+    G2 as `r_rtGIProbeDebug 5` and in-game validated 2026-09-14**: blue→red ramp
+    of the stored mean, plus magenta where `mean2 < mean²`, which is
+    algebraically impossible for a real second moment and so separates
+    "mistuned lobe" from "broken moments". No magenta anywhere; red tracks open
+    space (and so *appears* to track lights, because fixtures sit in the open
+    volume — the moments have no light term at all); scrubbing
+    `r_rtGIProbeMaxRayDist` 64/4096 at `r_rtGIProbeHysteresis 0` moves the whole
+    picture as it must, which is what proves the normalisation is live.
+    **G3 may now rely on the distance atlas.**
   - **Writing that overlay found the bug it was for, before it was ever run.**
     The atlas is `rg16f`, max finite value 65504; the blend pass stored the
     second moment in raw world units, so a miss-dominated probe at the default
@@ -600,7 +606,7 @@ Round-robin scheduling only.
 - The scratch ray image is the debugging surface here — dump/visualize it before
   chasing an atlas bug.
 
-### G2 — resolve switch ✅ **written 2026-09-13, not yet run**
+### G2 — resolve switch ✅ **landed and measured 2026-09-14**
 `gi_probe_resolve.comp`: reconstruct position + normal (G-buffer normal, fall back to
 `rt_ReconstructNormal`), offset by `r_rtGIProbeNormalBias`, fetch the 8 surrounding
 probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, write
@@ -610,6 +616,38 @@ probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, w
   `GIAtrous` should read ~0; `ProbeTrace/Blend/Resolve` are the new cost).
 - **Expected regressions:** contact darkening is gone (AO's job now) and light bleeds
   through thin walls — that is G3's whole purpose. Do not tune constants here.
+- ✅ **Measured 2026-09-14, in-game A/B clean.** Medians over 75 probe / 63
+  per-pixel in-game frames (menu frames excluded on `TLAS`):
+
+  | | per-pixel | probe |
+  |---|---|---|
+  | GI | 4.360 | 0.001 |
+  | GITemporal | 0.132 | 0.001 |
+  | GIAtrous | 0.376 | 0.056 |
+  | ProbeTrace | — | 0.048 |
+  | ProbeBlend | — | 0.075 |
+  | ProbeResolve | — | 0.524 |
+  | **GI chain** | **4.906** | **0.705** |
+
+  **7.0×** on the median, 5.0× worst case (6.57 → 1.31). Whole RT block's median
+  8.53 → 4.46 ms. Two numbers are confirmations rather than measurements: `GI`
+  reads 0.001 not 0, which is the predicted barrier-only residue proving set 0 is
+  still built for the probe trace; and `GIAtrous` reads 0.056 not 0.001, which is
+  **albedo mod running alone** — the direct evidence the reorder above works.
+- **`ProbeResolve` is flat at ~0.52 ms regardless of view.** GI cost no longer
+  swings with light count or scene complexity, the same scene-independence
+  `FroxelIntegrate` gained in F2, and worth as much as the mean drop.
+- **The cost model inverted, which changes what G6 tunes.** B.6 predicted
+  `ProbeTrace` would dominate with `r_rtGIProbeUpdatesPerFrame` as the throttle.
+  Trace + blend are 0.12 ms combined; the resolve is 0.52, i.e. **74 % of the
+  chain sits in the one pass no probe CVar affects.** 131 k rays in 0.048 ms is
+  ~2.7 Grays/s, ~3× the per-pixel path's per-ray rate, which says that launch is
+  latency-bound not throughput-bound — so raising `r_rtGIProbeRays` /
+  `UpdatesPerFrame` for quality should be near-free until it saturates. Test that
+  in G6 before trading anything else for probe quality. If the resolve ever needs
+  to come down, the cost is 8 scattered bilinear `rgba16f` taps per pixel at full
+  res (a +1 in Z is 1024 tiles away in the atlas), not arithmetic — the octahedral
+  encode and storage-index recomputation were already hoisted out of the loop.
 - **As built:**
   - **`gi_albedo_mod` moved to AFTER the probe resolve** in `vk_backend.cpp`.
     It is the one downstream pass that consumes the resolve's output, and the
