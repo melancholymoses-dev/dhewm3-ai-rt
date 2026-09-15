@@ -7,30 +7,48 @@ Writes vkRT.giBuffer and vk_gi_probe.cpp repoints giReadView at it, so
 gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
 
   mode 0 — the real resolve (G2).  Reconstruct the pixel's world position and
-           shading normal, offset along the normal, then take the 8 lattice
-           probes surrounding that point: trilinear weight x a wrapped cosine
-           term against the direction to each probe, normalised.  The atlas
-           fetch direction is the NORMAL (irradiance arriving from the
-           hemisphere); the probe direction only weights the blend.
+           shading normal, offset along the normal and toward the eye, then take
+           the 8 lattice probes surrounding that point: trilinear weight x a
+           wrapped cosine term x Chebyshev visibility, normalised.  The
+           irradiance fetch direction is the NORMAL; the probe direction only
+           weights the blend, and the visibility lookup uses the direction from
+           the probe BACK to the receiver.
 
   mode 1 — probe spheres tinted by the irradiance they have stored, in the
-           direction the sphere is seen from.  This is the convergence readout
-           for G1: a probe in a red-lit room must read red within ~16 frames.
-  mode 4 — probe state.  green = traced since it entered the window,
-           red = never traced (its atlas tile is stale or empty and the G2
-           resolve must fall back rather than darken), blue = classified inside
-           geometry (G4).
-  mode 5 — distance atlas readout, owed from G1 (nothing had ever looked at
-           the visibility moments and G3's Chebyshev test is built on them).
-           Spheres are tinted by the stored mean — already normalised to
-           [0,1] by maxRayDist — on a blue->green->red ramp; magenta means
-           mean2 < mean^2, which is algebraically impossible for a real second
-           moment and therefore says the lobe or the EMA is wrong, not merely
-           mistuned.
+           direction the sphere is seen from.  Convergence readout for G1: a
+           probe in a red-lit room must read red within ~16 frames.
+  mode 2 — per-pixel probe weights (G3).  magenta = not one of the 8 probes had
+           usable data, so GI is black here.  Otherwise a blue->red ramp on the
+           FRACTION OF WEIGHT CHEBYSHEV REJECTED: blue = every probe is visible
+           (open room), red = visibility is throwing nearly everything away
+           (hugging a wall).  Availability of probe data is mode 4's job, so the
+           two overlays compose rather than overlap.
+  mode 3 — leak detector (G3), and the gate for this chunk.  Chebyshev is an
+           ESTIMATE of visibility; this traces a ray query from the receiver to
+           each probe for the GROUND TRUTH and colour-codes the disagreement:
+             green = they agree (whatever the verdict)
+             red   = ray says OCCLUDED but Chebyshev let it through
+                     -> light leaking through geometry, a pillar-2 violation
+             blue  = ray says VISIBLE but Chebyshev blocked it
+                     -> over-darkening; lost energy, not a pillar violation
+           Weighted by each probe's trilinear share, so the colour is "how much
+           of this pixel's GI is wrong", not merely "something disagreed".
+           At r_rtGIProbeVisibility 0 this shows the RAW leak surface with no
+           mitigation, which is the before-picture to tune against; at 1 it
+           shows the residual.  Costs up to 8 ray queries per pixel — an
+           overlay, never the shipping path.
+  mode 5 — distance atlas readout, owed from G1 (nothing had ever looked at the
+           visibility moments and mode 3's Chebyshev is built on them).
+           Spheres are tinted by the stored mean — already normalised to [0,1]
+           by maxRayDist — on a blue->green->red ramp; magenta means
+           mean2 < mean^2, algebraically impossible for a real second moment and
+           therefore a broken map rather than a mistuned one.
 
-The sphere overlays ADD onto the lit scene rather than replacing it: the thing
-being checked is where the probes sit in the world, and a black background
-makes that much harder to judge than the room around them does.
+The sphere overlays (1, 4, 5) ADD onto the lit scene rather than replacing it:
+the thing being checked is where the probes sit in the world, and a black
+background makes that harder to judge than the room around them does.  The
+per-pixel overlays (2, 3) replace it, because there a lit scene underneath is
+just noise on top of the measurement.
 
 Descriptors (set 0):
   binding 0 — irradiance atlas (sampler2D)
@@ -40,8 +58,9 @@ Descriptors (set 0):
   binding 4 — distance atlas (sampler2D)
   binding 5 — depthSampler
   binding 6 — gbufNormalSampler
+  binding 7 — TLAS (mode 3 only, but statically accessed, so always bound)
 
-20260906_froxel_probe_gi.md Part B, chunks G0-G2.
+20260906_froxel_probe_gi.md Part B, chunks G0-G3.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -54,6 +73,7 @@ Code release.
 */
 
 #version 460
+#extension GL_EXT_ray_query : require
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -62,6 +82,7 @@ layout(set = 0, binding = 1, rgba16f) uniform image2D giOut;
 layout(set = 0, binding = 4) uniform sampler2D distanceAtlas;
 layout(set = 0, binding = 5) uniform sampler2D depthSampler;
 layout(set = 0, binding = 6) uniform sampler2D gbufNormalSampler;
+layout(set = 0, binding = 7) uniform accelerationStructureEXT tlas;
 
 #define GIPROBE_SET 0
 #include "gi_probe_common.glsl"
@@ -70,18 +91,25 @@ layout(set = 0, binding = 6) uniform sampler2D gbufNormalSampler;
 #include "rt_indirect.glsl"
 #include "rt_gbuf_normal.glsl"
 
+// Floor under the Chebyshev factor. A probe is never weighted to exactly zero:
+// at zero the interpolation goes discontinuous across the wall and the seam is
+// more objectionable than the residual leak. DDGI uses the same 0.05.
+#define GIPROBE_VIS_FLOOR 0.05
+
 // ---------------------------------------------------------------------------
-// Ray vs the probe lattice.
+// Ray vs the probe lattice (sphere overlays only).
 //
 // Stepping the ray and testing the NEAREST lattice point at each step, rather
 // than iterating the whole grid: at spacing/2 steps no sphere of radius <
 // spacing/2 can be stepped over, and each test is an analytic ray-sphere so the
 // result is exact rather than a marched approximation.
 // ---------------------------------------------------------------------------
-bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 hitCell, out vec3 hitNormal)
+bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 hitCell, out vec3 hitNormal,
+                          out float hitT)
 {
     hitCell = ivec3(0);
     hitNormal = vec3(0.0);
+    hitT = tMax;
 
     float spacing = max(gp.gridOrigin.w, 1.0);
     float step = spacing * 0.5;
@@ -116,6 +144,7 @@ bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 
         best = t0;
         hitCell = cell;
         hitNormal = normalize((ro + rd * t0) - c);
+        hitT = t0;
         found = true;
     }
 
@@ -130,77 +159,207 @@ vec3 gip_Ramp(float t)
 }
 
 // ---------------------------------------------------------------------------
-// The G2 resolve: irradiance at (worldPos, normal) from the 8 surrounding
-// probes.  Returns false when not one of them has usable data — the caller
-// must leave GI at zero rather than invent a value, and that case is what
-// debug mode 4's red spheres locate.
+// One of the 8 surrounding probes, with everything both the resolve and the
+// overlays need.  Factored out so mode 3 can reuse the exact weights mode 0
+// computes — an overlay that recomputes them differently tests nothing.
 // ---------------------------------------------------------------------------
-bool gip_SampleIrradiance(vec3 worldPos, vec3 normal, out vec3 irradiance)
+struct GIProbeTap
+{
+    int   idx;
+    vec3  pos;
+    float weight; // trilinear x wrapped cosine x crush, BEFORE visibility
+    float cheb;   // Chebyshev factor, 1.0 when r_rtGIProbeVisibility is 0
+    bool  valid;
+};
+
+GIProbeTap gip_Tap(int i, vec3 worldPos, vec3 normal, vec3 samplePos, ivec3 baseCell, vec3 frac)
+{
+    GIProbeTap t;
+    t.idx = 0;
+    t.pos = worldPos;
+    t.weight = 0.0;
+    t.cheb = 1.0;
+    t.valid = false;
+
+    ivec3 off = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+    ivec3 cell = baseCell + off;
+    if (!gip_CellInGrid(cell))
+        return t;
+
+    t.idx = gip_StorageIndex(cell);
+    uint flags = probeState.probes[t.idx].flags;
+    // An untraced probe's atlas tile still belongs to whichever probe last
+    // occupied it (storage is toroidal), so it is not "black", it is another
+    // room — exclude it outright.
+    if ((flags & GIPROBE_FLAG_TRACED) == 0u)
+        return t;
+    if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
+        return t;
+
+    vec3 tri = mix(vec3(1.0) - frac, frac, vec3(off));
+    float w = tri.x * tri.y * tri.z;
+    if (w <= 0.0)
+        return t;
+
+    t.pos = gip_ProbePosAt(cell, t.idx);
+
+    // Wrapped cosine against the true (unbiased) direction to the probe: a
+    // probe behind the surface contributes almost nothing, but never exactly
+    // nothing, or the interpolation goes discontinuous at grazing angles and
+    // shows as banding.
+    vec3 toProbe = t.pos - worldPos;
+    float lenSq = dot(toProbe, toProbe);
+    vec3 dirToProbe = (lenSq > 1e-8) ? (toProbe * inversesqrt(lenSq)) : normal;
+    float wrapped = max(1e-4, (dot(dirToProbe, normal) + 1.0) * 0.5);
+    w *= wrapped * wrapped + 0.2;
+
+    // Crush the tail so a probe contributing a sliver does not drag a
+    // neighbouring room's colour in at full trilinear strength.
+    const float crush = 0.2;
+    if (w < crush)
+        w *= (w * w) / (crush * crush);
+
+    t.weight = w;
+    t.valid = true;
+
+    // Chebyshev, from the BIASED position — the same point the trilinear
+    // fraction was taken at, and offset off the surface so the receiver's own
+    // wall does not read as its own occluder.
+    if (gp.misc.z != 0)
+    {
+        vec3 probeToPoint = samplePos - t.pos;
+        float dist = length(probeToPoint);
+        if (dist > 1e-6)
+        {
+            float invD = 1.0 / max(gp.tune.w, 1.0);
+            vec2 m = texture(distanceAtlas, gip_AtlasUV(t.idx, probeToPoint / dist, gp.atlas.w)).rg;
+            t.cheb = gip_Chebyshev(m, dist * invD);
+        }
+    }
+
+    return t;
+}
+
+// True when geometry stands between the receiver and the probe.  Ground truth
+// for mode 3 — this is what Chebyshev is approximating.
+//
+// OPAQUE GEOMETRY ONLY, and that is the whole point.  The moments this is
+// checking were built by probe rays that went through gi_ray.rahit, which
+// DISCARDS alpha-tested geometry below its threshold — so grating holes and
+// decals do not occlude a probe ray.  Forcing gl_RayFlagsOpaqueEXT here instead
+// made every perforated surface read solid, and since Mars City's floors are
+// grating, the overlay reported a screen of leaks that were Chebyshev being
+// right.  No confirm call and no opaque flag means non-opaque candidates are
+// simply never committed and only opaque geometry occludes.
+//
+// Residual mismatch, deliberate: rahit ACCEPTS non-opaque geometry that is not
+// alpha-tested (glass), so glass occludes a probe ray but reads as visible
+// here.  That direction turns a real leak into a green or blue pixel rather
+// than inventing a red one — for a leak detector, under-reporting on rare
+// geometry beats crying wolf on every floor.  A faithful test would need the
+// material table and UV interpolation in this pass, which is not worth it for
+// an overlay.
+bool gip_ProbeOccluded(vec3 from, vec3 to)
+{
+    vec3 d = to - from;
+    float len = length(d);
+    // Below the bias span there is no interval left to test, and tMin > tMax
+    // would make the query meaningless rather than merely empty.
+    if (len < 0.05)
+        return false;
+
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT,
+                          0xFEu, // skip the player body/hands, same mask the vol passes use
+                          from, 0.01, d / len, len - 0.01);
+
+    while (rayQueryProceedEXT(rq))
+    {
+    }
+
+    return rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+// Shared setup for every per-pixel mode: world position, shading normal, and the
+// biased sample point the lattice is addressed at.
+struct GIProbeSite
+{
+    vec3  worldPos;
+    vec3  normal;
+    vec3  samplePos;
+    ivec3 baseCell;
+    vec3  frac;
+    bool  valid; // false for sky / pixels the prepass never wrote
+};
+
+GIProbeSite gip_Site(ivec2 coord, ivec2 fullSize)
+{
+    GIProbeSite s;
+    s.worldPos = vec3(0.0);
+    s.normal = vec3(0.0, 0.0, 1.0);
+    s.samplePos = vec3(0.0);
+    s.baseCell = ivec3(0);
+    s.frac = vec3(0.0);
+    s.valid = false;
+
+    float depth = texelFetch(depthSampler, coord, 0).r;
+    if (depth >= 1.0)
+        return s; // sky gets no GI, same as gi_ray.rgen
+
+    s.worldPos = rt_ReconstructWorldPos(coord, fullSize, gp.invViewProj);
+    vec3 toEye = gp.cameraPosW.xyz - s.worldPos;
+    vec3 viewDir = (dot(toEye, toEye) > 1e-8) ? normalize(toEye) : vec3(0.0, 0.0, 1.0);
+
+    if (!rt_GbufNormalAt(coord, gp.misc.y, viewDir, s.normal))
+        s.normal = rt_ReconstructNormal(coord, fullSize, gp.invViewProj, s.worldPos, viewDir);
+
+    // Normal bias lifts the point off its own surface; view bias pushes it
+    // toward the eye, which is what stops a grazing wall from occluding itself
+    // in the Chebyshev test. DDGI carries both for the same reason.
+    s.samplePos = s.worldPos + s.normal * max(gp.tune.y, 0.0) + viewDir * max(gp.tune2.y, 0.0);
+
+    vec3 g = s.samplePos / max(gp.gridOrigin.w, 1.0);
+    s.baseCell = ivec3(floor(g));
+    s.frac = clamp(g - vec3(s.baseCell), vec3(0.0), vec3(1.0));
+    s.valid = true;
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// The G2/G3 resolve: irradiance at the site from its 8 surrounding probes.
+// wBefore/wAfter report the weight Chebyshev removed, for mode 2.  Returns
+// false when not one probe had usable data — the caller must leave GI at zero
+// rather than invent a value, and mode 4's red spheres locate that case.
+// ---------------------------------------------------------------------------
+bool gip_SampleIrradiance(GIProbeSite s, out vec3 irradiance, out float wBefore, out float wAfter)
 {
     irradiance = vec3(0.0);
-
-    float spacing = max(gp.gridOrigin.w, 1.0);
-    vec3 samplePos = worldPos + normal * max(gp.tune.y, 0.0);
-
-    // The lattice is absolute, so the base cell is a plain floor of the world
-    // position in lattice units — no grid origin enters the arithmetic.
-    vec3 g = samplePos / spacing;
-    ivec3 baseCell = ivec3(floor(g));
-    vec3 frac = clamp(g - vec3(baseCell), vec3(0.0), vec3(1.0));
-
-    vec3 sum = vec3(0.0);
-    float sumW = 0.0;
+    wBefore = 0.0;
+    wAfter = 0.0;
 
     // All eight fetches are in the receiver's normal direction; only the tile
     // differs, so the octahedral encode is hoisted out of the loop.
-    vec2 oct = gip_OctEncode(normalize(normal)) * 0.5 + 0.5;
+    vec2 oct = gip_OctEncode(normalize(s.normal)) * 0.5 + 0.5;
+
+    vec3 sum = vec3(0.0);
 
     for (int i = 0; i < 8; i++)
     {
-        ivec3 off = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
-        ivec3 cell = baseCell + off;
-        if (!gip_CellInGrid(cell))
+        GIProbeTap t = gip_Tap(i, s.worldPos, s.normal, s.samplePos, s.baseCell, s.frac);
+        if (!t.valid)
             continue;
 
-        int idx = gip_StorageIndex(cell);
-        uint flags = probeState.probes[idx].flags;
-        // An untraced probe's atlas tile still belongs to whichever probe last
-        // occupied it (storage is toroidal), so it is not "black", it is
-        // another room — exclude it outright.
-        if ((flags & GIPROBE_FLAG_TRACED) == 0u)
-            continue;
-        if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
-            continue;
+        wBefore += t.weight;
+        float w = t.weight * max(t.cheb, GIPROBE_VIS_FLOOR);
+        wAfter += w;
 
-        vec3 tri = mix(vec3(1.0) - frac, frac, vec3(off));
-        float weight = tri.x * tri.y * tri.z;
-        if (weight <= 0.0)
-            continue;
-
-        // Wrapped cosine against the true (unbiased) direction to the probe:
-        // a probe behind the surface contributes almost nothing, but never
-        // exactly nothing, or the interpolation goes discontinuous at grazing
-        // angles and shows as banding.
-        vec3 toProbe = gip_ProbePosAt(cell, idx) - worldPos;
-        float lenSq = dot(toProbe, toProbe);
-        vec3 dirToProbe = (lenSq > 1e-8) ? (toProbe * inversesqrt(lenSq)) : normal;
-        float wrapped = max(1e-4, (dot(dirToProbe, normal) + 1.0) * 0.5);
-        weight *= wrapped * wrapped + 0.2;
-
-        // Crush the tail so a probe contributing a sliver does not drag a
-        // neighbouring room's colour in at full trilinear strength.
-        const float crush = 0.2;
-        if (weight < crush)
-            weight *= (weight * weight) / (crush * crush);
-
-        sum += texture(irradianceAtlas, gip_AtlasUVOct(idx, oct, gp.atlas.z)).rgb * weight;
-        sumW += weight;
+        sum += texture(irradianceAtlas, gip_AtlasUVOct(t.idx, oct, gp.atlas.z)).rgb * w;
     }
 
-    if (sumW <= 1e-6)
+    if (wAfter <= 1e-6)
         return false;
 
-    irradiance = sum / sumW;
+    irradiance = sum / wAfter;
     return true;
 }
 
@@ -225,30 +384,70 @@ void main()
 
     if (mode == 0)
     {
-        float depth = texelFetch(depthSampler, fullCoord, 0).r;
-        if (depth < 1.0) // sky and unwritten pixels get no GI, same as gi_ray.rgen
+        GIProbeSite s = gip_Site(fullCoord, fullSize);
+        vec3 irradiance;
+        float wBefore, wAfter;
+        if (s.valid && gip_SampleIrradiance(s, irradiance, wBefore, wAfter))
         {
-            vec3 worldPos = rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj);
-            vec3 toEye = gp.cameraPosW.xyz - worldPos;
-            vec3 viewDir = (dot(toEye, toEye) > 1e-8) ? normalize(toEye) : vec3(0.0, 0.0, 1.0);
+            outColour = irradiance * gp.tune.z;
 
-            vec3 normal;
-            if (!rt_GbufNormalAt(fullCoord, gp.misc.y, viewDir, normal))
-                normal = rt_ReconstructNormal(fullCoord, fullSize, gp.invViewProj, worldPos, viewDir);
-
-            vec3 irradiance;
-            if (gip_SampleIrradiance(worldPos, normal, irradiance))
+            // Same energy-neutral contrast push gi_ray.rgen applies, so an
+            // r_rtGIProbes A/B at matched r_rtGIStrength/r_rtGIContrast
+            // compares the sampling structure and nothing else.
+            if (gp.tune2.x > 0.0)
             {
-                outColour = irradiance * gp.tune.z;
+                vec3 grayRef = vec3(dot(outColour, vec3(1.0 / 3.0)));
+                outColour = max(grayRef + (outColour - grayRef) * (1.0 + gp.tune2.x), vec3(0.0));
+            }
+        }
+    }
+    else if (mode == 2)
+    {
+        GIProbeSite s = gip_Site(fullCoord, fullSize);
+        if (s.valid)
+        {
+            vec3 irradiance;
+            float wBefore, wAfter;
+            if (!gip_SampleIrradiance(s, irradiance, wBefore, wAfter) || wBefore <= 1e-6)
+                outColour = vec3(1.0, 0.0, 1.0); // no usable probe — GI is black here
+            else
+                outColour = gip_Ramp(1.0 - wAfter / wBefore);
+        }
+    }
+    else if (mode == 3)
+    {
+        GIProbeSite s = gip_Site(fullCoord, fullSize);
+        if (s.valid)
+        {
+            float wTotal = 0.0;
+            float wLeak = 0.0; // occluded, but Chebyshev let it through
+            float wDark = 0.0; // visible, but Chebyshev blocked it
 
-                // Same energy-neutral contrast push gi_ray.rgen applies, so an
-                // r_rtGIProbes A/B at matched r_rtGIStrength/r_rtGIContrast
-                // compares the sampling structure and nothing else.
-                if (gp.tune2.x > 0.0)
-                {
-                    vec3 grayRef = vec3(dot(outColour, vec3(1.0 / 3.0)));
-                    outColour = max(grayRef + (outColour - grayRef) * (1.0 + gp.tune2.x), vec3(0.0));
-                }
+            for (int i = 0; i < 8; i++)
+            {
+                GIProbeTap t = gip_Tap(i, s.worldPos, s.normal, s.samplePos, s.baseCell, s.frac);
+                if (!t.valid)
+                    continue;
+
+                wTotal += t.weight;
+
+                // Trace from the biased point, matching what Chebyshev was
+                // asked about — testing a different ray would make any
+                // disagreement meaningless.
+                bool occluded = gip_ProbeOccluded(s.samplePos, t.pos);
+                bool passed = t.cheb > 0.5;
+
+                if (occluded && passed)
+                    wLeak += t.weight;
+                else if (!occluded && !passed)
+                    wDark += t.weight;
+            }
+
+            if (wTotal > 1e-6)
+            {
+                float leak = wLeak / wTotal;
+                float dark = wDark / wTotal;
+                outColour = vec3(leak, max(0.0, 1.0 - leak - dark), dark);
             }
         }
     }
@@ -262,18 +461,32 @@ void main()
         // through it, or the overlay reads as "probes everywhere" and says
         // nothing about placement.
         float depth = texelFetch(depthSampler, fullCoord, 0).r;
-        float tMax = 1.0e6;
+        float tSurface = 1.0e6;
         if (depth < 1.0)
-            tMax = length(rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj) - ro);
+            tSurface = length(rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj) - ro);
+
+        // Mode 4 traces PAST the surface, because the probes it most needs to
+        // show are the ones buried in geometry — depth-occluding them makes a
+        // buried probe invisible by construction, which is exactly the state G4
+        // classifies. Below, a probe is drawn if it is in front of the surface
+        // OR if it is flagged inside geometry, so buried probes x-ray through
+        // and everything else stays depth-correct.
+        float tMax = (mode == 4) ? 1.0e6 : tSurface;
 
         ivec3 cell;
         vec3 n;
-        if (gip_TraceProbeSphere(ro, rd, tMax, max(gp.debug.y, 0.25), cell, n))
+        float tHit;
+        if (gip_TraceProbeSphere(ro, rd, tMax, max(gp.debug.y, 0.25), cell, n, tHit))
         {
             int idx = gip_StorageIndex(cell);
             uint flags = probeState.probes[idx].flags;
 
-            if (mode == 4)
+            if (mode == 4 && tHit > tSurface && (flags & GIPROBE_FLAG_INSIDE) == 0u)
+            {
+                // Behind geometry and not classified buried — an ordinary probe
+                // in the next room. Occlude it as the other modes do.
+            }
+            else if (mode == 4)
             {
                 if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
                     outColour = vec3(0.0, 0.3, 1.0);
@@ -285,6 +498,12 @@ void main()
                 // Cheap lambert against the view so the spheres read as spheres
                 // and a lattice is legible as a lattice.
                 outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
+
+                // Halved when x-rayed through geometry, so "buried in that wall"
+                // stays distinguishable from "sitting in front of it" — without
+                // this a blue sphere gives no depth cue at all.
+                if (tHit > tSurface)
+                    outColour *= 0.5;
             }
             else if (mode == 5)
             {

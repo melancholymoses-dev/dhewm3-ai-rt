@@ -61,9 +61,22 @@ layout(set = GIPROBE_SET, binding = 2, std140) uniform GIProbeParams {
 
 // std430: vec3 has 16-byte alignment, so the trailing uint packs into the same
 // 16 bytes and this matches GIProbeStateEntry in vk_gi_probe.cpp.
+//
+// OWNERSHIP IS SPLIT, and that is deliberate.  `flags` and `offset` are
+// CPU-owned and re-uploaded every frame — the blend pass has to know whether a
+// probe had history BEFORE this frame's trace, and only the CPU knows both the
+// schedule and the grid scroll.  `backface` is the one field the GPU writes:
+// gi_probe_blend.comp measures it, the CPU reads it back two frames later
+// (the frame fence has retired that submission) and turns it into
+// GIPROBE_FLAG_INSIDE.  The CPU copies the value it just read back out again,
+// so its own upload never clobbers the measurement.
 struct GIProbeState {
-    vec3 offset; // G4 relocation from the lattice point; zero until then
-    uint flags;  // GIPROBE_FLAG_*
+    vec3  offset;   //  0  G4 relocation from the lattice point; zero until then
+    uint  flags;    // 12  GIPROBE_FLAG_*
+    float backface; // 16  GPU-written: fraction of this probe's rays hitting a back face
+    float pad0;     // 20
+    float pad1;     // 24
+    float pad2;     // 28
 };
 
 #define GIPROBE_FLAG_TRACED 1u // has been traced at least once since it entered the window
@@ -239,6 +252,36 @@ ivec2 gip_BorderSource(ivec2 t, int side)
     if (t.x == 0)
         return ivec2(1, last - t.y);
     return ivec2(inHi, last - t.y); // t.x == last
+}
+
+// ---------------------------------------------------------------------------
+// Chebyshev visibility (G3, DDGI / Majercik et al. 2019)
+//
+// Upper-bounds the probability that the probe can actually SEE the point it is
+// about to light, from the mean and mean-square occluder distance stored in its
+// visibility map.  This is the whole of pillar 2 for probe GI: without it a
+// probe on the far side of a thin wall interpolates its room's light into a
+// sealed one.
+//
+// BOTH arguments are normalised by r_rtGIProbeMaxRayDist — the moments because
+// rg16f cannot hold a raw second moment (see gi_probe_blend.comp), and distNorm
+// to match.  They MUST agree: the D^2 in the variance cancels the D^2 in the
+// squared difference only if it does, and mismatching them scales the test by
+// 512 with no symptom other than "visibility does nothing" or "everything is
+// black".
+// ---------------------------------------------------------------------------
+float gip_Chebyshev(vec2 moments, float distNorm)
+{
+    float mean = moments.x;
+    if (distNorm <= mean)
+        return 1.0; // in front of the mean occluder — visible, no bound needed
+
+    float variance = abs(mean * mean - moments.y);
+    float d = distNorm - mean;
+    float v = variance / (variance + d * d);
+    // Cubed: the raw ratio falls off far too gently and leaves a haze of leaked
+    // light past every wall.  DDGI cubes it for the same reason.
+    return max(v * v * v, 0.0);
 }
 
 // ---------------------------------------------------------------------------

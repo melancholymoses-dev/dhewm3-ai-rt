@@ -90,8 +90,24 @@ static idCVar r_rtGIProbeHysteresis("r_rtGIProbeHysteresis", "0.97", CVAR_RENDER
 static idCVar r_rtGIProbeNormalBias("r_rtGIProbeNormalBias", "8.0", CVAR_RENDERER | CVAR_FLOAT,
                                     "Receiver offset along the surface normal before the probe lookup (G2).");
 
+static idCVar r_rtGIProbeViewBias("r_rtGIProbeViewBias", "8.0", CVAR_RENDERER | CVAR_FLOAT,
+                                  "Receiver offset toward the eye, on top of r_rtGIProbeNormalBias (G3). This is "
+                                  "what stops a wall seen at a grazing angle from registering as its own occluder "
+                                  "in the Chebyshev test. Raise it if r_rtGIProbeDebug 3 shows blue "
+                                  "(over-darkening) along walls; lower it if raising it turns them red (leaks).");
+
+static idCVar r_rtGIProbeInsideThreshold("r_rtGIProbeInsideThreshold", "0.25", CVAR_RENDERER | CVAR_FLOAT,
+                                         "G4: fraction of a probe's rays that must hit BACK faces before it is "
+                                         "classified as buried in geometry and given zero weight in the resolve. "
+                                         "A probe inside a brush fires every ray into that brush's interior, so it "
+                                         "sees back faces almost exclusively; open air sees front faces. Cleared "
+                                         "again below 0.75x this, a dead band so a probe on the boundary cannot "
+                                         "flip-flop. 0 disables the classification.");
+
 static idCVar r_rtGIProbeVisibility("r_rtGIProbeVisibility", "1", CVAR_RENDERER | CVAR_BOOL,
-                                    "Chebyshev visibility weighting in the resolve (G3).");
+                                    "Chebyshev visibility weighting in the resolve (G3) — the thin-wall leak "
+                                    "mitigation, and the whole of pillar 2 for probe GI. Set 0 to see the raw "
+                                    "leak surface r_rtGIProbeDebug 3 is measuring against.");
 
 static idCVar r_rtGIProbeMaxRayDist("r_rtGIProbeMaxRayDist", "512", CVAR_RENDERER | CVAR_FLOAT,
                                     "Probe ray length, and the value a miss records in the visibility "
@@ -107,7 +123,10 @@ static idCVar r_rtGIProbeDistSharpness("r_rtGIProbeDistSharpness", "50.0", CVAR_
 
 static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INTEGER,
                                "Probe overlay: 0=off, 1=probe spheres tinted by stored irradiance, "
-                               "2=per-pixel probe weights (G3), 3=leak detector (G3), "
+                               "2=probe weights (blue->red = fraction of weight Chebyshev rejected; "
+                               "magenta = no usable probe, GI is black there), "
+                               "3=leak detector: Chebyshev vs ray-traced ground truth — green=agree, "
+                               "red=LEAK (occluded but let through), blue=over-dark (visible but blocked), "
                                "4=probe state (green=traced, red=never traced, blue=inside geometry), "
                                "5=distance atlas (blue->red ramp of mean hit distance / "
                                "r_rtGIProbeMaxRayDist; magenta = impossible second moment).");
@@ -169,18 +188,23 @@ struct GIProbeParamsUBO
     int32_t screen[4];     // 192  x=screenW y=screenH z=outW w=outH
     int32_t rect[4];       // 208  resolve dispatch rect, output-image space
     float debug[4];        // 224  x=debugGain y=probeRadius z=distSharpness w=unused
-    float tune2[4];        // 240  x=giContrast  y/z/w reserved (G3 Chebyshev)
+    float tune2[4];        // 240  x=giContrast y=viewBias  z/w reserved
 };
 static_assert(sizeof(GIProbeParamsUBO) == 256, "GIProbeParamsUBO size mismatch");
 
 // Mirrors GIProbeState in gi_probe_common.glsl. std430 gives vec3 a 16-byte
 // alignment, so the trailing uint packs into the same 16 bytes.
+//
+// `backface` is the one GPU-written field — see the GLSL side for why ownership
+// of this struct is split.
 struct GIProbeStateEntry
 {
-    float offset[3]; // G4 relocation from the lattice point
-    uint32_t flags;  // GIPROBE_FLAG_*
+    float offset[3]; //  0  G4 relocation from the lattice point
+    uint32_t flags;  // 12  GIPROBE_FLAG_*
+    float backface;  // 16  written by gi_probe_blend.comp, read back here
+    float pad[3];    // 20
 };
-static_assert(sizeof(GIProbeStateEntry) == 16, "GIProbeStateEntry size mismatch");
+static_assert(sizeof(GIProbeStateEntry) == 32, "GIProbeStateEntry size mismatch");
 
 #define GIPROBE_FLAG_TRACED 0x1u
 #define GIPROBE_FLAG_INSIDE 0x2u
@@ -638,6 +662,7 @@ static void VK_RT_GIProbeAnchor(const viewDef_t *viewDef, float spacing)
         {
             s_probeState[i].flags = 0;
             s_probeState[i].offset[0] = s_probeState[i].offset[1] = s_probeState[i].offset[2] = 0.0f;
+            s_probeState[i].backface = 0.0f;
         }
         s_baseCell[0] = newBase[0];
         s_baseCell[1] = newBase[1];
@@ -682,6 +707,10 @@ static void VK_RT_GIProbeAnchor(const viewDef_t *viewDef, float spacing)
 
                 s_probeState[idx].flags = 0;
                 s_probeState[idx].offset[0] = s_probeState[idx].offset[1] = s_probeState[idx].offset[2] = 0.0f;
+                // The tile now belongs to a different probe in a different room;
+                // inheriting its predecessor's verdict would classify on the
+                // wrong geometry until the EMA washed it out.
+                s_probeState[idx].backface = 0.0f;
                 cleared++;
             }
 
@@ -801,6 +830,10 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     ubo.debug[2] = Max(1.0f, r_rtGIProbeDistSharpness.GetFloat());
 
     ubo.tune2[0] = idMath::ClampFloat(0.0f, 1.0f, r_rtGIContrast.GetFloat());
+    // Clamped below half spacing: a bias larger than that walks the sample into
+    // the next lattice cell, so the trilinear weights would describe a point the
+    // receiver is not at.
+    ubo.tune2[1] = idMath::ClampFloat(0.0f, s_spacing * 0.5f, r_rtGIProbeViewBias.GetFloat());
 
     return true;
 }
@@ -923,10 +956,15 @@ static void VK_RT_InitProbeBlendPipelines(void)
 //   4 COMBINED_IMAGE_SAMPLER  distance atlas
 //   5 COMBINED_IMAGE_SAMPLER  depth
 //   6 COMBINED_IMAGE_SAMPLER  G-buffer normal/F0
+//   7 ACCELERATION_STRUCTURE  TLAS — G3's leak overlay traces ray queries for
+//     ground-truth probe visibility. Only mode 3 reads it, but the shader
+//     references it statically, so it has to be a live handle on every dispatch;
+//     the resolve therefore requires a valid TLAS, exactly as VK_RT_DispatchGI
+//     already does.
 static void VK_RT_InitProbeResolvePipeline(void)
 {
-    VkDescriptorSetLayoutBinding bindings[7] = {};
-    for (int i = 0; i < 7; i++)
+    VkDescriptorSetLayoutBinding bindings[8] = {};
+    for (int i = 0; i < 8; i++)
     {
         bindings[i].binding = (uint32_t)i;
         bindings[i].descriptorCount = 1;
@@ -939,10 +977,11 @@ static void VK_RT_InitProbeResolvePipeline(void)
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 7;
+    layoutInfo.bindingCount = 8;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giProbeResolveDescLayout));
 
@@ -973,16 +1012,17 @@ static void VK_RT_InitProbeResolvePipeline(void)
     if (vkRT.giProbeResolvePipeline == VK_NULL_HANDLE)
         return;
 
-    VkDescriptorPoolSize poolSizes[4] = {};
+    VkDescriptorPoolSize poolSizes[5] = {};
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 4)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[4] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
-    poolInfo.poolSizeCount = 4;
+    poolInfo.poolSizeCount = 5;
     poolInfo.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.giProbeResolveDescPool));
 
@@ -1216,6 +1256,54 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         return false;
     }
 
+    // --- G4 classification: read back what the GPU measured, THEN upload ---
+    //
+    // Order matters both ways. The read must come before the memcpy or our own
+    // upload overwrites the measurement; the memcpy must carry the value we just
+    // read so the next dispatch's EMA continues from it rather than from zero.
+    // The data is from this slot's previous submission, which the frame fence
+    // has already retired, so no extra synchronisation is needed — the existing
+    // memcpy relies on exactly the same guarantee.
+    if (vkRT.giProbeStateSsboMapped[frameIdx] != NULL)
+    {
+        const GIProbeStateEntry *gpuState = (const GIProbeStateEntry *)vkRT.giProbeStateSsboMapped[frameIdx];
+        const float insideOn = Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat());
+        const float insideOff = insideOn * 0.75f; // dead band — see the CVar
+        int inside = 0;
+
+        for (int i = 0; i < s_probeStateCount; i++)
+        {
+            const float bf = gpuState[i].backface;
+            s_probeState[i].backface = (bf == bf) ? bf : 0.0f; // NaN guard: never classify on garbage
+
+            if (insideOn > 0.0f && (s_probeState[i].flags & GIPROBE_FLAG_TRACED) != 0)
+            {
+                if (s_probeState[i].backface >= insideOn)
+                    s_probeState[i].flags |= GIPROBE_FLAG_INSIDE;
+                else if (s_probeState[i].backface < insideOff)
+                    s_probeState[i].flags &= ~GIPROBE_FLAG_INSIDE;
+            }
+            else if (insideOn <= 0.0f)
+            {
+                s_probeState[i].flags &= ~GIPROBE_FLAG_INSIDE;
+            }
+
+            if ((s_probeState[i].flags & GIPROBE_FLAG_INSIDE) != 0)
+                inside++;
+        }
+
+        // Every probe excluded is a probe the resolve can no longer fall back
+        // on, so a runaway threshold shows up as black GI. Report the count when
+        // it moves rather than making that a silent failure.
+        static int s_lastInsideLogged = -1;
+        if (r_vkLogRT.GetInteger() >= 1 && abs(inside - s_lastInsideLogged) > Max(1, s_probeStateCount / 100))
+        {
+            s_lastInsideLogged = inside;
+            common->Printf("VK RT GIProbe: %d/%d probes classified inside geometry (%.1f%%, threshold %.2f)\n", inside,
+                           s_probeStateCount, 100.0 * inside / Max(1, s_probeStateCount), insideOn);
+        }
+    }
+
     // Upload the PRE-trace flags: gi_probe_blend.comp uses them to decide whether
     // a probe has history to blend against, and this frame's scheduled probes do
     // not yet. They are marked below, after the buffer is filled.
@@ -1289,12 +1377,16 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
 
         int traced = 0;
         int inside = 0;
+        double bfSum = 0.0;
+        float bfMax = 0.0f;
         for (int i = 0; i < s_probeStateCount; i++)
         {
             if (s_probeState[i].flags & GIPROBE_FLAG_TRACED)
                 traced++;
             if (s_probeState[i].flags & GIPROBE_FLAG_INSIDE)
                 inside++;
+            bfSum += s_probeState[i].backface;
+            bfMax = Max(bfMax, s_probeState[i].backface);
         }
 
         const idVec3 camPos = viewDef->renderView.vieworg;
@@ -1319,8 +1411,11 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         common->Printf("  scratch %ux%u (%.2f MiB/slot)  state %.2f MiB/slot  total ~%.1f MiB\n",
                        vkRT.giProbeScratch[frameIdx].width, vkRT.giProbeScratch[frameIdx].height, scratchMiB, stateMiB,
                        irrMiB + distMiB + (scratchMiB + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
-        common->Printf("  traced=%d/%d  insideGeometry=%d  never traced=%d\n", traced, s_probeStateCount, inside,
-                       s_probeStateCount - traced);
+        common->Printf("  traced=%d/%d  insideGeometry=%d (%.1f%%)  never traced=%d\n", traced, s_probeStateCount,
+                       inside, 100.0 * inside / Max(1, s_probeStateCount), s_probeStateCount - traced);
+        common->Printf("  backface fraction: mean=%.3f max=%.3f  threshold=%.2f on / %.2f off\n",
+                       bfSum / Max(1, s_probeStateCount), bfMax, Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat()),
+                       Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat()) * 0.75f);
         common->Printf("  schedule: base=%d  %d probes/frame -> full refresh every %.1f frames  %d rays each "
                        "(%d rays/frame)\n",
                        s_updateBase, s_probeUpdates, (double)s_probeStateCount / (double)Max(1, s_probeUpdates),
@@ -1331,9 +1426,12 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
                        VK_RT_GIProbeActive() ? 1 : 0, outUbo.misc[0]);
         common->Printf("  sizeof(GIProbeParamsUBO)=%d (GLSL std140 block expects 256)\n",
                        (int)sizeof(GIProbeParamsUBO));
-        common->Printf("  resolve: giStrength=%.3f giContrast=%.3f normalBias=%.1f (mode 0 owns giBuffer=%d)\n",
-                       outUbo.tune[2], outUbo.tune2[0], outUbo.tune[1],
-                       (VK_RT_GIProbeActive() && outUbo.misc[0] == 0) ? 1 : 0);
+        common->Printf("  resolve: giStrength=%.3f giContrast=%.3f (mode 0 owns giBuffer=%d)\n", outUbo.tune[2],
+                       outUbo.tune2[0], (VK_RT_GIProbeActive() && outUbo.misc[0] == 0) ? 1 : 0);
+        common->Printf("  leak control: chebyshev=%s normalBias=%.1f viewBias=%.1f (spacing %.0f, so %.2f/%.2f "
+                       "cells)\n",
+                       outUbo.misc[2] ? "ON" : "OFF", outUbo.tune[1], outUbo.tune2[1], s_spacing,
+                       outUbo.tune[1] / Max(1.0f, s_spacing), outUbo.tune2[1] / Max(1.0f, s_spacing));
     }
 
     return true;
@@ -1522,6 +1620,17 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     const int frameIdx = vk.currentFrame;
 
+    // G3 bound the TLAS into the resolve set for the leak overlay's ray queries.
+    // Only mode 3 reads it, but the shader references it statically, so binding
+    // set 0 at all requires a live handle. VK_RT_DispatchGI has the same
+    // requirement, so a frame without a TLAS already had no GI.
+    if (!vkRT.tlas[frameIdx].isValid || vkRT.tlas[frameIdx].handle == VK_NULL_HANDLE)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT GIProbe: resolve skipped — no valid TLAS this frame\n");
+        return;
+    }
+
     static int s_lastResolveFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
     if (s_lastResolveFrame[frameIdx] == tr.frameCount)
         return;
@@ -1576,8 +1685,13 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         VkDescriptorBufferInfo paramsInfo = {vkRT.giProbeParamsUbo[frameIdx], 0, sizeof(GIProbeParamsUBO)};
         VkDescriptorBufferInfo stateInfo = {vkRT.giProbeStateSsbo[frameIdx], 0, VK_WHOLE_SIZE};
 
-        VkWriteDescriptorSet writes[7] = {};
-        for (int i = 0; i < 7; i++)
+        VkWriteDescriptorSetAccelerationStructureKHR tlasWrite = {};
+        tlasWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        tlasWrite.accelerationStructureCount = 1;
+        tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
+
+        VkWriteDescriptorSet writes[8] = {};
+        for (int i = 0; i < 8; i++)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = ds;
@@ -1598,8 +1712,10 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[5].pImageInfo = &depthInfo;
         writes[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[6].pImageInfo = &gbufInfo;
+        writes[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        writes[7].pNext = &tlasWrite;
 
-        vkUpdateDescriptorSets(vk.device, 7, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk.device, 8, writes, 0, NULL);
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 

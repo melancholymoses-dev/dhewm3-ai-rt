@@ -107,6 +107,35 @@ void main()
 
     ivec2 lid = ivec2(gl_LocalInvocationID.xy);
 
+    // ---- Probe classification (G4) ----
+    //
+    // A probe buried in a brush fires every ray into the INSIDE of that brush,
+    // so it sees back faces almost exclusively; a probe in open air sees front
+    // faces. The sign bit of the scratch alpha already carries this — G1 used it
+    // only to exclude those rays from the irradiance and then threw it away.
+    // Counting it is the whole classification statistic.
+    //
+    // The CPU reads this back and owns the flag; see gi_probe_common.glsl on why
+    // ownership of the state struct is split. One thread does it because it is a
+    // single scalar per probe and 256 threads racing on one address would need
+    // atomics to say the same thing.
+    if (tid == 0)
+    {
+        int back = 0;
+        for (int r = 0; r < numRays; r++)
+        {
+            if (s_ray[r].a < 0.0)
+                back++;
+        }
+        float frac = float(back) / float(max(numRays, 1));
+        // Same EMA the maps use, so one noisy update cannot flip a
+        // classification. A probe with no history takes it outright, or a newly
+        // scrolled-in probe would spend a full convergence inheriting the
+        // previous occupant's verdict.
+        float prev = probeState.probes[storageIdx].backface;
+        probeState.probes[storageIdx].backface = hadHistory ? mix(prev, frac, alpha) : frac;
+    }
+
     // ---- Irradiance (8x8 interior) ----
     int irrSide = max(gp.atlas.z, 3);
     int irrInterior = irrSide - 2;
@@ -159,10 +188,21 @@ void main()
             sumW += w;
         }
 
-        vec2 value = (sumW > 1e-6) ? vec2(sumD / sumW, sumD2 / sumW) : vec2(1.0, 1.0);
-
-        ivec2 t = gip_InteriorTexel(storageIdx, lid, distSide);
-        vec2 prev = imageLoad(distanceAtlas, t).rg;
-        imageStore(distanceAtlas, t, vec4(mix(prev, value, alpha), 0.0, 0.0));
+        // No ray landed in this texel's lobe.  The old fallback wrote
+        // vec2(1.0, 1.0) — mean = maxRayDist, variance = 0, i.e. "nothing in
+        // the way" — which is the LEAK-PERMISSIVE answer: gip_Chebyshev returns
+        // 1.0 unconditionally for it and the resolve lets that probe through a
+        // wall.  With 128 rays against a 16x16 interior there are fewer rays
+        // than texels, so a few per cent of texels took that path every update.
+        // Keeping history instead leaves the estimate stale rather than wrong,
+        // and an as-yet-unwritten texel reads mean 0 -> fully occluded, which is
+        // the conservative direction pillar 2 wants.
+        if (sumW > 1e-6)
+        {
+            vec2 value = vec2(sumD / sumW, sumD2 / sumW);
+            ivec2 t = gip_InteriorTexel(storageIdx, lid, distSide);
+            vec2 prev = imageLoad(distanceAtlas, t).rg;
+            imageStore(distanceAtlas, t, vec4(mix(prev, value, alpha), 0.0, 0.0));
+        }
     }
 }
