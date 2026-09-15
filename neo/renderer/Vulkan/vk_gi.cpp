@@ -51,7 +51,10 @@ static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, 
 idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                       "Global scale applied to the GI buffer before compositing");
 
-static idCVar r_rtGIContrast(
+// Not static: gi_probe_resolve.comp applies the identical contrast push, so an
+// r_rtGIProbes A/B compares the sampling structure and not two different tone
+// curves (20260906_froxel_probe_gi.md G2).
+idCVar r_rtGIContrast(
     "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
     "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
     "0 = off, 1 = full effect");
@@ -2373,9 +2376,18 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                     0, NULL);
     }
 
-    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+    // Probe mode stands the PER-PIXEL launch down, but not this function: the
+    // probe trace is a second raygen in this same pipeline and reaches
+    // gi_ray.rchit, which reads set 0's GIParams/TLAS/light SSBO. Everything
+    // above — UBO build, s_giParamsOffset publication, descriptor refresh — is
+    // what makes that trace legal, so only the vkCmdTraceRaysKHR is skipped.
+    const bool probeOwnsGI = VK_RT_GIProbeActive();
+
+    if (probeOwnsGI || dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
     {
         // Nothing to dispatch — still restore depth layout.
+        if (probeOwnsGI && r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT GI: per-pixel launch skipped — r_rtGIProbes owns giBuffer\n");
     }
     else
     {
@@ -2809,6 +2821,12 @@ void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool())
         return;
+    // Probe path: skip. There is no per-pixel noise left to filter — the probe
+    // atlas is its own temporal accumulator in world space — and an edge-stopped
+    // blur over an already-interpolated field only erodes the little contact
+    // detail the probes do carry.
+    if (VK_RT_GIProbeActive())
+        return;
 
     const int frameIdx = vk.currentFrame;
 
@@ -3130,6 +3148,12 @@ void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     if (!vk.gbufferSupported)
         return; // no gbufAlbedo target to read — legacy raw-radiance composite
+    // A probe overlay has claimed giBuffer: it is a measurement, not radiance,
+    // and tinting it by the receiver's albedo would make the readout unreadable.
+    // Mode 0 is the real resolve and DOES want modulating — probe irradiance is
+    // albedo-free, so this is more correct for it than for per-pixel GI.
+    if (VK_RT_GIProbeDebugMode() != 0)
+        return;
     if (vkRT.giAlbedoModPipeline == VK_NULL_HANDLE)
         return;
 

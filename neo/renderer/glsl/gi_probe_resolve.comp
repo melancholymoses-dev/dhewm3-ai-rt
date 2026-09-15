@@ -6,8 +6,12 @@ dhewm3-rt Vulkan — gi_probe_resolve.comp — probe atlas -> screen.
 Writes vkRT.giBuffer and vk_gi_probe.cpp repoints giReadView at it, so
 gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
 
-  mode 0 — the real resolve (G2).  Not implemented yet: G0/G1 dispatch this
-           shader only while an overlay is selected.
+  mode 0 — the real resolve (G2).  Reconstruct the pixel's world position and
+           shading normal, offset along the normal, then take the 8 lattice
+           probes surrounding that point: trilinear weight x a wrapped cosine
+           term against the direction to each probe, normalised.  The atlas
+           fetch direction is the NORMAL (irradiance arriving from the
+           hemisphere); the probe direction only weights the blend.
 
   mode 1 — probe spheres tinted by the irradiance they have stored, in the
            direction the sphere is seen from.  This is the convergence readout
@@ -16,10 +20,17 @@ gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
            red = never traced (its atlas tile is stale or empty and the G2
            resolve must fall back rather than darken), blue = classified inside
            geometry (G4).
+  mode 5 — distance atlas readout, owed from G1 (nothing had ever looked at
+           the visibility moments and G3's Chebyshev test is built on them).
+           Spheres are tinted by the stored mean — already normalised to
+           [0,1] by maxRayDist — on a blue->green->red ramp; magenta means
+           mean2 < mean^2, which is algebraically impossible for a real second
+           moment and therefore says the lobe or the EMA is wrong, not merely
+           mistuned.
 
-Both overlays ADD onto the lit scene rather than replacing it: the thing being
-checked in G0 is where the probes sit in the world, and a black background makes
-that much harder to judge than the room around them does.
+The sphere overlays ADD onto the lit scene rather than replacing it: the thing
+being checked is where the probes sit in the world, and a black background
+makes that much harder to judge than the room around them does.
 
 Descriptors (set 0):
   binding 0 — irradiance atlas (sampler2D)
@@ -30,7 +41,7 @@ Descriptors (set 0):
   binding 5 — depthSampler
   binding 6 — gbufNormalSampler
 
-20260906_froxel_probe_gi.md Part B, chunk G0.
+20260906_froxel_probe_gi.md Part B, chunks G0-G2.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -111,6 +122,85 @@ bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 
     return found;
 }
 
+// Blue -> cyan -> green -> yellow -> red over [0,1].  Overlay-only.
+vec3 gip_Ramp(float t)
+{
+    t = clamp(t, 0.0, 1.0);
+    return clamp(vec3(t * 3.0 - 1.5, 1.5 - abs(t * 3.0 - 1.5), 1.5 - t * 3.0), vec3(0.0), vec3(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// The G2 resolve: irradiance at (worldPos, normal) from the 8 surrounding
+// probes.  Returns false when not one of them has usable data — the caller
+// must leave GI at zero rather than invent a value, and that case is what
+// debug mode 4's red spheres locate.
+// ---------------------------------------------------------------------------
+bool gip_SampleIrradiance(vec3 worldPos, vec3 normal, out vec3 irradiance)
+{
+    irradiance = vec3(0.0);
+
+    float spacing = max(gp.gridOrigin.w, 1.0);
+    vec3 samplePos = worldPos + normal * max(gp.tune.y, 0.0);
+
+    // The lattice is absolute, so the base cell is a plain floor of the world
+    // position in lattice units — no grid origin enters the arithmetic.
+    vec3 g = samplePos / spacing;
+    ivec3 baseCell = ivec3(floor(g));
+    vec3 frac = clamp(g - vec3(baseCell), vec3(0.0), vec3(1.0));
+
+    vec3 sum = vec3(0.0);
+    float sumW = 0.0;
+
+    for (int i = 0; i < 8; i++)
+    {
+        ivec3 off = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+        ivec3 cell = baseCell + off;
+        if (!gip_CellInGrid(cell))
+            continue;
+
+        int idx = gip_StorageIndex(cell);
+        uint flags = probeState.probes[idx].flags;
+        // An untraced probe's atlas tile still belongs to whichever probe last
+        // occupied it (storage is toroidal), so it is not "black", it is
+        // another room — exclude it outright.
+        if ((flags & GIPROBE_FLAG_TRACED) == 0u)
+            continue;
+        if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
+            continue;
+
+        vec3 tri = mix(vec3(1.0) - frac, frac, vec3(off));
+        float weight = tri.x * tri.y * tri.z;
+        if (weight <= 0.0)
+            continue;
+
+        // Wrapped cosine against the true (unbiased) direction to the probe:
+        // a probe behind the surface contributes almost nothing, but never
+        // exactly nothing, or the interpolation goes discontinuous at grazing
+        // angles and shows as banding.
+        vec3 toProbe = gip_ProbePos(cell) - worldPos;
+        float lenSq = dot(toProbe, toProbe);
+        vec3 dirToProbe = (lenSq > 1e-8) ? (toProbe * inversesqrt(lenSq)) : normal;
+        float wrapped = max(1e-4, (dot(dirToProbe, normal) + 1.0) * 0.5);
+        weight *= wrapped * wrapped + 0.2;
+
+        // Crush the tail so a probe contributing a sliver does not drag a
+        // neighbouring room's colour in at full trilinear strength.
+        const float crush = 0.2;
+        if (weight < crush)
+            weight *= (weight * weight) / (crush * crush);
+
+        vec2 auv = gip_AtlasUV(idx, normal, gp.atlas.z);
+        sum += texture(irradianceAtlas, auv).rgb * weight;
+        sumW += weight;
+    }
+
+    if (sumW <= 1e-6)
+        return false;
+
+    irradiance = sum / sumW;
+    return true;
+}
+
 void main()
 {
     ivec2 local = ivec2(gl_GlobalInvocationID.xy);
@@ -130,7 +220,36 @@ void main()
 
     vec3 outColour = vec3(0.0);
 
-    if (mode == 1 || mode == 4)
+    if (mode == 0)
+    {
+        float depth = texelFetch(depthSampler, fullCoord, 0).r;
+        if (depth < 1.0) // sky and unwritten pixels get no GI, same as gi_ray.rgen
+        {
+            vec3 worldPos = rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj);
+            vec3 toEye = gp.cameraPosW.xyz - worldPos;
+            vec3 viewDir = (dot(toEye, toEye) > 1e-8) ? normalize(toEye) : vec3(0.0, 0.0, 1.0);
+
+            vec3 normal;
+            if (!rt_GbufNormalAt(fullCoord, gp.misc.y, viewDir, normal))
+                normal = rt_ReconstructNormal(fullCoord, fullSize, gp.invViewProj, worldPos, viewDir);
+
+            vec3 irradiance;
+            if (gip_SampleIrradiance(worldPos, normal, irradiance))
+            {
+                outColour = irradiance * gp.tune.z;
+
+                // Same energy-neutral contrast push gi_ray.rgen applies, so an
+                // r_rtGIProbes A/B at matched r_rtGIStrength/r_rtGIContrast
+                // compares the sampling structure and nothing else.
+                if (gp.tune2.x > 0.0)
+                {
+                    vec3 grayRef = vec3(dot(outColour, vec3(1.0 / 3.0)));
+                    outColour = max(grayRef + (outColour - grayRef) * (1.0 + gp.tune2.x), vec3(0.0));
+                }
+            }
+        }
+    }
+    else if (mode == 1 || mode == 4 || mode == 5)
     {
         vec2 uv = (vec2(fullCoord) + 0.5) / vec2(fullSize);
         vec3 ro = gp.cameraPosW.xyz;
@@ -148,7 +267,8 @@ void main()
         vec3 n;
         if (gip_TraceProbeSphere(ro, rd, tMax, max(gp.debug.y, 0.25), cell, n))
         {
-            uint flags = probeState.probes[gip_StorageIndex(cell)].flags;
+            int idx = gip_StorageIndex(cell);
+            uint flags = probeState.probes[idx].flags;
 
             if (mode == 4)
             {
@@ -163,9 +283,30 @@ void main()
                 // and a lattice is legible as a lattice.
                 outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
             }
+            else if (mode == 5)
+            {
+                if ((flags & GIPROBE_FLAG_TRACED) == 0u)
+                {
+                    outColour = vec3(0.4, 0.0, 0.4);
+                }
+                else
+                {
+                    // Both moments are already normalised by maxRayDist — see
+                    // gi_probe_blend.comp's header for why they have to be.
+                    vec2 m = texture(distanceAtlas, gip_AtlasUV(idx, n, gp.atlas.w)).rg;
+                    // Negative variance cannot happen for a real second moment;
+                    // if it does, the lobe weights or the EMA are wrong, not
+                    // merely mistuned.  Catches an fp16 overflow as NaN too.
+                    if (!(m.y >= m.x * m.x - 1e-3))
+                        outColour = vec3(1.0, 0.0, 1.0);
+                    else
+                        outColour = gip_Ramp(m.x);
+                    outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
+                }
+            }
             else
             {
-                vec2 auv = gip_AtlasUV(gip_StorageIndex(cell), n, gp.atlas.z);
+                vec2 auv = gip_AtlasUV(idx, n, gp.atlas.z);
                 outColour = texture(irradianceAtlas, auv).rgb * gp.debug.x;
 
                 // An untraced probe has nothing to show; magenta says "no data"

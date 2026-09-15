@@ -4764,10 +4764,6 @@ void VK_RB_DrawView(const void *data)
             const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
             int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
             VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
-            // gi_albedo_target.md: folded into the same profiler phase as à-trous —
-            // it's the last step of the same "turn raw radiance into what composite
-            // should add" denoise chain, and its own cost is a single small dispatch.
-            VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
 
@@ -4795,16 +4791,31 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeBlend);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_BLEND, rtCpuProbeBlendStart);
 
-            // Last in the GI chain, for the same reason the froxel resolve is
+            // After temporal/a-trous, for the same reason the froxel resolve is
             // last in the vol chain: it overwrites giBuffer and claims
-            // giReadView, so running it before the temporal/a-trous passes had
-            // read giBuffer would feed an overlay into their history.
+            // giReadView, so running it before those passes had read giBuffer
+            // would feed an overlay into their history.
             VK_SetRenderStage("RT_GI_ProbeResolve");
             const uint64_t rtCpuProbeResStart = VK_RTProfile_CPUStamp();
             int rtProfProbeRes = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_RESOLVE);
             VK_RT_DispatchGIProbeResolve(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeRes);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_RESOLVE, rtCpuProbeResStart);
+
+            // gi_albedo_target.md: shares the à-trous profiler phase — it's the
+            // last step of the same "turn raw radiance into what composite should
+            // add" chain, and its own cost is a single small dispatch.
+            //
+            // It runs AFTER the probe resolve because under r_rtGIProbes 1 the
+            // resolve is what produces the radiance it modulates (G2). It skips
+            // itself while a probe overlay owns giBuffer, so the per-pixel path's
+            // output is byte-identical to what it was before this move.
+            VK_SetRenderStage("RT_GI_AlbedoMod");
+            const uint64_t rtCpuGIAlbedoStart = VK_RTProfile_CPUStamp();
+            int rtProfGIAlbedo = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
+            VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAlbedo);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAlbedoStart);
 
             VK_SetRenderStage("RT_Volumetrics");
             const uint64_t rtCpuVolStart = VK_RTProfile_CPUStamp();

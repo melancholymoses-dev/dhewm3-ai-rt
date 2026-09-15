@@ -1046,11 +1046,15 @@ void VK_RT_ShutdownGIAlbedoMod(void);
 // Multiply the denoised GI (giReadView) by gbufAlbedo into whichever of
 // giAtrousA/B giReadView is NOT currently pointing at, then repoint giReadView
 // at the result.  Must be called outside a render pass, after
-// VK_RT_DispatchAtrousGI, while gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL (the
-// backend's Stage-3.5 barrier window).  Not in-place: checkerboard keeps stale
-// giBuffer pixels and temporal reuses its resolve output as history, so both
-// would compound the multiply across frames if written back into their source.
-// No-op when r_rtGIAlbedo is 0 or the G-buffer/scratch images don't exist.
+// VK_RT_DispatchGIProbeResolve (and so after VK_RT_DispatchAtrousGI), while
+// gbufAlbedo is in SHADER_READ_ONLY_OPTIMAL (the backend's Stage-3.5 barrier
+// window).  It is last in the GI chain under BOTH sampling structures: probe
+// irradiance is albedo-free, so the resolve's output wants modulating too.
+// Not in-place: checkerboard keeps stale giBuffer pixels and temporal reuses
+// its resolve output as history, so both would compound the multiply across
+// frames if written back into their source.
+// No-op when r_rtGIAlbedo is 0, a probe OVERLAY owns giBuffer (it is a
+// measurement, not radiance), or the G-buffer/scratch images don't exist.
 void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
 // ---------------------------------------------------------------------------
@@ -1203,10 +1207,13 @@ VkDescriptorSetLayout VK_RT_GIProbeDescLayout(void);
 VkDescriptorSet VK_RT_GIProbeDescSet(int frameIdx);
 
 // True when r_rtGIProbes selects the probe path and its whole chain is usable.
-// G2 wires this to stand the per-pixel rgen and the denoise chain down.
+// Stands the per-pixel rgen LAUNCH, the temporal EMA and the a-trous chain
+// down; VK_RT_DispatchGI itself still runs, because the probe trace is a second
+// raygen in that pipeline and needs the set 0 it builds.
 bool VK_RT_GIProbeActive(void);
 
 // r_rtGIProbeDebug, but 0 unless the probe resolve pipeline and atlases exist.
+// Non-zero means an OVERLAY owns giBuffer, which is why albedo mod skips.
 int VK_RT_GIProbeDebugMode(void);
 
 // Fire r_rtGIProbeRays rays for each of r_rtGIProbeUpdatesPerFrame probes into
@@ -1219,9 +1226,11 @@ void VK_RT_DispatchGIProbeTrace(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // borders.  Must follow VK_RT_DispatchGIProbeTrace in the same frame.
 void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
-// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  G0/G1 run
-// this only while r_rtGIProbeDebug selects an overlay; G2 adds the real
-// per-pixel resolve.
+// Probe atlases -> vkRT.giBuffer, and repoints giReadView at it.  Runs whenever
+// r_rtGIProbes selects the probe path (mode 0, the shipping G2 resolve) or
+// r_rtGIProbeDebug selects an overlay.  Runs AFTER temporal/a-trous — writing
+// an overlay before them would feed it into their history — and BEFORE
+// VK_RT_DispatchGIAlbedoMod, which is what modulates mode 0's output.
 // Must be called outside a render pass; depth must be in ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef);
 

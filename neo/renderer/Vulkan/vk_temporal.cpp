@@ -1252,11 +1252,20 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
 
     const int frameIdx = vk.currentFrame;
 
-    if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool() || !r_rtGITemporal.GetBool())
+    // Probe path (20260906_froxel_probe_gi.md G2): skip. A screen-space EMA on
+    // top of a world-space one double-smooths and re-imports the motion ghosting
+    // this arc exists to remove — the probe atlas already accumulates where
+    // reprojection is trivially valid. giReadView is pointed at giBuffer anyway
+    // so an early-out in the probe resolve can never leave the composite reading
+    // last frame's a-trous scratch.
+    if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool() || !r_rtGITemporal.GetBool() || VK_RT_GIProbeActive())
     {
         // Temporal disabled: composite reads the raw per-frame GI buffer directly.
         if (vkRT.giBuffer[frameIdx].view != VK_NULL_HANDLE)
             vkRT.giReadView[frameIdx] = vkRT.giBuffer[frameIdx].view;
+        // giHistory is now arbitrarily old. Toggling back on must resume from the
+        // current frame, not blend against whatever was on screen before.
+        vkRT.giHistoryValid = false;
         return;
     }
     if (vkRT.giTemporalPipeline == VK_NULL_HANDLE)
