@@ -309,6 +309,9 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_GI,
     VK_RTPROF_PHASE_GI_TEMPORAL,
     VK_RTPROF_PHASE_GI_ATROUS,
+    VK_RTPROF_PHASE_GI_PROBE_TRACE,
+    VK_RTPROF_PHASE_GI_PROBE_BLEND,
+    VK_RTPROF_PHASE_GI_PROBE_RESOLVE,
     VK_RTPROF_PHASE_GI_COMPOSITE,
     VK_RTPROF_PHASE_VOL,
     VK_RTPROF_PHASE_VOL_TEMPORAL,
@@ -360,6 +363,12 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "GITemporal";
     case VK_RTPROF_PHASE_GI_ATROUS:
         return "GIAtrous";
+    case VK_RTPROF_PHASE_GI_PROBE_TRACE:
+        return "ProbeTrace";
+    case VK_RTPROF_PHASE_GI_PROBE_BLEND:
+        return "ProbeBlend";
+    case VK_RTPROF_PHASE_GI_PROBE_RESOLVE:
+        return "ProbeResolve";
     case VK_RTPROF_PHASE_GI_COMPOSITE:
         return "GIComposite";
     case VK_RTPROF_PHASE_VOL:
@@ -1084,8 +1093,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // per light by VK_RB_DrawInteractions.  A negative layer means the light casts no
     // shadows at all — the mask isn't sampled rather than being cleared to white.
     int *useSM = (int *)(fsz + 2);
-    const bool hasShadowMask = VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE &&
-                               s_shadowMaskLayer >= 0;
+    const bool hasShadowMask =
+        VK_RTShadowsEnabled() && vkRT.shadowMask[vk.currentFrame].image != VK_NULL_HANDLE && s_shadowMaskLayer >= 0;
     const bool isWeaponDepthHack = (din->surf && din->surf->space && din->surf->space->weaponDepthHack);
     const idRenderLightLocal *lightDef = backEnd.vLight ? backEnd.vLight->lightDef : NULL;
     const bool isProjectedLight = (lightDef != NULL) ? !lightDef->parms.pointLight : false;
@@ -1135,8 +1144,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     // several early-return paths (RT off, invalid TLAS across a level load, empty scissor)
     // that leave it untouched, and the rgen only ever writes inside the view scissor.
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
-                           vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE &&
-                           vkRT.aoValid[vk.currentFrame];
+                           vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.aoValid[vk.currentFrame];
     *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed).
@@ -1150,12 +1158,12 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     if (giActive && r_rtGIAutoDirectScale.GetBool())
     {
         // Anchored linear coupling (r_rtGIAutoDirectScale — tuning-comparison aid, not a design
-        // doc item): reproduces r_rtGIDirectScale's own value exactly at r_rtGIStrength's default (0.25) —
+        // doc item): reproduces r_rtGIDirectScale's own value exactly at r_rtGIStrength's default (0.2) —
         // so an untouched r_rtGIDirectScale still means what its description says — and relaxes
         // toward 1.0 (no discount) as strength -> 0, matching the giActive==false branch
         // continuously at the limit. Scene-independent approximation, not physical auto-exposure —
         // see the CVar comments for why an exact version isn't possible.
-        const float kRefGIStrength = 0.25f; // must track r_rtGIStrength's registered default
+        const float kRefGIStrength = 0.2f; // must track r_rtGIStrength's registered default
         const float ratio = Max(0.0f, r_rtGIStrength.GetFloat()) / kRefGIStrength;
         effectiveDirectScale = idMath::ClampFloat(0.0f, 2.0f, 1.0f - (1.0f - effectiveDirectScale) * ratio);
     }
@@ -2909,8 +2917,8 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
     {
         common->Printf("VK GBUFFER: %d surfaces (bump found=%d fallback=%d, spec found=%d fallback=%d, "
                        "albedo found=%d fallback=%d)\n",
-                       gbufSurfCount, gbufBumpFound, gbufBumpFallback, gbufSpecFound, gbufSpecFallback,
-                       gbufAlbedoFound, gbufAlbedoFallback);
+                       gbufSurfCount, gbufBumpFound, gbufBumpFallback, gbufSpecFound, gbufSpecFallback, gbufAlbedoFound,
+                       gbufAlbedoFallback);
     }
 }
 
@@ -3693,9 +3701,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
                            (unsigned int)lightScissor.extent.width, (unsigned int)lightScissor.extent.height, nLocal,
                            nGlobal, nTrans, nGlobalShadow, nLocalShadow, VK_RTShadowsEnabled() ? 1 : 0,
                            s_shadowMaskLayer,
-                           (s_shadowMaskLayer < 0)                              ? " (noShadows)"
-                           : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER)   ? " (serial)"
-                                                                                : " (batched)");
+                           (s_shadowMaskLayer < 0)                            ? " (noShadows)"
+                           : (s_shadowMaskLayer == VK_RT_SHADOW_SERIAL_LAYER) ? " (serial)"
+                                                                              : " (batched)");
         }
 
         if (r_vkLogShadowBranch.GetInteger() >= 2)
@@ -4755,10 +4763,6 @@ void VK_RB_DrawView(const void *data)
             const uint64_t rtCpuGIAtrousStart = VK_RTProfile_CPUStamp();
             int rtProfGIAtrous = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
             VK_RT_DispatchAtrousGI(cmdBuf, backEnd.viewDef);
-            // gi_albedo_target.md: folded into the same profiler phase as à-trous —
-            // it's the last step of the same "turn raw radiance into what composite
-            // should add" denoise chain, and its own cost is a single small dispatch.
-            VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
             VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAtrous);
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAtrousStart);
 
@@ -4767,6 +4771,50 @@ void VK_RB_DrawView(const void *data)
                 if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIAtrous", false))
                     return;
             }
+
+            // Probe GI (20260906_froxel_probe_gi.md Part B). The trace MUST come
+            // after VK_RT_DispatchGI: it reuses the GIParams dynamic-UBO binding
+            // that call establishes, because gi_ray.rchit is shared between the
+            // two raygens and reads that block.
+            VK_SetRenderStage("RT_GI_ProbeTrace");
+            const uint64_t rtCpuProbeTraceStart = VK_RTProfile_CPUStamp();
+            int rtProfProbeTrace = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_TRACE);
+            VK_RT_DispatchGIProbeTrace(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeTrace);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_TRACE, rtCpuProbeTraceStart);
+
+            VK_SetRenderStage("RT_GI_ProbeBlend");
+            const uint64_t rtCpuProbeBlendStart = VK_RTProfile_CPUStamp();
+            int rtProfProbeBlend = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_BLEND);
+            VK_RT_DispatchGIProbeBlend(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeBlend);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_BLEND, rtCpuProbeBlendStart);
+
+            // After temporal/a-trous, for the same reason the froxel resolve is
+            // last in the vol chain: it overwrites giBuffer and claims
+            // giReadView, so running it before those passes had read giBuffer
+            // would feed an overlay into their history.
+            VK_SetRenderStage("RT_GI_ProbeResolve");
+            const uint64_t rtCpuProbeResStart = VK_RTProfile_CPUStamp();
+            int rtProfProbeRes = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_PROBE_RESOLVE);
+            VK_RT_DispatchGIProbeResolve(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfProbeRes);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_PROBE_RESOLVE, rtCpuProbeResStart);
+
+            // gi_albedo_target.md: shares the à-trous profiler phase — it's the
+            // last step of the same "turn raw radiance into what composite should
+            // add" chain, and its own cost is a single small dispatch.
+            //
+            // It runs AFTER the probe resolve because under r_rtGIProbes 1 the
+            // resolve is what produces the radiance it modulates (G2). It skips
+            // itself while a probe overlay owns giBuffer, so the per-pixel path's
+            // output is byte-identical to what it was before this move.
+            VK_SetRenderStage("RT_GI_AlbedoMod");
+            const uint64_t rtCpuGIAlbedoStart = VK_RTProfile_CPUStamp();
+            int rtProfGIAlbedo = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_ATROUS);
+            VK_RT_DispatchGIAlbedoMod(cmdBuf, backEnd.viewDef);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIAlbedo);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_ATROUS, rtCpuGIAlbedoStart);
 
             VK_SetRenderStage("RT_Volumetrics");
             const uint64_t rtCpuVolStart = VK_RTProfile_CPUStamp();
@@ -5052,8 +5100,7 @@ void VK_RB_CopyRender(const void *data)
     vkCmdEndRenderPass(cmdBuf);
 
     // Source: HDR scene image (rendered scene so far in linear floating point).
-    VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image,
-                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
     // Destination: capture texture sampled later by TG_SCREEN/window materials.
@@ -5076,14 +5123,13 @@ void VK_RB_CopyRender(const void *data)
     region.dstOffsets[1] = {copyW, copyH, 1};
 
     // Blit RGBA16F → RGBA8: driver performs format conversion. Values > 1.0 clamp.
-    vkCmdBlitImage(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                   dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+    vkCmdBlitImage(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstImage,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
 
     // Restore layouts for subsequent rendering.
     VK_TransitionImageLayout(cmdBuf, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image,
-                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     // Resume render pass so the rest of the frame can continue.

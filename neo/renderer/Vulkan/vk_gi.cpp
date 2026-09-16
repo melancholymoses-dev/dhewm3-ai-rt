@@ -48,13 +48,15 @@ static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, 
 
 // Not static: read from vk_backend.cpp (RB_DetermineLightScale) for the
 // r_rtGIAutoDirectScale coupling below.
-idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtGIStrength("r_rtGIStrength", "0.20", CVAR_RENDERER | CVAR_FLOAT,
                       "Global scale applied to the GI buffer before compositing");
 
-static idCVar r_rtGIContrast(
-    "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
-    "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
-    "0 = off, 1 = full effect");
+// Not static: gi_probe_resolve.comp applies the identical contrast push, so an
+// r_rtGIProbes A/B compares the sampling structure and not two different tone
+// curves (20260906_froxel_probe_gi.md G2).
+idCVar r_rtGIContrast("r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+                      "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
+                      "0 = off, 1 = full effect");
 
 idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.", CVAR_RENDERER | CVAR_FLOAT,
                          "Baseline multiplier on direct interaction lighting when GI is active, at "
@@ -599,10 +601,16 @@ static void VK_RT_InitGIPipeline(void)
     // --- Pipeline layout ---
     // set=0: per-frame resources (TLAS, GI image, depth, UBO)
     // set=1: material table (shared with reflections/shadows)
-    VkDescriptorSetLayout giLayouts[2] = {vkRT.giDescLayout, vkRT.matDescLayout};
+    // set=2: probe resources (Part B) — gi_probe_trace.rgen's atlases, scratch,
+    //        params and state. Declared even when probes are idle because it is
+    //        part of THIS pipeline's layout: the probe raygen is a group in it,
+    //        so every launch has to leave set 2 bound whether it uses it or not.
+    //        Owned by vk_gi_probe.cpp; VK_RT_InitGIProbeLayout runs before this.
+    VkDescriptorSetLayout giLayouts[3] = {vkRT.giDescLayout, vkRT.matDescLayout, VK_RT_GIProbeDescLayout()};
+    const bool haveProbeSet = (giLayouts[2] != VK_NULL_HANDLE);
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plInfo.setLayoutCount = 2;
+    plInfo.setLayoutCount = haveProbeSet ? 3 : 2;
     plInfo.pSetLayouts = giLayouts;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.giPipelineLayout));
 
@@ -612,6 +620,11 @@ static void VK_RT_InitGIPipeline(void)
     VkShaderModule rchitModule = VK_LoadSPIRV("glprogs/glsl/gi_ray.rchit.spv");
     VkShaderModule rahitModule = VK_LoadSPIRV("glprogs/glsl/gi_ray.rahit.spv");
     VkShaderModule shadowMissModule = VK_LoadSPIRV("glprogs/glsl/gi_shadow.rmiss.spv");
+    // Part B G1: the probe raygen. Optional — if it (or the probe set layout) is
+    // missing, the pipeline is still built with the per-pixel raygen alone and
+    // only the probe path is lost, rather than all of GI.
+    VkShaderModule probeRgenModule =
+        haveProbeSet ? VK_LoadSPIRV("glprogs/glsl/gi_probe_trace.rgen.spv") : VK_NULL_HANDLE;
 
     if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rchitModule == VK_NULL_HANDLE ||
         rahitModule == VK_NULL_HANDLE || shadowMissModule == VK_NULL_HANDLE)
@@ -627,8 +640,12 @@ static void VK_RT_InitGIPipeline(void)
             vkDestroyShaderModule(vk.device, rahitModule, NULL);
         if (shadowMissModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, shadowMissModule, NULL);
+        if (probeRgenModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, probeRgenModule, NULL);
         return;
     }
+    if (haveProbeSet && probeRgenModule == VK_NULL_HANDLE)
+        common->Warning("VK RT GI: gi_probe_trace.rgen.spv missing — probe GI disabled, per-pixel GI unaffected");
 
     // --- Shader stages ---
     // Stage 0: rgen
@@ -636,7 +653,8 @@ static void VK_RT_InitGIPipeline(void)
     // Stage 2: rchit (albedo + Option B light eval + shadow trace)
     // Stage 3: rahit (alpha-discard for GI rays)
     // Stage 4: shadow miss (clears occluded flag)
-    VkPipelineShaderStageCreateInfo stages[5] = {};
+    // Stage 5: probe rgen (optional, Part B G1)
+    VkPipelineShaderStageCreateInfo stages[6] = {};
 
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -663,12 +681,25 @@ static void VK_RT_InitGIPipeline(void)
     stages[4].module = shadowMissModule;
     stages[4].pName = "main";
 
+    const bool haveProbeRgen = (probeRgenModule != VK_NULL_HANDLE);
+    if (haveProbeRgen)
+    {
+        stages[5].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[5].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+        stages[5].module = probeRgenModule;
+        stages[5].pName = "main";
+    }
+
     // --- Shader groups ---
     // Group 0: rgen
     // Group 1: gi miss (missIndex=0 in traceRayEXT)
     // Group 2: hit (rchit + rahit)
     // Group 3: shadow miss (missIndex=1 in shadow traceRayEXT calls from rchit)
-    VkRayTracingShaderGroupCreateInfoKHR groups[4] = {};
+    // Group 4: probe rgen (optional) — selected by pointing vkCmdTraceRaysKHR at
+    //          giProbeRgenRegion instead of giRgenRegion. Reusing this pipeline
+    //          is what lets a probe ray hit gi_ray.rchit and therefore see the
+    //          same lights, cookies and admission the per-pixel path sees.
+    VkRayTracingShaderGroupCreateInfoKHR groups[5] = {};
 
     groups[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
@@ -698,12 +729,25 @@ static void VK_RT_InitGIPipeline(void)
     groups[3].anyHitShader = VK_SHADER_UNUSED_KHR;
     groups[3].intersectionShader = VK_SHADER_UNUSED_KHR;
 
+    if (haveProbeRgen)
+    {
+        groups[4].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        groups[4].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        groups[4].generalShader = 5; // gi_probe_trace.rgen
+        groups[4].closestHitShader = VK_SHADER_UNUSED_KHR;
+        groups[4].anyHitShader = VK_SHADER_UNUSED_KHR;
+        groups[4].intersectionShader = VK_SHADER_UNUSED_KHR;
+    }
+
+    const uint32_t stageCount = haveProbeRgen ? 6u : 5u;
+    const uint32_t groupCount = haveProbeRgen ? 5u : 4u;
+
     // --- RT pipeline ---
     VkRayTracingPipelineCreateInfoKHR rtPipeInfo = {};
     rtPipeInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipeInfo.stageCount = 5;
+    rtPipeInfo.stageCount = stageCount;
     rtPipeInfo.pStages = stages;
-    rtPipeInfo.groupCount = 4;
+    rtPipeInfo.groupCount = groupCount;
     rtPipeInfo.pGroups = groups;
     rtPipeInfo.maxPipelineRayRecursionDepth = 2; // primary GI ray + inline shadow ray
     rtPipeInfo.layout = vkRT.giPipelineLayout;
@@ -716,6 +760,8 @@ static void VK_RT_InitGIPipeline(void)
     vkDestroyShaderModule(vk.device, rchitModule, NULL);
     vkDestroyShaderModule(vk.device, rahitModule, NULL);
     vkDestroyShaderModule(vk.device, shadowMissModule, NULL);
+    if (probeRgenModule != VK_NULL_HANDLE)
+        vkDestroyShaderModule(vk.device, probeRgenModule, NULL);
 
     // --- Shader Binding Table ---
     // SBT layout:
@@ -738,10 +784,12 @@ static void VK_RT_InitGIPipeline(void)
     uint32_t handleSizeAligned = alignUp(handleSize, handleAlignment);
     uint32_t stride = alignUp(handleSizeAligned, baseAlignment);
 
-    // 4 groups total, 6 SBT records:
+    // 4-5 groups total, 6-7 SBT records:
     //   rgen:  1 record  (group 0)
     //   miss:  2 records (groups 1, 3)  — gi miss + shadow miss
     //   hit:   3 records (group 2, replicated)
+    //   rgen:  1 record  (group 4, probe raygen — appended LAST so the existing
+    //          record layout and every region below it is untouched)
     //
     // The hit region is 3 records wide, not 1, because TLAS instances carry a
     // hardcoded instanceShaderBindingTableRecordOffset of 0 or 2 (2 =
@@ -751,7 +799,8 @@ static void VK_RT_InitGIPipeline(void)
     // shader handle. Record 1 of the region is unused padding — nothing traces
     // with sbtRecordOffset 1 here — but it must exist for record 2 to be
     // addressable.
-    uint32_t sbtSize = 6 * stride;
+    const uint32_t sbtRecords = haveProbeRgen ? 7u : 6u;
+    uint32_t sbtSize = sbtRecords * stride;
 
     VK_CreateBuffer(sbtSize,
                     VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -759,9 +808,11 @@ static void VK_RT_InitGIPipeline(void)
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &vkRT.sbtGIBuffer,
                     &vkRT.sbtGIMemory);
 
-    // Fetch all 4 group handles in pipeline order: [rgen, gi-miss, hit, shadow-miss]
-    uint8_t *handles = (uint8_t *)alloca(4 * handleSize);
-    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.giPipeline, 0, 4, 4 * handleSize, handles));
+    // Fetch every group handle in pipeline order:
+    //   [rgen, gi-miss, hit, shadow-miss] (+ probe-rgen)
+    uint8_t *handles = (uint8_t *)alloca(groupCount * handleSize);
+    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.giPipeline, 0, groupCount, groupCount * handleSize,
+                                                  handles));
 
     uint8_t *sbtData;
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtGIMemory, 0, sbtSize, 0, (void **)&sbtData));
@@ -775,6 +826,9 @@ static void VK_RT_InitGIPipeline(void)
     // offsets 0..2 all resolve to the same (only) hit group.
     for (int i = 3; i < 6; i++)
         memcpy(sbtData + i * stride, handles + 2 * handleSize, handleSize);
+    // SBT slot 6 = probe rgen (group 4)
+    if (haveProbeRgen)
+        memcpy(sbtData + 6 * stride, handles + 4 * handleSize, handleSize);
     vkUnmapMemory(vk.device, vkRT.sbtGIMemory);
 
     VkBufferDeviceAddressInfo addrInfo = {};
@@ -789,6 +843,12 @@ static void VK_RT_InitGIPipeline(void)
     vkRT.giMissRegion = {sbtBase + 1 * stride, stride, 2 * stride};
     vkRT.giHitRegion = {sbtBase + 3 * stride, stride, 3 * stride};
     vkRT.giCallRegion = {0, 0, 0};
+    // A raygen region must be exactly ONE record wide and its address aligned to
+    // shaderGroupBaseAlignment. `stride` is already rounded up to that alignment,
+    // so record 6 lands aligned; a region sized to the whole remaining table
+    // instead is the classic way to get a device lost here.
+    vkRT.giProbeRgenRegion = haveProbeRgen ? VkStridedDeviceAddressRegionKHR{sbtBase + 6 * stride, stride, stride}
+                                           : VkStridedDeviceAddressRegionKHR{0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit) "
@@ -1007,6 +1067,10 @@ static void VK_RT_InitGICompositePipeline(void)
 void VK_RT_InitGI(void)
 {
     VK_RT_CreateGILightSsbos();
+    // Part B: the probe descriptor set layout must exist before the GI pipeline
+    // layout is built — it goes in as set 2, and the probe raygen is a group in
+    // that same pipeline.
+    VK_RT_InitGIProbeLayout();
     VK_RT_InitGIPipeline();
     // P9: ensure the shared null G-buffer image exists at init (idempotent) so its
     // one-time submit + queue wait never lands mid-frame at the first dispatch.
@@ -1016,6 +1080,7 @@ void VK_RT_InitGI(void)
     VK_RT_InitGITemporal();
     VK_RT_InitGIAtrous();
     VK_RT_InitGIAlbedoMod();
+    VK_RT_InitGIProbe();
 }
 
 // ---------------------------------------------------------------------------
@@ -1024,6 +1089,9 @@ void VK_RT_InitGI(void)
 
 void VK_RT_ShutdownGI(void)
 {
+    // Before the GI pipeline layout goes: it holds giProbeDescLayout as set 2.
+    VK_RT_ShutdownGIProbe();
+
     if (vkRT.giDescPool != VK_NULL_HANDLE)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.giDescPool, NULL);
@@ -1943,6 +2011,26 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
 }
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down).
+// Part B: the GIParams dynamic-UBO offset VK_RT_DispatchGI established this
+// frame, so vk_gi_probe.cpp can bind set 0 for the probe raygen without
+// allocating a second, identical block.  Returns false when this frame's GI
+// dispatch did not run — binding a stale offset would point gi_ray.rchit at the
+// previous frame's light list, which is exactly the kind of fault that shows up
+// as an unexplainable one-frame flash rather than an error.
+static uint32_t s_giParamsOffset[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_giParamsFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
+
+bool VK_RT_GIParamsBinding(int frameIdx, uint32_t *outOffset)
+{
+    if (frameIdx < 0 || frameIdx >= VK_MAX_FRAMES_IN_FLIGHT)
+        return false;
+    if (s_giParamsFrame[frameIdx] != tr.frameCount)
+        return false;
+    if (outOffset != NULL)
+        *outOffset = s_giParamsOffset[frameIdx];
+    return true;
+}
+
 static VkRect2D VK_RT_GI_ComputeDispatchRect(const viewDef_t *viewDef)
 {
     const int w = (int)vk.swapchainExtent.width;
@@ -2116,6 +2204,15 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.useGbufNormal = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     memcpy(uboMapped, &ubo, sizeof(GIParamsUBO));
 
+    // Part B: publish this frame's dynamic offset for the probe trace. It shares
+    // set 0 with the per-pixel launch because gi_ray.rchit — which both raygens
+    // reach — reads this block, and every field it reads (maxBounceLights,
+    // frameIndex, stochasticLights) is per-frame, not per-launch. The descriptor
+    // refresh below always rewrites binding 3 for this frame, so the buffer the
+    // set points at is this one.
+    s_giParamsOffset[frameIdx] = uboOff;
+    s_giParamsFrame[frameIdx] = tr.frameCount;
+
     // P3 mode transitions — one line per change, so a crash/perf report says
     // which estimator was live.
     if (r_vkLogRT.GetInteger() >= 1)
@@ -2266,10 +2363,29 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // set=1: material table
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet,
                             0, NULL);
+    // set=2: probe resources. gi_ray.rgen never touches them, but the probe
+    // raygen is a group in this same pipeline, so leaving the set unbound makes
+    // every descriptor it declares "accessed but not updated" from the
+    // validation layer's point of view — and undefined on some drivers.
+    {
+        VkDescriptorSet probeSet = VK_RT_GIProbeDescSet(frameIdx);
+        if (probeSet != VK_NULL_HANDLE)
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 2, 1, &probeSet,
+                                    0, NULL);
+    }
 
-    if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
+    // Probe mode stands the PER-PIXEL launch down, but not this function: the
+    // probe trace is a second raygen in this same pipeline and reaches
+    // gi_ray.rchit, which reads set 0's GIParams/TLAS/light SSBO. Everything
+    // above — UBO build, s_giParamsOffset publication, descriptor refresh — is
+    // what makes that trace legal, so only the vkCmdTraceRaysKHR is skipped.
+    const bool probeOwnsGI = VK_RT_GIProbeActive();
+
+    if (probeOwnsGI || dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
     {
         // Nothing to dispatch — still restore depth layout.
+        if (probeOwnsGI && r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT GI: per-pixel launch skipped — r_rtGIProbes owns giBuffer\n");
     }
     else
     {
@@ -2703,6 +2819,12 @@ void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     if (!r_useRayTracing.GetBool() || !r_rtGI.GetBool())
         return;
+    // Probe path: skip. There is no per-pixel noise left to filter — the probe
+    // atlas is its own temporal accumulator in world space — and an edge-stopped
+    // blur over an already-interpolated field only erodes the little contact
+    // detail the probes do carry.
+    if (VK_RT_GIProbeActive())
+        return;
 
     const int frameIdx = vk.currentFrame;
 
@@ -3024,6 +3146,12 @@ void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     if (!vk.gbufferSupported)
         return; // no gbufAlbedo target to read — legacy raw-radiance composite
+    // A probe overlay has claimed giBuffer: it is a measurement, not radiance,
+    // and tinting it by the receiver's albedo would make the readout unreadable.
+    // Mode 0 is the real resolve and DOES want modulating — probe irradiance is
+    // albedo-free, so this is more correct for it than for per-pixel GI.
+    if (VK_RT_GIProbeDebugMode() != 0)
+        return;
     if (vkRT.giAlbedoModPipeline == VK_NULL_HANDLE)
         return;
 

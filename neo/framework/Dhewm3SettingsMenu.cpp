@@ -2494,6 +2494,11 @@ struct RTCVars
     idCVar *rtTonemapToe = nullptr;
     idCVar *rtTonemapLinStart = nullptr;
     idCVar *rtTonemapLinLen = nullptr;
+
+    // Froxel and GI Probe Toggles
+    idCVar *rtVolFroxel = nullptr;
+    idCVar *rtGIProbes = nullptr;
+    idCVar *rtGIProbeHysteresis = nullptr;
 };
 
 static RTCVars rtCVars;
@@ -2552,22 +2557,20 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
     rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
     rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
-    rtCVars.rtVolFlashlightDensity = cvarSystem->Find("r_rtVolFlashlightDensity");
-    rtCVars.rtVolFlashlightStrength = cvarSystem->Find("r_rtVolFlashlightStrength");
-    rtCVars.rtVolFlashlightAnisotropy = cvarSystem->Find("r_rtVolFlashlightAnisotropy");
     rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
     rtCVars.rtVolDirectedStrength = cvarSystem->Find("r_rtVolDirectedStrength");
     rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
     rtCVars.rtAutoRelight = cvarSystem->Find("r_rtAutoRelight");
     rtCVars.rtAutoRelightMaxPerArea = cvarSystem->Find("r_rtAutoRelightMaxPerArea");
-    rtCVars.rtAutoRelightMax = cvarSystem->Find("r_rtAutoRelightMax");
-    rtCVars.rtAutoRelightIntensity = cvarSystem->Find("r_rtAutoRelightIntensity");
     rtCVars.rtAutoRelightDebugColor = cvarSystem->Find("r_rtAutoRelightDebugColor");
     rtCVars.rtTonemap = cvarSystem->Find("r_rtTonemap");
     rtCVars.rtTonemapExposure = cvarSystem->Find("r_rtTonemapExposure");
     rtCVars.rtTonemapToe = cvarSystem->Find("r_rtTonemapToe");
     rtCVars.rtTonemapLinStart = cvarSystem->Find("r_rtTonemapLinStart");
     rtCVars.rtTonemapLinLen = cvarSystem->Find("r_rtTonemapLinLen");
+    rtCVars.rtVolFroxel = cvarSystem->Find("r_rtVolFroxel");
+    rtCVars.rtGIProbes = cvarSystem->Find("r_rtGIProbes");
+    rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2616,13 +2619,19 @@ static void DrawRTOptionsMenu()
 
     // ---- Feature toggles -----------------------------------------------------
     ImGui::SeparatorText("Feature Toggles");
-    RTCheckbox("RT Shadows", rtCVars.rtShadows);
-    RTCheckbox("RT Ambient Occlusion", rtCVars.rtAO);
-    RTCheckbox("RT Reflections", rtCVars.rtReflections);
-    RTCheckbox("RT Global Illumination", rtCVars.rtGI);
-    RTCheckbox("RT Volumetric Lighting", rtCVars.rtVol);
-    RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
-    RTCheckbox("Show player shadow and reflections", rtCVars.showplayershadow);
+    if (ImGui::BeginTable("##FeatureCols", 2, ImGuiTableFlags_None))
+    {
+        ImGui::TableNextColumn();
+        RTCheckbox("RT Shadows", rtCVars.rtShadows);
+        RTCheckbox("RT Ambient Occlusion", rtCVars.rtAO);
+        RTCheckbox("RT Reflections", rtCVars.rtReflections);
+        RTCheckbox("Show player shadow and reflections", rtCVars.showplayershadow);
+        ImGui::TableNextColumn();
+        RTCheckbox("RT Global Illumination", rtCVars.rtGI);
+        RTCheckbox("RT Volumetric Lighting", rtCVars.rtVol);
+        RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
+        ImGui::EndTable();
+    }
     // ---- Shadow settings -----------------------------------------------------
     const bool shadowsOn = rtCVars.rtShadows && rtCVars.rtShadows->GetBool();
     ImGui::BeginDisabled(!shadowsOn);
@@ -2637,8 +2646,6 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Shadow Ray Bias", rtCVars.rtShadowRayBias, 0.0f, 2.0f);
         ImGui::TableNextColumn();
         RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
-        RTSliderFloat("Soft Shadow Radius Min", rtCVars.rtShadowSoftRadiusMin, 0.0f, 10.0f);
-        RTSliderFloat("Soft Shadow Radius Max", rtCVars.rtShadowSoftRadiusMax, 0.0f, 20.0f);
         RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
         RTCheckbox("Temporal Jitter Pattern", rtCVars.rtShadowTemporalJitter);
         RTCheckbox("Stable Spatial Jitter Seed", rtCVars.rtShadowStablePattern);
@@ -2653,9 +2660,8 @@ static void DrawRTOptionsMenu()
     if (ImGui::BeginTable("##AOCols", 2, ImGuiTableFlags_None))
     {
         ImGui::TableNextColumn();
-
-        RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
         RTCheckbox("AO/GI Normals from G-buffer (P9)", rtCVars.rtGbufNormals);
+        RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
         RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
         ImGui::TableNextColumn();
         RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);
@@ -2669,13 +2675,18 @@ static void DrawRTOptionsMenu()
     const bool reflOn = rtCVars.rtReflections && rtCVars.rtReflections->GetBool();
     ImGui::BeginDisabled(!reflOn);
     ImGui::SeparatorText("Reflection Settings");
+    if (ImGui::BeginTable("##ReflCols", 2, ImGuiTableFlags_None))
+    {
+        ImGui::TableNextColumn();
+        RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
+        RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
+        ImGui::TableNextColumn();
+        RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
+        RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
 
-    RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
-    RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
-    RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
-    RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
+        ImGui::EndTable();
+    }
     ImGui::EndDisabled(); // !reflOn
-
     // ---- GI settings ---------------------------------------------------------
     const bool giOn = rtCVars.rtGI && rtCVars.rtGI->GetBool();
     ImGui::BeginDisabled(!giOn);
@@ -2685,16 +2696,16 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-
+        RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
+        RTCheckbox("RT GI Probes", rtCVars.rtGIProbes);
         RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
         RTSliderInt("GI Max Lights (nearest-first, 1-128)", rtCVars.rtGIMaxLights, 1, 128);
-        RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
         RTSliderFloat("GI Light Collect Radius Scale", rtCVars.rtGILightCollectRadiusScale, 0.25f, 4.0f, "%.2f");
         RTSliderFloat("GI Radius (world units)", rtCVars.rtGIRadius, 16.0f, 512.0f, "%.0f");
-        RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
+
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Contrast/Scale");
-
+        RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
         RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
         RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 3.0f);
         RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
@@ -2709,6 +2720,7 @@ static void DrawRTOptionsMenu()
     const bool giTemporalOn = rtCVars.rtGITemporal && rtCVars.rtGITemporal->GetBool();
     ImGui::BeginDisabled(!giTemporalOn);
     RTSliderFloat("Temporal Alpha (0=full history, 1=current only)", rtCVars.rtGITemporalAlpha, 0.0f, 1.0f, "%.3f");
+    RTSliderFloat("Probe Alpha (1=full history, 0=current only)", rtCVars.rtGIProbeHysteresis, 0.0f, 1.0f, "%.3f");
     ImGui::EndDisabled(); // !giTemporalOn
 
     ImGui::Spacing();
@@ -2718,6 +2730,7 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(!giAtrousOn);
     RTSliderInt("A-trous Filter Passes", rtCVars.rtGIAtrousIterations, 1, 6);
     ImGui::EndDisabled(); // !giAtrousOn
+
     ImGui::EndDisabled(); // !giOn
     ImGui::Spacing();
     ImGui::SeparatorText("GI Volumetric Lighting");
@@ -2730,16 +2743,12 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
+        RTCheckbox("Froxel Volumetrics", rtCVars.rtVolFroxel);
         RTSliderInt("Samples##vol", rtCVars.rtVolSamples, 1, 64);
         RTSliderFloat("Max Dist##vol", rtCVars.rtVolMaxDist, 0.0f, 1024.0f, "%.0f");
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
         RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
-        ImGui::Spacing();
-        ImGui::TextDisabled("Point Lights");
-        RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.1f);
-        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 2.5f);
-        RTSliderFloat("Anisotropy##pt", rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
 
         // --- Right column: flashlight ---
         ImGui::TableNextColumn();
@@ -2747,15 +2756,23 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Density##dir", rtCVars.rtVolDirectedDensity, 0.0f, 0.1f);
         RTSliderFloat("Strength##dir", rtCVars.rtVolDirectedStrength, 0.0f, 2.5f);
         RTSliderFloat("Anisotropy##dir", rtCVars.rtVolDirectedAnisotropy, 0.0f, 1.0f);
-        ImGui::TextDisabled("Flashlight");
-        RTSliderFloat("Density##fl", rtCVars.rtVolFlashlightDensity, 0.0f, 0.1f);
-        RTSliderFloat("Strength##fl", rtCVars.rtVolFlashlightStrength, 0.0f, 2.5f);
-        RTSliderFloat("Anisotropy##fl", rtCVars.rtVolFlashlightAnisotropy, 0.0f, 1.0f);
-
+        ImGui::TextDisabled("Point Lights");
+        RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.1f);
+        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 2.5f);
+        RTSliderFloat("Anisotropy##pt", rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
         ImGui::EndTable();
     }
-
+    ImGui::Spacing();
     ImGui::EndDisabled(); // Volumetric
+    ImGui::SeparatorText("Tonemapping");
+    RTCheckbox("Enable Tonemapping (Uchimura filmic curve)", rtCVars.rtTonemap);
+    const bool tonemapOn = rtCVars.rtTonemap && rtCVars.rtTonemap->GetBool();
+    ImGui::BeginDisabled(!tonemapOn);
+    RTSliderFloat("Exposure", rtCVars.rtTonemapExposure, 0.1f, 4.0f, "%.2f");
+    RTSliderFloat("Toe Strength", rtCVars.rtTonemapToe, 1.0f, 4.0f, "%.2f");
+    RTSliderFloat("Linear Start", rtCVars.rtTonemapLinStart, 0.1f, 0.5f, "%.3f");
+    RTSliderFloat("Linear Length", rtCVars.rtTonemapLinLen, 0.0f, 1.0f, "%.3f");
+    ImGui::EndDisabled(); // !tonemapOn
 
     // ---- Auto-Relight (docs/plans/auto_relight.md) ---------------------------
     // Independent of the GI toggle above — synthesized lights feed shadows/GI/vol
@@ -2773,17 +2790,6 @@ static void DrawRTOptionsMenu()
                   0.0f, 5.0f, "%.2f");
     RTCheckbox("DEBUG: force hot pink + bright (see placement while navigating)", rtCVars.rtAutoRelightDebugColor);
     ImGui::EndDisabled(); // !autoRelightOn
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("Tonemapping");
-    RTCheckbox("Enable Tonemapping (Uchimura filmic curve)", rtCVars.rtTonemap);
-    const bool tonemapOn = rtCVars.rtTonemap && rtCVars.rtTonemap->GetBool();
-    ImGui::BeginDisabled(!tonemapOn);
-    RTSliderFloat("Exposure", rtCVars.rtTonemapExposure, 0.1f, 4.0f, "%.2f");
-    RTSliderFloat("Toe Strength", rtCVars.rtTonemapToe, 1.0f, 4.0f, "%.2f");
-    RTSliderFloat("Linear Start", rtCVars.rtTonemapLinStart, 0.1f, 0.5f, "%.3f");
-    RTSliderFloat("Linear Length", rtCVars.rtTonemapLinLen, 0.0f, 1.0f, "%.3f");
-    ImGui::EndDisabled(); // !tonemapOn
 
     ImGui::EndDisabled(); // !rtEnabled
 }
