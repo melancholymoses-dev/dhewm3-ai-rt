@@ -59,8 +59,7 @@ static idCVar r_rtGIProbes("r_rtGIProbes", "0", CVAR_RENDERER | CVAR_INTEGER,
                            "Global illumination sampling structure: 0 = per-pixel GI rays "
                            "(gi_ray.rgen + denoise chain), 1 = world-space irradiance probes. "
                            "At 1 the per-pixel launch, r_rtGITemporal and r_rtGIAtrous are stood "
-                           "down; contact darkening becomes AO's job alone and thin-wall leaks are "
-                           "expected until G3's Chebyshev visibility lands.");
+                           "down;");
 
 static idCVar r_rtGIProbeSpacing("r_rtGIProbeSpacing", "64", CVAR_RENDERER | CVAR_FLOAT,
                                  "World units between probes. Doom 3 interiors are small; 64 is "
@@ -79,8 +78,7 @@ static idCVar r_rtGIProbeRays("r_rtGIProbeRays", "128", CVAR_RENDERER | CVAR_INT
 
 static idCVar r_rtGIProbeUpdatesPerFrame("r_rtGIProbeUpdatesPerFrame", "1024", CVAR_RENDERER | CVAR_INTEGER,
                                          "Probes refreshed per frame, round-robin. At the 32x32x16 default "
-                                         "this is a full refresh every 16 frames. This is the throttle: "
-                                         "lowering it degrades convergence time, not frame cost.");
+                                         "this is a full refresh every 16 frames.");
 
 static idCVar r_rtGIProbeHysteresis("r_rtGIProbeHysteresis", "0.97", CVAR_RENDERER | CVAR_FLOAT,
                                     "Atlas EMA history weight. A probe that has never been traced since it "
@@ -99,14 +97,16 @@ static idCVar r_rtGIProbeViewBias("r_rtGIProbeViewBias", "8.0", CVAR_RENDERER | 
 static idCVar r_rtGIProbeInsideThreshold("r_rtGIProbeInsideThreshold", "0.25", CVAR_RENDERER | CVAR_FLOAT,
                                          "G4: fraction of a probe's rays that must hit BACK faces before it is "
                                          "classified as buried in geometry and given zero weight in the resolve. "
-                                         "A probe inside a brush fires every ray into that brush's interior, so it "
-                                         "sees back faces almost exclusively; open air sees front faces. Cleared "
-                                         "again below 0.75x this, a dead band so a probe on the boundary cannot "
-                                         "flip-flop. 0 disables the classification.");
+                                         "0 disables the classification.");
+
+static idCVar r_rtGIProbeOutsideThreshold("r_rtGIProbeOutsideThreshold", "0.9", CVAR_RENDERER | CVAR_FLOAT,
+                                          "G4: fraction of a probe's rays that must hit NOTHING before it is "
+                                          "classified as sitting in the void outside the level and given zero "
+                                          "weight. Deliberately high.");
 
 static idCVar r_rtGIProbeVisibility("r_rtGIProbeVisibility", "1", CVAR_RENDERER | CVAR_BOOL,
                                     "Chebyshev visibility weighting in the resolve (G3) — the thin-wall leak "
-                                    "mitigation, and the whole of pillar 2 for probe GI. Set 0 to see the raw "
+                                    "mitigation. Set 0 to see the raw "
                                     "leak surface r_rtGIProbeDebug 3 is measuring against.");
 
 static idCVar r_rtGIProbeMaxRayDist("r_rtGIProbeMaxRayDist", "512", CVAR_RENDERER | CVAR_FLOAT,
@@ -127,7 +127,9 @@ static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INT
                                "magenta = no usable probe, GI is black there), "
                                "3=leak detector: Chebyshev vs ray-traced ground truth — green=agree, "
                                "red=LEAK (occluded but let through), blue=over-dark (visible but blocked), "
-                               "4=probe state (green=traced, red=never traced, blue=inside geometry), "
+                               "4=probe state (green=usable, red=never traced, blue=buried in geometry, "
+                               "yellow=in the void outside the level; flagged probes x-ray through walls at half "
+                               "brightness, so dim=behind geometry and bright=in open air, i.e. misclassified), "
                                "5=distance atlas (blue->red ramp of mean hit distance / "
                                "r_rtGIProbeMaxRayDist; magenta = impossible second moment).");
 
@@ -194,20 +196,35 @@ static_assert(sizeof(GIProbeParamsUBO) == 256, "GIProbeParamsUBO size mismatch")
 
 // Mirrors GIProbeState in gi_probe_common.glsl. std430 gives vec3 a 16-byte
 // alignment, so the trailing uint packs into the same 16 bytes.
-//
-// `backface` is the one GPU-written field — see the GLSL side for why ownership
-// of this struct is split.
 struct GIProbeStateEntry
 {
     float offset[3]; //  0  G4 relocation from the lattice point
     uint32_t flags;  // 12  GIPROBE_FLAG_*
-    float backface;  // 16  written by gi_probe_blend.comp, read back here
-    float pad[3];    // 20
 };
-static_assert(sizeof(GIProbeStateEntry) == 32, "GIProbeStateEntry size mismatch");
+static_assert(sizeof(GIProbeStateEntry) == 16, "GIProbeStateEntry size mismatch");
+
+// Mirrors GIProbeStats in gi_probe_blend.comp.  Written by the GPU, read back
+// here; the CPU never writes the device copy after creation.
+//
+// These used to sit in GIProbeStateEntry, which is PER frame-in-flight slot, and
+// that was wrong in a way that produced a visible 2-frame oscillation. The blend
+// pass writes slot N; the CPU reads slot N+1 the next frame, finds the older
+// generation it uploaded itself, and copies that back over its shadow. The
+// classification therefore alternated between two generations at frame rate, the
+// dead band could not damp it, and every probe in the grid flipped in lockstep —
+// probe debug 3 strobed red/green at half the frame rate and mode 0's admitted
+// probe set changed every frame. An EMA accumulator cannot live in a per-slot
+// buffer; the atlases are shared for exactly the same reason.
+struct GIProbeStatsEntry
+{
+    float backface; // 0  fraction of rays hitting a back face
+    float miss;     // 4  fraction of rays hitting nothing
+};
+static_assert(sizeof(GIProbeStatsEntry) == 8, "GIProbeStatsEntry size mismatch");
 
 #define GIPROBE_FLAG_TRACED 0x1u
-#define GIPROBE_FLAG_INSIDE 0x2u
+#define GIPROBE_FLAG_INSIDE 0x2u  // buried in a solid brush
+#define GIPROBE_FLAG_OUTSIDE 0x4u // adrift in the void outside the sealed level hull
 
 // Hard cap, mirrored by GIPROBE_MAX_RAYS in gi_probe_blend.comp's shared-memory
 // ray cache. Raising one without the other silently truncates the ray loop.
@@ -230,6 +247,12 @@ static_assert(sizeof(GIProbeStateEntry) == 32, "GIProbeStateEntry size mismatch"
 
 static GIProbeStateEntry *s_probeState = NULL;
 static int s_probeStateCount = 0;
+
+// CPU shadow of the GPU-written statistics. Kept separate from the device buffer
+// so the CPU never writes the latter behind an in-flight blend dispatch: a probe
+// that scrolls into a new tile is zeroed HERE, and the readback below refuses to
+// adopt the device value until that probe has been traced again.
+static GIProbeStatsEntry *s_probeStats = NULL;
 
 // Geometry the resources were actually built at, so a mid-session cvar change
 // can be detected. Same pattern as s_froxelDim in vk_vol_froxel.cpp.
@@ -540,10 +563,31 @@ static void VK_RT_DestroyProbeResources(void)
         }
     }
 
+    if (vkRT.giProbeStatsSsboMapped != NULL)
+    {
+        vkUnmapMemory(vk.device, vkRT.giProbeStatsSsboMemory);
+        vkRT.giProbeStatsSsboMapped = NULL;
+    }
+    if (vkRT.giProbeStatsSsbo != VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(vk.device, vkRT.giProbeStatsSsbo, NULL);
+        vkRT.giProbeStatsSsbo = VK_NULL_HANDLE;
+    }
+    if (vkRT.giProbeStatsSsboMemory != VK_NULL_HANDLE)
+    {
+        vkFreeMemory(vk.device, vkRT.giProbeStatsSsboMemory, NULL);
+        vkRT.giProbeStatsSsboMemory = VK_NULL_HANDLE;
+    }
+
     if (s_probeState != NULL)
     {
         Mem_Free(s_probeState);
         s_probeState = NULL;
+    }
+    if (s_probeStats != NULL)
+    {
+        Mem_Free(s_probeStats);
+        s_probeStats = NULL;
     }
     s_probeStateCount = 0;
     s_probeDim[0] = s_probeDim[1] = s_probeDim[2] = 0;
@@ -603,16 +647,29 @@ static void VK_RT_CreateProbeResources(void)
         VK_CreateBuffer(stateBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                         &vkRT.giProbeStateSsbo[i], &vkRT.giProbeStateSsboMemory[i]);
-        VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStateSsboMemory[i], 0, stateBytes, 0,
-                             &vkRT.giProbeStateSsboMapped[i]));
+        VK_CHECK(
+            vkMapMemory(vk.device, vkRT.giProbeStateSsboMemory[i], 0, stateBytes, 0, &vkRT.giProbeStateSsboMapped[i]));
         memset(vkRT.giProbeStateSsboMapped[i], 0, (size_t)stateBytes);
 
         vkRT.giProbeDescSetLastUpdatedFrameCount[i] = -1;
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[i] = -1;
     }
 
+    // One shared stats buffer — see GIProbeStatsEntry on why this must not be
+    // per slot. Device-side zeroing happens once, here, with the device idle.
+    {
+        const VkDeviceSize statsBytes = (VkDeviceSize)probeCount * sizeof(GIProbeStatsEntry);
+        VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        &vkRT.giProbeStatsSsbo, &vkRT.giProbeStatsSsboMemory);
+        VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsSsboMemory, 0, statsBytes, 0, &vkRT.giProbeStatsSsboMapped));
+        memset(vkRT.giProbeStatsSsboMapped, 0, (size_t)statsBytes);
+    }
+
     s_probeState = (GIProbeStateEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStateEntry));
     memset(s_probeState, 0, probeCount * sizeof(GIProbeStateEntry));
+    s_probeStats = (GIProbeStatsEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStatsEntry));
+    memset(s_probeStats, 0, probeCount * sizeof(GIProbeStatsEntry));
     s_probeStateCount = probeCount;
 
     s_probeDim[0] = dim[0];
@@ -624,7 +681,8 @@ static void VK_RT_CreateProbeResources(void)
     s_tilesY = ty;
     s_windowValid = false; // force a full re-anchor, and with it a full invalidate
 
-    const double irrMiB = (double)vkRT.giProbeIrradiance.width * vkRT.giProbeIrradiance.height * 8.0 / (1024.0 * 1024.0);
+    const double irrMiB =
+        (double)vkRT.giProbeIrradiance.width * vkRT.giProbeIrradiance.height * 8.0 / (1024.0 * 1024.0);
     const double distMiB = (double)vkRT.giProbeDistance.width * vkRT.giProbeDistance.height * 4.0 / (1024.0 * 1024.0);
     common->Printf("VK RT GIProbe: grid %dx%dx%d (%d probes) atlas %dx%d tiles, irradiance %ux%u (%.1f MiB), "
                    "distance %ux%u (%.1f MiB), %d rays x %d updates/frame\n",
@@ -662,7 +720,8 @@ static void VK_RT_GIProbeAnchor(const viewDef_t *viewDef, float spacing)
         {
             s_probeState[i].flags = 0;
             s_probeState[i].offset[0] = s_probeState[i].offset[1] = s_probeState[i].offset[2] = 0.0f;
-            s_probeState[i].backface = 0.0f;
+            s_probeStats[i].backface = 0.0f;
+            s_probeStats[i].miss = 0.0f;
         }
         s_baseCell[0] = newBase[0];
         s_baseCell[1] = newBase[1];
@@ -709,8 +768,11 @@ static void VK_RT_GIProbeAnchor(const viewDef_t *viewDef, float spacing)
                 s_probeState[idx].offset[0] = s_probeState[idx].offset[1] = s_probeState[idx].offset[2] = 0.0f;
                 // The tile now belongs to a different probe in a different room;
                 // inheriting its predecessor's verdict would classify on the
-                // wrong geometry until the EMA washed it out.
-                s_probeState[idx].backface = 0.0f;
+                // wrong geometry until the EMA washed it out. Clearing TRACED
+                // above also stops the readback adopting the device value, and
+                // makes the next blend take its measurement outright.
+                s_probeStats[idx].backface = 0.0f;
+                s_probeStats[idx].miss = 0.0f;
                 cleared++;
             }
 
@@ -850,14 +912,15 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 //   0 STORAGE_IMAGE   probe ray scratch  rgba16f
 //   1 STORAGE_IMAGE   irradiance atlas   rgba16f
 //   2 UNIFORM_BUFFER  GIProbeParams
-//   3 STORAGE_BUFFER  probe state
+//   3 STORAGE_BUFFER  probe state        (per slot, CPU-owned)
 //   4 STORAGE_IMAGE   distance atlas     rg16f
+//   5 STORAGE_BUFFER  probe stats        (shared, GPU-owned; blend only)
 static bool VK_RT_InitProbeDescLayout(void)
 {
-    VkDescriptorSetLayoutBinding bindings[5] = {};
+    VkDescriptorSetLayoutBinding bindings[6] = {};
     const VkShaderStageFlags stages = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT;
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 6; i++)
     {
         bindings[i].binding = (uint32_t)i;
         bindings[i].descriptorCount = 1;
@@ -868,17 +931,18 @@ static bool VK_RT_InitProbeDescLayout(void)
     bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 5;
+    layoutInfo.bindingCount = 6;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giProbeDescLayout));
 
     VkDescriptorPoolSize poolSizes[3] = {};
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 3)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1256,31 +1320,42 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         return false;
     }
 
-    // --- G4 classification: read back what the GPU measured, THEN upload ---
+    // --- G4 classification: read back what the GPU measured ---
     //
-    // Order matters both ways. The read must come before the memcpy or our own
-    // upload overwrites the measurement; the memcpy must carry the value we just
-    // read so the next dispatch's EMA continues from it rather than from zero.
-    // The data is from this slot's previous submission, which the frame fence
-    // has already retired, so no extra synchronisation is needed — the existing
-    // memcpy relies on exactly the same guarantee.
-    if (vkRT.giProbeStateSsboMapped[frameIdx] != NULL)
+    // The stats buffer is shared across slots, so what is in it is always the
+    // most recent blend dispatch's output, and the frame fence has retired that
+    // submission before we get here. We only read it; the device copy is never
+    // written from the CPU after creation, so there is no race with an in-flight
+    // blend and nothing to upload back.
+    if (vkRT.giProbeStatsSsboMapped != NULL)
     {
-        const GIProbeStateEntry *gpuState = (const GIProbeStateEntry *)vkRT.giProbeStateSsboMapped[frameIdx];
+        const GIProbeStatsEntry *gpuStats = (const GIProbeStatsEntry *)vkRT.giProbeStatsSsboMapped;
         const float insideOn = Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat());
-        const float insideOff = insideOn * 0.75f; // dead band — see the CVar
+        const float insideOff = insideOn * 0.75f; // dead band — see the CVars
+        const float outsideOn = Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat());
+        const float outsideOff = outsideOn * 0.75f;
         int inside = 0;
+        int outside = 0;
 
         for (int i = 0; i < s_probeStateCount; i++)
         {
-            const float bf = gpuState[i].backface;
-            s_probeState[i].backface = (bf == bf) ? bf : 0.0f; // NaN guard: never classify on garbage
+            const bool traced = (s_probeState[i].flags & GIPROBE_FLAG_TRACED) != 0;
 
-            if (insideOn > 0.0f && (s_probeState[i].flags & GIPROBE_FLAG_TRACED) != 0)
+            // Untraced since it scrolled in: the device value still describes the
+            // tile's previous occupant. NaN guard: never classify on garbage.
+            if (traced)
             {
-                if (s_probeState[i].backface >= insideOn)
+                const float bf = gpuStats[i].backface;
+                const float ms = gpuStats[i].miss;
+                s_probeStats[i].backface = (bf == bf) ? bf : 0.0f;
+                s_probeStats[i].miss = (ms == ms) ? ms : 0.0f;
+            }
+
+            if (insideOn > 0.0f && traced)
+            {
+                if (s_probeStats[i].backface >= insideOn)
                     s_probeState[i].flags |= GIPROBE_FLAG_INSIDE;
-                else if (s_probeState[i].backface < insideOff)
+                else if (s_probeStats[i].backface < insideOff)
                     s_probeState[i].flags &= ~GIPROBE_FLAG_INSIDE;
             }
             else if (insideOn <= 0.0f)
@@ -1288,19 +1363,36 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
                 s_probeState[i].flags &= ~GIPROBE_FLAG_INSIDE;
             }
 
+            if (outsideOn > 0.0f && traced)
+            {
+                if (s_probeStats[i].miss >= outsideOn)
+                    s_probeState[i].flags |= GIPROBE_FLAG_OUTSIDE;
+                else if (s_probeStats[i].miss < outsideOff)
+                    s_probeState[i].flags &= ~GIPROBE_FLAG_OUTSIDE;
+            }
+            else if (outsideOn <= 0.0f)
+            {
+                s_probeState[i].flags &= ~GIPROBE_FLAG_OUTSIDE;
+            }
+
             if ((s_probeState[i].flags & GIPROBE_FLAG_INSIDE) != 0)
                 inside++;
+            if ((s_probeState[i].flags & GIPROBE_FLAG_OUTSIDE) != 0)
+                outside++;
         }
 
         // Every probe excluded is a probe the resolve can no longer fall back
-        // on, so a runaway threshold shows up as black GI. Report the count when
-        // it moves rather than making that a silent failure.
-        static int s_lastInsideLogged = -1;
-        if (r_vkLogRT.GetInteger() >= 1 && abs(inside - s_lastInsideLogged) > Max(1, s_probeStateCount / 100))
+        // on, so a runaway threshold shows up as black GI. Report the counts when
+        // they move rather than making that a silent failure.
+        static int s_lastUnusableLogged = -1;
+        const int unusable = inside + outside;
+        if (r_vkLogRT.GetInteger() >= 1 && abs(unusable - s_lastUnusableLogged) > Max(1, s_probeStateCount / 100))
         {
-            s_lastInsideLogged = inside;
-            common->Printf("VK RT GIProbe: %d/%d probes classified inside geometry (%.1f%%, threshold %.2f)\n", inside,
-                           s_probeStateCount, 100.0 * inside / Max(1, s_probeStateCount), insideOn);
+            s_lastUnusableLogged = unusable;
+            common->Printf("VK RT GIProbe: %d/%d probes unusable (%.1f%%) — %d inside geometry (>= %.2f backface), "
+                           "%d outside the level (>= %.2f miss)\n",
+                           unusable, s_probeStateCount, 100.0 * unusable / Max(1, s_probeStateCount), inside, insideOn,
+                           outside, outsideOn);
         }
     }
 
@@ -1342,8 +1434,14 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         stateInfo.offset = 0;
         stateInfo.range = VK_WHOLE_SIZE;
 
-        VkWriteDescriptorSet writes[5] = {};
-        for (int i = 0; i < 5; i++)
+        // Shared across slots by design — see GIProbeStatsEntry.
+        VkDescriptorBufferInfo statsInfo = {};
+        statsInfo.buffer = vkRT.giProbeStatsSsbo;
+        statsInfo.offset = 0;
+        statsInfo.range = VK_WHOLE_SIZE;
+
+        VkWriteDescriptorSet writes[6] = {};
+        for (int i = 0; i < 6; i++)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = ds;
@@ -1360,8 +1458,10 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         writes[3].pBufferInfo = &stateInfo;
         writes[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[4].pImageInfo = &distInfo;
+        writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[5].pBufferInfo = &statsInfo;
 
-        vkUpdateDescriptorSets(vk.device, 5, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
         vkRT.giProbeDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
@@ -1377,16 +1477,23 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
 
         int traced = 0;
         int inside = 0;
+        int outside = 0;
         double bfSum = 0.0;
+        double msSum = 0.0;
         float bfMax = 0.0f;
+        float msMax = 0.0f;
         for (int i = 0; i < s_probeStateCount; i++)
         {
             if (s_probeState[i].flags & GIPROBE_FLAG_TRACED)
                 traced++;
             if (s_probeState[i].flags & GIPROBE_FLAG_INSIDE)
                 inside++;
-            bfSum += s_probeState[i].backface;
-            bfMax = Max(bfMax, s_probeState[i].backface);
+            if (s_probeState[i].flags & GIPROBE_FLAG_OUTSIDE)
+                outside++;
+            bfSum += s_probeStats[i].backface;
+            msSum += s_probeStats[i].miss;
+            bfMax = Max(bfMax, s_probeStats[i].backface);
+            msMax = Max(msMax, s_probeStats[i].miss);
         }
 
         const idVec3 camPos = viewDef->renderView.vieworg;
@@ -1394,28 +1501,38 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
             (double)vkRT.giProbeIrradiance.width * vkRT.giProbeIrradiance.height * 8.0 / (1024.0 * 1024.0);
         const double distMiB =
             (double)vkRT.giProbeDistance.width * vkRT.giProbeDistance.height * 4.0 / (1024.0 * 1024.0);
-        const double scratchMiB = (double)vkRT.giProbeScratch[frameIdx].width *
-                                  vkRT.giProbeScratch[frameIdx].height * 8.0 / (1024.0 * 1024.0);
+        const double scratchMiB = (double)vkRT.giProbeScratch[frameIdx].width * vkRT.giProbeScratch[frameIdx].height *
+                                  8.0 / (1024.0 * 1024.0);
         const double stateMiB = (double)s_probeStateCount * sizeof(GIProbeStateEntry) / (1024.0 * 1024.0);
+        const double statsMiB = (double)s_probeStateCount * sizeof(GIProbeStatsEntry) / (1024.0 * 1024.0);
 
         common->Printf("=== [r_rtGIProbeDump] frame=%d slot=%d ===\n", tr.frameCount, frameIdx);
         common->Printf("  grid=%dx%dx%d (%d probes)  spacing=%.1f  coverage=%.0fx%.0fx%.0f units\n", s_probeDim[0],
                        s_probeDim[1], s_probeDim[2], s_probeStateCount, s_spacing, s_probeDim[0] * s_spacing,
                        s_probeDim[1] * s_spacing, s_probeDim[2] * s_spacing);
         common->Printf("  camera=(%.0f %.0f %.0f)  baseCell=(%d %d %d)  origin=(%.0f %.0f %.0f)\n", camPos.x, camPos.y,
-                       camPos.z, s_baseCell[0], s_baseCell[1], s_baseCell[2], outUbo.gridOrigin[0], outUbo.gridOrigin[1],
-                       outUbo.gridOrigin[2]);
+                       camPos.z, s_baseCell[0], s_baseCell[1], s_baseCell[2], outUbo.gridOrigin[0],
+                       outUbo.gridOrigin[1], outUbo.gridOrigin[2]);
         common->Printf("  atlas tiles=%dx%d  irradiance %ux%u side=%d (%.1f MiB)  distance %ux%u side=%d (%.1f MiB)\n",
                        s_tilesX, s_tilesY, vkRT.giProbeIrradiance.width, vkRT.giProbeIrradiance.height, s_irrSide,
                        irrMiB, vkRT.giProbeDistance.width, vkRT.giProbeDistance.height, s_distSide, distMiB);
-        common->Printf("  scratch %ux%u (%.2f MiB/slot)  state %.2f MiB/slot  total ~%.1f MiB\n",
+        common->Printf("  scratch %ux%u (%.2f MiB/slot)  state %.2f MiB/slot  stats %.2f MiB shared  total ~%.1f MiB\n",
                        vkRT.giProbeScratch[frameIdx].width, vkRT.giProbeScratch[frameIdx].height, scratchMiB, stateMiB,
-                       irrMiB + distMiB + (scratchMiB + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
-        common->Printf("  traced=%d/%d  insideGeometry=%d (%.1f%%)  never traced=%d\n", traced, s_probeStateCount,
-                       inside, 100.0 * inside / Max(1, s_probeStateCount), s_probeStateCount - traced);
-        common->Printf("  backface fraction: mean=%.3f max=%.3f  threshold=%.2f on / %.2f off\n",
+                       statsMiB, irrMiB + distMiB + statsMiB + (scratchMiB + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
+        const int usable = traced - inside - outside;
+        common->Printf("  traced=%d/%d  never traced=%d\n", traced, s_probeStateCount, s_probeStateCount - traced);
+        common->Printf("  usable=%d (%.1f%%)  insideGeometry=%d (%.1f%%)  outsideLevel=%d (%.1f%%)\n", usable,
+                       100.0 * usable / Max(1, s_probeStateCount), inside, 100.0 * inside / Max(1, s_probeStateCount),
+                       outside, 100.0 * outside / Max(1, s_probeStateCount));
+        // A near-zero mean with a max near 1.0 means the statistic is cleanly
+        // BIMODAL — a crisp classifier. A mean near the threshold means probes
+        // are strewn across it and the verdict is a coin flip.
+        common->Printf("  backface: mean=%.3f max=%.3f  threshold=%.2f on / %.2f off\n",
                        bfSum / Max(1, s_probeStateCount), bfMax, Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat()),
                        Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat()) * 0.75f);
+        common->Printf("  miss:     mean=%.3f max=%.3f  threshold=%.2f on / %.2f off\n",
+                       msSum / Max(1, s_probeStateCount), msMax, Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat()),
+                       Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat()) * 0.75f);
         common->Printf("  schedule: base=%d  %d probes/frame -> full refresh every %.1f frames  %d rays each "
                        "(%d rays/frame)\n",
                        s_updateBase, s_probeUpdates, (double)s_probeStateCount / (double)Max(1, s_probeUpdates),
@@ -1566,14 +1683,17 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.giProbeDescSets[frameIdx], 0, NULL);
     vkCmdDispatch(cmd, (uint32_t)s_probeUpdates, 1, 1);
 
-    // Blend writes the interiors; the border pass reads them.
+    // Blend writes the interiors; the border pass reads them. It also writes the
+    // stats buffer, which the CPU reads back after the frame fence — hence
+    // HOST_READ, and the HOST stage in the destination mask.
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
-                             &memBarrier, 0, NULL, 0, NULL);
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &memBarrier, 0,
+                             NULL, 0, NULL);
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBorderPipeline);
@@ -1664,7 +1784,8 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthToRead.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         depthToRead.image = vk.depthImage;
         depthToRead.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &depthToRead);
     }
 
@@ -1758,8 +1879,8 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depthRestore.image = vk.depthImage;
         depthRestore.subresourceRange = {depthAspect, 0, 1, 0, 1};
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
-                             NULL, 0, NULL, 1, &depthRestore);
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0,
+                             0, NULL, 0, NULL, 1, &depthRestore);
     }
 
     if (r_vkLogRT.GetInteger() >= 1)

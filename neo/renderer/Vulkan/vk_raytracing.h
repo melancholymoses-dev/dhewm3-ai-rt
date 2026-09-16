@@ -614,9 +614,17 @@ struct vkRTState_t
     vkReflBuffer_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT]; // rgba16f, raysPerProbe x probesPerFrame
     VkSampler      giProbeSampler;                           // bilinear-clamp for atlas fetches
 
+    // CPU-owned (offset + flags), re-uploaded every frame, hence per slot.
     VkBuffer       giProbeStateSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giProbeStateSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void          *giProbeStateSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // GPU-owned G4 classification statistics, read back by the CPU.  SHARED, not
+    // per slot: it is an EMA accumulator, and a per-slot copy only ever receives
+    // the GPU's write on alternating frames.
+    VkBuffer       giProbeStatsSsbo;
+    VkDeviceMemory giProbeStatsSsboMemory;
+    void          *giProbeStatsSsboMapped;
 
     VkBuffer       giProbeParamsUbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giProbeParamsUboMemory[VK_MAX_FRAMES_IN_FLIGHT];
