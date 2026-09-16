@@ -1,0 +1,84 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_probe_border.comp — octahedral border fill.
+
+An octahedral map is only seamless if a bilinear tap at the edge of a tile can
+reach the texel that is its neighbour ON THE SPHERE, which is generally on the
+opposite side of the map.  The one-texel border around each tile holds a copy of
+those texels, so the resolve's bilinear fetch never has to know about the fold.
+
+Without this pass, every probe shows a visible cross/seam wherever a lookup
+direction crosses the octahedron's edge — the classic DDGI artifact.
+
+One workgroup per updated probe, per map: gl_WorkGroupID.x = update slot,
+gl_WorkGroupID.y = 0 for the irradiance map, 1 for the distance map.  Each
+thread handles a whole row/column position (four border texels), so one
+workgroup of `side` active threads covers the ring including its corners.  The
+corners are written twice with the same value — the mirror rule gives the same
+source for each — which is cheaper than branching to avoid it.
+
+Descriptors: the same set 0 layout gi_probe_blend.comp uses.
+
+20260906_froxel_probe_gi.md Part B, chunk G1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D probeScratch;
+layout(set = 0, binding = 1, rgba16f) uniform image2D irradianceAtlas;
+layout(set = 0, binding = 4, rg16f) uniform image2D distanceAtlas;
+
+#define GIPROBE_SET 0
+#include "gi_probe_common.glsl"
+
+void main()
+{
+    int slot = int(gl_WorkGroupID.x);
+    if (slot >= max(gp.rays.y, 0))
+        return;
+
+    bool isDistance = (gl_WorkGroupID.y == 1u);
+    int side = isDistance ? max(gp.atlas.w, 3) : max(gp.atlas.z, 3);
+
+    int i = int(gl_LocalInvocationID.x);
+    if (i >= side)
+        return;
+
+    ivec3 absCell = gip_ScheduledCell(slot);
+    ivec2 origin = gip_TileOrigin(gip_StorageIndex(absCell), side);
+    int last = side - 1;
+
+    ivec2 dst[4];
+    dst[0] = ivec2(i, 0);
+    dst[1] = ivec2(i, last);
+    dst[2] = ivec2(0, i);
+    dst[3] = ivec2(last, i);
+
+    for (int k = 0; k < 4; k++)
+    {
+        ivec2 d = dst[k];
+        // Interior texels are reached by threads 1..side-2 of the row/column
+        // passes; skip them so the interior the blend pass just wrote is not
+        // overwritten by its own mirror.
+        if (d.x != 0 && d.x != last && d.y != 0 && d.y != last)
+            continue;
+
+        ivec2 s = gip_BorderSource(d, side);
+        if (isDistance)
+            imageStore(distanceAtlas, origin + d, imageLoad(distanceAtlas, origin + s));
+        else
+            imageStore(irradianceAtlas, origin + d, imageLoad(irradianceAtlas, origin + s));
+    }
+}

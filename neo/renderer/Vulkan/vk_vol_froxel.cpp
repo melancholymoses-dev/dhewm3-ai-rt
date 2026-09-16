@@ -54,7 +54,7 @@ static idCVar r_rtVolFroxelResX("r_rtVolFroxelResX", "240", CVAR_RENDERER | CVAR
                                 "shaft edges; cost is linear. Change forces a device-idle realloc.");
 static idCVar r_rtVolFroxelResY("r_rtVolFroxelResY", "135", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid height in cells. Change forces a device-idle realloc.");
-static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "64", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "96", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid depth in slices, exponentially distributed out to "
                                 "r_rtVolMaxDist. Change forces a device-idle realloc.");
 
@@ -76,18 +76,11 @@ static idCVar r_rtVolFroxelDebugGain("r_rtVolFroxelDebugGain", "20.0", CVAR_REND
                                      "Uchimura toe curve instead of reading as black. Mirrors r_rtVolDebugGain; "
                                      "modes 2 and 3 output normalised ramps and ignore it.");
 
-// F2: the grid's far anchor is DERIVED from the medium, not taken from
-// r_rtVolMaxDist. At r_rtVolDensity 0.015, maxDist 512 is 7.7 optical depths —
-// T = exp(-0.015*512) = 0.0005, so the outer half of the grid sat in near-total
-// extinction contributing nothing while consuming half the slice budget. Cutting
-// the far anchor to where transmittance reaches this floor, and the near anchor
-// to znear, takes the far cell from ~50 world units deep to ~18 at the same 64
-// slices — which is aimed straight at the surface-straddle error.
-//
+// F2: the grid's far anchor is DERIVED from the medium, not taken from r_rtVolMaxDist.
 // Must stay derived rather than a constant: raising density shortens the useful
 // range, lowering it extends the range back out toward r_rtVolMaxDist.
 static idCVar r_rtVolFroxelFarTransmittance(
-    "r_rtVolFroxelFarTransmittance", "0.02", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtVolFroxelFarTransmittance", "0.002", CVAR_RENDERER | CVAR_FLOAT,
     "Transmittance floor that sets the froxel grid's far plane: the grid ends where "
     "exp(-density*d) falls to this, capped by r_rtVolMaxDist. Lower = longer range, "
     "coarser cells. 0 disables the derivation and uses r_rtVolMaxDist directly.");
@@ -155,6 +148,13 @@ static_assert(sizeof(VolFroxelParamsUBO) == 304, "VolFroxelParamsUBO size mismat
 // running with a mismatched extent (same pattern as s_volMarchScale).
 static int32_t s_froxelDim[3] = {0, 0, 0};
 
+// Dimensions the last allocation attempt FAILED at.  A failed realloc leaves
+// s_froxelDim zeroed, which would make VK_RT_VolFroxelDimsChanged true forever:
+// the fill would then call VK_RT_CreateFroxelImages — and with it
+// vkDeviceWaitIdle — every single frame.  Latching the failed request makes it
+// retry only once the cvars actually move again.
+static int32_t s_froxelDimFailed[3] = {0, 0, 0};
+
 // ---------------------------------------------------------------------------
 // Dimensions
 // ---------------------------------------------------------------------------
@@ -170,6 +170,10 @@ static bool VK_RT_VolFroxelDimsChanged(void)
 {
     int32_t want[3];
     VK_RT_VolFroxelRequestedDims(want);
+
+    if (want[0] == s_froxelDimFailed[0] && want[1] == s_froxelDimFailed[1] && want[2] == s_froxelDimFailed[2])
+        return false; // already known-bad, do not retry every frame
+
     return want[0] != s_froxelDim[0] || want[1] != s_froxelDim[1] || want[2] != s_froxelDim[2];
 }
 
@@ -177,11 +181,23 @@ static bool VK_RT_VolFroxelDimsChanged(void)
 // 3D image lifecycle
 // ---------------------------------------------------------------------------
 
+static void VK_RT_FreeFroxelImage(vkFroxelGrid_t &g);
+
+// Allocation here is deliberately NON-FATAL, unlike most VK_CHECK sites in this
+// renderer.  r_rtVolFroxelResX/Y/Z clamp to 512x512x256, which is 512 MiB per
+// image and ~2 GiB across both images and both frame slots — a setting the
+// CVars accept and a memory-constrained device will refuse.  Under VK_CHECK that
+// legal setting terminated the renderer.  Returning false instead lets
+// VK_RT_VolFroxelActive stand the froxel path down and the ray march carry the
+// frame; that fallback only actually works because Active() now tests the grid
+// images and not just the pipelines.
 static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, uint32_t d)
 {
     g.width = w;
     g.height = h;
     g.depth = d;
+
+    VkResult vkr = VK_SUCCESS;
 
     VkImageCreateInfo imgCI = {};
     imgCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -194,7 +210,14 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
     imgCI.tiling = VK_IMAGE_TILING_OPTIMAL;
     imgCI.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     imgCI.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    VK_CHECK(vkCreateImage(vk.device, &imgCI, NULL, &g.image));
+    VK_CHECK_NONFATAL(vkCreateImage(vk.device, &imgCI, NULL, &g.image), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT Froxel: vkCreateImage failed (%d) for a %ux%ux%u grid image", (int)vkr, w, h, d);
+        g.image = VK_NULL_HANDLE;
+        VK_RT_FreeFroxelImage(g);
+        return false;
+    }
 
     VkMemoryRequirements memReq;
     vkGetImageMemoryRequirements(vk.device, g.image, &memReq);
@@ -214,8 +237,7 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
     if (memTypeIdx == UINT32_MAX)
     {
         common->Warning("VK RT Froxel: no device-local memory type for the froxel grid");
-        vkDestroyImage(vk.device, g.image, NULL);
-        g.image = VK_NULL_HANDLE;
+        VK_RT_FreeFroxelImage(g);
         return false;
     }
 
@@ -223,8 +245,24 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
     allocI.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocI.allocationSize = memReq.size;
     allocI.memoryTypeIndex = memTypeIdx;
-    VK_CHECK(vkAllocateMemory(vk.device, &allocI, NULL, &g.memory));
-    VK_CHECK(vkBindImageMemory(vk.device, g.image, g.memory, 0));
+    VK_CHECK_NONFATAL(vkAllocateMemory(vk.device, &allocI, NULL, &g.memory), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT Froxel: out of device memory (%d) for a %ux%ux%u grid image (%.1f MiB) — lower "
+                        "r_rtVolFroxelResX/Y/Z",
+                        (int)vkr, w, h, d, (double)memReq.size / (1024.0 * 1024.0));
+        g.memory = VK_NULL_HANDLE;
+        VK_RT_FreeFroxelImage(g);
+        return false;
+    }
+
+    VK_CHECK_NONFATAL(vkBindImageMemory(vk.device, g.image, g.memory, 0), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT Froxel: vkBindImageMemory failed (%d)", (int)vkr);
+        VK_RT_FreeFroxelImage(g);
+        return false;
+    }
 
     VkImageViewCreateInfo viewCI = {};
     viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -232,7 +270,14 @@ static bool VK_RT_AllocFroxelImage(vkFroxelGrid_t &g, uint32_t w, uint32_t h, ui
     viewCI.viewType = VK_IMAGE_VIEW_TYPE_3D;
     viewCI.format = VK_FORMAT_R16G16B16A16_SFLOAT;
     viewCI.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VK_CHECK(vkCreateImageView(vk.device, &viewCI, NULL, &g.view));
+    VK_CHECK_NONFATAL(vkCreateImageView(vk.device, &viewCI, NULL, &g.view), vkr);
+    if (vkr != VK_SUCCESS)
+    {
+        common->Warning("VK RT Froxel: vkCreateImageView failed (%d)", (int)vkr);
+        g.view = VK_NULL_HANDLE;
+        VK_RT_FreeFroxelImage(g);
+        return false;
+    }
 
     // Transition UNDEFINED -> GENERAL and clear to black, so a pass that reads
     // before the first fill (or reads a cell the fill skipped) sees zeroes
@@ -326,6 +371,7 @@ static void VK_RT_DestroyFroxelImages(void)
         VK_RT_FreeFroxelImage(vkRT.froxelIntegrated[i]);
     }
     s_froxelDim[0] = s_froxelDim[1] = s_froxelDim[2] = 0;
+    s_froxelDimFailed[0] = s_froxelDimFailed[1] = s_froxelDimFailed[2] = 0;
 }
 
 // Allocates (or reallocates) the grid at the currently requested dimensions.
@@ -344,6 +390,13 @@ static void VK_RT_CreateFroxelImages(void)
             !VK_RT_AllocFroxelImage(vkRT.froxelIntegrated[i], (uint32_t)dim[0], (uint32_t)dim[1], (uint32_t)dim[2]))
         {
             VK_RT_DestroyFroxelImages();
+            // Latch AFTER the destroy — it clears this on the way out.
+            s_froxelDimFailed[0] = dim[0];
+            s_froxelDimFailed[1] = dim[1];
+            s_froxelDimFailed[2] = dim[2];
+            common->Warning("VK RT Froxel: grid allocation failed at %dx%dx%d — falling back to the ray march "
+                            "(VK_RT_VolFroxelActive is false while the images are null)",
+                            dim[0], dim[1], dim[2]);
             return;
         }
         vkRT.froxelFillDescSetLastUpdatedFrameCount[i] = -1;
@@ -928,7 +981,19 @@ void VK_RT_ShutdownVolFroxel(void)
 // Requires the whole chain — fill, integrate and resolve — because standing the
 // march down while any link is missing would silently leave volBuffer empty and
 // the screen fogless, rather than falling back to the path that works.
-bool VK_RT_VolFroxelActive(void)
+//
+// The GRID IMAGES are part of that chain, not just the pipelines.  Checking only
+// the pipelines made this return true after a failed VK_RT_CreateFroxelImages:
+// the march stayed stood down, every froxel dispatch early-outed on a null
+// image, and the result was permanently fogless — with the overlays silently
+// dead too, since VK_RT_VolFroxelDebugMode gates on this.  This is the invariant
+// the comment above already claimed and did not enforce.
+// "The froxel path is SELECTED and could run" — everything Active() tests except
+// the grid images.  Only the fill uses this, and only so it can still reach its
+// realloc when the images are missing: gating the fill on Active() instead would
+// mean a failed allocation could never be recovered from, because the one code
+// path that retries sits behind the condition the failure just falsified.
+static bool VK_RT_VolFroxelSelected(void)
 {
     if (!vkRT.isInitialized || !r_useRayTracing.GetBool() || !r_rtVol.GetBool())
         return false;
@@ -936,6 +1001,14 @@ bool VK_RT_VolFroxelActive(void)
         return false;
     return vkRT.froxelFillPipeline != VK_NULL_HANDLE && vkRT.froxelIntegratePipeline != VK_NULL_HANDLE &&
            vkRT.froxelResolvePipeline != VK_NULL_HANDLE;
+}
+
+bool VK_RT_VolFroxelActive(void)
+{
+    if (!VK_RT_VolFroxelSelected())
+        return false;
+    return vkRT.froxelScatter[vk.currentFrame].image != VK_NULL_HANDLE &&
+           vkRT.froxelIntegrated[vk.currentFrame].image != VK_NULL_HANDLE;
 }
 
 // Non-zero only while an overlay is actually being drawn — vk_vol.cpp reads this
@@ -961,7 +1034,10 @@ int VK_RT_VolFroxelDebugMode(void)
 
 void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
 {
-    if (!VK_RT_VolFroxelActive())
+    // Selected(), not Active(): this function owns the realloc below, so it has
+    // to run when the grid images are missing. It bails on a null grid after the
+    // realloc has had its chance.
+    if (!VK_RT_VolFroxelSelected())
         return;
     if (!vkRT.tlas[vk.currentFrame].isValid)
         return;

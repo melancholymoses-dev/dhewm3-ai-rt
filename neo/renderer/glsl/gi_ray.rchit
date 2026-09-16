@@ -96,6 +96,12 @@ hitAttributeEXT vec2 baryCoord;
 
 void main()
 {
+    // B.2: hit geometry fields, written before any early-out so every return path
+    // leaves a complete payload. hitDist feeds the probe visibility moments,
+    // backface feeds probe classification (G4).
+    giPayload.hitDist  = gl_HitTEXT;
+    giPayload.backface = 0.0; // refined below, once the surface normal is known
+
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
     if (matIdx >= uint(materials.length()))
@@ -103,6 +109,16 @@ void main()
         giPayload.colour = vec3(0.0);
         return;
     }
+
+    // Which side was hit, from the vertex normal rather than gl_HitKindEXT.
+    // Doom 3 winds front faces the opposite way from the GL/Vulkan convention
+    // (GL_Cull culls GL_FRONT for CT_FRONT_SIDED), so every VISIBLE surface
+    // reports as gl_HitKindBackFacingTriangleEXT and the test came out inverted:
+    // probes in open air read as buried, and the blend pass threw away the rays
+    // carrying the actual light. The normal is the engine's own idea of
+    // "outward" and needs no winding convention at all.
+    vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
+    giPayload.backface = (dot(hitNorm, gl_WorldRayDirectionEXT) > 0.0) ? 1.0 : 0.0;
 
     // Sample diffuse albedo at secondary hit.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
@@ -118,11 +134,9 @@ void main()
 
     // --- Option B: evaluate each in-range light at the secondary hit ---
     vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
-    vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
 
-    // If the ray hit the back face (e.g. two-sided geometry), flip the normal
-    // so the hemisphere face toward the incoming ray direction.
-    if (dot(hitNorm, -gl_WorldRayDirectionEXT) < 0.0)
+    // Two-sided geometry: face the hemisphere toward the incoming ray.
+    if (giPayload.backface > 0.5)
         hitNorm = -hitNorm;
 
     // Shared light loop (rt_light_eval.glsl). bounceScale rides in as contribScale.

@@ -1,0 +1,94 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — gi_probe_trace.rgen — probe update rays.
+
+The SECOND raygen group in the existing GI ray pipeline (vk_gi.cpp), selected
+by pointing vkCmdTraceRaysKHR at vkRT.giProbeRgenRegion instead of
+vkRT.giRgenRegion.  Everything downstream of the ray is shared with the
+per-pixel path — gi_ray.rchit, gi_ray.rahit, gi_ray.rmiss, the same AR0 light
+admission, the same rt_light_eval.glsl — so a probe "sees" exactly the scene
+per-pixel GI sees.  That is the whole reason for reusing the pipeline rather
+than building a second one.
+
+Launch is (raysPerProbe, probesPerFrame): x = ray index within the probe,
+y = this frame's update slot.  Each invocation writes one texel of the scratch
+image, which gi_probe_blend.comp then folds into the octahedral atlases.
+
+Directions are spherical Fibonacci rotated by a per-update random rotation.
+The rotation matters: a fixed direction set traced forever bakes its own
+sampling bias into the EMA instead of averaging it away.  Both this shader and
+the blend pass regenerate the directions from gp.rays.w, so they are never
+stored.
+
+Scratch encoding:  rgb = incoming radiance, a = hit distance, NEGATED for a
+back-face hit.  One channel carries both because the blend pass wants the
+distance either way (visibility moments) but must exclude back-face hits from
+the irradiance (they are the inside of a wall, not light).
+
+20260906_froxel_probe_gi.md Part B, chunk G1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_EXT_ray_tracing : require
+
+// set 0 is the shared GI resource set.  Only the TLAS is touched here: the
+// per-pixel rgen's storage image / depth / G-buffer bindings are irrelevant to
+// a probe, and gi_ray.rchit reads the GIParams block and the light SSBO from
+// this same set without this shader having to declare them.
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
+
+#define GIPROBE_SET 2
+#include "gi_probe_common.glsl"
+
+layout(set = 2, binding = 0, rgba16f) uniform image2D probeScratch;
+
+#include "gi_payload.glsl"
+layout(location = 0) rayPayloadEXT GIPayload giPayload;
+
+void main()
+{
+    int rayIdx = int(gl_LaunchIDEXT.x);
+    int slot = int(gl_LaunchIDEXT.y);
+
+    int numRays = max(gp.rays.x, 1);
+    if (rayIdx >= numRays || slot >= max(gp.rays.y, 0))
+        return;
+
+    ivec3 absCell = gip_ScheduledCell(slot);
+    vec3 origin = gip_ProbePos(absCell);
+
+    mat3 rot = gip_RandomRotation(uint(gp.rays.w) * 2654435761u + uint(gp.rays.z));
+    vec3 dir = normalize(rot * gip_SphericalFibonacci(rayIdx, numRays));
+
+    float tMax = max(gp.tune.w, 1.0);
+
+    giPayload.colour = vec3(0.0);
+    giPayload.hitDist = tMax;
+    giPayload.backface = 0.0;
+
+    traceRayEXT(topLevelAS,
+                gl_RayFlagsNoneEXT,
+                0xFF, // cull mask (all instances)
+                0,    // SBT offset
+                0,    // SBT stride
+                0,    // miss index — gi_ray.rmiss, same as the per-pixel path
+                origin,
+                0.0,
+                dir,
+                tMax,
+                0); // payload location
+
+    float encodedDist = (giPayload.backface > 0.5) ? -giPayload.hitDist : giPayload.hitDist;
+
+    imageStore(probeScratch, ivec2(rayIdx, slot), vec4(giPayload.colour, encodedDist));
+}

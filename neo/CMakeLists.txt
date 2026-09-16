@@ -691,6 +691,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
 	renderer/Vulkan/vk_gi.cpp
+	renderer/Vulkan/vk_gi_probe.cpp
 	renderer/Vulkan/vk_vol.cpp
 	renderer/Vulkan/vk_vol_froxel.cpp
 	renderer/Vulkan/vk_tonemap.cpp
@@ -748,6 +749,10 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/gi_temporal_resolve.comp
 	renderer/glsl/gi_atrous.comp
 	renderer/glsl/gi_albedo_mod.comp
+	renderer/glsl/gi_probe_trace.rgen
+	renderer/glsl/gi_probe_blend.comp
+	renderer/glsl/gi_probe_border.comp
+	renderer/glsl/gi_probe_resolve.comp
 	renderer/glsl/glass_probe.rahit
 	renderer/glsl/glass_probe.rchit
 	renderer/glsl/glass_probe.rmiss
@@ -791,6 +796,7 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_common.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_probe_common.glsl"
 )
 
 set(SPIRV_BINARIES "")
