@@ -4945,12 +4945,19 @@ void VK_RB_DrawView(const void *data)
         VK_SetRenderStage("Refl_Composite");
         VK_RT_CompositeReflections(cmdBuf);
 
-        VK_SetRenderStage("Vol_Composite");
-        const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
-        int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
-        VK_RT_CompositeVolumetrics(cmdBuf);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
+        // F6: with r_rtVolAttenuateBackground the composite multiplies the scene by
+        // the path transmittance, so it has to run after the surfaces exist —
+        // attenuating here would dim only GI and ambient and let every direct light
+        // land on top unattenuated. The late site below is the same render pass.
+        if (!VK_RT_VolCompositeAfterSurfaces())
+        {
+            VK_SetRenderStage("Vol_Composite");
+            const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
+            int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
+            VK_RT_CompositeVolumetrics(cmdBuf);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
+        }
     }
 
     VK_SetRenderStage("Interactions");
@@ -4978,6 +4985,31 @@ void VK_RB_DrawView(const void *data)
     {
         if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterShaderPasses", true))
             return;
+    }
+
+    // F6 late composite site: after interactions and blend stages (surface radiance,
+    // which must be attenuated) and before Doom 3's own fog lights (a separate
+    // artist-placed medium — attenuating those too would double-count). The
+    // interaction/shader-pass loops set scissor and viewport per surface, so both
+    // are restored here before the fullscreen triangle. Same profiler phase as the
+    // early site; phases accumulate, so captures stay comparable across the toggle.
+    if (VK_RT_VolCompositeAfterSurfaces())
+    {
+        VK_SetRenderStage("Vol_Composite");
+        VkViewport volViewport = {0,
+                                  (float)vk.swapchainExtent.height,
+                                  (float)vk.swapchainExtent.width,
+                                  -(float)vk.swapchainExtent.height,
+                                  0.0f,
+                                  1.0f};
+        vkCmdSetViewport(cmdBuf, 0, 1, &volViewport);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+
+        const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
+        int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
+        VK_RT_CompositeVolumetrics(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
     }
 
     VK_SetRenderStage("FogLights");

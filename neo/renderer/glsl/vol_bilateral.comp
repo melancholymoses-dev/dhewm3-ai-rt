@@ -133,7 +133,10 @@ void main()
     // value never gets blended against a spatially-unrelated scatter sample.
     vec4  sumColor  = vec4(0.0);
     float sumW      = 0.0;
-    vec4  bestColor = vec4(0.0);
+    // Alpha 1.0, not 0.0: this is the no-sample fallback, and "clear air" is the
+    // only safe failsafe where transmittance is unknown — 0.0 would black the
+    // background out entirely once the composite multiplies by it (F6).
+    vec4  bestColor = vec4(0.0, 0.0, 0.0, 1.0);
     float bestDiff  = 1e30;
 
     for (int dy = -RADIUS; dy <= RADIUS; dy++)

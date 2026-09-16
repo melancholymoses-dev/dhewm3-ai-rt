@@ -438,14 +438,9 @@ void main()
 
     // Alpha carries the total path transmittance (camera -> tMax): 1.0 = clear
     // air, near-0.0 = the view ray is fully extinguished by the medium before
-    // it reaches the surface. Not yet consumed by vol_composite.frag's blend
-    // state (still pure additive) — that would also need the composite call
-    // moved to after the direct-lighting interaction pass so it attenuates
-    // ALL scene radiance behind the fog, not just the GI/reflection base drawn
-    // before it; tracked as a follow-up, not done here. Plumbed through now
-    // (bilateral upsample and temporal EMA already carry all 4 channels) so
-    // it's available without another pass of shader surgery, and so it can be
-    // inspected directly (e.g. temporarily view volBuf.a) to sanity-check the
-    // self-attenuation fix above.
+    // it reaches the surface. Consumed by the composite under
+    // r_rtVolAttenuateBackground (F6), which also moves the composite after the
+    // interaction pass so ALL scene radiance behind the fog is attenuated, not
+    // just the GI/reflection base. Inspect it directly with r_rtVolDebugMode 1.
     imageStore(volBuf, coord, vec4(result, transmittance));
 }

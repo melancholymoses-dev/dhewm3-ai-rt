@@ -463,7 +463,8 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.gridDim[3] = 0; // unused — F3's cluster cull was dropped 2026-09-13
 
     const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    const float density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+    // F6: effective, not raw — attenuation halves it, which also pushes dFar out.
+    const float density = VK_RT_VolEffectiveDensity();
 
     // Near anchor = the real near plane, read from the projection rather than from
     // r_znear: znear is game-owned and drops to 1.0 in cinematics, and the matrix
@@ -1193,6 +1194,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("  grid range: dNear=%.3f dFar=%.1f (r_rtVolMaxDist=%.1f, T floor=%.4f)  logRange=%.4f\n",
                        ubo.depthParams[0], ubo.depthParams[1], ubo.rangeParams[2],
                        r_rtVolFroxelFarTransmittance.GetFloat(), ubo.rangeParams[0]);
+        common->Printf("  density: raw=%.5f effective=%.5f (attenuateBackground=%d)\n", r_rtVolDensity.GetFloat(),
+                       ubo.densities[0], (int)VK_RT_VolCompositeAfterSurfaces());
         common->Printf("  linNum=%.4f  linAdd=%.4f  (transmittance at dFar = %.5f)\n", ubo.depthParams[2],
                        ubo.depthParams[3], idMath::Exp(-ubo.densities[0] * ubo.depthParams[1]));
 
