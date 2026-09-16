@@ -2683,10 +2683,10 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
-        ImGui::EndDisabled(); // !reflOn
+
         ImGui::EndTable();
     }
-
+    ImGui::EndDisabled(); // !reflOn
     // ---- GI settings ---------------------------------------------------------
     const bool giOn = rtCVars.rtGI && rtCVars.rtGI->GetBool();
     ImGui::BeginDisabled(!giOn);

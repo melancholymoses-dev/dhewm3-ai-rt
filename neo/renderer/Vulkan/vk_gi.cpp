@@ -48,16 +48,15 @@ static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, 
 
 // Not static: read from vk_backend.cpp (RB_DetermineLightScale) for the
 // r_rtGIAutoDirectScale coupling below.
-idCVar r_rtGIStrength("r_rtGIStrength", "0.25", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtGIStrength("r_rtGIStrength", "0.20", CVAR_RENDERER | CVAR_FLOAT,
                       "Global scale applied to the GI buffer before compositing");
 
 // Not static: gi_probe_resolve.comp applies the identical contrast push, so an
 // r_rtGIProbes A/B compares the sampling structure and not two different tone
 // curves (20260906_froxel_probe_gi.md G2).
-idCVar r_rtGIContrast(
-    "r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
-    "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
-    "0 = off, 1 = full effect");
+idCVar r_rtGIContrast("r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
+                      "GI colour contrast boost [0-1]: subtracts minimum channel and rescales to original brightness. "
+                      "0 = off, 1 = full effect");
 
 idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.", CVAR_RENDERER | CVAR_FLOAT,
                          "Baseline multiplier on direct interaction lighting when GI is active, at "
@@ -812,8 +811,8 @@ static void VK_RT_InitGIPipeline(void)
     // Fetch every group handle in pipeline order:
     //   [rgen, gi-miss, hit, shadow-miss] (+ probe-rgen)
     uint8_t *handles = (uint8_t *)alloca(groupCount * handleSize);
-    VK_CHECK(
-        vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.giPipeline, 0, groupCount, groupCount * handleSize, handles));
+    VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(vk.device, vkRT.giPipeline, 0, groupCount, groupCount * handleSize,
+                                                  handles));
 
     uint8_t *sbtData;
     VK_CHECK(vkMapMemory(vk.device, vkRT.sbtGIMemory, 0, sbtSize, 0, (void **)&sbtData));
@@ -848,9 +847,8 @@ static void VK_RT_InitGIPipeline(void)
     // shaderGroupBaseAlignment. `stride` is already rounded up to that alignment,
     // so record 6 lands aligned; a region sized to the whole remaining table
     // instead is the classic way to get a device lost here.
-    vkRT.giProbeRgenRegion =
-        haveProbeRgen ? VkStridedDeviceAddressRegionKHR{sbtBase + 6 * stride, stride, stride}
-                      : VkStridedDeviceAddressRegionKHR{0, 0, 0};
+    vkRT.giProbeRgenRegion = haveProbeRgen ? VkStridedDeviceAddressRegionKHR{sbtBase + 6 * stride, stride, stride}
+                                           : VkStridedDeviceAddressRegionKHR{0, 0, 0};
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT GI SBT: stride=%u sbtBytes=%u base=0x%llx (4 groups: rgen+gi-miss+shadow-miss+hit) "

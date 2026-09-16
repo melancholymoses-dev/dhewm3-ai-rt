@@ -54,7 +54,7 @@ static idCVar r_rtVolFroxelResX("r_rtVolFroxelResX", "240", CVAR_RENDERER | CVAR
                                 "shaft edges; cost is linear. Change forces a device-idle realloc.");
 static idCVar r_rtVolFroxelResY("r_rtVolFroxelResY", "135", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid height in cells. Change forces a device-idle realloc.");
-static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "64", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtVolFroxelResZ("r_rtVolFroxelResZ", "96", CVAR_RENDERER | CVAR_INTEGER,
                                 "Froxel grid depth in slices, exponentially distributed out to "
                                 "r_rtVolMaxDist. Change forces a device-idle realloc.");
 
@@ -76,18 +76,11 @@ static idCVar r_rtVolFroxelDebugGain("r_rtVolFroxelDebugGain", "20.0", CVAR_REND
                                      "Uchimura toe curve instead of reading as black. Mirrors r_rtVolDebugGain; "
                                      "modes 2 and 3 output normalised ramps and ignore it.");
 
-// F2: the grid's far anchor is DERIVED from the medium, not taken from
-// r_rtVolMaxDist. At r_rtVolDensity 0.015, maxDist 512 is 7.7 optical depths —
-// T = exp(-0.015*512) = 0.0005, so the outer half of the grid sat in near-total
-// extinction contributing nothing while consuming half the slice budget. Cutting
-// the far anchor to where transmittance reaches this floor, and the near anchor
-// to znear, takes the far cell from ~50 world units deep to ~18 at the same 64
-// slices — which is aimed straight at the surface-straddle error.
-//
+// F2: the grid's far anchor is DERIVED from the medium, not taken from r_rtVolMaxDist.
 // Must stay derived rather than a constant: raising density shortens the useful
 // range, lowering it extends the range back out toward r_rtVolMaxDist.
 static idCVar r_rtVolFroxelFarTransmittance(
-    "r_rtVolFroxelFarTransmittance", "0.02", CVAR_RENDERER | CVAR_FLOAT,
+    "r_rtVolFroxelFarTransmittance", "0.002", CVAR_RENDERER | CVAR_FLOAT,
     "Transmittance floor that sets the froxel grid's far plane: the grid ends where "
     "exp(-density*d) falls to this, capped by r_rtVolMaxDist. Lower = longer range, "
     "coarser cells. 0 disables the derivation and uses r_rtVolMaxDist directly.");
