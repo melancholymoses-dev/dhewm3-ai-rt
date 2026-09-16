@@ -626,6 +626,13 @@ struct vkRTState_t
     VkDeviceMemory giProbeStatsSsboMemory;
     void          *giProbeStatsSsboMapped;
 
+    // Per-slot snapshot of the above, filled by a copy at the end of the blend
+    // pass.  The CPU reads THIS, not the live accumulator, which the previous
+    // frame's blend may still be writing.
+    VkBuffer       giProbeStatsReadback[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory giProbeStatsReadbackMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void          *giProbeStatsReadbackMapped[VK_MAX_FRAMES_IN_FLIGHT];
+
     VkBuffer       giProbeParamsUbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giProbeParamsUboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void          *giProbeParamsUboMapped[VK_MAX_FRAMES_IN_FLIGHT];

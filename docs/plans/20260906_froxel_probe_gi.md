@@ -693,7 +693,11 @@ probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, w
     `r_rtGIProbes` back to 0 resumes from the current frame instead of blending
     against a history that is arbitrarily many frames old.
 
-### G3 — leak hardening (mandatory, pillar 2) ⚠️ **gate blocked: re-run after the G4 oscillation fix**
+### G3 — leak hardening (mandatory, pillar 2) ✅ **gate passed 2026-09-15**
+Mode 3 reads mostly green, with red only in corners (residual leak, a bias tune for G6)
+and magenta on distant walls — the latter is the grid's finite coverage, not a defect:
+those cells fall outside the 2048x2048x1024 window and go green on approach. The gate
+only became judgeable after the two G4 defects below were fixed.
 Chebyshev visibility weighting from the distance moments; **ship the leak overlay
 first**: mode 3 = leak detector, mode 2 = per-pixel probe weights. Then tune
 density/bias against the overlay.
@@ -860,6 +864,60 @@ still shows buried probes carrying weight.
   - Not a bug: **probes turn blue when a door closes on them.** Doom 3 doors are
     movers, and a probe the door brush swallows genuinely *is* inside geometry. That is
     the classifier working, and it is the case G4 relocation would eventually improve.
+- **Third run 2026-09-15 — oscillation gone, and it uncovered the real defect.** Stable
+  now, but in a large box room **probes in open air classify INSIDE** (mode 4 blue), and
+  mode 3 left whole surfaces unpainted. Both are the same thing: too many probes
+  excluded. The flicker had been masking it — the flag was crossing the dead band every
+  frame, so it read as noise rather than as a wrong verdict.
+  - Mode 3 only wrote `outColour` when `wTotal > 1e-6`; where every neighbour was
+    excluded it left the lit scene alone, which reads as "fine" when it is the **worst**
+    case. Now **magenta** = no probe GI at all on that surface.
+  - Added **modes 6 and 7**: the RAW backface / miss fraction on the ramp (blue 0 →
+    red 1), stats SSBO at resolve binding 8. Mode 4 shows the verdict, so a bad
+    statistic and a mistuned threshold look identical; 6/7 separate them. **An air
+    probe must read blue in mode 6.** If it does not, the statistic is measuring the
+    wrong thing and no threshold will rescue it — the first suspect then is triangle
+    facing (Doom 3 winds its faces opposite to the GL default, so `gl_HitKindEXT` and
+    "inside a brush" may not mean what `gi_ray.rchit` assumes).
+  - Also fixed: sharing the stats accumulator removed the accidental synchronisation
+    the per-slot version had, so the CPU was reading it while the previous frame's blend
+    still wrote it (the fence it waits on is two submissions back). The blend now copies
+    into a per-slot readback snapshot and the CPU reads that.
+  - `r_rtGIProbeDebug` was clamped to 0-5 in TWO places and only one was raised, so
+    mode 6 silently rendered mode 5. A stale upper bound on a debug mode does not
+    disable the new mode, it shows a different one — check every clamp.
+- **ROOT CAUSE, found with mode 6/7 (2026-09-15): the backface test was inverted.**
+  Mode 7 read correctly (air probes blue = they hit things, void probes orange = they
+  miss); mode 6 read the exact inverse (air probes ~0.8, void probes ~0).
+  - `gi_ray.rchit` derived it from `gl_HitKindEXT`. **Doom 3 winds front faces the
+    opposite way from the GL/Vulkan convention** — `GL_Cull` culls `GL_FRONT` for
+    `CT_FRONT_SIDED` (gl_backend.cpp) — so every VISIBLE surface reports as
+    `gl_HitKindBackFacingTriangleEXT`. `TRIANGLE_FACING_CULL_DISABLE` on the TLAS
+    instances stops culling but does not change the reported hit kind.
+  - Fixed by taking the side from the interpolated vertex normal
+    (`dot(hitNorm, rayDir) > 0`), which needs no winding convention. That test was
+    already in the shader a few lines below, used only to flip the shading hemisphere.
+  - **This was never only a G4 bug.** `gi_probe_blend.comp` excludes back-face rays
+    from the irradiance, so since G1 the blend has been discarding the rays that hit
+    visible surfaces — the ones carrying the light — and integrating mostly the
+    leftovers. Expect probe irradiance to come out markedly brighter, and G6's
+    `r_rtGIStrength` retune to be mandatory rather than optional. The per-pixel GI path
+    never read `backface`, which is why only the probe path looked over-dark.
+  - Retracted: the earlier `backface mean=0.017` reading. It was measured through the
+    oscillation and is not evidence of anything.
+- **Post-fix 2026-09-15: both statistics now read correctly.** Mode 6 blue in air,
+  ~0.5 in the void near a surface, ~0 far out; mode 7 the complement. Dump:
+  `usable=2959 (18.1%) insideGeometry=1088 (6.6%) outsideLevel=12337 (75.3%)`,
+  `backface mean=0.052 max=0.499`, `miss mean=0.891`.
+  - 18% usable is not alarming and 75% void is not a bug: the window is a 2048-unit
+    cube centred on the camera and most of it is outside a Doom 3 level. What matters
+    is whether *receiving surfaces* keep enough neighbours, and mode 3's green says
+    they do.
+  - **`backface max` never exceeds 0.5**, so nothing is being caught as genuinely
+    buried — a probe inside a brush would read near 1.0. The 1088 `insideGeometry`
+    probes are near-hull VOID probes that see the outside of the shell with about half
+    their rays. Harmless (both flags mean unusable) but the dump's label is currently
+    misleading, and it means G4 relocation has nothing to relocate in this map.
 
 ### G5 — scheduling, and dynamic-light latency
 Priority queue instead of round-robin: probes in areas reached by the portal BFS

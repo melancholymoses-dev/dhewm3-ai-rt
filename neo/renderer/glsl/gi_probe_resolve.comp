@@ -43,6 +43,13 @@ gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
            by maxRayDist — on a blue->green->red ramp; magenta means
            mean2 < mean^2, algebraically impossible for a real second moment and
            therefore a broken map rather than a mistuned one.
+  mode 6 — RAW backface fraction per probe, blue(0)->green(0.5)->red(1).
+  mode 7 — RAW miss fraction, same ramp.
+           Modes 4 and 6/7 answer different questions. Mode 4 shows the VERDICT,
+           so a wrong verdict and a mistuned threshold look identical; 6/7 show
+           the measurement the verdict was made from. An air probe SHOULD read
+           blue in mode 6 (it sees front faces); if it reads green or red the
+           statistic itself is wrong and no threshold will rescue it.
 
 The sphere overlays (1, 4, 5) ADD onto the lit scene rather than replacing it:
 the thing being checked is where the probes sit in the world, and a black
@@ -59,6 +66,7 @@ Descriptors (set 0):
   binding 5 — depthSampler
   binding 6 — gbufNormalSampler
   binding 7 — TLAS (mode 3 only, but statically accessed, so always bound)
+  binding 8 — probe stats SSBO (modes 6/7), shared with gi_probe_blend.comp
 
 20260906_froxel_probe_gi.md Part B, chunks G0-G3.
 
@@ -83,6 +91,18 @@ layout(set = 0, binding = 4) uniform sampler2D distanceAtlas;
 layout(set = 0, binding = 5) uniform sampler2D depthSampler;
 layout(set = 0, binding = 6) uniform sampler2D gbufNormalSampler;
 layout(set = 0, binding = 7) uniform accelerationStructureEXT tlas;
+
+// Same declaration as gi_probe_blend.comp's binding 5, at a different binding
+// because this pipeline has its own layout.  Read-only here: modes 6 and 7 show
+// the RAW statistic, before the threshold and dead band turn it into a flag.
+struct GIProbeStats {
+    float backface;
+    float miss;
+};
+
+layout(set = 0, binding = 8, std430) readonly buffer GIProbeStatsBuf {
+    GIProbeStats probes[];
+} probeStats;
 
 #define GIPROBE_SET 0
 #include "gi_probe_common.glsl"
@@ -464,9 +484,17 @@ void main()
                 float dark = wDark / wTotal;
                 outColour = vec3(leak, max(0.0, 1.0 - leak - dark), dark);
             }
+            else
+            {
+                // MAGENTA: all 8 neighbours excluded (G4) or zero-weighted, so
+                // this surface gets no probe GI at all. Leaving outColour alone
+                // here would render the scene unmodified and read as "fine" —
+                // the total absence of GI is the worst case, not the best.
+                outColour = vec3(1.0, 0.0, 1.0);
+            }
         }
     }
-    else if (mode == 1 || mode == 4 || mode == 5)
+    else if (mode == 1 || mode == 4 || mode == 5 || mode == 6 || mode == 7)
     {
         vec2 uv = (vec2(fullCoord) + 0.5) / vec2(fullSize);
         vec3 ro = gp.cameraPosW.xyz;
@@ -485,9 +513,12 @@ void main()
         // makes it invisible by construction, which is exactly the state G4
         // classifies. The trace itself enforces drawability, so an ordinary
         // probe behind the world cannot hide a buried one further along.
+        // Modes 6/7 read the raw statistic and are diagnosing exactly the probes
+        // the flags got wrong, so they x-ray on the same terms as mode 4.
         const uint xray = GIPROBE_FLAG_UNUSABLE;
-        float tRange = (mode == 4) ? 1.0e6 : tSurface;
-        uint mask = (mode == 4) ? xray : 0u;
+        bool wide = (mode == 4 || mode == 6 || mode == 7);
+        float tRange = wide ? 1.0e6 : tSurface;
+        uint mask = wide ? xray : 0u;
 
         ivec3 cell;
         vec3 n;
@@ -517,6 +548,27 @@ void main()
                 // this a flagged sphere gives no depth cue at all, and a
                 // misclassified probe in open air reads identically to a
                 // correctly classified one inside the wall behind it.
+                if (tHit > tSurface)
+                    outColour *= 0.5;
+            }
+            else if (mode == 6 || mode == 7)
+            {
+                if ((flags & GIPROBE_FLAG_TRACED) == 0u)
+                {
+                    outColour = vec3(0.4, 0.0, 0.4); // never traced, nothing measured
+                }
+                else
+                {
+                    // The RAW statistic on the ramp, with no threshold applied.
+                    // Mode 4 can only say "flagged"; this says by how much, which
+                    // is the difference between a mistuned threshold and a
+                    // statistic that is measuring the wrong thing. The ramp is
+                    // blue(0) -> green(0.5) -> red(1), so an air probe reading
+                    // near 0 is blue and one reading near 1 is red.
+                    float v = (mode == 6) ? probeStats.probes[idx].backface : probeStats.probes[idx].miss;
+                    outColour = gip_Ramp(clamp(v, 0.0, 1.0));
+                }
+                outColour *= mix(0.35, 1.0, max(0.0, dot(n, -rd)));
                 if (tHit > tSurface)
                     outColour *= 0.5;
             }

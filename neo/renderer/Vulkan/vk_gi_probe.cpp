@@ -127,11 +127,15 @@ static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INT
                                "magenta = no usable probe, GI is black there), "
                                "3=leak detector: Chebyshev vs ray-traced ground truth — green=agree, "
                                "red=LEAK (occluded but let through), blue=over-dark (visible but blocked), "
+                               "magenta=all 8 probes excluded, so that surface gets NO probe GI at all, "
                                "4=probe state (green=usable, red=never traced, blue=buried in geometry, "
                                "yellow=in the void outside the level; flagged probes x-ray through walls at half "
                                "brightness, so dim=behind geometry and bright=in open air, i.e. misclassified), "
                                "5=distance atlas (blue->red ramp of mean hit distance / "
-                               "r_rtGIProbeMaxRayDist; magenta = impossible second moment).");
+                               "r_rtGIProbeMaxRayDist; magenta = impossible second moment), "
+                               "6=RAW backface fraction, 7=RAW miss fraction (blue=0 green=0.5 red=1). "
+                               "6/7 show the measurement mode 4's verdict is made from: an air probe must "
+                               "read BLUE in mode 6, and if it does not, no threshold can fix it.");
 
 static idCVar r_rtGIProbeDebugGain("r_rtGIProbeDebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
                                    "Mode-1-only gain, so stored irradiance survives the Uchimura toe "
@@ -563,6 +567,25 @@ static void VK_RT_DestroyProbeResources(void)
         }
     }
 
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        if (vkRT.giProbeStatsReadbackMapped[i] != NULL)
+        {
+            vkUnmapMemory(vk.device, vkRT.giProbeStatsReadbackMemory[i]);
+            vkRT.giProbeStatsReadbackMapped[i] = NULL;
+        }
+        if (vkRT.giProbeStatsReadback[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, vkRT.giProbeStatsReadback[i], NULL);
+            vkRT.giProbeStatsReadback[i] = VK_NULL_HANDLE;
+        }
+        if (vkRT.giProbeStatsReadbackMemory[i] != VK_NULL_HANDLE)
+        {
+            vkFreeMemory(vk.device, vkRT.giProbeStatsReadbackMemory[i], NULL);
+            vkRT.giProbeStatsReadbackMemory[i] = VK_NULL_HANDLE;
+        }
+    }
+
     if (vkRT.giProbeStatsSsboMapped != NULL)
     {
         vkUnmapMemory(vk.device, vkRT.giProbeStatsSsboMemory);
@@ -657,13 +680,30 @@ static void VK_RT_CreateProbeResources(void)
 
     // One shared stats buffer — see GIProbeStatsEntry on why this must not be
     // per slot. Device-side zeroing happens once, here, with the device idle.
+    //
+    // Plus a PER-SLOT readback snapshot. Sharing the accumulator removed the
+    // accidental synchronisation the per-slot version had: the CPU would
+    // otherwise read the live buffer while the previous frame's blend is still
+    // writing it, since the fence it waited on is two submissions back. The blend
+    // copies into the slot's snapshot, and the CPU reads THAT — recorded in a
+    // submission the fence has retired.
     {
         const VkDeviceSize statsBytes = (VkDeviceSize)probeCount * sizeof(GIProbeStatsEntry);
-        VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                         &vkRT.giProbeStatsSsbo, &vkRT.giProbeStatsSsboMemory);
         VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsSsboMemory, 0, statsBytes, 0, &vkRT.giProbeStatsSsboMapped));
         memset(vkRT.giProbeStatsSsboMapped, 0, (size_t)statsBytes);
+
+        for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        {
+            VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                            &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
+            VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsReadbackMemory[i], 0, statsBytes, 0,
+                                 &vkRT.giProbeStatsReadbackMapped[i]));
+            memset(vkRT.giProbeStatsReadbackMapped[i], 0, (size_t)statsBytes);
+        }
     }
 
     s_probeState = (GIProbeStateEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStateEntry));
@@ -848,7 +888,9 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     ubo.tune[2] = idMath::ClampFloat(0.0f, 4.0f, r_rtGIStrength.GetFloat());
     ubo.tune[3] = Max(1.0f, r_rtGIProbeMaxRayDist.GetFloat());
 
-    ubo.misc[0] = idMath::ClampInt(0, 5, r_rtGIProbeDebug.GetInteger());
+    // Must track VK_RT_GIProbeDebugMode's range. A stale upper bound here does
+    // not disable the new mode, it silently renders a DIFFERENT one.
+    ubo.misc[0] = idMath::ClampInt(0, 7, r_rtGIProbeDebug.GetInteger());
     ubo.misc[1] = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     ubo.misc[2] = r_rtGIProbeVisibility.GetBool() ? 1 : 0;
 
@@ -1027,8 +1069,8 @@ static void VK_RT_InitProbeBlendPipelines(void)
 //     already does.
 static void VK_RT_InitProbeResolvePipeline(void)
 {
-    VkDescriptorSetLayoutBinding bindings[8] = {};
-    for (int i = 0; i < 8; i++)
+    VkDescriptorSetLayoutBinding bindings[9] = {};
+    for (int i = 0; i < 9; i++)
     {
         bindings[i].binding = (uint32_t)i;
         bindings[i].descriptorCount = 1;
@@ -1042,10 +1084,11 @@ static void VK_RT_InitProbeResolvePipeline(void)
     bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // stats, modes 6/7
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 8;
+    layoutInfo.bindingCount = 9;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giProbeResolveDescLayout));
 
@@ -1080,7 +1123,7 @@ static void VK_RT_InitProbeResolvePipeline(void)
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 4)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
     poolSizes[4] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -1226,7 +1269,7 @@ int VK_RT_GIProbeDebugMode(void)
         return 0;
     if (vkRT.giProbeResolvePipeline == VK_NULL_HANDLE || vkRT.giProbeIrradiance.image == VK_NULL_HANDLE)
         return 0;
-    return idMath::ClampInt(0, 5, r_rtGIProbeDebug.GetInteger());
+    return idMath::ClampInt(0, 7, r_rtGIProbeDebug.GetInteger());
 }
 
 // True when the probe path OWNS the GI result — G2 wires this to stand the
@@ -1322,14 +1365,13 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
 
     // --- G4 classification: read back what the GPU measured ---
     //
-    // The stats buffer is shared across slots, so what is in it is always the
-    // most recent blend dispatch's output, and the frame fence has retired that
-    // submission before we get here. We only read it; the device copy is never
-    // written from the CPU after creation, so there is no race with an in-flight
-    // blend and nothing to upload back.
-    if (vkRT.giProbeStatsSsboMapped != NULL)
+    // Read this slot's SNAPSHOT, not the live accumulator: the copy was recorded
+    // in the submission the frame fence has already retired. We only ever read;
+    // the device-side stats are never written from the CPU after creation, so
+    // there is nothing to upload back either.
+    if (vkRT.giProbeStatsReadbackMapped[frameIdx] != NULL)
     {
-        const GIProbeStatsEntry *gpuStats = (const GIProbeStatsEntry *)vkRT.giProbeStatsSsboMapped;
+        const GIProbeStatsEntry *gpuStats = (const GIProbeStatsEntry *)vkRT.giProbeStatsReadbackMapped[frameIdx];
         const float insideOn = Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat());
         const float insideOff = insideOn * 0.75f; // dead band — see the CVars
         const float outsideOn = Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat());
@@ -1684,15 +1726,31 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdDispatch(cmd, (uint32_t)s_probeUpdates, 1, 1);
 
     // Blend writes the interiors; the border pass reads them. It also writes the
-    // stats buffer, which the CPU reads back after the frame fence — hence
-    // HOST_READ, and the HOST stage in the destination mask.
+    // stats accumulator, which is copied to this slot's readback snapshot below.
     {
         VkMemoryBarrier memBarrier = {};
         memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
         memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_HOST_READ_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &memBarrier, 0,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &memBarrier,
+                             0, NULL, 0, NULL);
+    }
+
+    // Snapshot for the CPU's G4 classification. Reading the live accumulator
+    // instead would race the previous frame's blend — the fence the CPU waited on
+    // is two submissions back, not one.
+    if (vkRT.giProbeStatsReadback[frameIdx] != VK_NULL_HANDLE)
+    {
+        VkBufferCopy region = {};
+        region.size = (VkDeviceSize)s_probeStateCount * sizeof(GIProbeStatsEntry);
+        vkCmdCopyBuffer(cmd, vkRT.giProbeStatsSsbo, vkRT.giProbeStatsReadback[frameIdx], 1, &region);
+
+        VkMemoryBarrier hostBarrier = {};
+        hostBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        hostBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        hostBarrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hostBarrier, 0,
                              NULL, 0, NULL);
     }
 
@@ -1811,8 +1869,10 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         tlasWrite.accelerationStructureCount = 1;
         tlasWrite.pAccelerationStructures = &vkRT.tlas[frameIdx].handle;
 
-        VkWriteDescriptorSet writes[8] = {};
-        for (int i = 0; i < 8; i++)
+        VkDescriptorBufferInfo statsInfo = {vkRT.giProbeStatsSsbo, 0, VK_WHOLE_SIZE};
+
+        VkWriteDescriptorSet writes[9] = {};
+        for (int i = 0; i < 9; i++)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = ds;
@@ -1835,8 +1895,10 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[6].pImageInfo = &gbufInfo;
         writes[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
         writes[7].pNext = &tlasWrite;
+        writes[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[8].pBufferInfo = &statsInfo;
 
-        vkUpdateDescriptorSets(vk.device, 8, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk.device, 9, writes, 0, NULL);
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
