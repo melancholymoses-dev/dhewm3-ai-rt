@@ -505,7 +505,8 @@ per-pixel GI is pixel-identical, then build on it.
 | `r_rtGIProbeVisibility` | `1` | Chebyshev visibility weighting (G3) |
 | `r_rtGIProbeDebug` | `0` | 1 = probe spheres tinted by stored irradiance, 2 = probe weights / Chebyshev rejection, 3 = leak detector (Chebyshev vs ray-traced truth), 4 = probe state (active/inside-geometry/never-traced), 5 = distance-atlas mean |
 | `r_rtGIProbeViewBias` | `8.0` | receiver offset toward the eye, on top of the normal bias (G3) |
-| `r_rtGIProbeInsideThreshold` | `0.25` | backface fraction above which a probe is classified buried (G4); 0 disables |
+| `r_rtGIProbeInsideThreshold` | `0.25` | backface fraction above which a probe is classified buried in geometry (G4); 0 disables |
+| `r_rtGIProbeOutsideThreshold` | `0.9` | miss fraction above which a probe is classified as in the void outside the level (G4); 0 disables |
 | `r_rtGIProbeDump` | `0` | one-shot: grid origin/dims, memory, active/inactive counts, per-area occupancy, update queue depth |
 
 ## B.5 Chunks
@@ -692,7 +693,7 @@ probes, weight by trilinear × `max(0, dot(n, probeDir))` smoothed, normalize, w
     `r_rtGIProbes` back to 0 resumes from the current frame instead of blending
     against a history that is arbitrarily many frames old.
 
-### G3 — leak hardening (mandatory, pillar 2) ✅ **written 2026-09-14, not yet run**
+### G3 — leak hardening (mandatory, pillar 2) ⚠️ **gate blocked: re-run after the G4 oscillation fix**
 Chebyshev visibility weighting from the distance moments; **ship the leak overlay
 first**: mode 3 = leak detector, mode 2 = per-pixel probe weights. Then tune
 density/bias against the overlay.
@@ -768,7 +769,7 @@ density/bias against the overlay.
   probe isolation (a probe contributes only to pixels in areas its own area reaches
   through open portals — the same BFS set `VK_RT_UploadGILights` already walks).
 
-### G4 — probe classification ✅ **written 2026-09-14, not yet run** · relocation deferred
+### G4 — probe classification ✅ **run 2026-09-15; oscillation fixed, re-run pending** · relocation deferred
 Mark probes whose rays are mostly backface hits as inside-geometry and give them zero
 weight in the resolve. **Split from relocation deliberately** — classification alone
 may be enough, and it removes the confound that makes G3 unjudgeable: a buried probe's
@@ -783,13 +784,10 @@ still shows buried probes carrying weight.
 - Angled geometry (ramps, sloped ceilings, the AREA diagonals) buries proportionally
   more probes than axis-aligned rooms do, so those are the rooms to judge G4 in.
 - **As built:**
-  - **`GIProbeState` ownership is now split, and the split is the design.** `flags`
-    and `offset` stay CPU-owned and re-uploaded every frame (the blend pass needs
-    "did this probe have history *before* this frame", which only the CPU knows).
-    `backface` is the one GPU-written field. The CPU reads it back **before** its own
-    memcpy — the frame fence has already retired that submission, the same guarantee
-    the existing upload relies on — then copies the value straight back out so its
-    upload never clobbers the measurement. Struct grew 16 → **32 bytes**.
+  - The measured statistics live in their own **shared** SSBO (`GIProbeStats`, probe
+    layout binding 5, blend pass only). `GIProbeState` stays 16 bytes and entirely
+    CPU-owned. The first attempt put `backface`/`miss` inside `GIProbeState` and that
+    was wrong — see the 2026-09-15 oscillation below.
   - `r_rtGIProbeInsideThreshold` (default **0.25**, matching RTXGI) with a **dead
     band**: set above the threshold, cleared below 0.75× it, so a probe sitting on
     the boundary cannot flip-flop between frames. 0 disables classification.
@@ -804,8 +802,64 @@ still shows buried probes carrying weight.
     brightness so "buried in that wall" still reads differently from "in front of
     it". Modes 1 and 5 keep the depth clamp.
   - Every probe excluded is one the resolve can no longer fall back on, so a runaway
-    threshold surfaces as black GI. The inside count is logged when it moves and the
-    dump reports mean/max backface fraction against the threshold.
+    threshold surfaces as black GI. The counts are logged when they move and the dump
+    reports mean/max of both statistics against their thresholds.
+- **First run 2026-09-14 — classification verified, and it exposed a SECOND probe
+  population it does not catch.** Dump read `insideGeometry=277/16384 (1.7%)`,
+  `backface mean=0.017 max=0.996`. Note `0.017 x 16384 = 278 ≈ 277`: the statistic is
+  cleanly **bimodal** at 0 and 1, which is what a crisp classifier looks like and also
+  rules out a front/back winding inversion (that would have put the mean at 0.9+).
+  - But 1.7 % is too low, and the reason is structural: **Doom 3 maps are hollow
+    sealed shells.** "Not in a room" usually means the *void* outside the hull, not
+    solid — so few lattice points land inside actual brushes. A probe in the void
+    fires rays that MISS, `gi_ray.rmiss` sets `backface = 0`, and the backface
+    statistic reads it as wholesome open air. It then contributes the miss shader's
+    near-black ambient at **full weight**, dragging every surface near the map
+    boundary toward black. That is the over-darkening seen on the floors in G3's
+    overlay, and it is a *different* population from buried probes.
+  - Fix: count misses too (a miss encodes exactly `+maxRayDist`, so it is recoverable
+    with no new field) and add **`GIPROBE_FLAG_OUTSIDE`** + `r_rtGIProbeOutsideThreshold`
+    (default **0.9**). Deliberately high — a probe under open sky legitimately misses
+    ~half its rays and must not be caught. Separate flag from `INSIDE` because it is a
+    separate failure and wants its own overlay colour (yellow), but the same
+    treatment: zero weight, via `GIPROBE_FLAG_UNUSABLE`.
+  - **Overlay bug found at the same time.** `gip_TraceProbeSphere` returned the
+    nearest sphere of *any* class and mode 4 rejected it afterwards, so an ordinary
+    probe one pixel behind a wall silently suppressed every buried probe further along
+    the ray — mode 4 was under-reporting exactly what it exists to show. The
+    drawability test now lives inside the trace loop, which returns the nearest
+    *drawable* sphere. Overlay-only; mode 0 unaffected.
+  - Reading mode 4: flagged probes x-ray at **half** brightness, so **dim = behind
+    geometry** (correctly classified) and **bright = in open air** (misclassified).
+    That brightness cue is the test — "blue in open air" alone proves nothing, because
+    an x-rayed sphere draws at its world position regardless of what is in front of it.
+- **Second run 2026-09-15 — void probes confirmed, and a 2-frame oscillation found.**
+  `usable=9936 (60.6%) insideGeometry=480 (2.9%) outsideLevel=5968 (36.4%)`,
+  `miss mean=0.443 max=1.000`. The void population is real and large, as predicted.
+  - **The oscillation (real, shipping — not an overlay artifact).** Mode 4 showed
+    in-air probes strobing blue/green and mode 3 strobed red/green at **half the frame
+    rate**, a 2-frame period — which no EMA can produce (τ ≈ 533 frames) and which is
+    the signature of a per-frame-in-flight resource.
+  - Cause: `GIProbeState` is **per slot** because the CPU re-uploads it every frame,
+    and G4 parked its GPU-written statistics in it. The blend pass writes slot N; next
+    frame the CPU reads slot N+1, finds the *older* generation it uploaded itself, and
+    copies that back over its shadow. The classification therefore alternated between
+    two generations at frame rate — for *every* probe at once, so whole regions flipped
+    in lockstep. The dead band cannot damp this: both generations are legitimate values
+    on opposite sides of it.
+  - This is the rule already stated at the top of `vk_gi_probe.cpp` and the reason the
+    atlases are shared: **an EMA accumulator must not live in a per-slot buffer.** G4
+    broke it by turning a pure CPU→GPU upload into a readback.
+  - Fix: separate shared `GIProbeStats` SSBO (binding 5), GPU-written and CPU-read-only
+    after creation — so there is also no CPU write racing an in-flight blend. A probe
+    that scrolls into a new tile is zeroed in the CPU shadow instead, and the readback
+    refuses to adopt the device value until `GIPROBE_FLAG_TRACED` is set again.
+  - Why mode 0 looked stable while mode 3 strobed: mode 0 averages 8 probes with
+    trilinear weights, so one dropping in and out is a small shift; mode 3 is a hard
+    binary comparison, so the same shift is a colour flip.
+  - Not a bug: **probes turn blue when a door closes on them.** Doom 3 doors are
+    movers, and a probe the door brush swallows genuinely *is* inside geometry. That is
+    the classifier working, and it is the case G4 relocation would eventually improve.
 
 ### G5 — scheduling, and dynamic-light latency
 Priority queue instead of round-robin: probes in areas reached by the portal BFS

@@ -104,25 +104,33 @@ layout(set = 0, binding = 7) uniform accelerationStructureEXT tlas;
 // spacing/2 can be stepped over, and each test is an analytic ray-sphere so the
 // result is exact rather than a marched approximation.
 // ---------------------------------------------------------------------------
-bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 hitCell, out vec3 hitNormal,
-                          out float hitT)
+// tRange   — how far to march (bounds cost).
+// tVisible — distance to the depth-buffer surface along this ray.
+// xrayMask — probe flags that are allowed to draw THROUGH geometry.
+//
+// The drawability test lives inside the loop on purpose. Returning the nearest
+// sphere of any class and rejecting it afterwards silently hides every probe
+// behind it: an ordinary probe one pixel past the wall would suppress the buried
+// probe the overlay exists to show. This returns the nearest DRAWABLE sphere.
+bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tRange, float tVisible, uint xrayMask, float radius,
+                          out ivec3 hitCell, out vec3 hitNormal, out float hitT)
 {
     hitCell = ivec3(0);
     hitNormal = vec3(0.0);
-    hitT = tMax;
+    hitT = tRange;
 
     float spacing = max(gp.gridOrigin.w, 1.0);
     float step = spacing * 0.5;
     float r2 = radius * radius;
-    float best = tMax;
+    float best = tRange;
     bool found = false;
 
     // 256 steps * spacing/2 covers 8192 units at the 64-unit default, well past
-    // any Doom 3 room; the loop exits on tMax long before that indoors.
+    // any Doom 3 room; the loop exits on tRange long before that indoors.
     for (int i = 0; i < 256; i++)
     {
         float t = float(i) * step;
-        if (t > tMax)
+        if (t > tRange)
             break;
 
         vec3 p = ro + rd * t;
@@ -130,7 +138,8 @@ bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 
         if (!gip_CellInGrid(cell))
             continue;
 
-        vec3 c = gip_ProbePos(cell);
+        int idx = gip_StorageIndex(cell);
+        vec3 c = gip_ProbePosAt(cell, idx);
         vec3 oc = c - ro;
         float tca = dot(oc, rd);
         float d2 = dot(oc, oc) - tca * tca;
@@ -140,6 +149,9 @@ bool gip_TraceProbeSphere(vec3 ro, vec3 rd, float tMax, float radius, out ivec3 
         float t0 = tca - sqrt(max(0.0, r2 - d2));
         if (t0 < 0.0 || t0 >= best)
             continue;
+
+        if (t0 > tVisible && (probeState.probes[idx].flags & xrayMask) == 0u)
+            continue; // behind the world and not x-ray class
 
         best = t0;
         hitCell = cell;
@@ -193,7 +205,10 @@ GIProbeTap gip_Tap(int i, vec3 worldPos, vec3 normal, vec3 samplePos, ivec3 base
     // room — exclude it outright.
     if ((flags & GIPROBE_FLAG_TRACED) == 0u)
         return t;
-    if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
+    // Buried in a brush, or adrift in the void outside the level hull. Either
+    // way its irradiance describes somewhere the receiver cannot see and its
+    // distance moments cannot be reasoned about, so it gets no weight at all.
+    if ((flags & GIPROBE_FLAG_UNUSABLE) != 0u)
         return t;
 
     vec3 tri = mix(vec3(1.0) - frac, frac, vec3(off));
@@ -465,35 +480,33 @@ void main()
         if (depth < 1.0)
             tSurface = length(rt_ReconstructWorldPos(fullCoord, fullSize, gp.invViewProj) - ro);
 
-        // Mode 4 traces PAST the surface, because the probes it most needs to
-        // show are the ones buried in geometry — depth-occluding them makes a
-        // buried probe invisible by construction, which is exactly the state G4
-        // classifies. Below, a probe is drawn if it is in front of the surface
-        // OR if it is flagged inside geometry, so buried probes x-ray through
-        // and everything else stays depth-correct.
-        float tMax = (mode == 4) ? 1.0e6 : tSurface;
+        // Mode 4 marches PAST the surface, because the probes it most needs to
+        // show are the unusable ones — depth-occluding a probe buried in a wall
+        // makes it invisible by construction, which is exactly the state G4
+        // classifies. The trace itself enforces drawability, so an ordinary
+        // probe behind the world cannot hide a buried one further along.
+        const uint xray = GIPROBE_FLAG_UNUSABLE;
+        float tRange = (mode == 4) ? 1.0e6 : tSurface;
+        uint mask = (mode == 4) ? xray : 0u;
 
         ivec3 cell;
         vec3 n;
         float tHit;
-        if (gip_TraceProbeSphere(ro, rd, tMax, max(gp.debug.y, 0.25), cell, n, tHit))
+        if (gip_TraceProbeSphere(ro, rd, tRange, tSurface, mask, max(gp.debug.y, 0.25), cell, n, tHit))
         {
             int idx = gip_StorageIndex(cell);
             uint flags = probeState.probes[idx].flags;
 
-            if (mode == 4 && tHit > tSurface && (flags & GIPROBE_FLAG_INSIDE) == 0u)
+            if (mode == 4)
             {
-                // Behind geometry and not classified buried — an ordinary probe
-                // in the next room. Occlude it as the other modes do.
-            }
-            else if (mode == 4)
-            {
-                if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
-                    outColour = vec3(0.0, 0.3, 1.0);
+                if ((flags & GIPROBE_FLAG_OUTSIDE) != 0u)
+                    outColour = vec3(1.0, 0.8, 0.0); // void, outside the level hull
+                else if ((flags & GIPROBE_FLAG_INSIDE) != 0u)
+                    outColour = vec3(0.0, 0.3, 1.0); // buried in a solid brush
                 else if ((flags & GIPROBE_FLAG_TRACED) != 0u)
-                    outColour = vec3(0.0, 1.0, 0.0);
+                    outColour = vec3(0.0, 1.0, 0.0); // usable
                 else
-                    outColour = vec3(1.0, 0.0, 0.0);
+                    outColour = vec3(1.0, 0.0, 0.0); // never traced
 
                 // Cheap lambert against the view so the spheres read as spheres
                 // and a lattice is legible as a lattice.
@@ -501,7 +514,9 @@ void main()
 
                 // Halved when x-rayed through geometry, so "buried in that wall"
                 // stays distinguishable from "sitting in front of it" — without
-                // this a blue sphere gives no depth cue at all.
+                // this a flagged sphere gives no depth cue at all, and a
+                // misclassified probe in open air reads identically to a
+                // correctly classified one inside the wall behind it.
                 if (tHit > tSurface)
                     outColour *= 0.5;
             }

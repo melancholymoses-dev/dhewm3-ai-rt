@@ -62,25 +62,33 @@ layout(set = GIPROBE_SET, binding = 2, std140) uniform GIProbeParams {
 // std430: vec3 has 16-byte alignment, so the trailing uint packs into the same
 // 16 bytes and this matches GIProbeStateEntry in vk_gi_probe.cpp.
 //
-// OWNERSHIP IS SPLIT, and that is deliberate.  `flags` and `offset` are
-// CPU-owned and re-uploaded every frame — the blend pass has to know whether a
-// probe had history BEFORE this frame's trace, and only the CPU knows both the
-// schedule and the grid scroll.  `backface` is the one field the GPU writes:
-// gi_probe_blend.comp measures it, the CPU reads it back two frames later
-// (the frame fence has retired that submission) and turns it into
-// GIPROBE_FLAG_INSIDE.  The CPU copies the value it just read back out again,
-// so its own upload never clobbers the measurement.
+// Entirely CPU-owned and re-uploaded every frame: the blend pass has to know
+// whether a probe had history BEFORE this frame's trace, and only the CPU knows
+// both the schedule and the grid scroll.  That is why this buffer is PER
+// frame-in-flight slot — the CPU writes it while the previous frame may still be
+// reading.  G4's measured statistics deliberately do NOT live here; see
+// GIProbeStats in gi_probe_blend.comp.
 struct GIProbeState {
     vec3  offset;   //  0  G4 relocation from the lattice point; zero until then
     uint  flags;    // 12  GIPROBE_FLAG_*
-    float backface; // 16  GPU-written: fraction of this probe's rays hitting a back face
-    float pad0;     // 20
-    float pad1;     // 24
-    float pad2;     // 28
 };
 
-#define GIPROBE_FLAG_TRACED 1u // has been traced at least once since it entered the window
-#define GIPROBE_FLAG_INSIDE 2u // classified as buried in geometry (G4)
+#define GIPROBE_FLAG_TRACED  1u // has been traced at least once since it entered the window
+#define GIPROBE_FLAG_INSIDE  2u // classified as buried inside a solid brush (G4)
+// Classified as sitting in the void OUTSIDE the sealed level hull (G4).  A
+// distinct flag from INSIDE because it is a distinct failure and needs its own
+// colour in the overlay, but it gets the same treatment: zero weight.
+//
+// Doom 3 maps are hollow shells, so "not in a room" usually means empty space
+// rather than solid, and such a probe's rays MISS — which sets backface 0, so
+// the backface statistic reads it as wholesome open air.  It then contributes
+// the miss shader's near-black ambient at full weight and drags every surface
+// near the map boundary toward black.  Missing is not back-facing; it needs its
+// own counter.
+#define GIPROBE_FLAG_OUTSIDE 4u
+
+// Either classification means "do not let this probe light anything".
+#define GIPROBE_FLAG_UNUSABLE (GIPROBE_FLAG_INSIDE | GIPROBE_FLAG_OUTSIDE)
 
 layout(set = GIPROBE_SET, binding = 3, std430) buffer GIProbeStateBuf {
     GIProbeState probes[];

@@ -46,6 +46,7 @@ Descriptors (set 0):
   binding 3 — probe state SSBO    (declared by gi_probe_common.glsl)
   binding 4 — distance atlas rg16f (read/write), both channels normalised by
               maxRayDist
+  binding 5 — probe stats SSBO (read/write), G4 classification statistics
 
 20260906_froxel_probe_gi.md Part B, chunk G1.
 
@@ -71,6 +72,20 @@ layout(set = 0, binding = 4, rg16f) uniform image2D distanceAtlas;
 
 #define GIPROBE_SET 0
 #include "gi_probe_common.glsl"
+
+// G4 classification statistics.  A SEPARATE buffer from GIProbeState, and a
+// SINGLE one rather than one per frame-in-flight slot, because these are EMA
+// accumulators: the GPU writes them and the CPU reads them back.  Living in the
+// per-slot state buffer made the CPU's readback alternate between two
+// generations every frame — see vk_gi_probe.cpp for the full failure.
+struct GIProbeStats {
+    float backface; // 0  fraction of this probe's rays hitting a BACK face
+    float miss;     // 4  fraction of this probe's rays hitting NOTHING
+};
+
+layout(set = 0, binding = 5, std430) buffer GIProbeStatsBuf {
+    GIProbeStats probes[];
+} probeStats;
 
 // Hard cap on r_rtGIProbeRays, enforced CPU-side too.  Caching the probe's rays
 // in shared memory turns 256 threads x N global loads into N, which is the
@@ -115,25 +130,37 @@ void main()
     // only to exclude those rays from the irradiance and then threw it away.
     // Counting it is the whole classification statistic.
     //
-    // The CPU reads this back and owns the flag; see gi_probe_common.glsl on why
-    // ownership of the state struct is split. One thread does it because it is a
-    // single scalar per probe and 256 threads racing on one address would need
-    // atomics to say the same thing.
+    // The CPU reads this back out of probeStats and owns the resulting flag. One
+    // thread does it because it is a single scalar per probe and 256 threads
+    // racing on one address would need atomics to say the same thing.
     if (tid == 0)
     {
+        float maxDist = max(gp.tune.w, 1.0);
         int back = 0;
+        int miss = 0;
         for (int r = 0; r < numRays; r++)
         {
-            if (s_ray[r].a < 0.0)
+            float a = s_ray[r].a;
+            if (a < 0.0)
                 back++;
+            // A miss encodes exactly +tMax: gi_probe_trace.rgen seeds hitDist to
+            // tMax and gi_ray.rmiss writes gl_RayTmaxEXT, which is that same
+            // value. So "hit nothing" is recoverable without a second field.
+            if (abs(a) >= maxDist * 0.999)
+                miss++;
         }
-        float frac = float(back) / float(max(numRays, 1));
+
+        float invN = 1.0 / float(max(numRays, 1));
         // Same EMA the maps use, so one noisy update cannot flip a
         // classification. A probe with no history takes it outright, or a newly
         // scrolled-in probe would spend a full convergence inheriting the
         // previous occupant's verdict.
-        float prev = probeState.probes[storageIdx].backface;
-        probeState.probes[storageIdx].backface = hadHistory ? mix(prev, frac, alpha) : frac;
+        float prevBack = probeStats.probes[storageIdx].backface;
+        float prevMiss = probeStats.probes[storageIdx].miss;
+        float fracBack = float(back) * invN;
+        float fracMiss = float(miss) * invN;
+        probeStats.probes[storageIdx].backface = hadHistory ? mix(prevBack, fracBack, alpha) : fracBack;
+        probeStats.probes[storageIdx].miss = hadHistory ? mix(prevMiss, fracMiss, alpha) : fracMiss;
     }
 
     // ---- Irradiance (8x8 interior) ----
