@@ -2037,6 +2037,11 @@ void VK_RT_BeginLevelLoad(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         s_staticInstanceCache[i].valid = false;
 
+    // Release bindless texture slots held by the old map's images. Must follow the
+    // static-instance invalidation above: that is what guarantees every material
+    // entry (and so every tex index) is rewritten on the new map's first frame.
+    VK_RT_MatTableLevelLoadReset();
+
     // Reset all descriptor-set frame counters so every RT pipeline re-writes its
     // TLAS binding on the first rendered frame of the new level.
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)

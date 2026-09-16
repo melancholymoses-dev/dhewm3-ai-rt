@@ -942,6 +942,11 @@ void VK_RT_InitMaterialTable(void);
 // Destroy all material table GPU resources.  Device must be idle before calling.
 void VK_RT_ShutdownMaterialTable(void);
 
+// Release every bindless texture slot except the two fallbacks.  Called from
+// VK_RT_BeginLevelLoad so slot assignments don't accumulate across map loads
+// (VK_MAT_MAX_TEXTURES is exhausted after a few maps otherwise).
+void VK_RT_MatTableLevelLoadReset(void);
+
 // Returns true if `shader` has a resolvable emissive image — an SL_AMBIENT
 // stage that is a strict additive overlay with explicit UVs, a cinematic/
 // videomap stage, or (fallback) the diffuse image of a HasGui() material.
