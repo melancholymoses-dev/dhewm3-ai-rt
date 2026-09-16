@@ -418,10 +418,62 @@ reprojecting the cell centre through `prevViewProj`; a fetch outside the previou
 frustum falls back to the current sample. `r_rtVolFroxelRotate`'s index **must**
 key off a per-slot counter, not `tr.frameCount`.
 
+### F6 — background attenuation (must land BEFORE F5's decision)
+The composite does the additive half of the transport equation and never the
+attenuating half: `dst = airlight + dst`, with no `T·L_surface`. Both paths already
+compute the path transmittance and write it to `.a` — `vol_march.comp` and
+`vol_froxel_resolve.comp` agree on the convention — and `vol_composite.frag` passes it
+through, but `dstColorBlendFactor = VK_BLEND_FACTOR_ONE` discards it.
+
+Consequence: light is created rather than redistributed, nothing ever washes out with
+distance, and a wall seen through a shaft gains apparent detail instead of losing it
+(the added airlight lifts a dark surface off the tonemap toe onto a steeper part of the
+curve). The error is first-order — `exp(-0.015*50) = 0.47` at ordinary room distance.
+The compensating "medium lights the wall, wall bounces back" term is second-order,
+`sigma_s * path * albedo` ~ 5 %, same sign, and does not cancel it.
+
+**Toggle, so the old behaviour stays available until it is tuned out.**
+`r_rtVolAttenuateBackground`, default **0**. Both pipelines are built up front, so the
+toggle is free at runtime — same pattern as `volCompositeDebugPipeline`.
+
+1. **Blend.** Third pipeline beside the additive and replace ones, identical except
+   `dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA`, giving
+   `dst = src.rgb + dst*src.a`. Leave the alpha factors and `colorWriteMask` alone.
+   `VK_RT_CompositeVolumetrics` selects it; debug modes still win.
+2. **Ordering — the real work.** The composite currently runs at vk_backend.cpp:4951,
+   BEFORE `VK_RB_DrawInteractions` (4958), so attenuating there would dim only GI and
+   ambient and let every direct light land on top unattenuated. Move it, under the
+   cvar, to **after `VK_RB_DrawShaderPasses` (4975) and before `VK_RB_FogAllLights`
+   (4985)**: interactions and blend stages are surface radiance and must be attenuated;
+   Doom 3's own fog lights are a separate artist-placed medium and would be
+   double-counted. Keep one `VK_RTPROF_PHASE_VOL_COMPOSITE` bracket at each call site
+   (phases accumulate) and add a per-frame guard so it can never composite twice.
+3. **Prerequisite, one line, do not skip.** `vol_bilateral.comp:136` initialises
+   `bestColor = vec4(0.0)`. If no neighbour passes the bilateral test, alpha reaches
+   the composite as 0 — harmless today because alpha is ignored, a **fully black pixel**
+   once it multiplies the background. Initialise it to `vec4(0.0, 0.0, 0.0, 1.0)`;
+   "clear air" is the correct failsafe everywhere transmittance is unknown.
+4. **Retune density.** `r_rtVolDensity 0.015` was tuned by eye against the missing
+   attenuation and is absorbing that error — turning this on unchanged will read as
+   murk. Same trap as the froxel fog reading denser at identical density. Useful
+   synergy: the froxel far plane is `-ln(r_rtVolFroxelFarTransmittance)/density`, so
+   lowering density **automatically extends the grid's range**, which is the same fix
+   the "shafts only appear near the camera" complaint wants.
+
+- **Exit:** with the cvar on, a wall seen through a shaft LOSES contrast; the scene does
+  not get net brighter; distant surfaces wash out. A/B the cvar on the same frame.
+- **Check first:** `r_rtVolDebugMode 1` (path transmittance, greyscale) should read
+  white in clear air and darken with distance. Uniformly near-black means density is
+  crushing everything into a near-camera shell and step 4 is already overdue.
+- **Known limitation to accept, not fix:** transmittance comes from the opaque depth
+  buffer, so translucent surfaces and glass get attenuated by whatever is behind them.
+  Screen-space fog compositing always has this; note it and move on.
+
 ### F5 — retire decision
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the
 default, or delete `vol_march.comp` + `vol_bilateral.comp` from the froxel path.
-Update ROADMAP.md and move this part to `completed/`.
+Update ROADMAP.md and move this part to `completed/`. **Blocked on F6** — do not retire
+a path while the survivor is still missing half the transport equation.
 
 ## A.9 Known risks
 
@@ -430,6 +482,8 @@ Update ROADMAP.md and move this part to `completed/`.
 | Beam edge crispness floors at XY resolution, and side-on shafts are the hero case | F2 A/B screenshots | Raise `ResX/Y` (linear cost, huge freed budget); keep the march selectable; only then consider deleting it |
 | Shadow sampling at one cell centre blocks/aliases the shadowed part of a shaft | Blocky shaft boundaries that do not improve with more steps | Per-frame jitter within the cell + F4 EMA is the intended fix; a second occlusion sample per cell is the fallback |
 | Cells straddling a wall leak fog through it | Fog visible in front of geometry | Depth-clamped resolve (F2); if it survives, weight the last slice by the fractional depth position |
+| Attenuation turned on at a density tuned without it | Scene reads murky and over-dark rather than hazy | F6 step 4: density must come down in the same change. The cvar defaults off so the two can be A/B'd on one frame |
+| Transmittance reaching the composite as 0 instead of 1 | Black pixels / black haloes at depth edges once F6 is on | F6 step 3: the bilateral's no-sample fallback must be `a = 1`, not `a = 0`. `r_rtVolDebugMode 1` shows this directly |
 | Grid is frustum-shaped, so a fast camera turn invalidates most of it | Flicker on rapid turns | F4's fallback-to-current on reprojection miss; this is why the miss path must be "take current", never "take black" |
 
 ---
