@@ -72,6 +72,35 @@ static idImage *s_bindlessImages[VK_MAT_MAX_TEXTURES];
 static uint32_t s_bindlessCount = 0;
 static bool s_bindlessDirty = false;
 
+// The idImage::backendData (vkImageData_t*) each slot's descriptor was written
+// against.  idImage objects survive a level-load purge but their Vulkan image +
+// view are destroyed and recreated, so an unchanged idImage* is NOT proof the
+// descriptor is still valid — comparing backendData is.
+static void *s_bindlessBackendData[VK_MAT_MAX_TEXTURES];
+// Slots [0, s_bindlessWritten) have been through RebuildBindlessDescriptors at
+// least once; slots at or above it are freshly assigned and may lazy-load.
+static uint32_t s_bindlessWritten = 0;
+
+// Cheap per-frame scan: mark dirty if any slot's image was purged or reuploaded
+// since its descriptor was written.  Pure pointer compares — no lazy loading.
+static void ValidateBindlessSlots(void)
+{
+    uint32_t stale = 0;
+    for (uint32_t i = 0; i < s_bindlessWritten; i++)
+    {
+        idImage *img = s_bindlessImages[i];
+        if (img && img->backendData != s_bindlessBackendData[i])
+            stale++;
+    }
+    if (!stale)
+        return;
+
+    s_bindlessDirty = true;
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT MatTable: %u/%u bindless slots stale (image purge/reupload) — refreshing\n", stale,
+                       s_bindlessWritten);
+}
+
 // Returns the bindless slot index for img, assigning a new one if needed.
 // img == NULL returns slot 0 (white/flat-normal fallback, slot 0 is reserved).
 static uint32_t GetOrAssignTexIndex(idImage *img)
@@ -137,10 +166,17 @@ static void RebuildBindlessDescriptors(void)
     for (uint32_t i = 0; i < s_bindlessCount; i++)
     {
         VkDescriptorImageInfo info = fallbackInfo;
-        if (s_bindlessImages[i])
+        idImage *img = s_bindlessImages[i];
+        // Only freshly assigned slots may take VK_Image_GetDescriptorInfo's
+        // lazy-load path. A slot already written whose image is currently purged
+        // takes the white fallback instead: after a level load thousands of slots
+        // are purged at once, and loading them all here would both stall the frame
+        // and resurrect textures the new map never asked for. The next frame's
+        // ValidateBindlessSlots picks each one up once the raster path reuploads it.
+        if (img && (img->backendData || i >= s_bindlessWritten))
         {
             VkDescriptorImageInfo tmp = {};
-            if (VK_Image_GetDescriptorInfo(s_bindlessImages[i], &tmp))
+            if (VK_Image_GetDescriptorInfo(img, &tmp))
             {
                 info.imageView = tmp.imageView;
                 info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -148,6 +184,7 @@ static void RebuildBindlessDescriptors(void)
         }
         info.sampler = vkRT.matSampler; // always use our bilinear sampler
         infos[i] = info;
+        s_bindlessBackendData[i] = img ? img->backendData : NULL;
     }
 
     VkWriteDescriptorSet write = {};
@@ -167,6 +204,7 @@ static void RebuildBindlessDescriptors(void)
         fflush(NULL);
     }
 
+    s_bindlessWritten = s_bindlessCount;
     s_bindlessDirty = false;
 }
 
@@ -363,8 +401,10 @@ void VK_RT_InitMaterialTable(void)
     // Slot 0 = white (diffuse fallback), slot 1 = flat normal fallback.
 
     s_bindlessCount = 0;
+    s_bindlessWritten = 0;
     s_bindlessDirty = false;
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
+    memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
 
     GetOrAssignTexIndex(globalImages->whiteImage);    // slot 0 — diffuse fallback
     GetOrAssignTexIndex(globalImages->flatNormalMap); // slot 1 — normal fallback
@@ -455,10 +495,42 @@ void VK_RT_ShutdownMaterialTable(void)
     }
 
     s_bindlessCount = 0;
+    s_bindlessWritten = 0;
     s_bindlessDirty = false;
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
+    memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
 
     vkRT.matTableInitialized = false;
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_MatTableLevelLoadReset (public)
+//
+// Slot assignment is append-only, so without this the table keeps every image
+// from every map visited this session and runs out of its VK_MAT_MAX_TEXTURES
+// slots after a few transitions. Safe here because VK_RT_BeginLevelLoad also
+// invalidates the static instance cache, forcing a full material-entry rewrite
+// on the new map's first frame — no stale tex index survives the reset.
+// ---------------------------------------------------------------------------
+
+void VK_RT_MatTableLevelLoadReset(void)
+{
+    if (!vkRT.matTableInitialized)
+        return;
+
+    const uint32_t released = s_bindlessCount;
+
+    s_bindlessCount = 0;
+    s_bindlessWritten = 0;
+    s_bindlessDirty = false;
+    memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
+    memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
+
+    GetOrAssignTexIndex(globalImages->whiteImage);    // slot 0 — diffuse fallback
+    GetOrAssignTexIndex(globalImages->flatNormalMap); // slot 1 — normal fallback
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK RT MatTable: level-load reset — released %u bindless slots\n", released);
 }
 
 // ---------------------------------------------------------------------------
@@ -694,7 +766,11 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
         memcpy(idxDst + staticGeomCount * addrSize, dynGeomIdx, dynamicGeomCount * addrSize);
     }
 
-    // Rebuild bindless descriptor array if new images were encountered.
+    // Rebuild bindless descriptor array if new images were encountered, or if an
+    // already-assigned image was purged/reuploaded behind our back (level load,
+    // image cache LRU, vid_restart) — its old VkImageView is destroyed and
+    // sampling the stale descriptor is a device lost.
+    ValidateBindlessSlots();
     if (s_bindlessDirty)
         RebuildBindlessDescriptors();
 
