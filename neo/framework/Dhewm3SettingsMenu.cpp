@@ -2471,6 +2471,8 @@ struct RTCVars
     idCVar *rtVolTemporal = nullptr;
     idCVar *rtVolTemporalAlpha = nullptr;
     idCVar *rtVolDensity = nullptr;
+    idCVar *rtVolAttenuateBackground = nullptr;
+    idCVar *rtVolAttenuateDensityScale = nullptr;
     idCVar *rtVolStrength = nullptr;
     idCVar *rtVolAnisotropy = nullptr;
     idCVar *rtVolFlashlightDensity = nullptr;
@@ -2555,6 +2557,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolTemporal = cvarSystem->Find("r_rtVolTemporal");
     rtCVars.rtVolTemporalAlpha = cvarSystem->Find("r_rtVolTemporalAlpha");
     rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
+    rtCVars.rtVolAttenuateBackground = cvarSystem->Find("r_rtVolAttenuateBackground");
+    rtCVars.rtVolAttenuateDensityScale = cvarSystem->Find("r_rtVolAttenuateDensityScale");
     rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
     rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
     rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
@@ -2749,6 +2753,8 @@ static void DrawRTOptionsMenu()
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
         RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
+        RTCheckbox("Attenuate Background", rtCVars.rtVolAttenuateBackground);
+        RTSliderFloat("Atten. Density Scale", rtCVars.rtVolAttenuateDensityScale, 0.1f, 1.0f, "%.2f");
 
         // --- Right column: flashlight ---
         ImGui::TableNextColumn();

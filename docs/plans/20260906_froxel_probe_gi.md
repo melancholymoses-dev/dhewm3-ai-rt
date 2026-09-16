@@ -468,6 +468,30 @@ toggle is free at runtime — same pattern as `volCompositeDebugPipeline`.
 - **Known limitation to accept, not fix:** transmittance comes from the opaque depth
   buffer, so translucent surfaces and glass get attenuated by whatever is behind them.
   Screen-space fog compositing always has this; note it and move on.
+- 🟡 **Written 2026-09-16, not yet in-game validated.** As built:
+  - `r_rtVolAttenuateBackground` (default 0) drives both the pipeline choice
+    (`volCompositeAttenPipeline`) *and* the call site, via one query,
+    `VK_RT_VolCompositeAfterSurfaces()`. Backend calls it at exactly one of the two
+    sites; `VK_RT_CompositeVolumetrics` additionally self-guards on
+    `(tr.frameCount, backEnd.viewDef)` — keyed on the view, not the frame, because a
+    frame legitimately draws several.
+  - The late site **must re-set viewport and scissor**: the interaction and
+    shader-pass loops set both per surface, so the fullscreen triangle would
+    otherwise inherit the last drawn surface's rect. Not in the original step list.
+  - Step 4 is `r_rtVolAttenuateDensityScale` (default 0.5) applied inside
+    `VK_RT_VolEffectiveDensity()`, which both the march UBO and the froxel UBO now
+    read, rather than a lower `r_rtVolDensity` default. Lowering the shared default
+    would have degraded the tuned additive path, which is the thing the A/B compares
+    against. The froxel `dFar` extension falls out of it as the plan predicted; both
+    dumps now print raw vs effective density.
+  - Debug modes still win over the attenuating pipeline — both want replace blend.
+- **Residual, not fixed:** `gi_temporal_resolve.comp:83` stores `vec4(0.0)` when
+  current *and* history are non-finite, which is an alpha-0 (black) pixel under
+  attenuation. Reachable only via NaN on the non-default march path, and the shader
+  is shared with GI, so it was left alone rather than given a vol-specific
+  convention. Likewise the composite still runs on subviews/mirrors where the vol
+  dispatches did not, so those read stale transmittance — pre-existing, and additive
+  today, multiplicative once this is on.
 
 ### F5 — retire decision
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the

@@ -87,9 +87,8 @@ void main()
     }
 
     // .a is path transmittance (see vol_march.comp), not coverage/opacity.
-    // Passed through here for future use by a background-attenuation pass;
-    // the current blend state ignores src alpha (srcAlphaBlendFactor = ZERO),
-    // so this is a no-op on today's composite — see vol_march.comp's closing
-    // comment for why that attenuation isn't wired up yet.
+    // With r_rtVolAttenuateBackground the composite binds a pipeline whose
+    // dstColorBlendFactor is SRC_ALPHA, so this gives dst = airlight + T*dst —
+    // the full transport equation. The additive pipeline still ignores it.
     fragColor = vec4(vol.rgb, vol.a);
 }

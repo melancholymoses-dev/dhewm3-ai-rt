@@ -99,6 +99,25 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
 idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                       "Global scattering density (extinction + scattering coefficient)");
 
+// F6 (20260906_froxel_probe_gi.md): the composite only ever did the additive half
+// of the transport equation (dst = airlight + dst) and never the attenuating half
+// (T * L_surface), so fog created light instead of redistributing it.  Off by
+// default so the two can be A/B'd on one frame until the medium is retuned.
+static idCVar r_rtVolAttenuateBackground("r_rtVolAttenuateBackground", "0",
+                                         CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+                                         "Multiply the scene by the volumetric path transmittance as well as adding "
+                                         "in-scattering (1), or add only, as before (0).  When 1 the composite also "
+                                         "moves after the interaction/shader passes so direct light is attenuated too.");
+
+// r_rtVolDensity 0.015 was tuned by eye against the missing extinction, so it is
+// carrying that error; turning attenuation on unchanged reads as murk.  Scaling
+// here rather than changing the default keeps the off path byte-identical, and the
+// froxel far plane is -ln(farTransmittance)/density, so a lower density also
+// extends the grid's range for free.
+static idCVar r_rtVolAttenuateDensityScale("r_rtVolAttenuateDensityScale", "0.5",
+                                           CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                           "Density multiplier applied only while r_rtVolAttenuateBackground is 1.");
+
 idCVar r_rtVolStrength("r_rtVolStrength", "0.85", CVAR_RENDERER | CVAR_FLOAT,
                        "Final composite scale for point-light scatter");
 
@@ -136,6 +155,23 @@ idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RE
                                    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
 idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
                                  "Final composite multiplier for flashlight scatter.");
+
+// ---------------------------------------------------------------------------
+// F6 helpers — shared by the march (this file) and the froxel fill.
+// ---------------------------------------------------------------------------
+
+bool VK_RT_VolCompositeAfterSurfaces(void)
+{
+    return r_rtVolAttenuateBackground.GetBool() && vkRT.volCompositeAttenPipeline != VK_NULL_HANDLE;
+}
+
+float VK_RT_VolEffectiveDensity(void)
+{
+    float d = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+    if (VK_RT_VolCompositeAfterSurfaces())
+        d *= Max(0.0f, r_rtVolAttenuateDensityScale.GetFloat());
+    return idMath::ClampFloat(0.0f, 1.0f, d);
+}
 
 // ---------------------------------------------------------------------------
 // VolParamsUBO — must match the std140 VolParams block in vol_march.comp.
@@ -685,6 +721,24 @@ static void VK_RT_InitVolCompositePipeline(void)
     pipelineInfo.renderPass = vk.hdrRenderPass;
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositePipeline));
+
+    // --- Attenuating variant (F6): dst = src.rgb + dst * src.a.  Identical to the
+    // additive pipeline except dstColorBlendFactor, so the only thing the toggle
+    // changes at runtime is which handle is bound.  Alpha factors and write mask
+    // stay put — the framebuffer's alpha is not ours to touch. ---
+    VkPipelineColorBlendAttachmentState attenBlend = colorBlend;
+    attenBlend.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+
+    VkPipelineColorBlendAttachmentState attenAttachments[3] = {attenBlend, {}, {}};
+    VK_FillSecondBlendAttachment(&attenAttachments[1]);
+    VK_FillSecondBlendAttachment(&attenAttachments[2]);
+
+    VkPipelineColorBlendStateCreateInfo attenBlendState = blendState;
+    attenBlendState.pAttachments = attenAttachments;
+    pipelineInfo.pColorBlendState = &attenBlendState;
+
+    VK_CHECK(
+        vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.volCompositeAttenPipeline));
 
     // --- Debug variant: blend disabled (replace), so r_rtVolDebugMode's
     // transmittance/scatter visualization isn't muddied by additive blending onto
@@ -1640,6 +1694,11 @@ void VK_RT_ShutdownVolumetrics(void)
         vkDestroyPipeline(vk.device, vkRT.volCompositePipeline, NULL);
         vkRT.volCompositePipeline = VK_NULL_HANDLE;
     }
+    if (vkRT.volCompositeAttenPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.volCompositeAttenPipeline, NULL);
+        vkRT.volCompositeAttenPipeline = VK_NULL_HANDLE;
+    }
     if (vkRT.volCompositeDebugPipeline != VK_NULL_HANDLE)
     {
         vkDestroyPipeline(vk.device, vkRT.volCompositeDebugPipeline, NULL);
@@ -1819,7 +1878,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.frameIndex = (uint32_t)tr.frameCount;
     ubo.numSamples = idMath::ClampInt(1, 32, r_rtVolSamples.GetInteger());
     ubo.maxLights = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
-    ubo.density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+    ubo.density = VK_RT_VolEffectiveDensity();
     ubo.anisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
     ubo.maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
     ubo.strength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
@@ -1998,6 +2057,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        ubo.maxLights, ubo.maxDist, ubo.whiteNoiseMix);
         common->Printf("  point:     density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.density, ubo.strength,
                        ubo.anisotropy);
+        common->Printf("  density raw=%.5f effective=%.5f (attenuateBackground=%d)\n", r_rtVolDensity.GetFloat(),
+                       ubo.density, (int)VK_RT_VolCompositeAfterSurfaces());
         common->Printf("  directed:  density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.directedDensity,
                        ubo.directedStrength, ubo.directedAnisotropy);
         common->Printf("  flashlight:density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.flashlightDensity,
@@ -2011,9 +2072,15 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
 // ---------------------------------------------------------------------------
 // VK_RT_CompositeVolumetrics (public)
-// Additively blends volBuffer onto the framebuffer using a fullscreen triangle.
-// Must be called inside the render pass, after VK_RT_CompositeGI.
+// Blends volBuffer onto the framebuffer using a fullscreen triangle.  Must be
+// called inside the render pass, after VK_RT_CompositeGI.  Additive by default;
+// with r_rtVolAttenuateBackground it also multiplies the scene by src.a and the
+// backend calls it from the later, post-shader-passes site instead.
 // ---------------------------------------------------------------------------
+
+// Double-composite guard for F6's two call sites (see below).
+static int         s_volCompositeFrame = -1;
+static const void *s_volCompositeView = NULL;
 
 void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
 {
@@ -2026,6 +2093,17 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
     vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
     if (vb.image == VK_NULL_HANDLE || vkRT.volSampler == VK_NULL_HANDLE)
         return;
+
+    // F6 gave this function two possible call sites in VK_RB_DrawView (before the
+    // interactions, or after the shader passes when attenuating); the backend picks
+    // one, and this makes compositing the same view twice impossible either way.
+    // Keyed on the view, not just the frame: a frame can legitimately draw several.
+    if (s_volCompositeFrame == tr.frameCount && s_volCompositeView == (const void *)backEnd.viewDef)
+    {
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Vol: composite skipped — already drawn this view (frame=%d)\n", tr.frameCount);
+        return;
+    }
 
     // Write the descriptor set for this frame slot.
     // Use volReadView: points to volHistory when temporal is active, volBuffer otherwise.
@@ -2072,10 +2150,19 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         pc.debugGain = 1.0f;
     }
 
+    // Debug modes still win over F6's attenuating pipeline: both visualizations
+    // want the replace blend, not a multiply against the scene.
     const bool debugActive = pc.debugMode >= 1 && pc.debugMode <= 2;
-    VkPipeline pipe = debugActive ? vkRT.volCompositeDebugPipeline : vkRT.volCompositePipeline;
+    VkPipeline pipe = vkRT.volCompositePipeline;
+    if (debugActive)
+        pipe = vkRT.volCompositeDebugPipeline;
+    else if (VK_RT_VolCompositeAfterSurfaces())
+        pipe = vkRT.volCompositeAttenPipeline;
     if (pipe == VK_NULL_HANDLE)
         return;
+
+    s_volCompositeFrame = tr.frameCount;
+    s_volCompositeView = (const void *)backEnd.viewDef;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.volCompositeLayout, 0, 1,
