@@ -322,7 +322,7 @@ static int32_t VK_RT_GIProbeRequestedRays(void)
 
 static int32_t VK_RT_GIProbeRequestedUpdates(int32_t probeCount)
 {
-    return idMath::ClampInt(1, probeCount, r_rtGIProbeUpdatesPerFrame.GetInteger());
+    return idMath::ClampInt(1, Min(probeCount, 65535), r_rtGIProbeUpdatesPerFrame.GetInteger());
 }
 
 // Geometry the last allocation attempt FAILED at, as {Nx, Ny, Nz, rays, updates}.
@@ -1283,8 +1283,14 @@ bool VK_RT_GIProbeActive(void)
         return false;
     if (r_rtGIProbes.GetInteger() != 1)
         return false;
+    // The trace is part of the chain. VK_RT_InitGIPipeline tolerates a missing
+    // gi_probe_trace.rgen.spv by zeroing giProbeRgenRegion, and the trace then
+    // early-outs on it — so omitting it here stands the per-pixel path down in
+    // favour of probes that are never traced, i.e. black GI, which is the exact
+    // outcome this predicate exists to prevent.
     return vkRT.giProbeBlendPipeline != VK_NULL_HANDLE && vkRT.giProbeBorderPipeline != VK_NULL_HANDLE &&
-           vkRT.giProbeResolvePipeline != VK_NULL_HANDLE && vkRT.giProbeIrradiance.image != VK_NULL_HANDLE;
+           vkRT.giProbeResolvePipeline != VK_NULL_HANDLE && vkRT.giProbeIrradiance.image != VK_NULL_HANDLE &&
+           vkRT.giPipeline != VK_NULL_HANDLE && vkRT.giProbeRgenRegion.deviceAddress != 0;
 }
 
 // Probes are MAINTAINED (traced + blended) whenever either the resolve wants
@@ -1719,6 +1725,21 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
     GIProbeParamsUBO ubo;
     if (!VK_RT_GIProbeUpdate(viewDef, ubo))
         return;
+
+    // Write-after-read across the frame boundary. The atlases are SHARED, not per
+    // slot, so the previous frame's resolve may still be sampling them when this
+    // blend starts overwriting: submission order does not imply an execution
+    // dependency, and the frame fence is two submissions back. Nothing else
+    // covers it — the trace->blend barrier below is about the scratch image, and
+    // the post-resolve barrier only reaches fragment work.
+    {
+        VkMemoryBarrier memBarrier = {};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &memBarrier, 0, NULL, 0, NULL);
+    }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBlendPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBlendPipelineLayout, 0, 1,

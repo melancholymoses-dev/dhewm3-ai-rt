@@ -51,11 +51,15 @@ gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
            blue in mode 6 (it sees front faces); if it reads green or red the
            statistic itself is wrong and no threshold will rescue it.
 
-The sphere overlays (1, 4, 5) ADD onto the lit scene rather than replacing it:
-the thing being checked is where the probes sit in the world, and a black
-background makes that harder to judge than the room around them does.  The
-per-pixel overlays (2, 3) replace it, because there a lit scene underneath is
-just noise on top of the measurement.
+Every mode ADDS onto the lit scene.  For the sphere overlays (1, 4, 5, 6, 7)
+that is deliberate — the thing being checked is where the probes sit in the
+world, and a black background makes that harder to judge than the room does.
+
+For the per-pixel overlays (2, 3) it is a LIMITATION, not a choice:
+VK_RT_CompositeGI has only an additive pipeline and the direct-light
+interactions are drawn after it, so the scene tints the measurement.  Read hue
+ratios, not absolute colour, and distrust these two modes on bright surfaces.
+Fixing it needs a replace composite AND suppression of the later scene draws.
 
 Descriptors (set 0):
   binding 0 — irradiance atlas (sampler2D)
