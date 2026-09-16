@@ -65,7 +65,7 @@ Code release.
 // CVars
 // ---------------------------------------------------------------------------
 
-idCVar r_rtAutoRelight("r_rtAutoRelight", "1", CVAR_RENDERER | CVAR_BOOL,
+idCVar r_rtAutoRelight("r_rtAutoRelight", "0", CVAR_RENDERER | CVAR_BOOL,
                        "auto_relight.md: master toggle for engine-synthesized lights from emissive "
                        "world surfaces; regenerates on map load.");
 
