@@ -47,7 +47,9 @@ layout(set = 0, binding = 2, std140) uniform VolFroxelParams {
     vec4  depthParams;  // 112  x=dNear y=dFar z=linNum w=linAdd
     vec4  rangeParams;  // 128  x=logRange=log(dFar/dNear) y=1/logRange z=maxDist w=unused
     vec4  densities;    // 144  x=point y=directed z=flashlight w=whiteNoiseMix
-    vec4  strengths;    // 160  x=point y=directed z=flashlight w=temporalAlpha
+    // w was F4's temporalAlpha; F4 was dropped, so the slot now carries the
+    // two-lobe phase blend (see PhaseFunction in vol_froxel_fill.comp).
+    vec4  strengths;    // 160  x=point y=directed z=flashlight w=isotropicMix
     vec4  anisos;       // 176  x=point y=directed z=flashlight w=unused
     ivec4 misc;         // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
     ivec4 screen;       // 208  x=screenW y=screenH z=outW w=outH  (resolve target)

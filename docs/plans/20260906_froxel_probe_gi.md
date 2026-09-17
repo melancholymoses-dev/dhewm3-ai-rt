@@ -478,20 +478,66 @@ toggle is free at runtime — same pattern as `volCompositeDebugPipeline`.
   - The late site **must re-set viewport and scissor**: the interaction and
     shader-pass loops set both per surface, so the fullscreen triangle would
     otherwise inherit the last drawn surface's rect. Not in the original step list.
-  - Step 4 is `r_rtVolAttenuateDensityScale` (default 0.5) applied inside
-    `VK_RT_VolEffectiveDensity()`, which both the march UBO and the froxel UBO now
-    read, rather than a lower `r_rtVolDensity` default. Lowering the shared default
-    would have degraded the tuned additive path, which is the thing the A/B compares
-    against. The froxel `dFar` extension falls out of it as the plan predicted; both
-    dumps now print raw vs effective density.
   - Debug modes still win over the attenuating pipeline — both want replace blend.
+- **Step 4 as written was the wrong knob, and the first build proved it in-game
+  (screenshots 2026-09-16: corridor and terminal unreadably dark).** Scaling
+  `r_rtVolDensity` cannot work: density drives the *airlight* as well as the
+  extinction, so it trades shaft visibility one-for-one against background
+  attenuation and has no setting where both are right. It is also the wrong
+  magnitude — 0.015 was tuned for visible shafts, and `exp(-0.015 * 500)` is 5e-4,
+  i.e. a Doom 3 corridor is fully extinguished long before its far wall.
+  Replaced by **`r_rtVolAttenuateStrength` (default 0.1)**, applied as `T^k` in
+  `vol_composite.frag` — `T^k == exp(-k*tau)`, so k *is* the ratio of extinction to
+  scattering (the single-scatter albedo), and it is the one thing that was missing:
+  upstream conflates the two into one `density`. Nothing upstream changes now, so
+  the froxel `dFar`, the in-scattering, and an `r_rtVolAttenuateBackground` 0/1 A/B
+  are all like-for-like. `r_rtVolDebugMode 1` shows the post-`k` value, so it can be
+  tuned against what is actually applied.
+- **The 2D GUI/HUD overlay bug, same build:** the late call site sits outside the
+  block that gates on `hasRealCamera`, so Doom 3's second per-frame `RC_DRAW_VIEW`
+  (zeroed `viewaxis`) got multiplied by stale transmittance — HUD dimmed, settings
+  menu black. Additive compositing had always run there harmlessly, which is why
+  the gate was never needed before. The late site now carries the same
+  `hasRealCamera && !isSubview && !isMirror` test as the dispatches, which also
+  retires the stale-subview residual noted below.
 - **Residual, not fixed:** `gi_temporal_resolve.comp:83` stores `vec4(0.0)` when
   current *and* history are non-finite, which is an alpha-0 (black) pixel under
   attenuation. Reachable only via NaN on the non-default march path, and the shader
   is shared with GI, so it was left alone rather than given a vol-specific
-  convention. Likewise the composite still runs on subviews/mirrors where the vol
-  dispatches did not, so those read stale transmittance — pre-existing, and additive
-  today, multiplicative once this is on.
+  convention.
+
+### F7 — projected-light cone penumbra — written 2026-09-16
+Not planned; found from a user report that a directed light's shaft was invisible
+from a step outside it, with no door or gap involved. The point-light branch fades
+over a 1.0→1.5 halo shell outside its box; the cone branch was a hard binary
+`if (cosAngle < cd.w) continue`, so the two light classes obeyed visibly different
+rules. Both `vol_froxel_fill.comp` and `vol_march.comp` now smoothstep over a
+penumbra band sized as a fraction of the cone's own angular width
+(`VOL_CONE_PENUMBRA 0.35`), kept byte-identical between the two so the
+`r_rtVolFroxel` 0/1 A/B stays meaningful.
+
+The penumbra fixes the cone *wall*; it does nothing for viewing *angle*, and the
+report was equally about high-angle views (side-on under a fan, or looking down
+from above) reading as no scattering at all. That is the phase function, and it is
+a real tension rather than a mistuning: `r_rtVolDirectedAnisotropy` was
+deliberately raised to 0.6 to sharpen shaft/shadow definition, and HG is
+**normalised** — g redistributes a fixed scattered energy rather than scaling it,
+so buying forward contrast spends side-on visibility one-for-one (25× between
+`cosθ=1` and `cosθ=0` at g=0.6, vs 4× at the point default 0.35). Lowering g would
+trade back exactly the definition that was wanted.
+
+Fixed instead with a **two-lobe phase**, `r_rtVolIsotropicMix` (default 0.3):
+`PhaseFunction = mix(HG(cosθ, g), 1/4π, isoMix)`. Both lobes integrate to 1, so
+the blend does too — this is a redistribution, not a brightness change, and the
+anisotropy knobs stay free for shaft definition. At 0.3 it measures ~1.9× side-on
+for ~2/3 of the forward peak: real, not dramatic, because the geometry contributes
+as much as the phase (inside the cone the whole view ray sweeps the bright
+near-apex region; from outside it crosses once).
+- Cost nothing in struct size: the march UBO's `_uboPad` at offset 156 and the
+  froxel UBO's `strengths.w` (F4's dropped `temporalAlpha`) were both already dead
+  slots. `VolParamsUBO` stays 176 bytes, `VolFroxelParamsUBO` stays 304.
+- `VOL_CONE_PENUMBRA` and `PhaseFunction` are duplicated verbatim in
+  `vol_march.comp` and `vol_froxel_fill.comp`; both dumps now print `isotropicMix`.
 
 ### F5 — retire decision
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the

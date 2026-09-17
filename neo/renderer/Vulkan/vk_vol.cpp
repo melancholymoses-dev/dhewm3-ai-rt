@@ -100,29 +100,37 @@ idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
                       "Global scattering density (extinction + scattering coefficient)");
 
 // F6 (20260906_froxel_probe_gi.md): the composite only ever did the additive half
-// of the transport equation (dst = airlight + dst) and never the attenuating half
-// (T * L_surface), so fog created light instead of redistributing it.  Off by
-// default so the two can be A/B'd on one frame until the medium is retuned.
-static idCVar r_rtVolAttenuateBackground("r_rtVolAttenuateBackground", "0",
-                                         CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
-                                         "Multiply the scene by the volumetric path transmittance as well as adding "
-                                         "in-scattering (1), or add only, as before (0).  When 1 the composite also "
-                                         "moves after the interaction/shader passes so direct light is attenuated too.");
+// and never the attenuating half, so fog created light instead of redistributing it.
+static idCVar r_rtVolAttenuateBackground(
+    "r_rtVolAttenuateBackground", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "Multiply the scene by the volumetric path transmittance as well as adding "
+    "in-scattering (1), or add only, as before (0).  When 1 the composite also "
+    "moves after the interaction/shader passes so direct light is attenuated too.");
 
-// r_rtVolDensity 0.015 was tuned by eye against the missing extinction, so it is
-// carrying that error; turning attenuation on unchanged reads as murk.  Scaling
-// here rather than changing the default keeps the off path byte-identical, and the
-// froxel far plane is -ln(farTransmittance)/density, so a lower density also
-// extends the grid's range for free.
-static idCVar r_rtVolAttenuateDensityScale("r_rtVolAttenuateDensityScale", "0.5",
-                                           CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-                                           "Density multiplier applied only while r_rtVolAttenuateBackground is 1.");
+// Attenuation strength, applied as T^k in vol_composite.frag — i.e. the extinction
+// coefficient is k times the scattering one (the single-scatter albedo).
+static idCVar r_rtVolAttenuateStrength("r_rtVolAttenuateStrength", "0.04", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                                       "How much of the volumetric optical depth attenuates the scene behind it, "
+                                       "as T^k (0 = none, 1 = the full marched transmittance).  Only used while "
+                                       "r_rtVolAttenuateBackground is 1.");
 
 idCVar r_rtVolStrength("r_rtVolStrength", "0.85", CVAR_RENDERER | CVAR_FLOAT,
                        "Final composite scale for point-light scatter");
 
 idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.35", CVAR_RENDERER | CVAR_FLOAT,
                          "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
+
+// Two-lobe phase blend.  HG is normalised, so a single lobe can only trade
+// side-on visibility for forward contrast — at the directed default g=0.6 that is
+// a 25x swing between looking into a shaft and viewing it from the side, which
+// reads as no scattering at all at high angles.  Blending in an isotropic lobe
+// puts a floor under off-axis scattering while leaving total scattered energy
+// alone, so the anisotropy knobs can stay high for shaft/shadow definition.
+// Global rather than per-class: it is a visibility floor, not a medium property.
+idCVar r_rtVolIsotropicMix("r_rtVolIsotropicMix", "0.3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                           "Fraction of the volumetric phase function that is isotropic rather than the "
+                           "Henyey-Greenstein forward lobe (0 = pure HG, 1 = fully isotropic).  Raises "
+                           "side-on/high-angle shaft visibility without lowering r_rtVol*Anisotropy.");
 
 static idCVar r_rtVolDebugMode("r_rtVolDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
                                "0=off, 1=path transmittance as greyscale (white=clear air, black=fully "
@@ -157,20 +165,15 @@ idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDER
                                  "Final composite multiplier for flashlight scatter.");
 
 // ---------------------------------------------------------------------------
-// F6 helpers — shared by the march (this file) and the froxel fill.
+// F6 — background attenuation.  Nothing upstream changes: the march and the
+// froxel fill still see the raw r_rtVolDensity, so the in-scattering, the froxel
+// far plane and an r_rtVolAttenuateBackground 0/1 A/B all stay like-for-like.
+// The toggle only picks a blend pipeline, a call site, and this exponent.
 // ---------------------------------------------------------------------------
 
 bool VK_RT_VolCompositeAfterSurfaces(void)
 {
     return r_rtVolAttenuateBackground.GetBool() && vkRT.volCompositeAttenPipeline != VK_NULL_HANDLE;
-}
-
-float VK_RT_VolEffectiveDensity(void)
-{
-    float d = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
-    if (VK_RT_VolCompositeAfterSurfaces())
-        d *= Max(0.0f, r_rtVolAttenuateDensityScale.GetFloat());
-    return idMath::ClampFloat(0.0f, 1.0f, d);
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +200,7 @@ float VK_RT_VolEffectiveDensity(void)
 //   float directedDensity      offset 144  size  4  (scene spot/directed, lightType 1)
 //   float directedAnisotropy   offset 148  size  4
 //   float directedStrength     offset 152  size  4
-//   float _pad                 offset 156  size  4  (std140 round to 16)
+//   float isotropicMix         offset 156  size  4  (two-lobe phase blend)
 //   total: 160 bytes
 //   --- P8: half-res march ---
 //   int   marchWidth           offset 160  size  4
@@ -233,7 +236,7 @@ struct VolParamsUBO
     float directedDensity;      // 144
     float directedAnisotropy;   // 148
     float directedStrength;     // 152
-    float _uboPad;              // 156
+    float isotropicMix;         // 156 — repurposed former pad, see r_rtVolIsotropicMix
     // --- P8: half-res march ---
     // screenWidth/Height above stay FULL res (depth fetch + NDC reconstruction);
     // these describe the volBuf the march actually writes.
@@ -613,8 +616,8 @@ static void VK_RT_InitVolCompositePipeline(void)
     VkPushConstantRange compPush = {};
     compPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     compPush.offset = 0;
-    compPush.size =
-        sizeof(float) * 2 + sizeof(int32_t) + sizeof(float); // vec2 invScreenSize + int debugMode + float debugGain
+    // vec2 invScreenSize + int debugMode + float debugGain + float attenStrength (F6)
+    compPush.size = sizeof(float) * 2 + sizeof(int32_t) + sizeof(float) * 2;
 
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1878,7 +1881,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.frameIndex = (uint32_t)tr.frameCount;
     ubo.numSamples = idMath::ClampInt(1, 32, r_rtVolSamples.GetInteger());
     ubo.maxLights = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
-    ubo.density = VK_RT_VolEffectiveDensity();
+    ubo.density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
     ubo.anisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
     ubo.maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
     ubo.strength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
@@ -1888,7 +1891,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.directedDensity = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDirectedDensity.GetFloat());
     ubo.directedAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
     ubo.directedStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
-    ubo._uboPad = 0.0f;
+    ubo.isotropicMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI), scaled into
     // march space — the shader indexes volBuf with it.
@@ -2057,10 +2060,11 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        ubo.maxLights, ubo.maxDist, ubo.whiteNoiseMix);
         common->Printf("  point:     density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.density, ubo.strength,
                        ubo.anisotropy);
-        common->Printf("  density raw=%.5f effective=%.5f (attenuateBackground=%d)\n", r_rtVolDensity.GetFloat(),
-                       ubo.density, (int)VK_RT_VolCompositeAfterSurfaces());
+        common->Printf("  attenuateBackground=%d strength=%.3f (T^k at composite)\n",
+                       (int)VK_RT_VolCompositeAfterSurfaces(), r_rtVolAttenuateStrength.GetFloat());
         common->Printf("  directed:  density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.directedDensity,
                        ubo.directedStrength, ubo.directedAnisotropy);
+        common->Printf("  phase:     isotropicMix=%.3f (0=pure HG lobe, 1=fully isotropic)\n", ubo.isotropicMix);
         common->Printf("  flashlight:density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.flashlightDensity,
                        ubo.flashlightStrength, ubo.flashlightAnisotropy);
         common->Printf("  screen=%dx%d  march=%dx%d scale=%d  scissor=(%d,%d %dx%d)\n", ubo.screenWidth,
@@ -2079,7 +2083,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
 // ---------------------------------------------------------------------------
 
 // Double-composite guard for F6's two call sites (see below).
-static int         s_volCompositeFrame = -1;
+static int s_volCompositeFrame = -1;
 static const void *s_volCompositeView = NULL;
 
 void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
@@ -2132,10 +2136,14 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         float invScreen[2];
         int32_t debugMode;
         float debugGain;
+        float attenStrength;
     } pc = {
         {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
         r_rtVolDebugMode.GetInteger(),
         Max(0.0f, r_rtVolDebugGain.GetFloat()),
+        // 0 with the toggle off, so the additive pipeline's alpha stays the raw
+        // march value and debug mode 1 keeps showing what the march produced.
+        VK_RT_VolCompositeAfterSurfaces() ? idMath::ClampFloat(0.0f, 1.0f, r_rtVolAttenuateStrength.GetFloat()) : 0.0f,
     };
 
     // Froxel overlays (20260906_froxel_probe_gi.md F1) arrive already composed in

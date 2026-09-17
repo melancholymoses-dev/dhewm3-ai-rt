@@ -88,12 +88,27 @@ layout(set = 0, binding = 3, std430) readonly buffer GILightBuf {
 
 #define VOL_SHADOW_BIAS 0.5
 
+// Width of the soft band outside a projected light's cone wall, as a fraction of
+// the cone's own angular width — so tight spots and wide floods both get a
+// proportionate edge.  The point-light branch has always had its 1.0->1.5 halo
+// shell; the cone had a hard binary cut, which is why a viewer a step outside a
+// shaft saw nothing at all rather than something dim.
+#define VOL_CONE_PENUMBRA 0.35
+
 // Identical to vol_march.comp's.
 float HenyeyGreenstein(float cosTheta, float g)
 {
     float g2    = g * g;
     float denom = 1.0 + g2 - 2.0 * g * cosTheta;
     return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
+}
+
+// Forward HG lobe + isotropic lobe; see vol_march.comp for the rationale, and
+// keep the two copies identical so the r_rtVolFroxel 0/1 A/B stays meaningful.
+float PhaseFunction(float cosTheta, float g, float isoMix)
+{
+    const float INV_4PI = 0.0795774715;
+    return mix(HenyeyGreenstein(cosTheta, g), INV_4PI, clamp(isoMix, 0.0, 1.0));
 }
 
 void main()
@@ -167,9 +182,13 @@ void main()
             if (alongCone <= 0.0 || alongCone > bx.w)
                 continue;
             float cosAngle = alongCone / max(length(toCell), 0.001);
-            if (cosAngle < cd.w)
+            // max() on the width keeps cosOuter strictly below cd.w, so a
+            // degenerate near-zero-angle cone can't collapse the smoothstep.
+            float cosOuter = max(cd.w - VOL_CONE_PENUMBRA * max(1.0 - cd.w, 1e-3), -1.0);
+            if (cosAngle < cosOuter)
                 continue;
             atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+            atten *= smoothstep(cosOuter, cd.w, cosAngle);
         }
 
         if (atten < 0.001)
@@ -181,7 +200,7 @@ void main()
         float localAniso = isFlashlight ? fp.anisos.z
                          : isDirected   ? fp.anisos.y
                                         : fp.anisos.x;
-        float phase = HenyeyGreenstein(cosTheta, localAniso);
+        float phase = PhaseFunction(cosTheta, localAniso, fp.strengths.w);
 
         float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
 
