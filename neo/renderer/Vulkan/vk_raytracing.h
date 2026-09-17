@@ -1138,14 +1138,9 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
 // F6 (20260906_froxel_probe_gi.md): true when r_rtVolAttenuateBackground is on
 // and the attenuating pipeline exists.  The backend uses this to move the
 // composite after the interaction/shader passes, so surface radiance — not just
-// GI and ambient — is what gets multiplied by the path transmittance.
+// GI and ambient — is what gets multiplied by the path transmittance.  The late
+// call site must additionally gate on a real camera; see the comment there.
 bool VK_RT_VolCompositeAfterSurfaces(void);
-
-// Scattering/extinction coefficient actually handed to the march and the froxel
-// fill.  This is r_rtVolDensity scaled by r_rtVolAttenuateDensityScale while
-// attenuation is on: the old default absorbed the missing extinction term, so
-// the same constant reads as murk once the background is finally attenuated.
-float VK_RT_VolEffectiveDensity(void);
 
 // ---------------------------------------------------------------------------
 // Volumetric temporal EMA (Phase 7.2 — step 8)

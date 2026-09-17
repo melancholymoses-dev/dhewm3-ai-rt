@@ -115,6 +115,7 @@ extern idCVar r_rtVolFlashlightDensity;
 extern idCVar r_rtVolFlashlightStrength;
 extern idCVar r_rtVolFlashlightAnisotropy;
 extern idCVar r_rtVolWhiteNoiseMix;
+extern idCVar r_rtVolIsotropicMix;
 
 // ---------------------------------------------------------------------------
 // VolFroxelParamsUBO — must match the std140 VolFroxelParams block in
@@ -134,7 +135,7 @@ struct VolFroxelParamsUBO
     float depthParams[4];   // 112  x=dNear y=dFar z=linNum w=linAdd
     float rangeParams[4];   // 128  x=logRange y=1/logRange z=maxDist w=unused
     float densities[4];     // 144  x=point y=directed z=flashlight w=whiteNoiseMix
-    float strengths[4];     // 160  x=point y=directed z=flashlight w=temporalAlpha
+    float strengths[4];     // 160  x=point y=directed z=flashlight w=isotropicMix (was F4 temporalAlpha)
     float anisos[4];        // 176  x=point y=directed z=flashlight w=unused
     int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
     int32_t screen[4];      // 208  x=screenW y=screenH z=outW w=outH (resolve target)
@@ -463,8 +464,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.gridDim[3] = 0; // unused — F3's cluster cull was dropped 2026-09-13
 
     const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    // F6: effective, not raw — attenuation halves it, which also pushes dFar out.
-    const float density = VK_RT_VolEffectiveDensity();
+    const float density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
 
     // Near anchor = the real near plane, read from the projection rather than from
     // r_znear: znear is game-owned and drops to 1.0 in cinematics, and the matrix
@@ -502,7 +502,9 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.strengths[0] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
     ubo.strengths[1] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
     ubo.strengths[2] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
-    ubo.strengths[3] = 0.0f; // temporal alpha, F4
+    // Was F4's temporal alpha; F4 was dropped, so the slot carries the two-lobe
+    // phase blend instead (see PhaseFunction in vol_froxel_fill.comp).
+    ubo.strengths[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
 
     ubo.anisos[0] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
     ubo.anisos[1] = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
@@ -1194,8 +1196,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("  grid range: dNear=%.3f dFar=%.1f (r_rtVolMaxDist=%.1f, T floor=%.4f)  logRange=%.4f\n",
                        ubo.depthParams[0], ubo.depthParams[1], ubo.rangeParams[2],
                        r_rtVolFroxelFarTransmittance.GetFloat(), ubo.rangeParams[0]);
-        common->Printf("  density: raw=%.5f effective=%.5f (attenuateBackground=%d)\n", r_rtVolDensity.GetFloat(),
-                       ubo.densities[0], (int)VK_RT_VolCompositeAfterSurfaces());
+        common->Printf("  density=%.5f  attenuateBackground=%d\n", ubo.densities[0],
+                       (int)VK_RT_VolCompositeAfterSurfaces());
         common->Printf("  linNum=%.4f  linAdd=%.4f  (transmittance at dFar = %.5f)\n", ubo.depthParams[2],
                        ubo.depthParams[3], idMath::Exp(-ubo.densities[0] * ubo.depthParams[1]));
 
@@ -1236,6 +1238,7 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        ubo.anisos[0]);
         common->Printf("  directed:   density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[1], ubo.strengths[1],
                        ubo.anisos[1]);
+        common->Printf("  phase:      isotropicMix=%.3f (0=pure HG lobe, 1=fully isotropic)\n", ubo.strengths[3]);
         common->Printf("  flashlight: density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[2], ubo.strengths[2],
                        ubo.anisos[2]);
         common->Printf("  maxLights=%d  volLights=%d  whiteNoiseMix=%.4f\n", ubo.misc[1],

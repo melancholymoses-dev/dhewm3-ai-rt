@@ -4993,7 +4993,15 @@ void VK_RB_DrawView(const void *data)
     // interaction/shader-pass loops set scissor and viewport per surface, so both
     // are restored here before the fullscreen triangle. Same profiler phase as the
     // early site; phases accumulate, so captures stay comparable across the toggle.
-    if (VK_RT_VolCompositeAfterSurfaces())
+    //
+    // Gated on the SAME signature as the vol dispatches above (see hasRealCamera
+    // there): the 2D GUI/HUD overlay is a second RC_DRAW_VIEW with a zeroed
+    // viewaxis, and subviews/mirrors never ran the dispatch at all. Additive
+    // compositing onto those was invisible; multiplying blacked out the HUD and the
+    // settings menu.
+    const bool volHasRealCamera = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f;
+    if (VK_RT_VolCompositeAfterSurfaces() && volHasRealCamera && !backEnd.viewDef->isSubview &&
+        !backEnd.viewDef->isMirror)
     {
         VK_SetRenderStage("Vol_Composite");
         VkViewport volViewport = {0,

@@ -2472,9 +2472,10 @@ struct RTCVars
     idCVar *rtVolTemporalAlpha = nullptr;
     idCVar *rtVolDensity = nullptr;
     idCVar *rtVolAttenuateBackground = nullptr;
-    idCVar *rtVolAttenuateDensityScale = nullptr;
+    idCVar *rtVolAttenuateStrength = nullptr;
     idCVar *rtVolStrength = nullptr;
     idCVar *rtVolAnisotropy = nullptr;
+    idCVar *rtVolIsotropicMix = nullptr;
     idCVar *rtVolFlashlightDensity = nullptr;
     idCVar *rtVolFlashlightStrength = nullptr;
     idCVar *rtVolFlashlightAnisotropy = nullptr;
@@ -2558,9 +2559,10 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolTemporalAlpha = cvarSystem->Find("r_rtVolTemporalAlpha");
     rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
     rtCVars.rtVolAttenuateBackground = cvarSystem->Find("r_rtVolAttenuateBackground");
-    rtCVars.rtVolAttenuateDensityScale = cvarSystem->Find("r_rtVolAttenuateDensityScale");
+    rtCVars.rtVolAttenuateStrength = cvarSystem->Find("r_rtVolAttenuateStrength");
     rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
     rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
+    rtCVars.rtVolIsotropicMix = cvarSystem->Find("r_rtVolIsotropicMix");
     rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
     rtCVars.rtVolDirectedStrength = cvarSystem->Find("r_rtVolDirectedStrength");
     rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
@@ -2753,8 +2755,9 @@ static void DrawRTOptionsMenu()
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
         RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
+        RTSliderFloat("Isotropic Mix##vol", rtCVars.rtVolIsotropicMix, 0.0f, 1.0f, "%.2f");
         RTCheckbox("Attenuate Background", rtCVars.rtVolAttenuateBackground);
-        RTSliderFloat("Atten. Density Scale", rtCVars.rtVolAttenuateDensityScale, 0.1f, 1.0f, "%.2f");
+        RTSliderFloat("Atten. Strength", rtCVars.rtVolAttenuateStrength, 0.0f, 1.0f, "%.2f");
 
         // --- Right column: flashlight ---
         ImGui::TableNextColumn();

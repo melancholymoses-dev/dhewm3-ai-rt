@@ -83,7 +83,8 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     float directedDensity;      // offset 144, size  4  (scene spot/directed, lightType 1)
     float directedAnisotropy;   // offset 148, size  4
     float directedStrength;     // offset 152, size  4
-    float _pad;                 // offset 156, size  4
+    // Repurposed former pad float (was _pad, always 0) — same offset.
+    float isotropicMix;         // offset 156, size  4  see PhaseFunction below
     // --- P8: half-res march (rt_optimization_tuning.md) ---
     int   marchWidth;           // offset 160, size  4  volBuf dimensions (== full/marchScale)
     int   marchHeight;          // offset 164, size  4
@@ -153,6 +154,11 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
 
 #define VOL_SHADOW_BIAS 0.5
 
+// Must stay identical to vol_froxel_fill.comp's copy — an r_rtVolFroxel 0/1 A/B
+// is only meaningful while both paths evaluate the same light model.  See the
+// rationale there.
+#define VOL_CONE_PENUMBRA 0.35
+
 // ---------------------------------------------------------------------------
 // Henyey-Greenstein phase function.
 // cosTheta: dot(marchDir, toLightDir).
@@ -162,8 +168,22 @@ float HenyeyGreenstein(float cosTheta, float g)
 {
     float g2    = g * g;
     float denom = 1.0 + g2 - 2.0 * g * cosTheta;
- 
+
     return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
+}
+
+// Two-lobe phase: a forward HG lobe plus an isotropic one.  HG is normalised, so
+// a single lobe can only TRADE side-on visibility for forward contrast — at the
+// g=0.6 scene-directed default that is a 25x swing between looking into a shaft
+// and viewing it side-on, which reads as no scattering at all at high angles.
+// Both lobes integrate to 1 over the sphere, so the blend does too: this puts a
+// floor under off-axis scattering without touching total scattered energy, and
+// lets g stay high for the shaft/shadow definition it was raised to get.
+// Must stay identical to vol_froxel_fill.comp's copy.
+float PhaseFunction(float cosTheta, float g, float isoMix)
+{
+    const float INV_4PI = 0.0795774715;
+    return mix(HenyeyGreenstein(cosTheta, g), INV_4PI, clamp(isoMix, 0.0, 1.0));
 }
 
 // Cauchy-with-ramp attenuation — matches the GI bounce shading model.
@@ -366,9 +386,11 @@ void main()
                 if (alongCone <= 0.0 || alongCone > bx.w)
                     continue;
                 float cosAngle = alongCone / max(length(toStep), 0.001);
-                if (cosAngle < cd.w)
+                float cosOuter = max(cd.w - VOL_CONE_PENUMBRA * max(1.0 - cd.w, 1e-3), -1.0);
+                if (cosAngle < cosOuter)
                     continue;
                 atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+                atten *= smoothstep(cosOuter, cd.w, cosAngle);
             }
 
             if (atten < 0.001)
@@ -380,7 +402,7 @@ void main()
             float localAniso = isFlashlight ? params.flashlightAnisotropy
                              : isDirected   ? params.directedAnisotropy
                                             : params.anisotropy;
-            float phase        = HenyeyGreenstein(cosTheta, localAniso);
+            float phase        = PhaseFunction(cosTheta, localAniso, params.isotropicMix);
 
             // Fire a ray query to test occlusion between stepPos and the light.
             float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
