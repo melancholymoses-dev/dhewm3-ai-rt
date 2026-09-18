@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-11
+**Status reviewed:** 2026-09-18
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
@@ -34,7 +34,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R6 landed 2026-09-12**, awaiting in-game validation |
-| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A F0-F2 landed 2026-09-13, in-game validated** — vol 1.63 → 0.29 ms median (5.6×), and visually better. F3/F4 dropped (payoff gone); **F6 written 2026-09-16, awaiting in-game A/B** (`r_rtVolAttenuateBackground`); F5 open behind it. **Part B G0/G1 landed 2026-09-13, in-game validated** — probes trace and converge, per-pixel GI still the default (`r_rtGIProbes 0`). Next: G2 resolve switch. |
+| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5 and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6. |
 
 ### Measured RT budget (Mars City, 2026-09-11)
 
@@ -72,6 +72,25 @@ it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were se
   `r_znear` is game-owned and drops to 1.0 in cinematics, cutting every safe distance by
   sqrt(3).
 
+### Decisions taken 2026-09-18 (volumetrics)
+
+- **A gain on the light is legitimate; a gain on a medium coefficient is not.** The
+  medium has exactly two constants (σ_t, albedo) and they are global — extinction is
+  not a property of any one light. Per-class punch belongs on the light's radiance,
+  where it conserves energy by construction. Only albedo > 1 creates energy; a large
+  gain does not, and a diagnostic that conflates them will cry wolf during tuning.
+- **Pillar 3 has a cost that tuning cannot remove.** A participating medium compresses
+  dynamic range from both ends — airlight raises the black floor, extinction lowers the
+  highlight ceiling — and Doom 3's art direction is built on the opposite. **Albedo is
+  the lever**, not extinction or the tonemap toe: it cuts in-scatter while leaving
+  attenuation intact, so the medium darkens more than it glows and lit-vs-unlit contrast
+  goes *up*. Reach for it before the toe, which is global and also crushes real shadow
+  detail.
+- **Separating general haze from shaft punch is the return on the refactor.** Point
+  lights fill rooms with veil, directed lights only reach where they point, so a large
+  gain spread between the classes (6:1 in play) buys drama locally without paying for it
+  everywhere. The old single-density parameterisation could not express this.
+
 ---
 
 ## Live documents
@@ -95,6 +114,7 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 | `20260826_amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness. A1/A3/A5/A8/A11 landed; **A12 (far-field shadow flicker) has one zero-code experiment left** — `r_rtShadowSoftRadiusScale 0` picks between a cheap fix and a reversed-Z projection change. A2/A4/A6/A7 minor/latent. |
 | `20260831_rt_temporal_cut_detection.md` | Camera-cut detection rewritten to test camera position/orientation instead of ill-conditioned matrix elements; also fixed the GUI/HUD overlay's degenerate second `RC_DRAW_VIEW` re-running AO/Refl/GI/Vol every frame. |
 | `20260905_rt_projected_light_cookies.md` | Projected-light cookie/gobo textures in direct lighting, reflections, GI and volumetrics. All 4 stages, in-game validated. |
+| `20260917_vol_transport_coefficients.md` | Split the volumetric medium into σ_t + albedo + per-class radiance gains, replacing one `density` cvar that was extinction, scattering and brightness at once. Both integrators were already structurally correct — this was a semantics fix, zero resource change. Tuned in play. |
 | `20260810_auto_relight.md` | Synthesized shadow-casting lights from emissive panels. |
 | `20260808_gbuffer_normal_pass.md` | G-buffer normal/F0 prepass. |
 | `20260816_portal_area_lights.md` | Stage 2 (transition blend) was shelved on the temporal bug, now unblocked — not currently scheduled. |

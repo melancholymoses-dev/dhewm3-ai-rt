@@ -1,6 +1,6 @@
 # Volumetric transport coefficients — make the medium physical
 
-**Status:** Stage 1 written 2026-09-17, not yet in-game validated. Stage 2 (tuning) open.
+**Status:** ✅ **Complete.** Stage 1 written 2026-09-17; Stage 2 tuned in play 2026-09-18.
 
 Follows F6/F7 in `20260906_froxel_probe_gi.md`. Prompted by a review note on
 `r_rtVolAttenuateStrength` (applying `T^k` only at composite made the two halves of
@@ -27,20 +27,26 @@ Mapping the old code onto it:
   and medium-wide — correct.
 - **σ_s** = the per-class product `density × strength` in the final combine.
 
-Which gives the implied albedos:
+The unambiguous defect is that the per-class **densities** disagreed with the single
+σ_t used for Beer-Lambert:
 
-| class | σ_s = density × strength | σ_t | Λ |
-|---|---|---|---|
-| point | 0.015 × 0.85 = 0.01275 | 0.015 | 0.85 ✓ |
-| directed | 0.05 × 0.90 = 0.045 | 0.015 | **3.0** ✗ |
-| flashlight | 0.05 × 0.50 = 0.025 | 0.015 | **1.67** ✗ |
+| class | density (σ_s) | σ_t | Λ = σ_s/σ_t | strength (legitimate gain) |
+|---|---|---|---|---|
+| point | 0.015 | 0.015 | 1.0 | 0.85 |
+| directed | 0.05 | 0.015 | **3.33** ✗ | 0.90 |
+| flashlight | 0.05 | 0.015 | **3.33** ✗ | 0.50 |
+
+Only the *product* `density × strength` existed in the shader, so how much of it was
+medium and how much was light was genuinely undecidable — but no split exists with
+Λ ≤ 1 unless the gain absorbs the excess. Making that split explicit is the point of
+the new parameterisation.
 
 Two consequences:
 
-1. **Directed lights created 3× the energy they removed.** Cranking directed density
-   to make shafts read never cost anything, because it wasn't taking the energy from
-   anywhere. This is why the anisotropy/visibility tuning kept feeling like it had no
-   budget.
+1. **Directed lights scattered 3.3× more than the medium extinguished.** Cranking
+   directed density to make shafts read never cost anything, because it wasn't taking
+   the energy from anywhere. This is why the anisotropy/visibility tuning kept feeling
+   like it had no budget.
 2. **σ_t = 0.015 means T = 0.5 at 46 units** — about a metre. That is dense smoke, not
    haze, and it is why F6's attenuation blacked out a corridor. The number is that
    large because it was *also* the only knob setting point-light shaft brightness, so
@@ -68,8 +74,18 @@ the transport equation clean. A gain on the medium coefficient is what was wrong
 The gain default is not arbitrary: `0.01275 / (0.9 × 5e-4) = 28.3`, the factor that
 preserves today's point-light brightness. Using it for all three classes puts them on
 one honest basis. **Directed shafts land ~3.5× dimmer than before** — that is the
-energy creation being removed, and raising `r_rtVolDirectedGain` is then an explicit
-"spots punch harder" decision rather than a hidden Λ = 3.
+over-scattering being removed, and raising `r_rtVolDirectedGain` is then an explicit
+"spots punch harder" decision rather than a hidden Λ = 3.3.
+
+**A gain is not an albedo, and the dump must not conflate them.** The first version of
+`VK_RT_VolPrintMedium` printed `scatterScale/σ_t` as an "effective albedo" and flagged
+anything over 1 as creating energy. That is wrong: the gain scales the *light's*
+radiance, and a brighter light creates nothing — only a medium with σ_s > σ_t does.
+The check is Λ alone. At the Stage 2 tuning below (Λ = 0.75, directed gain 60) the old
+line would have screamed `CREATES ENERGY` at a strictly conservative medium. It now
+reports Λ once, plus each class's gain and the **spread between them** — which is the
+number actually worth seeing, since the medium cannot know what kind of light is
+shining through it, so differing gains are pure art direction.
 
 Composite drops `attenuation()`/`pow` entirely; `.a` is the true transmittance and the
 blend becomes `dst = airlight + T·dst`.
@@ -128,8 +144,41 @@ energy creation shows as a printed number > 1 instead of a look to second-guess.
 | Renamed cvars break saved configs / autoexec | Silent revert to defaults | Old names are gone, not aliased — `r_rtVol*Density`/`*Strength` in any cfg will warn as unknown. Intentional: silently mapping an old 0.015 onto the new σ_t would be 30× too thick |
 | A missed call site keeps reading a deleted cvar | Link error, not a silent bug | Full audit done: `vk_vol.cpp`, `vk_vol_froxel.cpp`, `vol_march.comp`, `vol_froxel_fill.comp`, `vol_composite.frag`, `Dhewm3SettingsMenu.cpp`. `vk_gi.cpp` reads none of them |
 
-## Stage 2 — tune from the new basis
+## Stage 2 — tuned in play 2026-09-18
 
-Open. Pick σ_t from desired visibility distance, Λ from how much the haze should glow,
-then per-class gain for punch. No tuning pass has happened yet, so there is nothing to
-preserve.
+| | value | reading |
+|---|---|---|
+| `r_rtVolExtinction` | 6e-4 | T = 0.74 @ 500u, 0.55 @ 1000u, 0.5 @ 1155u |
+| `r_rtVolAlbedo` | 0.75 | medium absorbs 25 % of what it intercepts |
+| `r_rtVolGain` (point) | 10 | σ_s·gain = 4.5e-3 |
+| `r_rtVolDirectedGain` | 60 | σ_s·gain = 2.7e-2 — a **6× spread** over point |
+
+Tonemap moved with it: toe power 3, linear start 0.25, linear length 0.5.
+
+The 6× gain spread is the interesting number and it is a coherent strategy rather than
+a fudge: **general haze and shaft punch are now separable**. Point lights are what fill
+a room with ambient veil, so holding them low keeps the black floor down; directed
+lights only reach where a beam actually points, so a high gain there buys drama without
+paying for it everywhere. That separation is the thing the old single-density
+parameterisation could not express.
+
+### The contrast cost is real and structural
+
+Fog compresses dynamic range from *both* ends: airlight adds a veil (raises the black
+floor) and extinction multiplies (lowers the highlight ceiling). Doom 3's art direction
+is built on the opposite — near-black shadows next to bright pools — so a physical
+participating medium is in direct tension with the source material's look. That is a
+genuine aesthetic sacrifice, not a bug to tune away.
+
+Levers to buy drama back *without* leaving the physical parameterisation, in order of
+how directly they attack the problem:
+
+1. **Lower Λ.** This is the precise tool. It cuts in-scatter (the floor lift) while
+   leaving extinction untouched, so the medium darkens more than it glows and
+   lit-vs-unlit contrast *increases*. The 0.9 → 0.75 move already did some of this;
+   going further (0.4–0.5) is the "smoke silhouette" end.
+2. **Lower σ_t, raise gains.** σ_t owns wash-out-with-distance; gain owns punch. If
+   distant surfaces read flat but the shafts are right, this trade is free.
+3. **Tonemap toe.** Steepening it recovers black level against the veil — but it is
+   global and also crushes genuine shadow detail, so it is the blunt instrument. Best
+   used after 1 and 2, not instead of them.
