@@ -468,12 +468,118 @@ toggle is free at runtime — same pattern as `volCompositeDebugPipeline`.
 - **Known limitation to accept, not fix:** transmittance comes from the opaque depth
   buffer, so translucent surfaces and glass get attenuated by whatever is behind them.
   Screen-space fog compositing always has this; note it and move on.
+- 🟡 **Written 2026-09-16, not yet in-game validated.** As built:
+  - `r_rtVolAttenuateBackground` (default 0) drives both the pipeline choice
+    (`volCompositeAttenPipeline`) *and* the call site, via one query,
+    `VK_RT_VolCompositeAfterSurfaces()`. Backend calls it at exactly one of the two
+    sites; `VK_RT_CompositeVolumetrics` additionally self-guards on
+    `(tr.frameCount, backEnd.viewDef)` — keyed on the view, not the frame, because a
+    frame legitimately draws several.
+  - The late site **must re-set viewport and scissor**: the interaction and
+    shader-pass loops set both per surface, so the fullscreen triangle would
+    otherwise inherit the last drawn surface's rect. Not in the original step list.
+  - Debug modes still win over the attenuating pipeline — both want replace blend.
+- **Step 4 as written was the wrong knob, and the first build proved it in-game
+  (screenshots 2026-09-16: corridor and terminal unreadably dark).** Scaling
+  `r_rtVolDensity` cannot work: density drives the *airlight* as well as the
+  extinction, so it trades shaft visibility one-for-one against background
+  attenuation and has no setting where both are right. It is also the wrong
+  magnitude — 0.015 was tuned for visible shafts, and `exp(-0.015 * 500)` is 5e-4,
+  i.e. a Doom 3 corridor is fully extinguished long before its far wall.
+  Replaced by **`r_rtVolAttenuateStrength` (default 0.1)**, applied as `T^k` in
+  `vol_composite.frag` — `T^k == exp(-k*tau)`, so k *is* the ratio of extinction to
+  scattering (the single-scatter albedo), and it is the one thing that was missing:
+  upstream conflates the two into one `density`. Nothing upstream changes now, so
+  the froxel `dFar`, the in-scattering, and an `r_rtVolAttenuateBackground` 0/1 A/B
+  are all like-for-like. `r_rtVolDebugMode 1` shows the post-`k` value, so it can be
+  tuned against what is actually applied.
+- **The 2D GUI/HUD overlay bug, same build:** the late call site sits outside the
+  block that gates on `hasRealCamera`, so Doom 3's second per-frame `RC_DRAW_VIEW`
+  (zeroed `viewaxis`) got multiplied by stale transmittance — HUD dimmed, settings
+  menu black. Additive compositing had always run there harmlessly, which is why
+  the gate was never needed before. The late site now carries the same
+  `hasRealCamera && !isSubview && !isMirror` test as the dispatches, which also
+  retires the stale-subview residual noted below.
+- **`r_rtVolAttenuateStrength` is an artistic control, not physics — say so.**
+  Review (2026-09-17) correctly flagged two things the original comments claimed
+  away: applying `k` only at composite leaves the airlight integrated with the raw
+  `density` while the background uses `k*density`, so the two halves of the
+  transport equation do not share an extinction coefficient; and `k < 1` puts
+  extinction *below* scattering, i.e. an albedo of `1/k` (25 at the tuned 0.04),
+  which no medium has. `k = 1` is the only self-consistent setting. Comments
+  corrected rather than the code: making it physical means carrying separate
+  `sigma_s`/`sigma_t` through `vol_march.comp` and the froxel integrate pass, which
+  moves the tuned additive look too and so is a deliberate decision, not a cleanup.
+  **Open.**
+- **Residual, not fixed:** `gi_temporal_resolve.comp:83` stores `vec4(0.0)` when
+  current *and* history are non-finite, which is an alpha-0 (black) pixel under
+  attenuation. Reachable only via NaN on the non-default march path, and the shader
+  is shared with GI, so it was left alone rather than given a vol-specific
+  convention.
 
-### F5 — retire decision
+### F7 — projected-light cone penumbra — written 2026-09-16
+Not planned; found from a user report that a directed light's shaft was invisible
+from a step outside it, with no door or gap involved. The point-light branch fades
+over a 1.0→1.5 halo shell outside its box; the cone branch was a hard binary
+`if (cosAngle < cd.w) continue`, so the two light classes obeyed visibly different
+rules. Both `vol_froxel_fill.comp` and `vol_march.comp` now smoothstep over a
+penumbra band sized as a fraction of the cone's own angular width
+(`VOL_CONE_PENUMBRA 0.35`), kept byte-identical between the two so the
+`r_rtVolFroxel` 0/1 A/B stays meaningful.
+
+The penumbra fixes the cone *wall*; it does nothing for viewing *angle*, and the
+report was equally about high-angle views (side-on under a fan, or looking down
+from above) reading as no scattering at all. That is the phase function, and it is
+a real tension rather than a mistuning: `r_rtVolDirectedAnisotropy` was
+deliberately raised to 0.6 to sharpen shaft/shadow definition, and HG is
+**normalised** — g redistributes a fixed scattered energy rather than scaling it,
+so buying forward contrast spends side-on visibility one-for-one (25× between
+`cosθ=1` and `cosθ=0` at g=0.6, vs 4× at the point default 0.35). Lowering g would
+trade back exactly the definition that was wanted.
+
+Fixed instead with a **two-lobe phase**, `r_rtVolIsotropicMix` (default 0.3):
+`PhaseFunction = mix(HG(cosθ, g), 1/4π, isoMix)`. Both lobes integrate to 1, so
+the blend does too — this is a redistribution, not a brightness change, and the
+anisotropy knobs stay free for shaft definition. At 0.3 it measures ~1.9× side-on
+for ~2/3 of the forward peak: real, not dramatic, because the geometry contributes
+as much as the phase (inside the cone the whole view ray sweeps the bright
+near-apex region; from outside it crosses once).
+- Cost nothing in struct size: the march UBO's `_uboPad` at offset 156 and the
+  froxel UBO's `strengths.w` (F4's dropped `temporalAlpha`) were both already dead
+  slots. `VolParamsUBO` stays 176 bytes, `VolFroxelParamsUBO` stays 304.
+- `VOL_CONE_PENUMBRA` and `PhaseFunction` are duplicated verbatim in
+  `vol_march.comp` and `vol_froxel_fill.comp`; both dumps now print `isotropicMix`.
+- **The penumbra did nothing in-game until the cookie clip was fixed too**, which
+  is why the first build read as no change at all. `rt_SampleLightCookie` returns
+  black outside the projector's `[0,1]` UV box (Doom 3's own zero-clamp), and
+  every cell in the new angular band projects outside it — so the softened edge
+  was multiplied by zero on exactly the fan/grate fixtures it was written for.
+  Added `rt_SampleLightCookieSoft`, volumetric-only (`VOL_COOKIE_PENUMBRA 0.08`,
+  UV units, clamped fetch): the surface paths keep the hard edge, because that is
+  what the GL renderer does and softening it would make lit surfaces disagree.
+  Caught in review, not in play — the symptom is indistinguishable from "the
+  change did nothing".
+
+### F5 — retire decision — **unblocked 2026-09-18, the only Part A item left**
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the
 default, or delete `vol_march.comp` + `vol_bilateral.comp` from the froxel path.
-Update ROADMAP.md and move this part to `completed/`. **Blocked on F6** — do not retire
-a path while the survivor is still missing half the transport equation.
+Update ROADMAP.md and move this part to `completed/`.
+
+F6 was the blocker and is done; the transport-coefficient work
+(`completed/20260917_vol_transport_coefficients.md`) went further and made the
+survivor's medium physical. The froxel path has been the default (`r_rtVolFroxel 1`)
+throughout, so the march is already only an A/B reference.
+
+Argument for keeping it compiled: every light-model change since F2 — F7's cone
+penumbra, the soft cookie edge, the two-lobe phase, the σ_t/albedo split — was written
+into *both* shaders precisely so the A/B stays meaningful, and that A/B is what
+localised the cookie hard-clip. Deleting the march removes the only independent check
+on the froxel sampler. Argument for deleting: that duplication is the maintenance cost
+being paid for it, and it has now been paid four times.
+
+**Note before deciding:** `r_rtVolHalfRes`/`r_rtVolBilateral`/`r_rtVolTemporal` and
+`vol_bilateral.comp` belong to the march path only. Retiring it retires them too,
+including the `bestColor` alpha-1 failsafe added in F6 step 3.
 
 ## A.9 Known risks
 
