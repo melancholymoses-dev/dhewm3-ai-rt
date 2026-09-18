@@ -202,25 +202,39 @@ float VK_RT_VolScatterScale(int lightClass)
     return sigmaS * Max(0.0f, gain);
 }
 
-// Shared by both dumps.  The per-class EFFECTIVE albedo (scatterScale / sigma_t) is
-// the number that matters: it is what the old density*strength pairs silently made
-// 3.0 for directed lights and 1.67 for the flashlight.  Anything above 1 means that
-// class scatters more energy than the medium removes, so it is called out by name
-// rather than left for someone to divide in their head.
+// Shared by both dumps.
+//
+// Albedo is the ONLY energy-conservation constraint, and it is the global
+// sigma_s/sigma_t — the per-class gains are not part of it.  A gain scales the
+// LIGHT's radiance, and a brighter light creates nothing; only a medium that
+// scatters more than it extinguishes does.  So `scatterScale/sigma_t` is albedo
+// times gain and means nothing on its own: at a perfectly conservative albedo 0.75
+// with a directed gain of 60 it reads 45, which is not a warning about anything.
+//
+// What IS worth seeing is the RATIO between class gains.  The medium cannot know
+// what kind of light is shining through it, so differing gains are pure art
+// direction — legitimate, but only if it is a deliberate choice rather than a
+// leftover.  That is what the spread line reports.
 void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash)
 {
     const float halfDist = (sigmaT > 1e-9f) ? (idMath::Log(2.0f) / sigmaT) : 0.0f;
-    common->Printf("  medium: sigma_t=%.6f  albedo=%.3f  sigma_s=%.6f   T=0.5 at %.0f units\n", sigmaT, albedo,
-                   sigmaT * albedo, halfDist);
+    common->Printf("  medium: sigma_t=%.6f  sigma_s=%.6f  albedo=%.3f%s   T=0.5 at %.0f units\n", sigmaT,
+                   sigmaT * albedo, albedo, (albedo > 1.0f) ? " <-- >1, CREATES ENERGY" : "", halfDist);
 
+    const float sigmaS = sigmaT * albedo;
     const float scales[3] = {scatterPoint, scatterDirected, scatterFlash};
     const char *names[3] = {"point     ", "directed  ", "flashlight"};
+    float minGain = 1e30f, maxGain = 0.0f;
     for (int i = 0; i < 3; i++)
     {
-        const float effAlbedo = (sigmaT > 1e-9f) ? (scales[i] / sigmaT) : 0.0f;
-        common->Printf("  %s: scatterScale=%.6f  effective albedo=%.3f%s\n", names[i], scales[i], effAlbedo,
-                       (effAlbedo > 1.0f) ? "   <-- >1, CREATES ENERGY" : "");
+        const float gain = (sigmaS > 1e-12f) ? (scales[i] / sigmaS) : 0.0f;
+        minGain = Min(minGain, gain);
+        maxGain = Max(maxGain, gain);
+        common->Printf("  %s: scatterScale=%.6f  radiance gain=%.1fx\n", names[i], scales[i], gain);
     }
+    if (minGain > 1e-4f)
+        common->Printf("  class gain spread: %.1fx (medium is identical for all three — pure art direction)\n",
+                       maxGain / minGain);
 }
 
 // ---------------------------------------------------------------------------

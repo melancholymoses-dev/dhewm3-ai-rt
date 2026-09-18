@@ -560,11 +560,26 @@ near-apex region; from outside it crosses once).
   Caught in review, not in play — the symptom is indistinguishable from "the
   change did nothing".
 
-### F5 — retire decision
+### F5 — retire decision — **unblocked 2026-09-18, the only Part A item left**
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the
 default, or delete `vol_march.comp` + `vol_bilateral.comp` from the froxel path.
-Update ROADMAP.md and move this part to `completed/`. **Blocked on F6** — do not retire
-a path while the survivor is still missing half the transport equation.
+Update ROADMAP.md and move this part to `completed/`.
+
+F6 was the blocker and is done; the transport-coefficient work
+(`completed/20260917_vol_transport_coefficients.md`) went further and made the
+survivor's medium physical. The froxel path has been the default (`r_rtVolFroxel 1`)
+throughout, so the march is already only an A/B reference.
+
+Argument for keeping it compiled: every light-model change since F2 — F7's cone
+penumbra, the soft cookie edge, the two-lobe phase, the σ_t/albedo split — was written
+into *both* shaders precisely so the A/B stays meaningful, and that A/B is what
+localised the cookie hard-clip. Deleting the march removes the only independent check
+on the froxel sampler. Argument for deleting: that duplication is the maintenance cost
+being paid for it, and it has now been paid four times.
+
+**Note before deciding:** `r_rtVolHalfRes`/`r_rtVolBilateral`/`r_rtVolTemporal` and
+`vol_bilateral.comp` belong to the march path only. Retiring it retires them too,
+including the `bestColor` alpha-1 failsafe added in F6 step 3.
 
 ## A.9 Known risks
 
