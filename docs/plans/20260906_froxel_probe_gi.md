@@ -500,6 +500,17 @@ toggle is free at runtime — same pattern as `volCompositeDebugPipeline`.
   the gate was never needed before. The late site now carries the same
   `hasRealCamera && !isSubview && !isMirror` test as the dispatches, which also
   retires the stale-subview residual noted below.
+- **`r_rtVolAttenuateStrength` is an artistic control, not physics — say so.**
+  Review (2026-09-17) correctly flagged two things the original comments claimed
+  away: applying `k` only at composite leaves the airlight integrated with the raw
+  `density` while the background uses `k*density`, so the two halves of the
+  transport equation do not share an extinction coefficient; and `k < 1` puts
+  extinction *below* scattering, i.e. an albedo of `1/k` (25 at the tuned 0.04),
+  which no medium has. `k = 1` is the only self-consistent setting. Comments
+  corrected rather than the code: making it physical means carrying separate
+  `sigma_s`/`sigma_t` through `vol_march.comp` and the froxel integrate pass, which
+  moves the tuned additive look too and so is a deliberate decision, not a cleanup.
+  **Open.**
 - **Residual, not fixed:** `gi_temporal_resolve.comp:83` stores `vec4(0.0)` when
   current *and* history are non-finite, which is an alpha-0 (black) pixel under
   attenuation. Reachable only via NaN on the non-default march path, and the shader
@@ -538,6 +549,16 @@ near-apex region; from outside it crosses once).
   slots. `VolParamsUBO` stays 176 bytes, `VolFroxelParamsUBO` stays 304.
 - `VOL_CONE_PENUMBRA` and `PhaseFunction` are duplicated verbatim in
   `vol_march.comp` and `vol_froxel_fill.comp`; both dumps now print `isotropicMix`.
+- **The penumbra did nothing in-game until the cookie clip was fixed too**, which
+  is why the first build read as no change at all. `rt_SampleLightCookie` returns
+  black outside the projector's `[0,1]` UV box (Doom 3's own zero-clamp), and
+  every cell in the new angular band projects outside it — so the softened edge
+  was multiplied by zero on exactly the fan/grate fixtures it was written for.
+  Added `rt_SampleLightCookieSoft`, volumetric-only (`VOL_COOKIE_PENUMBRA 0.08`,
+  UV units, clamped fetch): the surface paths keep the hard edge, because that is
+  what the GL renderer does and softening it would make lit surfaces disagree.
+  Caught in review, not in play — the symptom is indistinguishable from "the
+  change did nothing".
 
 ### F5 — retire decision
 From F1-F4 evidence: keep the march compiled behind `r_rtVolFroxel 0`, flip the

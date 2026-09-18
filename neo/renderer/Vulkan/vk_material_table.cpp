@@ -81,24 +81,37 @@ static void *s_bindlessBackendData[VK_MAT_MAX_TEXTURES];
 // least once; slots at or above it are freshly assigned and may lazy-load.
 static uint32_t s_bindlessWritten = 0;
 
-// Cheap per-frame scan: mark dirty if any slot's image was purged or reuploaded
-// since its descriptor was written.  Pure pointer compares — no lazy loading.
+// VK_Image_ChangeCounter() at the time the descriptors were last written.  The
+// backendData pointer compare below cannot stand on its own: VK_DestroyImageData
+// deletes the vkImageData_t and a later upload can be handed the same address, so
+// a purge/reupload pair that lands on the old pointer (ABA) reads as unchanged and
+// leaves the descriptor on a destroyed VkImageView.  The counter cannot miss that
+// transition, so it is the authority; the pointer scan survives only to name the
+// affected slots in the log.
+static uint32_t s_bindlessImageGeneration = 0;
+
+// Cheap per-frame check: mark dirty if any image was purged or reuploaded since
+// the descriptors were written.  No lazy loading.
 static void ValidateBindlessSlots(void)
 {
-    uint32_t stale = 0;
-    for (uint32_t i = 0; i < s_bindlessWritten; i++)
-    {
-        idImage *img = s_bindlessImages[i];
-        if (img && img->backendData != s_bindlessBackendData[i])
-            stale++;
-    }
-    if (!stale)
+    const uint32_t gen = VK_Image_ChangeCounter();
+    if (gen == s_bindlessImageGeneration)
         return;
 
     s_bindlessDirty = true;
+
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT MatTable: %u/%u bindless slots stale (image purge/reupload) — refreshing\n", stale,
-                       s_bindlessWritten);
+    {
+        uint32_t stale = 0;
+        for (uint32_t i = 0; i < s_bindlessWritten; i++)
+        {
+            idImage *img = s_bindlessImages[i];
+            if (img && img->backendData != s_bindlessBackendData[i])
+                stale++;
+        }
+        common->Printf("VK RT MatTable: image generation %u -> %u (%u/%u slots differ by pointer) — refreshing\n",
+                       s_bindlessImageGeneration, gen, stale, s_bindlessWritten);
+    }
 }
 
 // Returns the bindless slot index for img, assigning a new one if needed.
@@ -206,6 +219,9 @@ static void RebuildBindlessDescriptors(void)
 
     s_bindlessWritten = s_bindlessCount;
     s_bindlessDirty = false;
+    // Read AFTER the descriptors are written: anything that purges or uploads
+    // between here and the next validate must still be caught.
+    s_bindlessImageGeneration = VK_Image_ChangeCounter();
 }
 
 // ---------------------------------------------------------------------------
@@ -403,6 +419,7 @@ void VK_RT_InitMaterialTable(void)
     s_bindlessCount = 0;
     s_bindlessWritten = 0;
     s_bindlessDirty = false;
+    s_bindlessImageGeneration = VK_Image_ChangeCounter();
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
     memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
 
@@ -497,6 +514,7 @@ void VK_RT_ShutdownMaterialTable(void)
     s_bindlessCount = 0;
     s_bindlessWritten = 0;
     s_bindlessDirty = false;
+    s_bindlessImageGeneration = VK_Image_ChangeCounter();
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
     memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
 
@@ -523,6 +541,7 @@ void VK_RT_MatTableLevelLoadReset(void)
     s_bindlessCount = 0;
     s_bindlessWritten = 0;
     s_bindlessDirty = false;
+    s_bindlessImageGeneration = VK_Image_ChangeCounter();
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
     memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
 

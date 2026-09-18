@@ -96,26 +96,39 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
 
-idCVar r_rtVolDensity("r_rtVolDensity", "0.015", CVAR_RENDERER | CVAR_FLOAT,
-                      "Global scattering density (extinction + scattering coefficient)");
+// --- Medium coefficients (20260917_vol_transport_coefficients.md) -----------
+// Single-scatter transport has exactly two: extinction (drives transmittance) and
+// scattering (drives in-scatter), constrained by albedo = sigma_s/sigma_t <= 1.
+// The old r_rtVolDensity was both at once AND the per-class brightness knob, which
+// forced sigma_t up to 0.015 — T = 0.5 at 46 units, i.e. dense smoke, not haze.
+
+idCVar r_rtVolExtinction("r_rtVolExtinction", "0.0005", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                         "sigma_t, the medium's extinction coefficient per world unit.  Sets how far you "
+                         "can see: transmittance = exp(-sigma_t * distance), so 5e-4 gives 0.78 at 500 "
+                         "units.  Medium-wide — extinction is not a property of any one light.");
+
+idCVar r_rtVolAlbedo("r_rtVolAlbedo", "0.9", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+                     "Single-scatter albedo: sigma_s = albedo * sigma_t.  0 = pure absorber (medium "
+                     "darkens without glowing), 1 = pure scatterer (bright mist, no net darkening).  "
+                     "Values above 1 would create energy and are clamped.");
+
+// Per-class gains multiply the LIGHT's radiance, not the medium — legitimate,
+// because Doom 3 light intensities are authored rather than radiometric, and it
+// leaves the transport equation alone.  The default 28 is 0.01275/(0.9*5e-4), the
+// factor that preserves the old point-light brightness at the new sigma_s.
+idCVar r_rtVolGain("r_rtVolGain", "28.0", CVAR_RENDERER | CVAR_FLOAT,
+                   "Radiance gain for point-light in-scatter (compensates Doom 3's non-radiometric "
+                   "light intensities).  Brightness only — does not affect transmittance.");
 
 // F6 (20260906_froxel_probe_gi.md): the composite only ever did the additive half
 // and never the attenuating half, so fog created light instead of redistributing it.
+// Now that sigma_t is a real extinction coefficient this is the physically correct
+// mode, and 0 is the approximation — but it stays togglable until Stage 2 tunes.
 static idCVar r_rtVolAttenuateBackground(
-    "r_rtVolAttenuateBackground", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
+    "r_rtVolAttenuateBackground", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
     "Multiply the scene by the volumetric path transmittance as well as adding "
-    "in-scattering (1), or add only, as before (0).  When 1 the composite also "
-    "moves after the interaction/shader passes so direct light is attenuated too.");
-
-// Attenuation strength, applied as T^k in vol_composite.frag — i.e. the extinction
-// coefficient is k times the scattering one (the single-scatter albedo).
-static idCVar r_rtVolAttenuateStrength("r_rtVolAttenuateStrength", "0.04", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
-                                       "How much of the volumetric optical depth attenuates the scene behind it, "
-                                       "as T^k (0 = none, 1 = the full marched transmittance).  Only used while "
-                                       "r_rtVolAttenuateBackground is 1.");
-
-idCVar r_rtVolStrength("r_rtVolStrength", "0.85", CVAR_RENDERER | CVAR_FLOAT,
-                       "Final composite scale for point-light scatter");
+    "in-scattering (1), or add only (0).  When 1 the composite also moves after the "
+    "interaction/shader passes so direct light is attenuated too.");
 
 idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.35", CVAR_RENDERER | CVAR_FLOAT,
                          "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
