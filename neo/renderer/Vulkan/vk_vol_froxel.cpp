@@ -105,14 +105,10 @@ extern idCVar r_vkLogRT;
 extern idCVar r_rtVol;
 extern idCVar r_rtVolMaxDist;
 extern idCVar r_rtVolMaxLights;
-extern idCVar r_rtVolDensity;
-extern idCVar r_rtVolStrength;
+// The medium coefficients themselves come from VK_RT_VolExtinction/Albedo/
+// ScatterScale rather than the cvars, so the two integrators cannot drift apart.
 extern idCVar r_rtVolAnisotropy;
-extern idCVar r_rtVolDirectedDensity;
-extern idCVar r_rtVolDirectedStrength;
 extern idCVar r_rtVolDirectedAnisotropy;
-extern idCVar r_rtVolFlashlightDensity;
-extern idCVar r_rtVolFlashlightStrength;
 extern idCVar r_rtVolFlashlightAnisotropy;
 extern idCVar r_rtVolWhiteNoiseMix;
 extern idCVar r_rtVolIsotropicMix;
@@ -134,8 +130,8 @@ struct VolFroxelParamsUBO
     int32_t gridDim[4];     //  96  xyz = Nx,Ny,Nz   w = unused (std140 pad)
     float depthParams[4];   // 112  x=dNear y=dFar z=linNum w=linAdd
     float rangeParams[4];   // 128  x=logRange y=1/logRange z=maxDist w=unused
-    float densities[4];     // 144  x=point y=directed z=flashlight w=whiteNoiseMix
-    float strengths[4];     // 160  x=point y=directed z=flashlight w=isotropicMix (was F4 temporalAlpha)
+    float densities[4];     // 144  x=sigma_t y=albedo(diag) z=unused w=whiteNoiseMix
+    float strengths[4];     // 160  xyz=sigma_s*gain per class  w=isotropicMix
     float anisos[4];        // 176  x=point y=directed z=flashlight w=unused
     int32_t misc[4];        // 192  x=frameIndex y=maxLights z=debugMode w=debugSlice
     int32_t screen[4];      // 208  x=screenW y=screenH z=outW w=outH (resolve target)
@@ -464,7 +460,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.gridDim[3] = 0; // unused — F3's cluster cull was dropped 2026-09-13
 
     const float maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    const float density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+    const float sigmaT = VK_RT_VolExtinction();
 
     // Near anchor = the real near plane, read from the projection rather than from
     // r_znear: znear is game-owned and drops to 1.0 in cinematics, and the matrix
@@ -475,10 +471,14 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
         dNear = 1.0f; // degenerate projection — fall back rather than emit a NaN grid
 
     // Far anchor derived from the medium (see r_rtVolFroxelFarTransmittance).
+    // At a physical sigma_t this lands far beyond maxDist and the Min() wins, so the
+    // grid now covers the full r_rtVolMaxDist — which is the fix for "shafts only
+    // appear near the camera". Kept as a clamp for anyone who raises sigma_t back
+    // into smoke territory; inert at the default.
     float dFar = maxDist;
     const float tFloor = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFroxelFarTransmittance.GetFloat());
-    if (tFloor > 1e-5f && density > 1e-5f)
-        dFar = Min(maxDist, -idMath::Log(tFloor) / density);
+    if (tFloor > 1e-5f && sigmaT > 1e-5f)
+        dFar = Min(maxDist, -idMath::Log(tFloor) / sigmaT);
     dFar = Max(dFar, dNear * 2.0f); // never invert or collapse the range
 
     const float logRange = Max(idMath::Log(dFar / dNear), 1e-4f);
@@ -494,14 +494,19 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     ubo.rangeParams[2] = maxDist;
     ubo.rangeParams[3] = 0.0f;
 
-    ubo.densities[0] = density;
-    ubo.densities[1] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDirectedDensity.GetFloat());
-    ubo.densities[2] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolFlashlightDensity.GetFloat());
+    // x = sigma_t, the per-cell extinction the fill writes to alpha and the
+    // integrate pass exponentiates.  y/z are free since the per-class densities
+    // folded into strengths[] below; w is unrelated (jitter).
+    ubo.densities[0] = sigmaT;
+    ubo.densities[1] = VK_RT_VolAlbedo(); // diagnostic only — dump reads it
+    ubo.densities[2] = 0.0f;
     ubo.densities[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolWhiteNoiseMix.GetFloat());
 
-    ubo.strengths[0] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
-    ubo.strengths[1] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
-    ubo.strengths[2] = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
+    // sigma_s * per-class gain, folded CPU-side: the fill now does one multiply
+    // instead of density*strength, and the class scale means exactly one thing.
+    ubo.strengths[0] = VK_RT_VolScatterScale(VK_VOL_CLASS_POINT);
+    ubo.strengths[1] = VK_RT_VolScatterScale(VK_VOL_CLASS_DIRECTED);
+    ubo.strengths[2] = VK_RT_VolScatterScale(VK_VOL_CLASS_FLASHLIGHT);
     // Was F4's temporal alpha; F4 was dropped, so the slot carries the two-lobe
     // phase blend instead (see PhaseFunction in vol_froxel_fill.comp).
     ubo.strengths[3] = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
@@ -1196,8 +1201,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
         common->Printf("  grid range: dNear=%.3f dFar=%.1f (r_rtVolMaxDist=%.1f, T floor=%.4f)  logRange=%.4f\n",
                        ubo.depthParams[0], ubo.depthParams[1], ubo.rangeParams[2],
                        r_rtVolFroxelFarTransmittance.GetFloat(), ubo.rangeParams[0]);
-        common->Printf("  density=%.5f  attenuateBackground=%d\n", ubo.densities[0],
-                       (int)VK_RT_VolCompositeAfterSurfaces());
+        VK_RT_VolPrintMedium(ubo.densities[0], ubo.densities[1], ubo.strengths[0], ubo.strengths[1], ubo.strengths[2]);
+        common->Printf("  attenuateBackground=%d\n", (int)VK_RT_VolCompositeAfterSurfaces());
         common->Printf("  linNum=%.4f  linAdd=%.4f  (transmittance at dFar = %.5f)\n", ubo.depthParams[2],
                        ubo.depthParams[3], idMath::Exp(-ubo.densities[0] * ubo.depthParams[1]));
 
@@ -1234,13 +1239,8 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
                            "corner zFac=%.4f\n",
                            nearDist, centreDir * camFwd, cornerDir * camFwd);
         }
-        common->Printf("  point:      density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[0], ubo.strengths[0],
-                       ubo.anisos[0]);
-        common->Printf("  directed:   density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[1], ubo.strengths[1],
-                       ubo.anisos[1]);
-        common->Printf("  phase:      isotropicMix=%.3f (0=pure HG lobe, 1=fully isotropic)\n", ubo.strengths[3]);
-        common->Printf("  flashlight: density=%.5f strength=%.5f aniso=%.4f\n", ubo.densities[2], ubo.strengths[2],
-                       ubo.anisos[2]);
+        common->Printf("  anisotropy: point=%.4f directed=%.4f flashlight=%.4f  isotropicMix=%.3f\n", ubo.anisos[0],
+                       ubo.anisos[1], ubo.anisos[2], ubo.strengths[3]);
         common->Printf("  maxLights=%d  volLights=%d  whiteNoiseMix=%.4f\n", ubo.misc[1],
                        vkRT.volLightSsboMapped[frameIdx] ? *(const int *)vkRT.volLightSsboMapped[frameIdx] : -1,
                        ubo.densities[3]);
