@@ -2470,14 +2470,15 @@ struct RTCVars
     idCVar *rtVolMaxLights = nullptr;
     idCVar *rtVolTemporal = nullptr;
     idCVar *rtVolTemporalAlpha = nullptr;
-    idCVar *rtVolDensity = nullptr;
-    idCVar *rtVolStrength = nullptr;
+    idCVar *rtVolExtinction = nullptr;
+    idCVar *rtVolAlbedo = nullptr;
+    idCVar *rtVolAttenuateBackground = nullptr;
+    idCVar *rtVolGain = nullptr;
     idCVar *rtVolAnisotropy = nullptr;
-    idCVar *rtVolFlashlightDensity = nullptr;
-    idCVar *rtVolFlashlightStrength = nullptr;
+    idCVar *rtVolIsotropicMix = nullptr;
+    idCVar *rtVolFlashlightGain = nullptr;
     idCVar *rtVolFlashlightAnisotropy = nullptr;
-    idCVar *rtVolDirectedDensity = nullptr;
-    idCVar *rtVolDirectedStrength = nullptr;
+    idCVar *rtVolDirectedGain = nullptr;
     idCVar *rtVolDirectedAnisotropy = nullptr;
 
     // Auto-Relight (docs/plans/auto_relight.md) — experimental, off by default;
@@ -2554,12 +2555,16 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolMaxLights = cvarSystem->Find("r_rtVolMaxLights");
     rtCVars.rtVolTemporal = cvarSystem->Find("r_rtVolTemporal");
     rtCVars.rtVolTemporalAlpha = cvarSystem->Find("r_rtVolTemporalAlpha");
-    rtCVars.rtVolDensity = cvarSystem->Find("r_rtVolDensity");
-    rtCVars.rtVolStrength = cvarSystem->Find("r_rtVolStrength");
+    rtCVars.rtVolExtinction = cvarSystem->Find("r_rtVolExtinction");
+    rtCVars.rtVolAlbedo = cvarSystem->Find("r_rtVolAlbedo");
+    rtCVars.rtVolAttenuateBackground = cvarSystem->Find("r_rtVolAttenuateBackground");
+    rtCVars.rtVolGain = cvarSystem->Find("r_rtVolGain");
     rtCVars.rtVolAnisotropy = cvarSystem->Find("r_rtVolAnisotropy");
-    rtCVars.rtVolDirectedDensity = cvarSystem->Find("r_rtVolDirectedDensity");
-    rtCVars.rtVolDirectedStrength = cvarSystem->Find("r_rtVolDirectedStrength");
+    rtCVars.rtVolIsotropicMix = cvarSystem->Find("r_rtVolIsotropicMix");
+    rtCVars.rtVolDirectedGain = cvarSystem->Find("r_rtVolDirectedGain");
     rtCVars.rtVolDirectedAnisotropy = cvarSystem->Find("r_rtVolDirectedAnisotropy");
+    rtCVars.rtVolFlashlightGain = cvarSystem->Find("r_rtVolFlashlightGain");
+    rtCVars.rtVolFlashlightAnisotropy = cvarSystem->Find("r_rtVolFlashlightAnisotropy");
     rtCVars.rtAutoRelight = cvarSystem->Find("r_rtAutoRelight");
     rtCVars.rtAutoRelightMaxPerArea = cvarSystem->Find("r_rtAutoRelightMaxPerArea");
     rtCVars.rtAutoRelightDebugColor = cvarSystem->Find("r_rtAutoRelightDebugColor");
@@ -2749,17 +2754,27 @@ static void DrawRTOptionsMenu()
         RTSliderInt("Max Lights##vol", rtCVars.rtVolMaxLights, 0, 96);
         RTCheckbox("Temporal Accumulation", rtCVars.rtVolTemporal);
         RTSliderFloat("Temporal Blend##vol", rtCVars.rtVolTemporalAlpha, 0.0f, 1.0f);
+        RTSliderFloat("Isotropic Mix##vol", rtCVars.rtVolIsotropicMix, 0.0f, 1.0f, "%.2f");
+        RTCheckbox("Attenuate Background", rtCVars.rtVolAttenuateBackground);
 
-        // --- Right column: flashlight ---
+        // The medium: two coefficients, both global. Extinction is per world unit
+        // and the useful range is tiny — 5e-4 is T=0.78 at 500 units, 0.015 (the
+        // old default) is dense smoke, hence the %.5f and the 0.005 top end.
+        ImGui::TextDisabled("Medium");
+        RTSliderFloat("Extinction", rtCVars.rtVolExtinction, 0.0f, 0.005f, "%.5f");
+        RTSliderFloat("Albedo", rtCVars.rtVolAlbedo, 0.0f, 1.0f, "%.2f");
+
+        // --- Right column: per-class radiance gains ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Directed");
-        RTSliderFloat("Density##dir", rtCVars.rtVolDirectedDensity, 0.0f, 0.1f);
-        RTSliderFloat("Strength##dir", rtCVars.rtVolDirectedStrength, 0.0f, 2.5f);
+        RTSliderFloat("Gain##dir", rtCVars.rtVolDirectedGain, 0.0f, 100.0f, "%.1f");
         RTSliderFloat("Anisotropy##dir", rtCVars.rtVolDirectedAnisotropy, 0.0f, 1.0f);
         ImGui::TextDisabled("Point Lights");
-        RTSliderFloat("Density##pt", rtCVars.rtVolDensity, 0.0f, 0.1f);
-        RTSliderFloat("Strength##pt", rtCVars.rtVolStrength, 0.0f, 2.5f);
+        RTSliderFloat("Gain##pt", rtCVars.rtVolGain, 0.0f, 100.0f, "%.1f");
         RTSliderFloat("Anisotropy##pt", rtCVars.rtVolAnisotropy, 0.0f, 1.0f);
+        ImGui::TextDisabled("Flashlight");
+        RTSliderFloat("Gain##fl", rtCVars.rtVolFlashlightGain, 0.0f, 100.0f, "%.1f");
+        RTSliderFloat("Anisotropy##fl", rtCVars.rtVolFlashlightAnisotropy, 0.0f, 1.0f);
         ImGui::EndTable();
     }
     ImGui::Spacing();

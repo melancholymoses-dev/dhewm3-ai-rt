@@ -67,23 +67,24 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     uint  frameIndex;     // offset  80, size  4
     int   numSamples;     // offset  84, size  4
     int   maxLights;      // offset  88, size  4
-    float density;        // offset  92, size  4
+    float extinction;     // offset  92, size  4  sigma_t, medium-wide
     float anisotropy;     // offset  96, size  4
     float maxDist;        // offset 100, size  4
-    float strength;       // offset 104, size  4
+    float scatterPoint;   // offset 104, size  4  sigma_s * point gain
     int   scissorOffsetX; // offset 108, size  4  (MARCH space — see marchScale)
     int   scissorOffsetY; // offset 112, size  4
     int   scissorExtentX; // offset 116, size  4
     int   scissorExtentY; // offset 120, size  4
     int   screenWidth;          // offset 124, size  4  (FULL res — depth buffer / NDC)
     int   screenHeight;         // offset 128, size  4
-    float flashlightDensity;    // offset 132, size  4  (player flashlight, lightType 2)
+    float scatterFlash;         // offset 132, size  4  sigma_s * flashlight gain (lightType 2)
     float flashlightAnisotropy; // offset 136, size  4
-    float flashlightStrength;   // offset 140, size  4
-    float directedDensity;      // offset 144, size  4  (scene spot/directed, lightType 1)
+    float albedo;               // offset 140, size  4  diagnostic only — dump reads it
+    float scatterDirected;      // offset 144, size  4  sigma_s * directed gain (lightType 1)
     float directedAnisotropy;   // offset 148, size  4
-    float directedStrength;     // offset 152, size  4
-    float _pad;                 // offset 156, size  4
+    float _pad;                 // offset 152, size  4
+    // Repurposed former pad float (was _pad, always 0) — same offset.
+    float isotropicMix;         // offset 156, size  4  see PhaseFunction below
     // --- P8: half-res march (rt_optimization_tuning.md) ---
     int   marchWidth;           // offset 160, size  4  volBuf dimensions (== full/marchScale)
     int   marchHeight;          // offset 164, size  4
@@ -153,6 +154,12 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
 
 #define VOL_SHADOW_BIAS 0.5
 
+// Must stay identical to vol_froxel_fill.comp's copy — an r_rtVolFroxel 0/1 A/B
+// is only meaningful while both paths evaluate the same light model.  See the
+// rationale there.
+#define VOL_CONE_PENUMBRA 0.35
+#define VOL_COOKIE_PENUMBRA 0.08
+
 // ---------------------------------------------------------------------------
 // Henyey-Greenstein phase function.
 // cosTheta: dot(marchDir, toLightDir).
@@ -162,8 +169,22 @@ float HenyeyGreenstein(float cosTheta, float g)
 {
     float g2    = g * g;
     float denom = 1.0 + g2 - 2.0 * g * cosTheta;
- 
+
     return (1.0 - g2) / (4.0 * 3.14159265359 * pow(max(denom, 1e-2), 1.5));
+}
+
+// Two-lobe phase: a forward HG lobe plus an isotropic one.  HG is normalised, so
+// a single lobe can only TRADE side-on visibility for forward contrast — at the
+// g=0.6 scene-directed default that is a 25x swing between looking into a shaft
+// and viewing it side-on, which reads as no scattering at all at high angles.
+// Both lobes integrate to 1 over the sphere, so the blend does too: this puts a
+// floor under off-axis scattering without touching total scattered energy, and
+// lets g stay high for the shaft/shadow definition it was raised to get.
+// Must stay identical to vol_froxel_fill.comp's copy.
+float PhaseFunction(float cosTheta, float g, float isoMix)
+{
+    const float INV_4PI = 0.0795774715;
+    return mix(HenyeyGreenstein(cosTheta, g), INV_4PI, clamp(isoMix, 0.0, 1.0));
 }
 
 // Cauchy-with-ramp attenuation — matches the GI bounce shading model.
@@ -275,7 +296,7 @@ void main()
 
         // Beer-Lambert: update running transmittance and bail when negligible.
         float transBefore = transmittance;
-        transmittance *= exp(-params.density * stepSize);
+        transmittance *= exp(-params.extinction * stepSize);
         if (transmittance < 0.001)
             break;
 
@@ -366,9 +387,11 @@ void main()
                 if (alongCone <= 0.0 || alongCone > bx.w)
                     continue;
                 float cosAngle = alongCone / max(length(toStep), 0.001);
-                if (cosAngle < cd.w)
+                float cosOuter = max(cd.w - VOL_CONE_PENUMBRA * max(1.0 - cd.w, 1e-3), -1.0);
+                if (cosAngle < cosOuter)
                     continue;
                 atten = clamp(1.0 - alongCone / max(bx.w, 0.001), 0.0, 1.0);
+                atten *= smoothstep(cosOuter, cd.w, cosAngle);
             }
 
             if (atten < 0.001)
@@ -380,7 +403,7 @@ void main()
             float localAniso = isFlashlight ? params.flashlightAnisotropy
                              : isDirected   ? params.directedAnisotropy
                                             : params.anisotropy;
-            float phase        = HenyeyGreenstein(cosTheta, localAniso);
+            float phase        = PhaseFunction(cosTheta, localAniso, params.isotropicMix);
 
             // Fire a ray query to test occlusion between stepPos and the light.
             float tShadow = max(0.01, dist - VOL_SHADOW_BIAS);
@@ -412,7 +435,7 @@ void main()
             // in the light shaft" payoff, not just a wall/floor tint.
             if ((giLightBuf.lights[li].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
             {
-                vec3 cookie = rt_SampleLightCookie(giLightBuf.cookies[li], stepPos);
+                vec3 cookie = rt_SampleLightCookieSoft(giLightBuf.cookies[li], stepPos, VOL_COOKIE_PENUMBRA);
                 contrib = contrib * cookie;
             }
 
@@ -425,12 +448,15 @@ void main()
         }
     }
 
-    // Combine three light classes with independent density/strength controls.
-    // Beer-Lambert transmittance uses global density; these multipliers tune each type.
+    // Each scatter_* holds the accumulated (phase * falloff * visibility * dt * T)
+    // sum for its class; multiplying by sigma_s * gain turns it into radiance.
+    // Transmittance above used sigma_t, so the two halves now share a medium: the
+    // per-class scale divided by sigma_t is that class's effective albedo, and
+    // r_rtVolDump prints it so a value above 1 (energy creation) is visible.
     vec3 result = max(
-        scatter_point    * params.density          * params.strength          +
-        scatter_directed * params.directedDensity  * params.directedStrength  +
-        scatter_flash    * params.flashlightDensity * params.flashlightStrength,
+        scatter_point    * params.scatterPoint    +
+        scatter_directed * params.scatterDirected +
+        scatter_flash    * params.scatterFlash,
         vec3(0.0));
 
     // Clamp well under the fp16 (rgba16f) ceiling to avoid Inf.
@@ -438,14 +464,9 @@ void main()
 
     // Alpha carries the total path transmittance (camera -> tMax): 1.0 = clear
     // air, near-0.0 = the view ray is fully extinguished by the medium before
-    // it reaches the surface. Not yet consumed by vol_composite.frag's blend
-    // state (still pure additive) — that would also need the composite call
-    // moved to after the direct-lighting interaction pass so it attenuates
-    // ALL scene radiance behind the fog, not just the GI/reflection base drawn
-    // before it; tracked as a follow-up, not done here. Plumbed through now
-    // (bilateral upsample and temporal EMA already carry all 4 channels) so
-    // it's available without another pass of shader surgery, and so it can be
-    // inspected directly (e.g. temporarily view volBuf.a) to sanity-check the
-    // self-attenuation fix above.
+    // it reaches the surface. Consumed by the composite under
+    // r_rtVolAttenuateBackground (F6), which also moves the composite after the
+    // interaction pass so ALL scene radiance behind the fog is attenuated, not
+    // just the GI/reflection base. Inspect it directly with r_rtVolDebugMode 1.
     imageStore(volBuf, coord, vec4(result, transmittance));
 }

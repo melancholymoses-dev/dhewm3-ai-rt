@@ -46,6 +46,12 @@ layout(push_constant) uniform PC {
 
 layout(location = 0) out vec4 fragColor;
 
+// No exponent on the transmittance any more.  An earlier version raised it to a
+// T^k artistic power because sigma_t was conflated with the per-class scattering
+// strength and was ~30x too thick to use as a real extinction coefficient; the two
+// are separate cvars now (20260917_vol_transport_coefficients.md), so .a is the
+// honest path transmittance and the blend is the plain transport equation.
+
 void main()
 {
     // UV must come from the SCREEN size, not textureSize(u_VolMap): since P8 the
@@ -59,15 +65,12 @@ void main()
 
     if (pc.debugMode == 1)
     {
-        // Path transmittance (vol.a, see vol_march.comp): 1.0 = clear air between
-        // camera and surface, 0.0 = the medium fully extinguished the ray before it
-        // got there. White = no fog contribution possible here; black = the march
-        // gave up (density * distance saturated) well before reaching the surface.
-        // This is what to look at when tuning r_rtVolDensity against the
-        // self-attenuation fix: if this is uniformly near-black across most of the
-        // visible fog, density is crushing contribution into a thin near-camera
-        // shell — see the fix's discussion for why that reads as a flat lift with
-        // no visible shadow structure.
+        // Path transmittance (vol.a): 1.0 = clear air between camera and surface,
+        // 0.0 = the medium fully extinguished the ray before it got there.  This is
+        // exactly what the composite multiplies the background by, so it is the
+        // direct check on r_rtVolExtinction: it should read near-white across a room
+        // and visibly grey down a long corridor.  Uniformly near-black a few units
+        // out means sigma_t is in smoke territory, not haze.
         fragColor = vec4(vec3(vol.a), 1.0);
         return;
     }
@@ -87,9 +90,9 @@ void main()
     }
 
     // .a is path transmittance (see vol_march.comp), not coverage/opacity.
-    // Passed through here for future use by a background-attenuation pass;
-    // the current blend state ignores src alpha (srcAlphaBlendFactor = ZERO),
-    // so this is a no-op on today's composite — see vol_march.comp's closing
-    // comment for why that attenuation isn't wired up yet.
+    // With r_rtVolAttenuateBackground the composite binds a pipeline whose
+    // dstColorBlendFactor is SRC_ALPHA, giving dst = airlight + T*dst — the
+    // attenuating half of the transport equation, with the same sigma_t the
+    // airlight above was integrated against. The additive pipeline ignores alpha.
     fragColor = vec4(vol.rgb, vol.a);
 }

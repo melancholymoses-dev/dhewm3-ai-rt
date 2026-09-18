@@ -525,6 +525,7 @@ struct vkRTState_t
 
     VkPipeline            volCompositePipeline;
     VkPipeline            volCompositeDebugPipeline; // r_rtVolDebugMode >= 1: blend disabled (replace)
+    VkPipeline            volCompositeAttenPipeline; // r_rtVolAttenuateBackground 1: dst *= src.a (F6)
     VkPipelineLayout      volCompositeLayout;
     VkDescriptorSetLayout volCompositeDescLayout;
     VkDescriptorPool      volCompositeDescPool;
@@ -942,6 +943,11 @@ void VK_RT_InitMaterialTable(void);
 // Destroy all material table GPU resources.  Device must be idle before calling.
 void VK_RT_ShutdownMaterialTable(void);
 
+// Release every bindless texture slot except the two fallbacks.  Called from
+// VK_RT_BeginLevelLoad so slot assignments don't accumulate across map loads
+// (VK_MAT_MAX_TEXTURES is exhausted after a few maps otherwise).
+void VK_RT_MatTableLevelLoadReset(void);
+
 // Returns true if `shader` has a resolvable emissive image — an SL_AMBIENT
 // stage that is a strict additive overlay with explicit UVs, a cinematic/
 // videomap stage, or (fallback) the diffuse image of a HasGui() material.
@@ -1125,7 +1131,34 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Composite the volumetric buffer onto the framebuffer with additive blending.
 // Must be called INSIDE the main render pass, after VK_RT_CompositeGI.
 // Does nothing when r_rtVol is off or the pipeline is not ready.
+// Self-guards against compositing the same view twice in a frame (F6 gave it
+// two possible call sites).
 void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
+
+// F6 (20260906_froxel_probe_gi.md): true when r_rtVolAttenuateBackground is on
+// and the attenuating pipeline exists.  The backend uses this to move the
+// composite after the interaction/shader passes, so surface radiance — not just
+// GI and ambient — is what gets multiplied by the path transmittance.  The late
+// call site must additionally gate on a real camera; see the comment there.
+bool VK_RT_VolCompositeAfterSurfaces(void);
+
+// Medium coefficients (20260917_vol_transport_coefficients.md).  The march and the
+// froxel fill must be fed identical constants or an r_rtVolFroxel 0/1 A/B is
+// meaningless, so both read these rather than the cvars.
+enum
+{
+    VK_VOL_CLASS_POINT = 0,
+    VK_VOL_CLASS_DIRECTED = 1,
+    VK_VOL_CLASS_FLASHLIGHT = 2,
+};
+
+float VK_RT_VolExtinction(void);              // sigma_t, per world unit
+float VK_RT_VolAlbedo(void);                  // sigma_s / sigma_t, [0,1]
+float VK_RT_VolScatterScale(int lightClass);  // sigma_s * per-class radiance gain
+
+// Shared dump helper: prints sigma_t/albedo/sigma_s, the T=0.5 distance, and each
+// class's effective albedo, flagging any above 1 as energy-creating.
+void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash);
 
 // ---------------------------------------------------------------------------
 // Volumetric temporal EMA (Phase 7.2 — step 8)
