@@ -65,8 +65,7 @@ static idCVar r_rtVolSamples("r_rtVolSamples", "8", CVAR_RENDERER | CVAR_INTEGER
 
 // NOT static, from here down through the flashlight block: vk_vol_froxel.cpp externs
 // every medium/phase/strength knob so the froxel fill evaluates the identical light
-// model as the march. That is what makes an r_rtVolFroxel 0/1 A/B meaningful — same
-// constants, different sampling structure. See 20260906_froxel_probe_gi.md Part A.
+// model as the march.
 
 // Interleaved Gradient Noise (see the jitter comment in vol_march.comp) is a fixed,
 // low-discrepancy diagonal pattern — spatially coherent by design, which is exactly
@@ -81,17 +80,8 @@ idCVar r_rtVolWhiteNoiseMix("r_rtVolWhiteNoiseMix", "0.025", CVAR_RENDERER | CVA
                             "Fraction of white noise blended into the IGN march-step jitter to soften visible "
                             "dither stripes/fringes (0 = pure IGN, 1 = pure white noise). See vol_march.comp.");
 
-// NOT static: vk_gi.cpp's vol-specific selection pass (VK_RT_UploadGILights)
-// externs this to decide which GI candidates can possibly be marched at all,
-// before they ever compete for a vol light slot. See portal_area_lights.md
-// follow-up notes.
 idCVar r_rtVolMaxDist("r_rtVolMaxDist", "512.0", CVAR_RENDERER | CVAR_FLOAT, "Max ray-march distance in world units");
 
-// NOT static: vk_gi.cpp externs this — it's the max entry count of the
-// dedicated, vol-only light selection (VolLightBuf, separate from GILightBuf)
-// built each frame from the same admitted-candidate pool as GI, filtered to
-// lights whose sphere/cone can possibly reach within r_rtVolMaxDist of the
-// camera, then importance-ordered. See portal_area_lights.md follow-up notes.
 idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
                         "Max lights in the dedicated volumetric light selection (separate from "
                         "GI's own light buffer/cap).");
@@ -99,15 +89,13 @@ idCVar r_rtVolMaxLights("r_rtVolMaxLights", "96", CVAR_RENDERER | CVAR_INTEGER,
 // --- Medium coefficients (20260917_vol_transport_coefficients.md) -----------
 // Single-scatter transport has exactly two: extinction (drives transmittance) and
 // scattering (drives in-scatter), constrained by albedo = sigma_s/sigma_t <= 1.
-// The old r_rtVolDensity was both at once AND the per-class brightness knob, which
-// forced sigma_t up to 0.015 — T = 0.5 at 46 units, i.e. dense smoke, not haze.
 
-idCVar r_rtVolExtinction("r_rtVolExtinction", "0.0005", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtVolExtinction("r_rtVolExtinction", "0.0006", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                          "sigma_t, the medium's extinction coefficient per world unit.  Sets how far you "
                          "can see: transmittance = exp(-sigma_t * distance), so 5e-4 gives 0.78 at 500 "
                          "units.  Medium-wide — extinction is not a property of any one light.");
 
-idCVar r_rtVolAlbedo("r_rtVolAlbedo", "0.9", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtVolAlbedo("r_rtVolAlbedo", "0.75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                      "Single-scatter albedo: sigma_s = albedo * sigma_t.  0 = pure absorber (medium "
                      "darkens without glowing), 1 = pure scatterer (bright mist, no net darkening).  "
                      "Values above 1 would create energy and are clamped.");
@@ -116,7 +104,7 @@ idCVar r_rtVolAlbedo("r_rtVolAlbedo", "0.9", CVAR_RENDERER | CVAR_ARCHIVE | CVAR
 // because Doom 3 light intensities are authored rather than radiometric, and it
 // leaves the transport equation alone.  The default 28 is 0.01275/(0.9*5e-4), the
 // factor that preserves the old point-light brightness at the new sigma_s.
-idCVar r_rtVolGain("r_rtVolGain", "28.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolGain("r_rtVolGain", "10.0", CVAR_RENDERER | CVAR_FLOAT,
                    "Radiance gain for point-light in-scatter (compensates Doom 3's non-radiometric "
                    "light intensities).  Brightness only — does not affect transmittance.");
 
@@ -136,11 +124,9 @@ idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.35", CVAR_RENDERER | CVAR_FLOAT
 // Two-lobe phase blend.  HG is normalised, so a single lobe can only trade
 // side-on visibility for forward contrast — at the directed default g=0.6 that is
 // a 25x swing between looking into a shaft and viewing it from the side, which
-// reads as no scattering at all at high angles.  Blending in an isotropic lobe
-// puts a floor under off-axis scattering while leaving total scattered energy
-// alone, so the anisotropy knobs can stay high for shaft/shadow definition.
+// reads as no scattering at all at high angles.
 // Global rather than per-class: it is a visibility floor, not a medium property.
-idCVar r_rtVolIsotropicMix("r_rtVolIsotropicMix", "0.3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtVolIsotropicMix("r_rtVolIsotropicMix", "0.45", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                            "Fraction of the volumetric phase function that is isotropic rather than the "
                            "Henyey-Greenstein forward lobe (0 = pure HG, 1 = fully isotropic).  Raises "
                            "side-on/high-angle shaft visibility without lowering r_rtVol*Anisotropy.");
@@ -162,31 +148,79 @@ idCVar r_rtVolDump("r_rtVolDump", "0", CVAR_RENDERER | CVAR_BOOL,
 bool vkRT_volDumpPending = false;
 
 // Scene directed/spot lights (lightType 1) — separate from the player's flashlight.
-idCVar r_rtVolDirectedDensity("r_rtVolDirectedDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
-                              "Scatter contribution scale for scene directed/spot lights.");
-idCVar r_rtVolDirectedStrength("r_rtVolDirectedStrength", "0.9", CVAR_RENDERER | CVAR_FLOAT,
-                               "Final composite multiplier for scene directed light scatter.");
+idCVar r_rtVolDirectedGain("r_rtVolDirectedGain", "60.0", CVAR_RENDERER | CVAR_FLOAT,
+                           "Radiance gain for scene directed/spot in-scatter.  Brightness only.");
 idCVar r_rtVolDirectedAnisotropy("r_rtVolDirectedAnisotropy", "0.6", CVAR_RENDERER | CVAR_FLOAT,
                                  "Henyey-Greenstein g for scene spot lights (0=iso, 1=full forward).");
 
 // Player flashlight (lightType 2, allowLightInViewID set).
-idCVar r_rtVolFlashlightDensity("r_rtVolFlashlightDensity", "0.05", CVAR_RENDERER | CVAR_FLOAT,
-                                "Scatter contribution scale for the player flashlight.");
+idCVar r_rtVolFlashlightGain("r_rtVolFlashlightGain", "50.0", CVAR_RENDERER | CVAR_FLOAT,
+                             "Radiance gain for player-flashlight in-scatter.  Brightness only.");
 idCVar r_rtVolFlashlightAnisotropy("r_rtVolFlashlightAnisotropy", "0.7", CVAR_RENDERER | CVAR_FLOAT,
                                    "Henyey-Greenstein g parameter for the flashlight (0=isotropic, 1=full forward).");
-idCVar r_rtVolFlashlightStrength("r_rtVolFlashlightStrength", "0.5", CVAR_RENDERER | CVAR_FLOAT,
-                                 "Final composite multiplier for flashlight scatter.");
 
 // ---------------------------------------------------------------------------
-// F6 — background attenuation.  Nothing upstream changes: the march and the
-// froxel fill still see the raw r_rtVolDensity, so the in-scattering, the froxel
-// far plane and an r_rtVolAttenuateBackground 0/1 A/B all stay like-for-like.
-// The toggle only picks a blend pipeline, a call site, and this exponent.
+// Medium coefficient helpers — shared by the march (this file) and the froxel
+// fill, so both integrators are fed identical constants.
 // ---------------------------------------------------------------------------
 
 bool VK_RT_VolCompositeAfterSurfaces(void)
 {
     return r_rtVolAttenuateBackground.GetBool() && vkRT.volCompositeAttenPipeline != VK_NULL_HANDLE;
+}
+
+float VK_RT_VolExtinction(void)
+{
+    return idMath::ClampFloat(0.0f, 1.0f, r_rtVolExtinction.GetFloat());
+}
+
+float VK_RT_VolAlbedo(void)
+{
+    return idMath::ClampFloat(0.0f, 1.0f, r_rtVolAlbedo.GetFloat());
+}
+
+// sigma_s * gain for one light class — the single number each integrator needs to
+// turn its accumulated (phase * falloff * visibility * dt * T) sum into radiance.
+// Folded here rather than in the shader so the per-class density/strength pair
+// becomes one uniform slot and one multiply.
+float VK_RT_VolScatterScale(int lightClass)
+{
+    const float sigmaS = VK_RT_VolExtinction() * VK_RT_VolAlbedo();
+    float gain;
+    switch (lightClass)
+    {
+    case VK_VOL_CLASS_DIRECTED:
+        gain = r_rtVolDirectedGain.GetFloat();
+        break;
+    case VK_VOL_CLASS_FLASHLIGHT:
+        gain = r_rtVolFlashlightGain.GetFloat();
+        break;
+    default:
+        gain = r_rtVolGain.GetFloat();
+        break;
+    }
+    return sigmaS * Max(0.0f, gain);
+}
+
+// Shared by both dumps.  The per-class EFFECTIVE albedo (scatterScale / sigma_t) is
+// the number that matters: it is what the old density*strength pairs silently made
+// 3.0 for directed lights and 1.67 for the flashlight.  Anything above 1 means that
+// class scatters more energy than the medium removes, so it is called out by name
+// rather than left for someone to divide in their head.
+void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash)
+{
+    const float halfDist = (sigmaT > 1e-9f) ? (idMath::Log(2.0f) / sigmaT) : 0.0f;
+    common->Printf("  medium: sigma_t=%.6f  albedo=%.3f  sigma_s=%.6f   T=0.5 at %.0f units\n", sigmaT, albedo,
+                   sigmaT * albedo, halfDist);
+
+    const float scales[3] = {scatterPoint, scatterDirected, scatterFlash};
+    const char *names[3] = {"point     ", "directed  ", "flashlight"};
+    for (int i = 0; i < 3; i++)
+    {
+        const float effAlbedo = (sigmaT > 1e-9f) ? (scales[i] / sigmaT) : 0.0f;
+        common->Printf("  %s: scatterScale=%.6f  effective albedo=%.3f%s\n", names[i], scales[i], effAlbedo,
+                       (effAlbedo > 1.0f) ? "   <-- >1, CREATES ENERGY" : "");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,22 +231,22 @@ bool VK_RT_VolCompositeAfterSurfaces(void)
 //   uint  frameIndex        offset  80  size  4
 //   int   numSamples        offset  84  size  4
 //   int   maxLights         offset  88  size  4
-//   float density           offset  92  size  4  (point lights — Beer-Lambert too)
+//   float extinction        offset  92  size  4  (sigma_t — Beer-Lambert, medium-wide)
 //   float anisotropy        offset  96  size  4  (point lights HG)
 //   float maxDist           offset 100  size  4
-//   float strength          offset 104  size  4  (point lights)
+//   float scatterPoint      offset 104  size  4  (sigma_s * point gain)
 //   int   scissorOffX       offset 108  size  4
 //   int   scissorOffY       offset 112  size  4
 //   int   scissorExtX       offset 116  size  4
 //   int   scissorExtY       offset 120  size  4
 //   int   screenWidth       offset 124  size  4
 //   int   screenHeight      offset 128  size  4
-//   float flashlightDensity    offset 132  size  4  (player flashlight, lightType 2)
+//   float scatterFlash         offset 132  size  4  (sigma_s * flashlight gain)
 //   float flashlightAniso      offset 136  size  4
-//   float flashlightStrength   offset 140  size  4
-//   float directedDensity      offset 144  size  4  (scene spot/directed, lightType 1)
+//   float albedo               offset 140  size  4  (dump/diagnostic only)
+//   float scatterDirected      offset 144  size  4  (sigma_s * directed gain)
 //   float directedAnisotropy   offset 148  size  4
-//   float directedStrength     offset 152  size  4
+//   float _pad                 offset 152  size  4
 //   float isotropicMix         offset 156  size  4  (two-lobe phase blend)
 //   total: 160 bytes
 //   --- P8: half-res march ---
@@ -233,22 +267,22 @@ struct VolParamsUBO
     uint32_t frameIndex;        // 80
     int32_t numSamples;         // 84
     int32_t maxLights;          // 88
-    float density;              // 92
+    float extinction;           // 92  sigma_t
     float anisotropy;           // 96
     float maxDist;              // 100
-    float strength;             // 104
+    float scatterPoint;         // 104 sigma_s * point gain
     int32_t scissorOffsetX;     // 108
     int32_t scissorOffsetY;     // 112
     int32_t scissorExtentX;     // 116
     int32_t scissorExtentY;     // 120
     int32_t screenWidth;        // 124
     int32_t screenHeight;       // 128
-    float flashlightDensity;    // 132
+    float scatterFlash;         // 132 sigma_s * flashlight gain
     float flashlightAnisotropy; // 136
-    float flashlightStrength;   // 140
-    float directedDensity;      // 144
+    float albedo;               // 140 diagnostic only
+    float scatterDirected;      // 144 sigma_s * directed gain
     float directedAnisotropy;   // 148
-    float directedStrength;     // 152
+    float _uboPad;              // 152
     float isotropicMix;         // 156 — repurposed former pad, see r_rtVolIsotropicMix
     // --- P8: half-res march ---
     // screenWidth/Height above stay FULL res (depth fetch + NDC reconstruction);
@@ -629,8 +663,8 @@ static void VK_RT_InitVolCompositePipeline(void)
     VkPushConstantRange compPush = {};
     compPush.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     compPush.offset = 0;
-    // vec2 invScreenSize + int debugMode + float debugGain + float attenStrength (F6)
-    compPush.size = sizeof(float) * 2 + sizeof(int32_t) + sizeof(float) * 2;
+    // vec2 invScreenSize + int debugMode + float debugGain
+    compPush.size = sizeof(float) * 2 + sizeof(int32_t) + sizeof(float);
 
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1894,17 +1928,17 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.frameIndex = (uint32_t)tr.frameCount;
     ubo.numSamples = idMath::ClampInt(1, 32, r_rtVolSamples.GetInteger());
     ubo.maxLights = idMath::ClampInt(1, 128, r_rtVolMaxLights.GetInteger());
-    ubo.density = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDensity.GetFloat());
+    ubo.extinction = VK_RT_VolExtinction();
+    ubo.albedo = VK_RT_VolAlbedo();
     ubo.anisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolAnisotropy.GetFloat());
     ubo.maxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
-    ubo.strength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolStrength.GetFloat());
-    ubo.flashlightDensity = idMath::ClampFloat(0.0f, 1.0f, r_rtVolFlashlightDensity.GetFloat());
+    ubo.scatterPoint = VK_RT_VolScatterScale(VK_VOL_CLASS_POINT);
+    ubo.scatterDirected = VK_RT_VolScatterScale(VK_VOL_CLASS_DIRECTED);
+    ubo.scatterFlash = VK_RT_VolScatterScale(VK_VOL_CLASS_FLASHLIGHT);
     ubo.flashlightAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolFlashlightAnisotropy.GetFloat());
-    ubo.flashlightStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolFlashlightStrength.GetFloat());
-    ubo.directedDensity = idMath::ClampFloat(0.0f, 1.0f, r_rtVolDirectedDensity.GetFloat());
     ubo.directedAnisotropy = idMath::ClampFloat(0.0f, 0.99f, r_rtVolDirectedAnisotropy.GetFloat());
-    ubo.directedStrength = idMath::ClampFloat(0.0f, 8.0f, r_rtVolDirectedStrength.GetFloat());
     ubo.isotropicMix = idMath::ClampFloat(0.0f, 1.0f, r_rtVolIsotropicMix.GetFloat());
+    ubo._uboPad = 0.0f;
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI), scaled into
     // march space — the shader indexes volBuf with it.
@@ -2055,8 +2089,9 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d density=%.3f samples=%d\n",
-                       groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.density, ubo.numSamples);
+        common->Printf("VK RT Vol: dispatch complete groups=%ux%u march=%dx%d scale=%d sigma_t=%.6f samples=%d\n",
+                       groupsX, groupsY, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.extinction,
+                       ubo.numSamples);
 
     // r_rtVolDump (see the cvar's comment): the params half, armed by vk_gi.cpp after
     // it printed the light half. The cvars are re-read and clamped into `ubo` every
@@ -2071,15 +2106,10 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                        ubo.frameIndex);
         common->Printf("  numSamples=%d  maxLights=%d  maxDist=%.1f  whiteNoiseMix=%.4f\n", ubo.numSamples,
                        ubo.maxLights, ubo.maxDist, ubo.whiteNoiseMix);
-        common->Printf("  point:     density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.density, ubo.strength,
-                       ubo.anisotropy);
-        common->Printf("  attenuateBackground=%d strength=%.3f (T^k at composite)\n",
-                       (int)VK_RT_VolCompositeAfterSurfaces(), r_rtVolAttenuateStrength.GetFloat());
-        common->Printf("  directed:  density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.directedDensity,
-                       ubo.directedStrength, ubo.directedAnisotropy);
-        common->Printf("  phase:     isotropicMix=%.3f (0=pure HG lobe, 1=fully isotropic)\n", ubo.isotropicMix);
-        common->Printf("  flashlight:density=%.5f strength=%.5f anisotropy=%.4f\n", ubo.flashlightDensity,
-                       ubo.flashlightStrength, ubo.flashlightAnisotropy);
+        VK_RT_VolPrintMedium(ubo.extinction, ubo.albedo, ubo.scatterPoint, ubo.scatterDirected, ubo.scatterFlash);
+        common->Printf("  anisotropy: point=%.4f directed=%.4f flashlight=%.4f  isotropicMix=%.3f\n", ubo.anisotropy,
+                       ubo.directedAnisotropy, ubo.flashlightAnisotropy, ubo.isotropicMix);
+        common->Printf("  attenuateBackground=%d\n", (int)VK_RT_VolCompositeAfterSurfaces());
         common->Printf("  screen=%dx%d  march=%dx%d scale=%d  scissor=(%d,%d %dx%d)\n", ubo.screenWidth,
                        ubo.screenHeight, ubo.marchWidth, ubo.marchHeight, ubo.marchScale, ubo.scissorOffsetX,
                        ubo.scissorOffsetY, ubo.scissorExtentX, ubo.scissorExtentY);
@@ -2149,14 +2179,10 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         float invScreen[2];
         int32_t debugMode;
         float debugGain;
-        float attenStrength;
     } pc = {
         {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
         r_rtVolDebugMode.GetInteger(),
         Max(0.0f, r_rtVolDebugGain.GetFloat()),
-        // 0 with the toggle off, so the additive pipeline's alpha stays the raw
-        // march value and debug mode 1 keeps showing what the march produced.
-        VK_RT_VolCompositeAfterSurfaces() ? idMath::ClampFloat(0.0f, 1.0f, r_rtVolAttenuateStrength.GetFloat()) : 0.0f,
     };
 
     // Froxel overlays (20260906_froxel_probe_gi.md F1) arrive already composed in

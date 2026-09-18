@@ -1142,6 +1142,24 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd);
 // call site must additionally gate on a real camera; see the comment there.
 bool VK_RT_VolCompositeAfterSurfaces(void);
 
+// Medium coefficients (20260917_vol_transport_coefficients.md).  The march and the
+// froxel fill must be fed identical constants or an r_rtVolFroxel 0/1 A/B is
+// meaningless, so both read these rather than the cvars.
+enum
+{
+    VK_VOL_CLASS_POINT = 0,
+    VK_VOL_CLASS_DIRECTED = 1,
+    VK_VOL_CLASS_FLASHLIGHT = 2,
+};
+
+float VK_RT_VolExtinction(void);              // sigma_t, per world unit
+float VK_RT_VolAlbedo(void);                  // sigma_s / sigma_t, [0,1]
+float VK_RT_VolScatterScale(int lightClass);  // sigma_s * per-class radiance gain
+
+// Shared dump helper: prints sigma_t/albedo/sigma_s, the T=0.5 distance, and each
+// class's effective albedo, flagging any above 1 as energy-creating.
+void VK_RT_VolPrintMedium(float sigmaT, float albedo, float scatterPoint, float scatterDirected, float scatterFlash);
+
 // ---------------------------------------------------------------------------
 // Volumetric temporal EMA (Phase 7.2 — step 8)
 // ---------------------------------------------------------------------------

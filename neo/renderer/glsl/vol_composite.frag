@@ -42,34 +42,15 @@ layout(push_constant) uniform PC {
                           // 1 = path transmittance, greyscale (replace pipeline)
                           // 2 = raw scatter colour, unscaled (replace pipeline)
     float debugGain;      // mode 2 only — see r_rtVolDebugGain in vk_vol.cpp for why
-    float attenStrength;  // r_rtVolAttenuateStrength; 0 = no attenuation
 } pc;
 
 layout(location = 0) out vec4 fragColor;
 
-// T^k == exp(-k*tau): scales the optical depth used to attenuate the background,
-// leaving the in-scattering the march/froxel already computed untouched.
-//
-// This is a NON-PHYSICAL artistic control, not a single-scatter albedo.  Two
-// things are deliberately inconsistent, and both are the price of not retuning
-// the medium:
-//   - upstream integrates the airlight (and its own self-attenuation) with the
-//     raw `density`, while the background here uses k*density, so the two halves
-//     of the transport equation do not share an extinction coefficient;
-//   - k < 1 means extinction below scattering, which no real medium does
-//     (albedo = 1/k > 1).
-// `density` is one cvar doing both jobs everywhere upstream and is tuned for
-// visible shafts — far too thick to double as the background's extinction, where
-// exp(-0.015*500) fully extinguishes an ordinary corridor.  Making this physical
-// means splitting sigma_s from sigma_t in vol_march.comp and the froxel integrate
-// pass, which changes the tuned look of the additive path too; see F6 in
-// 20260906_froxel_probe_gi.md.
-float attenuation(float transmittance)
-{
-    if (pc.attenStrength <= 0.0)
-        return 1.0;
-    return pow(clamp(transmittance, 0.0, 1.0), pc.attenStrength);
-}
+// No exponent on the transmittance any more.  An earlier version raised it to a
+// T^k artistic power because sigma_t was conflated with the per-class scattering
+// strength and was ~30x too thick to use as a real extinction coefficient; the two
+// are separate cvars now (20260917_vol_transport_coefficients.md), so .a is the
+// honest path transmittance and the blend is the plain transport equation.
 
 void main()
 {
@@ -84,19 +65,13 @@ void main()
 
     if (pc.debugMode == 1)
     {
-        // Path transmittance (vol.a, see vol_march.comp): 1.0 = clear air between
-        // camera and surface, 0.0 = the medium fully extinguished the ray before it
-        // got there. White = no fog contribution possible here; black = the march
-        // gave up (density * distance saturated) well before reaching the surface.
-        // This is what to look at when tuning r_rtVolDensity against the
-        // self-attenuation fix: if this is uniformly near-black across most of the
-        // visible fog, density is crushing contribution into a thin near-camera
-        // shell — see the fix's discussion for why that reads as a flat lift with
-        // no visible shadow structure.
-        // Shows the value the composite ACTUALLY multiplies by, not the raw march
-        // output — otherwise tuning attenStrength against this overlay is blind.
-        // With attenuation off it degenerates to the raw transmittance as before.
-        fragColor = vec4(vec3(pc.attenStrength > 0.0 ? attenuation(vol.a) : vol.a), 1.0);
+        // Path transmittance (vol.a): 1.0 = clear air between camera and surface,
+        // 0.0 = the medium fully extinguished the ray before it got there.  This is
+        // exactly what the composite multiplies the background by, so it is the
+        // direct check on r_rtVolExtinction: it should read near-white across a room
+        // and visibly grey down a long corridor.  Uniformly near-black a few units
+        // out means sigma_t is in smoke territory, not haze.
+        fragColor = vec4(vec3(vol.a), 1.0);
         return;
     }
 
@@ -116,9 +91,8 @@ void main()
 
     // .a is path transmittance (see vol_march.comp), not coverage/opacity.
     // With r_rtVolAttenuateBackground the composite binds a pipeline whose
-    // dstColorBlendFactor is SRC_ALPHA, giving dst = airlight + T^k*dst — the
-    // attenuating half of the transport equation that the pure-additive blend
-    // omitted entirely, though see attenuation() above for where k makes the two
-    // halves inconsistent. The additive pipeline still ignores alpha.
-    fragColor = vec4(vol.rgb, attenuation(vol.a));
+    // dstColorBlendFactor is SRC_ALPHA, giving dst = airlight + T*dst — the
+    // attenuating half of the transport equation, with the same sigma_t the
+    // airlight above was integrated against. The additive pipeline ignores alpha.
+    fragColor = vec4(vol.rgb, vol.a);
 }

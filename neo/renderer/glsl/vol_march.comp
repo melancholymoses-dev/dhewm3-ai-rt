@@ -67,22 +67,22 @@ layout(set = 0, binding = 3, std140) uniform VolParams {
     uint  frameIndex;     // offset  80, size  4
     int   numSamples;     // offset  84, size  4
     int   maxLights;      // offset  88, size  4
-    float density;        // offset  92, size  4
+    float extinction;     // offset  92, size  4  sigma_t, medium-wide
     float anisotropy;     // offset  96, size  4
     float maxDist;        // offset 100, size  4
-    float strength;       // offset 104, size  4
+    float scatterPoint;   // offset 104, size  4  sigma_s * point gain
     int   scissorOffsetX; // offset 108, size  4  (MARCH space — see marchScale)
     int   scissorOffsetY; // offset 112, size  4
     int   scissorExtentX; // offset 116, size  4
     int   scissorExtentY; // offset 120, size  4
     int   screenWidth;          // offset 124, size  4  (FULL res — depth buffer / NDC)
     int   screenHeight;         // offset 128, size  4
-    float flashlightDensity;    // offset 132, size  4  (player flashlight, lightType 2)
+    float scatterFlash;         // offset 132, size  4  sigma_s * flashlight gain (lightType 2)
     float flashlightAnisotropy; // offset 136, size  4
-    float flashlightStrength;   // offset 140, size  4
-    float directedDensity;      // offset 144, size  4  (scene spot/directed, lightType 1)
+    float albedo;               // offset 140, size  4  diagnostic only — dump reads it
+    float scatterDirected;      // offset 144, size  4  sigma_s * directed gain (lightType 1)
     float directedAnisotropy;   // offset 148, size  4
-    float directedStrength;     // offset 152, size  4
+    float _pad;                 // offset 152, size  4
     // Repurposed former pad float (was _pad, always 0) — same offset.
     float isotropicMix;         // offset 156, size  4  see PhaseFunction below
     // --- P8: half-res march (rt_optimization_tuning.md) ---
@@ -296,7 +296,7 @@ void main()
 
         // Beer-Lambert: update running transmittance and bail when negligible.
         float transBefore = transmittance;
-        transmittance *= exp(-params.density * stepSize);
+        transmittance *= exp(-params.extinction * stepSize);
         if (transmittance < 0.001)
             break;
 
@@ -448,12 +448,15 @@ void main()
         }
     }
 
-    // Combine three light classes with independent density/strength controls.
-    // Beer-Lambert transmittance uses global density; these multipliers tune each type.
+    // Each scatter_* holds the accumulated (phase * falloff * visibility * dt * T)
+    // sum for its class; multiplying by sigma_s * gain turns it into radiance.
+    // Transmittance above used sigma_t, so the two halves now share a medium: the
+    // per-class scale divided by sigma_t is that class's effective albedo, and
+    // r_rtVolDump prints it so a value above 1 (energy creation) is visible.
     vec3 result = max(
-        scatter_point    * params.density          * params.strength          +
-        scatter_directed * params.directedDensity  * params.directedStrength  +
-        scatter_flash    * params.flashlightDensity * params.flashlightStrength,
+        scatter_point    * params.scatterPoint    +
+        scatter_directed * params.scatterDirected +
+        scatter_flash    * params.scatterFlash,
         vec3(0.0));
 
     // Clamp well under the fp16 (rgba16f) ceiling to avoid Inf.

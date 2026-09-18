@@ -228,11 +228,12 @@ void main()
             gl_RayQueryCommittedIntersectionNoneEXT)
             continue; // occluded
 
-        // Per-class density*strength is folded in here, not at the end: the
+        // sigma_s * per-class radiance gain, already folded CPU-side
+        // (VK_RT_VolScatterScale).  Applied here, not at the end, because the
         // integrate pass walks a single class-blind scattering field.
-        float classScale = isFlashlight ? (fp.densities.z * fp.strengths.z)
-                         : isDirected   ? (fp.densities.y * fp.strengths.y)
-                                        : (fp.densities.x * fp.strengths.x);
+        float classScale = isFlashlight ? fp.strengths.z
+                         : isDirected   ? fp.strengths.y
+                                        : fp.strengths.x;
 
         vec3 contrib = lightColor * lightIntens * phase * atten * classScale;
 
@@ -246,8 +247,9 @@ void main()
     // Clamp well under the fp16 ceiling to avoid Inf.
     scatter = min(max(scatter, vec3(0.0)), vec3(4096.0));
 
-    // Alpha is the extinction coefficient, except under debug mode 2 where it
-    // carries the light count instead (uniform branch, no divergence cost).
+    // Alpha is sigma_t, the extinction coefficient the integrate pass
+    // exponentiates — except under debug mode 2 where it carries the light count
+    // instead (uniform branch, no divergence cost).
     float alphaOut = (fp.misc.z == 2) ? float(litCount) : fp.densities.x;
 
     imageStore(froxelScatter, cell, vec4(scatter, alphaOut));
