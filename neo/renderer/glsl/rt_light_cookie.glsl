@@ -53,6 +53,40 @@ vec3 rt_SampleLightCookie(RTLightCookie c, vec3 worldPos)
     return texture(matTextures[nonuniformEXT(c.imageIndex)], uv).rgb;
 }
 
+// rt_SampleLightCookieSoft — VOLUMETRIC-ONLY variant that fades over a band just
+// outside the [0,1] projector box instead of hard-clipping to black.
+//
+// The surface paths must keep the hard edge above: that is what real Doom 3's
+// projected-light interaction pass does, and softening it would make lit surfaces
+// disagree with the GL renderer.  The volumetric paths have the opposite problem —
+// they widened the cone with an angular penumbra (VOL_CONE_PENUMBRA), and every
+// cell in that new band projects OUTSIDE [0,1], so the hard clip multiplied the
+// entire softened band by zero and the cone edge stayed exactly as hard as before
+// for any light with a cookie.  Fan/grate fixtures are precisely those lights.
+//
+// UV is clamped for the fetch so the band extends the border texel rather than
+// wrapping; Doom 3 cookies fall off to dark at their border, so this reads as the
+// projector's own edge fading out.
+vec3 rt_SampleLightCookieSoft(RTLightCookie c, vec3 worldPos, float penumbra)
+{
+    vec4 p = vec4(worldPos, 1.0);
+    float s = dot(p, c.planeS);
+    float t = dot(p, c.planeT);
+    float q = dot(p, c.planeQ);
+    if (q <= 0.0)
+        return vec3(0.0);
+    vec2 uv = vec2(s, t) / q;
+
+    // How far outside the box, in UV units; zero anywhere inside it.
+    vec2  outAxis = max(vec2(0.0) - uv, uv - vec2(1.0));
+    float outside = length(max(outAxis, vec2(0.0)));
+    if (outside >= penumbra)
+        return vec3(0.0);
+
+    float fade = 1.0 - smoothstep(0.0, penumbra, outside);
+    return texture(matTextures[nonuniformEXT(c.imageIndex)], clamp(uv, 0.0, 1.0)).rgb * fade;
+}
+
 // Used by rt_light_eval.glsl's shadow-budget/stochastic-selection weighting,
 // not just cookie code — kept here since both files already include this file.
 float rt_LightLuminance(vec3 c)

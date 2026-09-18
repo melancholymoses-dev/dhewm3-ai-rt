@@ -14,6 +14,13 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height);
 void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size);
 void VK_Image_Purge(idImage *img);
 
+// Monotonic, bumped on every idImage::backendData transition (upload or purge).
+// Consumers caching anything derived from a vkImageData_t — notably
+// vk_material_table.cpp's bindless descriptors — must compare this rather than
+// the vkImageData_t pointer, which the allocator can recycle across a
+// purge/reupload pair and so cannot detect one.
+uint32_t VK_Image_ChangeCounter(void);
+
 // Cinematic (video) image — updated each frame before the render pass.
 // cmd must be a recording command buffer outside any render pass.
 bool VK_Image_UpdateCinematic(VkCommandBuffer cmd, const byte *rgba, int w, int h);

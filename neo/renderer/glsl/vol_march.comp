@@ -158,6 +158,7 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
 // is only meaningful while both paths evaluate the same light model.  See the
 // rationale there.
 #define VOL_CONE_PENUMBRA 0.35
+#define VOL_COOKIE_PENUMBRA 0.08
 
 // ---------------------------------------------------------------------------
 // Henyey-Greenstein phase function.
@@ -434,7 +435,7 @@ void main()
             // in the light shaft" payoff, not just a wall/floor tint.
             if ((giLightBuf.lights[li].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
             {
-                vec3 cookie = rt_SampleLightCookie(giLightBuf.cookies[li], stepPos);
+                vec3 cookie = rt_SampleLightCookieSoft(giLightBuf.cookies[li], stepPos, VOL_COOKIE_PENUMBRA);
                 contrib = contrib * cookie;
             }
 

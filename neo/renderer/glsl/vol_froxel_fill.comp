@@ -95,6 +95,12 @@ layout(set = 0, binding = 3, std430) readonly buffer GILightBuf {
 // shaft saw nothing at all rather than something dim.
 #define VOL_CONE_PENUMBRA 0.35
 
+// Matching soft band for cookie-bearing projected lights, in projector UV units.
+// Without it the cone penumbra above is multiplied by zero at the projector edge
+// (rt_SampleLightCookie clips hard outside [0,1]) and buys nothing on exactly the
+// fan/grate fixtures it was added for.  See rt_SampleLightCookieSoft.
+#define VOL_COOKIE_PENUMBRA 0.08
+
 // Identical to vol_march.comp's.
 float HenyeyGreenstein(float cosTheta, float g)
 {
@@ -231,7 +237,7 @@ void main()
         vec3 contrib = lightColor * lightIntens * phase * atten * classScale;
 
         if ((giLightBuf.lights[li].flags & GI_LIGHT_FLAG_HAS_COOKIE) != 0u)
-            contrib *= rt_SampleLightCookie(giLightBuf.cookies[li], cellPos);
+            contrib *= rt_SampleLightCookieSoft(giLightBuf.cookies[li], cellPos, VOL_COOKIE_PENUMBRA);
 
         scatter += contrib;
         litCount++;

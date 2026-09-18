@@ -80,6 +80,19 @@ static void VK_DestroyImageData(vkImageData_t *vkd)
     delete vkd;
 }
 
+// Monotonic counter bumped on every backendData transition (upload or purge).
+// vk_material_table.cpp validates its bindless descriptors against this rather
+// than against vkImageData_t* identity alone: VK_DestroyImageData deletes the
+// object and a later upload can be handed the same address by the allocator, so
+// a pointer compare can miss a purge/reupload pair (ABA) and leave a descriptor
+// pointing at a destroyed VkImageView.
+static uint32_t s_imageChangeCounter = 0;
+
+uint32_t VK_Image_ChangeCounter(void)
+{
+    return s_imageChangeCounter;
+}
+
 void VK_Image_DrainGarbage(uint32_t frameIdx)
 {
     for (int i = 0; i < s_imageGarbageCount[frameIdx]; i++)
@@ -778,6 +791,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     vkd->height = (uint32_t)height;
 
     img->backendData = vkd;
+    s_imageChangeCounter++;
 }
 
 // ---------------------------------------------------------------------------
@@ -985,6 +999,7 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     vkd->height = (uint32_t)size;
 
     img->backendData = vkd;
+    s_imageChangeCounter++;
 }
 
 // ---------------------------------------------------------------------------
@@ -999,6 +1014,7 @@ void VK_Image_Purge(idImage *img)
 
     vkImageData_t *vkd = (vkImageData_t *)img->backendData;
     img->backendData = NULL;
+    s_imageChangeCounter++;
 
     // If the Vulkan device isn't up yet (or we're at shutdown after draining),
     // destroy immediately.  Otherwise queue for the current frame slot so the

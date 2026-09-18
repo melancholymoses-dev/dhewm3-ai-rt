@@ -47,11 +47,23 @@ layout(push_constant) uniform PC {
 
 layout(location = 0) out vec4 fragColor;
 
-// T^k == exp(-k*tau): scales the optical depth the composite attenuates by,
-// leaving the in-scattering the march/froxel already computed untouched.  This is
-// the single-scatter albedo — extinction and scattering are one `density` cvar
-// everywhere upstream, and that constant is tuned for visible shafts, which is
-// far too thick to also use as the background's extinction (F6).
+// T^k == exp(-k*tau): scales the optical depth used to attenuate the background,
+// leaving the in-scattering the march/froxel already computed untouched.
+//
+// This is a NON-PHYSICAL artistic control, not a single-scatter albedo.  Two
+// things are deliberately inconsistent, and both are the price of not retuning
+// the medium:
+//   - upstream integrates the airlight (and its own self-attenuation) with the
+//     raw `density`, while the background here uses k*density, so the two halves
+//     of the transport equation do not share an extinction coefficient;
+//   - k < 1 means extinction below scattering, which no real medium does
+//     (albedo = 1/k > 1).
+// `density` is one cvar doing both jobs everywhere upstream and is tuned for
+// visible shafts — far too thick to double as the background's extinction, where
+// exp(-0.015*500) fully extinguishes an ordinary corridor.  Making this physical
+// means splitting sigma_s from sigma_t in vol_march.comp and the froxel integrate
+// pass, which changes the tuned look of the additive path too; see F6 in
+// 20260906_froxel_probe_gi.md.
 float attenuation(float transmittance)
 {
     if (pc.attenStrength <= 0.0)
@@ -104,7 +116,9 @@ void main()
 
     // .a is path transmittance (see vol_march.comp), not coverage/opacity.
     // With r_rtVolAttenuateBackground the composite binds a pipeline whose
-    // dstColorBlendFactor is SRC_ALPHA, so this gives dst = airlight + T^k*dst —
-    // the full transport equation. The additive pipeline still ignores alpha.
+    // dstColorBlendFactor is SRC_ALPHA, giving dst = airlight + T^k*dst — the
+    // attenuating half of the transport equation that the pure-additive blend
+    // omitted entirely, though see attenuation() above for where k makes the two
+    // halves inconsistent. The additive pipeline still ignores alpha.
     fragColor = vec4(vol.rgb, attenuation(vol.a));
 }
