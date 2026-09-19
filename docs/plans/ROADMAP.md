@@ -35,7 +35,8 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 |---|---|---|---|
 | 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R4/R6 landed 2026-09-12.** Validated in-game 2026-09-18: gating is correct, but the surviving pixels don't read — R5 moved to the doc below |
 | 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `20260918_reflection_brightness.md` | 🔴 **Not started.** B0 (debug modes 5-7) first; B1 (shadow cull mask) is the one outright bug |
-| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5 and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6. |
+| 3 | **FSR upscaling** — every RT pass is screen-resolution, so decoupling render res from display res is worth ~6.6 ms of the 11.93 ms RT budget. U0 (resolution split + bilinear) delivers the whole perf win with no third-party code; FSR2 buys the quality back. | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK choice: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. U0 is independently shippable |
+| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5, G5b and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6, and **G5b (flicker factorization, added 2026-09-18) is now a blocker on that decision** — probe GI cannot track a flickering light at all today. |
 
 ### Measured RT budget (Mars City, 2026-09-11)
 
@@ -119,7 +120,8 @@ it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were se
 | Doc | Owns |
 |---|---|
 | `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done; **T3-T6 not started** (T3 is absorbed into the reflection rework above). |
-| `20260906_froxel_probe_gi.md` | World-space caching arc (arc #2). |
+| `20260906_froxel_probe_gi.md` | World-space caching arc (arc #2), including G5b flicker factorization. |
+| `20260918_fsr_upscaling.md` | Render-resolution decoupling and FSR upscaling (arc #3). Also owns motion vectors and jitter, which any future upscaler/TAA would share. |
 | `20260906_bloom_plan.md` | Bloom post-process — unimplemented; the tonemapped HDR pipeline it needs now exists. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
