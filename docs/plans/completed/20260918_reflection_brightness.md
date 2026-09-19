@@ -275,18 +275,18 @@ Both of B3's actual complaints are fixed, without the struct change:
 
 - **The two inconsistent constants now agree.** `reflect_ray.rchit`'s `F0` went 0.1 → 0.15,
   matching `GLASS_F0` in `reflect_ray.rgen`.
-- **The interface weight is at B3's target.** `r_rtReflectionBlend` 1.0 → 2.5 against
-  F0 0.15 gives ~0.375 effective, against the 0.4 B3 proposed. Reached with two cvars
-  instead of a 36 → 40 byte `VkMaterialEntry`, an `sizeof` assert, a payload field and four
-  shader edits.
+- **The interface weight is near B3's target.** `r_rtReflectionBlend` 1.0 → 2.0 against
+  `GLASS_F0` 0.15 gives 0.30 effective at normal incidence, against the 0.4 B3 proposed.
+  Reached with two constants instead of a 36 → 40 byte `VkMaterialEntry`, an `sizeof`
+  assert, a payload field and four shader edits.
 
 **What was given up:** per-material F0, so mirrors (`SS_SUBVIEW`, B3's 0.9) cannot be
 distinguished from glass. Doom 3 mirrors are raster subviews and do not come through this
 path, so the cost is ~zero today. Revisit only if a genuine RT mirror surface appears.
 
 Note `r_rtReflectionBlend` is a proportional gain on reflection radiance, not an additive
-floor — it does not lift dark reflections off the floor, so pillar 2 holds. Its slider range
-was widened to 5.0 to make it tunable in play.
+floor — it does not lift dark reflections off the floor, so pillar 2 holds. Slider and
+upload clamp are both 5.0, leaving headroom to tune higher.
 Bumped up reflection blend rather than retune everything again.
 
 ---
