@@ -1,7 +1,9 @@
 # Reflection Brightness — make the surviving pixels read
 
 **Date:** 2026-09-18
-**Status:** B0 landed + measured 2026-09-19. B1 in progress. B2-B5 not started.
+**Status:** B0 and B1 landed 2026-09-19. B2-B5 not started. **B3 is blocked** on
+`20260919_dynamic_model_normals.md` — the reflected subject is lit from the wrong direction,
+so nothing about reflection brightness can be judged against it until that lands.
 **Follows:** `20260911_reflection_gating.md` — that doc decided *which pixels trace*
 (R1/R2/R4/R6, landed 2026-09-12). This one is its unfinished R5: *what those pixels
 are worth*. R5 is moved here in full and expanded; the gating doc keeps R0-R6.
@@ -179,6 +181,13 @@ culls on `f0 < 1/255` and `f0` *is* `gbuf.a`. Branch kept, commented; relevant t
   gap is the ×0.15 `GLASS_F0`. → **B3 is not cosmetic.**
 - **B2's 2× is safe but is not the answer.** Mode 7's ×8 already saturates the world to
   white, so 2× fits; it does nothing for the player gap.
+
+**Follow-up, not yet done:** debug modes 2-7 force `reflMode` to 2 (`vk_reflections.cpp:1105`
+— `glassOnly = (mode == 1) && !reflDebugActive`), so every opaque pixel is traced and gated
+only by F0/minWeight. That is what the B0 spec asked for, but it means mode 6/7 cannot show
+what shipping mode 1 actually produces — raise the Fresnel knobs and metal reflections
+appear that normal play never pays for. The debug modes should honour `r_rtReflectionMode`
+and force full-screen only for mode 5, whose job is coverage.
 
 Caveats: the camera moved between the mode 6 and mode 7 captures, so only within-image
 comparisons are load-bearing (all of the above are). And **modes 6/7 are tonemapped** —
