@@ -17,11 +17,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
    floor of dark ones.
 3. **Light the air sparingly.** Volumetrics from hero lights only.
 4. **Reflections are set dressing.** Glass and mirrors, plus the odd hero surface by
-   explicit opt-in. Gated by *surface type*, not by a value derived from specular maps —
-   that was tried and failed (2026-09-12): Doom 3's specular maps encode a Blinn-Phong
-   highlight concentrated on panel seams and trim, so an F0 remap puts sharp mirror
-   specks on exactly the wrong geometry. The assets carry no PBR data; don't pretend
-   they do.
+   explicit opt-in.  The assets carry no PBR data; don't pretend they do.
 5. **No map editing.** Engine-side rules + budgets + debug overlays. Small def-file
    mods are allowed.
 6. **Debug visualization before tuning.** Every feature ships with an overlay mode;
@@ -34,7 +30,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R4/R6 landed 2026-09-12.** Validated in-game 2026-09-18: gating is correct, but the surviving pixels don't read — R5 moved to the doc below |
-| 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `20260918_reflection_brightness.md` | 🔴 **Not started.** B0 (debug modes 5-7) first; B1 (shadow cull mask) is the one outright bug |
+| 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `20260918_reflection_brightness.md` | 🟡 **B0 done 2026-09-19** — verdict: the player self-shadows (F4, →B1, dominant) and `GLASS_F0` eats the world reflection (→B3). B1 in progress |
 | 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5, G5b and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6, and **G5b (flicker factorization, added 2026-09-18) is now a blocker on that decision** — probe GI cannot track a flickering light at all today. |
 | 3 | **FSR upscaling** — every RT pass is screen-resolution, so decoupling render res from display res is worth ~6.6 ms of the 11.93 ms RT budget. U0 (resolution split + bilinear resolve) delivers the whole perf win with no third-party code; U1-U5 buy the image quality back. | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. **Sequenced after arcs 1b and 2 — with one exception: pull U0 forward to sit immediately before G6.** See below |
 
