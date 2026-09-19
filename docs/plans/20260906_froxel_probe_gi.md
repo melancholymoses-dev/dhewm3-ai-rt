@@ -1262,6 +1262,18 @@ only if G6's corner tuning turns out to be ambiguous because of it.
 meaning under probes. This overlaps `rt_optimization_tuning.md` T4-T6 and **must come
 last**. Decide the per-pixel path's fate, flip the default, update ROADMAP.md.
 
+**Two prerequisites, added 2026-09-18:**
+
+- **G5b must pass first.** Doom 3 uses flickering lights constantly as an atmosphere
+  device, so "probes smear every flickering light in the game" is a standing veto on
+  flipping `r_rtGIProbes 1` regardless of what the millisecond column says.
+- **Decide at the render resolution you intend to ship at**, not at native. The two
+  candidates do not scale together: per-pixel GI is entirely screen-resolution work
+  (4.41 → ~1.95 ms at 0.67 scale) while the probe trace is probe-count-bound and barely
+  moves (G2: 0.048 ms), so lower render resolution *shrinks* the probe path's advantage.
+  `20260918_fsr_upscaling.md`'s U0 is sequenced immediately before this chunk for exactly
+  that reason.
+
 ## B.6 Known risks
 
 | Risk | Signal | Mitigation |

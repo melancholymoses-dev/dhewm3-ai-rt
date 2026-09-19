@@ -461,6 +461,72 @@ Changing `r_fsr`, `r_fsrQuality` or `r_fsrRenderScale` requires a device-idle re
 rebuild — route them through the same path `VK_RT_ResizeTonemap` already uses and treat
 them exactly like a window resize.
 
+### 8.1 How render resolution is actually chosen
+
+Worth writing down because the intuitive answer — a table of resolutions per card family
+and aspect ratio — is not what anybody ships, and getting this wrong creates work that
+does not need doing.
+
+**The rule is: one linear divisor, applied to the actual output extent, per axis.**
+
+```c
+renderW = round(displayW / ratio);
+renderH = round(displayH / ratio);
+```
+
+FSR, DLSS and XeSS have all converged on the same divisors, which is why the mode names
+are interchangeable across them:
+
+| Mode | Divisor | Linear | Pixels |
+|---|---|---|---|
+| Native AA | 1.0 | 100 % | 100 % |
+| Quality | 1.5 | 66.7 % | 44.4 % |
+| Balanced | 1.7 | 58.8 % | 34.6 % |
+| Performance | 2.0 | 50 % | 25 % |
+| Ultra Performance | 3.0 | 33.3 % | 11.1 % |
+
+FSR2 ships this as `ffxFsr2GetRenderResolutionFromQualityMode(&w, &h, displayW, displayH,
+mode)` — use it rather than reimplementing the table, so our rounding matches the
+jitter phase count that `ffxFsr2GetJitterPhaseCount` derives from the same ratio.
+
+**Aspect ratio needs no handling whatsoever.** The same divisor on both axes preserves it
+by construction, so 16:9, 16:10, 4:3 and ultrawide are all the same code path. The
+upscaler never sees an aspect ratio — only `renderSize` and `displaySize`. In this engine
+it is doubly a non-issue: FOV comes from `renderView.fov_x/fov_y`, which game code derives
+from the *display* dimensions (`idPlayer::CalcFov`, `Player.cpp:8191`), and §2's sub-rect
+architecture deliberately leaves `glConfig.vidWidth/Height` alone — so the projection keeps
+using display aspect without anyone having to arrange it.
+
+**Nothing is chosen per card family.** What shipping titles sometimes do is auto-select an
+initial *preset* from a GPU database on first run — that picks a dropdown entry, not a
+bespoke resolution. The resolution still falls out of the divisor.
+
+**The other real answer is dynamic resolution scaling**, and it is the one that makes §2's
+layout pay off. Target a frame time, measure the previous frame's GPU time, and move the
+scale inside a band (typically 50–100 %) with a damped controller. `maxRenderSize` is set
+once at context creation to the top of the band; per-frame `renderSize` varies. Two
+practicalities that are always learned the hard way: **quantise the scale to steps** (~5 %)
+and **rate-limit changes**, because a temporal upscaler's history is mildly invalidated
+every time the sample grid moves, and a controller that hunts produces visible breathing.
+Deferred to U5; the architecture already supports it because we allocate at display
+resolution and render into a varying sub-rect.
+
+**Rounding, for this engine specifically.** Every screen-space compute pass here is
+`local_size 8×8` (`atrous_filter`, `gi_atrous`, `gi_probe_resolve`, `temporal_resolve`,
+`vol_*`, `tonemap` — checked 2026-09-18), so snapping `renderExtent` to a multiple of 8
+eliminates partial workgroups across the whole chain and keeps `r_rtGICheckerboard`'s
+parity stable. But **snap only when actually upscaling.** Common display widths are not
+all multiples of 8 (1366 is not), and snapping at ratio 1.0 would round 1366 → 1360 and
+break U0's cheapest regression test — that `r_fsrRenderScale 1.0` is bit-identical to
+`r_fsr 0`. Special-case the identity ratio to pass the display extent through untouched.
+
+One cosmetic note, so nobody "fixes" it later: per-axis rounding makes the render aspect
+differ from the display aspect by a fraction of a pixel (1920/1.7 = 1129.4, 1080/1.7 =
+635.3 → 1129×635, an aspect of 1.7780 against 1.7778). This is what every implementation
+does and the error is far below a pixel. Do **not** try to correct it by adjusting the
+projection — that would make the render and display frusta disagree, which is a real bug
+in exchange for an imaginary one.
+
 ---
 
 ## 9. Chunks
@@ -479,6 +545,12 @@ UI draw on top at full resolution. `r_fsrDebug 1` and `4` ship here.
   invisible at one of them. Mirrors and security-camera subviews correct.
   `r_rtReflectionMode 1` still finds and traces glass.
 - **This chunk is independently shippable and delivers the entire performance win.**
+- **Sequencing:** the rest of this arc waits for arcs 1b and 2, but **U0 should land just
+  before `20260906_froxel_probe_gi.md`'s G6**. G6 decides whether to retire per-pixel GI on
+  a cost/quality trade, and U0 cuts the two candidates' costs *unevenly* — per-pixel GI is
+  entirely screen-resolution work (4.41 → ~1.95 ms at 0.67), while the probe trace is
+  probe-count-bound and barely moves. Deciding at full resolution and then halving the cost
+  side risks deciding G6 twice. See ROADMAP's sequencing note.
 
 ### U1 — FSR 1 (EASU + RCAS)  🔴 *optional*
 Vendor `ffx_a.h` + `ffx_fsr1.h` into `renderer/glsl/fsr1/`, add to `GLSL_INCLUDES`, write
