@@ -34,6 +34,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "renderer/tr_local.h"
 
+#include <SDL.h>
+
 /*
 ==============================================================================
 
@@ -2062,6 +2064,57 @@ void R_DeriveTangents(srfTriangles_t *tri, bool allocFacePlanes)
     tri->facePlanesCalculated = true;
 
     Mem_FreeA(planes, planesOnStack);
+}
+
+/*
+=================
+R_DeriveDeformedTangents
+
+Called by the deformed-model generators (md5, liquid) right after they rewrite
+tri->verts.  Doom 3 defers derivation to the raster frontend, which only runs
+it for surfaces that survive frustum culling — so a culled surface reaches the
+TLAS with current positions and bind-pose normals.  RT has no way to know that
+happened, so while the TLAS is live the deferral is disabled here.
+
+r_rtDeformedTangents 0 restores the deferral for A/B cost measurement;
+r_showDynamic reports the count and time.
+=================
+*/
+void R_DeriveDeformedTangents(srfTriangles_t *tri)
+{
+    extern bool VK_RT_TLASActive(void);
+
+    if (!r_useDeferredTangents.GetBool())
+    {
+        R_DeriveTangents(tri);
+        return;
+    }
+
+    if (tri->tangentsCalculated || !VK_RT_TLASActive())
+    {
+        return;
+    }
+
+    if (!r_rtDeformedTangents.GetBool())
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            common->Warning("r_rtDeformedTangents 0 with RT active: dynamic models will reach the TLAS "
+                            "with bind-pose normals (measurement mode only)");
+        }
+        return;
+    }
+
+    const Uint64 startCounter = SDL_GetPerformanceCounter();
+    R_DeriveTangents(tri);
+    const Uint64 freq = SDL_GetPerformanceFrequency();
+    if (freq != 0)
+    {
+        tr.pc.c_rtDeformTangentUsec += (int)(((SDL_GetPerformanceCounter() - startCounter) * 1000000ull) / freq);
+    }
+    tr.pc.c_rtDeformTangents++;
 }
 
 /*

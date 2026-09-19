@@ -1028,6 +1028,19 @@ void VK_RT_DestroyBLAS(vkBLAS_t *blas)
 }
 
 // ---------------------------------------------------------------------------
+// VK_RT_TLASActive
+// Single source of truth for "the TLAS is live this frame".  Also called from
+// the frontend to decide whether RT-only per-frame geometry work is needed.
+// ---------------------------------------------------------------------------
+
+bool VK_RT_TLASActive(void)
+{
+    if (!vk.rayTracingSupported || !vkRT.isInitialized || !r_useRayTracing.GetBool())
+        return false;
+    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
+}
+
+// ---------------------------------------------------------------------------
 // VK_RT_RebuildTLAS
 // Rebuild the Top-Level AS each frame from visible entities in viewDef.
 // Each entity contributes one instance pointing to its BLAS.

@@ -92,11 +92,11 @@ void main()
     MaterialEntry mat = materials[matIdx];
     if ((mat.flags & MAT_FLAG_GLASS) != 0u)
     {
-        // Thin-glass approximation: flat F0 = 0.05 (5 % reflectance at all angles).
+        // Thin-glass approximation: flat F0 = 0.15 (15 % reflectance at all angles).
         // The reflected colour is tinted by the glass diffuse texture.
-        // The remaining 95 % continues straight through (no refraction).
+        // The remaining 85 % continues straight through (no refraction).
         // Glass tint is left unlit — it is a transmission colour, not a surface.
-        const float F0      = 0.1;
+        const float F0      = 0.15;
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
@@ -133,11 +133,12 @@ void main()
         // contribScale 1.0: reflections show first-hit direct light; bounceScale is a
         // GI-bounce-only knob (the pre-P5 drift where GI applied it and reflections
         // didn't is now explicit here).
+        // 0xFF: the player *should* cast shadows into the reflected world (B1).
         vec3 irradiance = vec3(REFL_AMBIENT) +
                           rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
                                                 REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
                                                 1.0, REFL_SHADOW_MIN_LUM,
-                                                rtLightBuf.reflAmbientScale);
+                                                rtLightBuf.reflAmbientScale, 0xFFu);
         reflPayload.colour = diffuse.rgb * irradiance;
     }
     else

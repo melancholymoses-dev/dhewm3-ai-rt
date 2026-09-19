@@ -55,6 +55,11 @@ hitAttributeEXT vec2 baryCoord;
 #define REFL_SHADOW_MIN_LUM    0.02
 #define REFL_AMBIENT           0.01
 
+// B1: drop noSelfShadow instances (mask bit set in vk_accelstruct.cpp:1205) from this
+// surface's shadow rays — same value shadow_ray.rgen:367 uses for the primary view.
+// Doom 3 marks the player noSelfShadow; without this the model shadows itself here only.
+#define REFL_SELF_SHADOW_MASK  0xFEu
+
 void main()
 {
     // Mirror distance: look up diffuse texture and apply per-light shadowed irradiance.
@@ -79,7 +84,8 @@ void main()
                           rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
                                                 REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
                                                 1.0, REFL_SHADOW_MIN_LUM,
-                                                rtLightBuf.reflAmbientScale);
+                                                rtLightBuf.reflAmbientScale,
+                                                REFL_SELF_SHADOW_MASK);
         reflPayload.colour = diffuse.rgb * irradiance;
     }
     else

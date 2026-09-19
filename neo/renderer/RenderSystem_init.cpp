@@ -146,6 +146,9 @@ idCVar r_rtShadows("r_rtShadows", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL 
 idCVar r_rtAO("r_rtAO", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER, "ray traced ambient occlusion");
 idCVar r_rtReflections("r_rtReflections", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL | CVAR_INTEGER,
                        "ray traced reflections (expensive)");
+idCVar r_rtDeformedTangents("r_rtDeformedTangents", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_INTEGER,
+                            "derive tangents for deformed models every frame while the TLAS is live, "
+                            "ignoring r_useDeferredTangents (0 = restore the deferral, for cost A/B)");
 // r_rtGI is declared in vk_gi.cpp — extern reference here for documentation.
 // All CVars from vk_gi.cpp are registered automatically at startup.
 idCVar r_rtShadowSamples("r_rtShadowSamples", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
