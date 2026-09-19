@@ -9,6 +9,21 @@ The renderer in neo/renderer/GL is the original version for this repo and works 
 
 When you work, check the existing GL functionality to understand how Doom3 expects things to render.  
 
+## Writing
+
+Plan docs: a stage is ≤40 lines. Tables and file lists over prose.
+State the change and how to check it. No "why it reads the way it does"
+sections, no restating a point at two levels of detail.  Keep motivation brief.
+
+Chat: lead with the answer. No preamble, no recap of what I just said,
+no summary of what you just did if it's visible in the diff.
+
+Ban: "worth noting", "it's worth knowing", "the interesting thing here", "it's load-bearing",
+bolded thesis sentences, and rhetorical setup before a fact.
+
+Code: Inline comments at most a few sentences.  Keep motivation brief and limited to crucial info.
+Save long motivation in memories, not the code.
+
 ## Plans
 Plans live in docs/plans/*.md.  **Start with docs/plans/ROADMAP.md** — it owns the
 ordering/status and links the live design docs.  Finished or superseded plans are in
@@ -19,11 +34,9 @@ If there are complex options, favour generating logs and debugging over theoreti
 
 When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
-Do not leave long comments inside functions.  Stay brief with crucial info.  Save long motivation inmemories, not the code.
-
 ## Assets
-The main doom3 assets have been unzipped and are accessible at
-build_rt/pak_assets/pak000 for inspection.  Most are text files despite the odd file suffixes.  Check this with a head command first.
+The main doom3 assets have been unzipped and are accessible at build_rt/pak_assets/pak000 for inspection.  
+Most are text files despite the odd file suffixes.  Check this with a head command first.
 
 neo/game/ and neo/d3xp/ are near-identical; changes must be mirrored across both.  
 Game is for the base game, d3xp is the expansion pack.

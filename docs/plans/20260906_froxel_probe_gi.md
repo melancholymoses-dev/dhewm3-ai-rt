@@ -1038,220 +1038,77 @@ specifically — see G5b.** Fix 1 (narrow the estimator) stays first regardless;
 (adaptive hysteresis) remains the right answer for *doors and moving lights*, which
 G5b cannot help.
 
-### G5b — flicker factorization: separate fast lights from stable ones  🔴
-**Proposed 2026-09-18. Now a live defect, not a gate** — G6 flipped probes on by default
-2026-09-19 without it, so the smeared-flicker artifact ships until this lands. That raises
-its priority rather than lowering it: it is the highest-value open item in Part B.
+### G5b — flicker factorization  🔴 live defect in the default path
 
-The originating idea was "split GI into fast-flickering and stable lights and give each its
-own smoothing rate". The split is right; **two EMA rates is not the mechanism that delivers
-it**, and the difference matters enough to write down before anyone builds it.
+A probe is re-traced every 16 frames and blended at alpha 0.03, so τ ≈ 8.9 s. A flickering
+light's bounce converges to its mean and a dark room keeps a glow. Pillar 2. Shipping since
+G6 flipped probes on.
 
-#### Step 0: confirm which path the lag is actually on
+**Two EMA rates does not fix it.** 16384/1024 = 16 frames per probe = a 3.75 Hz sample rate,
+Nyquist 1.875 Hz. Doom 3 flicker runs above that, so a fast bucket with high alpha aliases
+rather than tracks. Raising the update rate enough to clear it costs 4-8× the probe budget
+and re-imports the estimator noise G1 measured.
 
-This chunk fixes the **probe** path. The per-pixel path's EMA is
-`r_rtGITemporalAlpha 0.5` (`vk_temporal.cpp:944`), i.e. τ ≈ 1.4 frames ≈ 25 ms — it
-cannot produce a multi-second lag. So before building any of this, check
-`r_rtGIProbes`. If it reads `0` and GI still lags by seconds, the cause is somewhere
-else entirely and G5b will not touch it; find it first. (The selection hysteresis at
-`vk_gi.cpp:1431` is a ×1.15 importance boost, not a temporal filter — not a
-candidate.)
-
-#### Why two smoothing rates alone does not work
-
-Latency here is the product of two independent factors and the doc above only names
-one of them:
+**The mechanism.** A flicker is a scalar on a static light, and the CPU knows it exactly
+every frame. Split the stored irradiance:
 
 ```
-  τ  =  (frames between updates for one probe)  ×  (1 / alpha)
-     =  (16384 probes / 1024 per frame)         ×  (1 / 0.03)
-     =  16 frames                               ×  33.3 updates
-     =  533 frames  ≈  8.9 s  @60fps   (1/e)
-                        20 s           (90 % settled)
+E_p = Σ_stable L_j·G_pj  +  s(t) · Σ_fast L̂_k·G_pk
+                          └─ cached NORMALISED (s=1) ─┘
 ```
 
-Lowering hysteresis attacks the second factor. But the first factor is a **sample
-rate**: at the defaults a given probe is re-traced at 60/16 = **3.75 Hz**, which by
-Nyquist can represent nothing above 1.875 Hz. Doom 3's flicker tables run well above
-that. So a "fast" bucket with alpha near 1 does not reproduce the flicker — it
-*aliases* it, trading a smooth wash-out for a strobe at the wrong frequency and the
-wrong phase, which reads as a bug rather than as atmosphere. Two rates is necessary
-and not sufficient; on its own it makes the symptom louder, not better.
+`G` is geometric transport, constant while nothing moves. Caching the fast bucket with the
+flicker divided out makes it time-invariant, so it uses the **same slow hysteresis**, no
+extra rays, and the resolve multiplies by the current `s(t)`. **Flicker latency: zero.**
 
-Raising the update rate until the sample rate clears the flicker is the brute-force
-alternative and it is expensive: covering the flicker frequencies of interest means
-something like a 2-4 frame full rotation, i.e. 4-8× today's probe budget, *and* a low
-alpha on those probes, which re-imports the estimator noise that G1 measured. Paying
-twice for a result that is still only approximate.
+Covers flicker/pulse/strobe in place and full switch-off. A light switching *on* costs one
+refresh (~0.27 s) to build `G`. A **moving** light changes `G`, not `s` — not factorizable,
+stays in the stable bucket, and the classifier must reject it on the origin test or it will
+smear it confidently.
 
-#### The mechanism that does work: factor out amplitude, not time
-
-A Doom 3 flicker is a **scalar multiplier on an otherwise static light**. The light
-entity does not move, the geometry does not move, and the material's `rgb` expression
-only scales the colour. Write the probe's stored irradiance as a sum over lights:
-
-```
-  E_p(ω)  =  Σ_k  L_k(t) · G_{p,k}(ω)
-```
-
-where `G` is the purely geometric/albedo transport from light k to probe p — constant
-whenever neither the light nor the geometry moves — and `L_k(t)` is the light's
-radiance this frame. For a flickering light `L_k(t) = s_k(t) · L̂_k` with `s_k` a
-scalar the CPU already knows exactly, every frame, for free. So:
-
-```
-  E_p(ω)  =  Σ_stable L_j·G_{p,j}(ω)   +   s(t) · Σ_fast L̂_k·G_{p,k}(ω)
-             └────── slow bucket ──────┘         └──── fast bucket ────┘
-                                                  cached NORMALISED (s = 1)
-```
-
-The fast bucket is cached with the flicker **normalised out**, which makes it a
-*time-invariant* field. So it can use the **same slow hysteresis** as the stable
-bucket — no faster sampling, no extra rays, no extra estimator noise — and the resolve
-multiplies it by the current `s(t)`, which tracks at the full frame rate.
-
-**Latency for flicker: zero.** Not "shorter". Zero, because the time-varying part
-never enters the cache at all.
-
-#### What it does and does not cover
-
-| Case | Result |
-|---|---|
-| Light flickers / pulses / strobes in place | ✅ Exact, zero latency. This is the common Doom 3 case and the one the pillar-2 complaint is about. |
-| Light switches fully off | ✅ `s → 0`; the bounce glow goes with it in the same frame. |
-| Light switches **on** having never been traced while on | ⚠️ One refresh of latency (~16 frames ≈ 0.27 s) to build `G`, not 8.9 s. Acceptable; G5's priority bump shortens it further. |
-| Light **moves** | ❌ Movement changes `G`, not just `s`. Not factorizable. Moving lights stay in the stable bucket and keep the lag — that is G5 fix 2's job, unchanged. **The classifier must therefore exclude any light whose origin/axis changed**, or the factorization will confidently smear it. |
-| Door opens / geometry moves | ❌ Changes `G` for every light. G5's scheduling, unchanged. |
-
-#### Approximation, and the knob that controls it
-
-With **one** fast bucket, every flickering light in range shares a single gain `s(t)`.
-That is exact when one flicker light dominates a probe's neighbourhood — which in
-Doom 3 is usually true, a room has one broken strip light — and approximate when two
-flicker out of phase within one probe's reach. `r_rtGIProbeFastBuckets` sets the count
-K; storage and resolve cost scale linearly in K. **Start at K = 1 and measure** with
-the overlay below before paying for K = 2.
-
-#### Classification (CPU, `vk_gi.cpp`)
-
-Everything needed is already in hand at the light-collection site:
-`lightShader->EvaluateRegisters(regs, p.shaderParms, viewDef, ...)` runs per light per
-frame at `vk_gi.cpp:1499`, and `idRenderLightLocal::index` is a stable key — the file
-already keeps per-lightDef state arrays against it (`s_lightSelectedFrame`,
-`kHysteresisMaxLightIdx 4096`, `vk_gi.cpp:1287`). Follow that pattern exactly.
-
-Per lightDef, keep: last frame's evaluated colour, a running max luminance over ~2 s,
-and last frame's origin/axis. Then:
-
-- **fast** if the evaluated colour changed by more than `r_rtGIFlickerThreshold`
-  (relative) within the last `r_rtGIFlickerHold` seconds, **and** the origin and axis
-  are unchanged. Sticky over that hold window so a one-off change does not thrash the
-  classification (which would itself cause a pop, since reclassifying moves a light
-  between two caches that converge at different times).
-- `L̂_k` = the running max colour; `s_k(t)` = current luminance / max luminance.
-
-Deriving `L̂` from a running max rather than from the material makes this
-**self-calibrating**: it works identically for `flicker`, `pdflicker`, hand-written
-tables, and script-driven `setShaderParm`, with no material parsing and no table
-lookups. The cost is that a light's first ~2 s after coming into view are calibrated
-against an incomplete max; clamp `s ≤ 1` and let it settle.
-
-#### GPU changes
+**Changes**
 
 | File | Change |
 |---|---|
-| `GILightEntry` (`vk_gi.cpp:178`) | one flag bit `GI_LIGHT_FAST`, plus the normalised colour `L̂` alongside the existing current colour |
-| `GIParams` UBO | `vec4 fastGain[K]` — the per-bucket `s(t)`, uploaded per frame |
-| `gi_ray.rchit` / `rt_light_eval.glsl` | route each light's contribution to accumulator 0 or 1 by the flag. **Take the bucket selector as a parameter** — per the engine-wide rule from 2026-09-18, shared ray helpers do not hardcode per-consumer state |
-| `gi_payload.glsl` | payload grows by one `vec3` |
-| `gi_probe_trace.rgen` | writes two scratch values per ray |
-| `gi_probe_blend.comp` | blends both irradiance layers at the **same** hysteresis; **the distance atlas is not duplicated** — geometry does not flicker |
-| `gi_probe_resolve.comp` | `E = E_stable + Σ_k E_fast[k] · fastGain[k]` |
+| `vk_gi.cpp` classify | per-lightDef: last colour, ~2 s running max, last origin/axis. Fast if relative colour change > threshold within the hold window **and** origin/axis unchanged. `L̂` = running max, `s` = current/max, clamp `s ≤ 1`. Key off `idRenderLightLocal::index` like `s_lightSelectedFrame` (`vk_gi.cpp:1287`) |
+| `GILightEntry` | flag bit `GI_LIGHT_FAST` + normalised colour `L̂` |
+| `GIParams` UBO | `vec4 fastGain[K]` |
+| `rt_light_eval.glsl` | route contribution to accumulator 0/1 by the flag — **bucket selector is a parameter**, not hardcoded |
+| `gi_payload.glsl` | +1 `vec3`. First fold `backface` into `sign(hitDist)` — the scratch encoding already carries it that way — to claw back 4 bytes |
+| `gi_probe_blend.comp` | blend both layers at the same hysteresis; distance atlas **not** duplicated |
+| `gi_probe_resolve.comp` | `E = E_stable + Σ_k E_fast[k]·fastGain[k]` |
 
-Make the irradiance atlas a **2-layer (K+1) array texture** rather than a second
-separate image: `gip_AtlasUV` is then computed once and both taps share it, which is
-the difference between +50 % and +~25 % on the resolve's fetch cost.
+Make the irradiance atlas a `K+1` layer array, not a second image — one `gip_AtlasUV` for
+both taps.
 
-#### Cost
+**Cost.** Rays unchanged; that is the point. +13.1 MB per bucket, capacity only — the
+resolve is issue-rate bound over screen pixels (G2), not bandwidth bound. **The one real
+risk is the payload**: 20 → 32 bytes feeds RT occupancy, so measure the payload growth
+alone before wiring the split.
 
-**Footprint is not the interesting number here** — see the analysis below the table.
-VRAM capacity is free at this scale; what predicts time is unique bytes touched per
-frame, and the answer is that the probe atlases are comfortably L2-resident either way.
+Deriving `L̂` from a running max makes this self-calibrating — works for `flicker`,
+`pdflicker`, hand tables and script `setShaderParm` with no material parsing.
 
-| Item | At the 32×32×16 / 128-ray defaults |
-|---|---|
-| Irradiance atlas | 1280×1280 RGBA16F = 13.1 MB → **+13.1 MB per fast bucket** (capacity only) |
-| Distance atlas | 2304×2304 RG16F = 21.2 MB, **unchanged** — geometry does not flicker |
-| Probe scratch | 128×1024 RGBA16F = 1.05 MB/slot → **+1.05 MB/slot** |
-| Rays traced | **unchanged** — this is the whole point |
-| Blend pass | 2× irradiance load/store over 1024 tiles ≈ 2 MB/frame extra. Not a measured cost centre and not about to become one |
-| Resolve pass | +8 filtered fetches and their address math per pixel. G2 measured the resolve at 74 % of the probe chain — but that chain is small in absolute terms (the trace is 0.048 ms), and 74 % is a *share*, not a verdict. Measure it; keep `r_rtGIProbeFastBuckets 0` as a working off switch |
-| ⚠️ **Ray payload** | **The one place where "more memory" can actually cost time here.** See below |
-
-#### Why the atlas growth is free, and where the real risk is
-
-The resolve issues ~16 filtered fetches per pixel (8 taps × irradiance + distance).
-At 1920×1080 that is ~795 MB of *requests* per frame — but the *unique* bytes behind
-them are the probe tiles covering the visible region, which for a generous 16×16×4
-probe volume is ~2.1 MB (1024 probes × [100 irradiance texels × 8 B + 324 distance
-texels × 4 B]). Adjacent pixels sample the same eight probes, so the reuse ratio is on
-the order of 400:1 and the working set sits inside L2 on every modern part. Adding a
-second irradiance layer takes the irradiance share from ~0.8 MB to ~1.6 MB. It does not
-come close to changing which level of the hierarchy this pass lives in.
-
-So the resolve is issue-rate and ALU bound, over *screen pixels*, which independently
-explains G2's finding that no probe CVar affects it — and means **render-scale
-upscaling cuts it directly** (`20260918_fsr_upscaling.md`): at 0.67 scale it loses 56 %
-of its work, which is a larger saving than G5b's extra tap costs.
-
-**The ray payload is the exception.** `GIPayload` (`gi_payload.glsl`) is 20 bytes —
-`vec3 colour`, `float hitDist`, `float backface`. A second accumulator takes it to 32.
-Payloads live in per-lane scratch/local memory, and their size feeds occupancy on the
-ray-tracing pipeline, so crossing an allocation granule can cost more than the extra
-arithmetic saves — a cost that is completely invisible in a VRAM accounting and is the
-thing to watch in this chunk.
-
-Concrete claw-back before spending: **`backface` is redundant.** The scratch encoding
-already carries it as a sign convention (`a = hit distance, NEGATED for a back-face
-hit`, `gi_probe_trace.rgen`), so folding it into `sign(hitDist)` recovers 4 bytes and
-removes a disagreement between two encodings of the same fact. Do that first, then
-measure the payload growth on its own before wiring the split.
-
-#### CVars
+**CVars**
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `r_rtGIProbeFastBuckets` | `1` | K: separately-cached flicker buckets. `0` disables the split entirely (today's behaviour) |
-| `r_rtGIFlickerThreshold` | `0.15` | relative per-frame colour change that classifies a light as fast |
-| `r_rtGIFlickerHold` | `2.0` | seconds a light stays classified fast after its last change |
-| `r_rtGIProbeDebug 8` | — | **overlay, ships first:** fast-bucket fraction of each probe's irradiance (blue → red), with flickering lights outlined and a count of how many distinct fast lights reach each probe. The count is what says whether K = 1 is enough; the fraction is what says whether the split is doing anything at all |
+| `r_rtGIProbeFastBuckets` | `1` | K separately-cached buckets; `0` = today's behaviour, the off switch. One gain is shared per bucket, so K=1 is approximate when two lights flicker out of phase within a probe's reach. Measure before paying for K=2 |
+| `r_rtGIFlickerThreshold` | `0.15` | relative colour change that classifies fast |
+| `r_rtGIFlickerHold` | `2.0` | seconds a light stays fast after its last change (sticky, or reclassification itself pops) |
+| `r_rtGIProbeDebug 8` | — | **ships first:** fast-bucket fraction per probe (blue→red) + count of distinct fast lights reaching each probe. The count says whether K=1 suffices |
 
-#### Exit criteria
+**Checks**
 
-- A room lit only by a flickering light goes **fully dark on the dark half of the
-  flicker**, with no residual bounce glow — the pillar-2 statement of the bug.
-- The flicker's *shape* in the GI matches the direct lighting's, frame for frame, at
-  `r_rtGIProbeUpdatesPerFrame 1024` (i.e. no faster sampling was needed).
-- Non-flickering rooms are **unchanged** vs. `r_rtGIProbeFastBuckets 0` — the
-  classifier is not sweeping stable lights into the fast bucket.
-- A light carried by a moving entity is **not** classified fast (check the classifier
-  rejects it on the origin test), and its behaviour is unchanged.
-- Resolve cost measured with `r_vkRTProfile 1` and recorded here, before and after.
+- Room lit only by a flickering light goes fully dark on the dark half, no residual glow.
+- Flicker shape matches direct lighting frame for frame at `r_rtGIProbeUpdatesPerFrame 1024`
+  — i.e. no faster sampling was needed.
+- Non-flickering rooms identical to `r_rtGIProbeFastBuckets 0`.
+- A light on a moving entity is not classified fast, behaviour unchanged.
+- Resolve cost before/after, `r_vkRTProfile 1`, recorded here.
 
-#### Sequencing note
-
-This is **not** polish and it is not independent of G6. Doom 3 uses flickering lights
-constantly as an atmosphere device, so "probes smear every flickering light in the
-game" is a standing veto on flipping `r_rtGIProbes 1` by default — which is the arc's
-entire purpose (4.41 ms of per-pixel GI). **G5b must pass before G6 can decide.**
-
-It also gets *more* important if `20260918_fsr_upscaling.md` lands first: at U0's 67 %
-render scale, per-pixel GI costs ~1.9 ms rather than 4.41, which weakens "probes save
-milliseconds" and forces the probe path to win on quality-per-millisecond instead.
-
-Finally, the same factorization applies to the **froxel volumetrics** cache if F4-style
-reprojection is ever revived — a flickering light's shaft has exactly the same
-structure. Not scheduled; noted so it is not re-derived.
+Same factorization would apply to the froxel vol cache if F4-style reprojection is revived.
+Not scheduled.
 
 ### Known limitation — the per-pixel overlays are additive
 Modes 2 and 3 are composited additively (`VK_RT_CompositeGI` has no replace pipeline)
@@ -1280,14 +1137,12 @@ scheduled rather than as new bugs.
 **The per-pixel path stays.** No retire. `r_rtGIProbes 0` remains the A/B handle, the
 fallback, and the instrument the retune below is measured with.
 
-**Retune still owed.** `r_rtGIStrength`, `r_rtGIContrast` and the `r_rtGIAutoDirectScale`
-coupling all change meaning under probes, and the defaults still carry the per-pixel path's
-tuning. GI and volumetrics were reported over-bright on 2026-09-19, right after the flip —
-first test is `r_rtGIProbes 0` vs `1` on one spot to see whether the over-brightness tracks
-the cvar. Overlaps `rt_optimization_tuning.md` T4-T6.
+**Retune owed — cause confirmed 2026-09-19.** GI/vol read over-bright, and it tracks
+`r_rtGIProbes 1`. The defaults still carry the per-pixel path's tuning; `r_rtGIStrength`,
+`r_rtGIContrast` and the `r_rtGIAutoDirectScale` coupling all change meaning under probes.
+Overlaps `rt_optimization_tuning.md` T4-T6.
 
-**Exit:** GI/vol brightness under control, new constants recorded here, and a line saying
-whether the per-pixel path's tuning was the cause.
+**Exit:** brightness under control with the new constants recorded here.
 
 ## B.6 Known risks
 
