@@ -92,11 +92,11 @@ void main()
     MaterialEntry mat = materials[matIdx];
     if ((mat.flags & MAT_FLAG_GLASS) != 0u)
     {
-        // Thin-glass approximation: flat F0 = 0.05 (5 % reflectance at all angles).
+        // Thin-glass approximation: flat F0 = 0.15 (15 % reflectance at all angles).
         // The reflected colour is tinted by the glass diffuse texture.
-        // The remaining 95 % continues straight through (no refraction).
+        // The remaining 85 % continues straight through (no refraction).
         // Glass tint is left unlit — it is a transmission colour, not a surface.
-        const float F0      = 0.1;
+        const float F0      = 0.15;
         const float transmit = 1.0 - F0;
 
         vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);

@@ -55,7 +55,7 @@ Code release.
 // CVars (20260906_froxel_probe_gi.md B.4)
 // ---------------------------------------------------------------------------
 
-static idCVar r_rtGIProbes("r_rtGIProbes", "0", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtGIProbes("r_rtGIProbes", "1", CVAR_RENDERER | CVAR_INTEGER,
                            "Global illumination sampling structure: 0 = per-pixel GI rays "
                            "(gi_ray.rgen + denoise chain), 1 = world-space irradiance probes. "
                            "At 1 the per-pixel launch, r_rtGITemporal and r_rtGIAtrous are stood "
