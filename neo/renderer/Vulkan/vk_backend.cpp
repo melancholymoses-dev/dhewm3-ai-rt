@@ -298,9 +298,7 @@ static bool VK_RTShadowsEnabled()
 // Used to gate the TLAS rebuild / end-render-pass block.
 static bool VK_RTAnyEffectEnabled()
 {
-    if (!vk.rayTracingSupported || !vkRT.isInitialized || !r_useRayTracing.GetBool())
-        return false;
-    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
+    return VK_RT_TLASActive();
 }
 
 enum vkRTProfilePhase_t

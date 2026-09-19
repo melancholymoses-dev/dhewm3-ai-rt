@@ -380,12 +380,9 @@ void idMD5Mesh::UpdateSurface(const struct renderEntity_s *ent, const idJointMat
     // If a surface is going to be have a lighting interaction generated, it will also have to call
     // R_DeriveTangents() to get normals, tangents, and face planes.  If it only
     // needs shadows generated, it will only have to generate face planes.  If it only
-    // has ambient drawing, or is culled, no additional work will be necessary
-    if (!r_useDeferredTangents.GetBool())
-    {
-        // set face planes, vertex normals, tangents
-        R_DeriveTangents(tri);
-    }
+    // has ambient drawing, or is culled, no additional work will be necessary.
+    // RT cannot defer: it shades geometry the raster frontend culled.
+    R_DeriveDeformedTangents(tri);
 }
 
 /*

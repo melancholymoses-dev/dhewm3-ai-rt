@@ -608,7 +608,9 @@ typedef struct
     int c_deformedSurfaces; // idMD5Mesh::GenerateSurface
     int c_deformedVerts;    // idMD5Mesh::GenerateSurface
     int c_deformedIndexes;  // idMD5Mesh::GenerateSurface
-    int c_tangentIndexes;   // R_DeriveTangents()
+    int c_tangentIndexes;      // R_DeriveTangents()
+    int c_rtDeformTangents;    // deformed surfaces derived only because the TLAS is live
+    int c_rtDeformTangentUsec; // CPU time spent in those derivations
     int c_entityUpdates, c_lightUpdates, c_entityReferences, c_lightReferences;
     int c_guiSurfs;
     int frontEndMsec; // sum of time in all RE_RenderScene's in a frame
@@ -888,6 +890,7 @@ extern idCVar r_rtAO;             // ray traced ambient occlusion
 extern idCVar r_rtAOTemporal;     // temporal denoising for AO
 extern idCVar r_rtReflections;    // ray traced reflections
 extern idCVar r_rtGI;             // ray traced global illumination (Phase 6.1)
+extern idCVar r_rtDeformedTangents;  // force per-frame tangent derivation on deformed models for RT
 extern idCVar r_rtGIDirectScale;     // scaler to reduce impact of global illumination
 extern idCVar r_rtGIAutoDirectScale; // derive r_rtGIDirectScale from r_rtGIStrength (see vk_gi.cpp)
 extern idCVar r_rtGIStrength;        // global scale on the GI buffer before compositing
@@ -1684,6 +1687,9 @@ srfTriangles_t *R_MergeTriangles(const srfTriangles_t *tri1, const srfTriangles_
 // if the deformed verts have significant enough texture coordinate changes to reverse the texture
 // polarity of a triangle, the tangents will be incorrect
 void R_DeriveTangents(srfTriangles_t *tri, bool allocFacePlanes = true);
+// For deformed surfaces only: honours r_useDeferredTangents, but overrides the
+// deferral while the TLAS is live (RT consumes geometry the raster path culls).
+void R_DeriveDeformedTangents(srfTriangles_t *tri);
 
 // deformable meshes precalculate as much as possible from a base frame, then generate
 // complete srfTriangles_t from just a new set of vertexes
