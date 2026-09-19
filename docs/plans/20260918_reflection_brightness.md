@@ -1,7 +1,7 @@
 # Reflection Brightness — make the surviving pixels read
 
 **Date:** 2026-09-18
-**Status:** Planned, not started
+**Status:** B0 landed + measured 2026-09-19. B1 in progress. B2-B5 not started.
 **Follows:** `20260911_reflection_gating.md` — that doc decided *which pixels trace*
 (R1/R2/R4/R6, landed 2026-09-12). This one is its unfinished R5: *what those pixels
 are worth*. R5 is moved here in full and expanded; the gating doc keeps R0-R6.
@@ -152,6 +152,40 @@ Update the `r_rtReflectionDebugMode` description string in `vk_reflections.cpp:9
 a recorded verdict on which of "weak interface" / "dark subject" dominates. Every stage
 below is re-validated against mode 6/7, not against the composite.
 
+#### Landed 2026-09-19 — modes 5/6/7 in `reflect_ray.rgen`
+
+Range checks became `2..REFL_DEBUG_MAX_MODE` (= 7, in `vk_raytracing.h`) in three places:
+the full-screen decision in `VK_RT_DispatchReflections`, the replace-blend pipeline pick in
+`VK_RT_CompositeReflections`, and the per-surface glass overlay in `VK_RB_DrawShaderPasses`
+— that last one had been re-applying the reflection additively on top of the debug output
+during modes 2-4 as well.
+
+Two deviations from the spec: modes 6/7 write raw `accum` at the opaque store too (one
+`return` before `if (isGlass)` covers both), and mode 5's yellow is unreachable — the
+`rt_ReconstructNormal` fallback needs `gbuf.a <= 0`, but the early-out above it already
+culls on `f0 < 1/255` and `f0` *is* `gbuf.a`. Branch kept, commented; relevant to B4.
+
+#### Verdict, Central Access, 2026-09-19
+
+- **Mode 5: two green panes, no blue anywhere.** Debug forces full-screen legacy tracing,
+  so every opaque pixel was offered to the trace and every one was culled before it.
+  Glass-only mode loses nothing in this view.
+- **The player is the dominant problem, and it is F4.** Inside mode 7 alone, the floor
+  beside him reads 190-240/255 while his torso and legs read 1-39/255 — adjacent pixels,
+  same reflected room, ~10-100× apart. No global scalar can open that gap. Face and one
+  arm survive, the rest self-occludes. → **B1.**
+- **For the reflected world the interface weight binds, not the chain.** Mode 6 shows the
+  world at ~1-17/255, peak 49 — dim but legible; the composite shows nothing there. That
+  gap is the ×0.15 `GLASS_F0`. → **B3 is not cosmetic.**
+- **B2's 2× is safe but is not the answer.** Mode 7's ×8 already saturates the world to
+  white, so 2× fits; it does nothing for the player gap.
+
+Caveats: the camera moved between the mode 6 and mode 7 captures, so only within-image
+comparisons are load-bearing (all of the above are). And **modes 6/7 are tonemapped** —
+the debug composite writes into hdrScene before `tonemap.comp`, so those are
+`tonemap(accum)`, not linear `accum`. That is why mode 7 has to exist; a later pass could
+bypass the tonemap if linear numbers are ever needed.
+
 ---
 
 ### B1 — Stop the player self-shadowing in reflections *(the vertical bands)*
@@ -193,6 +227,20 @@ Bands gone, silhouette unchanged, world geometry reflected in the same pane unch
 residual self-shadow maximally obvious — use it as the stress setting.
 
 **Exit:** bands gone in-game; GI and world reflections visually unchanged.
+
+#### Landed 2026-09-19 — awaiting in-game check
+
+`cullMask` threaded through as a trailing argument on `rt_TraceLightShadow`,
+`rt_EvalDirectLighting` and `rt_EvalDirectLightingStochastic`, per the file's no-UBO
+contract. `0xFFu` from `gi_ray.rchit` (both paths) and `reflect_ray.rchit`;
+`REFL_SELF_SHADOW_MASK` (`0xFEu`) from `player_reflect.rchit`. All five includers of
+`rt_light_eval.glsl` compile; `gi_probe_trace.rgen` and `vol_march.comp` include it for
+the light SSBO only and call none of these.
+
+**Check against mode 7, not the composite** — B0 showed the composite is in F3's
+dark-room regime at Central Access. Expect the player's body to come up toward the
+190-240/255 the floor beside him already reads. If it doesn't, it's the shadow-terminator
+term, not self-occlusion — see the slope-scaled bias note above, and do not stack it.
 
 ---
 

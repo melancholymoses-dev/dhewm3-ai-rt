@@ -437,12 +437,4 @@ reassessed once these numbers exist.
 | `r_rtSpecGrazingGain` | 4.0 | R2 grazing ceiling as a multiple of F0 |
 | `r_rtReflectiveMaterials` | `mirror;glass;` | R3 opt-in substring list |
 | `r_rtReflectionDebugMode 5` | — | R0 path-classification overlay |
-
 ---
-
-*This file is a new addition with dhewm3-rt. It was created with the aid of GenAI, and
-may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL
-Source Code.*
-
-*It is distributed under the same modified GNU General Public License Version 3 of the
-original Doom 3 GPL Source Code release.*
