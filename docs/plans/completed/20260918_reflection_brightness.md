@@ -1,9 +1,9 @@
 # Reflection Brightness — make the surviving pixels read
 
 **Date:** 2026-09-18
-**Status:** B0 and B1 landed 2026-09-19. B2-B5 not started. **B3 is blocked** on
-`20260919_dynamic_model_normals.md` — the reflected subject is lit from the wrong direction,
-so nothing about reflection brightness can be judged against it until that lands.
+**Status:** ✅ **Closed 2026-09-19.** B0 and B1 landed. B2 dropped; B3 delivered by
+constants rather than plumbing; B4 deferred; B5 decided. The complaint is answered — see
+*Outcome* below.
 **Follows:** `20260911_reflection_gating.md` — that doc decided *which pixels trace*
 (R1/R2/R4/R6, landed 2026-09-12). This one is its unfinished R5: *what those pixels
 are worth*. R5 is moved here in full and expanded; the gating doc keeps R0-R6.
@@ -253,14 +253,51 @@ term, not self-occlusion — see the slope-scaled bias note above, and do not st
 
 ---
 
-Bug identified by updating Surface normals which were stale for anything out of view.  See dynamic_model_normals.md
-### B2/B3
+### B2 — **dropped 2026-09-19**
 
-Removed as busywork.  
+*Was: restore `r_lightScale` in the RT light upload, to fix F1's half-brightness at source.*
+
+The premise was that RT is lit at half the raster path's level. True at the source, but the
+downstream gains — `r_rtGIStrength`, `r_rtGIBounceScale`, the vol per-class radiances — have
+already absorbed that 2× and overshot it: **GI and volumetrics read too bright, not too
+dark.** Restoring the factor at source and halving three subsystems to compensate is a
+lateral move with a real retune risk and no visible payoff.
+
+The over-brightness is a live item, and it belongs to G6's retune in
+`20260906_froxel_probe_gi.md`, not here — probe GI became the default on 2026-09-19 while
+still carrying the per-pixel path's tuning, which is the more likely cause.
+
+### B3 — **delivered by constants 2026-09-19, plumbing dropped**
+
+*Was: per-material `reflF0` through `VkMaterialEntry` and the glass probe payload.*
+
+Both of B3's actual complaints are fixed, without the struct change:
+
+- **The two inconsistent constants now agree.** `reflect_ray.rchit`'s `F0` went 0.1 → 0.15,
+  matching `GLASS_F0` in `reflect_ray.rgen`.
+- **The interface weight is at B3's target.** `r_rtReflectionBlend` 1.0 → 2.5 against
+  F0 0.15 gives ~0.375 effective, against the 0.4 B3 proposed. Reached with two cvars
+  instead of a 36 → 40 byte `VkMaterialEntry`, an `sizeof` assert, a payload field and four
+  shader edits.
+
+**What was given up:** per-material F0, so mirrors (`SS_SUBVIEW`, B3's 0.9) cannot be
+distinguished from glass. Doom 3 mirrors are raster subviews and do not come through this
+path, so the cost is ~zero today. Revisit only if a genuine RT mirror surface appears.
+
+Note `r_rtReflectionBlend` is a proportional gain on reflection radiance, not an additive
+floor — it does not lift dark reflections off the floor, so pillar 2 holds. Its slider range
+was widened to 5.0 to make it tunable in play.
+Bumped up reflection blend rather than retune everything again.
 
 ---
 
-### B4 — An indirect term at reflection hits *(fixes F2)*
+### B4 — An indirect term at reflection hits *(fixes F2)* — **deferred 2026-09-19**
+
+**Deferred with reason.** B1 plus the B3 constants answered the complaint, so the largest
+piece of work in this doc is not needed to close it. Its real version was always gated on
+probe GI; that gate has now *opened* (`r_rtGIProbes` defaults to 1 as of 2026-09-19), so if
+reflections in shadow ever need to stop reading grey, start from step 1 below rather than
+from the cheap constant floor. Not scheduled.
 
 `REFL_AMBIENT = 0.01` is a placeholder standing in for everything GI and volumetrics
 give the primary view. This is the structurally correct fix and the largest piece of
@@ -302,7 +339,14 @@ actually reached the hit stages.
 
 ---
 
-### B5 — The dark-room regime *(decide; do not tune blind)*
+### B5 — The dark-room regime — **decided 2026-09-19: option 1, accept it**
+
+**Decision:** accept the dark-room regime. Glass in a dark room shows little. The blend
+crank raised the bright-room case to where it reads, which was the actual complaint, and
+option 3 (bloom) stays available as part of the bloom arc if the dark case ever matters.
+Option 2 (lowering `r_rtTonemapToe`) is rejected, as recorded below.
+
+*Original analysis retained:*
 
 F3's second regime. Below base luminance ~0.07 the tonemap slope is under 0.33 and no
 reflection-side gain that respects pillar 2 will make the reflection visible.
@@ -342,15 +386,21 @@ re-introduce the mirror specks that R6 removed, so it is a diagnostic, not a fal
 
 ---
 
-## Summary of the priority
+## Outcome — 2026-09-19
 
-| | Fixes | Confidence | Blast radius |
-|---|---|---|---|
-| **B1** | vertical bands on the player | **high** — straight inconsistency with two other call sites | reflections only |
-| **B2** | F1, half-brightness everywhere | **high** — provably missing vs. raster | GI + vol + refl; needs retune |
-| **B3** | the glass interface weight | **high** — already specified as R5 | glass only |
-| **B4** | F2, no indirect at reflected hits | medium | needs probe GI arc |
-| **B5** | F3, dark-room regime | decision, not a fix | global |
+| | Intended fix | Result |
+|---|---|---|
+| **B0** | instrument | ✅ landed; produced the F1-F4 verdict |
+| **B1** | vertical bands on the player | ✅ landed. Exposed 1c underneath — the bands had a second cause, stale dynamic-model normals (`20260919_dynamic_model_normals.md`), fixed there |
+| **B2** | F1, half-brightness everywhere | ❌ dropped — premise inverted; GI/vol are over-bright. Over-brightness handed to G6's retune |
+| **B3** | the glass interface weight | ✅ delivered by constants (`blend` 2.5 × `F0` 0.15 ≈ 0.375); per-material plumbing dropped |
+| **B4** | F2, no indirect at reflected hits | ⏸ deferred with reason, not scheduled |
+| **B5** | F3, dark-room regime | ✅ decided: accept it; bloom later, never the toe |
 
-B1 and B3 are small and independent. B2 is small but changes three subsystems and must
-land alone.
+**The complaint is answered.** Two cvars and one constant did what three of the five
+planned stages were budgeted for. The one thing the arc found that it did not go looking
+for — stale normals on every dynamic model in the TLAS, affecting GI and volumetrics as
+much as reflections — was worth more than anything on the original list.
+
+**Carried out of this doc:** GI/volumetric over-brightness → `20260906_froxel_probe_gi.md`
+G6 retune.

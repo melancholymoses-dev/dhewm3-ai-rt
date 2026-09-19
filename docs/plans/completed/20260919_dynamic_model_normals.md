@@ -1,8 +1,9 @@
 # Dynamic model normals are stale in RT
 
 **Date:** 2026-09-19
-**Status:** N1 landed + measured 2026-09-19 (0.16 ms/frame, 12 characters). N2 dropped — the
-cost doesn't justify it. N3 (validate beyond the player) open.
+**Status:** ✅ **Closed 2026-09-19.** N1 landed + measured (0.16 ms/frame, 12 characters).
+N2 dropped — the cost doesn't justify it. N3 dropped — the fix is unconditional, so there is
+no frustum-edge case left to test.
 **Found via:** `20260918_reflection_brightness.md` B1 — the player's reflection showed a hard
 vertical terminator on the wrong side, under point lights, in an open hall with no occluder.
 
@@ -131,14 +132,16 @@ The second is the structurally honest one. Cost it before choosing.
 
 **Exit:** N1's fix reproduced with the cvar back at its default and the cost recovered.
 
-### N3 — Validate beyond the player
+### N3 — Validate beyond the player — **dropped 2026-09-19**
 
-Run the frustum-edge test above, then re-check GI and volumetrics on animated models — both
-have been consuming these normals the whole time and neither has been looked at with this in
-mind.
+The frustum-edge test existed to find cases N1 might have missed. N1 derives for *every*
+deformed surface whenever the TLAS is live, with no dependence on culling, view, entity or
+consumer — so there is no edge left to sit on. GI and volumetrics read the same
+`idDrawVert.normal` the reflections do and are fixed by the same change.
 
-**Exit:** the frustum-edge test shows no break, plus a before/after on one animated NPC
-under GI.
+Reopen only if a dynamic model shows bind-pose lighting in GI or vol despite `rtTang` being
+non-zero in `r_showDynamic`; that would mean a deformed model type reaching the TLAS through
+neither `Model_md5.cpp` nor `Model_liquid.cpp`.
 
 ---
 
