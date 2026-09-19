@@ -1,6 +1,6 @@
 # FSR upscaling for dhewm3-rt
 
-**Status:** 🔴 Not started — design only.
+**Status:** Not started — design only.
 **Written:** 2026-09-18
 **Owns:** render-resolution decoupling, AMD FidelityFX Super Resolution integration,
 motion vectors, jitter, and the licensing paperwork that comes with vendored code.

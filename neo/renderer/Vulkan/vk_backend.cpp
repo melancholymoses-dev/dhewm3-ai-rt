@@ -46,7 +46,10 @@ static VkRect2D s_viewScissor;
 // Last major render stage that was entered.  Updated just before each vkCmd* stage.
 // Printed on VK_ERROR_DEVICE_LOST so we know exactly where command recording got to.
 static const char *s_lastRenderStage = "(none)";
-static const int VK_STAGE_BREADCRUMB_MAX = 16;
+// Deep enough to hold a whole frame. ShaderPasses writes one entry per draw surf, so a
+// 16-deep ring was entirely consumed by HUD surfaces and the RT dispatch stages — the
+// ones that actually matter for a device loss — had already scrolled off by the dump.
+static const int VK_STAGE_BREADCRUMB_MAX = 256;
 static char s_stageBreadcrumbs[VK_STAGE_BREADCRUMB_MAX][160];
 static int s_stageBreadcrumbHead = 0;
 
@@ -295,9 +298,7 @@ static bool VK_RTShadowsEnabled()
 // Used to gate the TLAS rebuild / end-render-pass block.
 static bool VK_RTAnyEffectEnabled()
 {
-    if (!vk.rayTracingSupported || !vkRT.isInitialized || !r_useRayTracing.GetBool())
-        return false;
-    return r_rtShadows.GetBool() || r_rtAO.GetBool() || r_rtReflections.GetBool() || r_rtGI.GetBool();
+    return VK_RT_TLASActive();
 }
 
 enum vkRTProfilePhase_t
@@ -1552,6 +1553,13 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
     int numPendingGlass = 0;
     int numMissedGlass = 0;
 
+    // r_rtReflectionDebugMode 2+ replaces reflBuffer with a visualization and
+    // refl_composite.frag already draws it full-screen with blending off; adding the
+    // per-surface overlay on top would re-weight it by the alpha channel and double it.
+    extern idCVar r_rtReflectionDebugMode;
+    const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
+    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= REFL_DEBUG_MAX_MODE);
+
     if (r_vkSplitSubmitVerbose.GetInteger() > 0)
     {
         common->Printf("VK DrawShaderPasses: ENTER numDrawSurfs=%d\n", backEnd.viewDef->numDrawSurfs);
@@ -2199,7 +2207,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         //
         // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
         // halos, particles, or other MC_TRANSLUCENT surfaces.
-        if (mat->GetSurfaceType() == SURFTYPE_GLASS && r_useRayTracing.GetBool() && r_rtReflections.GetBool() &&
+        if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
+            r_rtReflections.GetBool() &&
             vk.rayTracingSupported && vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
             vkRT.reflSampler != VK_NULL_HANDLE && vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
         {

@@ -155,9 +155,10 @@ void main()
                             ^ params.frameIndex     * 83492791u
                             ^ floatBitsToUint(gl_HitTEXT));
 
+        // 0xFF: the player *should* occlude bounce light in the room (B1).
         irradiance = rt_EvalDirectLightingStochastic(hitPos, hitNorm, params.maxBounceLights,
                                                      params.stochasticLights, GI_SHADOW_BIAS,
-                                                     rtLightBuf.bounceScale, seed);
+                                                     rtLightBuf.bounceScale, seed, 0xFFu);
     }
     else
     {
@@ -165,7 +166,7 @@ void main()
         // threshold 0). Kept for A/B against the stochastic estimator.
         irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
                                            RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
-                                           rtLightBuf.bounceScale, 0.0, 0.0);
+                                           rtLightBuf.bounceScale, 0.0, 0.0, 0xFFu);
     }
 
     // Final bounce colour: albedo × gathered irradiance.

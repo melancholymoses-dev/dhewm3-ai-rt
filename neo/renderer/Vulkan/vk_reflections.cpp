@@ -43,12 +43,8 @@ of the original Doom 3 GPL Source Code release.
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2500.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2500.0)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "1.0", CVAR_RENDERER | CVAR_FLOAT,
-                                  "Scale factor for reflection radiance, applied in reflect_ray.rgen.\n"
-                                  "Default dropped from 1.5 to 1.0 when refl_composite.frag (Step 8) replaced the\n"
-                                  "per-light interaction.frag blend: 1.5 was compensating for that pass's N-lights\n"
-                                  "over-brightness bug, which the single-pass composite no longer has.\n"
-                                  "Decrease further if reflections still look overbright.");
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "2.5", CVAR_RENDERER | CVAR_FLOAT,
+                                  "Scale factor for reflection radiance, applied in reflect_ray.rgen.");
 
 idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                        "Scale factor applied after the power-curve remap of specular-map luminance to F0.\n"
@@ -60,33 +56,26 @@ idCVar r_rtSpecF0Gamma("r_rtSpecF0Gamma", "3", CVAR_RENDERER | CVAR_FLOAT | CVAR
                        "Higher values restrict reflections to only the brightest specular texels (true metal/wet).\n"
                        "Tune with r_rtReflectionDebugMode 1 or 3.");
 
-idCVar r_rtSpecGrazingMax(
-    "r_rtSpecGrazingMax", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-    "Clamp on the grazing-angle Fresnel lobe for low-F0 (rough) surfaces, applied in\n"
-    "reflect_ray.rgen (Step 8). Real mirror-like grazing Fresnel (approaching 1.0 at\n"
-    "NdotV~0) assumes a perfectly smooth surface; rough surfaces never reach it because of\n"
-    "shadowing/masking this single-F0 approximation doesn't otherwise capture. Surfaces at\n"
-    "F0 >= ~0.7 (true metal) are unaffected — the clamp only pulls in low-F0 grazing highlights.\n"
-    "Still the hard ceiling; r_rtSpecGrazingGain scales the low-F0 lobe below it (R2).");
+idCVar r_rtSpecGrazingMax("r_rtSpecGrazingMax", "0.25", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                          "Clamp on the grazing-angle Fresnel lobe for low-F0 (rough) surfaces, applied in\n"
+                          "reflect_ray.rgen");
 
-idCVar r_rtSpecGrazingGain(
-    "r_rtSpecGrazingGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-    "Grazing-angle Fresnel ceiling for low-F0 surfaces, as a multiple of F0 (still capped by\n"
-    "r_rtSpecGrazingMax). Only affects legacy mode 2. Set very high for pre-R2 behaviour.");
+idCVar r_rtSpecGrazingGain("r_rtSpecGrazingGain", "4.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                           "Grazing-angle Fresnel ceiling for low-F0 surfaces, as a multiple of F0 (still capped by\n"
+                           "r_rtSpecGrazingMax). Only affects legacy mode 2. Set very high for pre-R2 behaviour.");
 
 idCVar r_rtReflectionMinWeight(
     "r_rtReflectionMinWeight", "0.04", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
     "Skip the reflection ray and its shadow rays when the pixel's final Fresnel weight is below\n"
     "this. Only affects legacy mode 2; glass always traces. 0.004 = pre-R1 behaviour.");
 
-idCVar r_rtReflectionMode(
-    "r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-    "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
-    "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
-    "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
-    "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
-    "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight.\n"
-    "Use r_rtReflections 0 to turn the feature off entirely.");
+idCVar r_rtReflectionMode("r_rtReflectionMode", "1", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
+                          "1 = glass only (default). Reflections are dispatched over the union screen rect of the\n"
+                          "    view's SURFTYPE_GLASS surfaces and skipped entirely when the view holds no glass;\n"
+                          "    opaque geometry never reflects, so no per-pixel F0/Fresnel work is done at all.\n"
+                          "2 = legacy full-screen. Every non-sky pixel is traced and gated by the specular-map F0\n"
+                          "    remap (r_rtSpecF0Scale/Gamma) plus r_rtReflectionMinWeight.\n"
+                          "Use r_rtReflections 0 to turn the feature off entirely.");
 
 idCVar r_rtReflectionDebugMode(
     "r_rtReflectionDebugMode", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -98,8 +87,16 @@ idCVar r_rtReflectionDebugMode(
     "    metal/wet trim grey, nothing solid white.\n"
     "4 = tint pixels using the rt_ReconstructNormal fallback (G-buffer alpha == 0) magenta\n"
     "    (reflect_ray.rgen) — should be only sky/translucents once the prepass covers the scene.\n"
-    "Modes 2-4 require r_rtReflections 1 — they ride on the reflection ray dispatch and are\n"
-    "displayed via refl_composite.frag with blending disabled (replace, not add).");
+    "5 = path classification (B0): green = glass, blue = opaque reflective, yellow =\n"
+    "    rt_ReconstructNormal fallback, black = sky or culled before the trace. Shows what the\n"
+    "    glass rect actually covers.\n"
+    "6 = raw traced radiance, before reflBlend and before the Schlick/glass weight. The\n"
+    "    decisive 'dark subject vs weak interface' measurement — a dim player here means the\n"
+    "    lighting chain is short (B2/B4), a bright one means the glass weight is (B3).\n"
+    "7 = mode 6 scaled x8, so the subject reads through the tonemap toe while judging it.\n"
+    "Modes 2-7 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
+    "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
+    "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -136,8 +133,8 @@ struct ReflParamsUBO
     float grazingGain;     // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
     int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
     int32_t rectOriginY;
-    int32_t reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
-    float _pad[3];         // std140 block rounds to 128; range must cover it
+    int32_t reflMode; // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
+    float _pad[3];    // std140 block rounds to 128; range must cover it
 };
 static_assert(sizeof(ReflParamsUBO) == 128, "ReflParamsUBO size mismatch");
 
@@ -443,8 +440,8 @@ static void VK_RT_CreateReflImages(uint32_t width, uint32_t height)
             barrier2.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier2.image = rb.image;
             barrier2.subresourceRange = subRange;
-            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, 0, 0, NULL, 0, NULL, 1, &barrier2);
+            vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                                 0, 0, NULL, 0, NULL, 1, &barrier2);
 
             vkEndCommandBuffer(tmpCmd);
 
@@ -1000,8 +997,8 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 // VK_ComputeDrawSurfScissor; the reflection buffer is swapchain-sized.
 // ---------------------------------------------------------------------------
 
-static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX,
-                                  int32_t *outY, uint32_t *outW, uint32_t *outH)
+static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX, int32_t *outY,
+                                  uint32_t *outW, uint32_t *outH)
 {
     if (!viewDef || !viewDef->drawSurfs)
         return false;
@@ -1093,7 +1090,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // the depth transitions, UBO upload or descriptor churn either. Safe to return here
     // because the depth barrier pair below is symmetric (ATTACHMENT on entry and exit).
     const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= 4);
+    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= REFL_DEBUG_MAX_MODE);
     const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !reflDebugActive;
     int32_t rectX = 0, rectY = 0;
     uint32_t rectW = rb.width, rectH = rb.height;
@@ -1340,7 +1337,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 //
 // Two pipeline objects share this layout/shader: reflCompositePipeline (additive,
 // normal operation) and reflCompositeDebugPipeline (blend disabled) selected by
-// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-4, so the debug
+// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-7, so the debug
 // visualization baked into reflBuffer by the rgen replaces the lit scene instead
 // of adding onto it.
 // ---------------------------------------------------------------------------
@@ -1470,7 +1467,7 @@ static void VK_RT_InitReflCompositePipeline(void)
 
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.reflCompositePipeline));
 
-    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-4's
+    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-7's
     // visualization (baked into reflBuffer by the rgen) isn't muddied by additive
     // blending onto the already-lit scene. ---
     VkPipelineColorBlendAttachmentState replaceBlend = {};
@@ -1537,7 +1534,7 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
         return;
 
     const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool debugActive = (debugMode >= 2 && debugMode <= 4);
+    const bool debugActive = (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE);
 
     // R6: glass-only has nothing for this pass — opaque is never traced and glass is
     // composited per-surface. It would also read stale texels outside the traced rect.

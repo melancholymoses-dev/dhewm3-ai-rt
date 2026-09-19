@@ -2684,7 +2684,7 @@ static void DrawRTOptionsMenu()
     {
         ImGui::TableNextColumn();
         RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
-        RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 2.0f);
+        RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 5.0f);
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");

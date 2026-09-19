@@ -12,7 +12,7 @@ Deliberately as simple as gi_composite.frag: reflect_ray.rgen already computes
 the Schlick Fresnel term (using the G-buffer normal and depth, both legitimately
 sampled there while depth is in a shader-readable layout outside any render
 pass) and bakes it into reflBuffer.rgb, and also handles r_rtReflectionDebugMode
-2-4 by writing the debug visualization directly into reflBuffer. This pass
+2-7 by writing the debug visualization directly into reflBuffer. This pass
 cannot do that work itself: it runs INSIDE the resumed render pass (same slot
 as VK_RT_CompositeGI), where depth is bound as that render pass's read-write
 attachment (subview depth prepasses can still write it later in the same

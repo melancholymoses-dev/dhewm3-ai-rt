@@ -1,7 +1,9 @@
 # Reflection Brightness — make the surviving pixels read
 
 **Date:** 2026-09-18
-**Status:** Planned, not started
+**Status:** ✅ **Closed 2026-09-19.** B0 and B1 landed. B2 dropped; B3 delivered by
+constants rather than plumbing; B4 deferred; B5 decided. The complaint is answered — see
+*Outcome* below.
 **Follows:** `20260911_reflection_gating.md` — that doc decided *which pixels trace*
 (R1/R2/R4/R6, landed 2026-09-12). This one is its unfinished R5: *what those pixels
 are worth*. R5 is moved here in full and expanded; the gating doc keeps R0-R6.
@@ -152,6 +154,47 @@ Update the `r_rtReflectionDebugMode` description string in `vk_reflections.cpp:9
 a recorded verdict on which of "weak interface" / "dark subject" dominates. Every stage
 below is re-validated against mode 6/7, not against the composite.
 
+#### Landed 2026-09-19 — modes 5/6/7 in `reflect_ray.rgen`
+
+Range checks became `2..REFL_DEBUG_MAX_MODE` (= 7, in `vk_raytracing.h`) in three places:
+the full-screen decision in `VK_RT_DispatchReflections`, the replace-blend pipeline pick in
+`VK_RT_CompositeReflections`, and the per-surface glass overlay in `VK_RB_DrawShaderPasses`
+— that last one had been re-applying the reflection additively on top of the debug output
+during modes 2-4 as well.
+
+Two deviations from the spec: modes 6/7 write raw `accum` at the opaque store too (one
+`return` before `if (isGlass)` covers both), and mode 5's yellow is unreachable — the
+`rt_ReconstructNormal` fallback needs `gbuf.a <= 0`, but the early-out above it already
+culls on `f0 < 1/255` and `f0` *is* `gbuf.a`. Branch kept, commented; relevant to B4.
+
+#### Verdict, Central Access, 2026-09-19
+
+- **Mode 5: two green panes, no blue anywhere.** Debug forces full-screen legacy tracing,
+  so every opaque pixel was offered to the trace and every one was culled before it.
+  Glass-only mode loses nothing in this view.
+- **The player is the dominant problem, and it is F4.** Inside mode 7 alone, the floor
+  beside him reads 190-240/255 while his torso and legs read 1-39/255 — adjacent pixels,
+  same reflected room, ~10-100× apart. No global scalar can open that gap. Face and one
+  arm survive, the rest self-occludes. → **B1.**
+- **For the reflected world the interface weight binds, not the chain.** Mode 6 shows the
+  world at ~1-17/255, peak 49 — dim but legible; the composite shows nothing there. That
+  gap is the ×0.15 `GLASS_F0`. → **B3 is not cosmetic.**
+- **B2's 2× is safe but is not the answer.** Mode 7's ×8 already saturates the world to
+  white, so 2× fits; it does nothing for the player gap.
+
+**Follow-up, not yet done:** debug modes 2-7 force `reflMode` to 2 (`vk_reflections.cpp:1105`
+— `glassOnly = (mode == 1) && !reflDebugActive`), so every opaque pixel is traced and gated
+only by F0/minWeight. That is what the B0 spec asked for, but it means mode 6/7 cannot show
+what shipping mode 1 actually produces — raise the Fresnel knobs and metal reflections
+appear that normal play never pays for. The debug modes should honour `r_rtReflectionMode`
+and force full-screen only for mode 5, whose job is coverage.
+
+Caveats: the camera moved between the mode 6 and mode 7 captures, so only within-image
+comparisons are load-bearing (all of the above are). And **modes 6/7 are tonemapped** —
+the debug composite writes into hdrScene before `tonemap.comp`, so those are
+`tonemap(accum)`, not linear `accum`. That is why mode 7 has to exist; a later pass could
+bypass the tonemap if linear numbers are ever needed.
+
 ---
 
 ### B1 — Stop the player self-shadowing in reflections *(the vertical bands)*
@@ -194,101 +237,67 @@ residual self-shadow maximally obvious — use it as the stress setting.
 
 **Exit:** bands gone in-game; GI and world reflections visually unchanged.
 
----
+#### Landed 2026-09-19 — awaiting in-game check
 
-### B2 — Restore `r_lightScale` in the RT light upload
+`cullMask` threaded through as a trailing argument on `rt_TraceLightShadow`,
+`rt_EvalDirectLighting` and `rt_EvalDirectLightingStochastic`, per the file's no-UBO
+contract. `0xFFu` from `gi_ray.rchit` (both paths) and `reflect_ray.rchit`;
+`REFL_SELF_SHADOW_MASK` (`0xFEu`) from `player_reflect.rchit`. All five includers of
+`rt_light_eval.glsl` compile; `gi_probe_trace.rgen` and `vol_march.comp` include it for
+the light SSBO only and call none of these.
 
-Fixes F1 at the source. **Blast radius: GI, volumetrics and reflections simultaneously.**
-Expect the scene to look wrong afterwards until retuned — that is the tuning-absorbs-error
-pattern the froxel fog retune already went through, not a regression.
-
-**The channel already exists.** `GILightEntry::colorIntensity[3]` is documented
-(`vk_gi.cpp:1379-1381`) as reserved for exactly this: *"kept as an explicit 1.0 rather
-than deleted ... for a future source to drive deliberately. The rule is only that it must
-not silently inherit parm3."* No struct change, no descriptor change, no shader change —
-`rt_light_eval.glsl:179`, `vol_march.comp:334` and `vol_froxel_fill.comp:147` all already
-multiply by it.
-
-**Implementation** (`vk_gi.cpp`, the `intensity` constant at `:1382`):
-
-```
-// F1: the raster path multiplies every light colour by r_lightScale (tr_render.cpp:590)
-// and again by overBright (interaction.frag:162). RT read the raw parms, so every RT hit
-// was lit at half the raster path's level. Drive the reserved intensity channel with it.
-const float intensity = r_rtLightScaleMatch.GetBool()
-                      ? r_lightScale.GetFloat() * backEnd.overBright : 1.0f;
-```
-
-- New cvar `r_rtLightScaleMatch`, `"1"`, `CVAR_RENDERER | CVAR_BOOL`, described as
-  "match the raster path's r_lightScale/overBright in RT light evaluation; 0 = legacy".
-  It is the A/B control and the bisect handle if GI or vol regress.
-- `r_lightScale` is declared `extern` in `tr_local.h:873`; `backEnd.overBright` is
-  set by `RB_DetermineLightScale` before the backend runs. Confirm the GI light upload
-  happens after that in the frame, or use `r_lightScale` alone and note the omission —
-  `overBright` is 1.0 unless a light's scaled registers exceed
-  `tr.backEndRendererMaxLight`, which is the uncommon case.
-- **Do not** apply it in `gi_ray.rchit` or the reflection hit shaders instead. Putting it
-  on the light makes it conserve energy by construction and keeps one source of truth —
-  the same argument the volumetrics doc settled on 2026-09-18 ("a gain on the light is
-  legitimate; a gain on a medium coefficient is not").
-
-**Retuning that follows, in this order:** `r_rtGIStrength` (0.20) and
-`r_rtGIBounceScale` (2.0) both sit downstream and will now over-deliver — halve one, not
-both, and record which. Volumetric per-class radiance gains were tuned in play on
-2026-09-18 against the un-scaled light and will need the same halving.
-
-**Validate:** mode 6/7 before/after on the same pane — the reflected subject should be
-exactly 2× brighter, nothing else about it changed. Then `r_rtGI 0 / r_rtVol 0` and
-confirm direct raster lighting is untouched (it must be — this path never feeds the
-raster interaction).
-
-**Exit:** 2× confirmed in mode 6; GI and vol retuned back to their pre-B2 look with the
-new constants recorded in this doc.
+**Check against mode 7, not the composite** — B0 showed the composite is in F3's
+dark-room regime at Central Access. Expect the player's body to come up toward the
+190-240/255 the floor beside him already reads. If it doesn't, it's the shadow-terminator
+term, not self-occlusion — see the slope-scaled bias note above, and do not stack it.
 
 ---
 
-### B3 — Glass F0 from the material entry *(carry-over of R5)*
+### B2 — **dropped 2026-09-19**
 
-Two hardcoded, mutually inconsistent constants: `GLASS_F0 = 0.15` (`reflect_ray.rgen:277`,
-the camera-facing interface) and `F0 = 0.1` (`reflect_ray.rchit:99`, secondary panes).
-0.15 is physically right for a clean pane head-on and is *why you can't see yourself* —
-the gating doc said so and R5 never landed.
+*Was: restore `r_lightScale` in the RT light upload, to fix F1's half-brightness at source.*
 
-**Implementation:**
+The premise was that RT is lit at half the raster path's level. True at the source, but the
+downstream gains — `r_rtGIStrength`, `r_rtGIBounceScale`, the vol per-class radiances — have
+already absorbed that 2× and overshot it: **GI and volumetrics read too bright, not too
+dark.** Restoring the factor at source and halving three subsystems to compensate is a
+lateral move with a real retune risk and no visible payoff.
 
-1. `VkMaterialEntry` (`vk_raytracing.h:71-85`) gains `float reflF0;` — 36 → 40 bytes.
-   Bump `static_assert(sizeof(VkMaterialEntry) == 36)` at `:86` to 40 and mirror the
-   field in `MaterialEntry` (`rt_material.glsl:28-40`). std430 on a struct of 4-byte
-   scalars needs no padding, but re-check the SSBO stride after the change.
-2. `vk_material_table.cpp`, beside the existing flag classification: `MC_TRANSLUCENT &&
-   SURFTYPE_GLASS` → **0.4**; `SS_SUBVIEW` (mirror) → 0.9; everything else **0.0**.
-   0.4 is not physical for glass — it is the deliberate "set dressing reads" number from
-   pillar 4, and this doc is where that is recorded.
-3. `GlassProbePayload` (`glass_probe_payload.glsl`) gains `float f0;` in place of `pad`
-   — the slot is already there, so the payload size does not change.
-   `glass_probe.rchit` writes `materials[matIdx].reflF0` where it currently writes
-   `hitNormal` (it has `matIdx` in hand at `:44` and already validates `REAL_GLASS`).
-4. `reflect_ray.rgen:277` uses `glassProbe.f0` instead of the `GLASS_F0` constant;
-   `reflect_ray.rchit:99` uses `mat.reflF0` instead of its own `0.1`, keeping
-   `transmit = 1.0 - F0`.
-5. Opaque geometry never reads `reflF0` in mode 1 — it exists for mode 2 and for a
-   future hero-surface opt-in. Leave it 0.0 and do not re-add a spec-map path; pillar 4
-   and the 2026-09-12 decisions settled that.
+The over-brightness is a live item, and it belongs to G6's retune in
+`20260906_froxel_probe_gi.md`, not here — probe GI became the default on 2026-09-19 while
+still carrying the per-pixel path's tuning, which is the more likely cause.
 
-**Risk:** 0.4 makes glass noticeably mirror-like. If it reads as a mirror rather than a
-pane, the number is the knob, not the mechanism — expose it as `r_rtGlassF0` before
-arguing about it.
+### B3 — **delivered by constants 2026-09-19, plumbing dropped**
 
-**Validate:** mode 6 (raw `accum`) must be *identical* before and after — B3 changes only
-the interface weight. The composite gets ~2.7× brighter glass. If mode 6 moved, something
-else changed too.
+*Was: per-material `reflF0` through `VkMaterialEntry` and the glass probe payload.*
 
-**Exit:** in-game screenshot of the same pane at F0 0.15 / 0.4 / 0.6, and a recorded
-choice.
+Both of B3's actual complaints are fixed, without the struct change:
+
+- **The two inconsistent constants now agree.** `reflect_ray.rchit`'s `F0` went 0.1 → 0.15,
+  matching `GLASS_F0` in `reflect_ray.rgen`.
+- **The interface weight is at B3's target.** `r_rtReflectionBlend` 1.0 → 2.5 against
+  F0 0.15 gives ~0.375 effective, against the 0.4 B3 proposed. Reached with two cvars
+  instead of a 36 → 40 byte `VkMaterialEntry`, an `sizeof` assert, a payload field and four
+  shader edits.
+
+**What was given up:** per-material F0, so mirrors (`SS_SUBVIEW`, B3's 0.9) cannot be
+distinguished from glass. Doom 3 mirrors are raster subviews and do not come through this
+path, so the cost is ~zero today. Revisit only if a genuine RT mirror surface appears.
+
+Note `r_rtReflectionBlend` is a proportional gain on reflection radiance, not an additive
+floor — it does not lift dark reflections off the floor, so pillar 2 holds. Its slider range
+was widened to 5.0 to make it tunable in play.
+Bumped up reflection blend rather than retune everything again.
 
 ---
 
-### B4 — An indirect term at reflection hits *(fixes F2)*
+### B4 — An indirect term at reflection hits *(fixes F2)* — **deferred 2026-09-19**
+
+**Deferred with reason.** B1 plus the B3 constants answered the complaint, so the largest
+piece of work in this doc is not needed to close it. Its real version was always gated on
+probe GI; that gate has now *opened* (`r_rtGIProbes` defaults to 1 as of 2026-09-19), so if
+reflections in shadow ever need to stop reading grey, start from step 1 below rather than
+from the cheap constant floor. Not scheduled.
 
 `REFL_AMBIENT = 0.01` is a placeholder standing in for everything GI and volumetrics
 give the primary view. This is the structurally correct fix and the largest piece of
@@ -330,7 +339,14 @@ actually reached the hit stages.
 
 ---
 
-### B5 — The dark-room regime *(decide; do not tune blind)*
+### B5 — The dark-room regime — **decided 2026-09-19: option 1, accept it**
+
+**Decision:** accept the dark-room regime. Glass in a dark room shows little. The blend
+crank raised the bright-room case to where it reads, which was the actual complaint, and
+option 3 (bloom) stays available as part of the bloom arc if the dark case ever matters.
+Option 2 (lowering `r_rtTonemapToe`) is rejected, as recorded below.
+
+*Original analysis retained:*
 
 F3's second regime. Below base luminance ~0.07 the tonemap slope is under 0.33 and no
 reflection-side gain that respects pillar 2 will make the reflection visible.
@@ -370,15 +386,21 @@ re-introduce the mirror specks that R6 removed, so it is a diagnostic, not a fal
 
 ---
 
-## Summary of the priority
+## Outcome — 2026-09-19
 
-| | Fixes | Confidence | Blast radius |
-|---|---|---|---|
-| **B1** | vertical bands on the player | **high** — straight inconsistency with two other call sites | reflections only |
-| **B2** | F1, half-brightness everywhere | **high** — provably missing vs. raster | GI + vol + refl; needs retune |
-| **B3** | the glass interface weight | **high** — already specified as R5 | glass only |
-| **B4** | F2, no indirect at reflected hits | medium | needs probe GI arc |
-| **B5** | F3, dark-room regime | decision, not a fix | global |
+| | Intended fix | Result |
+|---|---|---|
+| **B0** | instrument | ✅ landed; produced the F1-F4 verdict |
+| **B1** | vertical bands on the player | ✅ landed. Exposed 1c underneath — the bands had a second cause, stale dynamic-model normals (`20260919_dynamic_model_normals.md`), fixed there |
+| **B2** | F1, half-brightness everywhere | ❌ dropped — premise inverted; GI/vol are over-bright. Over-brightness handed to G6's retune |
+| **B3** | the glass interface weight | ✅ delivered by constants (`blend` 2.5 × `F0` 0.15 ≈ 0.375); per-material plumbing dropped |
+| **B4** | F2, no indirect at reflected hits | ⏸ deferred with reason, not scheduled |
+| **B5** | F3, dark-room regime | ✅ decided: accept it; bloom later, never the toe |
 
-B1 and B3 are small and independent. B2 is small but changes three subsystems and must
-land alone.
+**The complaint is answered.** Two cvars and one constant did what three of the five
+planned stages were budgeted for. The one thing the arc found that it did not go looking
+for — stale normals on every dynamic model in the TLAS, affecting GI and volumetrics as
+much as reflections — was worth more than anything on the original list.
+
+**Carried out of this doc:** GI/volumetric over-brightness → `20260906_froxel_probe_gi.md`
+G6 retune.
