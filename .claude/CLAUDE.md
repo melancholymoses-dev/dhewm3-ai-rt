@@ -1,7 +1,7 @@
 ## Goal
 
 We are refactoring the Doom3/Dhewm3 code base to use Vulkan.
-We are implementing raytracing as our goal.
+We are implementing raytracing as our goal, and other modern rendering techniques.
 
 ## Pre-existing implementations
 There is another Vulkan implementation in ../vkDoom3/neo that we can use to help develop our version
@@ -11,8 +11,7 @@ When you work, check the existing GL functionality to understand how Doom3 expec
 
 ## Plans
 Plans live in docs/plans/*.md.  **Start with docs/plans/ROADMAP.md** — it owns the
-ordering/status and links the live design docs (gbuffer_normal_pass.md,
-rt_optimization_tuning.md, auto_relight.md).  Finished or superseded plans are in
+ordering/status and links the live design docs.  Finished or superseded plans are in
 docs/plans/completed/ (including the original rt refactor phase docs).
 
 ## Procedure
@@ -36,6 +35,7 @@ Do not attempt to configure or build the project.  A separate process will handl
 
 When adding a new file include a comment at the top describing the file.
 Then add this block to demarcate new additions so it is clear what our changes are.
+This does not apply to files under a license (like AMD FSR).
 ```
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
