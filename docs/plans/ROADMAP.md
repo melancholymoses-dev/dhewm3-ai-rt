@@ -35,8 +35,42 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 |---|---|---|---|
 | 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R4/R6 landed 2026-09-12.** Validated in-game 2026-09-18: gating is correct, but the surviving pixels don't read — R5 moved to the doc below |
 | 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `20260918_reflection_brightness.md` | 🔴 **Not started.** B0 (debug modes 5-7) first; B1 (shadow cull mask) is the one outright bug |
-| 3 | **FSR upscaling** — every RT pass is screen-resolution, so decoupling render res from display res is worth ~6.6 ms of the 11.93 ms RT budget. U0 (resolution split + bilinear) delivers the whole perf win with no third-party code; FSR2 buys the quality back. | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK choice: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. U0 is independently shippable |
 | 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5, G5b and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6, and **G5b (flicker factorization, added 2026-09-18) is now a blocker on that decision** — probe GI cannot track a flickering light at all today. |
+| 3 | **FSR upscaling** — every RT pass is screen-resolution, so decoupling render res from display res is worth ~6.6 ms of the 11.93 ms RT budget. U0 (resolution split + bilinear resolve) delivers the whole perf win with no third-party code; U1-U5 buy the image quality back. | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. **Sequenced after arcs 1b and 2 — with one exception: pull U0 forward to sit immediately before G6.** See below |
+
+### Sequencing note — why FSR comes after, and the one piece that doesn't (2026-09-18)
+
+**The arc as a whole goes last.** Three reasons, none of them about FSR being hard:
+
+1. **Arc 1b is a bug list, not a feature.** B1 (the `rt_light_eval.glsl` shadow cull mask
+   hardcoded to `0xFF`) is an outright defect. Bugs before features, and glass is
+   precisely the content a temporal upscaler handles worst — debugging "are reflections
+   dim?" underneath a reconstruction filter means never knowing whether you are looking
+   at the reflection or at FSR's history.
+2. **U4 explicitly retunes the denoiser chain, and G6 may delete it.** If G6 retires
+   per-pixel GI, the `r_rtGITemporalAlpha` / a-trous chain U4 would be sweeping stops
+   existing. Doing U4 first is tuning something scheduled for demolition.
+3. **Pillar 6 cuts both ways.** Arcs 1b and 2 are in their tuning phase, and adding
+   sub-pixel jitter plus a reconstruction filter underneath a tuning loop destroys the
+   ability to attribute a change. Land the constants first, then change the sampling.
+
+**The exception is U0, and it is worth pulling forward to just before G6.** U0 is the
+odd one out: no jitter, no temporal component, no third-party code, no motion vectors —
+it is a resolution split and a bilinear blit, and it is independently shippable. The
+reason to want it before G6 is that **it changes the numbers G6 decides on, and it does
+not change them evenly.** Per-pixel GI is entirely screen-resolution work, so 0.67 scale
+takes it 4.41 → ~1.95 ms. The probe path only *partly* is — G2 measured the trace at
+0.048 ms and probe-count-bound, so it barely moves, while its resolve (74 % of the
+chain) scales with pixels like everything else. **Lower render resolution therefore
+shrinks the probe path's relative advantage.** G6 is the decision to retire per-pixel GI
+on a cost/quality trade; making it at full resolution and then halving the cost side
+afterwards risks deciding it twice.
+
+Same argument applies weakly to G5b, whose cost analysis already leans on render scale
+cutting the resolve by 56 %.
+
+This is a sequencing nicety, not a blocker. Doing the whole FSR arc strictly last costs
+at most a re-litigation of G6.
 
 ### Measured RT budget (Mars City, 2026-09-11)
 
