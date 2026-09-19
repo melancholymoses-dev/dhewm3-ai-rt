@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-18
+**Status reviewed:** 2026-09-19
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
@@ -29,45 +29,31 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R4/R6 landed 2026-09-12.** Validated in-game 2026-09-18: gating is correct, but the surviving pixels don't read — R5 moved to the doc below |
-| 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `20260918_reflection_brightness.md` | 🟡 **B0 done 2026-09-19** — verdict: the player self-shadows (F4, →B1, dominant) and `GLASS_F0` eats the world reflection (→B3). B1 in progress |
-| 1c | **Dynamic model normals are stale in RT** — skinned md5 meshes reach the TLAS with current positions and bind-pose normals, because `R_DeriveTangents` is gated on the raster frontend's decision to draw and RT consumes geometry the frontend culled. Found under 1b; affects GI and volumetrics too, not just reflections. | `20260919_dynamic_model_normals.md` | 🟡 **N1 landed + measured 2026-09-19** — the deferral is now overridden for deformed surfaces whenever the TLAS is live, for 0.16 ms/frame with 12 characters on screen. **N2 dropped**, the cost doesn't justify the surgery. N3 (frustum-edge test, then GI/vol on animated models) open. 1b validation is unblocked |
-| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5, G5b and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6, and **G5b (flicker factorization, added 2026-09-18) is now a blocker on that decision** — probe GI cannot track a flickering light at all today. |
-| 3 | **FSR upscaling** — every RT pass is screen-resolution, so decoupling render res from display res is worth ~6.6 ms of the 11.93 ms RT budget. U0 (resolution split + bilinear resolve) delivers the whole perf win with no third-party code; U1-U5 buy the image quality back. | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. **Sequenced after arcs 1b and 2 — with one exception: pull U0 forward to sit immediately before G6.** See below |
+| 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `completed/20260911_reflection_gating.md` | ✅ **Done.** R1/R2/R4/R6 landed 2026-09-12, validated in-game 2026-09-18. R5 (what the surviving pixels are worth) moved to 1b and closed there |
+| 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `completed/20260918_reflection_brightness.md` | ✅ **Closed 2026-09-19.** B0/B1 landed; **B2 dropped** (premise inverted — GI/vol are over-bright, not dark; handed to arc 2's G6 retune); **B3 delivered by constants** (`r_rtReflectionBlend` 2.5 × glass `F0` 0.15 ≈ 0.375, vs the 0.4 the plumbing was going to buy); B4 deferred; B5 decided = accept the dark-room regime, bloom later, never the toe |
+| 1c | **Dynamic model normals are stale in RT** — skinned md5 meshes reach the TLAS with current positions and bind-pose normals, because `R_DeriveTangents` is gated on the raster frontend's decision to draw and RT consumes geometry the frontend culled. Found under 1b; affects GI and volumetrics too, not just reflections. | `completed/20260919_dynamic_model_normals.md` | ✅ **Closed 2026-09-19.** N1 landed + measured: the deferral is overridden for deformed surfaces whenever the TLAS is live, 0.16 ms/frame with 12 characters on screen. N2 and N3 dropped — the cost doesn't justify the surgery, and the fix is unconditional so there is no frustum edge left to test |
+| 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated. G6 flipped `r_rtGIProbes` to 1 on 2026-09-19** — probe GI is the shipped default, decided on appearance, with G5b's flicker veto consciously waived and the per-pixel path *kept*, not retired. **Left: G5, G5b and G6's retune.** G5b is now a live defect in the default path (flickering lights smear, τ ≈ 8.9 s) and is the highest-value open item here. The retune is owed because the defaults still carry the per-pixel path's tuning — GI/vol reported over-bright right after the flip. |
+| 3 | **FSR upscaling** — every RT pass is screen-resolution, so decoupling render res from display res is worth ~6.6 ms of the 11.93 ms RT budget. U0 (resolution split + bilinear resolve) delivers the whole perf win with no third-party code; U1-U5 buy the image quality back. | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. **Now unblocked** — arc 1 is closed, and U0 no longer needs to precede G6 (the probe-vs-per-pixel choice was made on appearance, not cost, so the resolution-scaling argument below no longer gates it) |
 
-### Sequencing note — why FSR comes after, and the one piece that doesn't (2026-09-18)
+### Sequencing note — revised 2026-09-19
 
-**The arc as a whole goes last.** Three reasons, none of them about FSR being hard:
+**Two of the three reasons FSR went last have expired.** Arc 1 is closed, so reason 1
+(don't debug glass underneath a reconstruction filter) no longer applies. Reason 2 is gone
+in a different way than expected: G6 kept the per-pixel path rather than retiring it, so
+U4's denoiser-chain retune is not tuning something scheduled for demolition — but it is now
+tuning a path that is no longer the default, which lowers its value rather than its risk.
 
-1. **Arc 1b is a bug list, not a feature.** B1 (the `rt_light_eval.glsl` shadow cull mask
-   hardcoded to `0xFF`) is an outright defect. Bugs before features, and glass is
-   precisely the content a temporal upscaler handles worst — debugging "are reflections
-   dim?" underneath a reconstruction filter means never knowing whether you are looking
-   at the reflection or at FSR's history.
-2. **U4 explicitly retunes the denoiser chain, and G6 may delete it.** If G6 retires
-   per-pixel GI, the `r_rtGITemporalAlpha` / a-trous chain U4 would be sweeping stops
-   existing. Doing U4 first is tuning something scheduled for demolition.
-3. **Pillar 6 cuts both ways.** Arcs 1b and 2 are in their tuning phase, and adding
-   sub-pixel jitter plus a reconstruction filter underneath a tuning loop destroys the
-   ability to attribute a change. Land the constants first, then change the sampling.
+**The U0-before-G6 exception is withdrawn.** It rested on G6 being a cost/quality decision
+that render scale would tilt: per-pixel GI is entirely screen-resolution work (4.41 →
+~1.95 ms at 0.67) while the probe trace is probe-count-bound and barely moves (G2:
+0.048 ms), so lower render resolution shrinks the probe path's advantage and the decision
+could end up made twice. G6 was decided on appearance instead, so there is no cost decision
+left for U0 to tilt. U0 can go wherever it fits.
 
-**The exception is U0, and it is worth pulling forward to just before G6.** U0 is the
-odd one out: no jitter, no temporal component, no third-party code, no motion vectors —
-it is a resolution split and a bilinear blit, and it is independently shippable. The
-reason to want it before G6 is that **it changes the numbers G6 decides on, and it does
-not change them evenly.** Per-pixel GI is entirely screen-resolution work, so 0.67 scale
-takes it 4.41 → ~1.95 ms. The probe path only *partly* is — G2 measured the trace at
-0.048 ms and probe-count-bound, so it barely moves, while its resolve (74 % of the
-chain) scales with pixels like everything else. **Lower render resolution therefore
-shrinks the probe path's relative advantage.** G6 is the decision to retire per-pixel GI
-on a cost/quality trade; making it at full resolution and then halving the cost side
-afterwards risks deciding it twice.
-
-Same argument applies weakly to G5b, whose cost analysis already leans on render scale
-cutting the resolve by 56 %.
-
-This is a sequencing nicety, not a blocker. Doing the whole FSR arc strictly last costs
-at most a re-litigation of G6.
+**What still holds — reason 3, pillar 6.** Arc 2's G6 retune is open and GI/vol are being
+tuned right now. Adding sub-pixel jitter and a reconstruction filter underneath a live
+tuning loop destroys the ability to attribute a change. Land the constants first, then
+change the sampling. That puts FSR after G6's retune, but nothing further back than that.
 
 ### Measured RT budget (Mars City, 2026-09-11)
 
@@ -105,13 +91,16 @@ it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were se
   `r_znear` is game-owned and drops to 1.0 in cinematics, cutting every safe distance by
   sqrt(3).
 
-### Findings 2026-09-18 (reflections) — see `20260918_reflection_brightness.md`
+### Findings 2026-09-18 (reflections) — see `completed/20260918_reflection_brightness.md`
 
 - **RT direct lighting is half the raster path's, everywhere.** `RB_DetermineLightScale`
   applies `r_lightScale` (=2) to every raster light colour; the RT light upload takes raw
   `shaderParms` and pins `intensity = 1.0f`. This affects reflections, GI bounce *and*
   volumetrics — all three were tuned by eye around the shortfall, so fixing it requires
   retuning them, not just landing it.
+  **Superseded 2026-09-19 — do not action this.** True at the source, but the downstream
+  gains did not merely absorb the 2×, they overshot it: GI and volumetrics read *too
+  bright*. B2 was dropped for that reason. The over-brightness belongs to G6's retune.
 - **The tonemap toe has two regimes, not one.** At `r_rtTonemapToe 2.7` the blended curve's
   slope is <0.33 below base luminance 0.07 but *exceeds 1.0* between 0.12 and 0.3 — the
   toe→linear `smoothstep` is steeper than either section. So it crushes additive effects
@@ -122,8 +111,10 @@ it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were se
   hardcoded 0.01 floor. Structural, not a tuning miss.
 - **Engine-wide rule: a shadow ray's cull mask is not a constant.** `noSelfShadow` gets
   instance mask `0x01` and every consumer must choose — `shadow_ray.rgen` and the glass
-  probe use `0xFE`, but `rt_light_eval.glsl` hardcodes `0xFF`, so the player self-shadows
-  in reflections and nowhere else. Any new shared ray helper takes the mask as a parameter.
+  probe use `0xFE`, but `rt_light_eval.glsl` hardcoded `0xFF`, so the player self-shadowed
+  in reflections and nowhere else. Fixed in B1. Any new shared ray helper takes the mask as
+  a parameter. Note B1 only removed *half* the vertical banding — the rest was stale
+  dynamic-model normals (1c), which the cull-mask fix exposed underneath.
 
 ### Decisions taken 2026-09-18 (volumetrics)
 

@@ -4,10 +4,10 @@
 **Status:** Arc #2 in ROADMAP.md. The owed profiler checkpoint is taken
 (Mars City 2026-09-11: GI 4.41 / Refl 3.24 / Vol 1.53 / AO 1.17 / denoise ~0.65 ms).
 **Part A: F0-F2 landed and validated, F3 and F4 dropped, F5 open.
-Part B: G0-G2 landed and validated (G2 measured 2026-09-14, GI chain 4.91 → 0.71 ms).
-G3 and G4's classification written 2026-09-14; the G3 overlay gate is the open item,
-and it cannot be judged until G4 is in (a buried probe's moments are meaningless, so
-Chebyshev cannot reason about it). G4 relocation deferred pending that read.**
+Part B: G0-G4 landed and validated. G6 flipped `r_rtGIProbes` to 1 on 2026-09-19 —
+probe GI is the shipped default, decided on appearance, with G5b's flicker veto
+consciously waived. The per-pixel path is kept, not retired. Open: G5, G5b (now a live
+defect in the default path, highest-value item here), and G6's retune.**
 
 ---
 
@@ -1039,10 +1039,13 @@ specifically — see G5b.** Fix 1 (narrow the estimator) stays first regardless;
 G5b cannot help.
 
 ### G5b — flicker factorization: separate fast lights from stable ones  🔴
-**Proposed 2026-09-18.** The originating idea was "split GI into fast-flickering and
-stable lights and give each its own smoothing rate". The split is right; **two EMA
-rates is not the mechanism that delivers it**, and the difference matters enough to
-write down before anyone builds it.
+**Proposed 2026-09-18. Now a live defect, not a gate** — G6 flipped probes on by default
+2026-09-19 without it, so the smeared-flicker artifact ships until this lands. That raises
+its priority rather than lowering it: it is the highest-value open item in Part B.
+
+The originating idea was "split GI into fast-flickering and stable lights and give each its
+own smoothing rate". The split is right; **two EMA rates is not the mechanism that delivers
+it**, and the difference matters enough to write down before anyone builds it.
 
 #### Step 0: confirm which path the lag is actually on
 
@@ -1257,22 +1260,34 @@ Read hue *ratios*, not absolute colour, and distrust them on bright surfaces. A 
 fix needs a replace composite plus suppression of the later scene draws — worth doing
 only if G6's corner tuning turns out to be ambiguous because of it.
 
-### G6 — retire decision + retune
-`r_rtGIStrength`, `r_rtGIContrast` and the `r_rtGIAutoDirectScale` coupling all change
-meaning under probes. This overlaps `rt_optimization_tuning.md` T4-T6 and **must come
-last**. Decide the per-pixel path's fate, flip the default, update ROADMAP.md.
+### G6 — default flipped 2026-09-19 · retire deferred · retune owed
 
-**Two prerequisites, added 2026-09-18:**
+**`r_rtGIProbes` now defaults to 1** (`vk_gi_probe.cpp:58`, commit 5d07e756). Decided on
+look: probe GI reads better than the per-pixel path. Both prerequisites below were
+**consciously waived, not met** — recorded so the artifacts they predict read as known and
+scheduled rather than as new bugs.
 
-- **G5b must pass first.** Doom 3 uses flickering lights constantly as an atmosphere
-  device, so "probes smear every flickering light in the game" is a standing veto on
-  flipping `r_rtGIProbes 1` regardless of what the millisecond column says.
-- **Decide at the render resolution you intend to ship at**, not at native. The two
-  candidates do not scale together: per-pixel GI is entirely screen-resolution work
-  (4.41 → ~1.95 ms at 0.67 scale) while the probe trace is probe-count-bound and barely
-  moves (G2: 0.048 ms), so lower render resolution *shrinks* the probe path's advantage.
-  `20260918_fsr_upscaling.md`'s U0 is sequenced immediately before this chunk for exactly
-  that reason.
+- **G5b did not pass.** The veto stood on Doom 3 using flickering lights constantly as an
+  atmosphere device; that is still true and G5b is still to be built. It is now an open
+  defect against the shipped default instead of a gate in front of it.
+- **Decided at native**, not at the intended shipping render resolution. The two candidates
+  do not scale together: per-pixel GI is entirely screen-resolution work (4.41 → ~1.95 ms
+  at 0.67 scale) while the probe trace is probe-count-bound and barely moves (G2: 0.048 ms),
+  so lower render resolution *shrinks* the probe path's advantage. This only bites if the
+  choice is made on cost; it was made on appearance, so `20260918_fsr_upscaling.md`'s U0 no
+  longer has to precede this chunk.
+
+**The per-pixel path stays.** No retire. `r_rtGIProbes 0` remains the A/B handle, the
+fallback, and the instrument the retune below is measured with.
+
+**Retune still owed.** `r_rtGIStrength`, `r_rtGIContrast` and the `r_rtGIAutoDirectScale`
+coupling all change meaning under probes, and the defaults still carry the per-pixel path's
+tuning. GI and volumetrics were reported over-bright on 2026-09-19, right after the flip —
+first test is `r_rtGIProbes 0` vs `1` on one spot to see whether the over-brightness tracks
+the cvar. Overlaps `rt_optimization_tuning.md` T4-T6.
+
+**Exit:** GI/vol brightness under control, new constants recorded here, and a line saying
+whether the per-pixel path's tuning was the cause.
 
 ## B.6 Known risks
 
@@ -1283,7 +1298,7 @@ last**. Decide the per-pixel path's fate, flip the default, update ROADMAP.md.
 | Camera-anchored grid pops as it scrolls | Visible lighting shift when the grid origin snaps | Snap to `spacing` multiples and clear only the newly-entered slab; the cleared probes are "never traced", not black — the resolve must fall back, not darken |
 | Second rgen in a shared pipeline mis-indexes the SBT | Device lost, or probes get per-pixel GI's behaviour | Raygen region = `sbtBase + groupIndex·handleAlignedSize`, `size = handleAlignedSize`. Verify with a probe rgen that writes a constant before wiring the real one |
 | Probe count × ray count blows the budget on large maps | `ProbeTrace` dominates | `r_rtGIProbeUpdatesPerFrame` is the throttle; convergence time degrades gracefully, cost does not. **Measured false in G2** — the trace is 0.048 ms and latency-bound; the resolve is 74 % of the chain and no probe CVar affects it |
-| Flickering lights: the EMA low-passes them away (τ ≈ 8.9 s at defaults, 20 s to 90 %), leaving a bounce glow where a light went dark | Room does not go fully black when its light flickers off | **G5b — amplitude factorization.** Cache the flicker light's transport with its gain normalised out, rescale at resolve time. Zero latency, zero extra rays. Note that G5 fix 2 (adaptive hysteresis) does *not* solve this case: a probe is re-traced at 3.75 Hz, below the flicker's own frequency, so alpha cannot help. **Pillar 2, and a blocker on G6** |
+| Flickering lights: the EMA low-passes them away (τ ≈ 8.9 s at defaults, 20 s to 90 %), leaving a bounce glow where a light went dark | Room does not go fully black when its light flickers off | **G5b — amplitude factorization.** Cache the flicker light's transport with its gain normalised out, rescale at resolve time. Zero latency, zero extra rays. Note that G5 fix 2 (adaptive hysteresis) does *not* solve this case: a probe is re-traced at 3.75 Hz, below the flicker's own frequency, so alpha cannot help. **Pillar 2. Was a blocker on G6; G6 shipped without it 2026-09-19, so this is now live in the default path** |
 | Moving lights: the EMA lags in *world* space, so the glow stays where the light was and decays over seconds | A moving light drags a lagging world-space glow | G5's two fixes — narrow the estimator first, then adaptive hysteresis. **G5b explicitly cannot help here** (movement changes the transport, not just the amplitude), and its classifier must exclude moving lights or it will smear them confidently |
 | Volumetrics | — | Does *not* have either problem: F4 was dropped and the froxel fill has no history at all |
 
