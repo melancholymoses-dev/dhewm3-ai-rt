@@ -33,7 +33,8 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R6 landed 2026-09-12**, awaiting in-game validation |
+| 1 | **Reflection gating rework** — reflections were charging a flat per-pixel rate over the whole screen for sub-1% radiance. Now glass-only. | `20260911_reflection_gating.md` | 🟡 **R1/R2/R4/R6 landed 2026-09-12.** Validated in-game 2026-09-18: gating is correct, but the surviving pixels don't read — R5 moved to the doc below |
+| 1b | **Reflection brightness** — R5 split out and expanded after in-game validation. Reflections are dim and the player self-shadows in glass. | `20260918_reflection_brightness.md` | 🔴 **Not started.** B0 (debug modes 5-7) first; B1 (shadow cull mask) is the one outright bug |
 | 2 | **Froxel volumetrics + probe GI** — move vol/GI sampling out of screen space into world-space caches; deletes most of the GI noise-fighting chain structurally. | `20260906_froxel_probe_gi.md` | 🟡 **Part A: only F5 (retire decision) left.** F0-F2 landed + validated (vol 1.63 → 0.29 ms median, 5.6×, and visually better); F3/F4 dropped; F6 (background attenuation) and F7 (cone penumbra + soft cookie edge) landed; transport coefficients made physical and tuned in play — see completed doc. **Part B: G0-G4 landed + validated; G5 and G6 left.** Per-pixel GI is still the default (`r_rtGIProbes 0`) pending G6. |
 
 ### Measured RT budget (Mars City, 2026-09-11)
@@ -71,6 +72,26 @@ it is the bigger perf prize (GI + Vol + denoise ≈ 6.6 ms). Reflections were se
   latent exposure. Check the bias before reaching for a new G-buffer target — and note
   `r_znear` is game-owned and drops to 1.0 in cinematics, cutting every safe distance by
   sqrt(3).
+
+### Findings 2026-09-18 (reflections) — see `20260918_reflection_brightness.md`
+
+- **RT direct lighting is half the raster path's, everywhere.** `RB_DetermineLightScale`
+  applies `r_lightScale` (=2) to every raster light colour; the RT light upload takes raw
+  `shaderParms` and pins `intensity = 1.0f`. This affects reflections, GI bounce *and*
+  volumetrics — all three were tuned by eye around the shortfall, so fixing it requires
+  retuning them, not just landing it.
+- **The tonemap toe has two regimes, not one.** At `r_rtTonemapToe 2.7` the blended curve's
+  slope is <0.33 below base luminance 0.07 but *exceeds 1.0* between 0.12 and 0.3 — the
+  toe→linear `smoothstep` is steeper than either section. So it crushes additive effects
+  only in already-dark scenes and amplifies them in mid-dark ones. Quoting the toe branch
+  alone overstates the crush; evaluate the whole curve before blaming tonemapping.
+- **Reflected surfaces get no indirect light.** GI is screen-space and modulates by the
+  *primary* G-buffer albedo, so geometry seen in a mirror is direct-lit only, plus a
+  hardcoded 0.01 floor. Structural, not a tuning miss.
+- **Engine-wide rule: a shadow ray's cull mask is not a constant.** `noSelfShadow` gets
+  instance mask `0x01` and every consumer must choose — `shadow_ray.rgen` and the glass
+  probe use `0xFE`, but `rt_light_eval.glsl` hardcodes `0xFF`, so the player self-shadows
+  in reflections and nowhere else. Any new shared ray helper takes the mask as a parameter.
 
 ### Decisions taken 2026-09-18 (volumetrics)
 
