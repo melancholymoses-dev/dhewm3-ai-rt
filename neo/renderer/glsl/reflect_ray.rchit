@@ -133,11 +133,12 @@ void main()
         // contribScale 1.0: reflections show first-hit direct light; bounceScale is a
         // GI-bounce-only knob (the pre-P5 drift where GI applied it and reflections
         // didn't is now explicit here).
+        // 0xFF: the player *should* cast shadows into the reflected world (B1).
         vec3 irradiance = vec3(REFL_AMBIENT) +
                           rt_EvalDirectLighting(hitPos, hitNorm, RT_LIGHT_MAX_LIGHTS,
                                                 REFL_MAX_SHADOW_LIGHTS, REFL_SHADOW_BIAS,
                                                 1.0, REFL_SHADOW_MIN_LUM,
-                                                rtLightBuf.reflAmbientScale);
+                                                rtLightBuf.reflAmbientScale, 0xFFu);
         reflPayload.colour = diffuse.rgb * irradiance;
     }
     else

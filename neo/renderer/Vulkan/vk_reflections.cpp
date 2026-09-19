@@ -98,8 +98,16 @@ idCVar r_rtReflectionDebugMode(
     "    metal/wet trim grey, nothing solid white.\n"
     "4 = tint pixels using the rt_ReconstructNormal fallback (G-buffer alpha == 0) magenta\n"
     "    (reflect_ray.rgen) — should be only sky/translucents once the prepass covers the scene.\n"
-    "Modes 2-4 require r_rtReflections 1 — they ride on the reflection ray dispatch and are\n"
-    "displayed via refl_composite.frag with blending disabled (replace, not add).");
+    "5 = path classification (B0): green = glass, blue = opaque reflective, yellow =\n"
+    "    rt_ReconstructNormal fallback, black = sky or culled before the trace. Shows what the\n"
+    "    glass rect actually covers.\n"
+    "6 = raw traced radiance, before reflBlend and before the Schlick/glass weight. The\n"
+    "    decisive 'dark subject vs weak interface' measurement — a dim player here means the\n"
+    "    lighting chain is short (B2/B4), a bright one means the glass weight is (B3).\n"
+    "7 = mode 6 scaled x8, so the subject reads through the tonemap toe while judging it.\n"
+    "Modes 2-7 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
+    "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
+    "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
 
 // ---------------------------------------------------------------------------
 // UBO layout matching reflect_ray.rgen ReflParams block
@@ -1093,7 +1101,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // the depth transitions, UBO upload or descriptor churn either. Safe to return here
     // because the depth barrier pair below is symmetric (ATTACHMENT on entry and exit).
     const int reflDebugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= 4);
+    const bool reflDebugActive = (reflDebugMode >= 2 && reflDebugMode <= REFL_DEBUG_MAX_MODE);
     const bool glassOnly = (r_rtReflectionMode.GetInteger() == 1) && !reflDebugActive;
     int32_t rectX = 0, rectY = 0;
     uint32_t rectW = rb.width, rectH = rb.height;
@@ -1340,7 +1348,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 //
 // Two pipeline objects share this layout/shader: reflCompositePipeline (additive,
 // normal operation) and reflCompositeDebugPipeline (blend disabled) selected by
-// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-4, so the debug
+// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-7, so the debug
 // visualization baked into reflBuffer by the rgen replaces the lit scene instead
 // of adding onto it.
 // ---------------------------------------------------------------------------
@@ -1470,7 +1478,7 @@ static void VK_RT_InitReflCompositePipeline(void)
 
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.reflCompositePipeline));
 
-    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-4's
+    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-7's
     // visualization (baked into reflBuffer by the rgen) isn't muddied by additive
     // blending onto the already-lit scene. ---
     VkPipelineColorBlendAttachmentState replaceBlend = {};
@@ -1537,7 +1545,7 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
         return;
 
     const int debugMode = r_rtReflectionDebugMode.GetInteger();
-    const bool debugActive = (debugMode >= 2 && debugMode <= 4);
+    const bool debugActive = (debugMode >= 2 && debugMode <= REFL_DEBUG_MAX_MODE);
 
     // R6: glass-only has nothing for this pass — opaque is never traced and glass is
     // composited per-surface. It would also read stale texels outside the traced rect.

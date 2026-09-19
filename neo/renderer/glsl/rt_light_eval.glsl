@@ -193,8 +193,11 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
 // rt_TraceLightShadow — true if the light is occluded from the hit point.
 // The tMax > 0 guard covers hit points closer to the light centre than the
 // bias — those are treated as unoccluded rather than tracing a negative range.
+// cullMask: 0xFF tests everything; 0xFE drops noSelfShadow instances
+// (vk_accelstruct.cpp:1205). B1 — the includer decides, this file has no opinion.
 // ---------------------------------------------------------------------------
-bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, float shadowBias)
+bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, float shadowBias,
+                         uint cullMask)
 {
     float shadowTMax = dist - shadowBias;
     if (shadowTMax <= 0.0)
@@ -204,7 +207,7 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
     traceRayEXT(
         tlas,
         gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-        0xFF,
+        cullMask,
         0,                          // sbt hit offset (unused — skip closest hit)
         0,                          // sbt stride
         RT_LIGHT_SHADOW_MISS_INDEX, // gi_shadow.rmiss in this pipeline
@@ -231,10 +234,13 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 //   ambientScale — weight given to a light's contribution when it IS occluded
 //                  (0 = hard shadow, same as omitting it; pass rtLightBuf.reflAmbientScale
 //                  from reflect_ray/player_reflect, 0.0 from gi_ray to leave GI untouched)
+//   cullMask     — B1: shadow-ray instance mask. 0xFF everywhere except
+//                  player_reflect.rchit, which passes 0xFE so the player does not
+//                  self-shadow (matches shadow_ray.rgen:367).
 // ---------------------------------------------------------------------------
 vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
                            float shadowBias, float contribScale, float minShadowLum,
-                           float ambientScale)
+                           float ambientScale, uint cullMask)
 {
     vec3 irradiance  = vec3(0.0);
     int  n           = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
@@ -252,7 +258,7 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
             if (dist - shadowBias > 0.0)
             {
                 shadowsUsed++;
-                if (rt_TraceLightShadow(hitPos, hitNorm, lightDir, dist, shadowBias))
+                if (rt_TraceLightShadow(hitPos, hitNorm, lightDir, dist, shadowBias, cullMask))
                 {
                     irradiance += contrib * ambientScale;
                     continue;
@@ -285,7 +291,8 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
 // in Doom 3 rooms with 1-3 lights in range.
 // ---------------------------------------------------------------------------
 vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
-                                     float shadowBias, float contribScale, uint seed)
+                                     float shadowBias, float contribScale, uint seed,
+                                     uint cullMask)
 {
     int n = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
     if (n <= 0)
@@ -294,7 +301,7 @@ vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, i
     int k = clamp(picks, 1, 2);
     if (n <= k)
         return rt_EvalDirectLighting(hitPos, hitNorm, maxLights, RT_LIGHT_MAX_LIGHTS,
-                                     shadowBias, contribScale, 0.0, 0.0);
+                                     shadowBias, contribScale, 0.0, 0.0, cullMask);
 
     // Two independent single-sample reservoirs, held in scalars/vectors.
     float wSum = 0.0;
@@ -332,7 +339,7 @@ vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, i
         return vec3(0.0);
 
     vec3 result   = vec3(0.0);
-    bool occluded = rt_TraceLightShadow(hitPos, hitNorm, d0, t0, shadowBias);
+    bool occluded = rt_TraceLightShadow(hitPos, hitNorm, d0, t0, shadowBias, cullMask);
     if (!occluded)
         result += c0 * (wSum / w0);
 
@@ -340,8 +347,9 @@ vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, i
     {
         // Both reservoirs can land on the same light; reuse the trace instead of
         // spending a second identical ray.
-        bool occluded1 = (i1 == i0) ? occluded
-                                    : rt_TraceLightShadow(hitPos, hitNorm, d1, t1, shadowBias);
+        bool occluded1 = (i1 == i0)
+                             ? occluded
+                             : rt_TraceLightShadow(hitPos, hitNorm, d1, t1, shadowBias, cullMask);
         if (!occluded1)
             result += c1 * (wSum / w1);
         result *= 0.5;
