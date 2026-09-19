@@ -1,7 +1,8 @@
 # Dynamic model normals are stale in RT
 
 **Date:** 2026-09-19
-**Status:** Cause confirmed in-game 2026-09-19 (`r_useDeferredTangents 0` fixes it). Not fixed.
+**Status:** N1 landed + measured 2026-09-19 (0.16 ms/frame, 12 characters). N2 dropped — the
+cost doesn't justify it. N3 (validate beyond the player) open.
 **Found via:** `20260918_reflection_brightness.md` B1 — the player's reflection showed a hard
 vertical terminator on the wrong side, under point lights, in an open hall with no occluder.
 
@@ -80,23 +81,37 @@ anything else touches the mesh. Confirmed in-game 2026-09-19: the terminator cor
 
 ## Stages
 
-### N1 — Land the proven fix
+### N1 — Land the proven fix — *landed 2026-09-19, cost measured*
 
-`r_useDeferredTangents 0` is already the confirmed correct behaviour, and the deferral it
-disables buys much less once RT is on: nearly everything in the TLAS needs normals, so the
-work being deferred is work that has to happen anyway.
+The deferral is overridden for deformed surfaces whenever the TLAS is live, independently of
+`r_useDeferredTangents`. `r_useDeferredTangents` keeps its meaning for the raster path.
 
-Make RT depend on it explicitly rather than leaving it to a cvar the user can flip out from
-under the renderer. Do **not** silently force the cvar — either gate the RT dynamic-geometry
-path on it with a one-time warning when it is off, or derive in the RT path (N2).
+- `R_DeriveDeformedTangents` (`tr_trisurf.cpp`) owns the decision and the instrumentation;
+  `Model_md5.cpp` and `Model_liquid.cpp` call it in place of their `if
+  (!r_useDeferredTangents)` blocks.
+- `VK_RT_TLASActive()` (`vk_accelstruct.cpp`) is the predicate, now also the single source of
+  truth for `vk_backend.cpp`'s TLAS gate.
+- `r_rtDeformedTangents` (default 1) restores the deferral for A/B measurement, with a
+  one-time warning that normals will be bind-pose.
+- `r_showDynamic` gained `rtTang:<n> (<ms>)` — count and CPU time of the forced derivations.
 
-**Measure first:** `R_DeriveTangents` per md5 mesh per frame is the cost Doom 3 added the
-deferral to avoid. Record the frame-time delta with a few characters on screen before
-deciding whether N2 is needed at all.
+**Cost is smaller than the plan assumed.** md5 meshes have `dominantTris`, so derivation goes
+through `R_DeriveUnsmoothedTangents`, which early-returns on `tangentsCalculated`. For a mesh
+the raster path would have derived anyway the work only moves earlier and costs nothing; the
+real added cost is one unsmoothed derivation per *culled* md5 mesh per frame.
 
-**Exit:** terminator correct in mode 7 with the cvar at its normal default; cost recorded.
+**Measured 2026-09-19:** `rtTang:48 (0.16 ms)` steady, 12 characters on screen
+(`md5:12`, ~4 meshes each), range 0.160-0.200 ms with no drift. Against an RT budget near
+12 ms this is noise.
 
-### N2 — Narrow it to the RT path *(only if N1's cost justifies it)*
+**Exit met.** Cost recorded; terminator corrects with `r_useDeferredTangents` at its
+default 1.
+
+### N2 — Narrow it to the RT path — **dropped 2026-09-19**
+
+N1's 0.16 ms does not justify the surgery below. Kept for the record, and because the second
+option is the one to reach for if the RT path ever needs to stop aliasing `ambientCache` for
+another reason.
 
 Derive only for surfaces actually entering the TLAS, instead of for every md5 mesh.
 

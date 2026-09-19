@@ -842,6 +842,11 @@ void VK_RT_DrainBLASGarbage(void);
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
+// True when the TLAS will be rebuilt and consumed this frame (RT supported,
+// initialized, enabled, and at least one effect that needs it turned on).
+// Callable from the frontend; gates work that only RT geometry requires.
+bool VK_RT_TLASActive(void);
+
 // Dispatch shadow rays for a single light into `layer` of the shadow mask array.
 // Must be called outside a render pass.  Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry;
 // this function transitions depth to READ_ONLY_OPTIMAL for the dispatch then back before returning.
