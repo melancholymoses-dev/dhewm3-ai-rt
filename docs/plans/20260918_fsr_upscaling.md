@@ -497,9 +497,6 @@ from the *display* dimensions (`idPlayer::CalcFov`, `Player.cpp:8191`), and §2'
 architecture deliberately leaves `glConfig.vidWidth/Height` alone — so the projection keeps
 using display aspect without anyone having to arrange it.
 
-**Nothing is chosen per card family.** What shipping titles sometimes do is auto-select an
-initial *preset* from a GPU database on first run — that picks a dropdown entry, not a
-bespoke resolution. The resolution still falls out of the divisor.
 
 **The other real answer is dynamic resolution scaling**, and it is the one that makes §2's
 layout pay off. Target a frame time, measure the previous frame's GPU time, and move the
@@ -689,3 +686,153 @@ misrepresents its provenance, which is the one thing the block exists to prevent
 - `r_fsr 0` must remain a complete bypass — the native path stays compiled and default
   until U3 passes its gate.
 - Every chunk's overlay ships before anything it enables is tuned.
+
+---
+
+## Appendix A — vendoring FSR2 (file/build setup)
+
+Written 2026-09-19 against upstream `FidelityFX-FSR2` tag **`v2.2.1`**, commit
+`1680d1edd5c034f88ebbbb793d8b88f8842cf804`. Pin this in the vendoring commit.
+
+### A.1 Cauldron is not a dependency
+
+`src/ffx-fsr2-api/` references cauldron nowhere (`grep -rn "cauldron\|common.cmake"` is
+empty). Cauldron is the *sample app's* framework, pulled in by the top-level
+`CMakeLists.txt` for `src/VK` and `src/Common`. It was needed to build the sample, not the
+library. **Do not vendor `libs/cauldron/`.**
+
+### A.2 What actually compiles — four .cpp files
+
+| Source | Role |
+|---|---|
+| `ffx_fsr2.cpp` | API core, resource scheduling, pass ordering |
+| `ffx_assert.cpp` | assert reporting (`#ifdef _WIN32` guarded; Linux-clean) |
+| `vk/ffx_fsr2_vk.cpp` | Vulkan backend |
+| `vk/shaders/ffx_fsr2_shaders_vk.cpp` | blob lookup table; `#include`s the 8 permutation headers |
+
+AMD's CMake builds these as two static libs (`ffx_fsr2_api_x64` + `ffx_fsr2_api_vk_x64`).
+**We don't need libs.** Compile all four into `${DHEWM3BINARY}` via an `src_fsr2` list,
+exactly as `src_imgui` does (`neo/CMakeLists.txt:1044`). One target, no export sets, no
+MSVC-only `/MP` `/Z7` flags, no `FATAL_ERROR` on non-x64 platforms.
+
+Consequences: **delete `neo/libs/ffx_fsr2_api_vk_x64{,d}.lib`** (MSVC-only, config-specific,
+and the core `ffx_fsr2_api_x64.lib` half was never copied anyway), and **do not use
+`neo/libs/ffx-fsr2-api/CMakeLists.txt`, `vk/CMakeLists.txt` or `dx12/CMakeLists.txt`** —
+keep them on disk for provenance, never `add_subdirectory` them.
+
+### A.3 The blocker: precompiled SPIR-V permutation headers
+
+`ffx_fsr2_shaders_vk.cpp` includes `ffx_fsr2_*_pass_permutations.h`, which are **generated
+at build time**, not shipped in the repo. The generator is
+`tools/sc/FidelityFX_SC.exe` — a PE32+ Windows binary with **no source in the 2.2.1
+release**. It cannot run in a Linux CI or a clean Linux checkout.
+
+**Decision: generate once on Windows, vendor the output, and never run the generator from
+our build.** Copy the whole generated directory in and add it to the include path.
+
+| Item | Value |
+|---|---|
+| Generated at | `<fsr2>/build/VK/src/ffx-fsr2-api/shaders/vk/` |
+| Blob headers | 109 (`accumulate` 48, `reconstruct_previous_depth` 32, `depth_clip` 16, `lock` 4, `tcr_autogen` 4, `autogen_reactive` 2, `rcas` 2, `luminance_pyramid` 1) |
+| Index headers | 8 `*_permutations.h`, flat `#include` by name |
+| Total | **~12 MB** of C hex arrays |
+| Vendor to | `neo/libs/ffx-fsr2-api/vk/shaders/permutations/` |
+| Do **not** copy | the 8 `*.h.d` depfiles |
+
+Regeneration command, for the record (run on Windows, from the upstream clone, when the
+pinned tag moves) — this is what `vk/CMakeLists.txt` runs per pass:
+
+```
+tools/sc/FidelityFX_SC.exe -reflection -deps=gcc -DFFX_GPU=1 \
+  -DFFX_FSR2_OPTION_UPSAMPLE_SAMPLERS_USE_DATA_HALF=0 \
+  -DFFX_FSR2_OPTION_ACCUMULATE_SAMPLERS_USE_DATA_HALF=0 \
+  -DFFX_FSR2_OPTION_REPROJECT_SAMPLERS_USE_DATA_HALF=1 \
+  -DFFX_FSR2_OPTION_POSTPROCESSLOCKSTATUS_SAMPLERS_USE_DATA_HALF=0 \
+  -DFFX_FSR2_OPTION_UPSAMPLE_USE_LANCZOS_TYPE=2 \
+  -compiler=glslang -e main --target-env vulkan1.1 -S comp -Os -DFFX_GLSL=1 \
+  -DFFX_FSR2_OPTION_REPROJECT_USE_LANCZOS_TYPE={0,1} -DFFX_FSR2_OPTION_HDR_COLOR_INPUT={0,1} \
+  -DFFX_FSR2_OPTION_LOW_RESOLUTION_MOTION_VECTORS={0,1} -DFFX_FSR2_OPTION_JITTERED_MOTION_VECTORS={0,1} \
+  -DFFX_FSR2_OPTION_INVERTED_DEPTH={0,1} -DFFX_FSR2_OPTION_APPLY_SHARPENING={0,1} \
+  -DFFX_HALF={0,1}   # -DFFX_HALF=0 only, for ffx_fsr2_compute_luminance_pyramid_pass
+  -name=<pass_name> -I src/ffx-fsr2-api/vk/shaders -output=<outdir> <pass>.glsl
+```
+
+Trimming the permutation set to the six options we actually use would cut 109 → ~14
+headers, but the runtime selects blobs by option hash from the generated tables, so a
+missing permutation is a dispatch-time failure rather than a link error. Not worth it;
+revisit in U5 if repo size matters.
+
+### A.4 Drop `dx12/`
+
+`dx12/` is 264 KB of HLSL, `ffx_fsr2_dx12.cpp` and Microsoft's `d3dx12.h` — which carries
+its **own** MIT notice (`dx12/license.txt`, Copyright © 2015 Microsoft), a second
+third-party licensing obligation for code we will never compile. Delete
+`neo/libs/ffx-fsr2-api/dx12/` and the `*.hlsl` files under `shaders/`. Record the deletion
+in the vendoring commit message so the tree is still diffable against upstream.
+
+`shaders/*.h` and `shaders/*.glsl` stay: they are the GLSL sources the vendored blobs were
+compiled from, and keeping them is what makes A.3's regeneration auditable.
+
+### A.5 Final tree
+
+```
+neo/libs/ffx-fsr2-api/
+  LICENSE.txt                       ← upstream root LICENSE.txt, verbatim (already present)
+  ffx_fsr2.cpp/.h  ffx_assert.cpp/.h  ffx_error.h  ffx_fsr2_interface.h
+  ffx_fsr2_maximum_bias.h  ffx_fsr2_private.h  ffx_types.h  ffx_util.h
+  CMakeLists.txt                    ← kept for provenance, NOT add_subdirectory'd
+  shaders/*.h *.glsl                ← GLSL sources (drop the .hlsl)
+  vk/ffx_fsr2_vk.cpp/.h
+  vk/shaders/ffx_fsr2_shaders_vk.cpp/.h
+  vk/shaders/permutations/*.h       ← 109 blobs + 8 indices, vendored per A.3
+```
+
+Current state (2026-09-19): the tree matches upstream `src/ffx-fsr2-api` exactly, plus
+`LICENSE.txt`. Outstanding: add `vk/shaders/permutations/`, remove `dx12/` and the `.hlsl`
+files, remove the two stray `.lib` files from `neo/libs/`.
+
+### A.6 CMake wiring
+
+```cmake
+set(src_fsr2
+    libs/ffx-fsr2-api/ffx_fsr2.cpp
+    libs/ffx-fsr2-api/ffx_assert.cpp
+    libs/ffx-fsr2-api/vk/ffx_fsr2_vk.cpp
+    libs/ffx-fsr2-api/vk/shaders/ffx_fsr2_shaders_vk.cpp)
+
+target_include_directories(${DHEWM3BINARY} PRIVATE
+    "${CMAKE_SOURCE_DIR}/libs/ffx-fsr2-api"
+    "${CMAKE_SOURCE_DIR}/libs/ffx-fsr2-api/vk/shaders/permutations")
+```
+
+Gate both behind an `option(DHEWM3_FSR2 "..." ON)` so `r_fsr 2` can be compiled out.
+
+| Path | Why |
+|---|---|
+| `libs/ffx-fsr2-api` | `vk_upscale.cpp` includes `ffx_fsr2.h` / `vk/ffx_fsr2_vk.h` |
+| `.../vk/shaders/permutations` | **Mandatory.** `ffx_fsr2_shaders_vk.cpp` includes the 8 indices by *bare name* (`#include "ffx_fsr2_rcas_pass_permutations.h"`), not by subdirectory. Quoted-include fallback searches the including file's own dir — `vk/shaders/` — which does not contain them. Without this `-I`, `ffx_fsr2_shaders_vk.cpp` fails to compile. We moved them into `permutations/`; upstream's build put them on the include path from the build tree. |
+| Vulkan headers | already handled — the `_vk_inc` helper at `neo/CMakeLists.txt:657-671` applies to `${DHEWM3BINARY}` |
+
+Not needed: `_UNICODE` / `UNICODE` (AMD's CMake sets them, but nothing in the four sources
+selects a W-suffixed Win32 API — `ffx_assert.cpp` uses `char*` throughout).
+
+### A.7 Portability notes to expect at first compile
+
+| Item | Effect |
+|---|---|
+| `#include <codecvt>` in `ffx_fsr2_vk.cpp:29` | Deprecated since C++17, removed in C++26. Compiles with a warning on GCC/Clang today. Suppress locally; do not patch AMD's file. |
+| `wchar_t name[64]` in `ffx_types.h` | 2 bytes on Windows, 4 on Linux. Internal to FSR2's debug naming — sizes differ, behaviour doesn't. |
+| `VkPhysicalDeviceVulkan11Properties`, `VkPhysicalDeviceSubgroupSizeControlProperties` | Core-promoted names; needs Vulkan headers ≥ 1.3. Already satisfied by our SDK requirement. |
+| Device extensions | All **optional probes** (`VK_EXT_subgroup_size_control`, `VK_KHR_shader_float16_int8`, `VK_KHR_acceleration_structure`) — the backend queries and degrades. §11's "needs an extension we don't enable" risk is lower than written, but still verify at U3. |
+| `-Wall` noise from AMD sources | Expect unused-variable/sign-compare warnings. Mark the include dirs `SYSTEM` if it gets loud; do not edit the sources. |
+
+### A.8 Licensing checklist (concrete, supersedes §10's item list)
+
+| Action | Target |
+|---|---|
+| Keep verbatim | every AMD file header; `neo/libs/ffx-fsr2-api/LICENSE.txt` (already correct — byte-identical to upstream root) |
+| Notice location | ✅ Done. The README's 263-line inline licence dump moved to root `THIRD-PARTY-LICENSES.md` (index table + EXCLUDED CODE notice + every component's text verbatim). `README.md` keeps `# LICENSES` with the `COPYING.txt` pointer and a pointer to the new file; 420 → 167 lines. AMD's section names the pinned commit and defers to `neo/libs/ffx-fsr2-api/LICENSE.txt` as authoritative. |
+| Avoids an obligation | ✅ dropping `dx12/` removes the Microsoft `d3dx12.h` MIT notice from our tree entirely — no second entry needed |
+| FSR 1 headers (U1 only) | `ffx_a.h` / `ffx_fsr1.h` → `neo/renderer/glsl/fsr1/`, same MIT. Add the path to AMD's existing entry in `THIRD-PARTY-LICENSES.md`; the MIT text is already there. |
+| Binary dist | ✅ Done. There was **no** licence install rule at all — `neo/CMakeLists.txt` installed only shaders and targets, so binaries shipped without even the GPL. Added an `install(FILES COPYING.txt THIRD-PARTY-LICENSES.md)` to `${bindir}`, guarded `NOT APPLE AND NOT WIN32` to match the sibling target install. **Windows and macOS packaging still ship no notices** — those paths don't use `install()`; whatever produces their archives has to copy both files. |
+| Changelog | note "AMD FidelityFX Super Resolution 2.2.1 (MIT)" with the pinned commit |

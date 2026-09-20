@@ -49,7 +49,7 @@ This is just a definition on the weapon to activate an existing effect.  This wa
 2. Ray Traced shadows and acceleration structures.
 ![Ray Traced Shadows](docs/img/screenshots/20260830_shadows_on.jpg)
 ![Ray Traced Original](docs/img/screenshots/20260830_shadows_off.jpg)
-Ray Traced Shadows are in.  (There was a bug around light origin that has been fixed)  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, not that noticeable.  
+Ray Traced Shadows are in.  (There was a bug around light origin that has been fixed).  Top screenshot is RT, lower screenshot is original stencil.  Slight differences in shadows, and we're blurring some.  In all, not that noticeable.  The third-person player model showing up is more impactful in shadows.  
 
 3. Ray-Traced Ambient Occlusion with temporal filtering.   Now running properly and leads to darkening in the corners.
 ![RT Ambient Occlusion](docs/img/screenshots/20260830_AO_on.jpg)
@@ -68,7 +68,7 @@ The global illumination passes were washing out the color and killing the mood. 
 
 
 6. Volumetric Lighting 
-5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.  Lends a lot of mood, especially for moving lights and shadows.  
+5b. Volumetric Lighting.  This gives light shafts more substance, with colored light filling the air.  Lends a lot of mood, especially for moving lights and shadows.  It does soften the harsh lighting of Doom 3, but gives light more volume, so a worthwhile tradeoff.
 ![Volumetrics On](docs/img/screenshots/20260830_vol_on.jpg)
 ![Volumetrics Off](docs/img/screenshots/20260830_vol_off.jpg)
 
@@ -86,7 +86,7 @@ The two effects I've tried that seem to actually add something are the reflectio
 
 - Of all of these, the reflections seem like the biggest upgrade (and there are ways of doing that without ray-tracing).  
 Glass is plentiful enough early on.  Working to increase scope of reflections to particles/lighting while maintaining performance.
-- Global illumination was less impressive than I hoped, but the volumetrics help.  I could see GI having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
+- Global illumination was less impressive than I hoped, but the volumetrics help a lot with mood.  I could see GI having the biggest improvement to a game like Quake 4 where Doom's harsh shadows look odd in exterior environments.
 
 ## Additional Files
 
@@ -161,235 +161,7 @@ See COPYING.txt for the GNU GENERAL PUBLIC LICENSE
 
 ADDITIONAL TERMS:  The Doom 3 GPL Source Code is also subject to certain additional terms. You should have received a copy of these additional terms immediately following the terms and conditions of the GNU GPL which accompanied the Doom 3 Source Code.  If not, please request a copy in writing from id Software at id Software LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
-EXCLUDED CODE:  The code described below and contained in the Doom 3 GPL Source Code release is not part of the Program covered by the GPL and is expressly excluded from its terms.  You are solely responsible for obtaining from the copyright holder a license for such code and complying with the applicable license terms.
+See THIRD-PARTY-LICENSES.md for the bundled third-party components (Dear ImGui,
+AMD FidelityFX Super Resolution 2, miniz, minizip, stb, and others) — that file
+carries the EXCLUDED CODE notice and each component's licence in full.
 
-## Dear ImGui
-
-neo/libs/imgui/*
-
-The MIT License (MIT)
-
-Copyright (c) 2014-2024 Omar Cornut
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-## PropTree
-
-neo/tools/common/PropTree/*
-
-Copyright (C) 1998-2001 Scott Ramsay
-
-sramsay@gonavi.com
-
-http://www.gonavi.com
-
-This material is provided "as is", with absolutely no warranty expressed
-or implied. Any use is at your own risk.
-
-Permission to use or copy this software for any purpose is hereby granted
-without fee, provided the above notices are retained on all copies.
-Permission to modify the code and to distribute modified code is granted,
-provided the above notices are retained, and a notice that the code was
-modified is included with the above copyright notice.
-
-If you use this code, drop me an email.  I'd like to know if you find the code
-useful.
-
-## Base64 implementation
-
-neo/idlib/Base64.cpp
-
-Copyright (c) 1996 Lars Wirzenius.  All rights reserved.
-
-June 14 2003: TTimo <ttimo@idsoftware.com>
-
-modified + endian bug fixes
-
-http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=197039
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in the
-   documentation and/or other materials provided with the distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
-STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
-ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-POSSIBILITY OF SUCH DAMAGE.
-
-## miniz
-
-src/framework/miniz/*
-
-The MIT License (MIT)
-
-Copyright 2013-2014 RAD Game Tools and Valve Software
-Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
-
-All Rights Reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-
-## IO on .zip files using minizip
-
-src/framework/minizip/*
-
-Copyright (C) 1998-2010 Gilles Vollant (minizip) ( http://www.winimage.com/zLibDll/minizip.html )
-
-Modifications of Unzip for Zip64
-Copyright (C) 2007-2008 Even Rouault
-
-Modifications for Zip64 support
-Copyright (C) 2009-2010 Mathias Svensson ( http://result42.com )
-
-This software is provided 'as-is', without any express or implied
-warranty.  In no event will the authors be held liable for any damages
-arising from the use of this software.
-
-Permission is granted to anyone to use this software for any purpose,
-including commercial applications, and to alter it and redistribute it
-freely, subject to the following restrictions:
-
-1. The origin of this software must not be misrepresented; you must not
-   claim that you wrote the original software. If you use this software
-   in a product, an acknowledgment in the product documentation would be
-   appreciated but is not required.
-2. Altered source versions must be plainly marked as such, and must not be
-   misrepresented as being the original software.
-3. This notice may not be removed or altered from any source distribution.
-
-## MD4 Message-Digest Algorithm
-
-neo/idlib/hashing/MD4.cpp
-
-Copyright (C) 1991-2, RSA Data Security, Inc. Created 1991. All
-rights reserved.
-
-License to copy and use this software is granted provided that it
-is identified as the "RSA Data Security, Inc. MD4 Message-Digest
-Algorithm" in all material mentioning or referencing this software
-or this function.
-
-License is also granted to make and use derivative works provided
-that such works are identified as "derived from the RSA Data
-Security, Inc. MD4 Message-Digest Algorithm" in all material
-mentioning or referencing the derived work.
-
-RSA Data Security, Inc. makes no representations concerning either
-the merchantability of this software or the suitability of this
-software for any particular purpose. It is provided "as is"
-without express or implied warranty of any kind.
-
-These notices must be retained in any copies of any part of this
-documentation and/or software.
-
-## MD5 Message-Digest Algorithm
-
-neo/idlib/hashing/MD5.cpp
-
-This code implements the MD5 message-digest algorithm.
-The algorithm is due to Ron Rivest.  This code was
-written by Colin Plumb in 1993, no copyright is claimed.
-This code is in the public domain; do with it what you wish.
-
-## CRC32 Checksum
-
-neo/idlib/hashing/CRC32.cpp
-
-Copyright (C) 1995-1998 Mark Adler
-
-## stb_image and stb_vorbis
-
-neo/renderer/stb_image.h
-neo/sound/stb_vorbis.h
-
-Used to decode JPEG and OGG Vorbis files.
-
-from https://github.com/nothings/stb/
-
-Copyright (c) 2017 Sean Barrett
-
-Released under MIT License and Unlicense (Public Domain)
-
-## Brandelf utility
-
-neo/sys/linux/setup/brandelf.c
-
-Copyright (c) 1996 Søren Schmidt
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer
-   in this position and unchanged.
-2. Redistributions in binary form must reproduce the above copyright
-   notice, this list of conditions and the following disclaimer in the
-   documentation and/or other materials provided with the distribution.
-3. The name of the author may not be used to endorse or promote products
-   derived from this software withough specific prior written permission
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
-IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
-OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
-INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
-NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
-THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-`$FreeBSD: src/usr.bin/brandelf/brandelf.c,v 1.16 2000/07/02 03:34:08 imp Exp $`
-
-## makeself - Make self-extractable archives on Unix
-
-neo/sys/linux/setup/makeself/*, neo/sys/linux/setup/makeself/README
-Copyright (c) Stéphane Peter
-Licensing: GPL v2
