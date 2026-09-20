@@ -46,8 +46,8 @@ idCVar r_rtGIRadius("r_rtGIRadius", "128.0", CVAR_RENDERER | CVAR_FLOAT, "Max GI
 
 static idCVar r_rtGISamples("r_rtGISamples", "4", CVAR_RENDERER | CVAR_INTEGER, "GI bounce rays per pixel (1-8)");
 
-// Not static: read from vk_backend.cpp (RB_DetermineLightScale) for the
-// r_rtGIAutoDirectScale coupling below.
+// Not static: gi_probe_resolve.comp reads it too, so an r_rtGIProbes A/B is at
+// matched strength.
 idCVar r_rtGIStrength("r_rtGIStrength", "0.20", CVAR_RENDERER | CVAR_FLOAT,
                       "Global scale applied to the GI buffer before compositing");
 
@@ -59,20 +59,9 @@ idCVar r_rtGIContrast("r_rtGIContrast", "0.6", CVAR_RENDERER | CVAR_FLOAT,
                       "0 = off, 1 = full effect");
 
 idCVar r_rtGIDirectScale("r_rtGIDirectScale", "1.", CVAR_RENDERER | CVAR_FLOAT,
-                         "Baseline multiplier on direct interaction lighting when GI is active, at "
-                         "r_rtGIStrength's default (1.). Reduce below 1.0 to compensate for GI-added "
-                         "luminance and keep overall brightness consistent with the original game. "
-                         "When r_rtGIAutoDirectScale is on this is the anchor value, not necessarily "
-                         "the value actually applied — see that CVar");
-
-// Tuning-comparison aid: scrubbing r_rtGIStrength alone used to require also
-// re-tuning r_rtGIDirectScale by hand to keep A/B luminance roughly matched —
-// This is a scene-independent linear approximation.
-idCVar r_rtGIAutoDirectScale(
-    "r_rtGIAutoDirectScale", "1", CVAR_RENDERER | CVAR_BOOL,
-    "Derive the effective r_rtGIDirectScale from the current r_rtGIStrength (anchored at "
-    "strength=0.25 -> r_rtGIDirectScale's value, relaxing to 1.0 as strength->0), so scrubbing "
-    "r_rtGIStrength alone stays roughly luminance-matched. 0 = use r_rtGIDirectScale as-is (manual)");
+                         "Multiplier on direct interaction lighting when GI is active. Reduce below 1.0 "
+                         "to compensate for GI-added luminance and keep overall brightness consistent "
+                         "with the original game. Applied verbatim — it is not coupled to r_rtGIStrength");
 
 static idCVar r_rtGIBounceScale(
     "r_rtGIBounceScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
