@@ -50,6 +50,23 @@ gi_composite.frag keeps sampling one 2D image and knows nothing about probes.
            the measurement the verdict was made from. An air probe SHOULD read
            blue in mode 6 (it sees front faces); if it reads green or red the
            statistic itself is wrong and no threshold will rescue it.
+  mode 8 — G5b fast-bucket overlay, and it answers two questions at once:
+           GREEN channel = the fraction of this pixel's resolved irradiance that
+             came from the fast bucket, i.e. how much of the GI here is actually
+             being factorized.  Black means the classifier found nothing to do
+             here; a bright room under a flickering light should be well lit.
+           RED channel = how many flickering lights reach this point, /3.
+             Exactly ONE of them is bucketed (vk_gi.cpp picks the highest-
+             importance one, because a bucket's single gain can only be exact
+             for a single light); the others keep flickering correctly in
+             direct light, volumetrics and reflections, but their probe GI is
+             EMA-smeared as it was before G5b.  So red is the measure of what
+             this chunk is still leaving on the table: red staying dark says
+             one bucket covers the level, and red lighting up marks the places
+             that would need a per-PROBE gain to fix.
+           Counted by containment against the light SSBO, not by tracing — the
+           question is which lights REACH the point, and a shadowed one would
+           still have shared the gain.
 
 Every mode ADDS onto the lit scene.  For the sphere overlays (1, 4, 5, 6, 7)
 that is deliberate — the thing being checked is where the probes sit in the
@@ -107,6 +124,45 @@ struct GIProbeStats {
 layout(set = 0, binding = 8, std430) readonly buffer GIProbeStatsBuf {
     GIProbeStats probes[];
 } probeStats;
+
+// G5b mode 8 only.  A fourth transcription of GILightEntry (vk_gi.cpp,
+// rt_light_eval.glsl, vol_march.comp, vol_froxel_fill.comp) — declared here
+// rather than including rt_light_eval.glsl, which drags in the shadow-ray
+// payload and rt_material.glsl's ray-pipeline built-ins that do not exist in a
+// compute shader.  Only the containment fields and the flag are read.
+#define GIPROBE_MAX_LIGHTS 128
+#define GI_LIGHT_FLAG_FAST 0x2u
+
+struct GIResolveLight {
+    vec4 posRadius;
+    vec4 colorIntensity;
+    vec4 coneDir;
+    vec4 boxExtents;
+    uint lightType;
+    uint flags;
+    float fastScale;
+    uint fastBucket;
+    vec4 emitPos;
+};
+
+struct GIResolveCookie {
+    vec4 planeS;
+    vec4 planeT;
+    vec4 planeQ;
+    uint imageIndex;
+    uint pad0; uint pad1; uint pad2;
+};
+
+layout(set = 0, binding = 9, std430) readonly buffer GIResolveLightBuf {
+    int   numLights;
+    float bounceScale;
+    float giRadius;
+    float emissiveScale;
+    float reflAmbientScale;
+    float _pad0[3];
+    GIResolveLight lights[GIPROBE_MAX_LIGHTS];
+    GIResolveCookie cookies[GIPROBE_MAX_LIGHTS];
+} giLights;
 
 #define GIPROBE_SET 0
 #include "gi_probe_common.glsl"
@@ -370,9 +426,14 @@ GIProbeSite gip_Site(ivec2 coord, ivec2 fullSize)
 // false when not one probe had usable data — the caller must leave GI at zero
 // rather than invent a value, and mode 4's red spheres locate that case.
 // ---------------------------------------------------------------------------
-bool gip_SampleIrradiance(GIProbeSite s, out vec3 irradiance, out float wBefore, out float wAfter)
+// G5b: fastOut reports the fast buckets' share of the same sum, already scaled
+// by its gain, so mode 8 can show what fraction of the GI here is factorized
+// without resampling. irradiance is the TOTAL (stable + fast), i.e. what the
+// shipping path wants.
+bool gip_SampleIrradiance(GIProbeSite s, out vec3 irradiance, out vec3 fastOut, out float wBefore, out float wAfter)
 {
     irradiance = vec3(0.0);
+    fastOut = vec3(0.0);
     wBefore = 0.0;
     wAfter = 0.0;
 
@@ -380,7 +441,15 @@ bool gip_SampleIrradiance(GIProbeSite s, out vec3 irradiance, out float wBefore,
     // differs, so the octahedral encode is hoisted out of the loop.
     vec2 oct = gip_OctEncode(normalize(s.normal)) * 0.5 + 0.5;
 
+    // G5b: the buckets share the Chebyshev weights — they describe the same
+    // geometry from the same probe, and only differ in which lights' transport
+    // was cached. Each extra bucket therefore costs 8 more bilinear taps and no
+    // extra weighting work. Those taps are the whole argument against K = 2:
+    // G2 measured this loop issue-rate bound on its scattered fetches.
+    int buckets = gip_IrrBuckets();
+
     vec3 sum = vec3(0.0);
+    vec3 sumFast = vec3(0.0);
 
     for (int i = 0; i < 8; i++)
     {
@@ -392,13 +461,19 @@ bool gip_SampleIrradiance(GIProbeSite s, out vec3 irradiance, out float wBefore,
         float w = t.weight * max(t.cheb, GIPROBE_VIS_FLOOR);
         wAfter += w;
 
-        sum += texture(irradianceAtlas, gip_AtlasUVOct(t.idx, oct, gp.atlas.z)).rgb * w;
+        sum += texture(irradianceAtlas, gip_IrrAtlasUVOct(t.idx, 0, oct, gp.atlas.z)).rgb * w;
+
+        for (int k = 1; k < buckets; k++)
+            sumFast += texture(irradianceAtlas, gip_IrrAtlasUVOct(t.idx, k, oct, gp.atlas.z)).rgb *
+                       (w * gip_BucketGain(k));
     }
 
     if (wAfter <= 1e-6)
         return false;
 
-    irradiance = sum / wAfter;
+    float invW = 1.0 / wAfter;
+    fastOut = sumFast * invW;
+    irradiance = sum * invW + fastOut;
     return true;
 }
 
@@ -424,9 +499,9 @@ void main()
     if (mode == 0)
     {
         GIProbeSite s = gip_Site(fullCoord, fullSize);
-        vec3 irradiance;
+        vec3 irradiance, fastPart;
         float wBefore, wAfter;
-        if (s.valid && gip_SampleIrradiance(s, irradiance, wBefore, wAfter))
+        if (s.valid && gip_SampleIrradiance(s, irradiance, fastPart, wBefore, wAfter))
         {
             outColour = irradiance * gp.tune.z;
 
@@ -445,9 +520,9 @@ void main()
         GIProbeSite s = gip_Site(fullCoord, fullSize);
         if (s.valid)
         {
-            vec3 irradiance;
+            vec3 irradiance, fastPart;
             float wBefore, wAfter;
-            if (!gip_SampleIrradiance(s, irradiance, wBefore, wAfter) || wBefore <= 1e-6)
+            if (!gip_SampleIrradiance(s, irradiance, fastPart, wBefore, wAfter) || wBefore <= 1e-6)
                 outColour = vec3(1.0, 0.0, 1.0); // no usable probe — GI is black here
             else
                 outColour = gip_Ramp(1.0 - wAfter / wBefore);
@@ -495,6 +570,65 @@ void main()
                 // here would render the scene unmodified and read as "fine" —
                 // the total absence of GI is the worst case, not the best.
                 outColour = vec3(1.0, 0.0, 1.0);
+            }
+        }
+    }
+    else if (mode == 8)
+    {
+        // G5b. Green = how much of this pixel's GI is coming from the fast
+        // bucket; red = how many distinct fast lights reach the point, /3.
+        //
+        // The two are read together. Green bright and red dark is the healthy
+        // case and says K = 1 is exact here. Green bright and red bright says two
+        // or more fast lights share one gain at this point, so their individual
+        // flicker phases are being averaged — the only condition that argues for
+        // K = 2, and the reason this overlay exists before any tuning.
+        GIProbeSite s = gip_Site(fullCoord, fullSize);
+        if (s.valid)
+        {
+            vec3 irradiance, fastPart;
+            float wBefore, wAfter;
+            if (gip_SampleIrradiance(s, irradiance, fastPart, wBefore, wAfter))
+            {
+                float lumTotal = dot(irradiance, vec3(1.0 / 3.0));
+                float lumFast = dot(fastPart, vec3(1.0 / 3.0));
+                float frac = (lumTotal > 1e-6) ? clamp(lumFast / lumTotal, 0.0, 1.0) : 0.0;
+
+                // Containment only, no shadow ray: the question is which fast
+                // lights REACH this point and therefore share the bucket's one
+                // gain. A shadowed light still shares it.
+                int fastCount = 0;
+                int n = min(giLights.numLights, GIPROBE_MAX_LIGHTS);
+                for (int i = 0; i < n; i++)
+                {
+                    if ((giLights.lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)
+                        continue;
+
+                    vec3 lPos = giLights.lights[i].posRadius.xyz;
+                    vec4 bx = giLights.lights[i].boxExtents;
+                    vec3 toPoint = s.worldPos - lPos;
+
+                    if (giLights.lights[i].lightType == 0u)
+                    {
+                        vec3 nl = abs(toPoint) / max(bx.xyz, vec3(0.001));
+                        if (max(max(nl.x, nl.y), nl.z) < 1.5)
+                            fastCount++;
+                    }
+                    else
+                    {
+                        vec4 cd = giLights.lights[i].coneDir;
+                        float along = dot(toPoint, cd.xyz);
+                        if (along > 0.0 && along <= bx.w &&
+                            along / max(length(toPoint), 0.001) >= cd.w)
+                            fastCount++;
+                    }
+                }
+
+                outColour = vec3(float(fastCount) / 3.0, frac, 0.0);
+            }
+            else
+            {
+                outColour = vec3(0.0, 0.0, 1.0); // no usable probe — same case mode 2 paints magenta
             }
         }
     }
@@ -599,7 +733,10 @@ void main()
             }
             else
             {
-                vec2 auv = gip_AtlasUV(idx, n, gp.atlas.z);
+                // Bucket 0 — the stable set. Mode 1 is "what has this probe
+                // stored", and adding a fast bucket scaled by a gain that moves
+                // every frame would make a steady overlay strobe.
+                vec2 auv = gip_IrrAtlasUV(idx, 0, n, gp.atlas.z);
                 outColour = texture(irradianceAtlas, auv).rgb * gp.debug.x;
 
                 // An untraced probe has nothing to show; magenta says "no data"

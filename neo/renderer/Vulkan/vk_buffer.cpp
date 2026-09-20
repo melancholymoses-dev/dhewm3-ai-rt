@@ -56,6 +56,47 @@ void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryProper
 }
 
 // ---------------------------------------------------------------------------
+// VK_CreateBufferPreferred - as above, with a fallback property set
+// ---------------------------------------------------------------------------
+
+bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags preferredProps,
+                              VkMemoryPropertyFlags requiredProps, VkBuffer *outBuffer, VkDeviceMemory *outMemory)
+{
+    VkBufferCreateInfo bufInfo = {};
+    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufInfo.size = size;
+    bufInfo.usage = usage;
+    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VK_CHECK(vkCreateBuffer(vk.device, &bufInfo, NULL, outBuffer));
+
+    VkMemoryRequirements memReqs;
+    vkGetBufferMemoryRequirements(vk.device, *outBuffer, &memReqs);
+
+    uint32_t typeIdx = VK_TryFindMemoryType(memReqs.memoryTypeBits, preferredProps);
+    const bool gotPreferred = (typeIdx != UINT32_MAX);
+    if (!gotPreferred)
+        typeIdx = VK_FindMemoryType(memReqs.memoryTypeBits, requiredProps);
+
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = typeIdx;
+
+    VkMemoryAllocateFlagsInfo flagsInfo = {};
+    if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
+    {
+        flagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        flagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        allocInfo.pNext = &flagsInfo;
+    }
+
+    VK_CHECK(vkAllocateMemory(vk.device, &allocInfo, NULL, outMemory));
+    VK_CHECK(vkBindBufferMemory(vk.device, *outBuffer, *outMemory, 0));
+    return gotPreferred;
+}
+
+// ---------------------------------------------------------------------------
 // VK_UploadBuffer - copy data into a device-local buffer via a staging buffer
 // ---------------------------------------------------------------------------
 

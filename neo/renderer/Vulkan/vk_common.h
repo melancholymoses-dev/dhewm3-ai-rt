@@ -203,11 +203,21 @@ extern PFN_vkCmdPushDescriptorSetKHR pfn_vkCmdPushDescriptorSetKHR;
 void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps, VkBuffer *outBuffer,
                      VkDeviceMemory *outMemory);
 
+// As VK_CreateBuffer, but takes preferred properties and falls back to the
+// required set when no memory type offers them. Returns true if the preferred
+// set was honoured. For readback buffers the preferred set should include
+// HOST_CACHED: HOST_VISIBLE alone is usually write-combined, and CPU reads out
+// of write-combined memory bypass the cache entirely.
+bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags preferredProps,
+                              VkMemoryPropertyFlags requiredProps, VkBuffer *outBuffer, VkDeviceMemory *outMemory);
+
 // ---------------------------------------------------------------------------
 // Memory helper: find a memory type satisfying requirements
 // ---------------------------------------------------------------------------
 
-static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props)
+// Non-fatal variant: returns UINT32_MAX when nothing matches, for callers that
+// have a fallback property set.
+static inline uint32_t VK_TryFindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props)
 {
     for (uint32_t i = 0; i < vk.memProperties.memoryTypeCount; i++)
     {
@@ -216,8 +226,18 @@ static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlag
             return i;
         }
     }
-    common->FatalError("VK_FindMemoryType: no suitable memory type found");
     return UINT32_MAX;
+}
+
+static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props)
+{
+    const uint32_t idx = VK_TryFindMemoryType(typeBits, props);
+    if (idx == UINT32_MAX)
+    {
+        common->FatalError("VK_FindMemoryType: no suitable memory type found");
+        return UINT32_MAX;
+    }
+    return idx;
 }
 
 // ---------------------------------------------------------------------------

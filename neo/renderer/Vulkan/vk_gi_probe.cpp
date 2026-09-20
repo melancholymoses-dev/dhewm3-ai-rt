@@ -135,7 +135,11 @@ static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INT
                                "r_rtGIProbeMaxRayDist; magenta = impossible second moment), "
                                "6=RAW backface fraction, 7=RAW miss fraction (blue=0 green=0.5 red=1). "
                                "6/7 show the measurement mode 4's verdict is made from: an air probe must "
-                               "read BLUE in mode 6, and if it does not, no threshold can fix it.");
+                               "read BLUE in mode 6, and if it does not, no threshold can fix it. "
+                               "8=G5b fast bucket: GREEN = share of this pixel's GI that is being "
+                               "flicker-factorized, RED = flickering lights reaching the point / 3. Only the "
+                               "highest-importance one is bucketed, so red is what G5b is still leaving "
+                               "EMA-smeared — dark red across a level says one bucket covers it.");
 
 static idCVar r_rtGIProbeDebugGain("r_rtGIProbeDebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
                                    "Mode-1-only gain, so stored irradiance survives the Uchimura toe "
@@ -155,6 +159,9 @@ static idCVar r_rtGIProbeDump("r_rtGIProbeDump", "0", CVAR_RENDERER | CVAR_BOOL,
 
 extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
+extern bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage,
+                                     VkMemoryPropertyFlags preferredProps, VkMemoryPropertyFlags requiredProps,
+                                     VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
@@ -238,6 +245,14 @@ static_assert(sizeof(GIProbeStatsEntry) == 8, "GIProbeStatsEntry size mismatch")
 // (85 MiB) and a 2560x2560 irradiance atlas (52 MiB), already past sane.
 #define VK_GIPROBE_MAX_PROBES 65536
 
+// Probe set bindings, shared by the trace rgen (set 2) and the blend/border
+// compute passes (set 0). Named because G5b's fast scratch made it grow, and
+// the count appears in three places that must agree.
+#define VK_GIPROBE_DESC_BINDINGS 7
+
+// Resolve set bindings. Its own layout, and its own count.
+#define VK_GIPROBE_RESOLVE_BINDINGS 10
+
 // ---------------------------------------------------------------------------
 // CPU-side probe bookkeeping
 //
@@ -258,11 +273,21 @@ static int s_probeStateCount = 0;
 // adopt the device value until that probe has been traced again.
 static GIProbeStatsEntry *s_probeStats = NULL;
 
+// Staging copy of the mapped readback snapshot. The classification loop below
+// reads each entry several times; doing that against mapped device memory is
+// far slower than one linear memcpy into ordinary heap, even when the
+// allocation got HOST_CACHED.
+static GIProbeStatsEntry *s_probeStatsRead = NULL;
+static bool s_statsReadbackCached = false;
+
 // Geometry the resources were actually built at, so a mid-session cvar change
 // can be detected. Same pattern as s_froxelDim in vk_vol_froxel.cpp.
 static int32_t s_probeDim[3] = {0, 0, 0};
 static int32_t s_probeRays = 0;
 static int32_t s_probeUpdates = 0;
+// G5b: K as the irradiance atlas was actually sized for. Changing
+// r_rtGIProbeFastBuckets changes the atlas height, so it joins the realloc test.
+static int32_t s_probeFastBuckets = -1;
 
 // Window state, for scroll invalidation.
 static int32_t s_baseCell[3] = {0, 0, 0};
@@ -329,7 +354,7 @@ static int32_t VK_RT_GIProbeRequestedUpdates(int32_t probeCount)
 // Same purpose as s_froxelDimFailed in vk_vol_froxel.cpp: a failed realloc zeroes
 // s_probeDim, which would make this predicate true forever and call
 // VK_RT_CreateProbeResources — and with it vkDeviceWaitIdle — every frame.
-static int32_t s_probeGeomFailed[5] = {0, 0, 0, 0, 0};
+static int32_t s_probeGeomFailed[6] = {0, 0, 0, 0, 0, -1};
 
 static void VK_RT_GIProbeLatchFailure(const int32_t dim[3], int32_t rays, int32_t updates)
 {
@@ -338,9 +363,10 @@ static void VK_RT_GIProbeLatchFailure(const int32_t dim[3], int32_t rays, int32_
     s_probeGeomFailed[2] = dim[2];
     s_probeGeomFailed[3] = rays;
     s_probeGeomFailed[4] = updates;
-    common->Warning("VK RT GIProbe: resource allocation failed at %dx%dx%d, %d rays x %d updates — probe path "
-                    "stood down (per-pixel GI is unaffected)",
-                    dim[0], dim[1], dim[2], rays, updates);
+    s_probeGeomFailed[5] = VK_RT_GIFastBucketCount();
+    common->Warning("VK RT GIProbe: resource allocation failed at %dx%dx%d, %d rays x %d updates, %d fast bucket(s) "
+                    "— probe path stood down (per-pixel GI is unaffected)",
+                    dim[0], dim[1], dim[2], rays, updates, s_probeGeomFailed[5]);
 }
 
 static bool VK_RT_GIProbeGeometryChanged(void)
@@ -350,13 +376,15 @@ static bool VK_RT_GIProbeGeometryChanged(void)
     const int32_t probes = want[0] * want[1] * want[2];
     const int32_t rays = VK_RT_GIProbeRequestedRays();
     const int32_t updates = VK_RT_GIProbeRequestedUpdates(probes);
+    // G5b: K sizes the irradiance atlas, so it belongs in both tests below.
+    const int32_t fastBuckets = VK_RT_GIFastBucketCount();
 
     if (want[0] == s_probeGeomFailed[0] && want[1] == s_probeGeomFailed[1] && want[2] == s_probeGeomFailed[2] &&
-        rays == s_probeGeomFailed[3] && updates == s_probeGeomFailed[4])
+        rays == s_probeGeomFailed[3] && updates == s_probeGeomFailed[4] && fastBuckets == s_probeGeomFailed[5])
         return false; // already known-bad, do not retry every frame
 
     return want[0] != s_probeDim[0] || want[1] != s_probeDim[1] || want[2] != s_probeDim[2] || rays != s_probeRays ||
-           updates != s_probeUpdates;
+           updates != s_probeUpdates || fastBuckets != s_probeFastBuckets;
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +577,7 @@ static void VK_RT_DestroyProbeResources(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         VK_RT_FreeProbeImage(vkRT.giProbeScratch[i]);
+        VK_RT_FreeProbeImage(vkRT.giProbeScratchFast[i]);
 
         if (vkRT.giProbeStateSsboMapped[i] != NULL)
         {
@@ -612,14 +641,23 @@ static void VK_RT_DestroyProbeResources(void)
         Mem_Free(s_probeStats);
         s_probeStats = NULL;
     }
+    if (s_probeStatsRead != NULL)
+    {
+        Mem_Free(s_probeStatsRead);
+        s_probeStatsRead = NULL;
+    }
     s_probeStateCount = 0;
     s_probeDim[0] = s_probeDim[1] = s_probeDim[2] = 0;
     s_probeRays = 0;
     s_probeUpdates = 0;
     s_tilesX = s_tilesY = 0;
+    // -1, not 0: K = 0 is a legal configuration, so zero here would read as
+    // "already built at K = 0" and suppress the realloc that turns it back on.
+    s_probeFastBuckets = -1;
     s_windowValid = false;
     for (int i = 0; i < 5; i++)
         s_probeGeomFailed[i] = 0;
+    s_probeGeomFailed[5] = -1;
 }
 
 // Allocates (or reallocates) every probe resource at the currently requested
@@ -639,10 +677,19 @@ static void VK_RT_CreateProbeResources(void)
         tx++;
     const int32_t ty = (probeCount + tx - 1) / tx;
 
+    // G5b: the irradiance atlas holds 1 + K sets of tiles, bucket k starting at
+    // tile index k * probeCount. Deliberately extra ROWS rather than an image
+    // array — gip_TileOrigin already turns a linear tile index into a texel
+    // origin, so nothing in the addressing changes and no blend/border/resolve
+    // declaration has to be retyped to image2DArray. The distance atlas is NOT
+    // duplicated: occluder geometry is shared by both buckets.
+    const int32_t irrBuckets = 1 + VK_RT_GIFastBucketCount();
+    const int32_t irrTilesY = ty * irrBuckets;
+
     const int32_t rays = VK_RT_GIProbeRequestedRays();
     const int32_t updates = VK_RT_GIProbeRequestedUpdates(probeCount);
 
-    if (!VK_RT_AllocProbeImage(vkRT.giProbeIrradiance, (uint32_t)(tx * s_irrSide), (uint32_t)(ty * s_irrSide),
+    if (!VK_RT_AllocProbeImage(vkRT.giProbeIrradiance, (uint32_t)(tx * s_irrSide), (uint32_t)(irrTilesY * s_irrSide),
                                VK_FORMAT_R16G16B16A16_SFLOAT) ||
         !VK_RT_AllocProbeImage(vkRT.giProbeDistance, (uint32_t)(tx * s_distSide), (uint32_t)(ty * s_distSide),
                                VK_FORMAT_R16G16_SFLOAT))
@@ -659,6 +706,25 @@ static void VK_RT_CreateProbeResources(void)
         // frame's rays with no cross-frame meaning, so per-slot is simply
         // correct and costs 1 MiB at the defaults.
         if (!VK_RT_AllocProbeImage(vkRT.giProbeScratch[i], (uint32_t)rays, (uint32_t)updates,
+                                   VK_FORMAT_R16G16B16A16_SFLOAT))
+        {
+            VK_RT_DestroyProbeResources();
+            VK_RT_GIProbeLatchFailure(dim, rays, updates);
+            return;
+        }
+
+        // G5b fast-bucket radiance for the same rays. Allocated even at K = 0:
+        // the descriptor set writes binding 6 unconditionally, and a shader that
+        // declares a binding it never reads still needs a live view there.
+        //
+        // rgba16f, not the planned r11f_g11f_b10f. STORAGE_IMAGE support for
+        // B10G11R11 is optional in Vulkan (it sits behind
+        // shaderStorageImageExtendedFormats), and a GLSL storage image's format
+        // qualifier has to match its view exactly — so a runtime fallback would
+        // mean shipping two variants of gi_probe_trace.rgen and
+        // gi_probe_blend.comp. The alpha channel is wasted; 0.5 MiB per slot at
+        // the defaults is not worth a device-dependent cliff.
+        if (!VK_RT_AllocProbeImage(vkRT.giProbeScratchFast[i], (uint32_t)rays, (uint32_t)updates,
                                    VK_FORMAT_R16G16B16A16_SFLOAT))
         {
             VK_RT_DestroyProbeResources();
@@ -695,21 +761,35 @@ static void VK_RT_CreateProbeResources(void)
         VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsSsboMemory, 0, statsBytes, 0, &vkRT.giProbeStatsSsboMapped));
         memset(vkRT.giProbeStatsSsboMapped, 0, (size_t)statsBytes);
 
+        // The snapshots are read by the CPU, so ask for HOST_CACHED. Without it the
+        // driver hands back write-combined memory and every read is an uncached
+        // round trip — the classification loop below measured 3.3 ms for 16k probes.
+        bool cached = true;
         for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         {
-            VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
+            cached &= VK_CreateBufferPreferred(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                               &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
             VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsReadbackMemory[i], 0, statsBytes, 0,
                                  &vkRT.giProbeStatsReadbackMapped[i]));
             memset(vkRT.giProbeStatsReadbackMapped[i], 0, (size_t)statsBytes);
         }
+        s_statsReadbackCached = cached;
+        common->Printf("VK RT GIProbe: stats readback is %s (%d probes, %.2f KiB/slot)\n",
+                       cached ? "HOST_CACHED" : "UNCACHED (write-combined) — classification will be slow", probeCount,
+                       (double)statsBytes / 1024.0);
     }
 
     s_probeState = (GIProbeStateEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStateEntry));
     memset(s_probeState, 0, probeCount * sizeof(GIProbeStateEntry));
     s_probeStats = (GIProbeStatsEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStatsEntry));
     memset(s_probeStats, 0, probeCount * sizeof(GIProbeStatsEntry));
+    s_probeStatsRead = (GIProbeStatsEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStatsEntry));
+    memset(s_probeStatsRead, 0, probeCount * sizeof(GIProbeStatsEntry));
     s_probeStateCount = probeCount;
 
     s_probeDim[0] = dim[0];
@@ -719,16 +799,17 @@ static void VK_RT_CreateProbeResources(void)
     s_probeUpdates = updates;
     s_tilesX = tx;
     s_tilesY = ty;
+    s_probeFastBuckets = irrBuckets - 1;
     s_windowValid = false; // force a full re-anchor, and with it a full invalidate
 
     const double irrMiB =
         (double)vkRT.giProbeIrradiance.width * vkRT.giProbeIrradiance.height * 8.0 / (1024.0 * 1024.0);
     const double distMiB = (double)vkRT.giProbeDistance.width * vkRT.giProbeDistance.height * 4.0 / (1024.0 * 1024.0);
-    common->Printf("VK RT GIProbe: grid %dx%dx%d (%d probes) atlas %dx%d tiles, irradiance %ux%u (%.1f MiB), "
-                   "distance %ux%u (%.1f MiB), %d rays x %d updates/frame\n",
+    common->Printf("VK RT GIProbe: grid %dx%dx%d (%d probes) atlas %dx%d tiles/bucket, irradiance %ux%u (%.1f MiB, "
+                   "%d bucket(s): 1 stable + %d fast), distance %ux%u (%.1f MiB), %d rays x %d updates/frame\n",
                    dim[0], dim[1], dim[2], probeCount, tx, ty, vkRT.giProbeIrradiance.width,
-                   vkRT.giProbeIrradiance.height, irrMiB, vkRT.giProbeDistance.width, vkRT.giProbeDistance.height,
-                   distMiB, rays, updates);
+                   vkRT.giProbeIrradiance.height, irrMiB, irrBuckets, irrBuckets - 1, vkRT.giProbeDistance.width,
+                   vkRT.giProbeDistance.height, distMiB, rays, updates);
 }
 
 // ---------------------------------------------------------------------------
@@ -890,9 +971,13 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 
     // Must track VK_RT_GIProbeDebugMode's range. A stale upper bound here does
     // not disable the new mode, it silently renders a DIFFERENT one.
-    ubo.misc[0] = idMath::ClampInt(0, 7, r_rtGIProbeDebug.GetInteger());
+    ubo.misc[0] = idMath::ClampInt(0, 8, r_rtGIProbeDebug.GetInteger());
     ubo.misc[1] = (vk.gbufferSupported && r_rtGbufNormals.GetBool()) ? 1 : 0;
     ubo.misc[2] = r_rtGIProbeVisibility.GetBool() ? 1 : 0;
+    // G5b: how many bucket-sized tile blocks the irradiance atlas holds. The
+    // shaders need it to normalise their UVs against the taller image — the
+    // DISTANCE atlas is not duplicated and keeps using atlas[1] alone.
+    ubo.misc[3] = 1 + s_probeFastBuckets;
 
     const vkReflBuffer_t &gb = vkRT.giBuffer[vk.currentFrame];
     ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
@@ -939,6 +1024,13 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     // receiver is not at.
     ubo.tune2[1] = idMath::ClampFloat(0.0f, s_spacing * 0.5f, r_rtGIProbeViewBias.GetFloat());
 
+    // G5b: the fast buckets' current gains, refreshed by this frame's
+    // VK_RT_UploadGILights (vk_backend.cpp calls it before any probe dispatch).
+    // This is the ONLY part of the probe path that has to be current-frame
+    // fresh — the atlases are deliberately not.
+    ubo.tune2[2] = VK_RT_GIFastBucketGain(0);
+    ubo.tune2[3] = 0.0f; // bucket 1, when K > 1 is earned
+
     return true;
 }
 
@@ -957,12 +1049,13 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 //   3 STORAGE_BUFFER  probe state        (per slot, CPU-owned)
 //   4 STORAGE_IMAGE   distance atlas     rg16f
 //   5 STORAGE_BUFFER  probe stats        (shared, GPU-owned; blend only)
+//   6 STORAGE_IMAGE   fast ray scratch   rgba16f  (G5b; alpha unused)
 static bool VK_RT_InitProbeDescLayout(void)
 {
-    VkDescriptorSetLayoutBinding bindings[6] = {};
+    VkDescriptorSetLayoutBinding bindings[VK_GIPROBE_DESC_BINDINGS] = {};
     const VkShaderStageFlags stages = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT;
 
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < VK_GIPROBE_DESC_BINDINGS; i++)
     {
         bindings[i].binding = (uint32_t)i;
         bindings[i].descriptorCount = 1;
@@ -974,15 +1067,16 @@ static bool VK_RT_InitProbeDescLayout(void)
     bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // G5b fast scratch
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 6;
+    layoutInfo.bindingCount = VK_GIPROBE_DESC_BINDINGS;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giProbeDescLayout));
 
     VkDescriptorPoolSize poolSizes[3] = {};
-    poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 3)};
+    poolSizes[0] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 4)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
 
@@ -1067,10 +1161,14 @@ static void VK_RT_InitProbeBlendPipelines(void)
 //     references it statically, so it has to be a live handle on every dispatch;
 //     the resolve therefore requires a valid TLAS, exactly as VK_RT_DispatchGI
 //     already does.
+//   8 STORAGE_BUFFER          probe stats (modes 6/7)
+//   9 STORAGE_BUFFER          GI light SSBO — G5b's mode 8 counts how many FAST
+//     lights reach each receiver, which is the measurement that decides K=1 vs
+//     K=2. Same static-reference rule as the TLAS above: debug-only, always bound.
 static void VK_RT_InitProbeResolvePipeline(void)
 {
-    VkDescriptorSetLayoutBinding bindings[9] = {};
-    for (int i = 0; i < 9; i++)
+    VkDescriptorSetLayoutBinding bindings[VK_GIPROBE_RESOLVE_BINDINGS] = {};
+    for (int i = 0; i < VK_GIPROBE_RESOLVE_BINDINGS; i++)
     {
         bindings[i].binding = (uint32_t)i;
         bindings[i].descriptorCount = 1;
@@ -1085,10 +1183,11 @@ static void VK_RT_InitProbeResolvePipeline(void)
     bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[7].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     bindings[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // stats, modes 6/7
+    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // GI lights, G5b mode 8
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 9;
+    layoutInfo.bindingCount = VK_GIPROBE_RESOLVE_BINDINGS;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giProbeResolveDescLayout));
 
@@ -1123,7 +1222,8 @@ static void VK_RT_InitProbeResolvePipeline(void)
     poolSizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 4)};
     poolSizes[1] = {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
     poolSizes[2] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
-    poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 2)};
+    // 3 storage buffers per set now: probe state, probe stats, and G5b's lights.
+    poolSizes[3] = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VK_MAX_FRAMES_IN_FLIGHT * 3)};
     poolSizes[4] = {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
 
     VkDescriptorPoolCreateInfo poolInfo = {};
@@ -1269,7 +1369,10 @@ int VK_RT_GIProbeDebugMode(void)
         return 0;
     if (vkRT.giProbeResolvePipeline == VK_NULL_HANDLE || vkRT.giProbeIrradiance.image == VK_NULL_HANDLE)
         return 0;
-    return idMath::ClampInt(0, 7, r_rtGIProbeDebug.GetInteger());
+    // Mirror of the clamp in VK_RT_BuildProbeParams' misc[0]. Both must move
+    // together: raising only this one gates the new mode in but leaves the UBO
+    // telling the shader to render a different one.
+    return idMath::ClampInt(0, 8, r_rtGIProbeDebug.GetInteger());
 }
 
 // True when the probe path OWNS the GI result — G2 wires this to stand the
@@ -1375,9 +1478,15 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
     // in the submission the frame fence has already retired. We only ever read;
     // the device-side stats are never written from the CPU after creation, so
     // there is nothing to upload back either.
-    if (vkRT.giProbeStatsReadbackMapped[frameIdx] != NULL)
+    if (vkRT.giProbeStatsReadbackMapped[frameIdx] != NULL && s_probeStatsRead != NULL)
     {
-        const GIProbeStatsEntry *gpuStats = (const GIProbeStatsEntry *)vkRT.giProbeStatsReadbackMapped[frameIdx];
+        // One linear pass out of mapped memory, then classify from the heap copy.
+        // Touching the mapping directly costs ~200 ns per probe when it is not
+        // HOST_CACHED, which put this loop at 3.3 ms for a 32x32x16 grid.
+        memcpy(s_probeStatsRead, vkRT.giProbeStatsReadbackMapped[frameIdx],
+               (size_t)s_probeStateCount * sizeof(GIProbeStatsEntry));
+
+        const GIProbeStatsEntry *gpuStats = s_probeStatsRead;
         const float insideOn = Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat());
         const float insideOff = insideOn * 0.75f; // dead band — see the CVars
         const float outsideOn = Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat());
@@ -1464,6 +1573,10 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         scratchInfo.imageView = vkRT.giProbeScratch[frameIdx].view;
         scratchInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
+        VkDescriptorImageInfo scratchFastInfo = {};
+        scratchFastInfo.imageView = vkRT.giProbeScratchFast[frameIdx].view;
+        scratchFastInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
         VkDescriptorImageInfo irrInfo = {};
         irrInfo.imageView = vkRT.giProbeIrradiance.view;
         irrInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -1488,8 +1601,8 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         statsInfo.offset = 0;
         statsInfo.range = VK_WHOLE_SIZE;
 
-        VkWriteDescriptorSet writes[6] = {};
-        for (int i = 0; i < 6; i++)
+        VkWriteDescriptorSet writes[VK_GIPROBE_DESC_BINDINGS] = {};
+        for (int i = 0; i < VK_GIPROBE_DESC_BINDINGS; i++)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = ds;
@@ -1508,8 +1621,10 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         writes[4].pImageInfo = &distInfo;
         writes[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[5].pBufferInfo = &statsInfo;
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE; // G5b fast scratch
+        writes[6].pImageInfo = &scratchFastInfo;
 
-        vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk.device, VK_GIPROBE_DESC_BINDINGS, writes, 0, NULL);
         vkRT.giProbeDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 
@@ -1561,14 +1676,26 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         common->Printf("  camera=(%.0f %.0f %.0f)  baseCell=(%d %d %d)  origin=(%.0f %.0f %.0f)\n", camPos.x, camPos.y,
                        camPos.z, s_baseCell[0], s_baseCell[1], s_baseCell[2], outUbo.gridOrigin[0],
                        outUbo.gridOrigin[1], outUbo.gridOrigin[2]);
-        common->Printf("  atlas tiles=%dx%d  irradiance %ux%u side=%d (%.1f MiB)  distance %ux%u side=%d (%.1f MiB)\n",
+        common->Printf("  atlas tiles=%dx%d/bucket  irradiance %ux%u side=%d (%.1f MiB)  distance %ux%u side=%d "
+                       "(%.1f MiB)\n",
                        s_tilesX, s_tilesY, vkRT.giProbeIrradiance.width, vkRT.giProbeIrradiance.height, s_irrSide,
                        irrMiB, vkRT.giProbeDistance.width, vkRT.giProbeDistance.height, s_distSide, distMiB);
-        common->Printf("  scratch %ux%u (%.2f MiB/slot)  state %.2f MiB/slot  stats %.2f MiB shared  total ~%.1f MiB\n",
+        common->Printf("  scratch %ux%u (%.2f MiB/slot x2: primary + G5b fast)  state %.2f MiB/slot  stats %.2f MiB "
+                       "shared  total ~%.1f MiB\n",
                        vkRT.giProbeScratch[frameIdx].width, vkRT.giProbeScratch[frameIdx].height, scratchMiB, stateMiB,
-                       statsMiB, irrMiB + distMiB + statsMiB + (scratchMiB + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
+                       statsMiB,
+                       irrMiB + distMiB + statsMiB + (scratchMiB * 2.0 + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
+        // G5b. A gain pinned at 1.000 with a nonzero fast count means every fast
+        // light happens to be at its peak this instant; a gain of 0.000 with a
+        // count of 0 is the no-flickering-light-in-range case and the fast atlas
+        // is correctly contributing nothing.
+        common->Printf("  G5b: fastBuckets=%d (requested %d)  fastLights=%d  gain[0]=%.3f  irradiance atlas is "
+                       "%dx its single-bucket size\n",
+                       s_probeFastBuckets, VK_RT_GIFastBucketCount(), VK_RT_GIFastLightCount(),
+                       VK_RT_GIFastBucketGain(0), 1 + s_probeFastBuckets);
         const int usable = traced - inside - outside;
-        common->Printf("  traced=%d/%d  never traced=%d\n", traced, s_probeStateCount, s_probeStateCount - traced);
+        common->Printf("  traced=%d/%d  never traced=%d  stats readback=%s\n", traced, s_probeStateCount,
+                       s_probeStateCount - traced, s_statsReadbackCached ? "HOST_CACHED" : "UNCACHED (slow)");
         common->Printf("  usable=%d (%.1f%%)  insideGeometry=%d (%.1f%%)  outsideLevel=%d (%.1f%%)\n", usable,
                        100.0 * usable / Max(1, s_probeStateCount), inside, 100.0 * inside / Max(1, s_probeStateCount),
                        outside, 100.0 * outside / Max(1, s_probeStateCount));
@@ -1778,7 +1905,11 @@ void VK_RT_DispatchGIProbeBlend(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBorderPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.giProbeBorderPipelineLayout, 0, 1,
                             &vkRT.giProbeDescSets[frameIdx], 0, NULL);
-    vkCmdDispatch(cmd, (uint32_t)s_probeUpdates, 2, 1);
+    // y covers every irradiance bucket plus the single distance map. G5b: this
+    // used to be a constant 2 and MUST track s_probeFastBuckets — passing 2 with
+    // K = 1 leaves the fast bucket's octahedral borders unwritten, which reads as
+    // a seam cross that shows up only on flickering lights.
+    vkCmdDispatch(cmd, (uint32_t)s_probeUpdates, (uint32_t)(s_probeFastBuckets + 2), 1);
 
     // Border writes -> resolve's sampled read.
     {
@@ -1892,8 +2023,12 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
         VkDescriptorBufferInfo statsInfo = {vkRT.giProbeStatsSsbo, 0, VK_WHOLE_SIZE};
 
-        VkWriteDescriptorSet writes[9] = {};
-        for (int i = 0; i < 9; i++)
+        // G5b mode 8 only, but statically referenced by the shader, so it is
+        // bound on every dispatch. Same slot's buffer gi_ray.rchit reads.
+        VkDescriptorBufferInfo lightInfo = {vkRT.giLightSsbo[frameIdx], 0, VK_WHOLE_SIZE};
+
+        VkWriteDescriptorSet writes[VK_GIPROBE_RESOLVE_BINDINGS] = {};
+        for (int i = 0; i < VK_GIPROBE_RESOLVE_BINDINGS; i++)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = ds;
@@ -1918,8 +2053,10 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[7].pNext = &tlasWrite;
         writes[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writes[8].pBufferInfo = &statsInfo;
+        writes[9].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[9].pBufferInfo = &lightInfo;
 
-        vkUpdateDescriptorSets(vk.device, 9, writes, 0, NULL);
+        vkUpdateDescriptorSets(vk.device, VK_GIPROBE_RESOLVE_BINDINGS, writes, 0, NULL);
         vkRT.giProbeResolveDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
     }
 

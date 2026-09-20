@@ -154,6 +154,10 @@ void main()
         vec3 origin = worldPos + normal * bias;
 
         giPayload.colour = vec3(0.0);
+        // G5b: leaving the mode bit clear tells gi_ray.rchit to fold flickering
+        // lights back into `colour` at their current gain, exactly as before the
+        // bucket split existed. This path never reads giPayload.fast.
+        giPayload.fast = 0u;
         traceRayEXT(
             topLevelAS,
             gl_RayFlagsNoneEXT,

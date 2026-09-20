@@ -96,11 +96,16 @@ hitAttributeEXT vec2 baryCoord;
 
 void main()
 {
+    // G5b: read the caller's mode bit BEFORE anything overwrites the field — it
+    // is the same word the fast-bucket radiance goes out in.
+    bool probeMode = (giPayload.fast & GI_PAYLOAD_PROBE_MODE) != 0u;
+    giPayload.fast = 0u;
+
     // B.2: hit geometry fields, written before any early-out so every return path
-    // leaves a complete payload. hitDist feeds the probe visibility moments,
-    // backface feeds probe classification (G4).
-    giPayload.hitDist  = gl_HitTEXT;
-    giPayload.backface = 0.0; // refined below, once the surface normal is known
+    // leaves a complete payload. |hitDist| feeds the probe visibility moments and
+    // its sign feeds probe classification (G4).
+    giPayload.hitDist = gl_HitTEXT;
+    bool backface = false; // refined below, once the surface normal is known
 
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
 
@@ -118,7 +123,9 @@ void main()
     // carrying the actual light. The normal is the engine's own idea of
     // "outward" and needs no winding convention at all.
     vec3 hitNorm = rt_InterpolateNormal(matIdx, gl_PrimitiveID, baryCoord);
-    giPayload.backface = (dot(hitNorm, gl_WorldRayDirectionEXT) > 0.0) ? 1.0 : 0.0;
+    backface = dot(hitNorm, gl_WorldRayDirectionEXT) > 0.0;
+    if (backface)
+        giPayload.hitDist = -gl_HitTEXT;
 
     // Sample diffuse albedo at secondary hit.
     vec4 diffuse = rt_SampleDiffuse(matIdx, gl_PrimitiveID, baryCoord);
@@ -136,14 +143,18 @@ void main()
     vec3 hitPos  = gl_WorldRayOriginEXT + gl_HitTEXT * gl_WorldRayDirectionEXT;
 
     // Two-sided geometry: face the hemisphere toward the incoming ray.
-    if (giPayload.backface > 0.5)
+    if (backface)
         hitNorm = -hitNorm;
 
     // Shared light loop (rt_light_eval.glsl). bounceScale rides in as contribScale.
     // params.maxBounceLights == 0 signals Option A fallback (bounce disabled).
     int n = min(rtLightBuf.numLights, min(params.maxBounceLights, RT_LIGHT_MAX_LIGHTS));
 
-    vec3 irradiance;
+    // G5b: three-way split. `stable` is the steady lights; `fastNorm` is the
+    // flickering ones evaluated at their peak L̂ (what the probe fast bucket
+    // caches, and the only form that is time-invariant); `fastScaled` is those
+    // same lights at L̂·s, i.e. as they look right now.
+    vec3 stable, fastNorm, fastScaled;
     if (params.stochasticLights > 0)
     {
         // P3: importance-sample 1-2 lights and fire only those shadow rays.
@@ -156,17 +167,19 @@ void main()
                             ^ floatBitsToUint(gl_HitTEXT));
 
         // 0xFF: the player *should* occlude bounce light in the room (B1).
-        irradiance = rt_EvalDirectLightingStochastic(hitPos, hitNorm, params.maxBounceLights,
-                                                     params.stochasticLights, GI_SHADOW_BIAS,
-                                                     rtLightBuf.bounceScale, seed, 0xFFu);
+        rt_EvalDirectLightingStochasticBuckets(hitPos, hitNorm, params.maxBounceLights,
+                                               params.stochasticLights, GI_SHADOW_BIAS,
+                                               rtLightBuf.bounceScale, seed, 0xFFu,
+                                               stable, fastNorm, fastScaled);
     }
     else
     {
         // Legacy path: every in-range light gets a shadow ray (budget = max,
         // threshold 0). Kept for A/B against the stochastic estimator.
-        irradiance = rt_EvalDirectLighting(hitPos, hitNorm, params.maxBounceLights,
-                                           RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
-                                           rtLightBuf.bounceScale, 0.0, 0.0, 0xFFu);
+        rt_EvalDirectLightingBuckets(hitPos, hitNorm, params.maxBounceLights,
+                                     RT_LIGHT_MAX_LIGHTS, GI_SHADOW_BIAS,
+                                     rtLightBuf.bounceScale, 0.0, 0.0, 0xFFu,
+                                     stable, fastNorm, fastScaled);
     }
 
     // Final bounce colour: albedo × gathered irradiance.
@@ -175,7 +188,23 @@ void main()
     // radius/NdotL checks), return raw albedo so the rgen's giStrength still
     // provides a uniform ambient lift rather than returning black.
     if (n == 0 || rtLightBuf.bounceScale == 0.0)
+    {
         giPayload.colour = albedo;
+        return;
+    }
+
+    if (probeMode)
+    {
+        // Probe GI: the two buckets go to two atlases and are recombined at
+        // resolve time with the CURRENT gain, so the fast half must be stored
+        // without it.
+        giPayload.colour = albedo * stable;
+        giPayload.fast   = gip_PackRadiance(albedo * fastNorm);
+    }
     else
-        giPayload.colour = albedo * irradiance;
+    {
+        // Per-pixel GI: one value, flickering lights already at their current
+        // gain. Identical to what this shader returned before the split.
+        giPayload.colour = albedo * (stable + fastScaled);
+    }
 }

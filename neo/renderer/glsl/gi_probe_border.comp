@@ -12,15 +12,21 @@ Without this pass, every probe shows a visible cross/seam wherever a lookup
 direction crosses the octahedron's edge — the classic DDGI artifact.
 
 One workgroup per updated probe, per map: gl_WorkGroupID.x = update slot,
-gl_WorkGroupID.y = 0 for the irradiance map, 1 for the distance map.  Each
-thread handles a whole row/column position (four border texels), so one
+gl_WorkGroupID.y selects the map.  G5b turned that from a 2-entry choice into a
+range: y in [0, irrBuckets) walks the irradiance atlas' buckets (0 = stable,
+1..K = fast) and y == irrBuckets is the distance map, which is not bucketed.
+The DISPATCH's y extent has to match — a caller that still passes 2 leaves the
+fast bucket's borders unwritten, which shows up as a seam cross that appears
+only on flickering lights.
+
+Each thread handles a whole row/column position (four border texels), so one
 workgroup of `side` active threads covers the ring including its corners.  The
 corners are written twice with the same value — the mirror rule gives the same
 source for each — which is cheaper than branching to avoid it.
 
 Descriptors: the same set 0 layout gi_probe_blend.comp uses.
 
-20260906_froxel_probe_gi.md Part B, chunk G1.
+20260906_froxel_probe_gi.md Part B, chunks G1 and G5b.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -49,7 +55,9 @@ void main()
     if (slot >= max(gp.rays.y, 0))
         return;
 
-    bool isDistance = (gl_WorkGroupID.y == 1u);
+    int irrBuckets = gip_IrrBuckets();
+    int mapId = int(gl_WorkGroupID.y);
+    bool isDistance = (mapId >= irrBuckets);
     int side = isDistance ? max(gp.atlas.w, 3) : max(gp.atlas.z, 3);
 
     int i = int(gl_LocalInvocationID.x);
@@ -57,7 +65,11 @@ void main()
         return;
 
     ivec3 absCell = gip_ScheduledCell(slot);
-    ivec2 origin = gip_TileOrigin(gip_StorageIndex(absCell), side);
+    int storageIdx = gip_StorageIndex(absCell);
+    // The distance map has one tile per probe; the irradiance map has one per
+    // (probe, bucket) pair, so only the latter goes through gip_IrrTile.
+    ivec2 origin = isDistance ? gip_TileOrigin(storageIdx, side)
+                              : gip_TileOrigin(gip_IrrTile(storageIdx, mapId), side);
     int last = side - 1;
 
     ivec2 dst[4];

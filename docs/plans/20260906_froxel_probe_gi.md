@@ -6,8 +6,8 @@
 **Part A: F0-F2 landed and validated, F3 and F4 dropped, F5 open.
 Part B: G0-G4 landed and validated. G6 flipped `r_rtGIProbes` to 1 on 2026-09-19 —
 probe GI is the shipped default, decided on appearance, with G5b's flicker veto
-consciously waived. The per-pixel path is kept, not retired. Open: G5, G5b (now a live
-defect in the default path, highest-value item here), and G6's retune.**
+consciously waived. The per-pixel path is kept, not retired. G5b written 2026-09-19,
+awaiting its in-game checks. Open: G5 fix 2, G5b's validation, and G6's retune.**
 
 ---
 
@@ -1015,12 +1015,33 @@ that appears without it) and low-passes the *scene* purely as a side effect. So
 "lower the hysteresis" is not the lever. **Two fixes, in this order:**
 
 1. **Make each update low-variance enough that heavy smoothing is unnecessary.**
-   G2's measurement is what makes this affordable: the trace is latency-bound
-   (131 k rays in 0.048 ms, ~3x the per-pixel per-ray rate) and the arc freed
-   4.2 ms. 4096 probes/frame x 256 rays ≈ 1 M rays ≈ 1 ms at the per-pixel path's
-   measured throughput — a 4-frame rotation, and with a narrower estimator tail
-   alpha ~0.5 becomes affordable: τ ≈ 8 frames ≈ 130 ms. Enough for a door or a
-   slow pulse; still not a 10 Hz strobe.
+   **No code** — `r_rtGIProbeRays 256`, `r_rtGIProbeUpdatesPerFrame 4096`,
+   `r_rtGIProbeHysteresis 0.5`. Both clamps already accept those values
+   (`vk_gi_probe.cpp:320`, `:325`); only the scratch realloc follows. A 4-frame
+   rotation at alpha 0.5 is τ ≈ 8 frames ≈ 130 ms — a door or a slow pulse, not a
+   10 Hz strobe (4096/16384 is a 15 Hz sample rate, Nyquist 7.5 Hz).
+
+   ✅ **Measured 2026-09-19**, medians over 62-82 in-game frames per config, moving
+   through Mars City. `Shadows` swings 0.08-3.8 ms in the same capture, so only the
+   Probe rows are readable from it.
+
+   | Name | G2 | Expected | 128×1024 | 256×1024 | **256×4096** |
+   |---|---|---|---|---|---|
+   | ProbeTrace | 0.048 | ~0.4 | 0.052 | 0.070 | **0.146** |
+   | ProbeBlend | 0.075 | ~0.6 | 0.087 | 0.158 | **0.499** |
+   | ProbeResolve | 0.524 | 0.524 | 0.609 | 0.662 | **0.629** |
+   | scratch | 2 MiB | 16 MiB | 2 MiB | 4 MiB | **16 MiB** |
+
+   **+0.51 ms for 8× the rays** — cheaper than expected. GI chain 0.75 → 1.27 ms,
+   still ~4× under the per-pixel path's 4.9. Three things this settles:
+
+   - **The trace is latency-bound, confirmed.** 2× rays costs 1.35×, then 4× probes
+     costs 2.1× — 8× the work for 2.8× the time.
+   - **The blend is now the dominant probe pass** (0.499 vs trace 0.146) and scales
+     nearly linearly: 8× work, 5.7× time. Ray count is paid for in the blend, not the
+     trace — inverting B.6's prediction a second time, in the other direction.
+   - **Resolve is flat** at 0.609/0.662/0.629 across all three, as G2 said. That ±0.05
+     spread is view noise and sets the floor: smaller differences are not real.
 2. **Adaptive hysteresis in `gi_probe_blend.comp`** — the standard DDGI answer
    and a few lines. Compare the new value against `prev` and boost alpha when the
    relative change is large, so a probe *snaps* to a genuine lighting change while
@@ -1033,12 +1054,28 @@ Trigger-wise this is the same mechanism as the portal bump above: a light whose
 colour changed this frame should jump its neighbouring probes to the front of the
 queue, so it belongs here rather than in G6.
 
-**A third fix was proposed 2026-09-18 and supersedes fix 2 for the flicker case
-specifically — see G5b.** Fix 1 (narrow the estimator) stays first regardless; fix 2
-(adaptive hysteresis) remains the right answer for *doors and moving lights*, which
-G5b cannot help.
+❌ **Fix 1 does not reach flicker — confirmed in play 2026-09-19.** At
+`256 × 4096 × hysteresis 0.5` a 5 Hz light's GI still does not keep up. 
+Fix 1 is a door and moving-light fix only.
 
-### G5b — flicker factorization  🔴 live defect in the default path
+**Cause found 2026-09-19, and it was not the sample rate.** The light SSBO carried
+shaderParms, and Doom 3 puts flicker in the light material's register expressions —
+so the GI never received a varying signal to track at any update rate. See the
+premise correction under G5b.
+
+**A third fix was proposed 2026-09-18 and supersedes fix 2 for the flicker case
+specifically — see G5b.** Fix 2 (adaptive hysteresis) remains the right answer for
+*doors and moving lights*, which G5b cannot help, and **fix 1 gates fix 2** — its
+threshold is a GPU-side comparison against a noisy estimate.
+
+**Fix 1 does not gate G5b** (corrected 2026-09-19). G5b's classifier is a CPU-side
+colour delta on exact `idRenderLightLocal` data, no estimator involved, and the
+bucket split is energy-conserving ray-for-ray: at `s = 1` the two buckets sum to
+today's value from the same reservoir picks, at the same alpha. Per-bucket relative
+variance rises; the total does not. Build G5b first; run fix 1's CVar sweep beside
+it as a separate A/B.
+
+### G5b — flicker factorization  🟡 written 2026-09-19, not yet run
 
 A probe is re-traced every 16 frames and blended at alpha 0.03, so τ ≈ 8.9 s. A flickering
 light's bounce converges to its mean and a dark room keeps a glow. Pillar 2. Shipping since
@@ -1059,7 +1096,14 @@ E_p = Σ_stable L_j·G_pj  +  s(t) · Σ_fast L̂_k·G_pk
 
 `G` is geometric transport, constant while nothing moves. Caching the fast bucket with the
 flicker divided out makes it time-invariant, so it uses the **same slow hysteresis**, no
-extra rays, and the resolve multiplies by the current `s(t)`. **Flicker latency: zero.**
+extra rays, and the resolve multiplies by the current `s(t)`. 
+
+`L̂` has to be what the shader *reads*, not a correction applied after: the stochastic
+reservoir weights each light by its current contribution luminance
+(`rt_light_eval.glsl:321`) and `continue`s at `w <= 0`. A fast light in its dark phase
+would never be picked — the bucket starves — or be picked at tiny `p` and spike through
+the `wSum/w0` division. Storing `L̂` makes the selection time-invariant too, which reduces
+the shader change to pure routing by flag.
 
 Covers flicker/pulse/strobe in place and full switch-off. A light switching *on* costs one
 refresh (~0.27 s) to build `G`. A **moving** light changes `G`, not `s` — not factorizable,
@@ -1071,41 +1115,149 @@ smear it confidently.
 | File | Change |
 |---|---|
 | `vk_gi.cpp` classify | per-lightDef: last colour, ~2 s running max, last origin/axis. Fast if relative colour change > threshold within the hold window **and** origin/axis unchanged. `L̂` = running max, `s` = current/max, clamp `s ≤ 1`. Key off `idRenderLightLocal::index` like `s_lightSelectedFrame` (`vk_gi.cpp:1287`) |
-| `GILightEntry` | flag bit `GI_LIGHT_FAST` + normalised colour `L̂` |
-| `GIParams` UBO | `vec4 fastGain[K]` |
-| `rt_light_eval.glsl` | route contribution to accumulator 0/1 by the flag — **bucket selector is a parameter**, not hardcoded |
-| `gi_payload.glsl` | +1 `vec3`. First fold `backface` into `sign(hitDist)` — the scratch encoding already carries it that way — to claw back 4 bytes |
-| `gi_probe_blend.comp` | blend both layers at the same hysteresis; distance atlas **not** duplicated |
-| `gi_probe_resolve.comp` | `E = E_stable + Σ_k E_fast[k]·fastGain[k]` |
+| `GILightEntry` | `colorIntensity.rgb` = `L̂`; `s` and bucket index go in the **existing** `uint32_t pad[2]` (`vk_gi.cpp:187`) + flag bit `GI_LIGHT_FAST`. **No size change** |
+| `GIProbeParams` | `vec4 fastGain[K]` — the *resolve* reads `gp`, not set 0's `GIParams`. `tune2.zw` is free for K ≤ 2 |
+| `rt_light_eval.glsl` | route contribution to accumulator 0/1 by the flag — **bucket selector is a parameter**, not hardcoded. Apply `* s` inside `rt_LightContribAt` for every non-probe caller |
+| `vol_froxel_fill.comp:146`, `vol_march.comp:333` | own light loops, not via `rt_LightContribAt` — need `* s` by hand |
+| `gi_payload.glsl` | fold `backface` into `sign(hitDist)` (the scratch already encodes it that way) → 16 B, then +1 packed `uint` for the fast radiance. GLSL has no RGB9E5 intrinsic; hand-roll (~8 lines) for 20 B, or `uvec2`/`packHalf2x16` for 24 B |
+| `gi_probe_blend.comp` | blend both buckets at the same hysteresis; cache fast rays as packed `uint` (`s_fast[256]`, +1 KB shared, not +3 KB); distance atlas **not** duplicated |
+| `gi_probe_resolve.comp` | `E = E_stable + Σ_k E_fast[k]·fastGain[k]`, sharing the tap weights |
 
-Make the irradiance atlas a `K+1` layer array, not a second image — one `gip_AtlasUV` for
-both taps.
+**Address bucket `k` at `idx + k*probeCount` and double `s_tilesY`** — not a layer array.
+`gip_AtlasUVOct` is then unchanged and no `image2DArray`/`sampler2DArray` retype crosses
+blend, border and resolve. The border pass grows its `gl_WorkGroupID.y` range instead.
 
-**Cost.** Rays unchanged; that is the point. +13.1 MB per bucket, capacity only — the
-resolve is issue-rate bound over screen pixels (G2), not bandwidth bound. **The one real
-risk is the payload**: 20 → 32 bytes feeds RT occupancy, so measure the payload growth
-alone before wiring the split.
+**Cost** (16384 probes, K=1). Rays unchanged; that is the point.
+
+| | today | after |
+|---|---|---|
+| Irradiance atlas | 13.1 MB | 26.2 MB |
+| Distance / light SSBO | 21.2 MB / 20.5 KB | unchanged |
+| Scratch | 1.0 MiB/slot | +0.5 MiB/slot (`rg11b10f`) |
+| **ProbeResolve** | **0.609 ms** (2026-09-19) | **~0.9-1.2 ms** |
+| ProbeBlend | 0.087 ms | ~0.13 ms — only the irradiance loop doubles; the `pow()` distance loop is untouched |
+
+The resolve is the real cost, and the earlier "capacity only" claim was wrong on its own
+terms: G2 measured it **issue-rate bound on 8 scattered bilinear taps**, and K=1 makes it
+16 (`gi_probe_resolve.comp:395`). That, not the 13 MB, is the argument against K=2. The
+payload is no longer the risk — packing it keeps 20 bytes.
 
 Deriving `L̂` from a running max makes this self-calibrating — works for `flicker`,
 `pdflicker`, hand tables and script `setShaderParm` with no material parsing.
+
+**Transients, by design**
+
+- **First classification costs a ~9 s crossfade, not a pop.** At the flip the stable
+  bucket still holds that light steadily (today's bug) while the fast bucket is empty;
+  both EMAs converge at τ 8.9 s. The dark-room check below cannot be read until then,
+  and classifier flapping re-triggers it — that is what `r_rtGIFlickerHold` buys.
+- **A rising `L̂` rescales everything already cached in the fast bucket.** Bounded to a
+  light's first flicker cycle (~0.2 s) and corrected over one refresh.
+- `s` pins at 1 while `L̂` is still below peak, so the first peak reads under-bright.
 
 **CVars**
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `r_rtGIProbeFastBuckets` | `1` | K separately-cached buckets; `0` = today's behaviour, the off switch. One gain is shared per bucket, so K=1 is approximate when two lights flicker out of phase within a probe's reach. Measure before paying for K=2 |
+| `r_rtGIProbeFastBuckets` | `1` | K separately-cached buckets; `0` = today's behaviour, the off switch. ~~One gain is shared per bucket, so K=1 is approximate when two lights flicker out of phase within a probe's reach: the gain is the `L̂`-weighted mean of `s` over the bucket's lights, which is exact for one fast light and degrades smoothly.~~ **Corrected in the as-built table: that mean is wrong, not approximate. One light per bucket** |
 | `r_rtGIFlickerThreshold` | `0.15` | relative colour change that classifies fast |
-| `r_rtGIFlickerHold` | `2.0` | seconds a light stays fast after its last change (sticky, or reclassification itself pops) |
+| `r_rtGIFlickerHold` | `2.0` | ~~seconds a light stays fast after its last change~~ **as built: the `L̂` decay time constant. The classification latches instead** |
 | `r_rtGIProbeDebug 8` | — | **ships first:** fast-bucket fraction per probe (blue→red) + count of distinct fast lights reaching each probe. The count says whether K=1 suffices |
+
+### ⚠️ Premise correction — the flicker was never in the light SSBO
+
+Found 2026-09-19 while reading the first `r_rtGILightDump` of the classifier, which
+reported **0 flickering lights** in a 73-light Mars City upload.
+
+Doom 3 writes light animation as **material register expressions**, not shaderParms:
+
+```
+lights/square_flicker
+    red ((.25 * blinktable[Parm4 + (time * 15 * Parm3)]) + .75) * Parm0
+```
+
+`Parm0..2` are the constant amplitude; the flicker is the table lookup. The raster
+interaction path evaluates this (`vk_backend.cpp:4190`, `regs[stage->color.registers[i]]`),
+but the RT light upload read `p.shaderParms[SHADERPARM_RED..BLUE]` — the constant.
+
+**Consequences, all of which predate G5b:**
+
+| | |
+|---|---|
+| GI, volumetrics and reflections | have **never** seen a flickering light flicker. They got its constant amplitude |
+| "Dark room keeps a glow" | not (only) the EMA low-passing a flicker. Even at hysteresis 0 it would be steady — the signal was absent |
+| G5's fix 1 measurement | explained. `256 × 4096 × hysteresis 0.5` "does not reach a 5 Hz flicker" because no update rate can track a signal that is not in the data |
+| G5b's classifier | could not have fired on any retail flickering light |
+
+**Fixed as part of G5b:** `considerLight` now evaluates the light shader's registers
+once and takes the colour from the chosen stage, matching the raster path. The cookie
+block reuses the same registers and stage rather than re-evaluating — they must agree,
+or a multi-stage light gets one stage's gobo tinted by another's colour.
+
+Blast radius is small in *count* — a plain `colored` stage sets its colour registers to
+parm0-2 verbatim, so the vast majority of fixtures are byte-identical. 74 light
+materials in `lights.mtr` have a time-driven colour expression; those are the ones that
+change.
+
+✅ **Confirmed in play 2026-09-19**, by raising `r_rtGIStrength` and A/Bing against the
+non-RT path: GI now follows a fast light's pattern and stays stable on slow ones.
+
+**The effect is larger than "flicker was missing".** Observed in play: GI and
+volumetrics had been *flattening every animated light temporally*, not just flickering
+ones — strobes, pulses, slow neon, the lot. All 74 were pinned at `Parm0`.
+
+**Two consequences for G6's owed retune, which is downstream of this:**
+- `Parm0` is the table's multiplicand and the tables peak at 1.0, so every animated
+  light was being fed to GI/vol at its **peak** value. Their average contribution now
+  drops. That moves the baseline in the same direction as the reported over-brightness.
+- So the retune must happen *after* this lands, not against the old constants. Tuning
+  against a peak-pinned animated light set would bake in the wrong exposure.
+
+**The zero in that first dump was still legitimate.** Every light in that area
+(`squarelight1`, `biground1`, `squareishlight`, `spot01`, `triangle1`,
+`newalphagrate3b`, and a literal `squarelight1_snd_noflicker`) is a static material.
+The dump now prints `parm=` beside `eval=` so the two cases are distinguishable in a
+log: equal everywhere means "no animated lights here", not "detection is broken".
+
+🟡 **Written 2026-09-19, not yet in-game validated.** As built, deviating from the above:
+
+| Item | As built |
+|---|---|
+| K | **Clamped to 0..1**, not 0..2. The argument against K=2 is the resolve's tap count, and mode 8 is the measurement that settles it — so K=2 is not written speculatively. `VK_GI_MAX_FAST_BUCKETS` is the one place to raise |
+| Lights per bucket | **Exactly one**, and this corrects the plan. "`L̂`-weighted mean of `s` over the bucket's lights" is not a smooth degradation, it is wrong in the pillar-2 direction: two out-of-phase flickering lights in *different rooms* each receive the mean, so the lit room's bounce halves and the dark room's doubles. A single scalar can only be exact for a single light. The highest-importance flickering light is bucketed; the rest keep their gain everywhere else and their probe GI reverts to pre-G5b behaviour — no regression, just no fix. Lifting this needs a per-**probe** gain (one more float in `GIProbeStateEntry`), which mode 8's red channel is now the evidence for |
+| Two flags, not one | `GI_LIGHT_FLAG_FAST` = "rgb is `L̂`, multiply by `fastScale`" and is read by *everything*; `GI_LIGHT_FLAG_FAST_BUCKET` = "this one's transport is cached normalised". Conflating them would have left every non-bucketed flickering light rendering at its **peak** in volumetrics and reflections — permanently bright shafts, the exact regression the plan flagged as highest-visibility |
+| Classification latches | It does not expire after `r_rtGIFlickerHold`. A light falling back to the stable bucket hides an already-converged fast cache and reveals an empty stable one: a visible drop plus the ~9 s rebuild this chunk exists to remove. It latches until the light changes shape, and a light that stops flickering simply sits at `s = 1`. `r_rtGIFlickerHold` now governs only the `L̂` decay |
+| Re-seed triggers | A transport-field **shape hash** (mirroring `UpdateLightDef`'s own test — origin, axis, lightCenter, lightRadius, target/right/up, start/end, type, shader) rather than origin+axis, which missed radius and target changes; plus a `renderView.time` **rollback** test, which is what actually catches a lightDef index reused by a new map (`tr.frameCount` does not reset across a load, and `VK_RT_InitGI` is renderer init, not a map hook). A gap in sightings refreshes timestamps but **keeps** the verdict — dropping it made re-entering a room cost a full re-earn |
+| `L̂` and its luminance | One field. The first cut decayed a `peakLum` scalar while leaving `peakColor` at the old peak, which breaks `L̂ · s == current colour` — at peak luminance 1, decayed denominator 0.5 and current 0.1 the shaders reconstruct 0.2. The decay is applied to the colour and the luminance is derived |
+| Bucket routing | Not a bucket-selector parameter. `rt_LightContribAt` returns the **unscaled** contribution; both eval loops gained a `...Buckets` variant returning `stable` / `fastNorm` / `fastScaled`, and the old signatures survive as wrappers returning `stable + fastScaled`. Reflections and the froxel/march loops are therefore behaviour-unchanged by construction |
+| Probe vs per-pixel | `gi_ray.rchit` is shared, so the caller has to say which it is: `GIPayload.fast` is read as a mode bit on the way **in** (`GI_PAYLOAD_PROBE_MODE`, set only by `gi_probe_trace.rgen`) and written as packed radiance on the way **out**. One word, no payload growth |
+| Payload | 20 B: `vec3 colour` + `float hitDist` (back-face in its sign, as planned) + `uint fast`. Pack is a hand-rolled RGB9E5 in `gi_payload.glsl` |
+| Fast scratch | **`rgba16f`, not `r11f_g11f_b10f`.** `B10G11R11` storage-image support is optional in Vulkan and a GLSL format qualifier must match its view, so a runtime fallback would mean two shader variants. Costs 1 MiB/slot rather than 0.5 |
+| Blend's ray cache | `shared vec3 s_fast[256]` (+3 KB), not the planned packed `uint`. With an `rgba16f` scratch, packing would buy 3 KB of shared memory at the price of an unpack per (ray × texel) in the hot loop |
+| Atlas | As planned — bucket k at tile `idx + k*probeCount`, extra rows not an image array. But `atlas.y` had to stay the **per-bucket** tile count, because the distance atlas is not bucketed and shares the field. `gip_IrrAtlasUVOct`/`gip_IrrAtlasSize` are separate from the distance versions rather than keyed off `side` |
+| Mode 8 | Green = fast share of resolved irradiance; **red = flickering lights whose volume contains the receiver, /3** — a containment test against the light SSBO, not a per-probe distinct count, which would have needed the light index carried through the payload. With one light per bucket, red now reads as "what G5b is still leaving EMA-smeared here", which is the evidence for per-probe gains. Needed a new resolve binding 9 (the GI light SSBO) |
+| Realloc | K joins `s_probeDim`/rays/updates in `VK_RT_GIProbeGeometryChanged`, and `s_probeFastBuckets` initialises to **-1**, not 0 — K=0 is legal, so 0 would read as "already built" |
+| Border dispatch | y extent is now `s_probeFastBuckets + 2`. The old constant 2 would leave the fast bucket's borders unwritten |
+
+**Not bit-identical at `r_rtGIProbeFastBuckets 1`, only at 0.** The reservoir now weights
+by `L̂` rather than the current colour, which is the intended fix for starvation but does
+change the per-pixel estimator. The off switch is the A/B handle.
 
 **Checks**
 
 - Room lit only by a flickering light goes fully dark on the dark half, no residual glow.
+  **Wait ~9 s after the light is first seen** — see the transients above.
 - Flicker shape matches direct lighting frame for frame at `r_rtGIProbeUpdatesPerFrame 1024`
   — i.e. no faster sampling was needed.
 - Non-flickering rooms identical to `r_rtGIProbeFastBuckets 0`.
+- **Fan-blade light shafts still strobe, and reflections of flickering lights still
+  flicker.** Both read the light SSBO outside `rt_light_eval.glsl` and will silently go
+  steady if the `* s` is missed — the highest-visibility regression here.
+- **`r_rtGIProbes 0` is bit-identical**: `gi_ray.rgen` leaves the bucket selector at 0, so
+  all energy lands in bucket 0 and the per-pixel path is untouched.
 - A light on a moving entity is not classified fast, behaviour unchanged.
-- Resolve cost before/after, `r_vkRTProfile 1`, recorded here.
+- Resolve cost before/after, `r_vkRTProfile 1`, recorded here — expect it to roughly
+  double, and decide K=1 vs K=2 on that number plus `r_rtGIProbeDebug 8`.
 
 Same factorization would apply to the froxel vol cache if F4-style reprojection is revived.
 Not scheduled.
@@ -1137,6 +1289,12 @@ scheduled rather than as new bugs.
 **The per-pixel path stays.** No retire. `r_rtGIProbes 0` remains the A/B handle, the
 fallback, and the instrument the retune below is measured with.
 
+**A second cause found 2026-09-19 — it must land before the retune.** All 74 animated
+light materials were being fed to GI/vol pinned at `Parm0`, i.e. their peak, because the
+upload read `shaderParms` rather than the evaluated registers. Fixed under G5b. Their
+average contribution now drops, in the same direction as the over-brightness below, so
+the constants must be tuned after this rather than against a peak-pinned light set.
+
 **Retune owed — cause confirmed 2026-09-19.** GI/vol read over-bright, and it tracks
 `r_rtGIProbes 1`. The defaults still carry the per-pixel path's tuning; `r_rtGIStrength`,
 `r_rtGIContrast` and the `r_rtGIAutoDirectScale` coupling all change meaning under probes.
@@ -1153,7 +1311,7 @@ Overlaps `rt_optimization_tuning.md` T4-T6.
 | Camera-anchored grid pops as it scrolls | Visible lighting shift when the grid origin snaps | Snap to `spacing` multiples and clear only the newly-entered slab; the cleared probes are "never traced", not black — the resolve must fall back, not darken |
 | Second rgen in a shared pipeline mis-indexes the SBT | Device lost, or probes get per-pixel GI's behaviour | Raygen region = `sbtBase + groupIndex·handleAlignedSize`, `size = handleAlignedSize`. Verify with a probe rgen that writes a constant before wiring the real one |
 | Probe count × ray count blows the budget on large maps | `ProbeTrace` dominates | `r_rtGIProbeUpdatesPerFrame` is the throttle; convergence time degrades gracefully, cost does not. **Measured false in G2** — the trace is 0.048 ms and latency-bound; the resolve is 74 % of the chain and no probe CVar affects it |
-| Flickering lights: the EMA low-passes them away (τ ≈ 8.9 s at defaults, 20 s to 90 %), leaving a bounce glow where a light went dark | Room does not go fully black when its light flickers off | **G5b — amplitude factorization.** Cache the flicker light's transport with its gain normalised out, rescale at resolve time. Zero latency, zero extra rays. Note that G5 fix 2 (adaptive hysteresis) does *not* solve this case: a probe is re-traced at 3.75 Hz, below the flicker's own frequency, so alpha cannot help. **Pillar 2. Was a blocker on G6; G6 shipped without it 2026-09-19, so this is now live in the default path** |
+| Flickering lights: the EMA low-passes them away (τ ≈ 8.9 s at defaults, 20 s to 90 %), leaving a bounce glow where a light went dark | Room does not go fully black when its light flickers off | **G5b — amplitude factorization.** Cache the flicker light's transport with its gain normalised out, rescale at resolve time. Zero latency, zero extra rays. Note that G5 fix 2 (adaptive hysteresis) does *not* solve this case: a probe is re-traced at 3.75 Hz, below the flicker's own frequency, so alpha cannot help. **Pillar 2. Was a blocker on G6; G6 shipped without it 2026-09-19. Written 2026-09-19, awaiting G5b's in-game checks** |
 | Moving lights: the EMA lags in *world* space, so the glow stays where the light was and decays over seconds | A moving light drags a lagging world-space glow | G5's two fixes — narrow the estimator first, then adaptive hysteresis. **G5b explicitly cannot help here** (movement changes the transport, not just the amplitude), and its classifier must exclude moving lights or it will smear them confidently |
 | Volumetrics | — | Does *not* have either problem: F4 was dropped and the froxel fill has no history at all |
 

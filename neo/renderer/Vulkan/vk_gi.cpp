@@ -145,6 +145,30 @@ static idCVar r_rtGILightDump("r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
                               "saturation, radius, noShadows, classifier verdict, admitted/rejected, importance "
                               "pre/post saturation weight. Self-clearing (prints once then resets to 0)");
 
+// G5b (20260906_froxel_probe_gi.md): flicker factorization. A flickering light
+// is a scalar s(t) on an otherwise static light, and the CPU knows it exactly
+// every frame, so its bounce transport can be cached NORMALISED (at s = 1) and
+// rescaled at resolve time instead of being low-passed away by the probe EMA.
+//
+// Clamped to 0..1, not 0..K. The plan's own argument against a second fast
+// bucket is the resolve's tap count (8 taps -> 16 at K=1 -> 24 at K=2), and it
+// asks for r_rtGIProbeDebug 8's distinct-fast-light count before paying it.
+static idCVar r_rtGIProbeFastBuckets("r_rtGIProbeFastBuckets", "1", CVAR_RENDERER | CVAR_INTEGER,
+                              "G5b: cache flickering lights' probe GI in a separate bucket, normalised by their "
+                              "own flicker gain, and rescale it at resolve time. 1 = on, 0 = today's behaviour "
+                              "(flicker converges to its mean over ~9 s and leaves a glow in a dark room)");
+
+static idCVar r_rtGIFlickerThreshold("r_rtGIFlickerThreshold", "0.15", CVAR_RENDERER | CVAR_FLOAT,
+                                     "G5b: relative per-frame luminance change, against the light's own running "
+                                     "peak, that classifies it as fast. Lower = more lights get factorized");
+
+static idCVar r_rtGIFlickerHold("r_rtGIFlickerHold", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+                                "G5b: time constant over which a fast light's peak colour L-hat decays toward "
+                                "its current one, seconds. Sets how fast s returns to 1 for a light that "
+                                "settles or permanently dims. It does NOT expire the fast classification — "
+                                "that latches until the light changes shape, because dropping back to the "
+                                "stable bucket hides an already-converged cache and costs a ~9 s rebuild");
+
 static idCVar r_rtGIAlbedo("r_rtGIAlbedo", "1", CVAR_RENDERER | CVAR_BOOL,
                            "docs/plans/gi_albedo_target.md: multiply denoised GI by the receiving surface's "
                            "albedo (gbufAlbedo G-buffer target) before composite. 0 = legacy raw-radiance "
@@ -175,16 +199,43 @@ static idCVar r_rtGIAtrousSigmaZ("r_rtGIAtrousSigmaZ", "0.01", CVAR_RENDERER | C
 // light has a cookie entry at the same index in GILightBuffer::cookies[]".
 #define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
 
+// G5b — this light is classified as flickering, so colorIntensity.rgb holds
+// L̂ (its running PEAK colour, not its current one) and fastScale holds
+// s = current/peak. EVERY consumer must multiply the two back together to get
+// the light as it is right now. Volumetrics and reflections read this flag and
+// nothing else.
+#define GI_LIGHT_FLAG_FAST 0x2u
+
+// ...and this light's probe transport is the one cached in fast bucket 0, at
+// s = 1, for the resolve to rescale.
+//
+// A separate bit because the two statements are not the same, and conflating
+// them breaks the volumetrics: one gain is shared by a whole bucket, so the
+// bucket can hold at most ONE light before the gain stops being exact for any
+// of them (two flickering lights in different rooms would each get the mean —
+// the lit room's bounce halved and the dark room's doubled, which is the
+// pillar-2 failure this chunk exists to remove). Only the highest-importance
+// flickering light is bucketed; the rest keep FAST — so their shafts and
+// reflections still flicker correctly — and their probe GI falls back to
+// today's EMA-smeared behaviour, which is no worse than before G5b.
+//
+// Lifting this to several lights needs a per-PROBE gain, not a per-bucket one.
+// r_rtGIProbeDebug 8's red channel is the measurement that says whether it is
+// worth the extra float in GIProbeStateEntry.
+#define GI_LIGHT_FLAG_FAST_BUCKET 0x4u
+
 struct GILightEntry
 {
     float posRadius[4];      // xyz = world pos, w = sphere pre-cull radius
-    float colorIntensity[4]; // rgb = light colour, a = intensity
+    float colorIntensity[4]; // rgb = light colour (L̂ when FAST), a = intensity
     float coneDir[4];        // projected: xyz=normalised dir, w=cos(halfAngle); zeroed for point
     float boxExtents[4];     // point: xyz=AABB half-extents, w=0
                              // projected: w=max reach along cone axis; xyz=0
     uint32_t lightType;      // 0 = point, 1 = projected/spot
     uint32_t flags;          // GI_LIGHT_FLAG_* bitmask
-    uint32_t pad[2];         // alignment pad
+    // G5b, in what used to be two words of alignment pad — no size change.
+    float fastScale;         // s = current/peak luminance, 1.0 for a steady light
+    uint32_t fastBucket;     // which fast bucket this light's transport is cached in
     // 2026-08-30: idRenderLightLocal::globalLightOrigin — origin + axis * lightCenter.
     // The EMITTER. posRadius.xyz above stays the light's volume centre (parms.origin),
     // because boxExtents/coneDir are expressed relative to that and the attenuation
@@ -241,6 +292,272 @@ static_assert(sizeof(GILightBuffer) == 32 + VK_GI_MAX_LIGHTS * 96 + VK_GI_MAX_LI
 uint32_t VK_RT_GetGILightBufferSize(void)
 {
     return (uint32_t)sizeof(GILightBuffer);
+}
+
+// ---------------------------------------------------------------------------
+// G5b — flicker classifier (20260906_froxel_probe_gi.md, Part B)
+//
+// A flickering Doom 3 light is a scalar on an otherwise static light: its
+// position, volume, cone and cookie are all constant and only its RGB registers
+// move. That factors:
+//
+//     E_probe = SUM_stable L_j·G_j  +  s(t) · SUM_fast L̂_k·G_k
+//
+// where G is geometric transport and L̂ is the light's PEAK colour. The right
+// term is cached at s = 1, which makes it time-invariant and therefore immune to
+// the probe EMA's ~9 s time constant; the resolve multiplies the current s(t)
+// back in. Nothing here needs extra rays.
+//
+// Two things the verdict must get right or the mechanism backfires:
+//
+//   - A MOVING light changes G, not s. Factorizing it would cache its transport
+//     at the old position and then confidently rescale that stale glow forever,
+//     which is worse than the lag it replaces. Any origin/axis change drops the
+//     light back to the stable bucket and resets its history.
+//   - The classification is STICKY (r_rtGIFlickerHold). Crossing between buckets
+//     costs a full EMA crossfade at both ends, so a classifier that flaps at the
+//     threshold is a visible pulse generator.
+//
+// L̂ is derived from a decaying running peak rather than parsed out of the light
+// material, so `flicker`/`pdflicker` tables, hand-written expressions and script
+// setShaderParm all work with no material knowledge at all.
+// ---------------------------------------------------------------------------
+
+#define VK_GI_FLICKER_MAX_LIGHT_IDX 4096
+
+// Clamp on r_rtGIProbeFastBuckets. Each bucket costs the resolve 8 more
+// scattered bilinear taps and the irradiance atlas another probeCount tiles, so
+// K grows only on evidence from r_rtGIProbeDebug 8.
+#define VK_GI_MAX_FAST_BUCKETS 1
+
+struct GIFlickerState
+{
+    // L̂ itself, and nothing else: the peak LUMINANCE is derived from this
+    // vector, never stored beside it. Two fields drifting apart is exactly how
+    // L̂ * s stops equalling the light's current colour — see the decay below.
+    idVec3 peakColor;
+    float lastLum;    // previous sighting's luminance, for the delta test
+    float minScale;   // lowest s seen recently; 1 - this is the flicker DEPTH
+    uint32_t shapeId; // hash of every transport-affecting field, see below
+    int lastFrame;    // tr.frameCount of the last sighting
+    int lastMs;       // renderView.time of the last sighting, for the peak decay
+    bool isFast;      // has this light ever been seen to change? see below
+};
+
+static GIFlickerState s_flicker[VK_GI_FLICKER_MAX_LIGHT_IDX];
+
+// Hash of everything that changes a light's geometric transport G, so that only
+// its amplitude s is left varying — which is the entire premise of factorizing
+// it. The field list mirrors idRenderWorldLocal::UpdateLightDef's own
+// "shape stays the same" test (RenderWorld.cpp:464), minus the parts that
+// cannot affect G, plus the light shader: a shader swap changes the cookie, and
+// the cookie is part of the transport.
+//
+// Origin and axis alone are NOT enough. lightRadius, target/right/up and
+// start/end all resize or reshape the volume, and lightCenter moves the emitter
+// while leaving the volume centre put. Any of them changing under a light that
+// is currently classified fast would rescale transport cached for the old shape.
+static uint32_t VK_RT_LightShapeId(const renderLight_t &p, const idMaterial *shader)
+{
+    uint32_t h = 2166136261u; // FNV-1a
+    const auto mix = [&h](const void *data, size_t bytes) {
+        const uint8_t *b = (const uint8_t *)data;
+        for (size_t i = 0; i < bytes; i++)
+        {
+            h ^= (uint32_t)b[i];
+            h *= 16777619u;
+        }
+    };
+
+    mix(&p.axis, sizeof(p.axis));
+    mix(&p.origin, sizeof(p.origin));
+    mix(&p.lightCenter, sizeof(p.lightCenter));
+    mix(&p.lightRadius, sizeof(p.lightRadius));
+    mix(&p.target, sizeof(p.target));
+    mix(&p.right, sizeof(p.right));
+    mix(&p.up, sizeof(p.up));
+    mix(&p.start, sizeof(p.start));
+    mix(&p.end, sizeof(p.end));
+    mix(&p.pointLight, sizeof(p.pointLight));
+    mix(&p.parallel, sizeof(p.parallel));
+    mix(&shader, sizeof(shader));
+    return h;
+}
+
+struct GIFlickerVerdict
+{
+    idVec3 lhat;  // colour to upload (current colour unless fast)
+    float scale;  // s = current/peak luminance; 1.0 unless fast
+    float depth;  // 1 - lowest s seen recently: how DEEPLY this light flickers
+    bool fast;    // classified flickering, and factorizable
+    bool tracked; // false when the light index is past the tracking table
+};
+
+static float VK_RT_LightLuminance(const idVec3 &c)
+{
+    return Max(0.0f, 0.299f * c.x + 0.587f * c.y + 0.114f * c.z);
+}
+
+// nowMs is renderView.time — the game's ms clock, so the hold window and the
+// peak decay both survive a frame-rate change.
+static void VK_RT_ClassifyFlicker(int li, const renderLight_t &p, const idMaterial *shader, const idVec3 &color,
+                                  int nowMs, GIFlickerVerdict &out)
+{
+    out.lhat = color;
+    out.scale = 1.0f;
+    out.depth = 0.0f;
+    out.fast = false;
+    out.tracked = false;
+
+    if (r_rtGIProbeFastBuckets.GetInteger() <= 0)
+        return;
+    if (li < 0 || li >= VK_GI_FLICKER_MAX_LIGHT_IDX)
+        return; // past the table — treated as steady, which is the safe direction
+
+    out.tracked = true;
+
+    GIFlickerState &st = s_flicker[li];
+    const float lum = VK_RT_LightLuminance(color);
+    const float holdSec = Max(0.05f, r_rtGIFlickerHold.GetFloat());
+    const uint32_t shapeId = VK_RT_LightShapeId(p, shader);
+
+    // Two ways the history stops describing this light at all. Both throw the
+    // verdict away, because both mean the cached transport is for a different
+    // light or a different geometry:
+    //   reshaped — origin, volume, emitter offset or cookie changed, so G moved
+    //              and rescaling the cache would confidently smear the old one.
+    //              This is what keeps moving lights out of the fast bucket.
+    //   rewound  — renderView.time went backwards (level load, demo seek, save
+    //              restore). Also the only thing that catches a lightDef INDEX
+    //              being reused by a new map, since tr.frameCount does not reset
+    //              across a load.
+    const bool reshaped = (shapeId != st.shapeId);
+    const bool rewound = (nowMs < st.lastMs);
+
+    if (reshaped || rewound)
+    {
+        st.peakColor = color;
+        st.lastLum = lum;
+        st.minScale = 1.0f;
+        st.shapeId = shapeId;
+        st.lastFrame = tr.frameCount;
+        st.lastMs = nowMs;
+        st.isFast = false; // a light that just moved is never fast, however it flickers
+        return;
+    }
+
+    // A gap in sightings is different: the light left the gather set and came
+    // back, unchanged, and we simply were not looking. Its peak and its verdict
+    // are still good — only lastLum is from an arbitrary time ago, so the delta
+    // measured against it would be an artifact of the gap rather than a flicker.
+    // Refresh the timestamps and skip one delta test.
+    //
+    // Dropping the verdict here instead would make walking out of a room and
+    // back cost a full re-earn: one flicker cycle to reclassify plus the ~9 s
+    // crossfade between buckets, every time.
+    if ((tr.frameCount - st.lastFrame) > 2)
+    {
+        st.lastLum = lum;
+        st.lastFrame = tr.frameCount;
+        st.lastMs = nowMs;
+        if (!st.isFast)
+            st.peakColor = color;
+    }
+
+    // Exponential decay of the peak over the hold window, so L̂ tracks a light
+    // that permanently dims instead of pinning at a level it will never reach
+    // again. A steady light's peak converges to its own value.
+    //
+    // The decay is applied to the COLOUR, not to a luminance stored beside it.
+    // Decaying a separate scalar while leaving peakColor at the old peak breaks
+    // the one invariant every consumer depends on — that L̂ * s reconstructs the
+    // light's current colour — because s is then measured against a denominator
+    // the uploaded L̂ no longer has. At peakColor luminance 1, a decayed
+    // denominator of 0.5 and a current luminance of 0.1 the shaders would
+    // reconstruct 0.2: twice as bright as the light actually is, in direct
+    // volumetrics and reflections as well as GI.
+    const float dtSec = idMath::ClampFloat(0.0f, holdSec, (float)(nowMs - st.lastMs) * 0.001f);
+    const idVec3 decayed = st.peakColor * idMath::Exp(-dtSec / holdSec);
+    st.peakColor = (lum >= VK_RT_LightLuminance(decayed)) ? color : decayed;
+    const float peakLum = VK_RT_LightLuminance(st.peakColor);
+
+    // Relative change measured against the PEAK, not against the previous
+    // sample: a light spending most of its cycle near zero would otherwise show
+    // enormous relative deltas on tiny absolute ones.
+    //
+    // The verdict LATCHES, and never expires while the light keeps its shape.
+    // The original hold-window design let a light that stopped flickering fall
+    // back to the stable bucket, which was a visible fault rather than a
+    // cleanup: the fast atlas holds that light's converged transport, the
+    // stable atlas does not yet, and the switch hides the first and reveals the
+    // second instantly — a drop followed by the same multi-second recovery this
+    // whole chunk exists to remove. Latching costs nothing, because a light
+    // sitting in the fast bucket at s = 1 is treated exactly as the stable
+    // bucket would treat it. r_rtGIFlickerHold now governs only the peak decay
+    // above, which is what returns s to 1 for a light that settles.
+    const float threshold = Max(0.0f, r_rtGIFlickerThreshold.GetFloat());
+    if (peakLum > 1e-4f && idMath::Fabs(lum - st.lastLum) / peakLum > threshold)
+        st.isFast = true;
+
+    st.lastLum = lum;
+    st.shapeId = shapeId;
+    st.lastFrame = tr.frameCount;
+    st.lastMs = nowMs;
+
+    if (!st.isFast || peakLum <= 1e-4f)
+        return; // steady — or too dark for the ratio below to mean anything
+
+    const float scale = idMath::ClampFloat(0.0f, 1.0f, lum / peakLum);
+
+    // Flicker DEPTH: how far this light actually drops, not merely that it
+    // moves. The running minimum of s relaxes back toward 1 over the same hold
+    // window as the peak, so a light that stops dropping loses its depth.
+    //
+    // Needed because the fast bucket holds exactly one light and IMPORTANCE
+    // alone picks the wrong one: measured in play, a bright nearby fixture
+    // swinging 0.9-1.0 (lights/grate7_blinky, depth 0.10) outranked a
+    // lights/square_strobe swinging fully to black (depth 1.00) and took the
+    // bucket, so the one light that visibly needed factorizing did not get it.
+    st.minScale = Min(scale, st.minScale + dtSec / holdSec);
+    st.minScale = idMath::ClampFloat(0.0f, 1.0f, st.minScale);
+
+    out.fast = true;
+    out.lhat = st.peakColor;
+    out.scale = scale;
+    out.depth = 1.0f - st.minScale;
+}
+
+static void VK_RT_ResetFlickerState(void)
+{
+    memset(s_flicker, 0, sizeof(s_flicker));
+}
+
+// Per-bucket gain handed to gi_probe_resolve.comp through GIProbeParams. One
+// gain is shared by every fast light in the bucket, so at K=1 it is the
+// L̂-luminance-weighted mean of s: exact when a single fast light reaches a
+// probe, and a smooth degradation when two flicker out of phase within reach of
+// the same one. r_rtGIProbeDebug 8 counts how often that actually happens.
+//
+// Zero — not one — when no fast light is uploaded: the fast atlas still holds
+// decaying history from the last one, and a gain of 1 would republish it.
+static float s_giFastGain[VK_GI_MAX_FAST_BUCKETS] = {0.0f};
+static int s_giFastLightCount = 0;
+
+int VK_RT_GIFastBucketCount(void)
+{
+    return idMath::ClampInt(0, VK_GI_MAX_FAST_BUCKETS, r_rtGIProbeFastBuckets.GetInteger());
+}
+
+float VK_RT_GIFastBucketGain(int bucket)
+{
+    if (bucket < 0 || bucket >= VK_GI_MAX_FAST_BUCKETS)
+        return 0.0f;
+    return s_giFastGain[bucket];
+}
+
+int VK_RT_GIFastLightCount(void)
+{
+    return s_giFastLightCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,6 +1383,12 @@ static void VK_RT_InitGICompositePipeline(void)
 
 void VK_RT_InitGI(void)
 {
+    // Renderer init only — this is NOT a level-load hook (vk_backend.cpp calls
+    // VK_RT_InitGI once, from Vulkan startup). Reuse of a lightDef index by a
+    // new map is caught inside the classifier instead, by its shape-hash and
+    // time-rollback re-seeds; this call only guarantees a clean table on the
+    // first frame rather than whatever the loader left behind.
+    VK_RT_ResetFlickerState();
     VK_RT_CreateGILightSsbos();
     // Part B: the probe descriptor set layout must exist before the GI pipeline
     // layout is built — it goes in as set 2, and the probe raygen is a group in
@@ -1273,6 +1596,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         float importance; // L1: intensity × luminance × radius² / max(distSq, radius²), + hysteresis boost
         int tier;         // L1: distance tier 0-3 (0-128 / 128-320 / 320-768 / 768+)
         int lightIdx;     // index into lightDefs — stable identity for hysteresis
+        float flickerDepth; // G5b: 1 - lowest s seen recently. 0 for a steady light
         GILightEntry entry;
         GILightCookie cookie; // valid only when entry.flags & GI_LIGHT_FLAG_HAS_COOKIE
     };
@@ -1303,6 +1627,10 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     }
 
     const float whiteWeight = idMath::ClampFloat(0.0f, 1.0f, r_rtGIWhiteWeight.GetFloat());
+
+    // G5b: the classifier's clock. renderView.time is the game's own millisecond
+    // clock, so the hold window survives a frame-rate change and a pause.
+    const int nowMs = viewDef->renderView.time;
 
     // Per-light admission + candidate build, shared by both gather paths.
     // gatherArea/gatherHop are provenance for the dump: hop>=0 means BFS at that
@@ -1336,9 +1664,75 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         float radius =
             isProjected ? (p.axis * p.target).Length() : Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
 
+        // The light's colour is the EVALUATED colour of its material's chosen
+        // stage, not its raw shaderParms.
+        //
+        // This is what the raster interaction path uses (vk_backend.cpp:4190,
+        // `lightColor[i] = regs[stage->color.registers[i]]`), and reading parms
+        // instead silently drops every time-driven expression Doom 3 writes its
+        // light behaviour in. `lights/square_flicker` is
+        //     red ((.25 * blinktable[Parm4 + time*15*Parm3]) + .75) * Parm0
+        // so Parm0..2 are the CONSTANT amplitude and the whole flicker lives in
+        // the table lookup. Every RT consumer — GI bounce, volumetrics,
+        // reflections — therefore saw flickering lights as perfectly steady, and
+        // had done since the light SSBO was written. G5b cannot detect a flicker
+        // that never reaches it, and no probe update rate can track a signal
+        // that is not in the data (which is what G5's fix-1 measurement was
+        // really showing).
+        //
+        // Evaluated once here and reused by the cookie block below, which needs
+        // the same registers and must agree on the same chosen stage.
+        const idMaterial *lightShader = lightLocal->lightShader;
+        float *lightRegs = NULL;
+        int chosenStage = -1;
+        int numPassingStages = 0;
+        if (lightShader != NULL)
+        {
+            const int numRegs = lightShader->GetNumRegisters();
+            lightRegs = (float *)_alloca(sizeof(float) * numRegs);
+            lightShader->EvaluateRegisters(lightRegs, p.shaderParms, viewDef, p.referenceSound);
+
+            for (int s = 0; s < lightShader->GetNumStages(); s++)
+            {
+                const shaderStage_t *stage = lightShader->GetStage(s);
+                if (!lightRegs[stage->conditionRegister])
+                    continue;
+                if (!stage->texture.image)
+                    continue;
+                numPassingStages++;
+                if (chosenStage < 0)
+                    chosenStage = s; // v1: first passing stage — see the doc note on multi-stage lights
+            }
+        }
+
+        // No usable stage (no shader, or every stage's condition failed) leaves
+        // the parms as the only statement of the light's colour.
         float r = p.shaderParms[SHADERPARM_RED];
         float g = p.shaderParms[SHADERPARM_GREEN];
         float b = p.shaderParms[SHADERPARM_BLUE];
+        if (chosenStage >= 0)
+        {
+            const shaderStage_t *stage = lightShader->GetStage(chosenStage);
+            r = lightRegs[stage->color.registers[0]];
+            g = lightRegs[stage->color.registers[1]];
+            b = lightRegs[stage->color.registers[2]];
+        }
+        const idVec3 parmColorDbg(p.shaderParms[SHADERPARM_RED], p.shaderParms[SHADERPARM_GREEN],
+                                  p.shaderParms[SHADERPARM_BLUE]);
+        const idVec3 evalColorDbg(r, g, b);
+
+        // G5b: classify before anything downstream reads the colour. A fast
+        // light is uploaded at its PEAK colour with s carried alongside, so
+        // everything from here on — importance, saturation weight, the shader's
+        // reservoir weights — sees a time-invariant light and stops reacting to
+        // the flicker. Without that, a light in its dark phase scores near-zero
+        // importance, loses its upload slot, and the bucket it feeds starves.
+        GIFlickerVerdict flicker;
+        VK_RT_ClassifyFlicker(li, p, lightLocal->lightShader, idVec3(r, g, b), nowMs, flicker);
+        const float curLumDbg = VK_RT_LightLuminance(idVec3(r, g, b));
+        r = flicker.lhat.x;
+        g = flicker.lhat.y;
+        b = flicker.lhat.z;
 
         // 2026-08-30: parm3 is the material TIMESCALE on a light, not an intensity.
         //
@@ -1406,6 +1800,28 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                            VK_RT_LightClassName(lightClass), p.noShadows ? 1 : 0, radius, idMath::Sqrt(dSq), gatherArea,
                            gatherHop, r, g, b, sat, baseImportanceDbg, baseImportanceDbg * satWeight,
                            admitted ? "ADMIT" : "REJECT");
+            // G5b verdict. "color" above is now L̂ for a fast light, so print the
+            // current luminance beside it or the two are indistinguishable in a
+            // log taken at a moment the light happens to be at peak.
+            // Whether this light also WINS the bucket is decided after the
+            // selection sort, so it is reported in the [final order] block
+            // below rather than here.
+            // parm vs evaluated is the tell for a time-driven light material:
+            // they differ only where the stage's colour is an expression, which
+            // is exactly where a flicker can be found. Equal everywhere means
+            // this area simply has no animated lights, NOT that detection is
+            // broken — most Doom 3 fixtures are a plain `colored` stage, whose
+            // registers are parm0-2 verbatim.
+            // depth is the tell for a light that latched on a one-off transient
+            // (a switch-on at map load) rather than a real flicker: the latch is
+            // permanent, so depth near 0 on a FAST light means it changed once
+            // and has been steady since.
+            common->Printf("    G5b: %-7s s=%.3f depth=%.2f parm=(%.2f %.2f %.2f) eval=(%.2f %.2f %.2f) "
+                           "Lhat=(%.2f %.2f %.2f) lum now=%.3f peak=%.3f%s\n",
+                           flicker.fast ? "FAST" : "steady", flicker.scale, flicker.depth, parmColorDbg.x,
+                           parmColorDbg.y, parmColorDbg.z, evalColorDbg.x, evalColorDbg.y, evalColorDbg.z, r, g, b,
+                           curLumDbg, VK_RT_LightLuminance(idVec3(r, g, b)),
+                           flicker.tracked ? "" : " [untracked: index past the table, or buckets off]");
         }
 
         if (!admitted)
@@ -1416,6 +1832,7 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             Candidate &c = s_candidates[numCandidates++];
             c.distSq = dSq;
             c.lightIdx = li;
+            c.flickerDepth = flicker.depth;
 
             // L1 distance tier (world units): 0-128 / 128-320 / 320-768 / 768+.
             const float dist = idMath::Sqrt(dSq);
@@ -1479,8 +1896,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             // lightType: 0=point, 1=scene directed/spot, 2=player flashlight.
             // allowLightInViewID is set on muzzleFlash (first-person weapon light).
             c.entry.lightType = isProjected ? (p.allowLightInViewID != 0 ? 2u : 1u) : 0u;
-            c.entry.flags = 0u;
-            c.entry.pad[0] = c.entry.pad[1] = 0u;
+            c.entry.flags = flicker.fast ? GI_LIGHT_FLAG_FAST : 0u;
+            c.entry.fastScale = flicker.scale;
+            c.entry.fastBucket = 0u; // K is clamped to 1 — see r_rtGIProbeFastBuckets
 
             if (dumpLights)
                 common->Printf("    type: pointLight=%d parallel=%d isProjected=%d lightType=%u\n",
@@ -1489,28 +1907,15 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             // rt_projected_light_cookies.md Stage 1 — light-cookie stage detection.
             // Deliberately NOT gated on isProjected — see project_light_cookie_stage1
             // memory for why point lights need this too (fanblade3 is one).
-            // Registers are evaluated fresh rather than read from a cached
-            // viewLight; idRenderLightLocal has no shaderRegisters of its own.
-            if (lightLocal->lightShader != NULL)
+            //
+            // Registers and the chosen stage come from the colour block above
+            // rather than being re-evaluated here: the cookie and the light
+            // colour MUST come from the same stage, or a multi-stage light gets
+            // one stage's gobo tinted by another stage's colour.
+            if (lightShader != NULL)
             {
-                const idMaterial *lightShader = lightLocal->lightShader;
-                const int numRegs = lightShader->GetNumRegisters();
-                float *regs = (float *)_alloca(sizeof(float) * numRegs);
-                lightShader->EvaluateRegisters(regs, p.shaderParms, viewDef, p.referenceSound);
-
-                int chosenStage = -1;
-                int numPassing = 0;
-                for (int s = 0; s < lightShader->GetNumStages(); s++)
-                {
-                    const shaderStage_t *stage = lightShader->GetStage(s);
-                    if (!regs[stage->conditionRegister])
-                        continue;
-                    if (!stage->texture.image)
-                        continue;
-                    numPassing++;
-                    if (chosenStage < 0)
-                        chosenStage = s; // v1: first passing stage — see doc note on multi-stage lights
-                }
+                float *regs = lightRegs;
+                const int numPassing = numPassingStages;
 
                 if (chosenStage >= 0)
                 {
@@ -1947,6 +2352,21 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         }
     }
 
+    // G5b: count the flickering lights as they go in, and note which one wins
+    // the single fast bucket — see GI_LIGHT_FLAG_FAST_BUCKET on why it holds
+    // exactly one light.
+    //
+    // Ranked on importance x flicker DEPTH, not importance alone. Importance
+    // measures how much a light contributes; depth measures how much of that
+    // contribution the EMA is currently destroying. Only the product says how
+    // much error the bucket would remove, and ranking on importance alone put
+    // the bucket on a light swinging 0.9-1.0 while a strobe going fully black
+    // sat in the stable bucket.
+    int bucketIdx = -1;
+    int bucketSel = -1;
+    float bucketScore = 0.0f;
+    s_giFastLightCount = 0;
+
     for (int i = 0; i < numSelected; i++)
     {
         const int idx = lb->numLights++;
@@ -1954,7 +2374,55 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         lb->cookies[idx] = s_selected[i]->cookie;
         if (s_selected[i]->lightIdx < kHysteresisMaxLightIdx)
             s_lightSelectedFrame[s_selected[i]->lightIdx] = tr.frameCount;
+
+        if ((lb->lights[idx].flags & GI_LIGHT_FLAG_FAST) == 0u)
+            continue;
+
+        s_giFastLightCount++;
+        const float score = s_selected[i]->importance * s_selected[i]->flickerDepth;
+        if (score > bucketScore)
+        {
+            bucketScore = score;
+            bucketIdx = idx;
+            bucketSel = i;
+        }
     }
+
+    // Exactly one light carries the bucket bit, so its gain is exact rather
+    // than an average over lights that may not even share a room.
+    for (int k = 0; k < VK_GI_MAX_FAST_BUCKETS; k++)
+        s_giFastGain[k] = 0.0f;
+
+    if (bucketIdx >= 0)
+    {
+        lb->lights[bucketIdx].flags |= GI_LIGHT_FLAG_FAST_BUCKET;
+        lb->lights[bucketIdx].fastBucket = 0u;
+        s_giFastGain[0] = idMath::ClampFloat(0.0f, 1.0f, lb->lights[bucketIdx].fastScale);
+    }
+
+    if (dumpLights)
+    {
+        // Every fast light with its score, so a surprising bucket winner can be
+        // explained from the log instead of guessed at in the room.
+        common->Printf("  [G5b] %d flickering light(s) in the upload, ranked by importance x depth:\n",
+                       s_giFastLightCount);
+        for (int i = 0; i < numSelected; i++)
+        {
+            if ((lb->lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)
+                continue;
+            const idRenderLightLocal *ld = (s_selected[i]->lightIdx >= 0 && s_selected[i]->lightIdx < numLightDefs)
+                                               ? world->lightDefs[s_selected[i]->lightIdx]
+                                               : NULL;
+            common->Printf("    %-28s imp=%.4f depth=%.2f score=%.4f s=%.3f%s\n",
+                           (ld && ld->lightShader) ? ld->lightShader->GetName() : "<?>", s_selected[i]->importance,
+                           s_selected[i]->flickerDepth, s_selected[i]->importance * s_selected[i]->flickerDepth,
+                           lb->lights[i].fastScale, (i == bucketSel) ? "   <== BUCKET 0" : "");
+        }
+        common->Printf("    gain[0]=%.3f. Non-bucketed fast lights keep their gain everywhere else but fall "
+                       "back to EMA-smeared probe GI.\n",
+                       s_giFastGain[0]);
+    }
+
     s_prevUploadFrameNum = tr.frameCount;
 
     GILightBuffer *volLb = (GILightBuffer *)vkRT.volLightSsboMapped[frameIdx];

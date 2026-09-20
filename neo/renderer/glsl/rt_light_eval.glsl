@@ -59,14 +59,26 @@ Code release.
 // cookie entry at the same index in RTLightBuf::cookies[]". Must match vk_gi.cpp.
 #define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
 
+// G5b (20260906_froxel_probe_gi.md) — this light is classified as flickering:
+// colorIntensity.rgb is its PEAK colour L̂ and fastScale is s = current/peak.
+// Every consumer must multiply the two to get the light as it looks right now.
+#define GI_LIGHT_FLAG_FAST 0x2u
+
+// ...and this is the one light whose probe transport is cached normalised, in
+// fast bucket 0. At most one light carries it, because one gain is shared by
+// the whole bucket — see vk_gi.cpp. Only the probe path reads this bit; every
+// other consumer cares about FAST alone.
+#define GI_LIGHT_FLAG_FAST_BUCKET 0x4u
+
 struct RTLight {
     vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
-    vec4 colorIntensity; // rgb = light colour, a = intensity
+    vec4 colorIntensity; // rgb = light colour — L̂ when FAST — a = intensity
     vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
     vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
     uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
     uint flags;          // GI_LIGHT_FLAG_* bitmask
-    uint _pad1; uint _pad2;
+    float fastScale;     // G5b: s = current/peak luminance; 1.0 for a steady light
+    uint  fastBucket;    // G5b: which fast bucket caches this light's transport
     // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. See vk_gi.cpp's
     // GILightEntry::emitPos — attenuation stays measured from the volume centre, while
     // direction/N·L and shadow-ray targeting come from here, matching the GL split.
@@ -109,9 +121,38 @@ float rtle_rand(uint seed)
 }
 
 // ---------------------------------------------------------------------------
+// G5b — the flicker gain of light i, or 1.0 for a steady light.
+//
+// rt_LightContribAt deliberately does NOT apply this: it returns the light at
+// L̂, which is what the probe fast bucket must cache and — just as importantly —
+// what the reservoir below must weight by, so the same light keeps winning picks
+// at the same rate through its dark phase instead of starving the bucket.
+// Everything that wants the light as it looks right now multiplies it back in.
+// ---------------------------------------------------------------------------
+float rt_LightFastScale(int i)
+{
+    if ((rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)
+        return 1.0;
+    return clamp(rtLightBuf.lights[i].fastScale, 0.0, 1.0);
+}
+
+// Whether light i's transport goes to the fast ATLAS BUCKET, which is a
+// stricter test than "is it flickering". A flickering light that did not win
+// the bucket still has its gain applied like any other light; only its probe
+// GI falls back to being EMA-smeared, i.e. to how it behaved before G5b.
+bool rt_LightIsBucketed(int i)
+{
+    return (rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_FAST_BUCKET) != 0u;
+}
+
+// ---------------------------------------------------------------------------
 // rt_LightContribAt — unshadowed contribution of light i at a hit point.
 // Single source of the falloff/NdotL math for both the deterministic and the
 // stochastic loop below.  Returns false when the light doesn't reach the point.
+//
+// G5b: the result is NORMALISED — a flickering light is evaluated at its peak
+// colour L̂, without its current gain s. Multiply by rt_LightFastScale(i) for
+// the light as it is this frame.
 // ---------------------------------------------------------------------------
 bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
                        out vec3 contrib, out vec3 lightDir, out float dist)
@@ -237,14 +278,26 @@ bool rt_TraceLightShadow(vec3 hitPos, vec3 hitNorm, vec3 lightDir, float dist, f
 //   cullMask     — B1: shadow-ray instance mask. 0xFF everywhere except
 //                  player_reflect.rchit, which passes 0xFE so the player does not
 //                  self-shadow (matches shadow_ray.rgen:367).
+//
+// G5b splits the sum three ways so probe GI can cache the flicker-normalised
+// half separately:
+//   stableOut     — steady lights, as today
+//   fastNormOut   — flickering lights at L̂ (s = 1): the probe fast bucket
+//   fastScaledOut — the same lights at L̂·s: what everything else wants
+// stableOut + fastScaledOut is the value this function used to return, so the
+// wrapper below leaves every existing caller's behaviour unchanged.
 // ---------------------------------------------------------------------------
-vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
-                           float shadowBias, float contribScale, float minShadowLum,
-                           float ambientScale, uint cullMask)
+void rt_EvalDirectLightingBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
+                                  float shadowBias, float contribScale, float minShadowLum,
+                                  float ambientScale, uint cullMask,
+                                  out vec3 stableOut, out vec3 fastNormOut, out vec3 fastScaledOut)
 {
-    vec3 irradiance  = vec3(0.0);
-    int  n           = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
-    int  shadowsUsed = 0;
+    stableOut     = vec3(0.0);
+    fastNormOut   = vec3(0.0);
+    fastScaledOut = vec3(0.0);
+
+    int n           = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
+    int shadowsUsed = 0;
 
     for (int i = 0; i < n; i++)
     {
@@ -253,22 +306,45 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
         if (!rt_LightContribAt(i, hitPos, hitNorm, contribScale, contrib, lightDir, dist))
             continue;
 
+        // The shadow budget is spent on L̂ rather than on the current value, so a
+        // flickering light keeps its shadow ray through its dark phase and its
+        // cached transport stays shadowed correctly.
+        float weight = 1.0;
         if (shadowsUsed < shadowBudget && rt_LightLuminance(contrib) >= minShadowLum)
         {
             if (dist - shadowBias > 0.0)
             {
                 shadowsUsed++;
                 if (rt_TraceLightShadow(hitPos, hitNorm, lightDir, dist, shadowBias, cullMask))
-                {
-                    irradiance += contrib * ambientScale;
-                    continue;
-                }
+                    weight = ambientScale;
             }
         }
 
-        irradiance += contrib;
+        contrib *= weight;
+
+        // Every light gets its gain except the bucketed one, which is stored
+        // normalised for the resolve to rescale. rt_LightFastScale is 1.0 for a
+        // steady light, so this line is a no-op for almost everything.
+        if (rt_LightIsBucketed(i))
+        {
+            fastNormOut   += contrib;
+            fastScaledOut += contrib * rt_LightFastScale(i);
+        }
+        else
+        {
+            stableOut += contrib * rt_LightFastScale(i);
+        }
     }
-    return irradiance;
+}
+
+vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowBudget,
+                           float shadowBias, float contribScale, float minShadowLum,
+                           float ambientScale, uint cullMask)
+{
+    vec3 stable, fastNorm, fastScaled;
+    rt_EvalDirectLightingBuckets(hitPos, hitNorm, maxLights, shadowBudget, shadowBias, contribScale,
+                                 minShadowLum, ambientScale, cullMask, stable, fastNorm, fastScaled);
+    return stable + fastScaled;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,18 +366,33 @@ vec3 rt_EvalDirectLighting(vec3 hitPos, vec3 hitNorm, int maxLights, int shadowB
 // deterministic loop (zero variance for the same ray count) — the common case
 // in Doom 3 rooms with 1-3 lights in range.
 // ---------------------------------------------------------------------------
-vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
-                                     float shadowBias, float contribScale, uint seed,
-                                     uint cullMask)
+// G5b: same three-way split as the deterministic loop. The reservoir weights are
+// taken from the NORMALISED contribution, so which lights win picks no longer
+// moves with the flicker — a fast light in its dark phase would otherwise almost
+// never be picked (starving its bucket) or be picked at a tiny p and spike
+// through the wSum/w0 division. Each pick lands wholly in one bucket, so the two
+// buckets sum ray-for-ray to what this returned before at s = 1.
+void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
+                                            float shadowBias, float contribScale, uint seed,
+                                            uint cullMask,
+                                            out vec3 stableOut, out vec3 fastNormOut, out vec3 fastScaledOut)
 {
+    stableOut     = vec3(0.0);
+    fastNormOut   = vec3(0.0);
+    fastScaledOut = vec3(0.0);
+
     int n = min(rtLightBuf.numLights, min(maxLights, RT_LIGHT_MAX_LIGHTS));
     if (n <= 0)
-        return vec3(0.0);
+        return;
 
     int k = clamp(picks, 1, 2);
     if (n <= k)
-        return rt_EvalDirectLighting(hitPos, hitNorm, maxLights, RT_LIGHT_MAX_LIGHTS,
-                                     shadowBias, contribScale, 0.0, 0.0, cullMask);
+    {
+        rt_EvalDirectLightingBuckets(hitPos, hitNorm, maxLights, RT_LIGHT_MAX_LIGHTS, shadowBias,
+                                     contribScale, 0.0, 0.0, cullMask, stableOut, fastNormOut,
+                                     fastScaledOut);
+        return;
+    }
 
     // Two independent single-sample reservoirs, held in scalars/vectors.
     float wSum = 0.0;
@@ -336,12 +427,15 @@ vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, i
     }
 
     if (wSum <= 0.0 || i0 < 0)
-        return vec3(0.0);
+        return;
 
-    vec3 result   = vec3(0.0);
     bool occluded = rt_TraceLightShadow(hitPos, hitNorm, d0, t0, shadowBias, cullMask);
     if (!occluded)
-        result += c0 * (wSum / w0);
+    {
+        vec3 v = c0 * (wSum / w0);
+        if (rt_LightIsBucketed(i0)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i0); }
+        else                        { stableOut   += v * rt_LightFastScale(i0); }
+    }
 
     if (k > 1 && i1 >= 0)
     {
@@ -351,11 +445,27 @@ vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, i
                              ? occluded
                              : rt_TraceLightShadow(hitPos, hitNorm, d1, t1, shadowBias, cullMask);
         if (!occluded1)
-            result += c1 * (wSum / w1);
-        result *= 0.5;
+        {
+            vec3 v = c1 * (wSum / w1);
+            if (rt_LightIsBucketed(i1)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i1); }
+            else                        { stableOut   += v * rt_LightFastScale(i1); }
+        }
+        // The 0.5 is the two-reservoir average and must hit every bucket, or a
+        // frame where one pick is fast and the other steady is double-counted.
+        stableOut     *= 0.5;
+        fastNormOut   *= 0.5;
+        fastScaledOut *= 0.5;
     }
+}
 
-    return result;
+vec3 rt_EvalDirectLightingStochastic(vec3 hitPos, vec3 hitNorm, int maxLights, int picks,
+                                     float shadowBias, float contribScale, uint seed,
+                                     uint cullMask)
+{
+    vec3 stable, fastNorm, fastScaled;
+    rt_EvalDirectLightingStochasticBuckets(hitPos, hitNorm, maxLights, picks, shadowBias, contribScale,
+                                           seed, cullMask, stable, fastNorm, fastScaled);
+    return stable + fastScaled;
 }
 
 #endif // RT_LIGHT_EVAL_GLSL
