@@ -464,6 +464,8 @@ reflective floors. Make the floor conditional on the sampled texel actually bein
 (`e * 3.0` but floor only where `luminance(e) > 0.05`), or drop the floor for the
 reflection path (`reflLightBuf.emissiveScale` is already a separate knob).
 
+Decision: Wont fix.  Seems good enough.  Don't care.
+
 ### T6. Final tuning pass (only after T1-T5 + P3 land)
 
 Order: `r_rtSpecF0Gamma/Scale` via debug overlay (F0 mode) → `r_rtSpecGrazingMax` in a
