@@ -48,11 +48,15 @@ struct GIPayload {
 // the safe direction if a future rgen forgets to initialise the field.
 #define GI_PAYLOAD_PROBE_MODE 0x1u
 
-// Fast-bucket radiance packing.  Hand-rolled rather than packF2x11_1x10, which
-// is unsigned-normalised-in-[0,1] and would clip HDR bounce radiance; this is a
-// shared exponent over the three channels, i.e. RGB9E5 by hand.  Range and
-// precision comfortably exceed what the r11f_g11f_b10f scratch image that
-// receives it can hold, so the pack is never the limiting step.
+// Fast-bucket radiance packing.  It exists only to keep this payload at 20
+// bytes; the scratch image gi_probe_trace.rgen unpacks into is rgba16f, so the
+// pack IS the narrower of the two — a shared 9-bit mantissa against three
+// independent half-floats.  Acceptable here because the value is one bounce's
+// radiance about to be averaged over 128+ rays and then EMA'd at alpha 0.03;
+// anything that needed the extra mantissa would not survive that anyway.
+//
+// Hand-rolled rather than packF2x11_1x10, which is unsigned-normalised into
+// [0,1] and would clip HDR bounce radiance outright.
 uint gip_PackRadiance(vec3 c)
 {
     c = max(c, vec3(0.0));

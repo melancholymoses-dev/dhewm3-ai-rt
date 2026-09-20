@@ -61,10 +61,14 @@ Code release.
 
 // G5b (20260906_froxel_probe_gi.md) — this light is classified as flickering:
 // colorIntensity.rgb is its PEAK colour L̂ and fastScale is s = current/peak.
-// Every consumer that wants the light as it looks right now multiplies the two;
-// the probe fast bucket deliberately does not, which is what makes its cached
-// transport time-invariant and immune to the probe EMA's ~9 s time constant.
+// Every consumer must multiply the two to get the light as it looks right now.
 #define GI_LIGHT_FLAG_FAST 0x2u
+
+// ...and this is the one light whose probe transport is cached normalised, in
+// fast bucket 0. At most one light carries it, because one gain is shared by
+// the whole bucket — see vk_gi.cpp. Only the probe path reads this bit; every
+// other consumer cares about FAST alone.
+#define GI_LIGHT_FLAG_FAST_BUCKET 0x4u
 
 struct RTLight {
     vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
@@ -132,9 +136,13 @@ float rt_LightFastScale(int i)
     return clamp(rtLightBuf.lights[i].fastScale, 0.0, 1.0);
 }
 
-bool rt_LightIsFast(int i)
+// Whether light i's transport goes to the fast ATLAS BUCKET, which is a
+// stricter test than "is it flickering". A flickering light that did not win
+// the bucket still has its gain applied like any other light; only its probe
+// GI falls back to being EMA-smeared, i.e. to how it behaved before G5b.
+bool rt_LightIsBucketed(int i)
 {
-    return (rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_FAST) != 0u;
+    return (rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_FAST_BUCKET) != 0u;
 }
 
 // ---------------------------------------------------------------------------
@@ -314,14 +322,17 @@ void rt_EvalDirectLightingBuckets(vec3 hitPos, vec3 hitNorm, int maxLights, int 
 
         contrib *= weight;
 
-        if (rt_LightIsFast(i))
+        // Every light gets its gain except the bucketed one, which is stored
+        // normalised for the resolve to rescale. rt_LightFastScale is 1.0 for a
+        // steady light, so this line is a no-op for almost everything.
+        if (rt_LightIsBucketed(i))
         {
             fastNormOut   += contrib;
             fastScaledOut += contrib * rt_LightFastScale(i);
         }
         else
         {
-            stableOut += contrib;
+            stableOut += contrib * rt_LightFastScale(i);
         }
     }
 }
@@ -422,8 +433,8 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
     if (!occluded)
     {
         vec3 v = c0 * (wSum / w0);
-        if (rt_LightIsFast(i0)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i0); }
-        else                    { stableOut   += v; }
+        if (rt_LightIsBucketed(i0)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i0); }
+        else                        { stableOut   += v * rt_LightFastScale(i0); }
     }
 
     if (k > 1 && i1 >= 0)
@@ -436,8 +447,8 @@ void rt_EvalDirectLightingStochasticBuckets(vec3 hitPos, vec3 hitNorm, int maxLi
         if (!occluded1)
         {
             vec3 v = c1 * (wSum / w1);
-            if (rt_LightIsFast(i1)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i1); }
-            else                    { stableOut   += v; }
+            if (rt_LightIsBucketed(i1)) { fastNormOut += v; fastScaledOut += v * rt_LightFastScale(i1); }
+            else                        { stableOut   += v * rt_LightFastScale(i1); }
         }
         // The 0.5 is the two-reservoir average and must hit every bucket, or a
         // frame where one pick is fast and the other steady is double-counted.

@@ -137,9 +137,9 @@ static idCVar r_rtGIProbeDebug("r_rtGIProbeDebug", "0", CVAR_RENDERER | CVAR_INT
                                "6/7 show the measurement mode 4's verdict is made from: an air probe must "
                                "read BLUE in mode 6, and if it does not, no threshold can fix it. "
                                "8=G5b fast bucket: GREEN = share of this pixel's GI that is being "
-                               "flicker-factorized, RED = number of fast lights reaching the point / 3. "
-                               "Red staying dark says one gain per bucket is exact and "
-                               "r_rtGIProbeFastBuckets 2 would buy nothing.");
+                               "flicker-factorized, RED = flickering lights reaching the point / 3. Only the "
+                               "highest-importance one is bucketed, so red is what G5b is still leaving "
+                               "EMA-smeared — dark red across a level says one bucket covers it.");
 
 static idCVar r_rtGIProbeDebugGain("r_rtGIProbeDebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
                                    "Mode-1-only gain, so stored irradiance survives the Uchimura toe "
@@ -1020,7 +1020,7 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
 //   3 STORAGE_BUFFER  probe state        (per slot, CPU-owned)
 //   4 STORAGE_IMAGE   distance atlas     rg16f
 //   5 STORAGE_BUFFER  probe stats        (shared, GPU-owned; blend only)
-//   6 STORAGE_IMAGE   fast ray scratch   r11f_g11f_b10f  (G5b)
+//   6 STORAGE_IMAGE   fast ray scratch   rgba16f  (G5b; alpha unused)
 static bool VK_RT_InitProbeDescLayout(void)
 {
     VkDescriptorSetLayoutBinding bindings[VK_GIPROBE_DESC_BINDINGS] = {};

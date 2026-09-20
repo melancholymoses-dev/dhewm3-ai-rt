@@ -617,7 +617,10 @@ struct vkRTState_t
     vkReflBuffer_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED, (1+K) buckets tall
     vkReflBuffer_t giProbeDistance;   // rg16f visibility moments (mean, mean^2), SHARED
     vkReflBuffer_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT];     // rgba16f, raysPerProbe x probesPerFrame
-    vkReflBuffer_t giProbeScratchFast[VK_MAX_FRAMES_IN_FLIGHT]; // G5b fast-bucket radiance, r11f_g11f_b10f
+    // rgba16f, not the r11f_g11f_b10f the plan sketched: B10G11R11 storage-image
+    // support is optional in Vulkan and a GLSL format qualifier must match its
+    // view exactly, so a fallback would mean two shader variants. Alpha unused.
+    vkReflBuffer_t giProbeScratchFast[VK_MAX_FRAMES_IN_FLIGHT]; // G5b fast-bucket radiance, rgba16f
     VkSampler      giProbeSampler;                           // bilinear-clamp for atlas fetches
 
     // CPU-owned (offset + flags), re-uploaded every frame, hence per slot.
