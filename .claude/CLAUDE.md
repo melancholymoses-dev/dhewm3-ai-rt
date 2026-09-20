@@ -34,6 +34,8 @@ If there are complex options, favour generating logs and debugging over theoreti
 
 When adding new shaders update CMakelists.  For glsl files add them to the GLSL_INCLUDES.
 
+You can only carry out git read operations.  (diff, log, etc).  You cannot write to Git (push/pull/merge/rebase/commit, etc)
+
 ## Assets
 The main doom3 assets have been unzipped and are accessible at build_rt/pak_assets/pak000 for inspection.  
 Most are text files despite the odd file suffixes.  Check this with a head command first.

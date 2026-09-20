@@ -52,11 +52,11 @@ layout(set = GIPROBE_SET, binding = 2, std140) uniform GIProbeParams {
     ivec4 atlas;       // 128  x=tilesX y=tilesY z=irradiance side w=distance side
     ivec4 rays;        // 144  x=raysPerProbe y=probesPerFrame z=updateBase w=frameIndex
     vec4  tune;        // 160  x=hysteresis y=normalBias z=giStrength w=maxRayDist
-    ivec4 misc;        // 176  x=debugMode y=useGbufNormal z=visibility w=unused
+    ivec4 misc;        // 176  x=debugMode y=useGbufNormal z=visibility w=irradiance buckets (1+K)
     ivec4 screen;      // 192  x=screenW y=screenH z=outW w=outH
     ivec4 rect;        // 208  resolve dispatch rect, output-image space
     vec4  debug;       // 224  x=debugGain y=probeRadius z=distSharpness w=unused
-    vec4  tune2;       // 240  x=giContrast  y/z/w reserved (G3 Chebyshev)
+    vec4  tune2;       // 240  x=giContrast y=viewBias z=fastGain[0] w=fastGain[1]
 } gp;
 
 // std430: vec3 has 16-byte alignment, so the trailing uint packs into the same
@@ -199,9 +199,40 @@ ivec2 gip_TileOrigin(int storageIdx, int side)
     return ivec2(storageIdx % tx, storageIdx / tx) * side;
 }
 
+// ---------------------------------------------------------------------------
+// G5b — bucketed irradiance atlas.
+//
+// The irradiance atlas holds 1 + K sets of tiles stacked vertically; bucket k's
+// tile for probe p is at linear tile index p + k*probeCount. gip_TileOrigin
+// already turns a linear tile index into a texel origin, so that addressing
+// needs no change at all — only the UV normalisation does, because the image is
+// taller than atlas.y tiles now.
+//
+// The DISTANCE atlas is NOT bucketed (occluder geometry is shared), which is why
+// there are two size functions rather than one with a flag. Reading the distance
+// map through the irradiance sizing would divide by (1+K) times too large a
+// height and silently sample the wrong probe's moments.
+// ---------------------------------------------------------------------------
+
+int gip_IrrBuckets(void)
+{
+    return max(gp.misc.w, 1);
+}
+
+// Linear irradiance tile index of probe `storageIdx` in bucket `bucket`.
+int gip_IrrTile(int storageIdx, int bucket)
+{
+    return storageIdx + bucket * gip_ProbeCount();
+}
+
 ivec2 gip_AtlasSize(int side)
 {
     return ivec2(max(gp.atlas.x, 1) * side, max(gp.atlas.y, 1) * side);
+}
+
+ivec2 gip_IrrAtlasSize(int side)
+{
+    return ivec2(max(gp.atlas.x, 1) * side, max(gp.atlas.y, 1) * gip_IrrBuckets() * side);
 }
 
 // Interior texel (0..side-3) -> absolute atlas texel.
@@ -234,6 +265,28 @@ vec2 gip_AtlasUVOct(int storageIdx, vec2 oct, int side)
 vec2 gip_AtlasUV(int storageIdx, vec3 dir, int side)
 {
     return gip_AtlasUVOct(storageIdx, gip_OctEncode(normalize(dir)) * 0.5 + 0.5, side);
+}
+
+// G5b: the same, against the taller bucketed irradiance atlas. `bucket` 0 is the
+// stable set, 1..K the fast ones.
+vec2 gip_IrrAtlasUVOct(int storageIdx, int bucket, vec2 oct, int side)
+{
+    vec2 texel = vec2(gip_TileOrigin(gip_IrrTile(storageIdx, bucket), side)) + 1.0 + oct * float(max(side - 2, 1));
+    return texel / vec2(gip_IrrAtlasSize(side));
+}
+
+vec2 gip_IrrAtlasUV(int storageIdx, int bucket, vec3 dir, int side)
+{
+    return gip_IrrAtlasUVOct(storageIdx, bucket, gip_OctEncode(normalize(dir)) * 0.5 + 0.5, side);
+}
+
+// Per-bucket resolve gain, from the CPU classifier. Bucket 0 is steady lights
+// and is never scaled.
+float gip_BucketGain(int bucket)
+{
+    if (bucket <= 0)
+        return 1.0;
+    return (bucket == 1) ? gp.tune2.z : gp.tune2.w;
 }
 
 // Border texel -> the interior texel it mirrors.  The octahedron's seam folds

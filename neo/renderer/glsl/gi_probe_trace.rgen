@@ -26,6 +26,14 @@ back-face hit.  One channel carries both because the blend pass wants the
 distance either way (visibility moments) but must exclude back-face hits from
 the irradiance (they are the inside of a wall, not light).
 
+G5b adds a SECOND scratch image holding the fast bucket's radiance for the same
+ray.  A separate image rather than more channels because the fast half is
+radiance only: it shares the primary's hit distance and its back-face verdict by
+construction, since it is the same ray.  This shader sets the payload's
+probe-mode bit, which is what makes gi_ray.rchit split the two buckets at all —
+without it the fast bucket stays empty and the factorization does nothing
+visible, which is indistinguishable from "the feature is off".
+
 20260906_froxel_probe_gi.md Part B, chunk G1.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
@@ -51,6 +59,10 @@ layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 #include "gi_probe_common.glsl"
 
 layout(set = 2, binding = 0, rgba16f) uniform image2D probeScratch;
+// rgba16f rather than the planned r11f_g11f_b10f — see vk_gi_probe.cpp for why
+// (optional storage support for B10G11R11, and the format qualifier has to match
+// the view). Alpha is unused.
+layout(set = 2, binding = 6, rgba16f) uniform image2D probeScratchFast;
 
 #include "gi_payload.glsl"
 layout(location = 0) rayPayloadEXT GIPayload giPayload;
@@ -74,7 +86,11 @@ void main()
 
     giPayload.colour = vec3(0.0);
     giPayload.hitDist = tMax;
-    giPayload.backface = 0.0;
+    // G5b: tell gi_ray.rchit this is a probe ray, so a flickering light's
+    // contribution comes back in `fast` at s = 1 instead of being folded into
+    // `colour` at its current gain. Without this bit the fast bucket stays empty
+    // and the whole factorization silently does nothing.
+    giPayload.fast = GI_PAYLOAD_PROBE_MODE;
 
     traceRayEXT(topLevelAS,
                 gl_RayFlagsNoneEXT,
@@ -88,7 +104,9 @@ void main()
                 tMax,
                 0); // payload location
 
-    float encodedDist = (giPayload.backface > 0.5) ? -giPayload.hitDist : giPayload.hitDist;
-
-    imageStore(probeScratch, ivec2(rayIdx, slot), vec4(giPayload.colour, encodedDist));
+    // hitDist already carries the back-face flag in its sign (gi_payload.glsl);
+    // gi_ray.rchit and gi_ray.rmiss both negate it themselves, so there is
+    // nothing to re-encode here.
+    imageStore(probeScratch, ivec2(rayIdx, slot), vec4(giPayload.colour, giPayload.hitDist));
+    imageStore(probeScratchFast, ivec2(rayIdx, slot), vec4(gip_UnpackRadiance(giPayload.fast), 0.0));
 }

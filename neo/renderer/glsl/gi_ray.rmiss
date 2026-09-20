@@ -35,6 +35,10 @@ void main()
     // tmax the caller passed (giRadius for the per-pixel rgen, maxRayDist for the
     // probe rgen), so probes record the open direction at its true length rather
     // than at whatever constant this shader happened to know about.
-    giPayload.hitDist  = gl_RayTmaxEXT;
-    giPayload.backface = 0.0;
+    // Positive: a miss is not a back face. G5b folded the back-face flag into
+    // this field's sign, so writing a positive distance is the whole statement.
+    giPayload.hitDist = gl_RayTmaxEXT;
+
+    // Sky ambient belongs to the stable bucket — it does not flicker.
+    giPayload.fast = 0u;
 }

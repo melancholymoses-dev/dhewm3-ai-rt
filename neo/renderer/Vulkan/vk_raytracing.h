@@ -610,9 +610,14 @@ struct vkRTState_t
     // border compute pipelines.  gi_probe_common.glsl declares its contents once
     // for all of them, keyed on a GIPROBE_SET define.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED
+    // G5b: the irradiance atlas holds 1 + K sets of tiles stacked vertically —
+    // bucket k's tile for probe p is at linear tile index p + k*probeCount, so
+    // nothing about gip_TileOrigin's addressing changes.  The distance atlas is
+    // NOT duplicated: occluder geometry is the same for every bucket.
+    vkReflBuffer_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED, (1+K) buckets tall
     vkReflBuffer_t giProbeDistance;   // rg16f visibility moments (mean, mean^2), SHARED
-    vkReflBuffer_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT]; // rgba16f, raysPerProbe x probesPerFrame
+    vkReflBuffer_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT];     // rgba16f, raysPerProbe x probesPerFrame
+    vkReflBuffer_t giProbeScratchFast[VK_MAX_FRAMES_IN_FLIGHT]; // G5b fast-bucket radiance, r11f_g11f_b10f
     VkSampler      giProbeSampler;                           // bilinear-clamp for atlas fetches
 
     // CPU-owned (offset + flags), re-uploaded every frame, hence per slot.
@@ -1010,6 +1015,22 @@ void VK_RT_ResizeGI(uint32_t width, uint32_t height);
 // and refilled on each call.  Independent of r_rtGILightBounce so that reflection
 // hit shaders always receive lighting data.
 void VK_RT_UploadGILights(const viewDef_t *viewDef);
+
+// G5b (20260906_froxel_probe_gi.md) — flicker factorization, owned by vk_gi.cpp's
+// classifier and consumed by vk_gi_probe.cpp when it builds GIProbeParams.
+//
+// A fast light is uploaded at its PEAK colour L̂ with s = current/peak alongside,
+// so the probe fast bucket caches its transport time-invariantly and the resolve
+// multiplies the gain back in. Both are refreshed inside VK_RT_UploadGILights,
+// which vk_backend.cpp calls before any probe dispatch — reading them earlier in
+// the frame would hand the resolve the previous frame's flicker phase.
+//
+// Count is the clamped r_rtGIProbeFastBuckets (K). Gain is the L̂-luminance-
+// weighted mean of s over the bucket's uploaded lights, and is 0 — not 1 — when
+// the bucket holds no light, so its decaying atlas history cannot republish.
+int VK_RT_GIFastBucketCount(void);
+float VK_RT_GIFastBucketGain(int bucket);
+int VK_RT_GIFastLightCount(void);
 
 // Dispatch GI rays for the current view (once per frame).
 // Must be outside a render pass.  Depth must be in ATTACHMENT_OPTIMAL on entry;

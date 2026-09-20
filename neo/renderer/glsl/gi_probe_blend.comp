@@ -39,16 +39,27 @@ blending against them would drag a stale room's colour across the map.  The CPU
 uploads GIPROBE_FLAG_TRACED as it stood BEFORE this frame's trace precisely so
 this test can be made here.
 
+G5b — the irradiance atlas now holds 1 + K buckets of tiles and this pass fills
+each of them from its own scratch image, at the SAME hysteresis.  That is the
+whole trick: the fast bucket's rays were traced with every flickering light held
+at its peak L̂, so its content is time-invariant and a slow EMA is exactly right
+for it.  The flicker is reapplied in gi_probe_resolve.comp from a gain the CPU
+refreshes every frame, which is why the ~9 s EMA no longer low-passes it away.
+
+The distance atlas is deliberately NOT duplicated: occluder geometry is the same
+whichever light is being cached, and its pow() lobe is the expensive loop here.
+
 Descriptors (set 0):
   binding 0 — probe ray scratch rgba16f (read)
-  binding 1 — irradiance atlas rgba16f (read/write)
+  binding 1 — irradiance atlas rgba16f (read/write), (1+K) buckets tall
   binding 2 — GIProbeParams UBO   (declared by gi_probe_common.glsl)
   binding 3 — probe state SSBO    (declared by gi_probe_common.glsl)
   binding 4 — distance atlas rg16f (read/write), both channels normalised by
               maxRayDist
   binding 5 — probe stats SSBO (read/write), G4 classification statistics
+  binding 6 — fast-bucket ray scratch rgba16f (read), G5b
 
-20260906_froxel_probe_gi.md Part B, chunk G1.
+20260906_froxel_probe_gi.md Part B, chunks G1 and G5b.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -69,6 +80,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 layout(set = 0, binding = 0, rgba16f) uniform readonly image2D probeScratch;
 layout(set = 0, binding = 1, rgba16f) uniform image2D irradianceAtlas;
 layout(set = 0, binding = 4, rg16f) uniform image2D distanceAtlas;
+layout(set = 0, binding = 6, rgba16f) uniform readonly image2D probeScratchFast;
 
 #define GIPROBE_SET 0
 #include "gi_probe_common.glsl"
@@ -94,6 +106,12 @@ layout(set = 0, binding = 5, std430) buffer GIProbeStatsBuf {
 
 shared vec4 s_ray[GIPROBE_MAX_RAYS]; // rgb = radiance, a = signed hit distance
 shared vec3 s_dir[GIPROBE_MAX_RAYS];
+// G5b: the fast bucket's radiance for the same rays. It shares s_ray's hit
+// distance and back-face sign by construction — same ray — so only the colour
+// is cached. Kept as vec3 rather than the packed uint the plan sketched: the
+// scratch image is rgba16f, so packing here would cost an unpack per (ray x
+// texel) in the loop below purely to save 3 KB of shared memory.
+shared vec3 s_fast[GIPROBE_MAX_RAYS];
 
 void main()
 {
@@ -108,10 +126,13 @@ void main()
     // are regenerated here rather than stored.
     mat3 rot = gip_RandomRotation(uint(gp.rays.w) * 2654435761u + uint(gp.rays.z));
 
+    int irrBuckets = gip_IrrBuckets();
+
     for (int r = tid; r < numRays; r += 256)
     {
         s_ray[r] = imageLoad(probeScratch, ivec2(r, slot));
         s_dir[r] = normalize(rot * gip_SphericalFibonacci(r, numRays));
+        s_fast[r] = (irrBuckets > 1) ? imageLoad(probeScratchFast, ivec2(r, slot)).rgb : vec3(0.0);
     }
     barrier();
 
@@ -163,14 +184,21 @@ void main()
         probeStats.probes[storageIdx].miss = hadHistory ? mix(prevMiss, fracMiss, alpha) : fracMiss;
     }
 
-    // ---- Irradiance (8x8 interior) ----
+    // ---- Irradiance (8x8 interior), once per bucket ----
+    //
+    // G5b: the two buckets share the texel direction, the ray directions, the
+    // cosine weights and the EMA alpha. Only which radiance is being averaged
+    // differs, so the second bucket costs one more multiply-add per ray and no
+    // extra loop setup. Identical alpha is the point, not an economy: the fast
+    // bucket is time-invariant, so it wants the SAME heavy smoothing.
     int irrSide = max(gp.atlas.z, 3);
     int irrInterior = irrSide - 2;
     if (lid.x < irrInterior && lid.y < irrInterior)
     {
         vec3 texelDir = gip_TexelDirection(lid, irrSide);
 
-        vec3 sum = vec3(0.0);
+        vec3 sumStable = vec3(0.0);
+        vec3 sumFast = vec3(0.0);
         float sumW = 0.0;
         for (int r = 0; r < numRays; r++)
         {
@@ -179,15 +207,24 @@ void main()
             float w = max(0.0, dot(texelDir, s_dir[r]));
             if (w <= 0.0)
                 continue;
-            sum += s_ray[r].rgb * w;
+            sumStable += s_ray[r].rgb * w;
+            if (irrBuckets > 1)
+                sumFast += s_fast[r] * w;
             sumW += w;
         }
 
-        vec3 value = (sumW > 1e-6) ? (sum / sumW) : vec3(0.0);
+        float invW = (sumW > 1e-6) ? (1.0 / sumW) : 0.0;
 
-        ivec2 t = gip_InteriorTexel(storageIdx, lid, irrSide);
-        vec3 prev = imageLoad(irradianceAtlas, t).rgb;
-        imageStore(irradianceAtlas, t, vec4(mix(prev, value, alpha), 1.0));
+        ivec2 tS = gip_InteriorTexel(gip_IrrTile(storageIdx, 0), lid, irrSide);
+        vec3 prevS = imageLoad(irradianceAtlas, tS).rgb;
+        imageStore(irradianceAtlas, tS, vec4(mix(prevS, sumStable * invW, alpha), 1.0));
+
+        if (irrBuckets > 1)
+        {
+            ivec2 tF = gip_InteriorTexel(gip_IrrTile(storageIdx, 1), lid, irrSide);
+            vec3 prevF = imageLoad(irradianceAtlas, tF).rgb;
+            imageStore(irradianceAtlas, tF, vec4(mix(prevF, sumFast * invW, alpha), 1.0));
+        }
     }
 
     // ---- Visibility moments (16x16 interior) ----
