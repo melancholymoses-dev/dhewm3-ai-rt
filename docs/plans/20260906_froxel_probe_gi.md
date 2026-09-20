@@ -1058,6 +1058,11 @@ queue, so it belongs here rather than in G6.
 `256 × 4096 × hysteresis 0.5` a 5 Hz light's GI still does not keep up. 
 Fix 1 is a door and moving-light fix only.
 
+**Cause found 2026-09-19, and it was not the sample rate.** The light SSBO carried
+shaderParms, and Doom 3 puts flicker in the light material's register expressions —
+so the GI never received a varying signal to track at any update rate. See the
+premise correction under G5b.
+
 **A third fix was proposed 2026-09-18 and supersedes fix 2 for the flicker case
 specifically — see G5b.** Fix 2 (adaptive hysteresis) remains the right answer for
 *doors and moving lights*, which G5b cannot help, and **fix 1 gates fix 2** — its
@@ -1159,6 +1164,61 @@ Deriving `L̂` from a running max makes this self-calibrating — works for `fli
 | `r_rtGIFlickerHold` | `2.0` | ~~seconds a light stays fast after its last change~~ **as built: the `L̂` decay time constant. The classification latches instead** |
 | `r_rtGIProbeDebug 8` | — | **ships first:** fast-bucket fraction per probe (blue→red) + count of distinct fast lights reaching each probe. The count says whether K=1 suffices |
 
+### ⚠️ Premise correction — the flicker was never in the light SSBO
+
+Found 2026-09-19 while reading the first `r_rtGILightDump` of the classifier, which
+reported **0 flickering lights** in a 73-light Mars City upload.
+
+Doom 3 writes light animation as **material register expressions**, not shaderParms:
+
+```
+lights/square_flicker
+    red ((.25 * blinktable[Parm4 + (time * 15 * Parm3)]) + .75) * Parm0
+```
+
+`Parm0..2` are the constant amplitude; the flicker is the table lookup. The raster
+interaction path evaluates this (`vk_backend.cpp:4190`, `regs[stage->color.registers[i]]`),
+but the RT light upload read `p.shaderParms[SHADERPARM_RED..BLUE]` — the constant.
+
+**Consequences, all of which predate G5b:**
+
+| | |
+|---|---|
+| GI, volumetrics and reflections | have **never** seen a flickering light flicker. They got its constant amplitude |
+| "Dark room keeps a glow" | not (only) the EMA low-passing a flicker. Even at hysteresis 0 it would be steady — the signal was absent |
+| G5's fix 1 measurement | explained. `256 × 4096 × hysteresis 0.5` "does not reach a 5 Hz flicker" because no update rate can track a signal that is not in the data |
+| G5b's classifier | could not have fired on any retail flickering light |
+
+**Fixed as part of G5b:** `considerLight` now evaluates the light shader's registers
+once and takes the colour from the chosen stage, matching the raster path. The cookie
+block reuses the same registers and stage rather than re-evaluating — they must agree,
+or a multi-stage light gets one stage's gobo tinted by another's colour.
+
+Blast radius is small in *count* — a plain `colored` stage sets its colour registers to
+parm0-2 verbatim, so the vast majority of fixtures are byte-identical. 74 light
+materials in `lights.mtr` have a time-driven colour expression; those are the ones that
+change.
+
+✅ **Confirmed in play 2026-09-19**, by raising `r_rtGIStrength` and A/Bing against the
+non-RT path: GI now follows a fast light's pattern and stays stable on slow ones.
+
+**The effect is larger than "flicker was missing".** Observed in play: GI and
+volumetrics had been *flattening every animated light temporally*, not just flickering
+ones — strobes, pulses, slow neon, the lot. All 74 were pinned at `Parm0`.
+
+**Two consequences for G6's owed retune, which is downstream of this:**
+- `Parm0` is the table's multiplicand and the tables peak at 1.0, so every animated
+  light was being fed to GI/vol at its **peak** value. Their average contribution now
+  drops. That moves the baseline in the same direction as the reported over-brightness.
+- So the retune must happen *after* this lands, not against the old constants. Tuning
+  against a peak-pinned animated light set would bake in the wrong exposure.
+
+**The zero in that first dump was still legitimate.** Every light in that area
+(`squarelight1`, `biground1`, `squareishlight`, `spot01`, `triangle1`,
+`newalphagrate3b`, and a literal `squarelight1_snd_noflicker`) is a static material.
+The dump now prints `parm=` beside `eval=` so the two cases are distinguishable in a
+log: equal everywhere means "no animated lights here", not "detection is broken".
+
 🟡 **Written 2026-09-19, not yet in-game validated.** As built, deviating from the above:
 
 | Item | As built |
@@ -1228,6 +1288,12 @@ scheduled rather than as new bugs.
 
 **The per-pixel path stays.** No retire. `r_rtGIProbes 0` remains the A/B handle, the
 fallback, and the instrument the retune below is measured with.
+
+**A second cause found 2026-09-19 — it must land before the retune.** All 74 animated
+light materials were being fed to GI/vol pinned at `Parm0`, i.e. their peak, because the
+upload read `shaderParms` rather than the evaluated registers. Fixed under G5b. Their
+average contribution now drops, in the same direction as the over-brightness below, so
+the constants must be tuned after this rather than against a peak-pinned light set.
 
 **Retune owed — cause confirmed 2026-09-19.** GI/vol read over-bright, and it tracks
 `r_rtGIProbes 1`. The defaults still carry the per-pixel path's tuning; `r_rtGIStrength`,
