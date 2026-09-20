@@ -53,38 +53,9 @@ Code release.
 #error "define RT_LIGHT_SHADOW_MISS_INDEX before including rt_light_eval.glsl"
 #endif
 
-#define RT_LIGHT_MAX_LIGHTS 128  // must match VK_GI_MAX_LIGHTS in vk_gi.cpp
-
-// rt_projected_light_cookies.md — GILightEntry::flags bit for "this light has a
-// cookie entry at the same index in RTLightBuf::cookies[]". Must match vk_gi.cpp.
-#define GI_LIGHT_FLAG_HAS_COOKIE 0x1u
-
-// G5b (20260906_froxel_probe_gi.md) — this light is classified as flickering:
-// colorIntensity.rgb is its PEAK colour L̂ and fastScale is s = current/peak.
-// Every consumer must multiply the two to get the light as it looks right now.
-#define GI_LIGHT_FLAG_FAST 0x2u
-
-// ...and this is the one light whose probe transport is cached normalised, in
-// fast bucket 0. At most one light carries it, because one gain is shared by
-// the whole bucket — see vk_gi.cpp. Only the probe path reads this bit; every
-// other consumer cares about FAST alone.
-#define GI_LIGHT_FLAG_FAST_BUCKET 0x4u
-
-struct RTLight {
-    vec4 posRadius;      // xyz = volume centre (parms.origin), w = falloff/pre-cull radius
-    vec4 colorIntensity; // rgb = light colour — L̂ when FAST — a = intensity
-    vec4 coneDir;        // projected: xyz=dir, w=cos(halfAngle); zeroed for point
-    vec4 boxExtents;     // point: xyz=AABB half-extents, w=0; projected: w=max reach, xyz=0
-    uint lightType;      // 0 = point, 1 = projected/spot, 2 = player flashlight
-    uint flags;          // GI_LIGHT_FLAG_* bitmask
-    float fastScale;     // G5b: s = current/peak luminance; 1.0 for a steady light
-    uint  fastBucket;    // G5b: which fast bucket caches this light's transport
-    // Emitter: globalLightOrigin = parms.origin + axis * lightCenter. See vk_gi.cpp's
-    // GILightEntry::emitPos — attenuation stays measured from the volume centre, while
-    // direction/N·L and shadow-ray targeting come from here, matching the GL split.
-    vec4 emitPos;        // xyz = globalLightOrigin, w unused
-};
-
+// RTLight, RT_LIGHT_MAX_LIGHTS and the GI_LIGHT_FLAG_* bits. The buffer block
+// below is ours; the struct is shared with the volumetric and probe consumers.
+#include "rt_light_struct.glsl"
 #include "rt_light_cookie.glsl"
 
 layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
@@ -131,9 +102,7 @@ float rtle_rand(uint seed)
 // ---------------------------------------------------------------------------
 float rt_LightFastScale(int i)
 {
-    if ((rtLightBuf.lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)
-        return 1.0;
-    return clamp(rtLightBuf.lights[i].fastScale, 0.0, 1.0);
+    return rt_LightFastScale(rtLightBuf.lights[i]);
 }
 
 // Whether light i's transport goes to the fast ATLAS BUCKET, which is a

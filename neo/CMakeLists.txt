@@ -793,6 +793,7 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_indirect.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_material.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_cookie.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_struct.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_light_eval.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_common.glsl"

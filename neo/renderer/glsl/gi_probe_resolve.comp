@@ -125,26 +125,16 @@ layout(set = 0, binding = 8, std430) readonly buffer GIProbeStatsBuf {
     GIProbeStats probes[];
 } probeStats;
 
-// G5b mode 8 only.  A fourth transcription of GILightEntry (vk_gi.cpp,
-// rt_light_eval.glsl, vol_march.comp, vol_froxel_fill.comp) — declared here
-// rather than including rt_light_eval.glsl, which drags in the shadow-ray
-// payload and rt_material.glsl's ray-pipeline built-ins that do not exist in a
-// compute shader.  Only the containment fields and the flag are read.
-#define GIPROBE_MAX_LIGHTS 128
-#define GI_LIGHT_FLAG_FAST 0x2u
+// G5b mode 8 only — reads the containment fields and the FAST flag.
+//
+// rt_light_struct.glsl is struct-only and safe here; rt_light_eval.glsl is not,
+// because it declares a shadow-ray payload and calls traceRayEXT, neither of
+// which exists in a compute shader.
+#include "rt_light_struct.glsl"
 
-struct GIResolveLight {
-    vec4 posRadius;
-    vec4 colorIntensity;
-    vec4 coneDir;
-    vec4 boxExtents;
-    uint lightType;
-    uint flags;
-    float fastScale;
-    uint fastBucket;
-    vec4 emitPos;
-};
-
+// Padding twin of RTLightCookie so the light array's stride matches the upload.
+// Not rt_light_cookie.glsl's own struct: that file's samplers need set=1's
+// bindless matTextures[], which this shader does not bind.
 struct GIResolveCookie {
     vec4 planeS;
     vec4 planeT;
@@ -160,8 +150,8 @@ layout(set = 0, binding = 9, std430) readonly buffer GIResolveLightBuf {
     float emissiveScale;
     float reflAmbientScale;
     float _pad0[3];
-    GIResolveLight lights[GIPROBE_MAX_LIGHTS];
-    GIResolveCookie cookies[GIPROBE_MAX_LIGHTS];
+    RTLight lights[RT_LIGHT_MAX_LIGHTS];
+    GIResolveCookie cookies[RT_LIGHT_MAX_LIGHTS];
 } giLights;
 
 #define GIPROBE_SET 0
@@ -598,7 +588,7 @@ void main()
                 // lights REACH this point and therefore share the bucket's one
                 // gain. A shadowed light still shares it.
                 int fastCount = 0;
-                int n = min(giLights.numLights, GIPROBE_MAX_LIGHTS);
+                int n = min(giLights.numLights, RT_LIGHT_MAX_LIGHTS);
                 for (int i = 0; i < n; i++)
                 {
                     if ((giLights.lights[i].flags & GI_LIGHT_FLAG_FAST) == 0u)

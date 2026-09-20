@@ -73,6 +73,7 @@ Each of these cost a debugging session. They apply to any new RT code.
 | A mapped buffer the CPU **reads** needs `HOST_CACHED`, and should be memcpy'd out before use | `HOST_VISIBLE\|HOST_COHERENT` alone is write-combined; scalar reads cost ~200 ns each. Worth 3.26 → 0.03 ms on the probe classifier |
 | Doom 3 winds front faces opposite to GL/Vulkan — use the vertex normal, not `gl_HitKindEXT` | Every visible surface reports back-facing |
 | A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Caused the GI checkerboard ghost |
+| Shared GLSL that compute shaders include must be **pipeline-agnostic** — no ray payload, no `traceRayEXT`, no TLAS. `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not | An RT-only built-in pulled into a compute shader silently killed all volumetric lighting once |
 
 ### Standing decisions
 
@@ -99,7 +100,7 @@ Each of these cost a debugging session. They apply to any new RT code.
 
 | Doc | Owns |
 |---|---|
-| `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done. **T4-T6 open and now the next work** — they inherit arc 2's owed retune: GI/vol read over-bright under `r_rtGIProbes 1`, and the animated-light fix changed the light set they must be tuned against. T3 dropped. |
+| `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done; T3 dropped, T5 won't-fix, **T4a-1 done 2026-09-20** (one shared `rt_light_struct.glsl`, was four transcriptions). **T6 is the next work** and inherits arc 2's owed retune: GI/vol read over-bright under `r_rtGIProbes 1`, and the animated-light fix changed the light set they must be tuned against. T4b/T4c are conditional — the RT falloff is flat across 80 % of every light volume, but Doom 3's lights are visibility boxes rather than physical fixtures, so "correct" may read worse. |
 | `20260918_fsr_upscaling.md` | Render-resolution decoupling and FSR upscaling (arc #3). Also owns motion vectors and jitter, which any future upscaler/TAA would share. |
 | `20260906_bloom_plan.md` | Bloom post-process — unimplemented; the tonemapped HDR pipeline it needs now exists. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |

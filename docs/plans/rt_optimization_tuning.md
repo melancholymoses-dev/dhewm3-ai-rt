@@ -439,23 +439,92 @@ Reflectance is hardcoded: `GLASS_F0 = 0.1` (`reflect_ray.rgen:156`), `F0 = 0.05`
 - `glass_probe.rchit` returns the hit matIdx so the rgen's `glassWeight` Schlick uses
   the material F0 instead of the constant.
 
-### T4. Falloff-model mismatch between RT lighting and raster lighting
+### T4. Falloff model — flat across 80 % of every light volume
 
-The raster path lights via projection/falloff **textures**; the RT hit shaders use
-`atten = 1 − (d/r)²` with `intensity` defaulting to 1.0 when `SHADERPARM_ALPHA` is
-unset (`vk_gi.cpp:1004-1009`). RT-lit surfaces (reflection hits, GI bounces) therefore
-disagree with the same surface seen directly — one reason GI tuning feels like
-whack-a-mole: `r_rtGIBounceScale 4.0` is compensating for systematically-dim RT
-falloff in some rooms and overshooting in others.
+**Rewritten 2026-09-19.** The original text claimed RT used `atten = 1 − (d/r)²`. It
+hasn't since the box-containment work. `rt_light_eval.glsl:191`:
 
-Pragmatic fix (no texture sampling in hit shaders): fit the falloff curve better.
-Doom 3's default falloff is roughly linear-to-zero; try `atten = (1−t)²` or `(1−t²)²`
-(smoother tail than the current `1−t²`, which holds ~75% brightness at half radius —
-brighter than Doom 3's textures). Add `r_rtGIFalloffMode` (0 = current, 1 = squared,
-2 = smooth) and A/B against the raster image on a known room before retuning
-`r_rtGIBounceScale` downward.
+```glsl
+atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));  // maxNorm = L∞ box norm
+```
 
-### T5. Emissive floor in reflections/GI
+| `maxNorm` | atten |
+|---|---|
+| 0 → 0.8 | **1.0, flat** |
+| 0.8 → 1.0 | 1.0 → 0.1 |
+| 1.0 → 1.5 | 0.1 → 0 |
+
+The error is **shape, not scale** — a single gain cannot fix it, which is the real
+reason tuning felt like whack-a-mole. Big volumes read over-bright (their whole
+interior sits at 1.0) beside small ones that read fine.
+
+**Two reasons this may be a bad idea — settle them before step T4b.**
+
+1. **Doom 3's lights are placed to make things visible, not to be physical.** A light
+   entity is frequently a box with no fixture in it, sized to reveal a corridor. A
+   physically-correct falloff inside such a box may read *worse* than the flat one,
+   which is closer to what the level designer composed against. This bites hardest in
+   volumetrics, where the medium samples the whole volume rather than a surface in it.
+2. **Some of the historic whack-a-mole was the temporal smoothing**, not the falloff.
+   That is gone — arc 2 dropped froxel history entirely and probe GI replaced the
+   screen-space chain — so the symptom that motivated this item has already partly
+   resolved itself. Re-observe before spending the retune.
+
+**Was four copies of the light struct, three of the falloff.**
+
+| File | Struct (was → now) | Containment + falloff | Vol-only extras |
+|---|---|---|---|
+| `rt_light_eval.glsl` | `RTLight` → shared | box + **hard** cone | — |
+| `vol_march.comp` | `GILight` → shared | box + **soft** cone | sphere pre-cull, `coreFade` |
+| `vol_froxel_fill.comp` | `GILight` → shared | box + **soft** cone | sphere pre-cull, near-field ramp |
+| `gi_probe_resolve.comp` | `GIResolveLight` → shared | containment only (mode 8) | — |
+
+All four were **field-identical**; T4a-1 collapsed them. The box falloff branch is
+still character-identical in three places — that is T4a-2.
+
+#### Two things that must NOT be "fixed" — checked 2026-09-20
+
+1. **The hard/soft cone difference is deliberate.** `rt_light_cookie.glsl:59-61`: the
+   surface paths keep the hard edge because that is what Doom 3's projected-light
+   interaction pass does, and softening it would make lit surfaces disagree with the
+   GL renderer. Volumetrics has the opposite problem — a medium has no surface to
+   define the edge — so it widens the cone by `VOL_CONE_PENUMBRA` and needed
+   `rt_SampleLightCookieSoft` to stop the hard cookie clip zeroing the new band.
+2. **`rt_light_eval.glsl` cannot be included by a compute shader.** It declares
+   `rayPayloadEXT` (:103), calls `traceRayEXT` (:248) and requires the includer to
+   bind a TLAS. `gi_probe_resolve.comp:129-132` already records refusing to include
+   it for this reason, and pulling an RT-only built-in into a compute shader has
+   broken volumetrics before. It is not the shared home.
+
+#### Steps
+
+| # | Change | Check |
+|---|---|---|
+| **T4a-1** ✅ **done 2026-09-20** | New pipeline-agnostic `rt_light_struct.glsl` — `RT_LIGHT_MAX_LIGHTS`, the `GI_LIGHT_FLAG_*` bits, the struct, and `rt_LightFastScale(l)` taking the struct **by value**. Included by all four; each keeps its own buffer block. Precedent: `rt_light_cookie.glsl` | Purely a type move — fields already matched, so the SPIR-V should not change |
+| T4a-2 | Hoist box containment + base falloff into that header as `rt_LightVolumeAtten(l, p, penumbra, out atten)`. `penumbra = 0` for surfaces, `VOL_CONE_PENUMBRA` for the two vol paths — **guard the degenerate `smoothstep(cd.w, cd.w, x)`**. Vol-only extras stay at the call sites | Byte-identical output. Anything that moves is a bug |
+| T4b | `r_rtGIFalloffMode` (0 = current, 1 = corrected), one switch for three consumers | A/B at matched `r_rtGIStrength` |
+| T4c | Retune `r_rtGIBounceScale` and the vol class gains **downward** | Constants recorded in T6 |
+
+**T4a-1 as built.** Four struct names collapsed to `RTLight`; `GIPROBE_MAX_LIGHTS`
+(a fifth name for 128) folded into `RT_LIGHT_MAX_LIGHTS`. `rt_LightFastScale` lives in
+the header taking the struct by value, and `rt_light_eval.glsl` keeps a by-index
+wrapper so its call sites are untouched. Two things deliberately **not** shared:
+`GIResolveCookie` stays a local padding twin, because `rt_light_cookie.glsl`'s samplers
+need set=1's bindless `matTextures[]` that the resolve shader does not bind; and the
+falloff itself, which is T4a-2.
+
+**T4a-2 is a judgement call.** The cone branch is legitimately different, so only the
+box branch is a real duplicate, and parameterising the penumbra adds a degenerate case
+that does not exist today. It does make the `r_rtVolFroxel` A/B sharper — an identical
+light model by construction means any difference between march and froxel is the
+*sampler*, which is what F5 kept the march to test.
+
+T4c is not optional if T4b is taken. The current constants are in a good place
+precisely because they absorb the flat falloff's error; changing the shape spends that
+— same failure mode as the froxel fog retune in
+`completed/20260906_froxel_probe_gi.md`.
+
+### T5. Emissive floor in reflections/GI — ❌ **won't fix**
 
 `rt_EvalEmissiveRadiance` (`rt_material.glsl:222-228`): GUI surfaces get
 `max(e*3.0, 0.2)` then × `r_rtGIEmissiveScale` (2.0). The unconditional 0.2 floor makes
@@ -466,7 +535,21 @@ reflection path (`reflLightBuf.emissiveScale` is already a separate knob).
 
 Decision: Wont fix.  Seems good enough.  Don't care.
 
-### T6. Final tuning pass (only after T1-T5 + P3 land)
+Two things back that up. The floor is narrower than this item assumed —
+`rt_EvalEmissiveRadiance` (`rt_material.glsl:237`) gates `max(e*3.0, 0.2)` on
+`MAT_FLAG_GUI_EMISSIVE`, so monitors and panels only. And the artifact it describes
+needs a reflective floor, which glass-only reflections removed. Emissive contribution
+is small in practice because emissive surfaces nearly always have a real light entity
+beside them, which GI and vol already capture. `r_rtGIEmissiveScale 0` tests it.
+
+### T6. Final tuning pass
+
+**`r_rtGIAutoDirectScale` removed 2026-09-19.** It derived the effective
+`r_rtGIDirectScale` from `r_rtGIStrength` on an anchored linear curve. Inert at the
+shipped defaults — `r_rtGIDirectScale 1.0` makes the formula `1 - 0*ratio` — but it
+meant the CVar's printed value was not necessarily the applied one, which is a bad
+property in a knob you tune against. `r_rtGIDirectScale` is now applied verbatim.
+(Its description also claimed an anchor of 0.25 while the code used 0.2.)
 
 Order: `r_rtSpecF0Gamma/Scale` via debug overlay (F0 mode) → `r_rtSpecGrazingMax` in a
 grate/metal hallway → `r_rtGIFalloffMode` + `r_rtGIBounceScale` against a raster
@@ -504,8 +587,9 @@ Wave 5 — Auto-relight (auto_relight.md): synthesized panel lights + noShadows 
          Placed after P1b because each synthesized light is an interaction light +
          shadow dispatch; start with a budget of ~6 if attempted earlier.
 
-Wave 6 — Tuning: T3 per-material F0, T4 falloff mode, T5 emissive floor, then the
-         T6 constant pass — last, on top of the stable, fast, relit base.
+Wave 6 — Tuning: T3 dropped, T5 won't-fix, T4a-1 done. T4a-2 optional; T4b/T4c
+         only if the flat falloff still reads wrong now the temporal smoothing is
+         gone. T6 constant pass last.
 ```
 
 Auto-relight replaces the old Stage 4a/4b plan (see `auto_relight.md`); tuning stays
