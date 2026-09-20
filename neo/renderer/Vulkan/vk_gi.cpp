@@ -70,6 +70,22 @@ static idCVar r_rtGIBounceScale(
 static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Multiplier on emissive surface (SL_AMBIENT) contribution to GI and reflections");
 
+// T4b (rt_optimization_tuning.md). Point-light falloff shape shared by every
+// indirect consumer — GI, reflections, volumetrics. Direct surface lighting is
+// unaffected: the raster interaction pass samples Doom's real falloff images.
+// Modes 1/2 deliver much less energy than the flat default, so expect to raise
+// r_rtGIStrength / r_rtGIBounceScale / the vol class gains when A/B-ing.
+static idCVar r_rtGIFalloffMode("r_rtGIFalloffMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+                                "Point-light falloff for RT indirect lighting: 0 = legacy (flat to 80%% of the "
+                                "box, then a knee), 1 = (1-t)^2 raster-like, 2 = (1-t^2)^2 smooth");
+
+// Kept separate from the shape above so an A/B changes one thing at a time. 1.0 is
+// Doom's own light volume; the default 1.5 is the throw extension this renderer has
+// always had. Also sizes the sphere pre-cull, which must not clip the falloff.
+static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.5", CVAR_RENDERER | CVAR_FLOAT,
+                                 "How far past the light's box a point light reaches, in box-normalised units. "
+                                 "1.0 = stop at the box face (vanilla containment), 1.5 = default throw");
+
 static idCVar r_rtReflAmbientScale(
     "r_rtReflAmbientScale", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
     "Fraction of a shadowed light's contribution reflect_ray/player_reflect still add (0 = hard "
@@ -264,7 +280,9 @@ struct GILightBuffer
     float giRadius;         // r_rtGIRadius — hit-point light evaluation window (shader-side)
     float emissiveScale;    // r_rtGIEmissiveScale — emissive surface contribution multiplier
     float reflAmbientScale; // r_rtReflAmbientScale — reflections only, see rt_light_eval.glsl
-    float pad[3];           // pads header to 32 bytes (RTLight's std430 base alignment is 16)
+    int32_t falloffMode;    // r_rtGIFalloffMode — T4b, consumed by rt_LightBoxAtten
+    float falloffReach;     // r_rtGIFalloffReach — also sizes posRadius[3]'s sphere pre-cull
+    float pad[1];           // pads header to 32 bytes (RTLight's std430 base alignment is 16)
     GILightEntry lights[VK_GI_MAX_LIGHTS];
     // Stage 2: mirrored in GLSL as RTLightBuf::cookies[RT_LIGHT_MAX_LIGHTS]
     // (rt_light_eval.glsl), 1:1 with lights[] by index.
@@ -1551,6 +1569,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     lb->giRadius = Max(1.0f, r_rtGIRadius.GetFloat());
     lb->emissiveScale = idMath::ClampFloat(0.0f, 100.0f, r_rtGIEmissiveScale.GetFloat());
     lb->reflAmbientScale = idMath::ClampFloat(0.0f, 1.0f, r_rtReflAmbientScale.GetFloat());
+    lb->falloffMode = idMath::ClampInt(0, 2, r_rtGIFalloffMode.GetInteger());
+    lb->falloffReach = idMath::ClampFloat(1.0f, 3.0f, r_rtGIFalloffReach.GetFloat());
 
     const float giRadius = lb->giRadius;
     const float lightCollectScale = idMath::ClampFloat(0.25f, 8.0f, r_rtGILightCollectRadiusScale.GetFloat());
@@ -1863,8 +1883,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
                 c.entry.boxExtents[2] = p.lightRadius.z;
                 c.entry.boxExtents[3] = 0.0f;
                 c.entry.coneDir[0] = c.entry.coneDir[1] = c.entry.coneDir[2] = c.entry.coneDir[3] = 0.0f;
-                // Widen sphere pre-cull to cover the 1.5x halo zone outside the box.
-                c.entry.posRadius[3] = radius * 1.5f;
+                // Widen sphere pre-cull to cover the halo zone outside the box. Must
+                // track falloffReach or the cull clips the falloff before it reaches 0.
+                c.entry.posRadius[3] = radius * lb->falloffReach;
             }
             else
             {
@@ -2182,6 +2203,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             volLb->bounceScale = lb->bounceScale;
             volLb->giRadius = lb->giRadius;
             volLb->emissiveScale = lb->emissiveScale;
+            volLb->falloffMode = lb->falloffMode;
+            volLb->falloffReach = lb->falloffReach;
             const int volCutoff = idMath::ClampInt(1, VK_GI_MAX_LIGHTS, r_rtVolMaxLights.GetInteger());
             const float volMaxDist = Max(1.0f, r_rtVolMaxDist.GetFloat());
             for (int i = 0; i < numCandidates && volLb->numLights < volCutoff; i++)
@@ -2419,6 +2442,8 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     volLb->bounceScale = lb->bounceScale;
     volLb->giRadius = lb->giRadius;
     volLb->emissiveScale = lb->emissiveScale;
+    volLb->falloffMode = lb->falloffMode;
+    volLb->falloffReach = lb->falloffReach;
     for (int i = 0; i < numVolSelected; i++)
     {
         const int idx = volLb->numLights++;
@@ -2439,8 +2464,10 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         r_rtVolDump.SetBool(false); // one-shot: this site always runs, so it owns the clear
         vkRT_volDumpPending = true; // hand off to VK_RT_DispatchVolumetrics for the params half
         common->Printf("=== [r_rtVolDump] vol light SSBO as uploaded (frameIdx=%d) ===\n", frameIdx);
-        common->Printf("  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f\n", volLb->numLights,
-                       volLb->bounceScale, volLb->giRadius, volLb->emissiveScale);
+        common->Printf(
+            "  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f  falloff=%d/%.2f\n",
+            volLb->numLights, volLb->bounceScale, volLb->giRadius, volLb->emissiveScale, volLb->falloffMode,
+            volLb->falloffReach);
         common->Printf("  (GI upload for comparison: numLights=%d;  numSelected=%d, numVolSelected=%d, "
                        "numCandidates=%d)\n",
                        lb->numLights, numSelected, numVolSelected, numCandidates);
@@ -2703,8 +2730,10 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
             for (const viewLight_t *vl = viewDef->viewLights; vl; vl = vl->next)
                 viewLightCount++;
 
-            common->Printf("[GI] viewLights=%d  uploaded=%d  camPos=(%.0f,%.0f,%.0f)\n", viewLightCount, lb->numLights,
-                           viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y, viewDef->renderView.vieworg.z);
+            common->Printf("[GI] viewLights=%d  uploaded=%d  falloff=%d/%.2f  camPos=(%.0f,%.0f,%.0f)\n",
+                           viewLightCount, lb->numLights, lb->falloffMode, lb->falloffReach,
+                           viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y,
+                           viewDef->renderView.vieworg.z);
         }
     }
 

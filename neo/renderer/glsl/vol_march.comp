@@ -118,7 +118,9 @@ layout(set = 0, binding = 4, std430) readonly buffer GILightBuf {
     float  giRadius;
     float  emissiveScale;
     float  reflAmbientScale;
-    float  _pad0[3];
+    int    falloffMode;
+    float  falloffReach;
+    float  _pad0[1];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     // Stage 3: 1:1 with lights[] by index, meaningful only when that light's
     // flags has GI_LIGHT_FLAG_HAS_COOKIE set (vk_gi.cpp's GILightBuffer::cookies).
@@ -353,12 +355,9 @@ void main()
                 vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
                 float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
 
-                if (maxNorm >= 1.5) continue;
+                if (maxNorm >= giLightBuf.falloffReach) continue;
 
-                if (maxNorm <= 1.0)
-                    atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
-                else
-                    atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
+                atten = rt_LightBoxAtten(maxNorm, giLightBuf.falloffMode, giLightBuf.falloffReach);
 
                 // Fade to zero at the emitter to prevent a singularity glow blob.
                 // `dist` is measured from emitPos, which is where the singularity

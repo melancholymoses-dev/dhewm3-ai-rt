@@ -64,4 +64,35 @@ float rt_LightFastScale(RTLight l)
     return clamp(l.fastScale, 0.0, 1.0);
 }
 
+// r_rtGIFalloffMode — point-light attenuation vs the box-normalised L-inf distance
+// t (0 = centre, 1 = box face).  Projected lights use a cone ramp and never come
+// here.  Scalar in, scalar out: no buffer access, so every consumer can share it
+// whatever its block is called.  T4b, rt_optimization_tuning.md.
+//
+// `reach` is where the light dies, in units of t — a dhewm3-rt extension past Doom's
+// own box (t=1) to give lights more throw.  Shape and reach are separate knobs on
+// purpose: changing both at once makes an A/B unattributable.
+#define RT_FALLOFF_LEGACY 0 // flat to t=0.8, then knee to 0.1, then a linear tail
+#define RT_FALLOFF_RASTER 1 // (1-t)^2 — the shape Doom 3's own falloff images give
+#define RT_FALLOFF_SMOOTH 2 // (1-t^2)^2 — zero slope at both ends, no centre hotspot
+
+float rt_LightBoxAtten(float t, int mode, float reach)
+{
+    if (mode == RT_FALLOFF_LEGACY) {
+        // Knee is anchored to the box face, the tail to `reach`, so widening the
+        // reach stretches only the dim part — the original 1.5 behaviour at default.
+        if (t <= 1.0)
+            return mix(0.1, 1.0, clamp((1.0 - t) / 0.2, 0.0, 1.0));
+        return 0.1 * clamp((reach - t) / max(reach - 1.0, 0.001), 0.0, 1.0);
+    }
+
+    // Corrected curves span the whole reach, so a light keeps its throw and trades
+    // the flat core for a real gradient.  At the default reach 1.5, mode 1 lands on
+    // 0.11 at the box face — near enough the legacy knee's 0.1 that the face value
+    // is not what changes between them.
+    float u = t / max(reach, 0.001);
+    float f = (mode == RT_FALLOFF_SMOOTH) ? max(1.0 - u * u, 0.0) : max(1.0 - u, 0.0);
+    return f * f;
+}
+
 #endif // RT_LIGHT_STRUCT_GLSL

@@ -36,6 +36,8 @@ When adding new shaders update CMakelists.  For glsl files add them to the GLSL_
 
 You can only carry out git read operations.  (diff, log, etc).  You cannot write to Git (push/pull/merge/rebase/commit, etc)
 
+Add settings/Cvars that impact graphical quality to the Dhewm3SettingsMenu (neo\framework\Dhewm3SettingsMenu.cpp)
+
 ## Assets
 The main doom3 assets have been unzipped and are accessible at build_rt/pak_assets/pak000 for inspection.  
 Most are text files despite the odd file suffixes.  Check this with a head command first.

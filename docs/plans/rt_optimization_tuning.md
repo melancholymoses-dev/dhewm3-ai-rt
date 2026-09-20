@@ -502,8 +502,8 @@ still character-identical in three places — that is T4a-2.
 |---|---|---|
 | **T4a-1** ✅ **done 2026-09-20** | New pipeline-agnostic `rt_light_struct.glsl` — `RT_LIGHT_MAX_LIGHTS`, the `GI_LIGHT_FLAG_*` bits, the struct, and `rt_LightFastScale(l)` taking the struct **by value**. Included by all four; each keeps its own buffer block. Precedent: `rt_light_cookie.glsl` | Purely a type move — fields already matched, so the SPIR-V should not change |
 | T4a-2 | Hoist box containment + base falloff into that header as `rt_LightVolumeAtten(l, p, penumbra, out atten)`. `penumbra = 0` for surfaces, `VOL_CONE_PENUMBRA` for the two vol paths — **guard the degenerate `smoothstep(cd.w, cd.w, x)`**. Vol-only extras stay at the call sites | Byte-identical output. Anything that moves is a bug |
-| T4b | `r_rtGIFalloffMode` (0 = current, 1 = corrected), one switch for three consumers | A/B at matched `r_rtGIStrength` |
-| T4c | Retune `r_rtGIBounceScale` and the vol class gains **downward** | Constants recorded in T6 |
+| **T4b** ✅ **done 2026-09-20** | `r_rtGIFalloffMode` 0/1/2, one switch for three consumers | A/B; mode 0 must be pixel-identical to before |
+| T4c | Retune `r_rtGIStrength` / `r_rtGIBounceScale` / the vol class gains **upward** if a corrected mode wins | Constants recorded in T6 |
 
 **T4a-1 as built.** Four struct names collapsed to `RTLight`; `GIPROBE_MAX_LIGHTS`
 (a fifth name for 128) folded into `RT_LIGHT_MAX_LIGHTS`. `rt_LightFastScale` lives in
@@ -519,10 +519,68 @@ that does not exist today. It does make the `r_rtVolFroxel` A/B sharper — an i
 light model by construction means any difference between march and froxel is the
 *sampler*, which is what F5 kept the march to test.
 
-T4c is not optional if T4b is taken. The current constants are in a good place
-precisely because they absorb the flat falloff's error; changing the shape spends that
-— same failure mode as the froxel fog retune in
-`completed/20260906_froxel_probe_gi.md`.
+**T4b as built.** `float rt_LightBoxAtten(float t, int mode)` in `rt_light_struct.glsl`
+— scalar in, scalar out, no buffer access, so all three consumers share it whatever
+their block is named. `t` is the box-normalised L∞ distance (0 = centre, 1 = face).
+
+| mode | curve over `u = t/reach` | at the box face, reach 1.5 |
+|---|---|---|
+| 0 `RT_FALLOFF_LEGACY` | flat to t=0.8, knee to 0.1 at t=1, linear tail to reach | 0.1 |
+| 1 `RT_FALLOFF_RASTER` | `(1-u)²` | 0.11 |
+| 2 `RT_FALLOFF_SMOOTH` | `(1-u²)²` | 0.31 |
+
+**Shape and reach are separate knobs.** `r_rtGIFalloffReach` (default **1.5**, clamp
+1.0-3.0) is the pre-existing throw extension past Doom's own box, now explicit. The
+corrected curves span the whole reach rather than dying at the box face, so switching
+mode changes the *gradient* and nothing else — mode 1 even lands on 0.11 at the face,
+within noise of the legacy knee's 0.1. Setting reach to 1.0 is vanilla containment.
+
+Reach also sizes the **sphere pre-cull** (`posRadius[3] = radius * falloffReach`,
+`vk_gi.cpp`); it was a hardcoded `1.5f` there and in three shader `maxNorm >= 1.5`
+culls. Those four sites must agree or the cull clips the falloff before it reaches 0.
+
+Both fields ride in the light-SSBO header (`falloffMode` + `falloffReach`, were
+`pad[0..1]`) so they reach GI, reflections and both vol paths through the buffer those
+already read; header stays 32 bytes, `static_assert` unchanged. Both vol mirror sites in
+`VK_RT_UploadGILights` copy them. `gi_probe_resolve.comp`'s mode-8 containment test
+reads the reach so the overlay agrees with what the lighting does. Echoed by
+`r_vkLogRT 1` and `r_rtVolDump` as `falloff=<mode>/<reach>`.
+
+**The 1.5 reach is deliberate, not an accident** (author's note 2026-09-20: added for
+throw). It is also a second source of mush independent of the plateau — by L∞ volume the
+1.0→1.5 shell is **2.375×** the box itself, filled at a near-uniform 0.1. Diagnosis
+order: plateau first (`r_rtGIFalloffMode`), reach second (`r_rtGIFalloffReach`), because
+only the first is wrong on its own terms.
+
+**Scope: point lights only.** Projected/spot take the cone branch (`1 − along/reach`),
+which has no plateau and whose hard surface edge is deliberate. Shadows (binary
+occlusion), AO (no lights) and direct surface lighting (raster samples Doom's real
+falloff images) are all untouched — which is what keeps direct lighting usable as the
+A/B reference.
+
+**No auto-compensation gain.** Modes 1/2 deliver much less energy than the flat
+default, so a corrected mode will read dark until the gains come up — that is T4c, done
+by hand. An automatic normalisation would re-introduce exactly the kind of hidden
+coupling T6 just removed from `r_rtGIDirectScale`.
+
+#### First observations — 2026-09-20
+
+| | |
+|---|---|
+| Reach | Confirmed as the source of the **low ambient floor** — matches the 2.375× shell volume at a near-uniform 0.1 |
+| Modes 1/2 | Need roughly **2× `r_rtVolDirectedGain`** (60 → ~120) before light shafts are visible again. Shafts read better once they are |
+| Preference | Undecided between legacy and corrected |
+
+The shaft result is the shape working as intended: the flat core gave every froxel in the
+inner 80 % the same in-scatter, so a shaft had no gradient to separate it from its
+surroundings. Restoring the gradient costs absolute brightness — hence the 2×. Menu
+sliders go to 100, so ~120 needs the console; raise the slider max if this sticks.
+
+T4c is not optional if a corrected mode is kept. The current constants are in a good
+place precisely because they absorb the flat falloff's error; changing the shape spends
+that — same failure mode as the froxel fog retune in
+`completed/20260906_froxel_probe_gi.md`. Direction matters: the flat curve *over*-delivers,
+so removing it means tuning **up**, not down as an earlier draft of this item said.
 
 ### T5. Emissive floor in reflections/GI — ❌ **won't fix**
 
@@ -587,9 +645,9 @@ Wave 5 — Auto-relight (auto_relight.md): synthesized panel lights + noShadows 
          Placed after P1b because each synthesized light is an interaction light +
          shadow dispatch; start with a budget of ~6 if attempted earlier.
 
-Wave 6 — Tuning: T3 dropped, T5 won't-fix, T4a-1 done. T4a-2 optional; T4b/T4c
-         only if the flat falloff still reads wrong now the temporal smoothing is
-         gone. T6 constant pass last.
+Wave 6 — Tuning: T3 dropped, T5 won't-fix, T4a-1 and T4b done. T4a-2 optional; T4c
+         only if `r_rtGIFalloffMode 1`/`2` reads better than the flat default now the
+         temporal smoothing is gone. T6 constant pass last.
 ```
 
 Auto-relight replaces the old Stage 4a/4b plan (see `auto_relight.md`); tuning stays
@@ -597,15 +655,3 @@ last because T1/P3/auto-relight each change what the existing constants mean.
 
 ---
 
-## Profiler checkpoints
-
-Capture at the same spot each wave (suggest: Administration hallway from the 2026-08-08
-screenshot, 2560×1440):
-
-| Wave | TLAS | AO | Refl | GI | GI-denoise | Vol | Shadow (per-light Σ) | Total |
-|---|---|---|---|---|---|---|---|---|
-| baseline | | | | | | | | |
-| after W1 | | | | | | | | |
-| after W2 | | | | | | | | |
-| after W3 | | | | | | | | |
-| after W4 | | | | | | | | |

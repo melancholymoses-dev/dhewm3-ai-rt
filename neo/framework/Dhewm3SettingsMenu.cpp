@@ -2456,6 +2456,8 @@ struct RTCVars
     idCVar *rtGbufNormals = nullptr;
     idCVar *rtGIBounceScale = nullptr;
     idCVar *rtGIEmissiveScale = nullptr;
+    idCVar *rtGIFalloffMode = nullptr;
+    idCVar *rtGIFalloffReach = nullptr;
     idCVar *rtGIAtrous = nullptr;
     idCVar *rtGIAtrousIterations = nullptr;
     // rtGIAtrousSigmaL/SigmaZ removed from the menu 2026-08-23 (never touched, no
@@ -2546,6 +2548,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtGIStochasticLights = cvarSystem->Find("r_rtGIStochasticLights");
     rtCVars.rtGbufNormals = cvarSystem->Find("r_rtGbufNormals");
     rtCVars.rtGIBounceScale = cvarSystem->Find("r_rtGIBounceScale");
+    rtCVars.rtGIFalloffMode = cvarSystem->Find("r_rtGIFalloffMode");
+    rtCVars.rtGIFalloffReach = cvarSystem->Find("r_rtGIFalloffReach");
     rtCVars.rtGIAtrous = cvarSystem->Find("r_rtGIAtrous");
     rtCVars.rtGIAtrousIterations = cvarSystem->Find("r_rtGIAtrousIterations");
     rtCVars.rtGIContrast = cvarSystem->Find("r_rtGIContrast");
@@ -2611,6 +2615,17 @@ static void RTSliderFloat(const char *label, idCVar *cvar, float minV, float max
     AddCVarOptionTooltips(*cvar);
 }
 
+// Helper: dropdown over a small integer cvar. items[] is indexed by the value.
+static void RTCombo(const char *label, idCVar *cvar, const char *const *items, int count)
+{
+    if (cvar == nullptr)
+        return;
+    int v = idMath::ClampInt(0, count - 1, cvar->GetInteger());
+    if (ImGui::Combo(label, &v, items, count))
+        cvar->SetInteger(v);
+    AddCVarOptionTooltips(*cvar);
+}
+
 static void DrawRTOptionsMenu()
 {
     ImGui::Spacing();
@@ -2637,6 +2652,23 @@ static void DrawRTOptionsMenu()
         RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
         ImGui::EndTable();
     }
+    // ---- Point light falloff -------------------------------------------------
+    // Deliberately outside the per-feature disables: one model feeds GI,
+    // reflections and volumetrics, so it must stay reachable with GI off.
+    ImGui::SeparatorText("Point Light Falloff (GI + Reflections + Volumetrics)");
+    if (ImGui::BeginTable("##falloffCols", 2, ImGuiTableFlags_None))
+    {
+        static const char *const falloffModes[] = {"Legacy (flat core)", "Raster (1-t)^2", "Smooth (1-t^2)^2"};
+        ImGui::TableNextColumn();
+        RTCombo("Falloff Shape", rtCVars.rtGIFalloffMode, falloffModes, IM_ARRAYSIZE(falloffModes));
+        ImGui::TableNextColumn();
+        RTSliderFloat("Reach (1.0 = stop at light box)", rtCVars.rtGIFalloffReach, 1.0f, 3.0f, "%.2f");
+        ImGui::EndTable();
+    }
+    ImGui::TextDisabled("Shapes 1-2 trade the flat core for a gradient and read much darker:\n"
+                        "raise GI Strength and the volumetric class gains to compare fairly.\n"
+                        "Reach past 1.0 adds throw, and with it a low ambient floor.");
+
     // ---- Shadow settings -----------------------------------------------------
     const bool shadowsOn = rtCVars.rtShadows && rtCVars.rtShadows->GetBool();
     ImGui::BeginDisabled(!shadowsOn);
@@ -2652,8 +2684,6 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
         RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
-        RTCheckbox("Temporal Jitter Pattern", rtCVars.rtShadowTemporalJitter);
-        RTCheckbox("Stable Spatial Jitter Seed", rtCVars.rtShadowStablePattern);
         ImGui::EndTable();
     }
     ImGui::EndDisabled(); // !shadowsOn
@@ -2701,7 +2731,6 @@ static void DrawRTOptionsMenu()
         // --- Left column: general + point lights ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("General");
-        RTCheckbox("GI Checkerboard Tracing", rtCVars.rtGICheckerboard);
         RTCheckbox("RT GI Probes", rtCVars.rtGIProbes);
         RTSliderInt("GI Samples (1-8)", rtCVars.rtGISamples, 1, 8);
         RTSliderInt("GI Max Lights (nearest-first, 1-128)", rtCVars.rtGIMaxLights, 1, 128);
@@ -2711,11 +2740,8 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Contrast/Scale");
         RTSliderFloat("GI Strength", rtCVars.rtGIStrength, 0.0f, 1.0f);
-        RTSliderFloat("GI Colour Contrast (0=off, 1=full)", rtCVars.rtGIContrast, 0.0f, 1.0f);
-        RTSliderFloat("GI Emissive Scale (0=off, 1=default, 5=max)", rtCVars.rtGIEmissiveScale, 0.0f, 3.0f);
         RTSliderFloat("Direct Light Scale (when GI active)", rtCVars.rtGIDirectScale, 0.0f, 1.0f);
         RTSliderInt("GI Bounce Max Lights", rtCVars.rtGIMaxBounceLights, 0, 64);
-        RTSliderInt("GI Stochastic Lights (0=all lights)", rtCVars.rtGIStochasticLights, 0, 2);
         RTSliderFloat("Bounce Light Scale", rtCVars.rtGIBounceScale, 0.0f, 10.0f, "%.1f");
         ImGui::EndTable();
     }
@@ -2767,7 +2793,7 @@ static void DrawRTOptionsMenu()
         // --- Right column: per-class radiance gains ---
         ImGui::TableNextColumn();
         ImGui::TextDisabled("Directed");
-        RTSliderFloat("Gain##dir", rtCVars.rtVolDirectedGain, 0.0f, 100.0f, "%.1f");
+        RTSliderFloat("Gain##dir", rtCVars.rtVolDirectedGain, 0.0f, 150.0f, "%.1f");
         RTSliderFloat("Anisotropy##dir", rtCVars.rtVolDirectedAnisotropy, 0.0f, 1.0f);
         ImGui::TextDisabled("Point Lights");
         RTSliderFloat("Gain##pt", rtCVars.rtVolGain, 0.0f, 100.0f, "%.1f");

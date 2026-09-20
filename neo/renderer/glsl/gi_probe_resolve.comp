@@ -149,7 +149,9 @@ layout(set = 0, binding = 9, std430) readonly buffer GIResolveLightBuf {
     float giRadius;
     float emissiveScale;
     float reflAmbientScale;
-    float _pad0[3];
+    int   falloffMode;   // unused here (no attenuation), mirrored for layout parity
+    float falloffReach;  // used by the mode-8 containment test so the overlay matches
+    float _pad0[1];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     GIResolveCookie cookies[RT_LIGHT_MAX_LIGHTS];
 } giLights;
@@ -601,7 +603,7 @@ void main()
                     if (giLights.lights[i].lightType == 0u)
                     {
                         vec3 nl = abs(toPoint) / max(bx.xyz, vec3(0.001));
-                        if (max(max(nl.x, nl.y), nl.z) < 1.5)
+                        if (max(max(nl.x, nl.y), nl.z) < giLights.falloffReach)
                             fastCount++;
                     }
                     else

@@ -70,7 +70,9 @@ layout(set = 0, binding = 3, std430) readonly buffer GILightBuf {
     float  giRadius;
     float  emissiveScale;
     float  reflAmbientScale;
-    float  _pad0[3];
+    int    falloffMode;
+    float  falloffReach;
+    float  _pad0[1];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     RTLightCookie cookies[RT_LIGHT_MAX_LIGHTS];
 } giLightBuf;
@@ -165,12 +167,9 @@ void main()
             vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
             float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
 
-            if (maxNorm >= 1.5) continue;
+            if (maxNorm >= giLightBuf.falloffReach) continue;
 
-            if (maxNorm <= 1.0)
-                atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
-            else
-                atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
+            atten = rt_LightBoxAtten(maxNorm, giLightBuf.falloffMode, giLightBuf.falloffReach);
 
             // Fade out at the emitter: without it the singularity reads as a
             // bright sphere sitting at globalLightOrigin.

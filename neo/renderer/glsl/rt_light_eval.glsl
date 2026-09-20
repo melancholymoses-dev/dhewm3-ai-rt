@@ -64,7 +64,9 @@ layout(set = 0, binding = 4, std430) readonly buffer RTLightBuf {
     float   giRadius;         // r_rtGIRadius — max range for light evaluation
     float   emissiveScale;    // r_rtGIEmissiveScale — emissive surface multiplier
     float   reflAmbientScale; // r_rtReflAmbientScale — occluded-light lerp weight, reflections only
-    float   _pad0[3];
+    int     falloffMode;      // r_rtGIFalloffMode — see rt_LightBoxAtten
+    float   falloffReach;     // r_rtGIFalloffReach — point-light reach past the box face
+    float   _pad0[1];
     RTLight lights[RT_LIGHT_MAX_LIGHTS];
     // Stage 2: 1:1 with lights[] by index, meaningful only when that light's
     // flags has GI_LIGHT_FLAG_HAS_COOKIE set (vk_gi.cpp's GILightBuffer::cookies).
@@ -154,12 +156,11 @@ bool rt_LightContribAt(int i, vec3 hitPos, vec3 hitNorm, float contribScale,
         vec3  localAbs  = abs(hitPos - lPos);
         vec3  normLocal = localAbs / max(bx.xyz, vec3(0.001));
         float maxNorm   = max(max(normLocal.x, normLocal.y), normLocal.z);
-        if (maxNorm >= 1.5)
+        if (maxNorm >= rtLightBuf.falloffReach)
             return false;
-        if (maxNorm <= 1.0)
-            atten = mix(0.1, 1.0, clamp((1.0 - maxNorm) / 0.2, 0.0, 1.0));
-        else
-            atten = 0.1 * clamp((1.5 - maxNorm) / 0.5, 0.0, 1.0);
+        atten = rt_LightBoxAtten(maxNorm, rtLightBuf.falloffMode, rtLightBuf.falloffReach);
+        if (atten <= 0.0)
+            return false;
     }
     else
     {
