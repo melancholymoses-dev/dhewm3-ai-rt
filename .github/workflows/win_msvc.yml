@@ -104,6 +104,7 @@ jobs:
         cp -r build/glprogs publish/$PKGDIR/base/
 
         cp COPYING.txt publish/$PKGDIR/
+        cp THIRD-PARTY-LICENSES.md publish/$PKGDIR/
         echo "dhewm3-rt for 64bit (amd64 aka x86_64 aka x64) Windows, built $(date)" > publish/$PKGDIR/README.txt
         echo -e "from ${{ github.ref_name }} commit ${{ github.sha }}\n" >> publish/$PKGDIR/README.txt
         cat README.md >> publish/$PKGDIR/README.txt

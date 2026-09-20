@@ -1615,6 +1615,15 @@ endif()
 	endif()
 endif()
 
+# The GPL and the bundled MIT/BSD notices must reach binary recipients, not just
+# people who clone the repo, so install them alongside the binary.
+if(NOT APPLE AND NOT WIN32)
+	install(FILES
+			"${CMAKE_SOURCE_DIR}/../COPYING.txt"
+			"${CMAKE_SOURCE_DIR}/../THIRD-PARTY-LICENSES.md"
+			DESTINATION "${bindir}")
+endif()
+
 if(DEDICATED)
 	add_executable(${DHEWM3BINARY}ded WIN32 MACOSX_BUNDLE
 		${src_core}
