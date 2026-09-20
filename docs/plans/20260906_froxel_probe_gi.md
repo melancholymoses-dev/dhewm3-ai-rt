@@ -1021,14 +1021,27 @@ that appears without it) and low-passes the *scene* purely as a side effect. So
    rotation at alpha 0.5 is τ ≈ 8 frames ≈ 130 ms — a door or a slow pulse, not a
    10 Hz strobe (4096/16384 is a 15 Hz sample rate, Nyquist 7.5 Hz).
 
-   | | today | after | note |
-   |---|---|---|---|
-   | ProbeTrace | 0.048 | ~0.4 ms | 8× rays, latency-bound so likely less |
-   | ProbeBlend | 0.075 | ~0.6 ms | O(probes × texels × rays) — 4× × 2× |
-   | ProbeResolve | 0.524 | 0.524 | no probe CVar affects it |
-   | scratch | 2 MiB | 16 MiB | rays × updates × 8 B × 2 slots |
+   ✅ **Measured 2026-09-19**, medians over 62-82 in-game frames per config, moving
+   through Mars City. `Shadows` swings 0.08-3.8 ms in the same capture, so only the
+   Probe rows are readable from it.
 
-   Run it as a measurement, not a build.
+   | Name | G2 | Expected | 128×1024 | 256×1024 | **256×4096** |
+   |---|---|---|---|---|---|
+   | ProbeTrace | 0.048 | ~0.4 | 0.052 | 0.070 | **0.146** |
+   | ProbeBlend | 0.075 | ~0.6 | 0.087 | 0.158 | **0.499** |
+   | ProbeResolve | 0.524 | 0.524 | 0.609 | 0.662 | **0.629** |
+   | scratch | 2 MiB | 16 MiB | 2 MiB | 4 MiB | **16 MiB** |
+
+   **+0.51 ms for 8× the rays** — cheaper than expected. GI chain 0.75 → 1.27 ms,
+   still ~4× under the per-pixel path's 4.9. Three things this settles:
+
+   - **The trace is latency-bound, confirmed.** 2× rays costs 1.35×, then 4× probes
+     costs 2.1× — 8× the work for 2.8× the time.
+   - **The blend is now the dominant probe pass** (0.499 vs trace 0.146) and scales
+     nearly linearly: 8× work, 5.7× time. Ray count is paid for in the blend, not the
+     trace — inverting B.6's prediction a second time, in the other direction.
+   - **Resolve is flat** at 0.609/0.662/0.629 across all three, as G2 said. That ±0.05
+     spread is view noise and sets the floor: smaller differences are not real.
 2. **Adaptive hysteresis in `gi_probe_blend.comp`** — the standard DDGI answer
    and a few lines. Compare the new value against `prev` and boost alpha when the
    relative change is large, so a probe *snaps* to a genuine lighting change while
@@ -1040,6 +1053,14 @@ that appears without it) and low-passes the *scene* purely as a side effect. So
 Trigger-wise this is the same mechanism as the portal bump above: a light whose
 colour changed this frame should jump its neighbouring probes to the front of the
 queue, so it belongs here rather than in G6.
+
+❌ **Fix 1 does not reach flicker — confirmed in play 2026-09-19.** At
+`256 × 4096 × hysteresis 0.5` a **5 Hz** light's GI still does not keep up. Predicted:
+5 Hz is a 100 ms half-cycle ≈ 6 frames, against τ ≈ 8 frames, so the EMA lags more
+than a half-cycle and attenuates toward the mean whatever alpha is chosen. Lowering
+hysteresis further trades that for estimator noise — the two jobs the EMA is doing
+conflict from here on. **Fix 1 is a door and moving-light fix only**, which is what it
+claimed; it is now measured rather than argued.
 
 **A third fix was proposed 2026-09-18 and supersedes fix 2 for the flicker case
 specifically — see G5b.** Fix 2 (adaptive hysteresis) remains the right answer for
@@ -1112,7 +1133,8 @@ blend, border and resolve. The border pass grows its `gl_WorkGroupID.y` range in
 | Irradiance atlas | 13.1 MB | 26.2 MB |
 | Distance / light SSBO | 21.2 MB / 20.5 KB | unchanged |
 | Scratch | 1.0 MiB/slot | +0.5 MiB/slot (`rg11b10f`) |
-| **ProbeResolve** | **0.524 ms** | **~0.8-1.0 ms** |
+| **ProbeResolve** | **0.609 ms** (2026-09-19) | **~0.9-1.2 ms** |
+| ProbeBlend | 0.087 ms | ~0.13 ms — only the irradiance loop doubles; the `pow()` distance loop is untouched |
 
 The resolve is the real cost, and the earlier "capacity only" claim was wrong on its own
 terms: G2 measured it **issue-rate bound on 8 scattered bilinear taps**, and K=1 makes it
