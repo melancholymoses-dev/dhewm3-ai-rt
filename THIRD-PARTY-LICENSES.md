@@ -13,8 +13,8 @@ file is authoritative and is noted in the entry.
 | Dear ImGui | `neo/libs/imgui/*` | MIT |
 | PropTree | `neo/tools/common/PropTree/*` | Permissive (attribution) |
 | Base64 implementation | `neo/idlib/Base64.cpp` | BSD 2-clause |
-| miniz | `src/framework/miniz/*` | MIT |
-| minizip | `src/framework/minizip/*` | zlib |
+| miniz | `neo/framework/miniz/*` | MIT |
+| minizip | `neo/framework/minizip/*` | zlib |
 | MD4 Message-Digest Algorithm | `neo/idlib/hashing/MD4.cpp` | RSA Data Security |
 | MD5 Message-Digest Algorithm | `neo/idlib/hashing/MD5.cpp` | Public domain |
 | CRC32 Checksum | `neo/idlib/hashing/CRC32.cpp` | zlib |
@@ -112,7 +112,7 @@ POSSIBILITY OF SUCH DAMAGE.
 
 ## miniz
 
-src/framework/miniz/*
+neo/framework/miniz/*
 
 The MIT License (MIT)
 
