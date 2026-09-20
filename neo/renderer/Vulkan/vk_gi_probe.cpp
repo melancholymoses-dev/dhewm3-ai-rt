@@ -159,6 +159,9 @@ static idCVar r_rtGIProbeDump("r_rtGIProbeDump", "0", CVAR_RENDERER | CVAR_BOOL,
 
 extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
+extern bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage,
+                                     VkMemoryPropertyFlags preferredProps, VkMemoryPropertyFlags requiredProps,
+                                     VkBuffer *outBuffer, VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
@@ -269,6 +272,13 @@ static int s_probeStateCount = 0;
 // that scrolls into a new tile is zeroed HERE, and the readback below refuses to
 // adopt the device value until that probe has been traced again.
 static GIProbeStatsEntry *s_probeStats = NULL;
+
+// Staging copy of the mapped readback snapshot. The classification loop below
+// reads each entry several times; doing that against mapped device memory is
+// far slower than one linear memcpy into ordinary heap, even when the
+// allocation got HOST_CACHED.
+static GIProbeStatsEntry *s_probeStatsRead = NULL;
+static bool s_statsReadbackCached = false;
 
 // Geometry the resources were actually built at, so a mid-session cvar change
 // can be detected. Same pattern as s_froxelDim in vk_vol_froxel.cpp.
@@ -631,6 +641,11 @@ static void VK_RT_DestroyProbeResources(void)
         Mem_Free(s_probeStats);
         s_probeStats = NULL;
     }
+    if (s_probeStatsRead != NULL)
+    {
+        Mem_Free(s_probeStatsRead);
+        s_probeStatsRead = NULL;
+    }
     s_probeStateCount = 0;
     s_probeDim[0] = s_probeDim[1] = s_probeDim[2] = 0;
     s_probeRays = 0;
@@ -746,21 +761,35 @@ static void VK_RT_CreateProbeResources(void)
         VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsSsboMemory, 0, statsBytes, 0, &vkRT.giProbeStatsSsboMapped));
         memset(vkRT.giProbeStatsSsboMapped, 0, (size_t)statsBytes);
 
+        // The snapshots are read by the CPU, so ask for HOST_CACHED. Without it the
+        // driver hands back write-combined memory and every read is an uncached
+        // round trip — the classification loop below measured 3.3 ms for 16k probes.
+        bool cached = true;
         for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         {
-            VK_CreateBuffer(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                            &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
+            cached &= VK_CreateBufferPreferred(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                               &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
             VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsReadbackMemory[i], 0, statsBytes, 0,
                                  &vkRT.giProbeStatsReadbackMapped[i]));
             memset(vkRT.giProbeStatsReadbackMapped[i], 0, (size_t)statsBytes);
         }
+        s_statsReadbackCached = cached;
+        common->Printf("VK RT GIProbe: stats readback is %s (%d probes, %.2f KiB/slot)\n",
+                       cached ? "HOST_CACHED" : "UNCACHED (write-combined) — classification will be slow", probeCount,
+                       (double)statsBytes / 1024.0);
     }
 
     s_probeState = (GIProbeStateEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStateEntry));
     memset(s_probeState, 0, probeCount * sizeof(GIProbeStateEntry));
     s_probeStats = (GIProbeStatsEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStatsEntry));
     memset(s_probeStats, 0, probeCount * sizeof(GIProbeStatsEntry));
+    s_probeStatsRead = (GIProbeStatsEntry *)Mem_Alloc(probeCount * sizeof(GIProbeStatsEntry));
+    memset(s_probeStatsRead, 0, probeCount * sizeof(GIProbeStatsEntry));
     s_probeStateCount = probeCount;
 
     s_probeDim[0] = dim[0];
@@ -1449,9 +1478,15 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
     // in the submission the frame fence has already retired. We only ever read;
     // the device-side stats are never written from the CPU after creation, so
     // there is nothing to upload back either.
-    if (vkRT.giProbeStatsReadbackMapped[frameIdx] != NULL)
+    if (vkRT.giProbeStatsReadbackMapped[frameIdx] != NULL && s_probeStatsRead != NULL)
     {
-        const GIProbeStatsEntry *gpuStats = (const GIProbeStatsEntry *)vkRT.giProbeStatsReadbackMapped[frameIdx];
+        // One linear pass out of mapped memory, then classify from the heap copy.
+        // Touching the mapping directly costs ~200 ns per probe when it is not
+        // HOST_CACHED, which put this loop at 3.3 ms for a 32x32x16 grid.
+        memcpy(s_probeStatsRead, vkRT.giProbeStatsReadbackMapped[frameIdx],
+               (size_t)s_probeStateCount * sizeof(GIProbeStatsEntry));
+
+        const GIProbeStatsEntry *gpuStats = s_probeStatsRead;
         const float insideOn = Max(0.0f, r_rtGIProbeInsideThreshold.GetFloat());
         const float insideOff = insideOn * 0.75f; // dead band — see the CVars
         const float outsideOn = Max(0.0f, r_rtGIProbeOutsideThreshold.GetFloat());
@@ -1659,7 +1694,8 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
                        s_probeFastBuckets, VK_RT_GIFastBucketCount(), VK_RT_GIFastLightCount(),
                        VK_RT_GIFastBucketGain(0), 1 + s_probeFastBuckets);
         const int usable = traced - inside - outside;
-        common->Printf("  traced=%d/%d  never traced=%d\n", traced, s_probeStateCount, s_probeStateCount - traced);
+        common->Printf("  traced=%d/%d  never traced=%d  stats readback=%s\n", traced, s_probeStateCount,
+                       s_probeStateCount - traced, s_statsReadbackCached ? "HOST_CACHED" : "UNCACHED (slow)");
         common->Printf("  usable=%d (%.1f%%)  insideGeometry=%d (%.1f%%)  outsideLevel=%d (%.1f%%)\n", usable,
                        100.0 * usable / Max(1, s_probeStateCount), inside, 100.0 * inside / Max(1, s_probeStateCount),
                        outside, 100.0 * outside / Max(1, s_probeStateCount));
