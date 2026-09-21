@@ -35,6 +35,9 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms. **Retune owed → T4-T6** |
 | 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. **Unblocked** — see sequencing below |
 
+- Have retuned constants and selected a default for moving forwards 
+(raster fallout, reach=1.)
+
 ### Sequencing — FSR goes after the T4-T6 retune, and nothing further back
 
 Two of the three reasons FSR went last have expired: arc 1 is closed (so it is no longer
@@ -83,8 +86,7 @@ Each of these cost a debugging session. They apply to any new RT code.
   threshold culls from the bottom.
 - **Albedo is the volumetric lever**, not extinction and not the tonemap toe. It cuts
   in-scatter while leaving attenuation intact, so the medium darkens more than it glows and
-  lit-vs-unlit contrast goes *up*. Per-class radiance gains carry punch (6:1 point:directed
-  in play); a gain on a medium coefficient is never legitimate.
+  lit-vs-unlit contrast goes *up*. Per-class radiance gains carry punch (6:1 point:directed in play); 
 - **Do not "fix" RT direct lighting being half the raster path's.** True at the source
   (`r_lightScale` = 2 is not applied to the RT upload), but the downstream gains overshot
   it — GI and vol read *over*-bright. This belongs to the T4-T6 retune, not a plumbing fix.
@@ -93,6 +95,8 @@ Each of these cost a debugging session. They apply to any new RT code.
   blaming tonemapping.
 - **Reflected surfaces get no indirect light** — GI modulates by the *primary* G-buffer
   albedo. Structural, not a tuning miss.
+- **Using same light falloff as raster** - Keep reach = 1.  Get benefit of art,
+while new lighting techniques enhance without fighting too much.
 
 ---
 
@@ -100,7 +104,7 @@ Each of these cost a debugging session. They apply to any new RT code.
 
 | Doc | Owns |
 |---|---|
-| `rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done; T3 dropped, T5 won't-fix, **T4a-1 done 2026-09-20** (one shared `rt_light_struct.glsl`, was four transcriptions). **T4b done 2026-09-20** (`r_rtGIFalloffMode` 0/1/2 — the RT point-light falloff was flat across 80 % of every light volume; both corrected curves are now switchable, default off). **T6 is the next work** and inherits arc 2's owed retune: GI/vol read over-bright under `r_rtGIProbes 1`, and the animated-light fix changed the light set they must be tuned against. T4c (retune **up** for a corrected mode) is conditional — Doom 3's lights are visibility boxes rather than physical fixtures, so "correct" may read worse. |
+
 | `20260918_fsr_upscaling.md` | Render-resolution decoupling and FSR upscaling (arc #3). Also owns motion vectors and jitter, which any future upscaler/TAA would share. |
 | `20260906_bloom_plan.md` | Bloom post-process — unimplemented; the tonemapped HDR pipeline it needs now exists. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
@@ -125,6 +129,7 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 | `20260810_auto_relight.md` | Shadow-casting lights synthesized from emissive panels |
 | `20260808_gbuffer_normal_pass.md` | G-buffer normal/F0 prepass |
 | `20260816_portal_area_lights.md` | Stage 2 (transition blend) shelved, now unblocked — not scheduled |
+| `202608_rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done; T3 dropped, T5 won't-fix, All completed 2026-9-21 (`r_rtGIFalloffMode` 1 chosen, with reach=1) |
 | `20260831_rt_parallel_sun_lights.md` | Sun/parallel lights. **Not pursuing** |
 
 ---
@@ -133,9 +138,9 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 
 | Item | Doc | Note |
 |---|---|---|
-| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts |
-| Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough |
+| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
+| Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough - Skip|
 | Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |
 | Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
-| Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight. |
+| Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight - Skip |
 | Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Polish. |

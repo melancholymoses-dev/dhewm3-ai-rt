@@ -609,9 +609,72 @@ meant the CVar's printed value was not necessarily the applied one, which is a b
 property in a knob you tune against. `r_rtGIDirectScale` is now applied verbatim.
 (Its description also claimed an anchor of 0.25 while the code used 0.2.)
 
-Order: `r_rtSpecF0Gamma/Scale` via debug overlay (F0 mode) → `r_rtSpecGrazingMax` in a
-grate/metal hallway → `r_rtGIFalloffMode` + `r_rtGIBounceScale` against a raster
+Order:  → `r_rtGIFalloffMode` + `r_rtGIBounceScale` against a raster
 reference room → `r_rtGIStrength/Contrast` last. Record final values in this doc.
+
+There are two basic presets.  With the falloff curve and fixed volumetrics volumes and jitter.
+So, we tuned parameters against this.  
+Basically compare original and "enhanced graphics" with each setting and playing to get a similar overall look by exposure and shadow, while showing off the new features.  
+
+#### Preset 1 - RT Tweaked
+This included an extra volume increase for all lights.  Done under the belief that if we want GI, then light has to go further.  And that all Doom3 lights are flat things to tell if a light is there - less true light sources with 1/r^2 fall-off.
+
+| | | |
+|-----|----|----|
+| Param | Group | Value   |
+| Light Profile     | Light Profile | Flat Core |
+| Light Reach  | Light Profile | 1.5 |
+| ProbeAlpha | GI  | 0.95 |
+| BounceLights | GI | 2 |
+| DirectScale | GI | 0.9|
+| GIStrength | GI | 0.2|
+| GIRadius | GI | 256 |
+| GICollectRadius | GI | 1.5|
+| ReflectionBlend | Reflection | 4 |
+| LinearStart      | Tonemapping | 0.20 |
+| LinearLength | Tonemapping | 0.5|
+| Toe Strength | Tonemapping | 3 |
+| PointLight Gain | Volumetrics | 10 |
+| Directed Gain | Volumetrics | 50 |
+| Attentuation Extinction | Volumetrics | 6E-4 |
+| Albedo | Volumetrics | 0.75 |
+
+#### Preset 1 - Original
+
+Use the Doom3 light fall-off, and stick to the same light reach.
+This renders GI irrelevant, which never looked that impressive, but could have 
+impact on one-bounce lighting for something like Quake 4 where the harsh shadows look bad 
+in exterior environments.  
+
+| | | |
+|-----|----|----|
+| Param | Group | Value   |
+| Light Profile     | Light Profile | Raster|
+| Light Reach  | Light Profile | 1.0 |
+| ProbeAlpha | GI  | 0.95 |
+| BounceLights | GI | 2 |
+| DirectScale | GI | 0.9|
+| GIStrength | GI | 0.2|
+| GIRadius | GI | 256 |
+| GICollectRadius | GI | 1.5|
+| ReflectionBlend | Reflection | 4 |
+| LinearStart      | Tonemapping | 0.20 |
+| LinearLength | Tonemapping | 0.5|
+| Toe Strength | Tonemapping | 3 |
+| PointLight Gain | Volumetrics | 25 |
+| Directed Gain | Volumetrics | 50 |
+| Attentuation Extinction | Volumetrics | 6E-4 |
+| Albedo | Volumetrics | 1.0 |
+
+1 and 2 look better than otherwise.  
+They do need the point light gain turned up.  
+These basically all look the same once gain-matched for volumetrics.  The curves only slightly differ for GI - and GI does not look impressive. 
+(Can integrate across a column, and find the conversion from one gain to another to a similar optical depth.)
+I am leaning towards just setting reach to 1 to respect original artistic choices and feel.
+
+Decision: Going to take this as the default to tune from.
+1) Capture mosts of the good reflections and volumetrics.
+2) Avoids flattening too much lighting or looking too foggy.  
 
 ---
 

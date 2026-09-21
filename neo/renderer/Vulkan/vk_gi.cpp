@@ -73,15 +73,12 @@ static idCVar r_rtGIEmissiveScale("r_rtGIEmissiveScale", "2.0", CVAR_RENDERER | 
 // T4b (rt_optimization_tuning.md). Point-light falloff shape shared by every
 // indirect consumer — GI, reflections, volumetrics. Direct surface lighting is
 // unaffected: the raster interaction pass samples Doom's real falloff images.
-// Modes 1/2 deliver much less energy than the flat default, so expect to raise
-// r_rtGIStrength / r_rtGIBounceScale / the vol class gains when A/B-ing.
-static idCVar r_rtGIFalloffMode("r_rtGIFalloffMode", "0", CVAR_RENDERER | CVAR_INTEGER,
+static idCVar r_rtGIFalloffMode("r_rtGIFalloffMode", "1", CVAR_RENDERER | CVAR_INTEGER,
                                 "Point-light falloff for RT indirect lighting: 0 = legacy (flat to 80%% of the "
                                 "box, then a knee), 1 = (1-t)^2 raster-like, 2 = (1-t^2)^2 smooth");
 
-// Kept separate from the shape above so an A/B changes one thing at a time. 1.0 is
-// Doom's own light volume; the default 1.5 is the throw extension this renderer has
-// always had. Also sizes the sphere pre-cull, which must not clip the falloff.
+// 1.0 is Doom's own light volume;
+// Also sizes the sphere pre-cull, which must not clip the falloff.
 static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.5", CVAR_RENDERER | CVAR_FLOAT,
                                  "How far past the light's box a point light reaches, in box-normalised units. "
                                  "1.0 = stop at the box face (vanilla containment), 1.5 = default throw");
@@ -159,9 +156,9 @@ static idCVar r_rtGILightDump("r_rtGILightDump", "0", CVAR_RENDERER | CVAR_BOOL,
 // bucket is the resolve's tap count (8 taps -> 16 at K=1 -> 24 at K=2), and it
 // asks for r_rtGIProbeDebug 8's distinct-fast-light count before paying it.
 static idCVar r_rtGIProbeFastBuckets("r_rtGIProbeFastBuckets", "1", CVAR_RENDERER | CVAR_INTEGER,
-                              "G5b: cache flickering lights' probe GI in a separate bucket, normalised by their "
-                              "own flicker gain, and rescale it at resolve time. 1 = on, 0 = today's behaviour "
-                              "(flicker converges to its mean over ~9 s and leaves a glow in a dark room)");
+                                     "G5b: cache flickering lights' probe GI in a separate bucket, normalised by their "
+                                     "own flicker gain, and rescale it at resolve time. 1 = on, 0 = today's behaviour "
+                                     "(flicker converges to its mean over ~9 s and leaves a glow in a dark room)");
 
 static idCVar r_rtGIFlickerThreshold("r_rtGIFlickerThreshold", "0.15", CVAR_RENDERER | CVAR_FLOAT,
                                      "G5b: relative per-frame luminance change, against the light's own running "
@@ -175,8 +172,8 @@ static idCVar r_rtGIFlickerHold("r_rtGIFlickerHold", "2.0", CVAR_RENDERER | CVAR
                                 "stable bucket hides an already-converged cache and costs a ~9 s rebuild");
 
 static idCVar r_rtGIAlbedo("r_rtGIAlbedo", "1", CVAR_RENDERER | CVAR_BOOL,
-                           "docs/plans/gi_albedo_target.md: multiply denoised GI by the receiving surface's "
-                           "albedo (gbufAlbedo G-buffer target) before composite. 0 = legacy raw-radiance "
+                           "multiply denoised GI by the receiving surface's albedo "
+                           "(gbufAlbedo G-buffer target) before composite. 0 = legacy raw-radiance "
                            "add (A/B) — dark/black materials get the same GI wash as white ones. "
                            "No-op when vk.gbufferSupported is false");
 
@@ -239,8 +236,8 @@ struct GILightEntry
     uint32_t lightType;      // 0 = point, 1 = projected/spot
     uint32_t flags;          // GI_LIGHT_FLAG_* bitmask
     // G5b, in what used to be two words of alignment pad — no size change.
-    float fastScale;         // s = current/peak luminance, 1.0 for a steady light
-    uint32_t fastBucket;     // which fast bucket this light's transport is cached in
+    float fastScale;     // s = current/peak luminance, 1.0 for a steady light
+    uint32_t fastBucket; // which fast bucket this light's transport is cached in
     // 2026-08-30: idRenderLightLocal::globalLightOrigin — origin + axis * lightCenter.
     // The EMITTER. posRadius.xyz above stays the light's volume centre (parms.origin),
     // because boxExtents/coneDir are expressed relative to that and the attenuation
@@ -1602,9 +1599,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
     struct Candidate
     {
         float distSq;
-        float importance; // L1: intensity × luminance × radius² / max(distSq, radius²), + hysteresis boost
-        int tier;         // L1: distance tier 0-3 (0-128 / 128-320 / 320-768 / 768+)
-        int lightIdx;     // index into lightDefs — stable identity for hysteresis
+        float importance;   // L1: intensity × luminance × radius² / max(distSq, radius²), + hysteresis boost
+        int tier;           // L1: distance tier 0-3 (0-128 / 128-320 / 320-768 / 768+)
+        int lightIdx;       // index into lightDefs — stable identity for hysteresis
         float flickerDepth; // G5b: 1 - lowest s seen recently. 0 for a steady light
         GILightEntry entry;
         GILightCookie cookie; // valid only when entry.flags & GI_LIGHT_FLAG_HAS_COOKIE
@@ -2464,10 +2461,9 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         r_rtVolDump.SetBool(false); // one-shot: this site always runs, so it owns the clear
         vkRT_volDumpPending = true; // hand off to VK_RT_DispatchVolumetrics for the params half
         common->Printf("=== [r_rtVolDump] vol light SSBO as uploaded (frameIdx=%d) ===\n", frameIdx);
-        common->Printf(
-            "  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f  falloff=%d/%.2f\n",
-            volLb->numLights, volLb->bounceScale, volLb->giRadius, volLb->emissiveScale, volLb->falloffMode,
-            volLb->falloffReach);
+        common->Printf("  numLights=%d  bounceScale=%.4f  giRadius=%.1f  emissiveScale=%.4f  falloff=%d/%.2f\n",
+                       volLb->numLights, volLb->bounceScale, volLb->giRadius, volLb->emissiveScale, volLb->falloffMode,
+                       volLb->falloffReach);
         common->Printf("  (GI upload for comparison: numLights=%d;  numSelected=%d, numVolSelected=%d, "
                        "numCandidates=%d)\n",
                        lb->numLights, numSelected, numVolSelected, numCandidates);
@@ -2732,8 +2728,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
             common->Printf("[GI] viewLights=%d  uploaded=%d  falloff=%d/%.2f  camPos=(%.0f,%.0f,%.0f)\n",
                            viewLightCount, lb->numLights, lb->falloffMode, lb->falloffReach,
-                           viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y,
-                           viewDef->renderView.vieworg.z);
+                           viewDef->renderView.vieworg.x, viewDef->renderView.vieworg.y, viewDef->renderView.vieworg.z);
         }
     }
 

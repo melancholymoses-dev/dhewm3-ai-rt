@@ -43,7 +43,7 @@ of the original Doom 3 GPL Source Code release.
 static idCVar r_rtReflectionDistance("r_rtReflectionDistance", "2500.0", CVAR_RENDERER | CVAR_FLOAT,
                                      "Max reflection ray travel distance in world units (default 2500.0)");
 
-static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "2.0", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtReflectionBlend("r_rtReflectionBlend", "4.0", CVAR_RENDERER | CVAR_FLOAT,
                                   "Scale factor for reflection radiance, applied in reflect_ray.rgen. Max 5.");
 
 idCVar r_rtSpecF0Scale("r_rtSpecF0Scale", "0.2", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,

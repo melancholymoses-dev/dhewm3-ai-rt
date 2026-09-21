@@ -95,7 +95,7 @@ idCVar r_rtVolExtinction("r_rtVolExtinction", "0.0006", CVAR_RENDERER | CVAR_ARC
                          "can see: transmittance = exp(-sigma_t * distance), so 5e-4 gives 0.78 at 500 "
                          "units.  Medium-wide — extinction is not a property of any one light.");
 
-idCVar r_rtVolAlbedo("r_rtVolAlbedo", "0.75", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar r_rtVolAlbedo("r_rtVolAlbedo", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                      "Single-scatter albedo: sigma_s = albedo * sigma_t.  0 = pure absorber (medium "
                      "darkens without glowing), 1 = pure scatterer (bright mist, no net darkening).  "
                      "Values above 1 would create energy and are clamped.");
@@ -104,7 +104,7 @@ idCVar r_rtVolAlbedo("r_rtVolAlbedo", "0.75", CVAR_RENDERER | CVAR_ARCHIVE | CVA
 // because Doom 3 light intensities are authored rather than radiometric, and it
 // leaves the transport equation alone.  The default 28 is 0.01275/(0.9*5e-4), the
 // factor that preserves the old point-light brightness at the new sigma_s.
-idCVar r_rtVolGain("r_rtVolGain", "10.0", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolGain("r_rtVolGain", "25.0", CVAR_RENDERER | CVAR_FLOAT,
                    "Radiance gain for point-light in-scatter (compensates Doom 3's non-radiometric "
                    "light intensities).  Brightness only — does not affect transmittance.");
 
@@ -118,7 +118,7 @@ static idCVar r_rtVolAttenuateBackground(
     "in-scattering (1), or add only (0).  When 1 the composite also moves after the "
     "interaction/shader passes so direct light is attenuated too.");
 
-idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.35", CVAR_RENDERER | CVAR_FLOAT,
+idCVar r_rtVolAnisotropy("r_rtVolAnisotropy", "0.4", CVAR_RENDERER | CVAR_FLOAT,
                          "Henyey-Greenstein g parameter (0=isotropic, 0.8=flashlight shaft)");
 
 // Two-lobe phase blend.  HG is normalised, so a single lobe can only trade
