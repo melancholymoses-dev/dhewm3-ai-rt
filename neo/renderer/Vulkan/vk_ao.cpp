@@ -75,10 +75,11 @@ struct AOParamsUBO
 static_assert(sizeof(AOParamsUBO) == 112, "AOParamsUBO size mismatch");
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down) in framebuffer coordinates.
+// Isnt this redundant?  havent i done this twice over?
 static VkRect2D VK_RT_ComputeViewDispatchRect(const viewDef_t *viewDef)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;

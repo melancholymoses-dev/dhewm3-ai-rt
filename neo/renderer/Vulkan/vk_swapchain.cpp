@@ -16,6 +16,7 @@ of the original Doom 3 GPL Source Code release.
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_upscale.h"
 
 // Defined in vk_backend.cpp
 void VK_SetWindowMinimized(bool minimized);
@@ -229,19 +230,19 @@ void VK_CreateRenderPass(void)
     // Used by all scene rendering and graphics pipelines.  Writes to vkRT.hdrScene
     // instead of the swapchain; the tonemap compute pass resolves to the swapchain.
     VkAttachmentDescription hdrColor = {};
-    hdrColor.format         = VK_FORMAT_R16G16B16A16_SFLOAT;
-    hdrColor.samples        = VK_SAMPLE_COUNT_1_BIT;
-    hdrColor.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    hdrColor.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-    hdrColor.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    hdrColor.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    hdrColor.samples = VK_SAMPLE_COUNT_1_BIT;
+    hdrColor.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    hdrColor.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     hdrColor.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    hdrColor.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-    hdrColor.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrColor.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    hdrColor.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     // Depth attachment: same format and STORE ops as the UNORM passes, but must reset
     // the load ops and initial layout — depthAttachment was mutated for the resume pass above.
     VkAttachmentDescription hdrDepth = depthAttachment;
-    hdrDepth.loadOp        = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrDepth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     hdrDepth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -251,17 +252,17 @@ void VK_CreateRenderPass(void)
     // rgb = world-space bump normal * 0.5 + 0.5, a = normalized F0; clear value
     // {0.5, 0.5, 0.5, 0.0} (null normal, F0 0) is set in vk_backend.cpp.
     VkAttachmentDescription hdrNorm = {};
-    hdrNorm.format         = VK_FORMAT_R8G8B8A8_UNORM;
-    hdrNorm.samples        = VK_SAMPLE_COUNT_1_BIT;
-    hdrNorm.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    hdrNorm.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
-    hdrNorm.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    hdrNorm.format = VK_FORMAT_R8G8B8A8_UNORM;
+    hdrNorm.samples = VK_SAMPLE_COUNT_1_BIT;
+    hdrNorm.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    hdrNorm.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    hdrNorm.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     hdrNorm.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     // COLOR_ATTACHMENT_OPTIMAL, not UNDEFINED: VK_RT_CreateGBufferImages already
     // transitions the image out of UNDEFINED at creation time, so this initial
     // layout matches reality and the resume round-trip below is symmetric.
-    hdrNorm.initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    hdrNorm.finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrNorm.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrNorm.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     // Receiver-albedo attachment (docs/plans/gi_albedo_target.md): diffuse map
     // sample written by the same prepass, multiplied onto the denoised GI by the
@@ -282,27 +283,27 @@ void VK_CreateRenderPass(void)
     hdrSubpass.pDepthStencilAttachment = &depthRef;
     rpInfo.pSubpasses = &hdrSubpass;
 
-    VkAttachmentDescription hdrAttachments[4] = { hdrColor, hdrDepth, hdrNorm, hdrAlb };
+    VkAttachmentDescription hdrAttachments[4] = {hdrColor, hdrDepth, hdrNorm, hdrAlb};
     rpInfo.attachmentCount = vk.gbufferSupported ? 4 : 2;
     rpInfo.pAttachments = hdrAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPass));
 
     // --- HDR render pass (RGBA16F LOAD) ---
     // Resume variant: preserves prior colour and depth/stencil contents.
-    hdrColor.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrColor.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     hdrColor.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    hdrColor.finalLayout   = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    hdrColor.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    hdrDepth.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrDepth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     hdrDepth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     hdrDepth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-    hdrNorm.loadOp         = VK_ATTACHMENT_LOAD_OP_LOAD;
+    hdrNorm.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     // initialLayout stays COLOR_ATTACHMENT_OPTIMAL — the barrier in vk_backend.cpp
     // (Step 6) round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
     hdrAlb = hdrNorm; // albedo rides the same LOAD + round-trip contract
 
-    VkAttachmentDescription hdrResumeAttachments[4] = { hdrColor, hdrDepth, hdrNorm, hdrAlb };
+    VkAttachmentDescription hdrResumeAttachments[4] = {hdrColor, hdrDepth, hdrNorm, hdrAlb};
     rpInfo.pAttachments = hdrResumeAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPassResume));
 }
@@ -321,6 +322,8 @@ void VK_CreateSwapchain(int width, int height)
 
     vk.swapchainFormat = surfaceFormat.format;
     vk.swapchainExtent = {(uint32_t)width, (uint32_t)height};
+    // used for upscale
+    vk.renderExtent = {(uint32_t)width, (uint32_t)height};
     vk.depthFormat = VK_FindDepthFormat();
 
     uint32_t imageCount = caps.minImageCount + 1;
@@ -340,8 +343,8 @@ void VK_CreateSwapchain(int width, int height)
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  // TRANSFER_SRC needed for screenshot readback
-                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // TRANSFER_DST needed for tonemap blit resolve
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;  // TRANSFER_DST needed for tonemap blit resolve
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -520,6 +523,7 @@ void VK_RecreateSwapchain(int width, int height)
 
     vk.swapchainFormat = surfaceFormat.format;
     vk.swapchainExtent = {(uint32_t)width, (uint32_t)height};
+    VK_RT_UpdateRenderExtent();
 
     uint32_t imageCount = caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount)
@@ -536,8 +540,8 @@ void VK_RecreateSwapchain(int width, int height)
     swapInfo.imageExtent = vk.swapchainExtent;
     swapInfo.imageArrayLayers = 1;
     swapInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT |  // TRANSFER_SRC needed for screenshot readback
-                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // TRANSFER_DST needed for tonemap blit resolve
+                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | // TRANSFER_SRC needed for screenshot readback
+                          VK_IMAGE_USAGE_TRANSFER_DST_BIT;  // TRANSFER_DST needed for tonemap blit resolve
     swapInfo.preTransform = caps.currentTransform;
     swapInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swapInfo.presentMode = presentMode;
@@ -601,6 +605,7 @@ void VK_RecreateSwapchain(int width, int height)
     // to the new swapchain extent.
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
 
+    VK_RT_ResizeUpscale(vk.swapchainExtent.width, vk.swapchainExtent.height);
     // Swapchain is healthy again; clear any minimized flag set during the
     // previous (aborted) recreation when the surface was 0x0.
     VK_SetWindowMinimized(false);

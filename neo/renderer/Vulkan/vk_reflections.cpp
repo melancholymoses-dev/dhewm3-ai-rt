@@ -995,6 +995,7 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 // Union of every SURFTYPE_GLASS surface's frontend scissorRect, in Vulkan Y-down
 // pixels. False = no glass in view, caller skips the dispatch. Y-flip matches
 // VK_ComputeDrawSurfScissor; the reflection buffer is swapchain-sized.
+// FSR note: right size?  That now uses renderExtent
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX, int32_t *outY,

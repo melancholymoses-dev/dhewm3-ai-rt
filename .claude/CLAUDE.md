@@ -15,14 +15,15 @@ Plan docs: a stage is ≤40 lines. Tables and file lists over prose.
 State the change and how to check it. No "why it reads the way it does"
 sections, no restating a point at two levels of detail.  Keep motivation brief.
 
-Chat: lead with the answer. No preamble, no recap of what I just said,
-no summary of what you just did if it's visible in the diff.
-
 Ban: "worth noting", "it's worth knowing", "the interesting thing here", "it's load-bearing",
 bolded thesis sentences, and rhetorical setup before a fact.
 
+Chat: lead with the answer. No preamble, no recap of what I just said,
+Use longer conversational explanations and motivation when explaining concepts or changes directly to the user.  
+
 Code: Inline comments at most a few sentences.  Keep motivation brief and limited to crucial info.
 Save long motivation in memories, not the code.
+
 
 ## Plans
 Plans live in docs/plans/*.md.  **Start with docs/plans/ROADMAP.md** — it owns the

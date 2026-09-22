@@ -876,8 +876,8 @@ static VkRect2D s_volTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 // or the upsample reads a texel this frame never touched.
 static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef, int scale = 1)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;
@@ -1640,8 +1640,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     pc.offY = (int32_t)dispatchRect.offset.y;
     pc.extX = (int32_t)dispatchRect.extent.width;
     pc.extY = (int32_t)dispatchRect.extent.height;
-    pc.screenW = (int32_t)vk.swapchainExtent.width;
-    pc.screenH = (int32_t)vk.swapchainExtent.height;
+    pc.screenW = (int32_t)vk.renderExtent.width;
+    pc.screenH = (int32_t)vk.renderExtent.height;
     pc.sigma = idMath::ClampFloat(0.5f, 8.0f, r_rtVolBilateralSigma.GetFloat());
     pc.marchScale = s_volMarchScale;
     pc.marchW = (int32_t)srcImg.width;
@@ -1956,8 +1956,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI), scaled into
     // march space — the shader indexes volBuf with it.
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     {
         const VkRect2D marchRect = VK_RT_Vol_ComputeDispatchRect(viewDef, s_volMarchScale);
         ubo.scissorOffsetX = (int32_t)marchRect.offset.x;
@@ -2194,7 +2194,7 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         int32_t debugMode;
         float debugGain;
     } pc = {
-        {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
+        {1.0f / Max(1.0f, (float)vk.renderExtent.width), 1.0f / Max(1.0f, (float)vk.renderExtent.height)},
         r_rtVolDebugMode.GetInteger(),
         Max(0.0f, r_rtVolDebugGain.GetFloat()),
     };

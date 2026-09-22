@@ -73,6 +73,8 @@ struct vkState_t
     VkImageView swapchainImageViews[VK_MAX_SWAPCHAIN_IMAGES];
     VkFramebuffer swapchainFramebuffers[VK_MAX_SWAPCHAIN_IMAGES];
 
+    VkExtent2D renderExtent;
+
     // Depth buffer
     VkImage depthImage;
     VkDeviceMemory depthMemory;
@@ -171,8 +173,8 @@ struct vkPipelines_t
     // Drawn additively over MC_TRANSLUCENT surfaces to add ray-traced reflections.
     // Descriptor: binding0=GuiParams UBO (screen dims in texGenS.xy), binding1=reflBuffer sampler.
     VkDescriptorSetLayout glassReflDescLayout;
-    VkPipelineLayout      glassReflLayout;
-    VkPipeline            glassReflPipeline;
+    VkPipelineLayout glassReflLayout;
+    VkPipeline glassReflPipeline;
 
     // Fog light pipeline (FogAllLights pass)
     // Shared descriptor layout: binding0=UBO, binding1=samp0, binding2=samp1

@@ -1,0 +1,91 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — upscale_blit.comp — render sub-rect → display resolution.
+
+The 3D scene is rendered into the top-left `renderExtent` sub-rect of the
+display-sized hdrScene image.  This pass magnifies that sub-rect to fill the
+whole display extent, writing hdrUpscaled; the caller then copies the result
+back into hdrScene so the UI can composite on top at full resolution.
+
+The source is bound as a sampler (not a storage image) so the texture unit
+does the bilinear filtering.  Because hdrScene is display-sized but only valid
+inside [0, renderExtent), CLAMP_TO_EDGE guards the wrong boundary — the UV has
+to be clamped to the sub-rect explicitly or edge taps read never-written memory.
+
+Descriptors (set 0):
+  binding 0 — srcScene    sampler2D (hdrScene + linear clamp sampler)
+  binding 1 — dstUpscaled rgba16f storage image (hdrUpscaled)
+
+Push constants (12 bytes, matches UpscalePC in vk_upscale.cpp):
+  ivec2 renderExtent  — vk.renderExtent, the valid sub-rect of srcScene
+  int   debugMode     — r_fsrDebug (0 = bilinear, 1 = overlay, 4 = point)
+
+FSR upscaling arc U0 — docs/plans/20260918_fsr_upscaling.md.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcScene;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dstUpscaled;
+
+layout(push_constant) uniform PC {
+    ivec2 renderExtent;
+    int   debugMode;
+} pc;
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dstSize = imageSize(dstUpscaled);
+    if (p.x >= dstSize.x || p.y >= dstSize.y)
+        return;
+
+    // Output position in [0,1], then scaled by renderExtent/dstSize so the full
+    // output spans exactly the sub-rect rather than the whole source texture.
+    vec2 renderScale = vec2(pc.renderExtent) / vec2(dstSize);
+    vec2 uv = ((vec2(p) + 0.5) / vec2(dstSize)) * renderScale;
+
+    // Last valid texel centre inside the sub-rect.  Without this, bilinear taps on
+    // the right/bottom edges reach past renderExtent into uninitialised memory.
+    vec2 maxUV = (vec2(pc.renderExtent) - 0.5) / vec2(dstSize);
+    vec2 clampedUV = min(uv, maxUV);
+    bool wasClamped = clampedUV != uv;
+
+    vec3 c;
+    if (pc.debugMode == 4)
+    {
+        // Point magnify: the honest "what did the resolution cost" A/B, with no
+        // reconstruction smoothing it over.
+        ivec2 src = min(ivec2(clampedUV * vec2(dstSize)), pc.renderExtent - 1);
+        c = texelFetch(srcScene, src, 0).rgb;
+    }
+    else
+    {
+        c = texture(srcScene, clampedUV).rgb;
+    }
+
+    if (pc.debugMode == 1)
+    {
+        // Magenta marks pixels whose tap would have left the valid sub-rect — a
+        // correct frame has these only in the outermost half-texel, if at all.
+        if (wasClamped)
+            c = vec3(1.0, 0.0, 1.0);
+
+        // Green border confirms the pass ran and covers the whole display extent.
+        if (p.x < 2 || p.y < 2 || p.x >= dstSize.x - 2 || p.y >= dstSize.y - 2)
+            c = vec3(0.0, 1.0, 0.0);
+    }
+
+    imageStore(dstUpscaled, p, vec4(c, 1.0));
+}

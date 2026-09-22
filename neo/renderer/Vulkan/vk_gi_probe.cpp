@@ -979,16 +979,16 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     ubo.misc[3] = 1 + s_probeFastBuckets;
 
     const vkRTImage_t &gb = vkRT.giBuffer[vk.currentFrame];
-    ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
-    ubo.screen[1] = (int32_t)vk.swapchainExtent.height;
+    ubo.screen[0] = (int32_t)vk.renderExtent.width;
+    ubo.screen[1] = (int32_t)vk.renderExtent.height;
     ubo.screen[2] = (int32_t)Max(1u, gb.width);
     ubo.screen[3] = (int32_t)Max(1u, gb.height);
 
     // Resolve dispatch rect: the view scissor, GL Y-up -> Vulkan Y-down. Same
     // conversion VK_RT_GI_ComputeDispatchRect makes (static in vk_gi.cpp).
     {
-        const int fullW = (int)vk.swapchainExtent.width;
-        const int fullH = (int)vk.swapchainExtent.height;
+        const int fullW = (int)vk.renderExtent.width;
+        const int fullH = (int)vk.renderExtent.height;
         const idScreenRect &s = viewDef->scissor;
 
         const int x0 = idMath::ClampInt(0, fullW - 1, s.x1);

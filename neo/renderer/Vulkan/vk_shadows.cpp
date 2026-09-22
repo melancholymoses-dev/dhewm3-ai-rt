@@ -962,20 +962,19 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         if (VK_RTDebugLightFrameAllowed(r_vkRTDebugLights.GetInteger() > 0) && VK_RTDebugLightMatch(vLight))
         {
             const char *lightName = vLight->lightShader ? vLight->lightShader->GetName() : "<null>";
-            common->Printf(
-                "VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
-                "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
-                "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
-                "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
-                "mask=%ux%u layer=%d\n",
-                tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y, shadowOrigin.z,
-                light.lightRadius.x, light.lightRadius.y, light.lightRadius.z, ubo.lightFalloffRadius, ubo.numSamples,
-                requestedSamples, minSamples, ubo.rayBias, r_rtShadowTemporalJitter.GetBool() ? 1 : 0,
-                allowTemporalJitter ? 1 : 0, jitterMinSamples, r_rtShadowStablePattern.GetBool() ? 1 : 0,
-                ubo.frameIndex, softRadius, ubo.lightKind, axisRightHalf, axisUpHalf, axisFwdHalf,
-                r_rtShadowBlurEnable.GetBool() ? 1 : 0, r_rtShadowBlur.GetInteger(),
-                r_rtShadowBlurDepthAware.GetBool() ? 1 : 0, r_rtShadowBlurDepthThreshold.GetFloat(), sm.width,
-                sm.height, (int)ubo.shadowLayer);
+            common->Printf("VK RT LIGHT DBG: frame=%d light='%s' point=%d origin=(%.2f,%.2f,%.2f) rad=(%.2f,%.2f,%.2f) "
+                           "cutoff=%.3f samples=%d reqSamples=%d minSamples=%d bias=%.4f jitter=%d effJitter=%d "
+                           "jitterMinSamples=%d stable=%d seed=%u softRadius=%.3f kind=%u axisHalf=(%.3f,%.3f,%.3f) "
+                           "blurEn=%d blurRad=%d depthAware=%d depthTh=%.5f "
+                           "mask=%ux%u layer=%d\n",
+                           tr.frameCount, lightName, light.pointLight ? 1 : 0, shadowOrigin.x, shadowOrigin.y,
+                           shadowOrigin.z, light.lightRadius.x, light.lightRadius.y, light.lightRadius.z,
+                           ubo.lightFalloffRadius, ubo.numSamples, requestedSamples, minSamples, ubo.rayBias,
+                           r_rtShadowTemporalJitter.GetBool() ? 1 : 0, allowTemporalJitter ? 1 : 0, jitterMinSamples,
+                           r_rtShadowStablePattern.GetBool() ? 1 : 0, ubo.frameIndex, softRadius, ubo.lightKind,
+                           axisRightHalf, axisUpHalf, axisFwdHalf, r_rtShadowBlurEnable.GetBool() ? 1 : 0,
+                           r_rtShadowBlur.GetInteger(), r_rtShadowBlurDepthAware.GetBool() ? 1 : 0,
+                           r_rtShadowBlurDepthThreshold.GetFloat(), sm.width, sm.height, (int)ubo.shadowLayer);
         }
 
         memcpy(uboMapped, &ubo, sizeof(ShadowParamsUBO));
@@ -1028,8 +1027,8 @@ static bool VK_RT_ShadowBlurWanted(VkRect2D dispatchRect)
         return false;
 
     const int minRect = r_rtShadowBlurMinRect.GetInteger();
-    const bool rectTooSmall = minRect > 0 && dispatchRect.extent.width < (uint32_t)minRect &&
-                              dispatchRect.extent.height < (uint32_t)minRect;
+    const bool rectTooSmall =
+        minRect > 0 && dispatchRect.extent.width < (uint32_t)minRect && dispatchRect.extent.height < (uint32_t)minRect;
     if (rectTooSmall && r_vkLogRT.GetInteger() >= 2)
         common->Printf("VK RT BLUR: skipped for small rect %ux%u (< %d, frame=%d)\n", dispatchRect.extent.width,
                        dispatchRect.extent.height, minRect, tr.frameCount);
@@ -1213,8 +1212,8 @@ struct vkShadowBatchEntry_t
 #define VK_RT_SHADOW_BATCH_TRACK 64
 
 static vkShadowBatchEntry_t s_shadowBatch[VK_RT_SHADOW_BATCH_TRACK];
-static int s_shadowBatchCount = 0;    // entries recorded (including no-shadow lights)
-static int s_shadowBatchLayers = 0;   // batched layers assigned: 0..VK_RT_SHADOW_BATCH_MAX
+static int s_shadowBatchCount = 0;       // entries recorded (including no-shadow lights)
+static int s_shadowBatchLayers = 0;      // batched layers assigned: 0..VK_RT_SHADOW_BATCH_MAX
 static bool s_shadowBatchSerial = false; // any light landed on the serial layer
 static int s_shadowBatchOverflowLogged = -1;
 

@@ -2513,8 +2513,8 @@ bool VK_RT_GIParamsBinding(int frameIdx, uint32_t *outOffset)
 
 static VkRect2D VK_RT_GI_ComputeDispatchRect(const viewDef_t *viewDef)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;

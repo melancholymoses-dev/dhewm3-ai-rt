@@ -527,8 +527,8 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     // resolve writes. In froxel mode that is full res too — VK_RT_VolRequestedScale
     // forces r_rtVolHalfRes off, because the resolve is a single trilinear fetch.
     const vkRTImage_t &vb = vkRT.volBuffer[vk.currentFrame];
-    ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
-    ubo.screen[1] = (int32_t)vk.swapchainExtent.height;
+    ubo.screen[0] = (int32_t)vk.renderExtent.width;
+    ubo.screen[1] = (int32_t)vk.renderExtent.height;
     ubo.screen[2] = (int32_t)Max(1u, vb.width);
     ubo.screen[3] = (int32_t)Max(1u, vb.height);
 
@@ -536,8 +536,8 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     // into the output image. Mirrors VK_RT_Vol_ComputeDispatchRect in vk_vol.cpp
     // (static there, and this needs the same conversion).
     {
-        const int fullW = (int)vk.swapchainExtent.width;
-        const int fullH = (int)vk.swapchainExtent.height;
+        const int fullW = (int)vk.renderExtent.width;
+        const int fullH = (int)vk.renderExtent.height;
         const idScreenRect &s = viewDef->scissor;
 
         int x0 = idMath::ClampInt(0, fullW - 1, s.x1);

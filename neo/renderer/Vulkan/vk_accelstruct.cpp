@@ -19,6 +19,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/VertexCache.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
+#include "renderer/Vulkan/vk_upscale.h"
 
 #include <string.h>
 
@@ -2240,6 +2241,9 @@ void VK_RT_Shutdown(void)
     // HDR scene buffer and tonemap pipeline (Phase 8.1).  Also destroys the
     // G-buffer normal/F0 images (Stage 3.5) — see vk_tonemap.cpp.
     VK_RT_ShutdownTonemap();
+
+    // Upscaling
+    VK_RT_ShutdownUpscale();
 
     // Material table SSBOs and bindless descriptor set (Phase 5.4)
     VK_RT_ShutdownMaterialTable();

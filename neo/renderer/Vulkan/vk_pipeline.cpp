@@ -49,17 +49,17 @@ struct VkInteractionUBO
     float specularColor[4];
     float gammaBrightness[4];
     int applyGamma;
-    float screenWidth;  // framebuffer width  (for shadow mask UV)
-    float screenHeight; // framebuffer height (for shadow mask UV)
-    int useShadowMask;  // 1 when RT shadow mask is valid this frame
-    int useAO;          // 1 when RT AO mask is valid this frame
-    float lightScale;   // backEnd.overBright — final color multiplier before gamma
-    int useReflections; // 1 when RT reflection buffer is valid this frame
-    float specF0Scale;  // r_rtSpecF0Scale — multiplier for the specular→F0 remap curve
-    float specF0Gamma;  // r_rtSpecF0Gamma — power exponent for specular→F0 remap
-    int reflDebugMode;    // r_rtReflectionDebugMode — 0=off, 1=output Fresnel as greyscale
-    int shadowMaskLayer;  // P1b — shadow mask array layer for this light (see VK_RT_SHADOW_LAYERS)
-    int _pad2;            // std140 rounds the GLSL block up to a 16-byte multiple (384)
+    float screenWidth;   // framebuffer width  (for shadow mask UV)
+    float screenHeight;  // framebuffer height (for shadow mask UV)
+    int useShadowMask;   // 1 when RT shadow mask is valid this frame
+    int useAO;           // 1 when RT AO mask is valid this frame
+    float lightScale;    // backEnd.overBright — final color multiplier before gamma
+    int useReflections;  // 1 when RT reflection buffer is valid this frame
+    float specF0Scale;   // r_rtSpecF0Scale — multiplier for the specular→F0 remap curve
+    float specF0Gamma;   // r_rtSpecF0Gamma — power exponent for specular→F0 remap
+    int reflDebugMode;   // r_rtReflectionDebugMode — 0=off, 1=output Fresnel as greyscale
+    int shadowMaskLayer; // P1b — shadow mask array layer for this light (see VK_RT_SHADOW_LAYERS)
+    int _pad2;           // std140 rounds the GLSL block up to a 16-byte multiple (384)
 };
 // Must match INTERACTION_UBO_SIZE (vk_backend.cpp) and the std140 block in interaction.frag.
 static_assert(sizeof(VkInteractionUBO) == 384, "VkInteractionUBO size mismatch vs std140 block / INTERACTION_UBO_SIZE");
@@ -1298,6 +1298,7 @@ static VkPipeline VK_CreateGuiPipelineEx(VkPipelineLayout layout, bool blendEnab
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
+    // leaving as swapchain since GUI is at display size.
     VkViewport viewport = {0, 0, (float)vk.swapchainExtent.width, (float)vk.swapchainExtent.height, 0.0f, 1.0f};
     VkRect2D scissor = {{0, 0}, vk.swapchainExtent};
 

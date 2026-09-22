@@ -675,6 +675,7 @@ endfunction()
 set(src_vulkan
 	renderer/Vulkan/vk_instance.cpp
 	renderer/Vulkan/vk_swapchain.cpp
+	renderer/Vulkan/vk_upscale.cpp
 	renderer/Vulkan/vk_buffer.cpp
 	renderer/Vulkan/vk_shader.cpp
 	renderer/Vulkan/vk_image.cpp
@@ -773,6 +774,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/vol_froxel_integrate.comp
 	renderer/glsl/vol_froxel_resolve.comp
 	renderer/glsl/tonemap.comp
+	renderer/glsl/upscale_blit.comp
 )
 
 

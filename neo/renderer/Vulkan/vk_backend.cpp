@@ -26,6 +26,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
+#include "renderer/Vulkan/vk_upscale.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 #include <cmath>
@@ -35,6 +36,10 @@ static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 static bool s_frameNeedsImageAcquireWait = false;
+
+// FSR U0: set once the render sub-rect has been resolved to display resolution.
+// Everything drawn after this point (UI, HUD, ImGui) uses the full display extent.
+static bool s_upscaleDone = false;
 
 // Current view's scissor rect in VK coordinates (Y-down).
 // Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
@@ -138,17 +143,13 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
         rpResume.renderPass = vk.hdrRenderPassResume;
         rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = vk.swapchainExtent;
+        rpResume.renderArea.extent = vk.renderExtent;
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        VkViewport viewport = {
+            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(newCmd, 0, 1, &viewport);
         vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
     }
@@ -780,16 +781,20 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 static float s_projVk[16];
 
 // Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down).
+// Also include scaling to render coords.  Output is in RenderSub-region.
 static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
 {
-    int h = (int)vk.swapchainExtent.height;
-    const idScreenRect &s = viewDef->scissor;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
+
+    const idScreenRect s1 = VK_RT_ScaleDisplayRect(viewDef->scissor);
+
     VkRect2D r;
-    r.offset.x = idMath::ClampInt(0, (int)vk.swapchainExtent.width - 1, s.x1);
-    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top edge → VK top
-    int w2 = s.x2 - s.x1 + 1;
-    int h2 = s.y2 - s.y1 + 1;
-    r.extent.width = (uint32_t)idMath::ClampInt(1, (int)vk.swapchainExtent.width - r.offset.x, w2);
+    r.offset.x = idMath::ClampInt(0, w - 1, s1.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s1.y2); // GL top edge → VK top
+    int w2 = s1.x2 - s1.x1 + 1;
+    int h2 = s1.y2 - s1.y1 + 1;
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, w2);
     r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, h2);
     return r;
 }
@@ -813,28 +818,34 @@ static VkRect2D VK_IntersectRect(VkRect2D a, VkRect2D b)
 
 // Convert drawSurf->scissorRect (viewport-local GL coordinates) to a Vulkan scissor
 // in absolute framebuffer coordinates and clamp to the current view scissor.
+// Now scaled to Render area.
 static VkRect2D VK_ComputeDrawSurfScissor(const drawSurf_t *surf)
 {
     if (!surf || !backEnd.viewDef)
         return s_viewScissor;
 
-    const idScreenRect &s = surf->scissorRect;
-    if (s.IsEmpty())
+    // make a copy since modifying
+    idScreenRect disp = surf->scissorRect;
+
+    if (disp.IsEmpty())
         return VkRect2D{{0, 0}, {0, 0}};
 
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
 
-    const int absX1 = backEnd.viewDef->viewport.x1 + s.x1;
-    const int absY1 = backEnd.viewDef->viewport.y1 + s.y1; // GL bottom edge
-    const int absY2 = backEnd.viewDef->viewport.y1 + s.y2; // GL top edge
+    // shift by viewport, then scale.
+    disp.x1 += backEnd.viewDef->viewport.x1;
+    disp.x2 += backEnd.viewDef->viewport.x1;
+    disp.y1 += backEnd.viewDef->viewport.y1;
+    disp.y2 += backEnd.viewDef->viewport.y1;
+    const idScreenRect s = VK_RT_ScaleDisplayRect(disp);
 
     VkRect2D r;
-    r.offset.x = idMath::ClampInt(0, w - 1, absX1);
-    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - absY2); // GL top -> VK top
+    r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top -> VK top
 
     const int rw = s.x2 - s.x1 + 1;
-    const int rh = absY2 - absY1 + 1;
+    const int rh = s.y2 - s.y1 + 1;
     if (rw <= 0 || rh <= 0)
         return VkRect2D{{0, 0}, {0, 0}};
 
@@ -1082,8 +1093,8 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // screenSize (used by shader to compute shadow mask UV from gl_FragCoord)
     float *fsz = (float *)(ip + 1);
-    fsz[0] = (float)vk.swapchainExtent.width;
-    fsz[1] = (float)vk.swapchainExtent.height;
+    fsz[0] = (float)vk.renderExtent.width;
+    fsz[1] = (float)vk.renderExtent.height;
 
     // useShadowMask: 1 when RT shadow mask is valid this frame.
     // Weapon depth-hack surfaces are rendered in a different depth range and should
@@ -2251,8 +2262,8 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         memcpy(ovUbo->modelViewProjection, mvp, 64);
         // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
         // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
-        ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
-        ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
+        ovUbo->texGenS[0] = (float)vk.renderExtent.width;
+        ovUbo->texGenS[1] = (float)vk.renderExtent.height;
 
         VkDescriptorBufferInfo ovBufInfo = {};
         ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
@@ -3543,20 +3554,26 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
 static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
 {
-    VkRect2D lightScissor = {{0, 0}, vk.swapchainExtent}; // default: full framebuffer
+    VkRect2D lightScissor = {{0, 0}, vk.renderExtent}; // default: full renderExtent
 
     if (!r_useScissor.GetBool() || r_vkLightFullScissor.GetBool())
         return lightScissor;
 
-    int h = (int)vk.swapchainExtent.height;
-    int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
-    int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
-    int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
 
-    lightScissor.offset.x = absX1;
-    lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
-    lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
-    lightScissor.extent.height = absY2 - absY1 + 1;
+    idScreenRect disp = vLight->scissorRect;
+    // shift by viewport, then scale.
+    disp.x1 += backEnd.viewDef->viewport.x1;
+    disp.x2 += backEnd.viewDef->viewport.x1;
+    disp.y1 += backEnd.viewDef->viewport.y1;
+    disp.y2 += backEnd.viewDef->viewport.y1;
+    const idScreenRect s = VK_RT_ScaleDisplayRect(disp);
+
+    lightScissor.offset.x = s.x1;
+    lightScissor.offset.y = h - 1 - s.y2; // flip Y: OpenGL top edge -> Vulkan top edge
+    lightScissor.extent.width = s.x2 - s.x1 + 1;
+    lightScissor.extent.height = s.y2 - s.y1 + 1;
     // Intersect with the view scissor so subview (mirror) rendering stays
     // confined to the mirror surface's screen bounds.
     return VK_IntersectRect(lightScissor, s_viewScissor);
@@ -3810,16 +3827,13 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             rpResume.renderPass = vk.hdrRenderPassResume;
             rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
             rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = vk.swapchainExtent;
+            rpResume.renderArea.extent = vk.renderExtent;
             rpResume.clearValueCount = 0;
             rpResume.pClearValues = NULL;
             vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-            VkViewport rtViewport = {0,
-                                     (float)vk.swapchainExtent.height,
-                                     (float)vk.swapchainExtent.width,
-                                     -(float)vk.swapchainExtent.height,
-                                     0.0f,
-                                     1.0f};
+            VkViewport rtViewport = {
+                0,   (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f,
+                1.0f};
             vkCmdSetViewport(cmd, 0, 1, &rtViewport);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
@@ -3853,7 +3867,7 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor =
-            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
+            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.renderExtent}, s_viewScissor) : lightScissor;
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -4338,6 +4352,8 @@ void VK_RB_DrawView(const void *data)
         return;
     }
 
+    VK_RT_UpdateRenderExtent();
+
     // When RT shadows are toggled on or off, cached interactions may be missing
     // stencil shadow volumes (skipped during creation when RT was on) or have
     // stale ones (present when RT was off). Invalidate all interactions so they
@@ -4489,33 +4505,56 @@ void VK_RB_DrawView(const void *data)
         rpBegin.renderPass = vk.hdrRenderPass;
         rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
-        rpBegin.renderArea.extent = vk.swapchainExtent;
+        rpBegin.renderArea.extent = vk.renderExtent;
         rpBegin.clearValueCount = vk.gbufferSupported ? 4 : 2;
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
         // NOTE: the negative height inverts the effective winding order, so our pipelines
         // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        VkViewport viewport = {
+            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+
         // Set scissor from viewDef to confine subview rendering to mirror bounds.
         s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
+        s_upscaleDone = false;
     }
     else
     {
         // === Subsequent RC_DRAW_VIEW: render pass already open; reset viewport/scissor ===
+        // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
+        // viewaxis.  That is the boundary between 3D (render resolution) and UI
+        // (display resolution), so resolve the sub-rect here, before the UI draws.
+        const bool isGuiOverlay = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
+        if (isGuiOverlay && !s_upscaleDone && VK_RT_UpscaleActive())
+        {
+            vkCmdEndRenderPass(s_frameCmdBuf);
+            VK_SetRenderStage("RT_Upscale");
+            VK_RT_DispatchUpscale(s_frameCmdBuf);
+            s_upscaleDone = true;
+
+            VkRenderPassBeginInfo rpResume = {};
+            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpResume.renderPass = vk.hdrRenderPassResume;
+            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+            rpResume.renderArea.offset = {0, 0};
+            rpResume.renderArea.extent = vk.swapchainExtent; // UI draws at display res
+            rpResume.clearValueCount = 0;
+            rpResume.pClearValues = NULL;
+            vkCmdBeginRenderPass(s_frameCmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+        }
+
         // Compute this view's scissor first; GL clears depth/stencil through the
         // active scissor for each view (important for subviews/mirrors).
-        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
+        // Post-upscale the frame is display-space, so the render-scale conversion
+        // must not be applied.
+        s_viewScissor =
+            s_upscaleDone ? VkRect2D{{0, 0}, vk.swapchainExtent} : VK_ComputeViewScissor(backEnd.viewDef);
 
         // Each view has its own projection matrix, so depth values from the previous view
         // are meaningless (and harmful) here.  Clear depth+stencil so this view's depth
@@ -4537,12 +4576,8 @@ void VK_RB_DrawView(const void *data)
             vkCmdClearAttachments(s_frameCmdBuf, 1, &clearDepth, 1, &clearRect);
         }
 
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        const VkExtent2D vpExtent = s_upscaleDone ? vk.swapchainExtent : vk.renderExtent;
+        VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
         // Set scissor from viewDef — for the main view this is typically full-screen;
         // for subviews it confines rendering to the mirror surface's screen bounds.
@@ -4896,16 +4931,12 @@ void VK_RB_DrawView(const void *data)
         rpResume.renderPass = vk.hdrRenderPassResume;
         rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = vk.swapchainExtent;
+        rpResume.renderArea.extent = vk.renderExtent;
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        VkViewport viewport = {
+            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -5001,12 +5032,8 @@ void VK_RB_DrawView(const void *data)
         !backEnd.viewDef->isMirror)
     {
         VK_SetRenderStage("Vol_Composite");
-        VkViewport volViewport = {0,
-                                  (float)vk.swapchainExtent.height,
-                                  (float)vk.swapchainExtent.width,
-                                  -(float)vk.swapchainExtent.height,
-                                  0.0f,
-                                  1.0f};
+        VkViewport volViewport = {
+            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &volViewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -5124,7 +5151,7 @@ void VK_RB_CopyRender(const void *data)
             common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u "
                            "isSubview=%d isMirror=%d clipPlanes=%d\n",
                            cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH,
-                           copyW, copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height,
+                           copyW, copyH, (unsigned)vk.renderExtent.width, (unsigned)vk.renderExtent.height,
                            backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1);
@@ -5149,8 +5176,14 @@ void VK_RB_CopyRender(const void *data)
     region.srcSubresource.mipLevel = 0;
     region.srcSubresource.baseArrayLayer = 0;
     region.srcSubresource.layerCount = 1;
-    region.srcOffsets[0] = {srcX, srcY, 0};
-    region.srcOffsets[1] = {srcX + copyW, srcY + copyH, 1};
+    // Source lives in the render sub-rect; dst is a display-resolution idImage, so
+    // the blit rescales. Clamp in display units, then scale only the source.
+    const int rsX = (int)idMath::Floor(srcX * VK_RT_RenderScaleX());
+    const int rsY = (int)idMath::Floor(srcY * VK_RT_RenderScaleY());
+    const int rsW = (int)idMath::Ceil(copyW * VK_RT_RenderScaleX());
+    const int rsH = (int)idMath::Ceil(copyH * VK_RT_RenderScaleY());
+    region.srcOffsets[0] = {rsX, rsY, 0};
+    region.srcOffsets[1] = {rsX + rsW, rsY + rsH, 1};
 
     region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.dstSubresource.mipLevel = 0;
@@ -5175,15 +5208,14 @@ void VK_RB_CopyRender(const void *data)
     rpResume.renderPass = vk.hdrRenderPassResume;
     rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
     rpResume.renderArea.offset = {0, 0};
-    rpResume.renderArea.extent = vk.swapchainExtent;
+    rpResume.renderArea.extent = vk.renderExtent;
     rpResume.clearValueCount = 0;
     rpResume.pClearValues = NULL;
     vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
     // Re-apply default viewport/scissor state (negative-height Y flip).
     VkViewport viewport = {
-        0,   (float)vk.swapchainExtent.height, (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height, 0.0f,
-        1.0f};
+        0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
     vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 }
@@ -5222,6 +5254,15 @@ void VK_RB_SwapBuffers()
     D3::ImGuiHooks::RenderVulkan(cmdBuf);
 
     vkCmdEndRenderPass(cmdBuf);
+
+    // Fallback resolve: a frame with no 2D GUI overlay never hit the upscale in
+    // VK_RB_DrawView, so the sub-rect is still unresolved here.  No-op otherwise.
+    if (!s_upscaleDone && VK_RT_UpscaleActive())
+    {
+        VK_SetRenderStage("RT_Upscale");
+        VK_RT_DispatchUpscale(cmdBuf);
+        s_upscaleDone = true;
+    }
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.
@@ -5500,6 +5541,7 @@ void VKimp_PostInit(int width, int height)
         // wires them into the HDR framebuffers — see vk_tonemap.cpp.
         common->Printf("VK: initializing RT tonemapping\n");
         VK_RT_InitTonemap();
+        VK_RT_InitUpscale();
     }
 
     common->Printf("VK: Backend ready\n");

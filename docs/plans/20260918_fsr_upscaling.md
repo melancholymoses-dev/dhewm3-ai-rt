@@ -110,6 +110,7 @@ top-left `renderExtent` sub-rectangle of it.**
   │                               │
   └───────────────────────────────┘
 ```
+Then use another buffer as destination for upscaling before copying back to output.
 
 What this buys:
 

@@ -185,7 +185,7 @@ struct vkShadowMask_t
     uint32_t layers;
 };
 
-// General Image Buffer
+// General Image Buffer for RT
 // Has image, memory, view and sizing.
 struct vkRTImage_t
 {
@@ -195,10 +195,6 @@ struct vkRTImage_t
     uint32_t width;
     uint32_t height;
 };
-
-// Reflection colour buffer: RGBA16F per frame-in-flight slot.
-// Same storage layout as vkRTImage_t; format baked at alloc time.
-typedef vkRTImage_t vkRTImage_t;
 
 // Volumetric froxel grid: a 3D image (20260906_froxel_probe_gi.md Part A).
 // Separate from vkRTImage_t only because it needs a depth extent.
@@ -230,10 +226,9 @@ struct vkRTState_t
 
     // AO image and pipeline
     vkRTImage_t aoMask[VK_MAX_FRAMES_IN_FLIGHT];
-    // A2 (amd_vulkan_cleanup.md): set by VK_RT_DispatchAO only once vkCmdTraceRaysKHR has
-    // been recorded for this slot, cleared before every early-out. The interaction pass
-    // must gate on this rather than on aoMask[].image being non-null — an image can exist
-    // and still hold nothing written this frame.
+    // Set by VK_RT_DispatchAO only once vkCmdTraceRaysKHR is recorded for this slot,
+    // cleared before every early-out.  The interaction pass must gate on this, not on
+    // aoMask[].image: the image can exist and hold nothing written this frame.
     bool aoValid[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler aoMaskSampler; // nearest-clamp, used when sampling AO in the lighting pass
 
@@ -261,22 +256,9 @@ struct vkRTState_t
     VkDescriptorSet blurDescSetV[VK_MAX_FRAMES_IN_FLIGHT]; // vertical pass: blurTemp→shadowMask
     int blurDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // --------------------------------------------------------------------------
-    // Temporal EMA resolve (Step 5.2)
-    //
-    // Single shared history image, NOT one per frame-in-flight slot. The EMA
-    // recurrence (history = mix(history, current, alpha)) is inherently sequential
-    // across frames; giving each of the two in-flight slots its own history meant
-    // each one only updated every other frame, doubling the effective time constant
-    // and the screen-space ghosting under motion (see rt_temporal_cut_detection.md's
-    // sibling doc on cut detection for the related per-pass history discussion).
-    // Safe without per-slot isolation because every frame's RT work goes through one
-    // command buffer submitted to vk.graphicsQueue (vk_backend.cpp), so submission
-    // order already places last frame's write before this frame's read/write;
-    // VK_RT_DispatchTemporalResolveAO issues an explicit barrier for the memory
-    // dependency that ordering alone doesn't cover. aoMask (current) stays per-slot
-    // below — it's freshly written every frame with no cross-frame dependency.
-    // --------------------------------------------------------------------------
+    // SHARED, not per slot: the EMA recurrence is sequential across frames, so a
+    // per-slot history would only update every other frame and double the ghosting.
+    // Safe because all RT work goes through one queue, in submission order.
     vkRTImage_t aoHistory; // accumulated EMA history, R8_UNORM
 
     // Temporal compute pipeline (temporal_resolve.comp)
@@ -297,15 +279,13 @@ struct vkRTState_t
     idVec3 aoPrevCamFwd;
 
     // --------------------------------------------------------------------------
-    // Atrous spatial filter (Step 5.2b)
+    // Ambient Occlusion Atrous spatial filter
     //
     // Ping-pong between aoHistory and aoScratch.  Descriptor set index alternates
     // per pass: [frameIdx][0] reads history → writes scratch (odd pass outputs);
     //           [frameIdx][1] reads scratch → writes history (even pass outputs).
     // aoReadView[i] is updated after each Atrous dispatch to point at whichever
     // image holds the final result.  The backend always samples aoReadView[i].
-    //
-    // Requires r_rtTemporal 1 (EMA must run first to supply a reasonable  input).
     // --------------------------------------------------------------------------
     vkRTImage_t aoScratch[VK_MAX_FRAMES_IN_FLIGHT]; // ping-pong scratch, R8_UNORM, GENERAL
 
@@ -313,15 +293,9 @@ struct vkRTState_t
     VkPipelineLayout atrousPipelineLayout;
     VkDescriptorSetLayout atrousDescLayout;
     VkDescriptorPool atrousDescPool;
-    // [frameIdx][0]: binding0=aoHistory(in), binding1=aoScratch(out), binding2=depth
-    // [frameIdx][1]: binding0=aoScratch(in), binding1=aoHistory(out), binding2=depth
     VkDescriptorSet atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][2];
     int atrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // View sampled by the interaction pass.  Initialised to aoHistory.view at
-    // CreateHistoryImages; updated at end of each DispatchAtrousAO to whichever
-    // image holds the final Atrous output (history if even pass count, scratch if odd).
-    // Falls back to aoHistory.view when Atrous is disabled (r_rtAtrousIterations 0).
     VkImageView aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
@@ -333,7 +307,7 @@ struct vkRTState_t
     VkSampler reflSampler;                           // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
-    // RT Global Illumination (Phase 6.1 — one-bounce, ambient-only)
+    // RT Global Illumination
     //
     // One RGBA16F buffer per frame-in-flight slot.
     // --------------------------------------------------------------------------
@@ -341,11 +315,10 @@ struct vkRTState_t
     VkSampler giSampler;                           // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
-    // GI temporal EMA accumulation (Phase 6.2)
+    // GI temporal EMA accumulation
     //
-    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot — see the
-    //   AO temporal comment above for why. gi_temporal_resolve.comp blends giBuffer
-    //   (raw current frame) into it.
+    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot.
+    //   gi_temporal_resolve.comp blends giBuffer (raw current frame) into it.
     // giReadView: per-slot; updated each frame to point at giHistory when temporal
     //   is active, or giBuffer when r_rtGITemporal is off.  The composite pass
     //   and any future interaction-shader sampling should read from giReadView.
@@ -392,7 +365,7 @@ struct vkRTState_t
     int giAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // GI light list SSBO (Phase 6.1 Option B)
+    // GI light list SSBO
     //
     // One host-visible, persistently-mapped storage buffer per frame-in-flight
     // slot.  Filled each frame from viewDef->viewLights; consumed by
@@ -402,14 +375,11 @@ struct vkRTState_t
     VkDeviceMemory giLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void *giLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Dedicated volumetric light selection (portal_area_lights.md follow-up, 2026-08-22).
+    // Dedicated volumetric light selection
     // Same GILightBuffer layout as giLightSsbo above, but filled with a SEPARATE
     // selection: the same admitted-candidate pool, filtered to lights that can
     // possibly reach within r_rtVolMaxDist of the camera, capped at r_rtVolMaxLights.
-    // Exists so a light GI legitimately wants (e.g. for a bounce far from the
-    // camera) but that can never appear in the fog can't consume a vol light slot
-    // and evict one that actually can. vol_march.comp reads this buffer, not
-    // giLightSsbo.
+    // vol_march.comp reads this buffer, not giLightSsbo.
     VkBuffer volLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory volLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void *volLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
@@ -450,13 +420,9 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR reflHitRegion;
     VkStridedDeviceAddressRegionKHR reflCallRegion;
 
-    // Fullscreen composite pipeline (Step 8, see docs/plans/gbuffer_normal_pass.md) —
-    // additively blends reflBuffer onto the framebuffer once per view, replacing the
-    // disabled per-light reflection block in interaction.frag. Only created when
-    // vk.gbufferSupported (the Fresnel/debug-mode math this replaces lives in
-    // reflect_ray.rgen, which needs gbufNormal). reflCompositeDebugPipeline is the
-    // same shader with blending disabled, selected when r_rtReflectionDebugMode is
-    // 2-7 so the visualization replaces rather than adds onto the lit scene.
+    // Fullscreen composite pipeline
+    // reflCompositeDebugPipeline is used when r_rtReflectionDebugMode is
+    // 2-7 so the visualization replaces the scene (since blend is off).
     VkPipeline reflCompositePipeline;
     VkPipeline reflCompositeDebugPipeline;
     VkPipelineLayout reflCompositeLayout;
@@ -481,9 +447,6 @@ struct vkRTState_t
     //   vtxAddrSSBO   — uint64_t[],        vertex buffer device address per instance
     //   idxAddrSSBO   — uint64_t[],        index  buffer device address per instance
     //
-    // One descriptor set (not per-frame) with a bindless sampler2D array at
-    // binding=3.  All VK_MAT_MAX_TEXTURES slots are initialised to the white
-    // fallback; slots are updated when new diffuse images appear in the scene.
     // --------------------------------------------------------------------------
     VkBuffer matTableSSBO;
     VkDeviceMemory matTableSSBOMemory;
@@ -505,7 +468,7 @@ struct vkRTState_t
     bool matTableInitialized;
 
     // --------------------------------------------------------------------------
-    // Volumetric Lighting (Phase 7.2)
+    // Volumetric Lighting
     //
     // volBuffer: RGBA16F per-slot scatter accumulation image (full resolution).
     //   Written by vol_march.comp (compute + ray queries).
@@ -525,8 +488,8 @@ struct vkRTState_t
     int volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline volCompositePipeline;
-    VkPipeline volCompositeDebugPipeline; // r_rtVolDebugMode >= 1: blend disabled (replace)
-    VkPipeline volCompositeAttenPipeline; // r_rtVolAttenuateBackground 1: dst *= src.a (F6)
+    VkPipeline volCompositeDebugPipeline;
+    VkPipeline volCompositeAttenPipeline;
     VkPipelineLayout volCompositeLayout;
     VkDescriptorSetLayout volCompositeDescLayout;
     VkDescriptorPool volCompositeDescPool;
@@ -534,11 +497,11 @@ struct vkRTState_t
 
     // Volumetric temporal EMA (Phase 7.2 — step 8)
     // volHistory is single shared, not per-slot — see the AO temporal comment above.
-    vkRTImage_t volHistory; // RGBA16F accumulated history
+    vkRTImage_t volHistory;
     bool volHistoryValid;
     idVec3 volPrevCamPos;
     idVec3 volPrevCamFwd;
-    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT]; // → history when on, → volBuffer when off
+    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline volTemporalPipeline;
     VkPipelineLayout volTemporalPipelineLayout;
@@ -547,9 +510,9 @@ struct vkRTState_t
     VkDescriptorSet volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Volumetric bilateral filter (Phase 7.2 — step 10)
+    // Volumetric bilateral filter
     // Reads volHistory (storage image), writes filtered result to volBlurred.
-    // CompositeVolumetrics reads volBlurred when the pass is active.
+    // CompositeVolumetrics reads volBlurred.
     vkRTImage_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
 
     VkPipeline volBilateralPipeline;
@@ -560,19 +523,17 @@ struct vkRTState_t
     int volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // Volumetric froxel grid (20260906_froxel_probe_gi.md Part A)
+    // Volumetric froxel grid
     //
-    // World-space-cached replacement for the per-pixel march, selected by
-    // r_rtVolFroxel.  froxelScatter holds per-cell in-scattering (rgb, per unit
-    // length) + extinction (a); froxelIntegrated (F2) holds the accumulated
-    // camera->cell integral.  Both are per frame-in-flight slot because each is
-    // written and consumed inside the same frame.  The froxel-space EMA history
-    // (F4) will be a SINGLE shared image, not per slot — per-slot history is what
-    // silently halved the AO/GI/Vol update rate before the 2026-09-06 fix.
+    // World-space-cached replacement for the per-pixel march, selected by r_rtVolFroxel.
+    //  froxelScatter holds per-cell in-scattering (rgb, per unit length) + extinction (a);
+    //  froxelIntegrated (F2) holds the accumulated camera->cell integral.
+    // Both are per frame-in-flight slot because each is written and consumed inside
+    // the same frame.  The froxel-space EMA history(F4) will be a SINGLE shared image.
     // --------------------------------------------------------------------------
     vkFroxelGrid_t froxelScatter[VK_MAX_FRAMES_IN_FLIGHT];
     vkFroxelGrid_t froxelIntegrated[VK_MAX_FRAMES_IN_FLIGHT];
-    VkSampler froxelSampler; // trilinear + clamp; the resolve's whole filter story
+    VkSampler froxelSampler; // trilinear + clamp;
 
     VkPipeline froxelFillPipeline;
     VkPipelineLayout froxelFillPipelineLayout;
@@ -598,29 +559,17 @@ struct vkRTState_t
     int froxelResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // GI irradiance probes (20260906_froxel_probe_gi.md Part B)
+    // GI irradiance probes
     //
-    // The two atlases are SINGLE, not per frame-in-flight slot: they are an EMA
-    // accumulator over world-space probes, and per-slot history is what silently
-    // halved the AO/GI/Vol update rate before the 2026-09-06 fix.  The scratch
-    // image is per slot — it holds one frame's rays with no cross-frame meaning,
-    // so per-slot is simply correct there.
+    // The two atlases are SINGLE, so they accumulate over all updates every frame.
+    // The scratch image is per slot — it holds one frame's rays with no cross-frame meaning,
     //
-    // giProbeDescLayout is bound at TWO different set indices: set 2 of the GI
-    // ray-tracing pipeline (for gi_probe_trace.rgen) and set 0 of the blend and
-    // border compute pipelines.  gi_probe_common.glsl declares its contents once
-    // for all of them, keyed on a GIPROBE_SET define.
+    // giProbeDescLayout binds at set 2 in the GI RT pipeline and set 0 in the
+    // blend/border/resolve compute ones; the GLSL side keys on GIPROBE_SET.
     // --------------------------------------------------------------------------
-    // G5b: the irradiance atlas holds 1 + K sets of tiles stacked vertically —
-    // bucket k's tile for probe p is at linear tile index p + k*probeCount, so
-    // nothing about gip_TileOrigin's addressing changes.  The distance atlas is
-    // NOT duplicated: occluder geometry is the same for every bucket.
     vkRTImage_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED, (1+K) buckets tall
     vkRTImage_t giProbeDistance;   // rg16f visibility moments (mean, mean^2), SHARED
-    vkRTImage_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT]; // rgba16f, raysPerProbe x probesPerFrame
-    // rgba16f, not the r11f_g11f_b10f the plan sketched: B10G11R11 storage-image
-    // support is optional in Vulkan and a GLSL format qualifier must match its
-    // view exactly, so a fallback would mean two shader variants. Alpha unused.
+    vkRTImage_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT];     // rgba16f, raysPerProbe x probesPerFrame
     vkRTImage_t giProbeScratchFast[VK_MAX_FRAMES_IN_FLIGHT]; // G5b fast-bucket radiance, rgba16f
     VkSampler giProbeSampler;                                // bilinear-clamp for atlas fetches
 
@@ -629,9 +578,7 @@ struct vkRTState_t
     VkDeviceMemory giProbeStateSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
     void *giProbeStateSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // GPU-owned G4 classification statistics, read back by the CPU.  SHARED, not
-    // per slot: it is an EMA accumulator, and a per-slot copy only ever receives
-    // the GPU's write on alternating frames.
+    // GPU-owned G4 classification statistics, read back by the CPU.
     VkBuffer giProbeStatsSsbo;
     VkDeviceMemory giProbeStatsSsboMemory;
     void *giProbeStatsSsboMapped;
@@ -686,14 +633,23 @@ struct vkRTState_t
     VkDescriptorSet tonemapDescSets[VK_MAX_FRAMES_IN_FLIGHT];
     int tonemapDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
+    // Resolution Upscaler bounce-buffer.
+    // hdrScene (sub-rect) -> hdrUpscaled -> hdrScene (full)
+    vkRTImage_t hdrUpscaled;
+    VkPipeline upscalePipeline;
+    VkPipelineLayout upscalePipelineLayout;
+    VkDescriptorSetLayout upscaleDescLayout;
+    VkDescriptorPool upscaleDescPool;
+    VkDescriptorSet upscaleDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int upscaleDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkSampler upscaleSampler; // linear clamp-to-edge, samples hdrScene
+
     // --------------------------------------------------------------------------
-    // G-buffer normal/F0 image, written by the depth prepass (see
-    // docs/plans/gbuffer_normal_pass.md).  rgb = world-space bump-mapped normal
-    // (× 0.5 + 0.5), a = normalized F0 (0 = "no data, use rt_ReconstructNormal").
-    // Gated on vk.gbufferSupported (requires independentBlend); left all-NULL
-    // when unsupported so the old depth-only path is used instead.
+    // G-buffer normal/F0 image, written by the depth prepass
+    //  rgb = world-space bump-mapped normal (× 0.5 + 0.5),
+    // a = normalized F0 (0 = "no data, use rt_ReconstructNormal").
     // --------------------------------------------------------------------------
-    vkRTImage_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM world normal + F0
+    vkRTImage_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Receiver-albedo G-buffer target (docs/plans/gi_albedo_target.md): diffuse map
     // sample written by the same prepass as gbufNormal (attachment 2). Cleared to
@@ -705,8 +661,7 @@ struct vkRTState_t
     // multiplies the denoised GI radiance by gbufAlbedo into whichever of
     // giAtrousA/B is NOT the current giReadView (always allocated, otherwise
     // idle this frame), then repoints giReadView at it. One descriptor set per
-    // frame slot, rewritten unconditionally every dispatch — unlike
-    // giAtrousDescSets there is no multi-pass reuse to cache against, since this
+    // frame slot, rewritten unconditionally every dispatch, since this
     // pass runs exactly once per frame.
     VkPipeline giAlbedoModPipeline;
     VkPipelineLayout giAlbedoModPipelineLayout;
@@ -714,9 +669,7 @@ struct vkRTState_t
     VkDescriptorPool giAlbedoModDescPool;
     VkDescriptorSet giAlbedoModDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // P6 (rt_optimization_tuning.md): true when any VK_MAT_FLAG_GLASS geometry is in
-    // this frame's TLAS. Lets the reflection rgen skip the per-pixel glass probe ray
-    // in glass-free scenes. Recomputed each TLAS build in vk_accelstruct.cpp.
+    // Recomputed each TLAS build in vk_accelstruct.cpp.
     bool sceneHasGlass;
 
     bool isInitialized;
