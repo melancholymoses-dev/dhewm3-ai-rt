@@ -70,10 +70,9 @@ Reasons, in order of weight:
 
 | Option | Verdict |
 |---|---|
-| **FSR 1** (`ffx_a.h` + `ffx_fsr1.h`, EASU + RCAS) | **Keep as a fallback, do not make it the goal.** Two MIT headers that compile under `glslc` as GLSL with `#define A_GLSL 1` — genuinely zero new build dependencies, which is why it is tempting. But it is a spatial filter that assumes a *clean, anti-aliased, perceptual-space* input, and this engine supplies the opposite: no AA at all, plus a stochastic RT noise floor. EASU will sharpen the aliasing and RCAS will sharpen the noise. Worth having behind `r_fsr 1` as an escape hatch (driver problems, a platform where the FSR2 backend misbehaves, a card where FSR2's internal resources don't fit), not worth tuning. |
-| **FidelityFX SDK / FSR 3.1 upscaler** (`ffx_api`, `ffxCreateContext`/`ffxDispatch`) | **The upgrade path, not the starting point.** Better image quality than 2.2.1 and a stable ABI, and its dispatch inputs are a *superset* of FSR2's — same colour/depth/MV/exposure/reactive set — so a later port is largely renaming, which is exactly why FSR2 first is cheap rather than wasted. Deferred because the SDK's build is structured around a Windows/DX12 sample framework and an `ffx_api` loader, and untangling a Linux-clean Vulkan-only build of it is unbounded work to do *before* we know our motion vectors are correct. Revisit at U5, once U3 has proven the plumbing. |
-| **FSR 4** | **Out of scope.** ML-based, RDNA4-gated, and distributed as a binary rather than buildable source. Fails the cross-vendor requirement and the redistribution requirement at the same time. |
-| DLSS / XeSS | Out of scope — vendor-locked, and DLSS's SDK terms are not GPL-compatible for redistribution. If they are ever wanted, U2's motion-vector and jitter work is the shared prerequisite and is deliberately written to be upscaler-agnostic. |
+| **FSR 1** (`ffx_a.h` + `ffx_fsr1.h`, EASU + RCAS) | **Keep as a fallback, do not make it the goal.**  It is a spatial filter that assumes a *clean, anti-aliased, perceptual-space* input, and this engine supplies the opposite: no AA at all, plus a stochastic RT noise floor. EASU will sharpen the aliasing and RCAS will sharpen the noise. Worth having behind `r_fsr 1` as an escape hatch (driver problems, a platform where the FSR2 backend misbehaves, a card where FSR2's internal resources don't fit), not worth tuning. |
+| **FidelityFX SDK / FSR 3.1 upscaler** (`ffx_api`, `ffxCreateContext`/`ffxDispatch`) | **The upgrade path, not the starting point.** Better image quality than 2.2.1 and a stable ABI, and its dispatch inputs are a *superset* of FSR2's — same colour/depth/MV/exposure/reactive set — so a later port is largely renaming. Deferred because the SDK's build is structured around a Windows/DX12 sample framework and an `ffx_api` loader, and untangling a Linux-clean Vulkan-only build of it is a hassle. Revisit at U5, once U3 has proven the plumbing. |
+| FSR 4 / DLSS / XeSS | Vendor locked.  |
 
 ### Before writing any code
 
@@ -131,10 +130,7 @@ What this buys:
 
 What it costs:
 
-- VRAM is sized for display resolution even though only part is used. Since that is today's
-  footprint, it is a non-regression rather than a saving. (The alternative layout would
-  have *saved* memory; we are trading that for not touching the pipeline cache. Correct
-  trade.)
+- VRAM is sized for display resolution even though only part is used. This does not touch the pipeline cache. 
 - Every display-space → Vulkan-space rect conversion must now scale *and* flip Y against
   the render height rather than the swapchain height. Concentrated in two helpers (§4).
 
@@ -505,8 +501,7 @@ once at context creation to the top of the band; per-frame `renderSize` varies. 
 practicalities that are always learned the hard way: **quantise the scale to steps** (~5 %)
 and **rate-limit changes**, because a temporal upscaler's history is mildly invalidated
 every time the sample grid moves, and a controller that hunts produces visible breathing.
-Deferred to U5; the architecture already supports it because we allocate at display
-resolution and render into a varying sub-rect.
+Deferred to U5.
 
 **Rounding, for this engine specifically.** Every screen-space compute pass here is
 `local_size 8×8` (`atrous_filter`, `gi_atrous`, `gi_probe_resolve`, `temporal_resolve`,
@@ -520,7 +515,7 @@ break U0's cheapest regression test — that `r_fsrRenderScale 1.0` is bit-ident
 One cosmetic note, so nobody "fixes" it later: per-axis rounding makes the render aspect
 differ from the display aspect by a fraction of a pixel (1920/1.7 = 1129.4, 1080/1.7 =
 635.3 → 1129×635, an aspect of 1.7780 against 1.7778). This is what every implementation
-does and the error is far below a pixel. Do **not** try to correct it by adjusting the
+does and the error is far below a pixel. Do **not** correct it by adjusting the
 projection — that would make the render and display frusta disagree, which is a real bug
 in exchange for an imaginary one.
 
