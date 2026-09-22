@@ -62,7 +62,7 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
         // First VK_MAX_FRAMES_IN_FLIGHT slots: gbufNormal; then gbufAlbedo.
         const bool isAlbedo = slot >= VK_MAX_FRAMES_IN_FLIGHT;
         const int i = slot % VK_MAX_FRAMES_IN_FLIGHT;
-        vkReflBuffer_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
+        vkRTImage_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
         gb.width = width;
         gb.height = height;
 
@@ -152,8 +152,9 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GBuffer: allocated %dx%d R8G8B8A8_UNORM normal/F0 + albedo images (%d frames in flight)\n",
-                       width, height, VK_MAX_FRAMES_IN_FLIGHT);
+        common->Printf(
+            "VK RT GBuffer: allocated %dx%d R8G8B8A8_UNORM normal/F0 + albedo images (%d frames in flight)\n", width,
+            height, VK_MAX_FRAMES_IN_FLIGHT);
 }
 
 static void VK_RT_DestroyGBufferImages(void)
@@ -162,7 +163,7 @@ static void VK_RT_DestroyGBufferImages(void)
     {
         const bool isAlbedo = slot >= VK_MAX_FRAMES_IN_FLIGHT;
         const int i = slot % VK_MAX_FRAMES_IN_FLIGHT;
-        vkReflBuffer_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
+        vkRTImage_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
         if (gb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, gb.view, NULL);

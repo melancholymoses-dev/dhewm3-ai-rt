@@ -2196,9 +2196,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
         // halos, particles, or other MC_TRANSLUCENT surfaces.
         if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
-            r_rtReflections.GetBool() &&
-            vk.rayTracingSupported && vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
-            vkRT.reflSampler != VK_NULL_HANDLE && vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+            r_rtReflections.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
+            vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
+            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
         {
             if (numPendingGlass < 256)
             {
@@ -4624,7 +4624,7 @@ void VK_RB_DrawView(const void *data)
         // modulate pass at the end of the RT block needs it in SHADER_READ_ONLY too.
         if (vk.gbufferSupported)
         {
-            vkReflBuffer_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
+            vkRTImage_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
             VkImageMemoryBarrier gbufToRead[2] = {};
             for (int gi = 0; gi < 2; gi++)
             {
@@ -4873,7 +4873,7 @@ void VK_RB_DrawView(const void *data)
         // that, matching the depth-barrier round-trip symmetry.
         if (vk.gbufferSupported)
         {
-            vkReflBuffer_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
+            vkRTImage_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
             VkImageMemoryBarrier gbufToAttach[2] = {};
             for (int gi = 0; gi < 2; gi++)
             {

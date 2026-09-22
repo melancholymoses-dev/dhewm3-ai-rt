@@ -2190,7 +2190,7 @@ void VK_RT_Shutdown(void)
     // AO mask images
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
+        vkRTImage_t &ao = vkRT.aoMask[i];
         if (ao.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, ao.view, NULL);

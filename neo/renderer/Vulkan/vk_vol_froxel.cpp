@@ -526,7 +526,7 @@ static bool VK_RT_BuildFroxelParams(const viewDef_t *viewDef, const vkFroxelGrid
     // screen.xy = full res (depth fetch / NDC), screen.zw = the volBuffer the
     // resolve writes. In froxel mode that is full res too — VK_RT_VolRequestedScale
     // forces r_rtVolHalfRes off, because the resolve is a single trilinear fetch.
-    const vkReflBuffer_t &vb = vkRT.volBuffer[vk.currentFrame];
+    const vkRTImage_t &vb = vkRT.volBuffer[vk.currentFrame];
     ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
     ubo.screen[1] = (int32_t)vk.swapchainExtent.height;
     ubo.screen[2] = (int32_t)Max(1u, vb.width);
@@ -1411,7 +1411,7 @@ void VK_RT_DispatchVolFroxelResolve(VkCommandBuffer cmd, const viewDef_t *viewDe
 
     vkFroxelGrid_t &grid = vkRT.froxelScatter[frameIdx];
     vkFroxelGrid_t &integrated = vkRT.froxelIntegrated[frameIdx];
-    vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
+    vkRTImage_t &vb = vkRT.volBuffer[frameIdx];
     if (grid.image == VK_NULL_HANDLE || integrated.image == VK_NULL_HANDLE || vb.image == VK_NULL_HANDLE)
         return;
 

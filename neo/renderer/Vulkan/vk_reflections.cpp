@@ -343,7 +343,7 @@ static void VK_RT_CreateReflImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &rb = vkRT.reflBuffer[i];
+        vkRTImage_t &rb = vkRT.reflBuffer[i];
         rb.width = width;
         rb.height = height;
 
@@ -466,7 +466,7 @@ static void VK_RT_DestroyReflImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &rb = vkRT.reflBuffer[i];
+        vkRTImage_t &rb = vkRT.reflBuffer[i];
         if (rb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, rb.view, NULL);
@@ -1074,7 +1074,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     s_lastReflDispatchFrame[frameIdx] = tr.frameCount;
 
-    vkReflBuffer_t &rb = vkRT.reflBuffer[frameIdx];
+    vkRTImage_t &rb = vkRT.reflBuffer[frameIdx];
     if (rb.image == VK_NULL_HANDLE)
     {
         common->Printf("VK RT Refl: skip — reflBuffer[%d] image is NULL\n", frameIdx);
@@ -1530,7 +1530,7 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
         return;
 
     const int frameIdx = vk.currentFrame;
-    vkReflBuffer_t &rb = vkRT.reflBuffer[frameIdx];
+    vkRTImage_t &rb = vkRT.reflBuffer[frameIdx];
     if (rb.image == VK_NULL_HANDLE || vkRT.reflSampler == VK_NULL_HANDLE)
         return;
 

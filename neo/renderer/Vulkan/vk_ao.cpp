@@ -119,7 +119,7 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
+        vkRTImage_t &ao = vkRT.aoMask[i];
         ao.width = width;
         ao.height = height;
 
@@ -246,7 +246,7 @@ static void VK_RT_DestroyAOMaskImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
+        vkRTImage_t &ao = vkRT.aoMask[i];
         if (ao.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, ao.view, NULL);
@@ -593,7 +593,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     }
 
-    vkAOMask_t &ao = vkRT.aoMask[frameIdx];
+    vkRTImage_t &ao = vkRT.aoMask[frameIdx];
 
     // Same shape as the TLAS guard above: unconditional early-out, gated log.
     if (ao.image == VK_NULL_HANDLE)
