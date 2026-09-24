@@ -339,6 +339,19 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE,
     VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
+
+    // Everything above is ray tracing and sums into the reported `total=`.
+    // Everything below is the rest of the frame and sums into `raster=`.
+    // Keep the split: `total=` is the number every recorded RT budget is quoted
+    // against, and folding raster into it would silently invalidate all of them.
+    VK_RTPROF_PHASE_RT_COUNT,
+
+    VK_RTPROF_PHASE_DEPTH_PREPASS = VK_RTPROF_PHASE_RT_COUNT,
+    VK_RTPROF_PHASE_INTERACTIONS,
+    VK_RTPROF_PHASE_SHADER_PASSES,
+    VK_RTPROF_PHASE_FOG_LIGHTS,
+    VK_RTPROF_PHASE_UPSCALE,
+    VK_RTPROF_PHASE_TONEMAP,
     VK_RTPROF_PHASE_COUNT
 };
 
@@ -404,6 +417,18 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "FroxelResolve";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
+    case VK_RTPROF_PHASE_DEPTH_PREPASS:
+        return "DepthPrepass";
+    case VK_RTPROF_PHASE_INTERACTIONS:
+        return "Interactions";
+    case VK_RTPROF_PHASE_SHADER_PASSES:
+        return "ShaderPasses";
+    case VK_RTPROF_PHASE_FOG_LIGHTS:
+        return "FogLights";
+    case VK_RTPROF_PHASE_UPSCALE:
+        return "Upscale";
+    case VK_RTPROF_PHASE_TONEMAP:
+        return "Tonemap";
     default:
         return "Unknown";
     }
@@ -598,13 +623,15 @@ static void VK_RTProfile_CollectAndLog(int slot)
     const int logEvery = Max(1, r_vkRTProfileLogEvery.GetInteger());
     if (mode >= 2 || (recordedFrame % logEvery) == 0)
     {
-        double totalMs = 0.0;
-        double totalCPUMs = 0.0;
+        // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
+        double totalMs = 0.0, rasterMs = 0.0;
+        double totalCPUMs = 0.0, rasterCPUMs = 0.0;
         for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
         {
-            totalMs += phaseMs[p];
+            const bool isRT = (p < VK_RTPROF_PHASE_RT_COUNT);
+            (isRT ? totalMs : rasterMs) += phaseMs[p];
             if (haveCPU)
-                totalCPUMs += s_rtProfCPUMs[slot][p];
+                (isRT ? totalCPUMs : rasterCPUMs) += s_rtProfCPUMs[slot][p];
         }
 
         // Enumerate the phases rather than hand-listing them: the old fixed format
@@ -620,8 +647,10 @@ static void VK_RTProfile_CollectAndLog(int slot)
                 cpuLine += va(" %s=%.3f", name, s_rtProfCPUMs[slot][p]);
         }
 
-        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f%s) CPU(total=%.3f%s) events=%u\n", recordedFrame,
-                       slot, totalMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0, cpuLine.c_str(), eventCount);
+        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f raster=%.3f%s) CPU(total=%.3f raster=%.3f%s) "
+                       "events=%u\n",
+                       recordedFrame, slot, totalMs, rasterMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0,
+                       haveCPU ? rasterCPUMs : 0.0, cpuLine.c_str(), eventCount);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -4579,7 +4608,11 @@ void VK_RB_DrawView(const void *data)
         {
             vkCmdEndRenderPass(s_frameCmdBuf);
             VK_SetRenderStage("RT_Upscale");
+            const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
+            int profUp = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_UPSCALE);
             VK_RT_DispatchUpscale(s_frameCmdBuf);
+            VK_RTProfile_PhaseEnd(s_frameCmdBuf, profUp);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
             s_upscaleDone = true;
 
             VkRenderPassBeginInfo rpResume = {};
@@ -4694,7 +4727,13 @@ void VK_RB_DrawView(const void *data)
     //   5. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
     VK_SetRenderStage("DepthPrepass");
     if (!r_skipDepthPrepass.GetBool())
+    {
+        const uint64_t cpuDepthStart = VK_RTProfile_CPUStamp();
+        int profDepth = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_DEPTH_PREPASS);
         VK_RB_FillDepthBuffer(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profDepth);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_DEPTH_PREPASS, cpuDepthStart);
+    }
 
     // Rebuild TLAS after the depth prepass so that depth values are populated before any
     // RT dispatch (shadow batch, AO, reflections, GI) reads from them.
@@ -5060,7 +5099,13 @@ void VK_RB_DrawView(const void *data)
 
     VK_SetRenderStage("Interactions");
     if (!r_skipInteractions.GetBool())
+    {
+        const uint64_t cpuInterStart = VK_RTProfile_CPUStamp();
+        int profInter = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_INTERACTIONS);
         VK_RB_DrawInteractions(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profInter);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_INTERACTIONS, cpuInterStart);
+    }
 
     const int splitMask = VK_GetEffectiveSplitSubmitMask();
     if ((splitMask & 2) != 0)
@@ -5077,7 +5122,13 @@ void VK_RB_DrawView(const void *data)
 
     VK_SetRenderStage("ShaderPasses");
     if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
+    {
+        const uint64_t cpuShaderStart = VK_RTProfile_CPUStamp();
+        int profShader = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_SHADER_PASSES);
         VK_RB_DrawShaderPasses(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profShader);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADER_PASSES, cpuShaderStart);
+    }
 
     if ((splitMask & 4) != 0)
     {
@@ -5117,7 +5168,13 @@ void VK_RB_DrawView(const void *data)
 
     VK_SetRenderStage("FogLights");
     if (!r_skipFogLights.GetBool())
+    {
+        const uint64_t cpuFogStart = VK_RTProfile_CPUStamp();
+        int profFog = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_FOG_LIGHTS);
         VK_RB_FogAllLights(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profFog);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_FOG_LIGHTS, cpuFogStart);
+    }
 
     if ((splitMask & 8) != 0)
     {
@@ -5340,14 +5397,24 @@ void VK_RB_SwapBuffers()
             common->Printf("VK FSR VIEW: resolve ran in the SwapBuffers FALLBACK — no GUI overlay view was seen, "
                            "so the UI (if any) drew at render resolution\n");
         VK_SetRenderStage("RT_Upscale");
+        const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
+        int profUp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_UPSCALE);
         VK_RT_DispatchUpscale(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profUp);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
         s_upscaleDone = true;
     }
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.
     VK_SetRenderStage("RT_Tonemap");
-    VK_RT_DispatchTonemap(cmdBuf);
+    {
+        const uint64_t cpuTmStart = VK_RTProfile_CPUStamp();
+        int profTm = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_TONEMAP);
+        VK_RT_DispatchTonemap(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profTm);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_TONEMAP, cpuTmStart);
+    }
 
     // If a screenshot readback was requested, copy the swapchain image to the
     // staging buffer before presenting.  The image is in PRESENT_SRC_KHR after

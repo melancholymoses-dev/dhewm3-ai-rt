@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-19 · **Next work: T4-T6 constants retune**, then arc 3 (FSR).
+**Status reviewed:** 2026-09-23 · **Next work: arc 3 (FSR), U1 onward.**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
@@ -30,39 +30,39 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | # | Item | Doc | Status |
 |---|---|---|---|
 | 1 | **Reflection gating rework** — glass-only instead of a flat per-pixel rate over the whole screen | `completed/20260911_reflection_gating.md` | ✅ Closed 2026-09-18 |
-| 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol are over-**bright**; handed to the retune) |
+| 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol were over-**bright**; settled in tuning) |
 | 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
-| 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms. **Retune owed → T4-T6** |
-| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🔴 **Not started, design only.** SDK: standalone FidelityFX-FSR2 2.2.1, Vulkan backend, MIT. **Unblocked** — see sequencing below |
+| 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
+| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🟡 **U0 landed 2026-09-23** — render-resolution decoupling + bilinear resolve, `r_fsrRenderScale`. No third-party code yet. U1-U5 not started; SDK choice unchanged (FidelityFX-FSR2 2.2.1, Vulkan, MIT). Open: mirror/subview dispatch rects, glass rect, RT-total measurement — see §4 Outstanding |
 
-- Have retuned constants and selected a default for moving forwards 
-(raster fallout, reach=1.)
-
-### Sequencing — FSR goes after the T4-T6 retune, and nothing further back
-
-Two of the three reasons FSR went last have expired: arc 1 is closed (so it is no longer
-debugging glass underneath a reconstruction filter), and G6 kept the per-pixel path rather
-than retiring it (so U4's denoiser retune is not tuning something scheduled for demolition,
-merely something no longer default).
-
-What still holds is pillar 6. GI/vol are being tuned right now; adding sub-pixel jitter and
-a reconstruction filter underneath a live tuning loop destroys the ability to attribute a
-change. Land the constants first.
-
-The **U0-before-G6 exception is withdrawn** — it assumed G6 was a cost decision that render
-scale would tilt. G6 was decided on appearance, so U0 can go wherever it fits.
+- Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
+- U0 gated the screen-space composites on `hasRealCamera` — they had been running twice
+  per frame (3D view + 2D GUI overlay view), doubling the GI/refl/vol contribution. Noted
+  because it shifted the baseline the current constants sit on.
 
 ### Measured RT budget
 
-`r_vkRTProfile 1`, Mars City, median GPU ms per phase.
+`r_vkRTProfile 1`, Mars City, median GPU ms per phase. **RTX 4070 Ti Super, 2560×1440.**
 
-| | GI | Refl | Vol | AO | denoise | TLAS | **total** |
+| | GI | Refl | Vol | AO | Shadows | TLAS | **total** |
 |---|---|---|---|---|---|---|---|
-| 2026-09-11 (pre-arc-1/2) | 4.41 | 3.24 | 1.53 | 1.17 | ~0.65 | 0.15 | **11.93** |
-| 2026-09-19 (arc 2 closed) | ~1.3 | ~0.8 | 0.29 | 1.9 | ~0.05 | 0.12 | **~7-8** |
+| 2026-09-11 (pre-arc-1/2) | 4.41 | 3.24 | 1.53 | 1.17 | — | 0.15 | **11.93** |
+| 2026-09-19 (arc 2 closed) | ~1.3 | ~0.8 | 0.29 | 1.9 | — | 0.12 | **~7-8** |
+| 2026-09-23 MC2, scale 1.00 | 1.29 | ~0 | 0.52 | 1.27 | 1.80 | 0.17 | **5.05** |
+| 2026-09-23 MC2, scale 0.67 | 0.54 | ~0 | 0.37 | 0.49 | 0.68 | 0.14 | **2.22** |
 
-AO and Shadows are now the two largest costs. Every remaining pass is
-screen-resolution, which is arc 3's whole argument.
+Shadows and AO are the two largest costs. **Not every remaining pass is
+screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS, probe trace/blend, froxel
+fill/integrate) that render scale cannot touch, so 0.50 saves only 0.1 ms more than 0.67.
+See `20260918_fsr_upscaling.md` §12.
+
+**Raster is uninstrumented** — the profiler covers RT phases only, and these runs were
+vsync-locked at 60, so the raster share of the frame is unknown. Wrapping the depth
+prepass / interaction loop / shader passes in profiler phases is the next measurement.
+
+**These are all from the fast card.** The 9070 XT runs the same content near 30 fps with
+dips into the teens; nothing above has been re-measured there, and it is the hardware the
+arc exists for.
 
 ### Engine-wide rules
 
@@ -89,7 +89,7 @@ Each of these cost a debugging session. They apply to any new RT code.
   lit-vs-unlit contrast goes *up*. Per-class radiance gains carry punch (6:1 point:directed in play); 
 - **Do not "fix" RT direct lighting being half the raster path's.** True at the source
   (`r_lightScale` = 2 is not applied to the RT upload), but the downstream gains overshot
-  it — GI and vol read *over*-bright. This belongs to the T4-T6 retune, not a plumbing fix.
+  it — GI and vol read *over*-bright. This was a tuning matter, not a plumbing fix.
 - **The tonemap toe has two regimes.** At `r_rtTonemapToe 2.7` slope is <0.33 below
   luminance 0.07 but *exceeds 1.0* between 0.12 and 0.3. Evaluate the whole curve before
   blaming tonemapping.

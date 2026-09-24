@@ -1,6 +1,6 @@
 # FSR upscaling for dhewm3-rt
 
-**Status:** Not started — design only.
+**Status:** U0 landed 2026-09-23 (bilinear resolve, `r_fsrRenderScale`). U1-U5 not started.
 **Written:** 2026-09-18
 **Owns:** render-resolution decoupling, AMD FidelityFX Super Resolution integration,
 motion vectors, jitter, and the licensing paperwork that comes with vendored code.
@@ -9,22 +9,25 @@ motion vectors, jitter, and the licensing paperwork that comes with vendored cod
 
 ## Thesis
 
-Every RT pass in this engine is screen-resolution. The 2026-09-11 Mars City budget is
-**11.93 ms of RT at the window's native resolution**, and that number is a pure function
-of pixel count — GI 4.41, reflections 3.24 (pre-gating), vol 1.53, AO 1.17, denoise ~0.65.
-Nothing in that list is geometry-bound or draw-call-bound.
+Decoupling render resolution from display resolution is worth more in an RT renderer than
+in a raster game, because most RT cost is a pure function of pixel count.
 
-So decoupling render resolution from display resolution is worth more here than it is in
-a raster game. At FSR *Quality* (1.5× linear, 44 % of the pixels) the same scene costs
-**≈ 5.3 ms of RT instead of 11.93** — a 6.6 ms saving before the raster passes are counted,
-against an upscaler cost of roughly 1.0–1.5 ms at 1080p output. That is a bigger win than
-any individual optimisation left in `rt_optimization_tuning.md`.
+**The perf win comes from the resolution split, not from FSR.** FSR is what stops the
+split from looking bad. U0 delivers the performance with a bilinear blit and no
+third-party code; U1-U4 buy the image quality back.
 
-The corollary, and the reason this doc is structured the way it is: **the perf win comes
-from the resolution split, not from FSR.** FSR is what stops the split from looking bad.
-Stage U0 delivers the entire performance benefit with a bilinear blit and no third-party
-code at all; U1–U4 buy the image quality back. Sequence the work so the win lands first
-and is measurable on its own.
+### As originally argued (2026-09-18, now stale)
+
+The 2026-09-11 budget was 11.93 ms of RT, all of it pixel-bound — GI 4.41, reflections
+3.24 pre-gating, vol 1.53, AO 1.17, denoise ~0.65 — projecting ≈ 5.3 ms at Quality, a
+6.6 ms saving.
+
+### As measured (2026-09-23, U0 shipped)
+
+Arc 2 invalidated that projection before U0 landed: the froxel grid and the GI probes moved
+most of the vol and GI work into world-space caches that do not know what resolution they
+are feeding. **See §Thesis-measured below and §12.** The saving is real but about half what
+was argued, and Performance-class scales are now nearly pointless on the RT side.
 
 ---
 
@@ -223,9 +226,55 @@ Vendored third party:
 
 ## 4. The resolution-decoupling change list
 
-This is the bulk of the engineering, and it is all in U0. `vk.swapchainExtent` currently
-means two different things — "the size of the thing we present" and "the size of the thing
-we render" — and every use site has to be sorted into one bucket or the other.
+This is the bulk of the engineering, and it is all in U0. Landed 2026-09-23.
+
+### The rule (this is the part that bites)
+
+A screen dimension in this renderer means one of **three** things, and they do not agree
+once render and display resolution split. Every RT buffer stays display-sized and is
+written identity-mapped into the top-left sub-rect, which is what makes case 2 read
+"wrong" to intuition.
+
+| Use | Value | Sites |
+|---|---|---|
+| 1. NDC denominator for depth→world reconstruction | `renderExtent` | `params.screenSize` in the four rgens; `vol_march`, `gi_probe_resolve`, `vol_froxel_resolve` `screen.xy` |
+| 2. `gl_FragCoord` → normalized UV into a display-sized RT buffer | **`swapchainExtent`** | interaction `screenSize` (shadow+AO UV), glass overlay `texGenS`, `vol_composite` `invScreenSize` |
+| 3. Write/dispatch bounds | `renderExtent` | dispatch rects, `gi_atrous`/`gi_albedo_mod` `screenWidth` |
+
+Case 2 is the counter-intuitive one: the divisor must be the *texture's* size, not the
+render size, or the mask is magnified by `1/renderScale`. `gi_composite` and
+`refl_composite` are immune because they use `textureSize()` / `texelFetch`.
+
+### Viewport / renderArea: one accessor, no exceptions
+
+`VK_CurrentDrawExtent()` (`vk_backend.cpp`) returns `renderExtent` before the resolve and
+`swapchainExtent` after; `VK_ScaleToDrawSpace()` does the same for screen rects. All 8
+viewport sites and all 5 `renderArea` sites go through them. One site that forgets —
+the RT block's resume, which runs for the 2D overlay view too — squeezed the UI, ImGui
+and the GI composite back into the sub-rect.
+
+The screen-space composites are now gated on the existing `hasRealCamera`, same as the RT
+dispatches. They were running a second time on the 2D overlay view, which at native
+silently doubled GI/refl/vol and under FSR stamped an un-upscaled GI buffer into the
+top-left corner.
+
+### Outstanding (deferred out of U0)
+
+| Item | Effect |
+|---|---|
+| RT dispatch rects (`vk_ao`/`vk_gi`/`vk_temporal`/`vk_vol`/`vk_gi_probe`/`vk_vol_froxel`) read `viewDef->scissor` unscaled and only clamp to `renderExtent` | Correct for the full-screen view by accident; wrong for mirrors and subviews |
+| `VK_RT_GlassScreenRect` (`vk_reflections.cpp`) is entirely display-space | `r_rtReflectionMode 1` traces the wrong rect — §11's "reflections silently vanish" |
+| `hdrUpscaled` is one shared image across frames in flight | WAR hazard: frame N's copy vs frame N+1's dispatch, no barrier between them |
+| No temporal-history reset on a `renderExtent` change | A few frames of wrongly-scaled GI/AO/vol history after a scale change |
+| `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` are not in `Dhewm3SettingsMenu.cpp` | Required by CLAUDE.md for quality-affecting cvars |
+| `r_fsr` is declared but never read | U1/U3 will need it |
+
+---
+
+### Original site inventory (kept for reference)
+
+`vk.swapchainExtent` meant two different things — "the size of the thing we present" and
+"the size of the thing we render" — and every use site had to be sorted into one bucket.
 
 Add to `vk_common.h`:
 
@@ -432,27 +481,29 @@ downward if FSR2's history proves to be doing the job already.
 
 ## 7. Debug overlays (pillar 6 — these ship first, in their own chunk)
 
-| `r_fsrDebug` | Shows |
-|---|---|
-| `1` | Outline of the render sub-rect plus a text readout of `renderExtent`, scale, quality mode, and the jitter offset in pixels. The cheapest way to catch a scissor-scaling mistake. |
-| `2` | Motion vectors: `rg = mv * scale + 0.5` (green = static, red/blue = ±x, bright/dark = ±y) plus a magnitude heat ramp. **Pan the camera and confirm the whole screen shifts uniformly; strafe past a door and confirm the door differs from the wall.** A wrong sign looks identical to a correct one until you test both axes. |
-| `3` | Reactive mask and transparency-and-composition mask, side by side. |
-| `4` | Render at reduced resolution but *point-magnify* instead of upscaling — the honest "what did the resolution actually cost" A/B, with no reconstruction hiding it. |
-| `5` | Upscaler input/output luminance histogram difference, for the pillar-2 black-level check. |
+| `r_fsrDebug` | Shows | State |
+|---|---|---|
+| `1` | Green border (the resolve ran and covers the display extent) + magenta on any tap clamped off the sub-rect. | ✅ U0 |
+| `2` | **Taken by U0**: per-view console log — which view, `upscaleDone`, viewport, scissor, subview/mirror flags. Caught the GUI-first frame and the render-extent leak. U2's motion-vector overlay needs a different number. | ✅ U0 |
+| `3` | Reactive mask and transparency-and-composition mask, side by side. | U4 |
+| `4` | Render at reduced resolution but *point-magnify* instead of upscaling — the honest "what did the resolution actually cost" A/B. | ✅ U0 |
+| `5` | Upscaler input/output luminance histogram difference, for the pillar-2 black-level check. | U3 |
 
 ---
 
 ## 8. CVars
 
-| CVar | Default | Meaning |
-|---|---|---|
-| `r_fsr` | `0` | `0` = off (native), `1` = FSR 1 spatial (EASU+RCAS), `2` = FSR 2 temporal. Archived. |
-| `r_fsrQuality` | `1` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). Archived. |
-| `r_fsrRenderScale` | `0.67` | Explicit linear scale when `r_fsrQuality 0`. Clamped `[0.33, 1.0]`, snapped to an even pixel count. |
-| `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`; feeds `enableSharpening`/`sharpness` on the FSR2 path. |
-| `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. |
-| `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. |
-| `r_fsrDebug` | `0` | §7. |
+Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
+
+| CVar | Default | Meaning | State |
+|---|---|---|---|
+| `r_fsr` | `0` | `0` = off (native), `1` = FSR 1 spatial (EASU+RCAS), `2` = FSR 2 temporal. Declared but not yet read. | U1/U3 |
+| `r_fsrRenderScale` | `1.0` | Explicit linear scale. Clamped low at `0.3`; snapped to a multiple of 8 with a 64px floor, except at exactly 1.0 which passes the display extent through. | ✅ U0 |
+| `r_fsrDebug` | `0` | §7. | ✅ U0 |
+| `r_fsrQuality` | `1` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). | U3 |
+| `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`; feeds `enableSharpening`/`sharpness` on the FSR2 path. | U3 |
+| `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
+| `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. | U5 |
 
 Changing `r_fsr`, `r_fsrQuality` or `r_fsrRenderScale` requires a device-idle resource
 rebuild — route them through the same path `VK_RT_ResizeTonemap` already uses and treat
@@ -524,26 +575,24 @@ in exchange for an imaginary one.
 
 ## 9. Chunks
 
-### U0 — resolution decoupling + bilinear resolve  🔴
-No third-party code. Add `vk_upscale.h/.cpp`, `vk.renderExtent`, `upscale_blit.comp`, and
-work the §4 change list. `r_fsr 0` with `r_fsrRenderScale < 1` renders the 3D scene into the
-sub-rect, bilinear-resolves it into `hdrUpscaled`, copies back into `hdrScene`, and lets the
-UI draw on top at full resolution. `r_fsrDebug 1` and `4` ship here.
+### U0 — resolution decoupling + bilinear resolve  🟡 landed 2026-09-23
+No third-party code. `vk_upscale.h/.cpp`, `vk.renderExtent`, `upscale_blit.comp`, §4's rule.
+`r_fsrRenderScale < 1` renders the 3D scene into the sub-rect, bilinear-resolves it into
+`hdrUpscaled`, copies back into `hdrScene`, and lets the UI draw on top at full resolution.
+`r_fsrDebug 1`, `2` and `4` ship here.
 
-- **Exit:** at `r_fsrRenderScale 0.67` on the Mars City test scene, `r_vkRTProfile 1` shows
-  RT total drop from ~11.9 ms to **≈ 5.5 ms ± 0.5** (the measurement that justifies the
-  whole arc); HUD, PDA and main menu pixel-identical to native; no validation errors;
-  shadows, AO, GI, reflections and volumetrics all land in the right place at `0.5`, `0.67`
-  and `1.0` — three scales, because an off-by-one in the scissor conversion can be
-  invisible at one of them. Mirrors and security-camera subviews correct.
-  `r_rtReflectionMode 1` still finds and traces glass.
-- **This chunk is independently shippable and delivers the entire performance win.**
-- **Sequencing:** the rest of this arc waits for arcs 1b and 2, but **U0 should land just
-  before `20260906_froxel_probe_gi.md`'s G6**. G6 decides whether to retire per-pixel GI on
-  a cost/quality trade, and U0 cuts the two candidates' costs *unevenly* — per-pixel GI is
-  entirely screen-resolution work (4.41 → ~1.95 ms at 0.67), while the probe trace is
-  probe-count-bound and barely moves. Deciding at full resolution and then halving the cost
-  side risks deciding G6 twice. See ROADMAP's sequencing note.
+- **Met:** scene, shadows, AO, GI, reflections and volumetrics land correctly and fill the
+  frame at `0.3`, `0.5`, `0.67` and `1.0`; HUD, ImGui and the main menu at display
+  resolution (a frame whose *first* view is the 2D overlay skips the resolve entirely);
+  no validation errors; `r_fsrRenderScale 1.0` is a complete bypass.
+- **Measured (§12):** RT GPU 5.05 → 2.22 ms at `0.67` (×0.44) on a 4070 Ti Super at 1440p.
+  The original "11.9 → 5.5 ms" target was written against the pre-arc-2 budget and no
+  longer applies.
+- **Not yet met:** mirrors and subviews not verified (their dispatch rects are unscaled —
+  §4 Outstanding); `r_rtReflectionMode 1` glass rect not converted, so glass reflections
+  are known wrong; no measurement on the 9070 XT, which is the card with the problem.
+- **Sequencing note withdrawn** — G6 was decided on appearance, not cost, so U0 no longer
+  had to precede it.
 
 ### U1 — FSR 1 (EASU + RCAS)  🔴 *optional*
 Vendor `ffx_a.h` + `ffx_fsr1.h` into `renderer/glsl/fsr1/`, add to `GLSL_INCLUDES`, write
@@ -660,7 +709,7 @@ misrepresents its provenance, which is the one thing the block exists to prevent
 
 | Risk | Signal | Mitigation |
 |---|---|---|
-| **Scissor/viewport scaling subtly wrong**, visible only at some scale factors | Shadows, AO or reflections offset by a few pixels; glass reflections vanish | `r_fsrDebug 1` outline; test at 0.5 / 0.67 / 1.0, not one value; `r_fsrRenderScale 1.0` must be bit-identical to `r_fsr 0` — make that an assertion, it is the cheapest regression test available |
+| **Scissor/viewport scaling subtly wrong**, visible only at some scale factors | Shadows, AO or reflections offset by a few pixels; glass reflections vanish | **Materialised in U0, three ways** — see §4. Symptoms were: shadows/AO magnified 1.5× (case-2 divisor), everything after the RT block squeezed into the sub-rect (one missed viewport), and a GI buffer stamped 1:1 into the top-left (composite re-run on the 2D view). All three were invisible at `1.0`, which is why the identity bypass is a *necessary* but not sufficient regression test. Test at 0.3 / 0.5 / 0.67 / 1.0 |
 | **Pillar 2: FSR2's history lifts the black floor** | Dark corridors glow after panning off a bright light | `r_fsrDebug 5`; U3 gate. If it fails, the levers are the reactive mask and `preExposure`, in that order. This is the one risk that could veto the arc |
 | **Motion-vector sign or scale wrong** | Image smears *worse* under motion than bilinear does | U2 ships the overlay before any consumer exists, precisely so this is caught in isolation. Test both axes and both directions |
 | **Skinned-geometry ghosting** (known gap, §5) | Monsters trail under fast lateral motion | T&C mask in U4; double-buffered deform verts in U5 only if measured to be needed |
@@ -669,6 +718,76 @@ misrepresents its provenance, which is the one thing the block exists to prevent
 | FSR2's internal resources push VRAM over at 4K | Allocation failure on a small card | **Low.** This is capacity, not speed — FSR2's per-frame traffic at 720p→1080p is only ~60-100 MB and its cost is the accumulate pass's compute, not memory. Doom 3's asset footprint is tiny by modern standards, so 250 MB competes with very little. Report the figure at context creation and warn above a threshold; a fallback to `r_fsr 1` is belt-and-braces |
 | **The FSR2 Vulkan backend needs an extension we don't enable** | Context creation fails at startup | Read the backend's device-extension list at the pinned tag and add them in `vk_instance.cpp` during U3; fail *soft* to `r_fsr 0` with a warning, never hard |
 | The fifth blend attachment is missed on one pipeline | Validation error, or that pipeline silently fails to create | Grep `blendAttachments` and `attachmentCount` in `vk_pipeline.cpp` + `vk_gi.cpp` and fix all of them in one commit |
+
+---
+
+## 12. Measured — U0 exit, 2026-09-23
+
+**RTX 4070 Ti Super, 2560×1440, MC2 (Mars City 2), `r_vkRTProfile 1`, no enemies.**
+Median GPU ms. The 1.00 and 0.67 columns are the *same parked camera* — `r_fsrRenderScale`
+was toggled between consecutive frames — so they differ only in resolution. The 0.50 column
+is a later fingerprint-matched window and carries scene error (Shadows reads higher at 0.50
+than at 0.67, which scale alone cannot do); treat it as ±20 %.
+
+| Group | 1.00 | 0.67 | 0.50 | ×0.67 | ×0.50 |
+|---|---|---|---|---|---|
+| Shadows | 1.797 | 0.681 | 0.748* | 0.38 | — |
+| AO | 1.265 | 0.485 | 0.382 | 0.38 | 0.30 |
+| GI chain | 1.286 | 0.539 | 0.373 | 0.42 | 0.29 |
+| Vol chain | 0.519 | 0.372 | 0.482* | 0.72 | — |
+| TLAS | 0.170 | 0.141 | 0.146 | 0.83 | 0.86 |
+| **RT GPU total** | **5.054** | **2.220** | **2.117** | **0.44** | **0.42** |
+| **RT CPU total** | **0.276** | **0.309** | **0.275** | 1.12 | 1.00 |
+
+Pixel ratios for reference: 0.67 → 0.449, 0.50 → 0.25. `*` = scene-contaminated.
+
+### The fixed floor is the headline
+
+| | 1.00 | 0.67 | 0.50 |
+|---|---|---|---|
+| screen-space phases | 4.31 | 1.49 | 1.37 |
+| fixed floor (TLAS, ProbeTrace, ProbeBlend, FroxelFill, FroxelIntegrate) | 0.73 | 0.62 | 0.75 |
+| floor as % of RT | 14 % | 28 % | 35 % |
+
+**0.67 saves 2.8 ms. 0.50 saves 0.1 ms more than 0.67.** Arc 2 moved vol into the froxel
+grid and GI into probes — world-space caches that do not scale with render resolution — so
+the work FSR can remove is now a smaller share of RT than §Thesis assumed. Performance-class
+scales are not worth offering on the RT budget alone; revisit only if raster turns out to
+dominate (below).
+
+Screen-space passes land at or slightly under the pixel ratio (Shadows/AO/ProbeResolve all
+×0.38 vs an ideal 0.449; GIAtrous ×0.22, GIComposite ×0.27). The cheap full-screen RGBA16F
+passes beat the ratio because halving 1440p drops them out of a bandwidth-saturated regime.
+
+**CPU is flat across all three scales** (~0.28-0.31 ms, mostly TLAS build 0.17 + probe-trace
+setup 0.08). Neither is resolution-dependent. FSR buys nothing CPU-side.
+
+### Not measured: raster
+
+`r_vkRTProfile` instruments 21 RT events and nothing else — no timer around
+`DepthPrepass` / `Interactions` / `DrawShaderPasses` / tonemap, and no frame-total GPU
+timer. Frame rate was vsync-locked at 60 throughout, so frame time carries no headroom
+signal either. **Any raster figure would be invented.** To get one: uncap the framerate, and
+wrap the raster blocks in `VK_RTProfile_PhaseBegin/End` — mechanical, and raster should
+scale *well* with render resolution (fill-bound, not draw-call-bound, at these triangle
+counts), so it may hold the remaining win at 0.50.
+
+### Open: the AMD 9070 XT is the case that matters
+
+The 4070 Ti Super runs MC2 at a comfortable 60. The **9070 XT sits near 30 fps and dips into
+the teens** — a weaker RT card, and the hardware that actually motivates this arc. Every
+number above is from the *fast* card, where there was no problem to solve.
+
+Before tuning anything against these figures, re-measure on the 9070 XT. Two things could
+differ enough to change the conclusions:
+
+| | Why it matters |
+|---|---|
+| The fixed floor may not be fixed there | If probe trace / froxel fill are relatively more expensive on RDNA4, the floor is a larger share and FSR's ceiling is lower still |
+| Raster may dominate | If the 9070 XT is not RT-bound at all, the whole §12 analysis points at the wrong half of the frame — which is exactly what the raster instrumentation above would reveal |
+
+Record a `timeDemo` with a heavy action scene first. A reproducible camera path removes the
+scene variance that makes the 0.50 column above soft, and makes the two cards comparable.
 
 ---
 
