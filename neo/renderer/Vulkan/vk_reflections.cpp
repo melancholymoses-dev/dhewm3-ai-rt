@@ -1148,8 +1148,10 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     ubo.maxDist = Max(1.0f, r_rtReflectionDistance.GetFloat());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
-    ubo.screenWidth = (int32_t)rb.width;
-    ubo.screenHeight = (int32_t)rb.height;
+    // NDC denominator for depth->world reconstruction, so it must be the extent
+    // the depth buffer was rasterised through, not the (display-sized) refl buffer.
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
     // Ceiling matches the settings-menu slider range.
     ubo.reflBlend = idMath::ClampFloat(0.0f, 5.0f, r_rtReflectionBlend.GetFloat());
     ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());

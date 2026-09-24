@@ -2188,13 +2188,16 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
 
     // P8: UV comes from the screen size, not the vol image size — they differ when
     // the compositor is reading the march-res image directly.
+    // Display extent, not renderExtent: the vol image is display-sized (or a fixed
+    // fraction of it) and written identity-mapped into the render sub-rect, so
+    // fragCoord / displayExtent lands on the right texel at either march scale.
     struct
     {
         float invScreen[2];
         int32_t debugMode;
         float debugGain;
     } pc = {
-        {1.0f / Max(1.0f, (float)vk.renderExtent.width), 1.0f / Max(1.0f, (float)vk.renderExtent.height)},
+        {1.0f / Max(1.0f, (float)vk.swapchainExtent.width), 1.0f / Max(1.0f, (float)vk.swapchainExtent.height)},
         r_rtVolDebugMode.GetInteger(),
         Max(0.0f, r_rtVolDebugGain.GetFloat()),
     };

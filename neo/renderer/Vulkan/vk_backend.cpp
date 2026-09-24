@@ -41,6 +41,22 @@ static bool s_frameNeedsImageAcquireWait = false;
 // Everything drawn after this point (UI, HUD, ImGui) uses the full display extent.
 static bool s_upscaleDone = false;
 
+// The extent every raster draw must use *right now*.  The 3D scene renders into
+// the top-left renderExtent sub-rect; once VK_RT_DispatchUpscale has resolved it
+// the frame is display-space again.  Every viewport and render-pass renderArea
+// goes through here — a single site that forgets it squeezes everything drawn
+// afterwards (UI, ImGui, the GI composite) back into the sub-rect.
+static VkExtent2D VK_CurrentDrawExtent(void)
+{
+    return s_upscaleDone ? vk.swapchainExtent : vk.renderExtent;
+}
+
+// Frontend screen rect (always display space) -> current draw space.
+static idScreenRect VK_ScaleToDrawSpace(const idScreenRect &s)
+{
+    return s_upscaleDone ? s : VK_RT_ScaleDisplayRect(s);
+}
+
 // Current view's scissor rect in VK coordinates (Y-down).
 // Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
 // Used to confine all rendering (depth prepass, interactions, shader passes)
@@ -142,14 +158,15 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.hdrRenderPassResume;
         rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
         rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = vk.renderExtent;
+        rpResume.renderArea.extent = drawExtent;
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
         VkViewport viewport = {
-            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
+            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(newCmd, 0, 1, &viewport);
         vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
     }
@@ -780,14 +797,15 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
-// Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down).
-// Also include scaling to render coords.  Output is in RenderSub-region.
+// Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down),
+// scaled into whichever space is currently being drawn (§VK_CurrentDrawExtent).
 static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
 {
-    const int w = (int)vk.renderExtent.width;
-    const int h = (int)vk.renderExtent.height;
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    const int w = (int)drawExtent.width;
+    const int h = (int)drawExtent.height;
 
-    const idScreenRect s1 = VK_RT_ScaleDisplayRect(viewDef->scissor);
+    const idScreenRect s1 = VK_ScaleToDrawSpace(viewDef->scissor);
 
     VkRect2D r;
     r.offset.x = idMath::ClampInt(0, w - 1, s1.x1);
@@ -818,7 +836,8 @@ static VkRect2D VK_IntersectRect(VkRect2D a, VkRect2D b)
 
 // Convert drawSurf->scissorRect (viewport-local GL coordinates) to a Vulkan scissor
 // in absolute framebuffer coordinates and clamp to the current view scissor.
-// Now scaled to Render area.
+// Scaled into whichever space is currently being drawn — post-upscale the 2D GUI
+// surfaces come through here too, and scaling them would clip the HUD to the sub-rect.
 static VkRect2D VK_ComputeDrawSurfScissor(const drawSurf_t *surf)
 {
     if (!surf || !backEnd.viewDef)
@@ -830,15 +849,16 @@ static VkRect2D VK_ComputeDrawSurfScissor(const drawSurf_t *surf)
     if (disp.IsEmpty())
         return VkRect2D{{0, 0}, {0, 0}};
 
-    const int w = (int)vk.renderExtent.width;
-    const int h = (int)vk.renderExtent.height;
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    const int w = (int)drawExtent.width;
+    const int h = (int)drawExtent.height;
 
     // shift by viewport, then scale.
     disp.x1 += backEnd.viewDef->viewport.x1;
     disp.x2 += backEnd.viewDef->viewport.x1;
     disp.y1 += backEnd.viewDef->viewport.y1;
     disp.y2 += backEnd.viewDef->viewport.y1;
-    const idScreenRect s = VK_RT_ScaleDisplayRect(disp);
+    const idScreenRect s = VK_ScaleToDrawSpace(disp);
 
     VkRect2D r;
     r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
@@ -1091,10 +1111,13 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     int *ip = (int *)f;
     *ip = r_gammaInShader.GetBool() ? 1 : 0;
 
-    // screenSize (used by shader to compute shadow mask UV from gl_FragCoord)
+    // screenSize (used by shader to compute shadow mask / AO UV from gl_FragCoord).
+    // Stays swapchainExtent under FSR: the masks are display-sized and written
+    // identity-mapped into the render sub-rect, so uv = fragCoord / bufferSize.
+    // Using renderExtent here magnifies both masks by 1/renderScale.
     float *fsz = (float *)(ip + 1);
-    fsz[0] = (float)vk.renderExtent.width;
-    fsz[1] = (float)vk.renderExtent.height;
+    fsz[0] = (float)vk.swapchainExtent.width;
+    fsz[1] = (float)vk.swapchainExtent.height;
 
     // useShadowMask: 1 when RT shadow mask is valid this frame.
     // Weapon depth-hack surfaces are rendered in a different depth range and should
@@ -2260,10 +2283,13 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
         memset(ovUbo, 0, sizeof(*ovUbo));
         memcpy(ovUbo->modelViewProjection, mvp, 64);
-        // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
+        // Stash the reflection buffer's resolution in texGenS.xy — fragment divides
+        // gl_FragCoord by it to get the screen UV.  That buffer is display-sized and
+        // written identity-mapped into the render sub-rect, so this is swapchainExtent
+        // even under FSR; renderExtent would magnify the reflection by 1/renderScale.
         // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
-        ovUbo->texGenS[0] = (float)vk.renderExtent.width;
-        ovUbo->texGenS[1] = (float)vk.renderExtent.height;
+        ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
+        ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
 
         VkDescriptorBufferInfo ovBufInfo = {};
         ovBufInfo.buffer = uboRings[vk.currentFrame].buffer;
@@ -3554,13 +3580,14 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
 static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
 {
-    VkRect2D lightScissor = {{0, 0}, vk.renderExtent}; // default: full renderExtent
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    VkRect2D lightScissor = {{0, 0}, drawExtent}; // default: full draw extent
 
     if (!r_useScissor.GetBool() || r_vkLightFullScissor.GetBool())
         return lightScissor;
 
-    const int w = (int)vk.renderExtent.width;
-    const int h = (int)vk.renderExtent.height;
+    const int w = (int)drawExtent.width;
+    const int h = (int)drawExtent.height;
 
     idScreenRect disp = vLight->scissorRect;
     // shift by viewport, then scale.
@@ -3568,7 +3595,7 @@ static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
     disp.x2 += backEnd.viewDef->viewport.x1;
     disp.y1 += backEnd.viewDef->viewport.y1;
     disp.y2 += backEnd.viewDef->viewport.y1;
-    const idScreenRect s = VK_RT_ScaleDisplayRect(disp);
+    const idScreenRect s = VK_ScaleToDrawSpace(disp);
 
     lightScissor.offset.x = s.x1;
     lightScissor.offset.y = h - 1 - s.y2; // flip Y: OpenGL top edge -> Vulkan top edge
@@ -3826,14 +3853,14 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rpResume.renderPass = vk.hdrRenderPassResume;
             rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+            const VkExtent2D drawExtent = VK_CurrentDrawExtent();
             rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = vk.renderExtent;
+            rpResume.renderArea.extent = drawExtent;
             rpResume.clearValueCount = 0;
             rpResume.pClearValues = NULL;
             vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
             VkViewport rtViewport = {
-                0,   (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f,
-                1.0f};
+                0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
             vkCmdSetViewport(cmd, 0, 1, &rtViewport);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
@@ -3867,7 +3894,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor =
-            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.renderExtent}, s_viewScissor) : lightScissor;
+            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, VK_CurrentDrawExtent()}, s_viewScissor)
+                                 : lightScissor;
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -4500,12 +4528,20 @@ void VK_RB_DrawView(const void *data)
         clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
         clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
 
+        // A frame whose *first* view is already the 2D overlay (main menu, PDA,
+        // loading screens) has no 3D content to downscale, so it renders straight
+        // at display resolution and needs no resolve.  Declaring that up front is
+        // what makes VK_CurrentDrawExtent below return the right answer.
+        const bool firstIsGui = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
+        s_upscaleDone = firstIsGui;
+        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpBegin.renderPass = vk.hdrRenderPass;
         rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
-        rpBegin.renderArea.extent = vk.renderExtent;
+        rpBegin.renderArea.extent = drawExtent;
         rpBegin.clearValueCount = vk.gbufferSupported ? 4 : 2;
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
@@ -4513,7 +4549,7 @@ void VK_RB_DrawView(const void *data)
         // NOTE: the negative height inverts the effective winding order, so our pipelines
         // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
         VkViewport viewport = {
-            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
+            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
 
         // Set scissor from viewDef to confine subview rendering to mirror bounds.
@@ -4522,7 +4558,15 @@ void VK_RB_DrawView(const void *data)
 
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
-        s_upscaleDone = false;
+
+        if (r_fsrDebug.GetInteger() >= 2)
+        {
+            common->Printf("VK FSR VIEW: FIRST gui=%d draw=%ux%u render=%ux%u display=%ux%u scissor=(%d,%d %ux%u)\n",
+                           firstIsGui ? 1 : 0, drawExtent.width, drawExtent.height, vk.renderExtent.width,
+                           vk.renderExtent.height, vk.swapchainExtent.width, vk.swapchainExtent.height,
+                           s_viewScissor.offset.x, s_viewScissor.offset.y, s_viewScissor.extent.width,
+                           s_viewScissor.extent.height);
+        }
     }
     else
     {
@@ -4543,7 +4587,7 @@ void VK_RB_DrawView(const void *data)
             rpResume.renderPass = vk.hdrRenderPassResume;
             rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
             rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = vk.swapchainExtent; // UI draws at display res
+            rpResume.renderArea.extent = VK_CurrentDrawExtent(); // UI draws at display res
             rpResume.clearValueCount = 0;
             rpResume.pClearValues = NULL;
             vkCmdBeginRenderPass(s_frameCmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
@@ -4551,10 +4595,9 @@ void VK_RB_DrawView(const void *data)
 
         // Compute this view's scissor first; GL clears depth/stencil through the
         // active scissor for each view (important for subviews/mirrors).
-        // Post-upscale the frame is display-space, so the render-scale conversion
-        // must not be applied.
-        s_viewScissor =
-            s_upscaleDone ? VkRect2D{{0, 0}, vk.swapchainExtent} : VK_ComputeViewScissor(backEnd.viewDef);
+        // VK_ComputeViewScissor already skips the render-scale conversion once the
+        // frame is display-space, so no special case is needed here.
+        s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
 
         // Each view has its own projection matrix, so depth values from the previous view
         // are meaningless (and harmful) here.  Clear depth+stencil so this view's depth
@@ -4576,12 +4619,24 @@ void VK_RB_DrawView(const void *data)
             vkCmdClearAttachments(s_frameCmdBuf, 1, &clearDepth, 1, &clearRect);
         }
 
-        const VkExtent2D vpExtent = s_upscaleDone ? vk.swapchainExtent : vk.renderExtent;
+        const VkExtent2D vpExtent = VK_CurrentDrawExtent();
         VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
         // Set scissor from viewDef — for the main view this is typically full-screen;
         // for subviews it confines rendering to the mirror surface's screen bounds.
         vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
+
+        if (r_fsrDebug.GetInteger() >= 2)
+        {
+            common->Printf("VK FSR VIEW: subsequent gui=%d upscaleDone=%d vp=%ux%u scissor=(%d,%d %ux%u) "
+                           "vdViewport=(%d,%d %d,%d) vdScissor=(%d,%d %d,%d) sub=%d mirror=%d\n",
+                           isGuiOverlay ? 1 : 0, s_upscaleDone ? 1 : 0, vpExtent.width, vpExtent.height,
+                           s_viewScissor.offset.x, s_viewScissor.offset.y, s_viewScissor.extent.width,
+                           s_viewScissor.extent.height, backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+                           backEnd.viewDef->viewport.x2, backEnd.viewDef->viewport.y2, backEnd.viewDef->scissor.x1,
+                           backEnd.viewDef->scissor.y1, backEnd.viewDef->scissor.x2, backEnd.viewDef->scissor.y2,
+                           backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0);
+        }
     }
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
@@ -4930,13 +4985,17 @@ void VK_RB_DrawView(const void *data)
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.hdrRenderPassResume;
         rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+        // Display extent once the resolve has run: this block also executes for the
+        // 2D overlay view, and resuming at renderExtent here is what squeezed the UI
+        // and the GI composite back into the top-left sub-rect.
+        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
         rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = vk.renderExtent;
+        rpResume.renderArea.extent = drawExtent;
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
         VkViewport viewport = {
-            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
+            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -4952,39 +5011,50 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
-        // GI composite: blend the GI buffer onto the framebuffer once per view.
-        // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
-        // split-submit probes independently of the per-light interaction loop.
-        VK_SetRenderStage("GI_Composite");
-        const uint64_t rtCpuGICompStart = VK_RTProfile_CPUStamp();
-        int rtProfGIComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_COMPOSITE);
-        VK_RT_CompositeGI(cmdBuf);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIComp);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_COMPOSITE, rtCpuGICompStart);
-        if ((splitMask & 512) != 0)
+        // The screen-space composites belong to the view that produced the buffers.
+        // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
+        // viewaxis (see hasRealCamera above, which already stands the RT dispatches
+        // down for it) and was compositing GI/refl/vol a second time over the
+        // finished frame.  Under FSR that second pass lands 1:1 on an
+        // already-upscaled image and paints the GI buffer into the top-left
+        // renderExtent corner; at native it just doubled the contribution
+        // invisibly.  Same guard, same reason.
+        if (hasRealCamera)
         {
-            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
-                return;
-        }
+            // GI composite: blend the GI buffer onto the framebuffer once per view.
+            // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
+            // split-submit probes independently of the per-light interaction loop.
+            VK_SetRenderStage("GI_Composite");
+            const uint64_t rtCpuGICompStart = VK_RTProfile_CPUStamp();
+            int rtProfGIComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_COMPOSITE);
+            VK_RT_CompositeGI(cmdBuf);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIComp);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_COMPOSITE, rtCpuGICompStart);
+            if ((splitMask & 512) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
+                    return;
+            }
 
-        // Reflection composite (Stage 3.5 / Step 8, see docs/plans/gbuffer_normal_pass.md):
-        // blend reflBuffer onto the framebuffer once per view, replacing the disabled
-        // per-light reflection block in interaction.frag. Same resume-pass slot as GI.
-        VK_SetRenderStage("Refl_Composite");
-        VK_RT_CompositeReflections(cmdBuf);
+            // Reflection composite (Stage 3.5 / Step 8, see docs/plans/gbuffer_normal_pass.md):
+            // blend reflBuffer onto the framebuffer once per view, replacing the disabled
+            // per-light reflection block in interaction.frag. Same resume-pass slot as GI.
+            VK_SetRenderStage("Refl_Composite");
+            VK_RT_CompositeReflections(cmdBuf);
 
-        // F6: with r_rtVolAttenuateBackground the composite multiplies the scene by
-        // the path transmittance, so it has to run after the surfaces exist —
-        // attenuating here would dim only GI and ambient and let every direct light
-        // land on top unattenuated. The late site below is the same render pass.
-        if (!VK_RT_VolCompositeAfterSurfaces())
-        {
-            VK_SetRenderStage("Vol_Composite");
-            const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
-            int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
-            VK_RT_CompositeVolumetrics(cmdBuf);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
+            // F6: with r_rtVolAttenuateBackground the composite multiplies the scene by
+            // the path transmittance, so it has to run after the surfaces exist —
+            // attenuating here would dim only GI and ambient and let every direct light
+            // land on top unattenuated. The late site below is the same render pass.
+            if (!VK_RT_VolCompositeAfterSurfaces())
+            {
+                VK_SetRenderStage("Vol_Composite");
+                const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
+                int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
+                VK_RT_CompositeVolumetrics(cmdBuf);
+                VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
+                VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
+            }
         }
     }
 
@@ -5032,8 +5102,9 @@ void VK_RB_DrawView(const void *data)
         !backEnd.viewDef->isMirror)
     {
         VK_SetRenderStage("Vol_Composite");
+        const VkExtent2D volExtent = VK_CurrentDrawExtent();
         VkViewport volViewport = {
-            0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
+            0, (float)volExtent.height, (float)volExtent.width, -(float)volExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &volViewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -5176,14 +5247,18 @@ void VK_RB_CopyRender(const void *data)
     region.srcSubresource.mipLevel = 0;
     region.srcSubresource.baseArrayLayer = 0;
     region.srcSubresource.layerCount = 1;
-    // Source lives in the render sub-rect; dst is a display-resolution idImage, so
-    // the blit rescales. Clamp in display units, then scale only the source.
-    const int rsX = (int)idMath::Floor(srcX * VK_RT_RenderScaleX());
-    const int rsY = (int)idMath::Floor(srcY * VK_RT_RenderScaleY());
-    const int rsW = (int)idMath::Ceil(copyW * VK_RT_RenderScaleX());
-    const int rsH = (int)idMath::Ceil(copyH * VK_RT_RenderScaleY());
+    // Source lives in the render sub-rect (identity once the resolve has run); dst is
+    // a display-resolution idImage, so the blit rescales. Clamp in display units, then
+    // scale only the source, and keep the far corner inside the valid region.
+    const VkExtent2D srcExtent = VK_CurrentDrawExtent();
+    const float scaleX = s_upscaleDone ? 1.0f : VK_RT_RenderScaleX();
+    const float scaleY = s_upscaleDone ? 1.0f : VK_RT_RenderScaleY();
+    const int rsX = (int)idMath::Floor(srcX * scaleX);
+    const int rsY = (int)idMath::Floor(srcY * scaleY);
+    const int rsX2 = idMath::ClampInt(rsX + 1, (int)srcExtent.width, rsX + (int)idMath::Ceil(copyW * scaleX));
+    const int rsY2 = idMath::ClampInt(rsY + 1, (int)srcExtent.height, rsY + (int)idMath::Ceil(copyH * scaleY));
     region.srcOffsets[0] = {rsX, rsY, 0};
-    region.srcOffsets[1] = {rsX + rsW, rsY + rsH, 1};
+    region.srcOffsets[1] = {rsX2, rsY2, 1};
 
     region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.dstSubresource.mipLevel = 0;
@@ -5208,14 +5283,16 @@ void VK_RB_CopyRender(const void *data)
     rpResume.renderPass = vk.hdrRenderPassResume;
     rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
     rpResume.renderArea.offset = {0, 0};
-    rpResume.renderArea.extent = vk.renderExtent;
+    rpResume.renderArea.extent = VK_CurrentDrawExtent();
     rpResume.clearValueCount = 0;
     rpResume.pClearValues = NULL;
     vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
     // Re-apply default viewport/scissor state (negative-height Y flip).
-    VkViewport viewport = {
-        0, (float)vk.renderExtent.height, (float)vk.renderExtent.width, -(float)vk.renderExtent.height, 0.0f, 1.0f};
+    // Post-upscale the frame is display-space; restoring renderExtent here would
+    // silently shrink everything drawn after a mid-frame _currentRender capture.
+    const VkExtent2D vpExtent = VK_CurrentDrawExtent();
+    VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
     vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 }
@@ -5259,6 +5336,9 @@ void VK_RB_SwapBuffers()
     // VK_RB_DrawView, so the sub-rect is still unresolved here.  No-op otherwise.
     if (!s_upscaleDone && VK_RT_UpscaleActive())
     {
+        if (r_fsrDebug.GetInteger() >= 2)
+            common->Printf("VK FSR VIEW: resolve ran in the SwapBuffers FALLBACK — no GUI overlay view was seen, "
+                           "so the UI (if any) drew at render resolution\n");
         VK_SetRenderStage("RT_Upscale");
         VK_RT_DispatchUpscale(cmdBuf);
         s_upscaleDone = true;

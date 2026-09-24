@@ -2645,8 +2645,10 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.numSamples = idMath::ClampInt(1, 8, r_rtGISamples.GetInteger());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
     ubo.giStrength = idMath::ClampFloat(0.0f, 4.0f, r_rtGIStrength.GetFloat());
-    ubo.screenWidth = (int32_t)gb.width;
-    ubo.screenHeight = (int32_t)gb.height;
+    // NDC denominator for depth->world reconstruction, so it must be the extent
+    // the depth buffer was rasterised through, not the (display-sized) GI buffer.
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
     ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
     ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;

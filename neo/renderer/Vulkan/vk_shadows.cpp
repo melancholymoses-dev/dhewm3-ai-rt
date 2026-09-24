@@ -940,8 +940,10 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         ubo.debugMode = r_rtShadowDebugMode.GetInteger();
         ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
         ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
-        ubo.screenWidth = (int32_t)sm.width;
-        ubo.screenHeight = (int32_t)sm.height;
+        // NDC denominator for depth->world reconstruction, so it must be the extent
+        // the depth buffer was rasterised through, not the (display-sized) mask.
+        ubo.screenWidth = (int32_t)vk.renderExtent.width;
+        ubo.screenHeight = (int32_t)vk.renderExtent.height;
         ubo.shadowLayer = (int32_t)idMath::ClampInt(0, VK_RT_SHADOW_LAYERS - 1, layer);
 
         // Exclude player body from shadow rays when player is very close to the light.

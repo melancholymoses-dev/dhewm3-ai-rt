@@ -678,8 +678,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                                       : "depth-gradient reconstruction (no G-buffer)"));
         }
     }
-    ubo.screenWidth = (int32_t)ao.width;
-    ubo.screenHeight = (int32_t)ao.height;
+    // NDC denominator for depth->world reconstruction, so it must be the extent
+    // the depth buffer was rasterised through, not the (display-sized) AO mask.
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
     ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
     ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
