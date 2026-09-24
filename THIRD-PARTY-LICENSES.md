@@ -21,6 +21,7 @@ file is authoritative and is noted in the entry.
 | stb_image / stb_vorbis | `neo/renderer/stb_image.h`, `neo/sound/stb_vorbis.h` | MIT / Unlicense |
 | Brandelf utility | `neo/sys/linux/setup/brandelf.c` | BSD 3-clause |
 | makeself | `neo/sys/linux/setup/makeself/*` | GPL v2 |
+| AMD FidelityFX Super Resolution 1 | `neo/libs/ffx-fsr/*` | MIT |
 | AMD FidelityFX Super Resolution 2 | `neo/libs/ffx-fsr2-api/*` | MIT |
 
 ---
@@ -257,6 +258,40 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 neo/sys/linux/setup/makeself/*, neo/sys/linux/setup/makeself/README
 Copyright (c) Stéphane Peter
 Licensing: GPL v2
+
+
+## AMD FidelityFX Super Resolution 1
+
+neo/libs/ffx-fsr/*
+
+The EASU/RCAS shader headers `ffx_a.h` and `ffx_fsr1.h`, vendored unmodified and
+`#include`d by `neo/renderer/glsl/fsr_easu.comp` and `fsr_rcas.comp`.  The
+authoritative copy of this notice ships in the tree as
+`neo/libs/ffx-fsr/license.txt`.
+
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+`ffx_a.h` additionally carries a notice for concepts used in its float
+approximations, Copyright (c) 2014 Michal Drobot, under the same MIT terms;
+see the file header.
 
 
 ## AMD FidelityFX Super Resolution 2

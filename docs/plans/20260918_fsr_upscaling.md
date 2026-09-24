@@ -1,6 +1,7 @@
 # FSR upscaling for dhewm3-rt
 
-**Status:** U0 landed 2026-09-23 (bilinear resolve, `r_fsrRenderScale`). U1-U5 not started.
+**Status:** U0 landed 2026-09-23 (bilinear resolve, `r_fsrRenderScale`).
+U1 landed 2026-09-24 (FSR 1 behind `r_fsr 1`), unvalidated in-game. U2-U5 not started.
 **Written:** 2026-09-18
 **Owns:** render-resolution decoupling, AMD FidelityFX Super Resolution integration,
 motion vectors, jitter, and the licensing paperwork that comes with vendored code.
@@ -187,6 +188,7 @@ Per frame-in-flight slot unless noted. Sizes quoted for 1920×1080 display.
 |---|---|---|---|---|---|
 | `vkRT.motionVectors[i]` | `R16G16_SFLOAT` | display (written in render sub-rect) | COLOR_ATTACHMENT, SAMPLED, STORAGE | U2 | 8 MB ×2 |
 | `vkRT.hdrUpscaled` | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED, TRANSFER_SRC | U0 | 16 MB ×1 |
+| `s_fsrPerceptual` (file-static in `vk_upscale.cpp`) | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED | U1 | 16 MB ×1 |
 | `vkRT.preAlphaColor[i]` | `R16G16B16A16_SFLOAT` | display | TRANSFER_DST, SAMPLED | U4 | 16 MB ×2 |
 | `vkRT.reactiveMask[i]` | `R8_UNORM` | display | STORAGE, SAMPLED | U4 | 2 MB ×2 |
 | `vkRT.exposure1x1` | `R32_SFLOAT` | 1×1 | STORAGE, SAMPLED | U3 | — |
@@ -201,13 +203,20 @@ Shaders to add (register in `CMakeLists.txt` `GLSL_SHADER_SOURCES`):
 
 | File | Stage | Notes |
 |---|---|---|
-| `renderer/glsl/upscale_blit.comp` | U0 | bilinear/point resolve of the render sub-rect → `hdrUpscaled`; also carries the `r_fsrDebug` overlays |
-| `renderer/glsl/fsr_easu.comp` | U1 (optional) | `#define A_GLSL 1` + `ffx_a.h` + `ffx_fsr1.h` |
-| `renderer/glsl/fsr_rcas.comp` | U1 (optional) | ditto |
+| `renderer/glsl/upscale_blit.comp` | ✅ U0 | bilinear/point resolve of the render sub-rect → `hdrUpscaled`; also carries the `r_fsrDebug` overlays |
+| `renderer/glsl/fsr_prepare.comp` | ✅ U1 | `hdrScene` sub-rect → `s_fsrPerceptual`; reversible tonemap + gamma 2.0, edge-extended pad ring |
+| `renderer/glsl/fsr_easu.comp` | ✅ U1 | `#define A_GLSL 1` + `ffx_a.h` + `ffx_fsr1.h`; `FsrEasuCon` constants computed per-thread |
+| `renderer/glsl/fsr_rcas.comp` | ✅ U1 | `FSR_RCAS_DENOISE 1`; inverts the gamma + tonemap and writes `hdrScene` |
 | `renderer/glsl/motion_debug.comp` | U2 | `r_fsrDebug 2` motion-vector visualisation |
 
-`ffx_a.h` / `ffx_fsr1.h` go in `renderer/glsl/fsr1/` and are added to **`GLSL_INCLUDES`**
-(per CLAUDE.md), not `GLSL_SHADER_SOURCES` — they are headers, not stages.
+**`ffx_a.h` / `ffx_fsr1.h` live in `neo/libs/ffx-fsr/`** alongside upstream's
+`license.txt`, *not* in `renderer/glsl/fsr1/` as originally written. They sit next to the
+other vendored AMD tree (`neo/libs/ffx-fsr2-api/`), which keeps all third-party code under
+`neo/libs/`. Two CMake consequences:
+
+- `GLSLC_FLAGS` gains `-I${CMAKE_SOURCE_DIR}/libs/ffx-fsr` — the shaders `#include` them by
+  bare name and glslc had no `-I` at all before.
+- Both are listed in **`GLSL_INCLUDES`** (per CLAUDE.md) so editing them rebuilds the SPIR-V.
 
 C++ files to add:
 
@@ -219,8 +228,9 @@ Vendored third party:
 
 | Path | Contents |
 |---|---|
-| `neo/libs/fsr2/` | the pinned `ffx-fsr2-api/` tree, **unmodified**, AMD headers intact |
-| `neo/libs/fsr2/LICENSE.txt` | AMD's MIT text, verbatim from upstream |
+| `neo/libs/ffx-fsr2-api/` | the pinned FSR 2 tree, **unmodified**, AMD headers intact |
+| `neo/libs/ffx-fsr2-api/LICENSE.txt` | AMD's MIT text, verbatim from upstream |
+| `neo/libs/ffx-fsr/` | ✅ FSR 1: `ffx_a.h`, `ffx_fsr1.h`, `license.txt`, unmodified |
 
 ---
 
@@ -264,10 +274,10 @@ top-left corner.
 |---|---|
 | RT dispatch rects (`vk_ao`/`vk_gi`/`vk_temporal`/`vk_vol`/`vk_gi_probe`/`vk_vol_froxel`) read `viewDef->scissor` unscaled and only clamp to `renderExtent` | Correct for the full-screen view by accident; wrong for mirrors and subviews |
 | `VK_RT_GlassScreenRect` (`vk_reflections.cpp`) is entirely display-space | `r_rtReflectionMode 1` traces the wrong rect — §11's "reflections silently vanish" |
-| `hdrUpscaled` is one shared image across frames in flight | WAR hazard: frame N's copy vs frame N+1's dispatch, no barrier between them |
+| `hdrUpscaled` and `s_fsrPerceptual` are one shared image each across frames in flight | WAR hazard: frame N's copy vs frame N+1's dispatch, no barrier between them |
 | No temporal-history reset on a `renderExtent` change | A few frames of wrongly-scaled GI/AO/vol history after a scale change |
-| `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` are not in `Dhewm3SettingsMenu.cpp` | Required by CLAUDE.md for quality-affecting cvars |
-| `r_fsr` is declared but never read | U1/U3 will need it |
+| ~~cvars missing from `Dhewm3SettingsMenu.cpp`~~ | ✅ U1 — all four are under "Resolution Scaling / Upscaling", outside the ray-tracing disable |
+| ~~`r_fsr` is declared but never read~~ | ✅ U1 |
 
 ---
 
@@ -486,8 +496,12 @@ downward if FSR2's history proves to be doing the job already.
 | `1` | Green border (the resolve ran and covers the display extent) + magenta on any tap clamped off the sub-rect. | ✅ U0 |
 | `2` | **Taken by U0**: per-view console log — which view, `upscaleDone`, viewport, scissor, subview/mirror flags. Caught the GUI-first frame and the render-extent leak. U2's motion-vector overlay needs a different number. | ✅ U0 |
 | `3` | Reactive mask and transparency-and-composition mask, side by side. | U4 |
-| `4` | Render at reduced resolution but *point-magnify* instead of upscaling — the honest "what did the resolution actually cost" A/B. | ✅ U0 |
+| `4` | Render at reduced resolution but *point-magnify* instead of upscaling — the honest "what did the resolution actually cost" A/B. **Forces the bilinear path, overriding `r_fsr`.** | ✅ U0 |
 | `5` | Upscaler input/output luminance histogram difference, for the pillar-2 black-level check. | U3 |
+| `6` | EASU output with RCAS sharpening skipped — isolates what RCAS contributes. | ✅ U1 |
+
+Mode `1`'s border is green on the bilinear path and **cyan** on the FSR 1 path, so the
+overlay also says which resolve ran.
 
 ---
 
@@ -497,11 +511,11 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 
 | CVar | Default | Meaning | State |
 |---|---|---|---|
-| `r_fsr` | `0` | `0` = off (native), `1` = FSR 1 spatial (EASU+RCAS), `2` = FSR 2 temporal. Declared but not yet read. | U1/U3 |
+| `r_fsr` | `0` | Filter used when `r_fsrRenderScale < 1`: `0` = bilinear resolve, `1` = FSR 1 spatial (EASU+RCAS), `2` = FSR 2 (warns once, falls back to `0`). | ✅ U1 / U3 |
 | `r_fsrRenderScale` | `1.0` | Explicit linear scale. Clamped low at `0.3`; snapped to a multiple of 8 with a 64px floor, except at exactly 1.0 which passes the display extent through. | ✅ U0 |
 | `r_fsrDebug` | `0` | §7. | ✅ U0 |
 | `r_fsrQuality` | `1` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). | U3 |
-| `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`; feeds `enableSharpening`/`sharpness` on the FSR2 path. | U3 |
+| `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`, 1 = sharpest. Mapped to `FsrRcasCon`'s attenuation-in-stops as `2·(1−s)`. Will also feed `enableSharpening`/`sharpness` on the FSR2 path. | ✅ U1 / U3 |
 | `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
 | `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. | U5 |
 
@@ -594,15 +608,41 @@ No third-party code. `vk_upscale.h/.cpp`, `vk.renderExtent`, `upscale_blit.comp`
 - **Sequencing note withdrawn** — G6 was decided on appearance, not cost, so U0 no longer
   had to precede it.
 
-### U1 — FSR 1 (EASU + RCAS)  🔴 *optional*
-Vendor `ffx_a.h` + `ffx_fsr1.h` into `renderer/glsl/fsr1/`, add to `GLSL_INCLUDES`, write
-`fsr_easu.comp` + `fsr_rcas.comp`. Needs a perceptual-space input: tonemap the render
-sub-rect first, run EASU+RCAS into `hdrUpscaled` as already-tonemapped values, and bypass
-the final tonemap (`r_rtTonemap`'s existing bypass at `vk_tonemap.cpp:559`).
+### U1 — FSR 1 (EASU + RCAS)  🟡 landed 2026-09-24, not yet validated in-game
+`r_fsr 1` runs three compute dispatches in `VK_RT_DispatchUpscale`, replacing the bilinear
+blit entirely:
 
-- **Exit:** visibly better than U0's bilinear on static geometry at `0.67`. **If it is not —
-  a real possibility given no AA and the RT noise floor — record that and drop the chunk
-  rather than tuning it.** Its purpose is to be a fallback, not a product.
+| Pass | Reads | Writes | Dispatch |
+|---|---|---|---|
+| `fsr_prepare.comp` | `hdrScene[slot]` storage, source clamped to `renderExtent` | `s_fsrPerceptual` | `renderExtent + 8`, clamped to display |
+| `fsr_easu.comp` | `s_fsrPerceptual` sampled (`textureGather` ×3) | `hdrUpscaled` | display |
+| `fsr_rcas.comp` | `hdrUpscaled` sampled (`texelFetch`) | `hdrScene[slot]` storage | display |
+
+**Deviation from the sketch above: the tonemap is reversible, not the engine's.** The
+original plan had EASU emit already-tonemapped values and bypass `r_rtTonemap`. Instead
+`fsr_prepare` applies AMD's reversible tonemapper `c/(max(c)+1)` plus a gamma-2.0 encode,
+and `fsr_rcas` inverts both. `hdrScene` still holds linear HDR when the chain ends, so the
+UI composite, the Uchimura tonemap and screenshots are bit-for-bit the same code path as
+`r_fsr 0` — which is what makes the A/B against U0 and against native meaningful.
+
+Other implementation notes:
+
+- RCAS writing straight back into `hdrScene` drops U0's full-resolution copy, so the FSR 1
+  path is three dispatches and no `vkCmdCopyImage`.
+- `FsrEasuCon(viewport = renderExtent, resource = display, output = display)` is the
+  sub-rect layout of §2 natively; no UV fixup anywhere.
+- EASU's 12-tap kernel reaches 2 texels past its viewport, and `hdrScene` outside the
+  sub-rect is never written. `fsr_prepare` therefore runs over a padded rect with the source
+  coordinate clamped, edge-extending the ring instead of reading undefined memory.
+- `FSR_RCAS_DENOISE 1`. No AA and a stochastic RT noise floor is exactly RCAS's worst input;
+  this is the cheap lever and it costs a few ALU.
+- Constants are computed per-thread in the shader rather than on the CPU, so the AMD headers
+  are never included from C++ and there is no uniform buffer to keep in sync.
+
+- **Exit (not yet run):** visibly better than U0's bilinear on static geometry at `0.67`.
+  **If it is not — a real possibility given no AA and the RT noise floor — record that and
+  drop the chunk rather than tuning it.** Its purpose is to be a fallback, not a product.
+  Check with `r_fsrDebug 1` (cyan border = FSR 1 ran), `4` (point magnify), `6` (EASU only).
 
 ### U2 — motion vectors + jitter  🔴
 `motionVectors` attachment, the fifth blend-attachment slot across `vk_pipeline.cpp`,
@@ -619,7 +659,7 @@ vectors in this chunk** — that is the point. Ship the overlay and validate it 
   construction; verify that it does).
 
 ### U3 — FSR 2 integration  🔴
-Vendor `neo/libs/fsr2/` at a pinned tag, add the CMake target and `src_fsr2` list,
+Vendor `neo/libs/ffx-fsr2-api/` at a pinned tag, add the CMake target and `src_fsr2` list,
 create/destroy the context alongside `VK_RT_ResizeTonemap`, and dispatch. No reactive mask
 yet; `FFX_FSR2_ENABLE_AUTO_EXPOSURE` initially (the simplest correct answer given the
 tonemap is a fixed curve downstream), `FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE` +
@@ -659,7 +699,7 @@ U4 said it was needed; dynamic resolution (nearly free given §2's layout).
 | Component | License | Compatibility with the Doom 3 GPL-3 release |
 |---|---|---|
 | `FidelityFX-FSR2` (`ffx-fsr2-api/`, including its shaders) | **MIT** (Copyright © Advanced Micro Devices, Inc.) | ✅ MIT is permissive and GPL-compatible. Combining it into a GPLv3 work is explicitly allowed; the combined work is distributed under GPLv3 while the MIT files keep their own notice. |
-| `ffx_a.h`, `ffx_fsr1.h` (FSR 1) | **MIT** (AMD) | ✅ Same. |
+| `ffx_a.h`, `ffx_fsr1.h` (FSR 1, `neo/libs/ffx-fsr/`) | **MIT** (AMD, 2021) | ✅ Same. |
 | FidelityFX SDK / FSR 3.1 (if U5 takes the upgrade) | **MIT** (AMD) | ✅ Same — but re-check the exact tag; AMD has shipped SDK components under other terms before. |
 | FSR 4 | binary distribution, **not** MIT source | ❌ Do not vendor. Already out of scope for hardware reasons. |
 
@@ -673,11 +713,10 @@ with the software, in source *and* binary distributions.
 
 1. **Do not touch AMD's file headers.** Every vendored file keeps its
    `Copyright (c) … Advanced Micro Devices, Inc.` block verbatim.
-2. **`neo/libs/fsr2/LICENSE.txt`** — copy upstream's licence file unchanged.
-3. **`README.md` → `# LICENSES`** — add an `## AMD FidelityFX Super Resolution` section
-   listing `neo/libs/fsr2/*` and `neo/renderer/glsl/fsr1/*` with the full MIT text. The file
-   already does exactly this for Dear ImGui (`README.md:166`) and two other dependencies;
-   follow that shape precisely.
+2. ✅ **`neo/libs/ffx-fsr2-api/LICENSE.txt`** and **`neo/libs/ffx-fsr/license.txt`** — upstream's
+   licence files, unchanged.
+3. ✅ **`THIRD-PARTY-LICENSES.md`** — one section per AMD tree (FSR 1 and FSR 2 carry
+   different copyright years), plus a row each in the index table. See A.8.
 4. **Binary distribution.** The MIT notice must reach anyone who gets a build, not just
    anyone who clones the repo. Check whether the install rules at `CMakeLists.txt:1591+`
    ship a licence directory; if not, add one, and make sure `dist/` picks it up.
@@ -691,7 +730,8 @@ with the software, in source *and* binary distributions.
   use and are fine. **User-visible UI is where care is needed**: AMD's branding guidance
   asks for the full "AMD FidelityFX™ Super Resolution 2" on first mention. Practical rule:
   name it accurately and don't imply AMD endorsement, sponsorship or certification of this
-  fork. Write the video-menu string once, in U5, and write it correctly.
+  fork. ✅ U1's menu string is `AMD FidelityFX™ Super Resolution 1`; add the FSR 2 one the
+  same way at U3.
 - **Patents.** MIT carries no express patent grant (unlike Apache-2.0). Normal for graphics
   code and not a practical concern for a GPL hobby fork, but worth knowing that it is a
   difference rather than an oversight.
@@ -699,8 +739,8 @@ with the software, in source *and* binary distributions.
 ### Our own new files
 
 Per CLAUDE.md, **our** new files (`vk_upscale.cpp`, `upscale_blit.comp`, `motion_debug.comp`,
-`fsr_easu.comp`, `fsr_rcas.comp`) carry the dhewm3-rt GenAI copyright block. **Vendored AMD
-files do not** — they keep AMD's header and nothing else. A file carrying both notices
+`fsr_prepare.comp`, `fsr_easu.comp`, `fsr_rcas.comp`) carry the dhewm3-rt GenAI copyright
+block. **Vendored AMD files do not** — they keep AMD's header and nothing else. A file carrying both notices
 misrepresents its provenance, which is the one thing the block exists to prevent.
 
 ---
@@ -793,8 +833,10 @@ scene variance that makes the 0.50 column above soft, and makes the two cards co
 
 ## Hygiene
 
-- New `.comp` → `GLSL_SHADER_SOURCES`; `ffx_a.h` / `ffx_fsr1.h` → `GLSL_INCLUDES`.
-- Vendored AMD sources go in `neo/libs/fsr2/` **unmodified**; if a local change is
+- New `.comp` → `GLSL_SHADER_SOURCES`; `ffx_a.h` / `ffx_fsr1.h` → `GLSL_INCLUDES` **and** a
+  `-I` in `GLSLC_FLAGS`, since they live outside `renderer/glsl/`.
+- Vendored AMD sources go in `neo/libs/ffx-fsr/` and `neo/libs/ffx-fsr2-api/`
+  **unmodified**; if a local change is
   unavoidable, mark it `// dhewm3-rt:` on the line so `git diff` against upstream stays
   readable.
 - Our new files carry the dhewm3-rt GenAI block; AMD's do not.
@@ -948,6 +990,6 @@ selects a W-suffixed Win32 API — `ffx_assert.cpp` uses `char*` throughout).
 | Keep verbatim | every AMD file header; `neo/libs/ffx-fsr2-api/LICENSE.txt` (already correct — byte-identical to upstream root) |
 | Notice location | ✅ Done. The README's 263-line inline licence dump moved to root `THIRD-PARTY-LICENSES.md` (index table + EXCLUDED CODE notice + every component's text verbatim). `README.md` keeps `# LICENSES` with the `COPYING.txt` pointer and a pointer to the new file; 420 → 167 lines. AMD's section names the pinned commit and defers to `neo/libs/ffx-fsr2-api/LICENSE.txt` as authoritative. |
 | Avoids an obligation | ✅ dropping `dx12/` removes the Microsoft `d3dx12.h` MIT notice from our tree entirely — no second entry needed |
-| FSR 1 headers (U1 only) | `ffx_a.h` / `ffx_fsr1.h` → `neo/renderer/glsl/fsr1/`, same MIT. Add the path to AMD's existing entry in `THIRD-PARTY-LICENSES.md`; the MIT text is already there. |
+| FSR 1 headers | ✅ U1. `ffx_a.h` / `ffx_fsr1.h` + upstream `license.txt` in `neo/libs/ffx-fsr/`. `THIRD-PARTY-LICENSES.md` gained its own "AMD FidelityFX Super Resolution 1" section (2021 copyright year, separate from FSR 2's 2022-2023) and an index row. |
 | Binary dist | ✅ Done. There was **no** licence install rule at all — `neo/CMakeLists.txt` installed only shaders and targets, so binaries shipped without even the GPL. Added an `install(FILES COPYING.txt THIRD-PARTY-LICENSES.md)` to `${bindir}`, guarded `NOT APPLE AND NOT WIN32` to match the sibling target install. **Windows and macOS packaging still ship no notices** — those paths don't use `install()`; whatever produces their archives has to copy both files. |
 | Changelog | note "AMD FidelityFX Super Resolution 2.2.1 (MIT)" with the pinned commit |

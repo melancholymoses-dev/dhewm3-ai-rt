@@ -9,6 +9,7 @@
 extern idCVar r_fsr;
 extern idCVar r_fsrRenderScale;
 extern idCVar r_fsrDebug;
+extern idCVar r_fsrSharpness;
 
 void VK_RT_InitUpscale();
 void VK_RT_ResizeUpscale(uint32_t w, uint32_t h);

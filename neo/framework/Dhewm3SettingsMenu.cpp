@@ -2502,6 +2502,12 @@ struct RTCVars
     idCVar *rtVolFroxel = nullptr;
     idCVar *rtGIProbes = nullptr;
     idCVar *rtGIProbeHysteresis = nullptr;
+
+    // Resolution scaling / upscaling (docs/plans/20260918_fsr_upscaling.md)
+    idCVar *fsr = nullptr;
+    idCVar *fsrRenderScale = nullptr;
+    idCVar *fsrSharpness = nullptr;
+    idCVar *fsrDebug = nullptr;
 };
 
 static RTCVars rtCVars;
@@ -2580,6 +2586,10 @@ static void InitRTOptionsMenu()
     rtCVars.rtVolFroxel = cvarSystem->Find("r_rtVolFroxel");
     rtCVars.rtGIProbes = cvarSystem->Find("r_rtGIProbes");
     rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
+    rtCVars.fsr = cvarSystem->Find("r_fsr");
+    rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
+    rtCVars.fsrSharpness = cvarSystem->Find("r_fsrSharpness");
+    rtCVars.fsrDebug = cvarSystem->Find("r_fsrDebug");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2833,6 +2843,36 @@ static void DrawRTOptionsMenu()
     ImGui::EndDisabled(); // !autoRelightOn
 
     ImGui::EndDisabled(); // !rtEnabled
+
+    // ---- Resolution scaling (docs/plans/20260918_fsr_upscaling.md) -----------
+    // Outside the ray-tracing disable: the 3D scene renders into a sub-rect of
+    // the display-sized targets whether or not RT is on.  RT just benefits most,
+    // since nearly all of its cost is a function of pixel count.
+    ImGui::Spacing();
+    ImGui::SeparatorText("Resolution Scaling / Upscaling");
+    RTSliderFloat("Render Scale (1.0 = native, bypasses the upscaler entirely)", rtCVars.fsrRenderScale, 0.3f, 1.0f,
+                  "%.2f");
+
+    static const char *const fsrModes[] = {"Bilinear resolve", "AMD FidelityFX\xE2\x84\xA2 Super Resolution 1",
+                                           "FSR 2 (not implemented yet)"};
+    RTCombo("Upscale Filter", rtCVars.fsr, fsrModes, IM_ARRAYSIZE(fsrModes));
+
+    const bool fsr1On = rtCVars.fsr && rtCVars.fsr->GetInteger() == 1;
+    ImGui::BeginDisabled(!fsr1On);
+    RTSliderFloat("Sharpness (RCAS)", rtCVars.fsrSharpness, 0.0f, 1.0f, "%.2f");
+    ImGui::EndDisabled(); // !fsr1On
+    ImGui::TextDisabled("FSR 1 is a spatial filter with no temporal history, so it sharpens the\n"
+                        "ray-traced noise floor along with the image. Keep sharpness low if it\n"
+                        "crawls. Neither mode does anything at Render Scale 1.0.");
+
+    static const char *const fsrDebugModes[] = {"Off",
+                                                "1 - resolve border (green = bilinear, cyan = FSR 1)",
+                                                "2 - per-view console log",
+                                                "3 - unused",
+                                                "4 - point magnify (no reconstruction, honest A/B)",
+                                                "5 - unused",
+                                                "6 - EASU only, no RCAS sharpening"};
+    RTCombo("Upscale Debug Overlay", rtCVars.fsrDebug, fsrDebugModes, IM_ARRAYSIZE(fsrDebugModes));
 }
 
 // ---------------------------------------------------------------------------

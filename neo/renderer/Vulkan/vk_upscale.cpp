@@ -1,7 +1,20 @@
 /*
 ============================================================================
 Functions to Upscale images.
-Targeting AMD FidelityFX FSR2 later, with simple linear scaling initially.
+
+Two resolve paths share vk.renderExtent and VK_RT_DispatchUpscale:
+
+  r_fsr 0  U0 — upscale_blit.comp, a bilinear magnify of the render sub-rect.
+  r_fsr 1  U1 — AMD FidelityFX Super Resolution 1: fsr_prepare → fsr_easu →
+               fsr_rcas.  EASU and RCAS need a perceptual-space input, so the
+               chain applies AMD's reversible tonemapper + gamma up front and
+               inverts both at the end.  hdrScene therefore still holds linear
+               HDR when the chain finishes, and the UI composite, the Uchimura
+               tonemap and screenshots downstream are untouched.  That is the
+               deliberate difference from the plan's original sketch, which had
+               EASU emit already-tonemapped values and bypass r_rtTonemap.
+
+Targeting AMD FidelityFX FSR2 (r_fsr 2) at U3.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
@@ -28,15 +41,51 @@ struct UpscalePC
     int32_t debugMode;
 };
 
+// FsrPC — must match the push_constant block in fsr_prepare.comp / fsr_easu.comp.
+struct FsrEasuPC
+{
+    int32_t renderExtent[2];
+    int32_t displayExtent[2];
+};
+
+// Must match fsr_rcas.comp.
+struct FsrRcasPC
+{
+    float sharpness;
+    int32_t debugMode;
+};
+
 idCVar r_fsr("r_fsr", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-             "Toggle for FSR upscaling.  Values (0=bilinear AA, 1=FSR2). Off if Renderscale=1.0");
+             "Upscale filter used when r_fsrRenderScale < 1.0.  0 = bilinear resolve, "
+             "1 = AMD FidelityFX Super Resolution 1 (EASU + RCAS), 2 = FSR 2 (not implemented yet).");
 idCVar r_fsrRenderScale("r_fsrRenderScale", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Linear Render Scale Factor.  Values (0.5=Half-Resolution, 1=no-scale).");
 idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "FSR Debug Mode.");
+idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                      "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
 
-static void VK_RT_CreateUpscaleImage(uint32_t width, uint32_t height)
+// ---------------------------------------------------------------------------
+// FSR 1 (U1) resources.  Kept file-static: vk_upscale.cpp is the one
+// translation unit that owns upscaling, and nothing else needs to see them.
+// ---------------------------------------------------------------------------
+struct fsrPass_t
 {
-    vkRTImage_t &up = vkRT.hdrUpscaled;
+    VkPipeline pipeline;
+    VkPipelineLayout layout;
+    VkDescriptorSetLayout descLayout;
+    VkDescriptorPool descPool;
+    VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT];
+};
+
+static vkRTImage_t s_fsrPerceptual; // display-res RGBA16F, perceptual space
+static fsrPass_t s_fsrPrepare;
+static fsrPass_t s_fsrEasu;
+static fsrPass_t s_fsrRcas;
+static bool s_fsr1Ready = false;
+static int s_fsrLoggedMode = -1; // last r_fsr value announced to the console
+
+static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t height, const char *label)
+{
     up.width = width;
     up.height = height;
 
@@ -70,7 +119,7 @@ static void VK_RT_CreateUpscaleImage(uint32_t width, uint32_t height)
     }
     if (memTypeIdx == UINT32_MAX)
     {
-        common->Error("VK RT Upscale: no device-local memory type for up scene buffer");
+        common->Error("VK RT Upscale: no device-local memory type for %s", label);
         return;
     }
 
@@ -135,9 +184,8 @@ static void VK_RT_CreateUpscaleImage(uint32_t width, uint32_t height)
     }
 }
 
-static void VK_RT_DestroyUpscaleImage(void)
+static void VK_RT_DestroyUpscaleImage(vkRTImage_t &up)
 {
-    vkRTImage_t &up = vkRT.hdrUpscaled;
     if (up.view != VK_NULL_HANDLE)
     {
         vkDestroyImageView(vk.device, up.view, NULL);
@@ -301,6 +349,287 @@ static void VK_RT_DestroyUpscalePipeline(void)
 }
 
 /*
+===========================================================================
+FSR 1 (U1)
+
+Three compute dispatches, all 2-binding: binding 0 reads, binding 1 writes.
+
+  fsr_prepare  hdrScene[slot] (storage) -> s_fsrPerceptual  (renderExtent + pad)
+  fsr_easu     s_fsrPerceptual (sampled) -> hdrUpscaled      (display extent)
+  fsr_rcas     hdrUpscaled (sampled)     -> hdrScene[slot]   (display extent)
+
+RCAS writing straight back into hdrScene is what lets the FSR 1 path skip the
+full-resolution copy the bilinear path needs.
+===========================================================================
+*/
+
+static bool VK_RT_CreateFsrPass(fsrPass_t &pass, const char *spvPath, VkDescriptorType srcType, uint32_t pushSize)
+{
+    memset(&pass, 0, sizeof(pass));
+
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = srcType;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutCI = {};
+    layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.bindingCount = 2;
+    layoutCI.pBindings = bindings;
+    VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &pass.descLayout));
+
+    VkPushConstantRange pushRange = {};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = pushSize;
+
+    VkPipelineLayoutCreateInfo plCI = {};
+    plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plCI.setLayoutCount = 1;
+    plCI.pSetLayouts = &pass.descLayout;
+    plCI.pushConstantRangeCount = 1;
+    plCI.pPushConstantRanges = &pushRange;
+    VK_CHECK(vkCreatePipelineLayout(vk.device, &plCI, NULL, &pass.layout));
+
+    VkShaderModule compMod = VK_LoadSPIRV(spvPath);
+    if (compMod == VK_NULL_HANDLE)
+    {
+        common->Warning("VK RT FSR1: failed to load %s", spvPath);
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stage = {};
+    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = compMod;
+    stage.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineCI = {};
+    pipelineCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineCI.stage = stage;
+    pipelineCI.layout = pass.layout;
+    VK_CHECK(vkCreateComputePipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineCI, NULL, &pass.pipeline));
+    vkDestroyShaderModule(vk.device, compMod, NULL);
+
+    VkDescriptorPoolSize poolSizes[2] = {};
+    poolSizes[0].type = srcType;
+    poolSizes[0].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[1].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolCI = {};
+    poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.poolSizeCount = 2;
+    poolCI.pPoolSizes = poolSizes;
+    VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &pass.descPool));
+
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        layouts[i] = pass.descLayout;
+
+    VkDescriptorSetAllocateInfo dsAlloc = {};
+    dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsAlloc.descriptorPool = pass.descPool;
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = layouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, pass.descSets));
+    return true;
+}
+
+static void VK_RT_DestroyFsrPass(fsrPass_t &pass)
+{
+    if (pass.pipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(vk.device, pass.pipeline, NULL);
+    if (pass.layout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(vk.device, pass.layout, NULL);
+    if (pass.descPool != VK_NULL_HANDLE)
+        vkDestroyDescriptorPool(vk.device, pass.descPool, NULL);
+    if (pass.descLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(vk.device, pass.descLayout, NULL);
+    memset(&pass, 0, sizeof(pass));
+}
+
+// Rewritten every dispatch rather than tracked with a dirty counter: six writes
+// per frame is nothing, and the views change on every resize and every bindless
+// purge.  Safe because the sets are per frame-in-flight and the slot's fence has
+// already been waited on.
+static void VK_RT_WriteFsrPassDescriptors(const fsrPass_t &pass, int frameIdx, VkDescriptorType srcType,
+                                          VkImageView srcView, VkImageLayout srcLayout, VkImageView dstView)
+{
+    VkDescriptorImageInfo srcInfo = {};
+    srcInfo.sampler = (srcType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) ? vkRT.upscaleSampler : VK_NULL_HANDLE;
+    srcInfo.imageView = srcView;
+    srcInfo.imageLayout = srcLayout;
+
+    VkDescriptorImageInfo dstInfo = {};
+    dstInfo.imageView = dstView;
+    dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet writes[2] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = pass.descSets[frameIdx];
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = srcType;
+    writes[0].pImageInfo = &srcInfo;
+
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = pass.descSets[frameIdx];
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[1].pImageInfo = &dstInfo;
+
+    vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+}
+
+static void VK_RT_CreateFsr1Pipelines(void)
+{
+    VK_RT_CreateUpscaleSampler();
+
+    s_fsr1Ready = VK_RT_CreateFsrPass(s_fsrPrepare, "glprogs/glsl/fsr_prepare.comp.spv",
+                                      VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, sizeof(int32_t) * 2) &&
+                  VK_RT_CreateFsrPass(s_fsrEasu, "glprogs/glsl/fsr_easu.comp.spv",
+                                      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(FsrEasuPC)) &&
+                  VK_RT_CreateFsrPass(s_fsrRcas, "glprogs/glsl/fsr_rcas.comp.spv",
+                                      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(FsrRcasPC));
+
+    if (s_fsr1Ready)
+        common->Printf("VK RT FSR1: EASU + RCAS pipelines initialized\n");
+    else
+        common->Warning("VK RT FSR1: pipeline setup failed — r_fsr 1 will fall back to the bilinear resolve");
+}
+
+static void VK_RT_DestroyFsr1Pipelines(void)
+{
+    VK_RT_DestroyFsrPass(s_fsrPrepare);
+    VK_RT_DestroyFsrPass(s_fsrEasu);
+    VK_RT_DestroyFsrPass(s_fsrRcas);
+    s_fsr1Ready = false;
+}
+
+// r_fsrDebug 4 is the point-magnify A/B, which lives on the bilinear path, so it
+// wins over r_fsr — otherwise there is nothing honest to compare FSR against.
+static bool VK_RT_Fsr1Active(void)
+{
+    return r_fsr.GetInteger() == 1 && r_fsrDebug.GetInteger() != 4 && s_fsr1Ready &&
+           s_fsrPerceptual.image != VK_NULL_HANDLE;
+}
+
+static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
+{
+    const VkImageSubresourceRange colorRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const uint32_t dispW = vk.swapchainExtent.width;
+    const uint32_t dispH = vk.swapchainExtent.height;
+
+    VK_RT_WriteFsrPassDescriptors(s_fsrPrepare, frameIdx, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                  vkRT.hdrScene[frameIdx].view, VK_IMAGE_LAYOUT_GENERAL, s_fsrPerceptual.view);
+    VK_RT_WriteFsrPassDescriptors(s_fsrEasu, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, s_fsrPerceptual.view,
+                                  VK_IMAGE_LAYOUT_GENERAL, vkRT.hdrUpscaled.view);
+    VK_RT_WriteFsrPassDescriptors(s_fsrRcas, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                  vkRT.hdrUpscaled.view, VK_IMAGE_LAYOUT_GENERAL, vkRT.hdrScene[frameIdx].view);
+
+    // 1. hdrScene COLOR_ATTACHMENT_OPTIMAL -> GENERAL.  It stays there for the
+    //    whole chain: fsr_prepare reads it, fsr_rcas writes it.
+    VkImageMemoryBarrier toGeneral = {};
+    toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toGeneral.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    toGeneral.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.image = vkRT.hdrScene[frameIdx].image;
+    toGeneral.subresourceRange = colorRange;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                         NULL, 0, NULL, 1, &toGeneral);
+
+    // Between dispatches only a memory dependency is needed — every image
+    // involved is already in GENERAL.  The same barrier also orders fsr_prepare's
+    // read of hdrScene against fsr_rcas's write of it (WAR).
+    VkMemoryBarrier computeChain = {};
+    computeChain.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    computeChain.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    computeChain.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+
+    // 2. fsr_prepare over renderExtent plus a pad ring: EASU's 12-tap kernel
+    //    reaches two texels past its viewport, and hdrScene outside the sub-rect
+    //    was never written this frame.
+    {
+        const uint32_t padW = (vk.renderExtent.width + 8 < dispW) ? vk.renderExtent.width + 8 : dispW;
+        const uint32_t padH = (vk.renderExtent.height + 8 < dispH) ? vk.renderExtent.height + 8 : dispH;
+
+        int32_t pc[2] = {(int32_t)vk.renderExtent.width, (int32_t)vk.renderExtent.height};
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrPrepare.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrPrepare.layout, 0, 1,
+                                &s_fsrPrepare.descSets[frameIdx], 0, NULL);
+        vkCmdPushConstants(cmd, s_fsrPrepare.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), pc);
+        vkCmdDispatch(cmd, (padW + 7) / 8, (padH + 7) / 8, 1);
+    }
+
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                         &computeChain, 0, NULL, 0, NULL);
+
+    // 3. EASU over the full display extent.
+    {
+        FsrEasuPC pc;
+        pc.renderExtent[0] = (int32_t)vk.renderExtent.width;
+        pc.renderExtent[1] = (int32_t)vk.renderExtent.height;
+        pc.displayExtent[0] = (int32_t)dispW;
+        pc.displayExtent[1] = (int32_t)dispH;
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrEasu.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrEasu.layout, 0, 1,
+                                &s_fsrEasu.descSets[frameIdx], 0, NULL);
+        vkCmdPushConstants(cmd, s_fsrEasu.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+    }
+
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                         &computeChain, 0, NULL, 0, NULL);
+
+    // 4. RCAS sharpens and converts back to linear HDR, straight into hdrScene.
+    {
+        float s = r_fsrSharpness.GetFloat();
+        if (s < 0.0f)
+            s = 0.0f;
+        if (s > 1.0f)
+            s = 1.0f;
+
+        FsrRcasPC pc;
+        pc.sharpness = 2.0f * (1.0f - s); // FsrRcasCon takes attenuation in stops; 0 = sharpest
+        pc.debugMode = r_fsrDebug.GetInteger();
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrRcas.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrRcas.layout, 0, 1,
+                                &s_fsrRcas.descSets[frameIdx], 0, NULL);
+        vkCmdPushConstants(cmd, s_fsrRcas.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+    }
+
+    // 5. hdrScene back to COLOR_ATTACHMENT_OPTIMAL for the UI resume pass.
+    VkImageMemoryBarrier toAttach = {};
+    toAttach.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toAttach.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    toAttach.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+    toAttach.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toAttach.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toAttach.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toAttach.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toAttach.image = vkRT.hdrScene[frameIdx].image;
+    toAttach.subresourceRange = colorRange;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
+                         NULL, 0, NULL, 1, &toAttach);
+}
+
+/*
 Function to round size to nearest multiple of 8.  Min size is 64, and maximum is display dim
 (which can be not divisible by 8).
 */
@@ -356,13 +685,33 @@ the UI pass.  No-op unless the extents actually differ.
 */
 void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
 {
-    if (!VK_RT_UpscaleActive() || vkRT.upscalePipeline == VK_NULL_HANDLE)
+    if (!VK_RT_UpscaleActive())
         return;
     if (vkRT.hdrUpscaled.image == VK_NULL_HANDLE || vkRT.hdrScene[vk.currentFrame].image == VK_NULL_HANDLE)
+        return;
+    if (vkRT.upscalePipeline == VK_NULL_HANDLE && !VK_RT_Fsr1Active())
         return;
 
     const int frameIdx = (int)vk.currentFrame;
     const VkImageSubresourceRange colorRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    const int mode = r_fsr.GetInteger();
+    if (mode != s_fsrLoggedMode)
+    {
+        const char *what = VK_RT_Fsr1Active() ? "AMD FidelityFX Super Resolution 1 (EASU + RCAS)" : "bilinear resolve";
+        if (mode == 2)
+            common->Warning("VK RT Upscale: r_fsr 2 (FSR 2) is not implemented yet — using the bilinear resolve");
+        common->Printf("VK RT Upscale: r_fsr %d -> %s, render %ux%u -> display %ux%u, sharpness %.2f\n", mode, what,
+                       vk.renderExtent.width, vk.renderExtent.height, vk.swapchainExtent.width,
+                       vk.swapchainExtent.height, r_fsrSharpness.GetFloat());
+        s_fsrLoggedMode = mode;
+    }
+
+    if (VK_RT_Fsr1Active())
+    {
+        VK_RT_DispatchFsr1(cmd, frameIdx);
+        return;
+    }
 
     // Descriptor views only change on resize; the counter guard skips the rewrite.
     if (vkRT.upscaleDescSetLastUpdatedFrameCount[frameIdx] != (int)tr.frameCount)
@@ -476,25 +825,31 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
 void VK_RT_InitUpscale()
 {
     VK_RT_ResizeUpscale(vk.swapchainExtent.width, vk.swapchainExtent.height);
-    // Init for VK pipeline for FSR etc goes here.
     VK_RT_CreateUpscalePipeline();
+    VK_RT_CreateFsr1Pipelines();
 }
 
 void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
-    VK_RT_DestroyUpscaleImage();
-    VK_RT_CreateUpscaleImage(width, height);
+    VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled);
+    VK_RT_DestroyUpscaleImage(s_fsrPerceptual);
+    VK_RT_CreateUpscaleImage(vkRT.hdrUpscaled, width, height, "hdrUpscaled");
+    VK_RT_CreateUpscaleImage(s_fsrPerceptual, width, height, "fsrPerceptual");
     // Covers the resize path; the per-frame call in VK_RB_DrawView covers cvar changes.
     VK_RT_UpdateRenderExtent();
-    // hdrUpscaled's view changed, so the bound descriptors are stale.
+    // hdrUpscaled's view changed, so the bound descriptors are stale.  (The FSR 1
+    // passes rewrite theirs every dispatch, so they need nothing here.)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         vkRT.upscaleDescSetLastUpdatedFrameCount[i] = -1;
+    s_fsrLoggedMode = -1;
 }
 
 void VK_RT_ShutdownUpscale(void)
 {
-    VK_RT_DestroyUpscaleImage();
+    VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled);
+    VK_RT_DestroyUpscaleImage(s_fsrPerceptual);
+    VK_RT_DestroyFsr1Pipelines();
     VK_RT_DestroyUpscalePipeline();
 }
 

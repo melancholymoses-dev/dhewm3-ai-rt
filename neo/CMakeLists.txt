@@ -775,6 +775,9 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/vol_froxel_resolve.comp
 	renderer/glsl/tonemap.comp
 	renderer/glsl/upscale_blit.comp
+	renderer/glsl/fsr_prepare.comp
+	renderer/glsl/fsr_easu.comp
+	renderer/glsl/fsr_rcas.comp
 )
 
 
@@ -783,6 +786,8 @@ file(MAKE_DIRECTORY "${SPV_OUTPUT_DIR}")
 
 set(GLSLC_FLAGS --target-env=vulkan1.2)
 list(APPEND GLSLC_FLAGS --target-spv=spv1.4)
+# AMD's FSR 1 shader headers (ffx_a.h / ffx_fsr1.h) are included by bare name.
+list(APPEND GLSLC_FLAGS "-I${CMAKE_SOURCE_DIR}/libs/ffx-fsr")
 
 
 # Shared GLSL include files — not compiled directly but #included by stage shaders.
@@ -800,6 +805,9 @@ set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_gbuf_normal.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/vol_froxel_common.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_probe_common.glsl"
+	# AMD FSR 1 (MIT) — vendored unmodified, see THIRD-PARTY-LICENSES.md.
+	"${CMAKE_SOURCE_DIR}/libs/ffx-fsr/ffx_a.h"
+	"${CMAKE_SOURCE_DIR}/libs/ffx-fsr/ffx_fsr1.h"
 )
 
 set(SPIRV_BINARIES "")
