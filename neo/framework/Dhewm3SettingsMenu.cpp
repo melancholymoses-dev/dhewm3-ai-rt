@@ -2421,6 +2421,7 @@ struct RTCVars
     idCVar *rtShadowBlurEnable = nullptr;
     idCVar *rtShadowBlurDepthAware = nullptr;
     idCVar *rtShadowRayBias = nullptr;
+    idCVar *rtShadowBiasErrMargin = nullptr;
     idCVar *rtShadowSoftRadiusScale = nullptr;
     idCVar *rtShadowSoftRadiusMin = nullptr;
     idCVar *rtShadowSoftRadiusMax = nullptr;
@@ -2528,6 +2529,7 @@ static void InitRTOptionsMenu()
     rtCVars.rtShadowBlurEnable = cvarSystem->Find("r_rtShadowBlurEnable");
     rtCVars.rtShadowBlurDepthAware = cvarSystem->Find("r_rtShadowBlurDepthAware");
     rtCVars.rtShadowRayBias = cvarSystem->Find("r_rtShadowRayBias");
+    rtCVars.rtShadowBiasErrMargin = cvarSystem->Find("r_rtShadowBiasErrMargin");
     rtCVars.rtShadowSoftRadiusScale = cvarSystem->Find("r_rtShadowSoftRadiusScale");
     rtCVars.rtShadowSoftRadiusMin = cvarSystem->Find("r_rtShadowSoftRadiusMin");
     rtCVars.rtShadowSoftRadiusMax = cvarSystem->Find("r_rtShadowSoftRadiusMax");
@@ -2697,6 +2699,11 @@ static void DrawRTOptionsMenu()
         RTSliderInt("Shadow Blur Radius (pixels)", rtCVars.rtShadowBlur, 0, 8);
         RTCheckbox("Depth-Aware Shadow Blur", rtCVars.rtShadowBlurDepthAware);
         RTSliderFloat("Shadow Ray Bias", rtCVars.rtShadowRayBias, 0.0f, 2.0f);
+        RTSliderFloat("Shadow Bias Distance Margin", rtCVars.rtShadowBiasErrMargin, 1.0f, 32.0f, "%.1f");
+        ImGui::TextDisabled("Distance margin scales the bias floor that stops far geometry\n"
+                            "self-shadowing (depth->world error grows as distance squared).\n"
+                            "Raise it if distant structures flicker; debug overlay 9 turns\n"
+                            "white once the bias reaches a pixel and shadows start detaching.");
         ImGui::TableNextColumn();
         RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
         RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");

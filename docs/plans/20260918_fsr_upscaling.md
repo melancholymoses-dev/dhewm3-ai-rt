@@ -1030,22 +1030,37 @@ because a wrong-but-stationary value reads as correct and a wrong-and-moving one
 | Shadow flicker at moderate range | `r_rtShadowRayBias` had been lowered to `0.05`, below A12's self-intersection margin | user set it to `0.25`; fixed |
 | Shadows differ from the non-RT path at `0.25` | peter-panning — the base bias is covering both the honest margin *and* the reconstruction error | open; the right fix is a smaller base bias once the floor is trustworthy |
 | Bad shadows in cinematics | the A12 floor (`d²·ulp/znear`) and the AO fade band both read the **`r_znear` cvar from the backend**. Game code writes it directly (3.0 → 1.0, `Game_local.cpp:4532`), so on the transition frame the value disagrees with the matrix the depth buffer was rasterised through | fixed — `VK_RT_EffectiveZNear(viewDef)` reads it off `projectionMatrix` instead, the way `vk_vol_froxel.cpp` already did |
-| Flicker on structures ~3000 units out | unresolved; see below | open |
+| Flicker on structures ~3000 units out | the A12 bias floor's 3x margin is too small — see below | `r_rtShadowBiasErrMargin`, sweep pending |
 
 `renderView.cramZNear` is **not** involved and is not a lurking bug: it is never assigned
 anywhere in the tree, so `R_BuildProjection`'s `zNear *= 0.25` branch never runs.
 
-**The 3000-unit case is probably not the bias.** At that range one render pixel covers
-several world units, so the shadow boundary on a refinery is far sub-pixel, and one
-stochastic shadow ray per pixel gives a binary answer that jitter re-rolls every frame.
-`r_rtShadowDebugMode 9` (new) decides it: it paints black where the base bias wins and
-grey→white where the A12 floor wins, brightness = floor size / 4 units. Distant geometry
-reading **black** means raise the bias; reading **white** and still flickering means the
-bias already covers the reconstruction error and the cause is undersampling — a
-reactive-mask / denoiser problem, i.e. U4.
+**The 3000-unit case is the bias after all — the margin, not the base.** Measured:
+identical at render scale 0.5 and 1.0 (so not undersampling), present in every `r_fsr`
+mode including at scale 1.0 where jitter is off entirely (so not FSR), and **raising
+`r_znear` makes it go away**.
 
-Second discriminator, no code needed: undersampling scales with render resolution, bias
-error does not. Sweep `r_fsrRenderScale`.
+That last result is the informative one, because it does not fit "error exceeds bias":
+the error and the A12 floor both scale as `1/znear`, so znear leaves their ratio
+untouched. It works by pushing the *absolute* error below the geometry's feature scale.
+Conclusion: the one-ulp error model is optimistic — the dominant term is the cancellation
+inside `invViewProj * vec4(ndc, 1)` at `ndc.z ≈ 0.999`, worth many ulps — and A12's 3×
+margin under-covers it.
+
+`r_rtShadowBiasErrMargin` (new, default 3.0 = A12's value) makes that sweepable, and buys
+the same thing znear did at no near-clipping cost, because the floor term only wins at
+range. The budget is real and bounded: error grows as `d²`, pixel footprint grows as `d`,
+and a bias is invisible until it exceeds the footprint. At `d = 3000`, 1440p, fov 90°,
+that is 0.54 units of bias against a 2.3-unit footprint — roughly 4× of headroom.
+
+`r_rtShadowDebugMode 9` shows exactly that headroom: black = base bias in charge, grey =
+floor in charge and well under a pixel, white = bias has reached one pixel and further
+margin trades distant flicker for detached contact shadows.
+
+**Instrumentation defect found and fixed:** `VK_RT_ShadowBlurRadius()` did not check the
+debug mode, so the 6-tap separable blur was filtering every diagnostic. Mode 2 emits a
+binary 0/1 and read as a smooth gradient. All debug readings before 2026-09-24 were taken
+through that blur.
 
 ### Outstanding after U3
 

@@ -42,7 +42,7 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     ivec2 scissorOffset;        // screen-space origin of this dispatch (light scissor rect offset)
     ivec2 screenSize;           // full framebuffer size (for UV reconstruction)
     int   shadowLayer;          // P1b: array layer this light writes (0..VK_RT_SHADOW_LAYERS-1)
-    float biasErrCoeff;         // A12: bias floor vs depth-reconstruction error (3*ulp/znear)
+    float biasErrCoeff;         // A12: bias floor vs depth-reconstruction error (margin*ulp/znear)
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (xyz = world unit axis,
@@ -52,6 +52,7 @@ layout(set = 0, binding = 3) uniform ShadowParams {
     vec4  lightAxisUp;
     vec4  lightAxisFwd;         // point-light 3rd axis; zero half-extent for projected (flat aperture)
     uint  lightKind;            // 0 = point (ellipsoid), 1 = projected (aperture rect) — informational only
+    float biasFootprintCoeff;   // world units per render pixel, per unit of view distance
 } params;
 
 layout(location = 0) rayPayloadEXT float shadowFactor;
@@ -294,15 +295,19 @@ void main() {
     float floorTerm   = params.biasErrCoeff * camDist * camDist;
     float adaptBias   = max( baseTerm, floorTerm );
 
-    // Debug mode 9: which of the two bias terms is in charge, and how big it is.
-    //   black         the base bias (rayBias/nDotL) dominates
-    //   grey->white   the A12 depth-error floor dominates; brightness = floorTerm/4 units
-    // Distant geometry should be bright.  If a flickering structure reads BLACK out
-    // there, the floor never engaged and raising rayBias is the fix; if it reads
-    // WHITE and still flickers, the bias is already covering the reconstruction error
-    // and the flicker is something else (undersampling, most likely).
+    // Debug mode 9: the bias budget.  The origin bias is only *visible* (as peter-panning,
+    // shadows detaching from contact points) once it exceeds one pixel's world footprint,
+    // and that footprint grows as d while the reconstruction error grows as d^2 — so this
+    // is the headroom available for r_rtShadowBiasErrMargin at any given distance.
+    //   black        the base bias (rayBias/nDotL) is in charge — near field
+    //   dark grey    the A12 depth-error floor is in charge but is far below a pixel
+    //   white        the bias has reached a full pixel; raising the margin further
+    //                starts trading distant flicker for detached contact shadows
+    // Raise r_rtShadowBiasErrMargin until the flicker stops, keeping this grey.
     if ( params.debugMode == 9 ) {
-        storeShadow( coord, floorTerm > baseTerm ? (0.35 + 0.65 * clamp( floorTerm / 4.0, 0.0, 1.0 )) : 0.0 );
+        float pixFootprint = camDist * params.biasFootprintCoeff;
+        float budget       = ( pixFootprint > 1e-5 ) ? clamp( adaptBias / pixFootprint, 0.0, 1.0 ) : 1.0;
+        storeShadow( coord, floorTerm > baseTerm ? ( 0.15 + 0.85 * budget ) : 0.0 );
         return;
     }
 
