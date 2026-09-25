@@ -92,7 +92,8 @@ struct fsrPass_t
     VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT];
 };
 
-static vkRTImage_t s_fsrPerceptual; // display-res RGBA16F, perceptual space
+// Per frame-in-flight for the same reason as vkRT.hdrUpscaled — see vk_raytracing.h.
+static vkRTImage_t s_fsrPerceptual[VK_MAX_FRAMES_IN_FLIGHT]; // display-res RGBA16F, perceptual space
 static fsrPass_t s_fsrPrepare;
 static fsrPass_t s_fsrEasu;
 static fsrPass_t s_fsrRcas;
@@ -243,8 +244,8 @@ static void VK_RT_CreateUpscaleSampler(void)
 
 /*
 Upscale compute pipeline: upscale_blit.comp magnifies hdrScene's render sub-rect
-into hdrUpscaled at display resolution.  Descriptor sets are per frame-in-flight
-because hdrScene is per-slot; hdrUpscaled is shared.
+into hdrUpscaled at display resolution.  Descriptor sets, and every image they
+point at, are per frame-in-flight.
 */
 static void VK_RT_CreateUpscalePipeline(void)
 {
@@ -371,9 +372,9 @@ FSR 1 (U1)
 
 Three compute dispatches, all 2-binding: binding 0 reads, binding 1 writes.
 
-  fsr_prepare  hdrScene[slot] (storage) -> s_fsrPerceptual  (renderExtent + pad)
-  fsr_easu     s_fsrPerceptual (sampled) -> hdrUpscaled      (display extent)
-  fsr_rcas     hdrUpscaled (sampled)     -> hdrScene[slot]   (display extent)
+  fsr_prepare  hdrScene[slot]          -> s_fsrPerceptual[slot]  (renderExtent + pad)
+  fsr_easu     s_fsrPerceptual[slot]   -> hdrUpscaled[slot]      (display extent)
+  fsr_rcas     hdrUpscaled[slot]       -> hdrScene[slot]         (display extent)
 
 RCAS writing straight back into hdrScene is what lets the FSR 1 path skip the
 full-resolution copy the bilinear path needs.
@@ -545,7 +546,7 @@ static void VK_RT_DestroyFsr1Pipelines(void)
 static bool VK_RT_Fsr1Active(void)
 {
     return r_fsr.GetInteger() == 1 && r_fsrDebug.GetInteger() != 4 && s_fsr1Ready &&
-           s_fsrPerceptual.image != VK_NULL_HANDLE;
+           s_fsrPerceptual[vk.currentFrame].image != VK_NULL_HANDLE;
 }
 
 static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
@@ -555,11 +556,14 @@ static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
     const uint32_t dispH = vk.swapchainExtent.height;
 
     VK_RT_WriteFsrPassDescriptors(s_fsrPrepare, frameIdx, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                                  vkRT.hdrScene[frameIdx].view, VK_IMAGE_LAYOUT_GENERAL, s_fsrPerceptual.view);
-    VK_RT_WriteFsrPassDescriptors(s_fsrEasu, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, s_fsrPerceptual.view,
-                                  VK_IMAGE_LAYOUT_GENERAL, vkRT.hdrUpscaled.view);
+                                  vkRT.hdrScene[frameIdx].view, VK_IMAGE_LAYOUT_GENERAL,
+                                  s_fsrPerceptual[frameIdx].view);
+    VK_RT_WriteFsrPassDescriptors(s_fsrEasu, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                  s_fsrPerceptual[frameIdx].view, VK_IMAGE_LAYOUT_GENERAL,
+                                  vkRT.hdrUpscaled[frameIdx].view);
     VK_RT_WriteFsrPassDescriptors(s_fsrRcas, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                  vkRT.hdrUpscaled.view, VK_IMAGE_LAYOUT_GENERAL, vkRT.hdrScene[frameIdx].view);
+                                  vkRT.hdrUpscaled[frameIdx].view, VK_IMAGE_LAYOUT_GENERAL,
+                                  vkRT.hdrScene[frameIdx].view);
 
     // 1. hdrScene COLOR_ATTACHMENT_OPTIMAL -> GENERAL.  It stays there for the
     //    whole chain: fsr_prepare reads it, fsr_rcas writes it.
@@ -806,6 +810,18 @@ static uint32_t VK_SnapExtent8(float f, uint32_t displayDim)
     return fsnap;
 }
 
+// True once VK_RT_InitUpscale has tried to build the resolve pipelines.  Before that,
+// "no pipeline" means "not built yet", not "failed" — the difference matters to the
+// fallback in VK_RT_UpdateRenderExtent, which runs once from VK_RT_ResizeUpscale
+// before the pipelines exist and then again every frame from VK_RB_DrawView.
+static bool s_upscaleInitDone = false;
+
+// Is there any path that can resolve the render sub-rect back to display resolution?
+static bool VK_RT_ResolvePathReady(void)
+{
+    return vkRT.upscalePipeline != VK_NULL_HANDLE || s_fsr1Ready;
+}
+
 void VK_RT_UpdateRenderExtent(void)
 {
     const VkExtent2D old = vk.renderExtent;
@@ -814,6 +830,24 @@ void VK_RT_UpdateRenderExtent(void)
     float scale = r_fsrRenderScale.GetFloat();
     if (scale < 0.3f)
         scale = 0.3f;
+
+    // With no resolve path there is nothing to magnify the sub-rect back up, and the
+    // callers mark the resolve done regardless — so the UI would draw at display extent
+    // over a scene stranded in the top-left corner.  Render native instead: a lost
+    // performance option beats a broken frame, and it keeps every display-space divisor
+    // in §4 consistent for free.
+    if (scale < 1.0f && s_upscaleInitDone && !VK_RT_ResolvePathReady())
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            common->Warning("VK RT Upscale: no resolve pipeline loaded — ignoring r_fsrRenderScale %.2f and "
+                            "rendering at native resolution",
+                            scale);
+        }
+        scale = 1.0f;
+    }
 
     uint32_t wn, hn;
     if (scale >= 1.0f)
@@ -830,10 +864,20 @@ void VK_RT_UpdateRenderExtent(void)
     }
 
     if (wn != old.width || hn != old.height)
+    {
         common->Printf("VK RT Upscale: renderExtent %ux%u -> %ux%u (display %ux%u, requested scale %.3f, "
                        "achieved %.4f x %.4f)\n",
                        old.width, old.height, wn, hn, vk.swapchainExtent.width, vk.swapchainExtent.height, scale,
                        (float)wn / (float)vk.swapchainExtent.width, (float)hn / (float)vk.swapchainExtent.height);
+
+        // The AO/GI/vol histories are indexed in render-resolution texels, so after a
+        // scale change every one of them refers to the previous raster grid.  Blending
+        // against that ghosts until it converges.  Same flags the camera-cut detector
+        // uses; this is the same class of event.
+        vkRT.aoHistoryValid = false;
+        vkRT.giHistoryValid = false;
+        vkRT.volHistoryValid = false;
+    }
 
     vk.renderExtent.width = wn;
     vk.renderExtent.height = hn;
@@ -850,7 +894,8 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
 {
     if (!VK_RT_UpscaleActive())
         return;
-    if (vkRT.hdrUpscaled.image == VK_NULL_HANDLE || vkRT.hdrScene[vk.currentFrame].image == VK_NULL_HANDLE)
+    if (vkRT.hdrUpscaled[vk.currentFrame].image == VK_NULL_HANDLE ||
+        vkRT.hdrScene[vk.currentFrame].image == VK_NULL_HANDLE)
         return;
     if (vkRT.upscalePipeline == VK_NULL_HANDLE && !VK_RT_Fsr1Active())
         return;
@@ -876,8 +921,10 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
         return;
     }
 
-    // Descriptor views only change on resize; the counter guard skips the rewrite.
-    if (vkRT.upscaleDescSetLastUpdatedFrameCount[frameIdx] != (int)tr.frameCount)
+    // Both views only change on resize, which resets the marker to -1 — so this is a
+    // once-per-resize write, not a per-frame one.  (Comparing against tr.frameCount
+    // instead, as this used to, is true every frame and never skips anything.)
+    if (vkRT.upscaleDescSetLastUpdatedFrameCount[frameIdx] < 0)
     {
         VkDescriptorImageInfo srcInfo = {};
         srcInfo.sampler = vkRT.upscaleSampler;
@@ -885,7 +932,7 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
         srcInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
         VkDescriptorImageInfo dstInfo = {};
-        dstInfo.imageView = vkRT.hdrUpscaled.view;
+        dstInfo.imageView = vkRT.hdrUpscaled[frameIdx].view;
         dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkWriteDescriptorSet writes[2] = {};
@@ -946,7 +993,7 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
     preCopy[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
     preCopy[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     preCopy[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    preCopy[0].image = vkRT.hdrUpscaled.image;
+    preCopy[0].image = vkRT.hdrUpscaled[frameIdx].image;
     preCopy[0].subresourceRange = colorRange;
 
     preCopy[1].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -967,7 +1014,7 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
     copyRegion.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copyRegion.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copyRegion.extent = {vk.swapchainExtent.width, vk.swapchainExtent.height, 1};
-    vkCmdCopyImage(cmd, vkRT.hdrUpscaled.image, VK_IMAGE_LAYOUT_GENERAL, vkRT.hdrScene[frameIdx].image,
+    vkCmdCopyImage(cmd, vkRT.hdrUpscaled[frameIdx].image, VK_IMAGE_LAYOUT_GENERAL, vkRT.hdrScene[frameIdx].image,
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
     // 5. hdrScene back to COLOR_ATTACHMENT_OPTIMAL for the UI resume pass.
@@ -990,30 +1037,41 @@ void VK_RT_InitUpscale()
     VK_RT_ResizeUpscale(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_CreateUpscalePipeline();
     VK_RT_CreateFsr1Pipelines();
+    // Both pipeline sets have now either loaded or failed, so "no resolve path" is a
+    // real answer from here on.  Re-run the extent so the fallback can take effect on
+    // the very first frame rather than after it.
+    s_upscaleInitDone = true;
+    VK_RT_UpdateRenderExtent();
 }
 
 void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
-    VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled);
-    VK_RT_DestroyUpscaleImage(s_fsrPerceptual);
-    VK_RT_CreateUpscaleImage(vkRT.hdrUpscaled, width, height, "hdrUpscaled");
-    VK_RT_CreateUpscaleImage(s_fsrPerceptual, width, height, "fsrPerceptual");
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled[i]);
+        VK_RT_DestroyUpscaleImage(s_fsrPerceptual[i]);
+        VK_RT_CreateUpscaleImage(vkRT.hdrUpscaled[i], width, height, "hdrUpscaled");
+        VK_RT_CreateUpscaleImage(s_fsrPerceptual[i], width, height, "fsrPerceptual");
+        // The views changed, so the bound descriptors are stale.  (The FSR 1 passes
+        // rewrite theirs every dispatch, so they need nothing here.)
+        vkRT.upscaleDescSetLastUpdatedFrameCount[i] = -1;
+    }
     // Covers the resize path; the per-frame call in VK_RB_DrawView covers cvar changes.
     VK_RT_UpdateRenderExtent();
-    // hdrUpscaled's view changed, so the bound descriptors are stale.  (The FSR 1
-    // passes rewrite theirs every dispatch, so they need nothing here.)
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
-        vkRT.upscaleDescSetLastUpdatedFrameCount[i] = -1;
     s_fsrLoggedMode = -1;
 }
 
 void VK_RT_ShutdownUpscale(void)
 {
-    VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled);
-    VK_RT_DestroyUpscaleImage(s_fsrPerceptual);
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled[i]);
+        VK_RT_DestroyUpscaleImage(s_fsrPerceptual[i]);
+    }
     VK_RT_DestroyFsr1Pipelines();
     VK_RT_DestroyUpscalePipeline();
+    s_upscaleInitDone = false;
 }
 
 float VK_RT_RenderScaleX(void)

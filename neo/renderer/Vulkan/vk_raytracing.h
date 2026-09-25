@@ -635,7 +635,12 @@ struct vkRTState_t
 
     // Resolution Upscaler bounce-buffer.
     // hdrScene (sub-rect) -> hdrUpscaled -> hdrScene (full)
-    vkRTImage_t hdrUpscaled;
+    //
+    // Per frame-in-flight, not shared: the slot fence waited on at frame start belongs
+    // to frame N-1, so frame N+1 can be recorded and submitted while frame N is still
+    // executing.  A single shared image therefore lets frame N+1's compute write race
+    // frame N's transfer read (WAR), which shows up as intermittent flicker.
+    vkRTImage_t hdrUpscaled[VK_MAX_FRAMES_IN_FLIGHT];
     VkPipeline upscalePipeline;
     VkPipelineLayout upscalePipelineLayout;
     VkDescriptorSetLayout upscaleDescLayout;

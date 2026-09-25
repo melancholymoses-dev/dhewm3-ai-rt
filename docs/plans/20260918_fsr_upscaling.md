@@ -188,8 +188,8 @@ Per frame-in-flight slot unless noted. Sizes quoted for 1920×1080 display.
 | Resource | Format | Extent | Usage | Stage | ~Size |
 |---|---|---|---|---|---|
 | `vkRT.motionVectors[i]` | `R16G16_SFLOAT` | display (written in render sub-rect) | COLOR_ATTACHMENT, SAMPLED (**not** STORAGE — not a mandatory storage format) | U2 | 8 MB ×2 |
-| `vkRT.hdrUpscaled` | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED, TRANSFER_SRC | U0 | 16 MB ×1 |
-| `s_fsrPerceptual` (file-static in `vk_upscale.cpp`) | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED | U1 | 16 MB ×1 |
+| `vkRT.hdrUpscaled[i]` | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED, TRANSFER_SRC | U0 | 16 MB ×2 |
+| `s_fsrPerceptual[i]` (file-static in `vk_upscale.cpp`) | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED | U1 | 16 MB ×2 |
 | `vkRT.preAlphaColor[i]` | `R16G16B16A16_SFLOAT` | display | TRANSFER_DST, SAMPLED | U4 | 16 MB ×2 |
 | `vkRT.reactiveMask[i]` | `R8_UNORM` | display | STORAGE, SAMPLED | U4 | 2 MB ×2 |
 | `vkRT.exposure1x1` | `R32_SFLOAT` | 1×1 | STORAGE, SAMPLED | U3 | — |
@@ -275,8 +275,9 @@ top-left corner.
 |---|---|
 | RT dispatch rects (`vk_ao`/`vk_gi`/`vk_temporal`/`vk_vol`/`vk_gi_probe`/`vk_vol_froxel`) read `viewDef->scissor` unscaled and only clamp to `renderExtent` | Correct for the full-screen view by accident; wrong for mirrors and subviews |
 | `VK_RT_GlassScreenRect` (`vk_reflections.cpp`) is entirely display-space | `r_rtReflectionMode 1` traces the wrong rect — §11's "reflections silently vanish" |
-| `hdrUpscaled` and `s_fsrPerceptual` are one shared image each across frames in flight | WAR hazard: frame N's copy vs frame N+1's dispatch, no barrier between them |
-| No temporal-history reset on a `renderExtent` change | A few frames of wrongly-scaled GI/AO/vol history after a scale change |
+| ~~`hdrUpscaled` and `s_fsrPerceptual` are one shared image each across frames in flight~~ | ✅ U2. Both are now per-slot. The hazard was real: the frame-start fence belongs to slot N-1, so frame N+1 can be submitted while frame N still executes, and its compute write could race frame N's transfer read. Cost is +16 MB ×1 each at 1080p |
+| ~~No temporal-history reset on a `renderExtent` change~~ | ✅ U2. `VK_RT_UpdateRenderExtent` clears `aoHistoryValid`/`giHistoryValid`/`volHistoryValid` whenever the extent moves — the same flags the camera-cut detector uses |
+| ~~A failed resolve still set `s_upscaleDone`~~ | ✅ U2. With no resolve pipeline loaded, `r_fsrRenderScale` is ignored and the scene renders native (warn once) rather than being stranded in the top-left corner |
 | ~~cvars missing from `Dhewm3SettingsMenu.cpp`~~ | ✅ U1 — all four are under "Resolution Scaling / Upscaling", outside the ray-tracing disable |
 | ~~`r_fsr` is declared but never read~~ | ✅ U1 |
 
