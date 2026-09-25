@@ -673,8 +673,26 @@ COLOR_ATTACHMENT_OPTIMAL.
 
 bool VK_RT_MotionDebugActive(void)
 {
-    return r_fsrDebug.GetInteger() == 7 && s_motionDebugReady && vk.gbufferSupported &&
-           vkRT.motionVectors[vk.currentFrame].image != VK_NULL_HANDLE;
+    if (r_fsrDebug.GetInteger() != 7 || !s_motionDebugReady || !vk.gbufferSupported ||
+        vkRT.motionVectors[vk.currentFrame].image == VK_NULL_HANDLE)
+        return false;
+
+    // The attachment is only ever written by the G-buffer prepass, which stands down
+    // when r_useRayTracing is off (VK_RB_FillDepthBuffer).  Without this the overlay
+    // would happily paint the whole screen with the cleared zero field — a black frame
+    // that reads as "motion vectors are broken" rather than "ray tracing is off".
+    if (!r_useRayTracing.GetBool())
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            common->Warning("VK RT Upscale: r_fsrDebug 7 needs r_useRayTracing 1 — motion vectors are written by "
+                            "the ray-tracing G-buffer prepass; overlay disabled");
+        }
+        return false;
+    }
+    return true;
 }
 
 void VK_RT_DispatchMotionDebug(VkCommandBuffer cmd)
@@ -816,10 +834,15 @@ static uint32_t VK_SnapExtent8(float f, uint32_t displayDim)
 // before the pipelines exist and then again every frame from VK_RB_DrawView.
 static bool s_upscaleInitDone = false;
 
-// Is there any path that can resolve the render sub-rect back to display resolution?
+// Can the path that would ACTUALLY run this frame resolve the sub-rect?  This must stay
+// the exact negation of VK_RT_DispatchUpscale's pipeline early-out, not a looser "some
+// pipeline loaded" test: with a broken bilinear blit but working FSR 1 shaders, the
+// looser test keeps the reduced extent alive while r_fsr 0 (the default) and
+// r_fsrDebug 4 both still dispatch nothing — recreating the stranded-in-the-corner
+// frame this fallback exists to prevent.
 static bool VK_RT_ResolvePathReady(void)
 {
-    return vkRT.upscalePipeline != VK_NULL_HANDLE || s_fsr1Ready;
+    return vkRT.upscalePipeline != VK_NULL_HANDLE || VK_RT_Fsr1Active();
 }
 
 void VK_RT_UpdateRenderExtent(void)
@@ -838,13 +861,15 @@ void VK_RT_UpdateRenderExtent(void)
     // in §4 consistent for free.
     if (scale < 1.0f && s_upscaleInitDone && !VK_RT_ResolvePathReady())
     {
-        static bool warned = false;
-        if (!warned)
+        // Warn per r_fsr value, not once: the readiness test is mode-dependent, so
+        // switching modes can start or stop hitting this and the user needs to know why.
+        static int warnedMode = -1;
+        if (warnedMode != r_fsr.GetInteger())
         {
-            warned = true;
-            common->Warning("VK RT Upscale: no resolve pipeline loaded — ignoring r_fsrRenderScale %.2f and "
+            warnedMode = r_fsr.GetInteger();
+            common->Warning("VK RT Upscale: no resolve pipeline for r_fsr %d — ignoring r_fsrRenderScale %.2f and "
                             "rendering at native resolution",
-                            scale);
+                            warnedMode, scale);
         }
         scale = 1.0f;
     }

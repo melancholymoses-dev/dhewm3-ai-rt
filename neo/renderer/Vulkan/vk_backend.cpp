@@ -830,11 +830,17 @@ static float s_projVk[16];
 // pair the G-buffer prepass reprojects against, both UNJITTERED and left in GL clip
 // space — only xy/w is read, and the Z remap above rewrites row 2 alone.  For the same
 // reason weaponDepthHack/modelDepthHack are not applied: they only scale or shift
-// proj[14].  s_prevViewProjGl == s_viewProjNoJitterGl when the view has no usable
-// previous frame (first frame, subview, mirror, 2D overlay), which makes every motion
-// vector exactly zero instead of wrong.
+// proj[14].
+//
+// When the view has no usable previous frame (first frame, subview, mirror, 2D overlay)
+// s_motionPrevValid is false and BOTH halves fall back to the current frame's — the
+// view-projection here, and the per-surface model matrix in VK_RB_FillDepthBuffer.
+// Both must fall back together: an entity first seen in a subview can have a genuine
+// prevModelMatrix from last frame, and pairing that with this frame's camera emits
+// object motion in a view whose contract says the vector is exactly zero.
 static float s_viewProjNoJitterGl[16];
 static float s_prevViewProjGl[16];
+static bool s_motionPrevValid = false;
 
 // Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down),
 // scaled into whichever space is currently being drawn (§VK_CurrentDrawExtent).
@@ -2796,9 +2802,12 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             memcpy(ubo->modelMatrix, surf->space->modelMatrix, 64);
             // U2 motion vectors: this surface's unjittered clip transform for both
             // frames.  The world's own space is the identity in both, so static
-            // geometry's motion comes entirely from the camera term.
+            // geometry's motion comes entirely from the camera term.  Without a valid
+            // previous frame both halves use the current transform, so the two products
+            // are identical and the motion vector is exactly zero.
+            const float *prevModel = s_motionPrevValid ? surf->space->prevModelMatrix : surf->space->modelMatrix;
             VK_MultiplyMatrix4(s_viewProjNoJitterGl, surf->space->modelMatrix, ubo->mvpNoJitter);
-            VK_MultiplyMatrix4(s_prevViewProjGl, surf->space->prevModelMatrix, ubo->prevMvpNoJitter);
+            VK_MultiplyMatrix4(s_prevViewProjGl, prevModel, ubo->prevMvpNoJitter);
             memcpy(ubo->bumpMatrixS, bumpMatrix[0].ToFloatPtr(), 16);
             memcpy(ubo->bumpMatrixT, bumpMatrix[1].ToFloatPtr(), 16);
             memcpy(ubo->specularMatrixS, specMatrix[0].ToFloatPtr(), 16);
@@ -4475,7 +4484,8 @@ void VK_RB_DrawView(const void *data)
         // U2: the unjittered view-projection pair, for the motion-vector attachment.
         VK_MultiplyMatrix4(backEnd.viewDef->unjitteredProjectionMatrix, backEnd.viewDef->worldSpace.modelViewMatrix,
                            s_viewProjNoJitterGl);
-        if (backEnd.viewDef->prevFrameValid)
+        s_motionPrevValid = backEnd.viewDef->prevFrameValid;
+        if (s_motionPrevValid)
             memcpy(s_prevViewProjGl, backEnd.viewDef->prevViewProjMatrix, 64);
         else
             memcpy(s_prevViewProjGl, s_viewProjNoJitterGl, 64);
