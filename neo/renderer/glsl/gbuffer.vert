@@ -30,6 +30,12 @@ layout(location = 11) in vec3 in_Normal;     // ARB attrib 11 = normal
 layout(set=0, binding=0) uniform GBufferParams {
     mat4  u_ModelViewProjection;
     mat4  u_ModelMatrix;        // surf->space->modelMatrix — rigid transform (no shear/non-uniform scale)
+    // U2 motion vectors: both UNJITTERED and in GL clip space (no Vulkan Z remap —
+    // only xy/w is read, and the remap rewrites row 2 alone).  u_PrevMVPNoJitter
+    // equals u_MVPNoJitter when this view has no usable previous frame, which makes
+    // the motion vector exactly zero rather than wrong.
+    mat4  u_MVPNoJitter;
+    mat4  u_PrevMVPNoJitter;
     vec4  u_BumpMatrixS;
     vec4  u_BumpMatrixT;
     vec4  u_DiffuseMatrixS;     // alpha-test UV (gbuffer_clip.frag only)
@@ -48,6 +54,8 @@ layout(location = 2) out vec2 vary_TexCoord_Specular;
 layout(location = 3) out vec3 vary_TangentWS;
 layout(location = 4) out vec3 vary_BiTangentWS;
 layout(location = 5) out vec3 vary_NormalWS;
+layout(location = 6) out vec4 vary_CurClip;   // unjittered, this frame
+layout(location = 7) out vec4 vary_PrevClip;  // unjittered, last frame
 
 void main() {
     vec4 tc = vec4(in_TexCoord, 0.0, 1.0);
@@ -64,6 +72,9 @@ void main() {
     vary_TangentWS   = modelRot * in_Tangent;
     vary_BiTangentWS = modelRot * in_BiTangent;
     vary_NormalWS    = modelRot * in_Normal;
+
+    vary_CurClip  = u_MVPNoJitter     * vec4(in_Position, 1.0);
+    vary_PrevClip = u_PrevMVPNoJitter * vec4(in_Position, 1.0);
 
     gl_Position = u_ModelViewProjection * vec4(in_Position, 1.0);
 }

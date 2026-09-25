@@ -930,10 +930,21 @@ void R_SetViewMatrix(viewDef_t *viewDef)
 
     memset(world, 0, sizeof(*world));
 
-    // the model matrix is an identity
+    // the model matrix is an identity.  [15] is part of that identity: upstream left it
+    // at 0 because every reader only ever touched the 3x4 block, but U2's motion-vector
+    // path multiplies this as a full 4x4.
     world->modelMatrix[0 * 4 + 0] = 1;
     world->modelMatrix[1 * 4 + 1] = 1;
     world->modelMatrix[2 * 4 + 2] = 1;
+    world->modelMatrix[3 * 4 + 3] = 1;
+
+    // U2 motion vectors: the world doesn't move in its own frame, so its previous
+    // transform is the same identity and all of its motion comes from the camera via
+    // viewDef->prevViewProjMatrix.
+    world->prevModelMatrix[0 * 4 + 0] = 1;
+    world->prevModelMatrix[1 * 4 + 1] = 1;
+    world->prevModelMatrix[2 * 4 + 2] = 1;
+    world->prevModelMatrix[3 * 4 + 3] = 1;
 
     // transform by the camera placement
     origin = viewDef->renderView.vieworg;
@@ -965,6 +976,64 @@ void R_SetViewMatrix(viewDef_t *viewDef)
 
 /*
 ===============
+R_BuildProjection
+
+The frustum half of R_SetupProjection, factored out so the jittered and unjittered
+matrices can be built from one piece of code.  jitterx/jittery are sub-pixel offsets
+expressed in pixels of a viewport spanning spanX x spanY.
+===============
+*/
+static void R_BuildProjection(const viewDef_t *viewDef, float jitterx, float jittery, int spanX, int spanY,
+                              float out[16])
+{
+    float zNear = r_znear.GetFloat();
+    if (viewDef->renderView.cramZNear)
+    {
+        zNear *= 0.25;
+    }
+
+    float ymax = zNear * tan(viewDef->renderView.fov_y * idMath::PI / 360.0f);
+    float ymin = -ymax;
+
+    float xmax = zNear * tan(viewDef->renderView.fov_x * idMath::PI / 360.0f);
+    float xmin = -xmax;
+
+    const float width = xmax - xmin;
+    const float height = ymax - ymin;
+
+    jitterx = jitterx * width / (spanX > 0 ? spanX : 1);
+    xmin += jitterx;
+    xmax += jitterx;
+    jittery = jittery * height / (spanY > 0 ? spanY : 1);
+    ymin += jittery;
+    ymax += jittery;
+
+    out[0] = 2 * zNear / width;
+    out[4] = 0;
+    out[8] = (xmax + xmin) / width; // normally 0
+    out[12] = 0;
+
+    out[1] = 0;
+    out[5] = 2 * zNear / height;
+    out[9] = (ymax + ymin) / height; // normally 0
+    out[13] = 0;
+
+    // this is the far-plane-at-infinity formulation, and
+    // crunches the Z range slightly so w=0 vertexes do not
+    // rasterize right at the wraparound point
+    out[2] = 0;
+    out[6] = 0;
+    out[10] = -0.999f;
+    out[14] = -2.0f * zNear;
+
+    out[3] = 0;
+    out[7] = 0;
+    out[11] = -1;
+    out[15] = 0;
+}
+
+/*
+===============
 R_SetupProjection
 
 This uses the "infinite far z" trick
@@ -972,17 +1041,32 @@ This uses the "infinite far z" trick
 */
 void R_SetupProjection(viewDef_t *viewDef)
 {
-    float xmin, xmax, ymin, ymax;
-    float width, height;
-    float zNear;
     float jitterx, jittery;
     static idRandom random;
 
-    // random jittering is usefull when multiple
-    // frames are going to be blended together
-    // for motion blurred anti-aliasing
-    if (r_jitter.GetBool())
+    // Viewport span the jitter is measured against.  r_jitter's whole-pixel noise is
+    // display-space; the FSR sequence below is in render-resolution pixels, which is
+    // a different divisor once the two resolutions split.
+    int spanX = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
+    int spanY = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
+
+    // U2 (docs/plans/20260918_fsr_upscaling.md §13): Halton(2,3) over [-0.5,+0.5] of a
+    // render pixel, which is what a temporal upscaler needs.  It takes precedence over
+    // r_jitter, whose whole-pixel white noise is for motion-blurred AA and is wrong
+    // here; r_jitter keeps its old behaviour whenever the FSR path is off.  Subviews
+    // are excluded — nothing downstream reconstructs them.
+    extern bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH);
+    const bool fsrJitter = !viewDef->isSubview && VK_RT_GetFsrJitter(&jitterx, &jittery, &spanX, &spanY);
+
+    if (fsrJitter)
     {
+        // jitterx/jittery and the span were written by VK_RT_GetFsrJitter
+    }
+    else if (r_jitter.GetBool())
+    {
+        // random jittering is usefull when multiple
+        // frames are going to be blended together
+        // for motion blurred anti-aliasing
         jitterx = random.RandomFloat();
         jittery = random.RandomFloat();
     }
@@ -991,53 +1075,11 @@ void R_SetupProjection(viewDef_t *viewDef)
         jitterx = jittery = 0;
     }
 
-    //
-    // set up projection matrix
-    //
-    zNear = r_znear.GetFloat();
-    if (viewDef->renderView.cramZNear)
-    {
-        zNear *= 0.25;
-    }
+    viewDef->jitterOffset[0] = jitterx;
+    viewDef->jitterOffset[1] = jittery;
 
-    ymax = zNear * tan(viewDef->renderView.fov_y * idMath::PI / 360.0f);
-    ymin = -ymax;
-
-    xmax = zNear * tan(viewDef->renderView.fov_x * idMath::PI / 360.0f);
-    xmin = -xmax;
-
-    width = xmax - xmin;
-    height = ymax - ymin;
-
-    jitterx = jitterx * width / (viewDef->viewport.x2 - viewDef->viewport.x1 + 1);
-    xmin += jitterx;
-    xmax += jitterx;
-    jittery = jittery * height / (viewDef->viewport.y2 - viewDef->viewport.y1 + 1);
-    ymin += jittery;
-    ymax += jittery;
-
-    viewDef->projectionMatrix[0] = 2 * zNear / width;
-    viewDef->projectionMatrix[4] = 0;
-    viewDef->projectionMatrix[8] = (xmax + xmin) / width; // normally 0
-    viewDef->projectionMatrix[12] = 0;
-
-    viewDef->projectionMatrix[1] = 0;
-    viewDef->projectionMatrix[5] = 2 * zNear / height;
-    viewDef->projectionMatrix[9] = (ymax + ymin) / height; // normally 0
-    viewDef->projectionMatrix[13] = 0;
-
-    // this is the far-plane-at-infinity formulation, and
-    // crunches the Z range slightly so w=0 vertexes do not
-    // rasterize right at the wraparound point
-    viewDef->projectionMatrix[2] = 0;
-    viewDef->projectionMatrix[6] = 0;
-    viewDef->projectionMatrix[10] = -0.999f;
-    viewDef->projectionMatrix[14] = -2.0f * zNear;
-
-    viewDef->projectionMatrix[3] = 0;
-    viewDef->projectionMatrix[7] = 0;
-    viewDef->projectionMatrix[11] = -1;
-    viewDef->projectionMatrix[15] = 0;
+    R_BuildProjection(viewDef, jitterx, jittery, spanX, spanY, viewDef->projectionMatrix);
+    R_BuildProjection(viewDef, 0.0f, 0.0f, spanX, spanY, viewDef->unjitteredProjectionMatrix);
 }
 
 /*
@@ -1281,6 +1323,33 @@ void R_RenderView(viewDef_t *parms)
     if (tr.viewDef->numClipPlanes > 0)
     {
         R_ObliqueProjection(tr.viewDef);
+    }
+
+    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): roll last frame's
+    // unjittered view-projection forward, for the primary view only.  Subviews, mirrors
+    // and the 2D overlay keep prevFrameValid false, which makes the backend emit a zero
+    // motion vector instead of reprojecting through a camera that was never theirs.
+    // Matrices stay in GL clip space — the Vulkan Z remap only rewrites row 2, and
+    // motion vectors read xy/w.
+    {
+        static float s_prevViewProj[16];
+        static int s_prevViewProjFrame = -1;
+
+        tr.viewDef->prevFrameValid = false;
+        if (!tr.viewDef->isSubview)
+        {
+            if (s_prevViewProjFrame == tr.frameCount - 1)
+            {
+                memcpy(tr.viewDef->prevViewProjMatrix, s_prevViewProj, sizeof(s_prevViewProj));
+                tr.viewDef->prevFrameValid = true;
+            }
+            if (s_prevViewProjFrame != tr.frameCount)
+            {
+                myGlMultMatrix(tr.viewDef->worldSpace.modelViewMatrix, tr.viewDef->unjitteredProjectionMatrix,
+                               s_prevViewProj);
+                s_prevViewProjFrame = tr.frameCount;
+            }
+        }
     }
 
     // identify all the visible portalAreas, and the entityDefs and

@@ -433,6 +433,33 @@ viewEntity_t *R_SetEntityDefViewEntity(idRenderEntityLocal *def)
 
     R_AxisToModelMatrix(def->parms.axis, def->parms.origin, vModel->modelMatrix);
 
+    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): hand the backend
+    // last frame's transform for this entity.  Two cases fall back to the current
+    // matrix — meaning a camera-only motion vector rather than a wrong one:
+    //   - the entity was not drawn last frame (disocclusion; FSR2 handles that itself)
+    //   - it moved further than a frame plausibly can, i.e. it was teleported
+    // The frame guard also keeps a second view in the same frame (mirror, subview)
+    // from overwriting prevModelMatrix with this frame's value.
+    {
+        const float *prev = vModel->modelMatrix;
+        if (def->prevModelFrame == tr.frameCount - 1)
+        {
+            const float dx = vModel->modelMatrix[12] - def->prevModelMatrix[12];
+            const float dy = vModel->modelMatrix[13] - def->prevModelMatrix[13];
+            const float dz = vModel->modelMatrix[14] - def->prevModelMatrix[14];
+            const float teleportDistSqr = 256.0f * 256.0f;
+            if (dx * dx + dy * dy + dz * dz < teleportDistSqr)
+                prev = def->prevModelMatrix;
+        }
+        memcpy(vModel->prevModelMatrix, prev, sizeof(vModel->prevModelMatrix));
+
+        if (def->prevModelFrame != tr.frameCount)
+        {
+            memcpy(def->prevModelMatrix, vModel->modelMatrix, sizeof(def->prevModelMatrix));
+            def->prevModelFrame = tr.frameCount;
+        }
+    }
+
     // we may not have a viewDef if we are just creating shadows at entity creation time
     if (tr.viewDef)
     {

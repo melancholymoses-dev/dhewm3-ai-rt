@@ -113,6 +113,9 @@ struct vkState_t
     // differing per-attachment blend/write-mask state). See docs/plans/gbuffer_normal_pass.md.
     // If false, the G-buffer prepass must not be enabled; fall back to the existing depth-only path.
     bool gbufferSupported;
+    // separateDepthStencilLayouts, which FSR 2's backend needs for its depth-aspect-only
+    // barriers on our combined depth+stencil buffer.  False = r_fsr 2 falls back.
+    bool fsr2Supported;
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index
@@ -243,21 +246,28 @@ static inline uint32_t VK_FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlag
 }
 
 // ---------------------------------------------------------------------------
-// G-buffer normal/F0 pass (Stage 3.5, see docs/plans/gbuffer_normal_pass.md):
-// every graphics pipeline targeting vk.hdrRenderPass must supply a blend
-// attachment state per subpass color attachment. When vk.gbufferSupported is
-// true the subpass declares 2 (attachment 0 = hdrScene, attachment 1 =
-// gbufNormal); pipelines other than the G-buffer prepass itself must not
-// write attachment 1, so they pair their real attachment-0 state with this
-// write-mask-0, blend-off filler. Callers still gate attachmentCount on
-// vk.gbufferSupported (1 when false) so the array is simply unread in that case.
+// Colour attachments on vk.hdrRenderPass, in subpass order:
+//   0 hdrScene, 1 gbufNormal, 2 gbufAlbedo, 3 motionVectors
+// (the render pass itself also carries depth at attachment index 1, so the
+// framebuffer order is hdrScene, depth, gbufNormal, gbufAlbedo, motionVectors).
+// Every graphics pipeline targeting the pass must supply one blend-attachment
+// state per colour attachment; only the G-buffer prepass writes 1..3, so
+// everyone else pairs their real attachment-0 state with write-mask-0 fillers.
+// VK_FillHdrBlendAttachments does that and returns the count to use, which is
+// 1 when !vk.gbufferSupported (the subpass then declares a single attachment).
 // ---------------------------------------------------------------------------
 
-static inline void VK_FillSecondBlendAttachment(VkPipelineColorBlendAttachmentState *out)
+#define VK_HDR_COLOR_ATTACHMENT_COUNT 4
+
+static inline uint32_t VK_FillHdrBlendAttachments(VkPipelineColorBlendAttachmentState *arr)
 {
-    *out = {};
-    out->blendEnable = VK_FALSE;
-    out->colorWriteMask = 0;
+    for (int i = 1; i < VK_HDR_COLOR_ATTACHMENT_COUNT; i++)
+    {
+        arr[i] = {};
+        arr[i].blendEnable = VK_FALSE;
+        arr[i].colorWriteMask = 0;
+    }
+    return vk.gbufferSupported ? (uint32_t)VK_HDR_COLOR_ATTACHMENT_COUNT : 1u;
 }
 
 // ---------------------------------------------------------------------------

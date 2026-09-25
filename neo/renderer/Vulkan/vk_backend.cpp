@@ -826,6 +826,22 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
+// U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): the view-projection
+// pair the G-buffer prepass reprojects against, both UNJITTERED and left in GL clip
+// space — only xy/w is read, and the Z remap above rewrites row 2 alone.  For the same
+// reason weaponDepthHack/modelDepthHack are not applied: they only scale or shift
+// proj[14].
+//
+// When the view has no usable previous frame (first frame, subview, mirror, 2D overlay)
+// s_motionPrevValid is false and BOTH halves fall back to the current frame's — the
+// view-projection here, and the per-surface model matrix in VK_RB_FillDepthBuffer.
+// Both must fall back together: an entity first seen in a subview can have a genuine
+// prevModelMatrix from last frame, and pairing that with this frame's camera emits
+// object motion in a view whose contract says the vector is exactly zero.
+static float s_viewProjNoJitterGl[16];
+static float s_prevViewProjGl[16];
+static bool s_motionPrevValid = false;
+
 // Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down),
 // scaled into whichever space is currently being drawn (§VK_CurrentDrawExtent).
 static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
@@ -1571,6 +1587,8 @@ struct VkGBufferUBO
 {
     float modelViewProjection[16]; // 64 bytes
     float modelMatrix[16];         // 64 bytes — surf->space->modelMatrix (rigid transform)
+    float mvpNoJitter[16];         // 64 bytes — U2, GL clip space, no jitter
+    float prevMvpNoJitter[16];     // 64 bytes — U2, ditto, last frame (== mvpNoJitter when unavailable)
     float bumpMatrixS[4];          // 16 bytes
     float bumpMatrixT[4];          // 16 bytes
     float diffuseMatrixS[4];       // 16 bytes — alpha-test UV (gbuffer_clip.frag only)
@@ -1581,7 +1599,13 @@ struct VkGBufferUBO
     float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
     float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
     float _pad0;                   // 4 bytes
-}; // 240 bytes total
+}; // 368 bytes total
+
+// Every UBO here comes out of the one ring, whose stride is sized from
+// INTERACTION_UBO_SIZE.  A struct that outgrows it would silently scribble over the
+// next draw's slot rather than fail, so check it at compile time instead.
+static_assert(sizeof(VkGBufferUBO) <= INTERACTION_UBO_SIZE,
+              "VkGBufferUBO no longer fits the shared UBO ring stride — see VK_AllocUBO");
 
 static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
 {
@@ -2776,6 +2800,14 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             VkGBufferUBO *ubo = (VkGBufferUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + uboOffset);
             memcpy(ubo->modelViewProjection, mvp, 64);
             memcpy(ubo->modelMatrix, surf->space->modelMatrix, 64);
+            // U2 motion vectors: this surface's unjittered clip transform for both
+            // frames.  The world's own space is the identity in both, so static
+            // geometry's motion comes entirely from the camera term.  Without a valid
+            // previous frame both halves use the current transform, so the two products
+            // are identical and the motion vector is exactly zero.
+            const float *prevModel = s_motionPrevValid ? surf->space->prevModelMatrix : surf->space->modelMatrix;
+            VK_MultiplyMatrix4(s_viewProjNoJitterGl, surf->space->modelMatrix, ubo->mvpNoJitter);
+            VK_MultiplyMatrix4(s_prevViewProjGl, prevModel, ubo->prevMvpNoJitter);
             memcpy(ubo->bumpMatrixS, bumpMatrix[0].ToFloatPtr(), 16);
             memcpy(ubo->bumpMatrixT, bumpMatrix[1].ToFloatPtr(), 16);
             memcpy(ubo->specularMatrixS, specMatrix[0].ToFloatPtr(), 16);
@@ -4449,6 +4481,15 @@ void VK_RB_DrawView(const void *data)
         {
             s_projVk[c * 4 + 2] = 0.5f * src[c * 4 + 2] + 0.5f * src[c * 4 + 3];
         }
+        // U2: the unjittered view-projection pair, for the motion-vector attachment.
+        VK_MultiplyMatrix4(backEnd.viewDef->unjitteredProjectionMatrix, backEnd.viewDef->worldSpace.modelViewMatrix,
+                           s_viewProjNoJitterGl);
+        s_motionPrevValid = backEnd.viewDef->prevFrameValid;
+        if (s_motionPrevValid)
+            memcpy(s_prevViewProjGl, backEnd.viewDef->prevViewProjMatrix, 64);
+        else
+            memcpy(s_prevViewProjGl, s_viewProjNoJitterGl, 64);
+
         if (r_vkLogRT.GetInteger() >= 2 && backEnd.viewDef->numClipPlanes > 0)
         {
             common->Printf("VK PROJ REMAP: isSubview=%d isMirror=%d clipPlanes=%d\n",
@@ -4551,11 +4592,14 @@ void VK_RB_DrawView(const void *data)
         // only consumed when vk.gbufferSupported, but harmless to fill in unconditionally.
         // clearValues[3] (gbufAlbedo, gi_albedo_target.md) = {1,1,1,1}: WHITE, so a pixel
         // the prepass never writes modulates GI by 1.0 (legacy behavior), not by 0.
-        VkClearValue clearValues[4] = {};
+        // clearValues[4] (motionVectors, U2) = (0,0): a pixel the prepass never writes
+        // reports no motion.  Sky, translucent surfaces and particles all land here.
+        VkClearValue clearValues[5] = {};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 128};
         clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
         clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
+        clearValues[4].color = {{0.0f, 0.0f, 0.0f, 0.0f}};
 
         // A frame whose *first* view is already the 2D overlay (main menu, PDA,
         // loading screens) has no 3D content to downscale, so it renders straight
@@ -4571,7 +4615,7 @@ void VK_RB_DrawView(const void *data)
         rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
         rpBegin.renderArea.extent = drawExtent;
-        rpBegin.clearValueCount = vk.gbufferSupported ? 4 : 2;
+        rpBegin.clearValueCount = vk.gbufferSupported ? 5 : 2;
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
@@ -4590,11 +4634,13 @@ void VK_RB_DrawView(const void *data)
 
         if (r_fsrDebug.GetInteger() >= 2)
         {
-            common->Printf("VK FSR VIEW: FIRST gui=%d draw=%ux%u render=%ux%u display=%ux%u scissor=(%d,%d %ux%u)\n",
+            common->Printf("VK FSR VIEW: FIRST gui=%d draw=%ux%u render=%ux%u display=%ux%u scissor=(%d,%d %ux%u) "
+                           "prevFrameValid=%d jitter=(%.3f,%.3f)\n",
                            firstIsGui ? 1 : 0, drawExtent.width, drawExtent.height, vk.renderExtent.width,
                            vk.renderExtent.height, vk.swapchainExtent.width, vk.swapchainExtent.height,
                            s_viewScissor.offset.x, s_viewScissor.offset.y, s_viewScissor.extent.width,
-                           s_viewScissor.extent.height);
+                           s_viewScissor.extent.height, backEnd.viewDef->prevFrameValid ? 1 : 0,
+                           backEnd.viewDef->jitterOffset[0], backEnd.viewDef->jitterOffset[1]);
         }
     }
     else
@@ -4673,6 +4719,17 @@ void VK_RB_DrawView(const void *data)
     }
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
+
+    // U3: latch this view's near plane, fov and applied jitter for the FSR 2 dispatch,
+    // which runs after the last view and cannot read them from backEnd.viewDef by then.
+    // Same signature the RT dispatches use, and the same one U2 gave prevViewProjMatrix:
+    // the primary 3D view only.  Deliberately outside the RT gate — the resolution split
+    // works with ray tracing off.
+    if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror &&
+        backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f)
+    {
+        VK_RT_CaptureFsrViewParams(backEnd.viewDef);
+    }
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
@@ -5404,6 +5461,12 @@ void VK_RB_SwapBuffers()
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
         s_upscaleDone = true;
     }
+
+    // U2 motion-vector overlay (r_fsrDebug 7).  After the resolve so it draws crisp at
+    // display resolution, before the tonemap so hdrScene is still the thing being read.
+    // No-op unless the mode is selected.
+    VK_SetRenderStage("RT_MotionDebug");
+    VK_RT_DispatchMotionDebug(cmdBuf);
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.

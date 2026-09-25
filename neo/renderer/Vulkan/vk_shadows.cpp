@@ -42,7 +42,7 @@ struct ShadowParamsUBO
     int32_t screenWidth;      // full framebuffer width  // offset 112
     int32_t screenHeight;     // full framebuffer height // offset 116
     int32_t shadowLayer;      // P1b: shadow mask array layer for this light // offset 120
-    float biasErrCoeff;       // was _pad0 — depth-reconstruction bias floor, 3*ulp/znear // offset 124
+    float biasErrCoeff;       // was _pad0 — depth-reconstruction bias floor, margin*ulp/znear // offset 124
 
     // --- Phase 9 / Stage 1: anisotropic soft-shadow light shape ---
     // Point lights: world-axis-aligned ellipsoid semi-axes (matches the box-extents
@@ -55,7 +55,12 @@ struct ShadowParamsUBO
     float lightAxisUp[4];    // xyz = world unit axis, w = half-extent               // offset 144
     float lightAxisFwd[4];   // xyz = world unit axis, w = half-extent (0 for projected — flat aperture) // offset 160
     uint32_t lightKind;      // 0 = point (ellipsoid), 1 = projected (aperture rect) // offset 176
-    float _pad1[3];          // pad block to 16-byte multiple (192 total)            // offset 180
+    // World units spanned by one render pixel per unit of view distance:
+    // 2*tan(fovx/2)/renderWidth.  The bias budget — an origin bias only becomes
+    // visible as peter-panning once it exceeds the pixel footprint, and the
+    // footprint grows as d while the reconstruction error grows as d^2.
+    float biasFootprintCoeff; // offset 180
+    float _pad1[2];           // pad block to 16-byte multiple (192 total) // offset 184
 };
 // Must stay within the shared RT UBO ring stride (384 bytes, sized off VkInteractionUBO
 // in vk_backend.cpp) and match the std140 layout of ShadowParams in shadow_ray.rgen exactly.
@@ -80,8 +85,23 @@ struct vkShadowBlurPush_t
 };
 static_assert(sizeof(vkShadowBlurPush_t) == 36, "vkShadowBlurPush_t must match shadow_blur.comp's push block");
 
-static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
+// A12's floor carried a margin of 3 against a ONE-ulp model of the depth->world error.
+// That model is optimistic: the dominant term is the cancellation inside
+// invViewProj*vec4(ndc,1) when ndc.z ~ 0.999, worth many ulps rather than one.
+//
+// Raising r_znear was found to kill distant shadow flicker (2026-09-24).  It cannot have
+// worked by restoring the bias/error ratio — znear scales the error and this floor
+// identically — so it worked by pushing the ABSOLUTE error below the geometry's feature
+// scale.  A bigger margin buys the same thing with no near-clipping cost, because the
+// floor term only ever wins at range.  Its ceiling is peter-panning, which begins once
+// the bias reaches one pixel footprint; r_rtShadowDebugMode 9 shows that headroom.
+static idCVar r_rtShadowBiasErrMargin(
+    "r_rtShadowBiasErrMargin", "6.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+    "safety multiple on the d^2*ulp/znear depth-reconstruction bias floor for RT shadows. "
+    "3 = the original A12 value. Raise it if distant geometry self-shadows or flickers; "
+    "r_rtShadowDebugMode 9 goes white when the bias reaches one pixel and peter-panning starts.");
 static idCVar r_rtShadowSoftRadiusScale(
     "r_rtShadowSoftRadiusScale", "0.08", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
     "scale factor from point-light radius to RT soft-shadow source radius (smaller avoids washed-out shadows)");
@@ -140,6 +160,9 @@ static idCVar r_rtShadowDebugMode(
     "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
     "3=dot(biasDir,lightDir) mapped 0..1; "
     "5=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
+    "9=bias budget (black=base rayBias/nDotL in charge, grey-to-white=the A12 depth-error floor in "
+    "charge with brightness = bias / pixel footprint; white means the bias has reached a full pixel "
+    "and raising r_rtShadowBiasErrMargin further will start detaching contact shadows), "
     "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
     "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
     "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
@@ -931,11 +954,23 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         }
         ubo.rayBias = r_rtShadowRayBias.GetFloat();
         // A12: worldPos reconstruction error is d^2*ulp/znear; without this floor the
-        // 0.15 bias is swamped past d~2739 (d~1581 at the cinematic znear 1) and the
-        // origin self-shadows. 3x margin. Stays sub-pixel until d~10000.
+        // bias is swamped at range and the origin self-shadows.  ulp ~6e-8; the margin
+        // is r_rtShadowBiasErrMargin (3 = A12's original).
+        //
+        // Near plane from the projection, not the r_znear cvar: game code writes that
+        // directly (3.0 -> 1.0 for cinematics), so a backend read can return a value
+        // this frame's depth buffer was never rasterised with, and the floor is then
+        // wrong for exactly the frames where znear moved. See VK_RT_EffectiveZNear.
+        ubo.biasErrCoeff =
+            Max(0.0f, r_rtShadowBiasErrMargin.GetFloat()) * 6.0e-8f / Max(0.001f, VK_RT_EffectiveZNear(viewDef));
+
+        // World units per render pixel, per unit of view distance.  proj[0] = 1/tan(fovx/2),
+        // so this is 2*tan(fovx/2)/renderWidth.  Only the debug overlay reads it today; it
+        // is the ceiling on how far the floor above can usefully be raised.
         {
-            extern idCVar r_znear;
-            ubo.biasErrCoeff = 1.8e-7f / Max(0.001f, r_znear.GetFloat());
+            const float projXX = viewDef->projectionMatrix[0];
+            const float w = (float)Max(1, (int)vk.renderExtent.width);
+            ubo.biasFootprintCoeff = (projXX > 1e-6f) ? (2.0f / (projXX * w)) : 0.0f;
         }
         ubo.debugMode = r_rtShadowDebugMode.GetInteger();
         ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
@@ -1016,6 +1051,11 @@ static int VK_RT_ShadowBlurRadius(void)
 {
     if (!r_rtShadowBlurEnable.GetBool() || vkRT.blurPipeline == VK_NULL_HANDLE ||
         vkRT.shadowMask[vk.currentFrame].blurTempImage == VK_NULL_HANDLE)
+        return 0;
+    // Every r_rtShadowDebugMode writes its diagnostic INTO the shadow mask, so the blur
+    // was filtering the instrument as well as the signal — which is why the binary
+    // 0/1 of mode 2 read as a smooth gradient.  A blurred debug view is a lie.
+    if (r_rtShadowDebugMode.GetInteger() != 0)
         return 0;
     return Min(8, Max(0, r_rtShadowBlur.GetInteger()));
 }

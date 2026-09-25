@@ -690,9 +690,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Scale the band by sqrt(znear/3): reconstruction error is d^2*ulp/znear, so the
     // safe distance shrinks when the game drops r_znear to 1.0 for cinematics
     // (Game_local.cpp:4532). Without this AO breaks at d~2887 in cut-scenes.
+    // Near plane from the projection rather than the cvar, so the transition frame
+    // itself is right too — see VK_RT_EffectiveZNear.
     {
-        extern idCVar r_znear;
-        const float znScale = idMath::Sqrt(Max(0.001f, r_znear.GetFloat()) / 3.0f);
+        const float znScale = idMath::Sqrt(Max(0.001f, VK_RT_EffectiveZNear(viewDef)) / 3.0f);
         ubo.fadeStart = Max(0.0f, r_rtAOFadeStart.GetFloat()) * znScale;
         ubo.fadeEnd = Max(ubo.fadeStart + 1.0f, r_rtAOFadeEnd.GetFloat() * znScale);
     }

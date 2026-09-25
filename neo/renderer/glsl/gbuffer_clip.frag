@@ -29,11 +29,15 @@ layout(location = 2) in vec2 vary_TexCoord_Specular;
 layout(location = 3) in vec3 vary_TangentWS;
 layout(location = 4) in vec3 vary_BiTangentWS;
 layout(location = 5) in vec3 vary_NormalWS;
+layout(location = 6) in vec4 vary_CurClip;
+layout(location = 7) in vec4 vary_PrevClip;
 
 // Shared UBO with gbuffer.vert — binding 0, both stages.
 layout(set=0, binding=0) uniform GBufferParams {
     mat4  u_ModelViewProjection;
     mat4  u_ModelMatrix;
+    mat4  u_MVPNoJitter;
+    mat4  u_PrevMVPNoJitter;
     vec4  u_BumpMatrixS;
     vec4  u_BumpMatrixT;
     vec4  u_DiffuseMatrixS;
@@ -53,6 +57,15 @@ layout(set=0, binding=3) uniform sampler2D u_SpecularMap;
 layout(location = 0) out vec4 fragColor;  // attachment 0 (hdrScene) — write-masked off in the pipeline
 layout(location = 1) out vec4 outGbuf;    // attachment 1 (gbufNormal) — rgb = world normal, a = F0
 layout(location = 2) out vec4 outAlbedo;  // attachment 2 (gbufAlbedo) — rgb = diffuse sample
+layout(location = 3) out vec2 outMotion;  // attachment 3 (motionVectors) — GL NDC, Y up
+
+// Same guard as gbuffer.frag: a non-positive w makes the perspective divide meaningless.
+vec2 GBuf_MotionVector(vec4 cur, vec4 prev) {
+    if (cur.w <= 0.0 || prev.w <= 0.0) {
+        return vec2(0.0);
+    }
+    return (prev.xy / prev.w) - (cur.xy / cur.w);
+}
 
 void main() {
     // Matches depth_clip.frag's discard boundary (<=) so the depth buffer this
@@ -75,5 +88,6 @@ void main() {
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
     outAlbedo = vec4(diffuseSample.rgb, 1.0);
+    outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);
 }

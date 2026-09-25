@@ -1,0 +1,6 @@
+- Probe GI and Froxel volumetrics now much more performant and smoother.
+- fixed reflections having bad shadows due to stale normals
+- fixed flickering lights on GI/volumetrics which previously had ignored it.  Split into fast/slow buckets
+- to allow some smoothing.  
+- Settled on same falloff as Doom3 lights with reach=1.  avoids too much ambient light increase.
+- Starting on FSR upscaling integration.  Bilinear, FSR1, FSR2.

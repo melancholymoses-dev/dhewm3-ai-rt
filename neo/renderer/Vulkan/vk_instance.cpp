@@ -305,11 +305,28 @@ static void VKimp_CreateDevice(void)
     VkPhysicalDeviceRayQueryFeaturesKHR supportedRayQuery = {};
     supportedRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 
+    // subgroupSizeControl is core in 1.3.  FSR2's Vulkan backend chains
+    // VkPipelineShaderStageRequiredSubgroupSizeCreateInfo to force wave64 whenever
+    // VK_EXT_subgroup_size_control is merely *available*, so we have to enable the
+    // feature or its pipeline creation is invalid on every RDNA card.
+    VkPhysicalDeviceProperties physProps = {};
+    vkGetPhysicalDeviceProperties(vk.physicalDevice, &physProps);
+    const bool deviceHasVk13 = physProps.apiVersion >= VK_API_VERSION_1_3;
+
+    VkPhysicalDeviceVulkan13Features supportedVk13 = {};
+    supportedVk13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+
     supportedFeatures2.pNext = &supportedVk12;
     supportedVk12.pNext = &supportedEds;
+    void **supportedTail = (void **)&supportedEds.pNext;
+    if (deviceHasVk13)
+    {
+        *supportedTail = &supportedVk13;
+        supportedTail = (void **)&supportedVk13.pNext;
+    }
     if (vk.rayTracingSupported)
     {
-        supportedEds.pNext = &supportedAs;
+        *supportedTail = &supportedAs;
         supportedAs.pNext = &supportedRtPipeline;
         supportedRtPipeline.pNext = &supportedRayQuery;
     }
@@ -358,6 +375,27 @@ static void VKimp_CreateDevice(void)
         vk.rayTracingSupported && supportedVk12.descriptorBindingSampledImageUpdateAfterBind;
     vk12Features.descriptorBindingPartiallyBound =
         vk.rayTracingSupported && supportedVk12.descriptorBindingPartiallyBound;
+    // Three features AMD's FSR 2.2.1 Vulkan backend assumes rather than requests
+    // (docs/plans/20260918_fsr_upscaling.md §11).  It probes the *physical device* for
+    // fp16 and subgroup-size control and then uses them unconditionally, and its
+    // barriers for the depth SRV carry only VK_IMAGE_ASPECT_DEPTH_BIT — illegal on our
+    // combined D32S8 depth buffer without separateDepthStencilLayouts.  All three are
+    // harmless to enable when present; r_fsr 2 is gated on them below.
+    vk12Features.shaderFloat16 = supportedVk12.shaderFloat16;
+    vk12Features.separateDepthStencilLayouts = supportedVk12.separateDepthStencilLayouts;
+
+    VkPhysicalDeviceVulkan13Features vk13Features = {};
+    vk13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    vk13Features.subgroupSizeControl = deviceHasVk13 && supportedVk13.subgroupSizeControl;
+
+    // deviceHasVk13 is part of the gate rather than a separate fallback: on a 1.2-only
+    // device we cannot enable subgroupSizeControl through this struct, and FSR2 would
+    // still chain the required-subgroup-size struct if the EXT extension is advertised.
+    vk.fsr2Supported = (supportedVk12.separateDepthStencilLayouts == VK_TRUE) && deviceHasVk13;
+    if (!vk.fsr2Supported)
+        common->Warning("Vulkan: r_fsr 2 (FSR 2) unavailable — %s",
+                        !deviceHasVk13 ? "device reports less than Vulkan 1.3"
+                                       : "separateDepthStencilLayouts not supported");
 
     // Extension list: base + optional RT extensions
     const char **exts;
@@ -389,6 +427,12 @@ static void VKimp_CreateDevice(void)
 
     *nextChain = &edsFeatures;
     nextChain = (void **)&edsFeatures.pNext;
+
+    if (deviceHasVk13)
+    {
+        *nextChain = &vk13Features;
+        nextChain = (void **)&vk13Features.pNext;
+    }
 
     if (vk.rayTracingSupported)
     {

@@ -751,16 +751,15 @@ static void VK_RT_InitVolCompositePipeline(void)
     colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
-    // Attachments 1-2 (gbufNormal, gbufAlbedo) are written only by the G-buffer
-    // prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
+    // Attachments 1-3 (gbufNormal, gbufAlbedo, motionVectors) are written only by the
+    // G-buffer prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
     // fillers so the subpass's per-attachment blend-state count always matches.
-    VkPipelineColorBlendAttachmentState blendAttachments[3] = {colorBlend, {}, {}};
-    VK_FillSecondBlendAttachment(&blendAttachments[1]);
-    VK_FillSecondBlendAttachment(&blendAttachments[2]);
+    VkPipelineColorBlendAttachmentState blendAttachments[VK_HDR_COLOR_ATTACHMENT_COUNT] = {colorBlend};
+    const uint32_t blendCount = VK_FillHdrBlendAttachments(blendAttachments);
 
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
+    blendState.attachmentCount = blendCount;
     blendState.pAttachments = blendAttachments;
 
     VkDynamicState dynStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
@@ -793,9 +792,8 @@ static void VK_RT_InitVolCompositePipeline(void)
     VkPipelineColorBlendAttachmentState attenBlend = colorBlend;
     attenBlend.dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
 
-    VkPipelineColorBlendAttachmentState attenAttachments[3] = {attenBlend, {}, {}};
-    VK_FillSecondBlendAttachment(&attenAttachments[1]);
-    VK_FillSecondBlendAttachment(&attenAttachments[2]);
+    VkPipelineColorBlendAttachmentState attenAttachments[VK_HDR_COLOR_ATTACHMENT_COUNT] = {attenBlend};
+    VK_FillHdrBlendAttachments(attenAttachments);
 
     VkPipelineColorBlendStateCreateInfo attenBlendState = blendState;
     attenBlendState.pAttachments = attenAttachments;
@@ -812,13 +810,12 @@ static void VK_RT_InitVolCompositePipeline(void)
     replaceBlend.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
-    VkPipelineColorBlendAttachmentState replaceAttachments[3] = {replaceBlend, {}, {}};
-    VK_FillSecondBlendAttachment(&replaceAttachments[1]);
-    VK_FillSecondBlendAttachment(&replaceAttachments[2]);
+    VkPipelineColorBlendAttachmentState replaceAttachments[VK_HDR_COLOR_ATTACHMENT_COUNT] = {replaceBlend};
+    VK_FillHdrBlendAttachments(replaceAttachments);
 
     VkPipelineColorBlendStateCreateInfo replaceBlendState = {};
     replaceBlendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    replaceBlendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
+    replaceBlendState.attachmentCount = blendCount;
     replaceBlendState.pAttachments = replaceAttachments;
     pipelineInfo.pColorBlendState = &replaceBlendState;
 

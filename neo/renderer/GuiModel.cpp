@@ -209,6 +209,8 @@ void idGuiModel::EmitSurface(guiModelSurface_t *surf, float modelMatrix[16], flo
     viewEntity_t *guiSpace = (viewEntity_t *)R_ClearedFrameAlloc(sizeof(*guiSpace));
     memcpy(guiSpace->modelMatrix, modelMatrix, sizeof(guiSpace->modelMatrix));
     memcpy(guiSpace->modelViewMatrix, modelViewMatrix, sizeof(guiSpace->modelViewMatrix));
+    // U2: a GUI surface has no history of its own, so it reports no motion.
+    memcpy(guiSpace->prevModelMatrix, modelMatrix, sizeof(guiSpace->prevModelMatrix));
     guiSpace->weaponDepthHack = depthHack;
 
     // add the surface, which might recursively create another gui

@@ -89,6 +89,7 @@ option(ONATIVE		"Optimize for the host CPU" OFF)
 option(SDL2			"Use SDL2 instead of SDL1.2" ON)
 option(SDL3			"Use SDL3 instead of SDL2 or SDL1.2" OFF)
 option(IMGUI		"Build with Dear ImGui integration - requires SDL2/SDL3 and C++11" ON)
+option(DHEWM3_FSR2	"Build with AMD FidelityFX(TM) Super Resolution 2 (r_fsr 2); MIT, vendored in libs/ffx-fsr2-api" ON)
 option(REPRODUCIBLE_BUILD "Replace __DATE__ and __TIME__ by hardcoded values for reproducible builds" OFF)
 
 option(HARDLINK_GAME "Compile gamecode into executable (no game DLLs)" OFF)
@@ -778,6 +779,8 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/fsr_prepare.comp
 	renderer/glsl/fsr_easu.comp
 	renderer/glsl/fsr_rcas.comp
+	renderer/glsl/motion_debug.comp
+	renderer/glsl/fsr2_bleed_debug.comp
 )
 
 
@@ -1074,6 +1077,22 @@ set(src_imgui ${src_imgui} libs/imgui/backends/imgui_impl_vulkan.cpp)
 
 else()
 set(src_imgui sys/sys_imgui.h)
+endif()
+
+# AMD FidelityFX Super Resolution 2.2.1 (MIT) — vendored unmodified in
+# libs/ffx-fsr2-api, see THIRD-PARTY-LICENSES.md and
+# docs/plans/20260918_fsr_upscaling.md Appendix A.  Compiled straight into the
+# main target rather than as AMD's two static libs; upstream's CMakeLists.txt
+# files are kept on disk for provenance and never add_subdirectory'd.
+if(DHEWM3_FSR2)
+set(src_fsr2
+	libs/ffx-fsr2-api/ffx_fsr2.cpp
+	libs/ffx-fsr2-api/ffx_assert.cpp
+	libs/ffx-fsr2-api/vk/ffx_fsr2_vk.cpp
+	libs/ffx-fsr2-api/vk/shaders/ffx_fsr2_shaders_vk.cpp
+)
+else()
+set(src_fsr2 "")
 endif()
 
 
@@ -1510,6 +1529,7 @@ if(CORE)
 		${src_sys_base}
 		${src_sys_core}
 		${src_imgui}
+		${src_fsr2}
 		${src_editor_tools}
 	)
 	
@@ -1518,7 +1538,7 @@ if(CORE)
 		set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${DHEWM3BINARY})
 	endif()
 
-	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} PREFIX neo FILES ${src_core} ${src_sys_base} ${src_sys_core} ${src_imgui} ${src_editor_tools})
+	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} PREFIX neo FILES ${src_core} ${src_sys_base} ${src_sys_core} ${src_imgui} ${src_fsr2} ${src_editor_tools})
 
 	target_include_directories(${DHEWM3BINARY} PRIVATE "${CMAKE_SOURCE_DIR}/libs/imgui")
 
@@ -1528,6 +1548,32 @@ if(HARDLINK_GAME)
 else()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES COMPILE_DEFINITIONS "__DOOM_DLL__;${TOOLS_DEFINES}")
 endif()
+
+	# Must come AFTER the set_target_properties(COMPILE_DEFINITIONS) calls above: those
+	# REPLACE the property, so anything appended by target_compile_definitions earlier
+	# would be silently discarded.
+	if(DHEWM3_FSR2)
+		# SYSTEM keeps AMD's unused-variable / sign-compare warnings out of our build log.
+		# The permutations dir is mandatory: ffx_fsr2_shaders_vk.cpp includes the eight
+		# index headers by bare name, and they do not sit in its own directory.
+		target_include_directories(${DHEWM3BINARY} SYSTEM PRIVATE
+			"${CMAKE_SOURCE_DIR}/libs/ffx-fsr2-api"
+			"${CMAKE_SOURCE_DIR}/libs/ffx-fsr2-api/vk/shaders/permutations")
+		target_compile_definitions(${DHEWM3BINARY} PRIVATE DHEWM3_FSR2=1)
+		if(MSVC)
+			# ffx_fsr2_vk.cpp uses <codecvt>, deprecated since C++17.
+			set_source_files_properties(${src_fsr2} PROPERTIES COMPILE_DEFINITIONS
+				"_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING")
+		else()
+			# ffx_types.h spells FFX_API as __declspec(dllexport) unless FFX_GCC is set.
+			# Target-wide, so the library sources and vk_upscale.cpp agree on the linkage.
+			target_compile_definitions(${DHEWM3BINARY} PRIVATE FFX_GCC=1)
+			# AMD's sources call MSVC-only wcscpy_s / wcstombs_s.  Force-include our own
+			# shims rather than patching the vendored tree.
+			set_source_files_properties(${src_fsr2} PROPERTIES COMPILE_OPTIONS
+				"-include;${CMAKE_SOURCE_DIR}/libs/ffx-fsr2-api-compat/ffx_fsr2_posix_compat.h")
+		endif()
+	endif()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES LINK_FLAGS "${ldflags}")
 	set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/sys/osx/Info.plist)
 
