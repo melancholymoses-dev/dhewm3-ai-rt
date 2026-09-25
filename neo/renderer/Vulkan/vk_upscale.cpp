@@ -1020,9 +1020,16 @@ static bool VK_RT_Fsr2Requested(void)
 // Could FSR 2 resolve this frame?  Side-effect free, unlike VK_RT_Fsr2Ready — the
 // render-extent fallback asks this *before* the extent is settled and must not trigger
 // a context build at the old size.
+//
+// r_useRayTracing gates it because the motion attachment is written only by the G-buffer
+// prepass, which stands down with RT (VK_RB_FillDepthBuffer).  Feeding FSR2 that untouched
+// field would claim every pixel is static, so the history never reprojects and the whole
+// frame ghosts on camera motion — a failure that looks like a bad FSR2 setup rather than a
+// missing prepass.  Same reason VK_RT_MotionDebugActive refuses to draw.
 static bool VK_RT_Fsr2Possible(void)
 {
-    return VK_RT_Fsr2Requested() && vk.fsr2Supported && vk.gbufferSupported && !s_fsr2CreateFailed;
+    return VK_RT_Fsr2Requested() && vk.fsr2Supported && vk.gbufferSupported && r_useRayTracing.GetBool() &&
+           !s_fsr2CreateFailed;
 }
 
 // Create / recreate / tear down as needed, and report whether this frame can dispatch.
@@ -1044,6 +1051,23 @@ static bool VK_RT_Fsr2Ready(void)
                             !vk.gbufferSupported ? "no G-buffer prepass, so no motion vectors"
                                                  : "see the vk.fsr2Supported warning at startup");
         }
+        return false;
+    }
+
+    // No G-buffer prepass this frame means no motion vectors (see VK_RT_Fsr2Possible).
+    // Tear the context down rather than idle: it holds 60-250 MB of device memory, and a
+    // history built before RT was toggled is worthless once it comes back anyway.
+    if (!r_useRayTracing.GetBool())
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            common->Warning("VK RT FSR2: r_fsr 2 needs r_useRayTracing 1 — motion vectors come from the ray-tracing "
+                            "G-buffer prepass; falling back to the bilinear resolve (set r_fsrJitter 0 too, or the "
+                            "jitter shimmers with nothing to reconcile it)");
+        }
+        VK_RT_Fsr2DestroyContext();
         return false;
     }
 

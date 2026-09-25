@@ -1047,7 +1047,7 @@ Conclusion: the one-ulp error model is optimistic — the dominant term is the c
 inside `invViewProj * vec4(ndc, 1)` at `ndc.z ≈ 0.999`, worth many ulps — and A12's 3×
 margin under-covers it.
 
-`r_rtShadowBiasErrMargin` (new, default 3.0 = A12's value) makes that sweepable, and buys
+`r_rtShadowBiasErrMargin` (new, default **6.0**; 3.0 was A12's value) makes that sweepable, and buys
 the same thing znear did at no near-clipping cost, because the floor term only wins at
 range. The budget is real and bounded: error grows as `d²`, pixel footprint grows as `d`,
 and a bias is invisible until it exceeds the footprint. At `d = 3000`, 1440p, fov 90°,
@@ -1062,12 +1062,28 @@ debug mode, so the 6-tap separable blur was filtering every diagnostic. Mode 2 e
 binary 0/1 and read as a smooth gradient. All debug readings before 2026-09-24 were taken
 through that blur.
 
+Sweep result: **6.0 fixes the 3000-unit refinery flicker** with `r_znear` back at 3.0.
+
+### S8 — FSR 2 requires `r_useRayTracing 1`
+
+The motion attachment is written only by the G-buffer prepass, which `VK_RB_FillDepthBuffer`
+stands down when `r_useRayTracing 0`. FSR2 was still dispatching against that untouched
+field, i.e. "every pixel is static": history never reprojects and the frame ghosts on camera
+motion. `VK_RT_Fsr2Possible`/`Ready` now include the condition, warn once, tear the context
+down and fall back to the bilinear resolve — the same guard `VK_RT_MotionDebugActive`
+already had for `r_fsrDebug 7`.
+
+`r_fsrJitter` is *not* auto-gated with it: it is the deliberate A/B lever for "is the jitter
+perturbing something?", so the warning tells the user to turn it off instead.
+
 ### Outstanding after U3
 
 | Item | Note |
 |---|---|
 | Exit gate not formally run | image quality vs native, the pillar-2 bleed check, FSR2 dispatch cost |
-| Distant shadow flicker | §14 S7 — instrument first with `r_rtShadowDebugMode 9` |
+| ~~Distant shadow flicker~~ | fixed — `r_rtShadowBiasErrMargin 6` (§14 S7) |
+| Blur depth edge-stop is raw device depth | `r_rtShadowBlurDepthThreshold 0.003` is a relative tolerance of `threshold·Z/znear` — ~100% at Z=1000, so it cannot reject anything past ~1000 units. Linearise via `proj[14]/(proj[10]−1)`. Deferred, not stacked on the margin fix |
+| GI / reflections / `vol_march` have no margin cvar | they share `rt_ReconstructWorldPos` with the same latent exposure |
 | Base shadow bias vs non-RT match | §14 S7 |
 | VRAM figure not reported | FSR2 exposes only its host scratch size; the internal device total is not queryable through the 2.2.1 API. `r_vkLogRT` is the fallback |
 | `Changelog.md` entry | §10 item 5; FSR 1 never got one either. `THIRD-PARTY-LICENSES.md` (the actual MIT obligation) is done |
