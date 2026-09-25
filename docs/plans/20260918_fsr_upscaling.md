@@ -2,8 +2,8 @@
 
 **Status:** U0 landed 2026-09-23 (bilinear resolve, `r_fsrRenderScale`).
 U1 landed 2026-09-24 (FSR 1 behind `r_fsr 1`) and U2 landed 2026-09-24 (motion vectors +
-jitter + `r_fsrDebug 7`); both exits met in-game. **U3 is next and unblocked.**
-U3-U5 not started.
+jitter + `r_fsrDebug 7`); both exits met in-game. **U3 code landed 2026-09-24 —
+built, not yet validated in-game; its exit gate is open.** U4-U5 not started.
 **Written:** 2026-09-18
 **Owns:** render-resolution decoupling, AMD FidelityFX Super Resolution integration,
 motion vectors, jitter, and the licensing paperwork that comes with vendored code.
@@ -500,7 +500,7 @@ downward if FSR2's history proves to be doing the job already.
 | `2` | **Taken by U0**: per-view console log — which view, `upscaleDone`, viewport, scissor, subview/mirror flags. Caught the GUI-first frame and the render-extent leak. U2's motion-vector overlay needs a different number. | ✅ U0 |
 | `3` | Reactive mask and transparency-and-composition mask, side by side. | U4 |
 | `4` | Render at reduced resolution but *point-magnify* instead of upscaling — the honest "what did the resolution actually cost" A/B. **Forces the bilinear path, overriding `r_fsr`.** | ✅ U0 |
-| `5` | Upscaler input/output luminance histogram difference, for the pillar-2 black-level check. | U3 |
+| `5` | FSR 2 light-bleed check: red where the output is brighter than a 3×3 neighbourhood of the input, blue where darker. Pillar 2's gate. | ✅ U3 |
 | `6` | EASU output with RCAS sharpening skipped — isolates what RCAS contributes. | ✅ U1 |
 | `7` | Motion-vector flow: hue = direction, value = speed / `r_fsrMotionScale`, colour-wheel legend top-left. | U2 |
 
@@ -515,12 +515,12 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 
 | CVar | Default | Meaning | State |
 |---|---|---|---|
-| `r_fsr` | `0` | Filter used when `r_fsrRenderScale < 1`: `0` = bilinear resolve, `1` = FSR 1 spatial (EASU+RCAS), `2` = FSR 2 (warns once, falls back to `0`). | ✅ U1 / U3 |
+| `r_fsr` | `0` | Filter used when the render scale is below 1: `0` = bilinear resolve, `1` = FSR 1 spatial (EASU+RCAS), `2` = FSR 2 temporal. `2` falls back to `0` with one warning if the device or build cannot do it. | ✅ U1 / U3 |
 | `r_fsrRenderScale` | `1.0` | Explicit linear scale. Clamped low at `0.3`; snapped to a multiple of 8 with a 64px floor, except at exactly 1.0 which passes the display extent through. | ✅ U0 |
 | `r_fsrDebug` | `0` | §7. | ✅ U0 |
-| `r_fsrQuality` | `1` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). | U3 |
+| `r_fsrQuality` | `0` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). Default changed from the `1` written here — see §14 S6. | ✅ U3 |
 | `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`, 1 = sharpest. Mapped to `FsrRcasCon`'s attenuation-in-stops as `2·(1−s)`. Will also feed `enableSharpening`/`sharpness` on the FSR2 path. | ✅ U1 / U3 |
-| `r_fsrJitter` | `0` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. Inert until U3 consumes it. | U2 |
+| `r_fsrJitter` | `0` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. **Forced on under `r_fsr 2`**, which cannot reconstruct without it. | ✅ U2 / U3 |
 | `r_fsrMotionScale` | `16` | Render pixels of motion that saturate the `r_fsrDebug 7` overlay. | U2 |
 | `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
 | `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. | U5 |
@@ -688,21 +688,19 @@ Detailed change list in §13.
   test proves the overlay and the MV field agree with each other, not that either matches
   what `ffxFsr2ContextDispatch` expects.
 
-### U3 — FSR 2 integration  🔴
-Vendor `neo/libs/ffx-fsr2-api/` at a pinned tag, add the CMake target and `src_fsr2` list,
-create/destroy the context alongside `VK_RT_ResizeTonemap`, and dispatch. No reactive mask
-yet; `FFX_FSR2_ENABLE_AUTO_EXPOSURE` initially (the simplest correct answer given the
-tonemap is a fixed curve downstream), `FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE` +
-`_DEPTH_INFINITE` on, `_DEPTH_INVERTED` off. Per frame: `renderSize`, `jitterOffset`,
-`motionVectorScale`, `frameTimeDelta` in **milliseconds**, `cameraNear` from `viewDef` (not
-cached), `cameraFovAngleVertical` in radians, `reset` wired to the existing camera-cut
-detector.
+### U3 — FSR 2 integration  🟡 code landed 2026-09-24, exit gate open
+`r_fsr 2` drives the vendored FSR 2.2.1 library from `VK_RT_DispatchFsr2` in
+`vk_upscale.cpp`. Flags as planned: `HIGH_DYNAMIC_RANGE | DEPTH_INFINITE | AUTO_EXPOSURE`,
+`DEPTH_INVERTED` off, `DEBUG_CHECKING` added when `r_fsrDebug >= 2`. Context lifetime is
+lazy: built on the first dispatch, torn down when `r_fsr` leaves 2, the render extent
+moves, the flags change, or the scale returns to 1.0. Detailed change list in §14.
 
 - **Exit:** at Quality, sharper than U0's bilinear and close to native on static geometry;
   **no light bleeding into dark corridors when the camera pans from a lit room to a dark
   one** (pillar 2 — a gate, not a nice-to-have; use `r_fsrDebug 5`); RT total still ≈ 5.5 ms
   and FSR2's own dispatch ≤ 1.5 ms at 1080p; builds and runs clean on Linux/RADV as well as
   Windows.
+- **Not yet met:** nothing above has been observed. Windows build not run; Linux not tried.
 
 ### U4 — reactive mask, T&C mask, denoiser retune  🔴
 `preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,
@@ -932,6 +930,105 @@ not verified in U2** and is U3's job.
 and before the tonemap, replacing `hdrScene` entirely. Hue = flow direction, value = speed
 normalised by `r_fsrMotionScale` (default 16 render pixels); below 0.05 px reads near-black,
 so "exactly zero" is legible. A 72 px colour wheel in the top-left corner is the legend.
+
+---
+
+## 14. U3 change list
+
+### S1 — build
+
+| File | Change |
+|---|---|
+| `CMakeLists.txt` | `option(DHEWM3_FSR2 … ON)`; `src_fsr2` = the four `.cpp` files from A.2, added to `add_executable`; `SYSTEM PRIVATE` include dirs `libs/ffx-fsr2-api` + `.../vk/shaders/permutations`; `DHEWM3_FSR2=1`; `fsr2_bleed_debug.comp` in `GLSL_SHADER_SOURCES` |
+| `libs/ffx-fsr2-api-compat/ffx_fsr2_posix_compat.h` | **new, ours.** `wcscpy_s` / `wcstombs_s` shims, force-included into the four FSR2 units on non-MSVC via `-include`. AMD's tree stays byte-identical; the shim lives outside it so provenance is unambiguous |
+
+Two upstream assumptions A.7 did not catch, both fatal rather than cosmetic:
+
+| Item | Fix |
+|---|---|
+| `ffx_types.h` spells `FFX_API` as `__declspec(dllexport)` unless `FFX_GCC` is defined | `FFX_GCC=1` target-wide on non-MSVC |
+| `ffx_fsr2.cpp` and `ffx_fsr2_vk.cpp` call MSVC-only `wcscpy_s` / `wcstombs_s` outside any `_DEBUG` guard | the compat header above |
+
+### S2 — device features the FSR2 backend assumes rather than requests
+
+`vk_instance.cpp`. All three are probed on the *physical device* by AMD's backend and then
+used unconditionally, so they must be enabled or FSR2 emits invalid Vulkan. §11's
+"needs an extension we don't enable" risk was real, three times over.
+
+| Feature | Why | If missing |
+|---|---|---|
+| `separateDepthStencilLayouts` | FSR2's depth-SRV barrier carries only `VK_IMAGE_ASPECT_DEPTH_BIT`, illegal on our combined D32S8 buffer | `vk.fsr2Supported = false` |
+| `subgroupSizeControl` (core 1.3) | it chains `VkPipelineShaderStageRequiredSubgroupSizeCreateInfo` to force wave64 whenever `VK_EXT_subgroup_size_control` is merely *available* — i.e. on every RDNA card | gated: a device reporting < 1.3 loses `r_fsr 2` |
+| `shaderFloat16` | `fp16Supported` comes from a physical-device query, so it loads FP16 SPIR-V permutations without asking | enabled when present; when absent FSR2 also reports false, so they agree |
+
+`vk.fsr2Supported` is latched in `vk_common.h`; `r_fsr 2` falls back to the bilinear
+resolve with one warning rather than failing hard.
+
+### S3 — the dispatch
+
+`vk_upscale.cpp`, one new `#if defined(DHEWM3_FSR2)` block. Inputs are the existing
+display-sized images; `renderSize` is the sub-rect.
+
+| Item | Value |
+|---|---|
+| `color` / `depth` / `motionVectors` | `hdrScene[slot]`, `vk.depthImage` via `vk.depthSampledView`, `motionVectors[slot]` — all declared `FFX_RESOURCE_STATE_COMPUTE_READ`, so we move them to `SHADER_READ_ONLY_OPTIMAL` first and restore them after |
+| `output` | `hdrUpscaled[slot]`, `UNORDERED_ACCESS`, then copied over `hdrScene` exactly as U0 does |
+| resource dimensions | **display extent, not `renderSize`.** FSR2's only UV-space read of the colour buffer (the luminance pyramid) routes through `ClampUv(uv, RenderSize, InputColorResourceDimensions)`, which rescales against the real texture size; everything else is a `texelFetch`. So §2's sub-rect needs no copy and no shim |
+| `motionVectorScale` | `{+0.5·renderW, −0.5·renderH}` |
+| `jitterOffset` | `{−jitterX, +jitterY}` |
+| `frameTimeDelta` | wall clock via `SDL_GetPerformanceCounter`, clamped `[0.1, 1000]` ms — not `tr.frameShaderTime`, which stops in the menu |
+| `cameraNear` | per frame from `viewDef` incl. `cramZNear`; `cameraFar` 1e6 (finite, ignored under `DEPTH_INFINITE`, and avoids an `inf` in AMD's unused `fQ·fMin` term) |
+| `reset` | `VK_RT_DetectCameraCut` on the 3D view + `!prevFrameValid` + first frame after a context build |
+| jitter | `r_fsr 2` forces the Halton sequence on regardless of `r_fsrJitter`, and now calls the real `ffxFsr2GetJitterPhaseCount` / `ffxFsr2GetJitterOffset`. U2's hand port stays as the `DHEWM3_FSR2=OFF` fallback |
+
+Both sign conventions are **derived, not guessed**, from
+`fSrcUnjitteredPos = iPxLrPos + 0.5 − Jitter()` (`ffx_fsr2_upsample.h`) cross-checked
+against `motionVectorJitterCancellation` (`ffx_fsr2.cpp:902`): FSR2's `jitterOffset` is the
+image's displacement in render pixels, Y **down**. `R_BuildProjection` shifts the frustum,
+which moves the image the other way in X; the negative-height viewport flips Y and cancels
+the second sign. That is where U2's open question lands — it still needs confirming by eye.
+
+`VK_RT_CaptureFsrViewParams` (called from `VK_RB_DrawView` on the primary, non-subview,
+real-camera view, *outside* the RT gate) latches near plane, fov, jitter and the cut result,
+because the resolve runs after the frame's last `RC_DRAW_VIEW`.
+
+### S4 — the depth caveat
+
+`R_BuildProjection` uses `−0.999` rather than `−1.0` for the far-plane-at-infinity row, so
+device depth tops out at 0.9995. FSR2's infinite-depth linearisation is
+`viewZ = −near/(d − 1)`, which then saturates at ≈ 2000× near (≈ 6000 units at
+`r_znear 3`). No choice of `cameraNear`/`cameraFar` fixes it: the finite family needs a
+negative far plane when `d` never reaches 1, and the infinite family hard-codes
+`c = −1 − ε`. Consequence is compressed — but monotonic — distance for FSR2's disocclusion
+test, so it loses sensitivity at long range rather than being wrong. Do not "fix" it by
+changing `−0.999`; that epsilon exists to keep `w = 0` vertices off the wraparound point.
+
+### S5 — `r_fsrDebug 5`
+
+`fsr2_bleed_debug.comp`, dispatched between `ffxFsr2ContextDispatch` and the copy-back,
+where the render-res input and the display-res output both still exist. Compares output
+luminance against a 3×3 min/max of the input: **red** = output brighter than the brightest
+input tap (history lifting the black floor), **blue** = darker than the darkest (a
+comparison bug, not a bleed), image dimmed elsewhere. 3×3 rather than a point tap because
+reconstruction legitimately resolves sub-pixel detail and a point compare flags every edge.
+
+### S6 — `r_fsrQuality`
+
+`0` = use `r_fsrRenderScale` (**deviation: the plan said default `1`**, which would silently
+enable upscaling for every existing config), `1`-`4` = the §8.1 divisors, applied in
+`VK_RT_UpdateRenderExtent` before the existing snap-to-8. Written out rather than calling
+`ffxFsr2GetRenderResolutionFromQualityMode` so the presets survive `DHEWM3_FSR2=OFF` and so
+`VK_SnapExtent8` stays the single rounding rule.
+
+### Outstanding after U3
+
+| Item | Note |
+|---|---|
+| Nothing observed in-game | the whole exit gate |
+| VRAM figure not reported | FSR2 exposes only its host scratch size; the internal device total is not queryable through the 2.2.1 API. `r_vkLogRT` is the fallback |
+| `Changelog.md` entry | §10 item 5; FSR 1 never got one either. `THIRD-PARTY-LICENSES.md` (the actual MIT obligation) is done |
+| `.hlsl` files still in `libs/ffx-fsr2-api/shaders/` | A.4 says drop them; inert, never compiled |
+| Mirrors / subviews / glass rect | unchanged from §4 Outstanding |
 
 ---
 

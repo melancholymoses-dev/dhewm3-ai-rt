@@ -113,6 +113,9 @@ struct vkState_t
     // differing per-attachment blend/write-mask state). See docs/plans/gbuffer_normal_pass.md.
     // If false, the G-buffer prepass must not be enabled; fall back to the existing depth-only path.
     bool gbufferSupported;
+    // separateDepthStencilLayouts, which FSR 2's backend needs for its depth-aspect-only
+    // barriers on our combined depth+stencil buffer.  False = r_fsr 2 falls back.
+    bool fsr2Supported;
 
     uint32_t currentFrame;    // 0..VK_MAX_FRAMES_IN_FLIGHT-1
     uint32_t currentImageIdx; // current swapchain image index

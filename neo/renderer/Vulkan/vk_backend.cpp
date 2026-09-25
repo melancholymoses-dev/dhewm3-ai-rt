@@ -4720,6 +4720,17 @@ void VK_RB_DrawView(const void *data)
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
 
+    // U3: latch this view's near plane, fov and applied jitter for the FSR 2 dispatch,
+    // which runs after the last view and cannot read them from backEnd.viewDef by then.
+    // Same signature the RT dispatches use, and the same one U2 gave prevViewProjMatrix:
+    // the primary 3D view only.  Deliberately outside the RT gate — the resolution split
+    // works with ray tracing off.
+    if (!backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror &&
+        backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f)
+    {
+        VK_RT_CaptureFsrViewParams(backEnd.viewDef);
+    }
+
     if (r_vkLogRT.GetInteger() >= 2)
     {
         // Count weapon/mirror/subview surfaces for diagnostic summary

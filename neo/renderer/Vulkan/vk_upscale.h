@@ -12,6 +12,13 @@ extern idCVar r_fsrDebug;
 extern idCVar r_fsrSharpness;
 extern idCVar r_fsrJitter;
 extern idCVar r_fsrMotionScale;
+extern idCVar r_fsrQuality;
+
+// U3: latch the 3D view's projection parameters for the FSR 2 dispatch, which runs
+// after the frame's last RC_DRAW_VIEW and cannot trust backEnd.viewDef by then (the
+// 2D overlay view has a zeroed viewaxis and a meaningless fov).  Call once per frame
+// from the primary, non-subview, real-camera path.
+void VK_RT_CaptureFsrViewParams(const viewDef_t *viewDef);
 
 // U2: sub-pixel jitter for this frame, in render pixels over [-0.5,+0.5], and the
 // render extent to measure it against.  False = not jittering; outputs untouched.

@@ -1,0 +1,104 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — fsr2_bleed_debug.comp — r_fsrDebug 5, pillar 2's black-level gate.
+
+A temporal upscaler keeps a history buffer, and history buffers leak light from
+bright frames into dark ones.  This pass compares FSR 2's output against the
+sub-rect input it was reconstructed from and tints every pixel where the output
+is brighter than its neighbourhood of the input.  Pan from a lit room into a
+dark corridor: if the corridor lights up in red, FSR 2's history is lifting the
+black floor and the reactive mask / preExposure levers (U4) are needed.
+
+  unchanged    pixel matches its input, shown as the ordinary image, dimmed
+  red          output brighter than the brightest input tap by > threshold
+  blue         output darker than the darkest input tap by > threshold
+
+Both directions are shown because a blue field means the comparison itself is
+wrong (a scale or offset bug) rather than a bleed.  The reference is a 3x3
+min/max of the input, not a single tap: reconstruction legitimately resolves
+sub-pixel detail, so a point comparison flags every edge.
+
+Runs on FSR 2's output *before* it is copied back over hdrScene, which is why
+binding 0 can still read the render-resolution input.
+
+Descriptors (set 0):
+  binding 0 — srcScene  sampler2D (hdrScene, still the render-res input this frame)
+  binding 1 — dstUpscaled rgba16f storage image (hdrUpscaled, read AND written)
+
+Push constants (20 bytes, matches Fsr2BleedPC in vk_upscale.cpp):
+  ivec2 renderExtent   — valid sub-rect of srcScene
+  ivec2 displayExtent  — size of dstUpscaled
+  float threshold      — linear-HDR luminance difference that counts as a bleed
+
+FSR upscaling arc U3 — docs/plans/20260918_fsr_upscaling.md §7.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcScene;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dstUpscaled;
+
+layout(push_constant) uniform PC {
+    ivec2 renderExtent;
+    ivec2 displayExtent;
+    float threshold;
+} pc;
+
+float Luma(vec3 c)
+{
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.displayExtent.x || p.y >= pc.displayExtent.y)
+        return;
+
+    vec4 outColor = imageLoad(dstUpscaled, p);
+    float outLuma = Luma(outColor.rgb);
+
+    // Display pixel -> render pixel.  The sub-rect layout makes this a plain scale.
+    ivec2 c = ivec2((vec2(p) + 0.5) * vec2(pc.renderExtent) / vec2(pc.displayExtent));
+
+    float lo = 1e30;
+    float hi = -1e30;
+    for (int dy = -1; dy <= 1; dy++)
+    {
+        for (int dx = -1; dx <= 1; dx++)
+        {
+            ivec2 s = clamp(c + ivec2(dx, dy), ivec2(0), pc.renderExtent - 1);
+            float l = Luma(texelFetch(srcScene, s, 0).rgb);
+            lo = min(lo, l);
+            hi = max(hi, l);
+        }
+    }
+
+    vec3 result = outColor.rgb * 0.25; // dim the image so the tint reads clearly
+    if (outLuma > hi + pc.threshold)
+    {
+        // Saturating ramp: a marginal bleed is dark red, a bad one is full red.
+        float over = clamp((outLuma - hi) / max(pc.threshold * 8.0, 1e-4), 0.0, 1.0);
+        result = vec3(0.1 + 0.9 * over, 0.0, 0.0);
+    }
+    else if (outLuma < lo - pc.threshold)
+    {
+        float under = clamp((lo - outLuma) / max(pc.threshold * 8.0, 1e-4), 0.0, 1.0);
+        result = vec3(0.0, 0.0, 0.1 + 0.9 * under);
+    }
+
+    // hdrScene is pre-tonemap linear HDR, and the Uchimura curve downstream would
+    // otherwise crush the tint into the toe.  Same factor motion_debug.comp uses.
+    imageStore(dstUpscaled, p, vec4(result * 4.0, outColor.a));
+}
