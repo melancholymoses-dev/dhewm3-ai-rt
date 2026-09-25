@@ -881,6 +881,29 @@ vkRTCameraCutResult_t VK_RT_DetectCameraCut(const viewDef_t *viewDef, idVec3 &pr
                                             bool historyValid, const char *tag);
 
 // ---------------------------------------------------------------------------
+// Effective near plane for THIS view, read off the projection instead of the
+// r_znear cvar.
+//
+// Game code writes r_znear directly (3.0 normally, 1.0 for cinematics —
+// Game_local.cpp:4532), so a backend GetFloat() can return a value the frontend
+// never rasterised this frame's depth buffer with.  Everything keyed on znear —
+// the A12 depth-reconstruction bias floor (d^2*ulp/znear), the AO fade band,
+// FSR 2's cameraNear — is then wrong for exactly the frames where znear moved,
+// which is the cinematic transition.  The matrix is authoritative.
+//
+//   ndcZ = -proj[10] + proj[14]/d  =>  d(ndcZ = -1) = proj[14] / (proj[10] - 1)
+//
+// Jitter does not affect this: R_BuildProjection only shifts the frustum's x/y
+// edges, leaving rows 2 and 3 alone.  vk_vol_froxel.cpp has used this since the
+// froxel work; this is the same expression, shared.
+// ---------------------------------------------------------------------------
+inline float VK_RT_EffectiveZNear(const viewDef_t *viewDef)
+{
+    const float d = viewDef->projectionMatrix[14] / (viewDef->projectionMatrix[10] - 1.0f);
+    return (d > 0.01f && d == d) ? d : 3.0f; // degenerate projection: Doom 3's default
+}
+
+// ---------------------------------------------------------------------------
 // P1b — batched shadow masks
 //
 // Per-view flow (all from vk_backend.cpp):

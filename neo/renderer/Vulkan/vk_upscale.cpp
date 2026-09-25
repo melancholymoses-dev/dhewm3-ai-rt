@@ -95,9 +95,10 @@ idCVar r_fsrQuality("r_fsrQuality", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARC
 idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "FSR Debug Mode.");
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
-idCVar r_fsrJitter("r_fsrJitter", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
-                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Required by r_fsr 2 "
-                   "and forced on when it is active; on the other paths it only adds shimmer.");
+idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  r_fsr 2 needs it and "
+                   "goes blurry without it; on the bilinear and FSR 1 paths it only adds shimmer.  Kept "
+                   "switchable so \"is the jitter perturbing something?\" stays an A/B rather than an argument.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
 
@@ -156,9 +157,11 @@ static bool s_fsrCamValid = false;
 
 void VK_RT_CaptureFsrViewParams(const viewDef_t *viewDef)
 {
-    float zn = r_znear.GetFloat();
-    if (viewDef->renderView.cramZNear)
-        zn *= 0.25f; // matches R_BuildProjection; r_znear is game-owned and moves in cinematics
+    // From the projection, not r_znear: game code writes that cvar directly and drops it
+    // to 1.0 for cinematics, so a backend read can disagree with the matrix this frame's
+    // depth was rasterised through.  (renderView.cramZNear is dead — never assigned
+    // anywhere in the tree — so R_BuildProjection's 0.25 branch never fires.)
+    const float zn = VK_RT_EffectiveZNear(viewDef);
 
     const vkRTCameraCutResult_t cut =
         VK_RT_DetectCameraCut(viewDef, s_fsrPrevCamPos, s_fsrPrevCamFwd, s_fsrCamValid, "FSR");
@@ -1355,13 +1358,29 @@ plus the render extent the caller should measure it against.  Returns false when
 the FSR jitter is not in play, leaving the outputs untouched so R_SetupProjection
 can fall back to r_jitter.
 
-r_fsr 2 forces it on regardless of r_fsrJitter: FSR 2 reconstructs from the jittered
-sample grid, so without jitter it has nothing to resolve and reads as a blur.
+r_fsr 2 wants it on — FSR 2 reconstructs from the jittered sample grid, and without
+jitter it has nothing to resolve and reads as a blur — but it is deliberately NOT forced.
+Jitter is the one lever that separates "a screen-space input is changing frame to frame
+and nothing reconciles it" from "FSR 2's own history is unstable", and an A/B you cannot
+run is not a debug lever.  r_fsrJitter defaults to 1 instead; turning it off under r_fsr 2
+warns once and is expected to look soft.
 */
 bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
 {
-    if (!r_fsrJitter.GetBool() && !s_fsr2Running)
+    if (!r_fsrJitter.GetBool())
+    {
+        if (s_fsr2Running)
+        {
+            static bool warned = false;
+            if (!warned)
+            {
+                warned = true;
+                common->Warning("VK RT FSR2: r_fsrJitter 0 with r_fsr 2 — FSR 2 has no sub-pixel samples to "
+                                "reconstruct from and will read as a blur.  This is the A/B, not a usable setting.");
+            }
+        }
         return false;
+    }
     if (!VK_RT_UpscaleActive() || vk.renderExtent.width == 0)
         return false;
 

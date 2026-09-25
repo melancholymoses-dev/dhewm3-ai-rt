@@ -80,7 +80,7 @@ struct vkShadowBlurPush_t
 };
 static_assert(sizeof(vkShadowBlurPush_t) == 36, "vkShadowBlurPush_t must match shadow_blur.comp's push block");
 
-static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.15", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
+static idCVar r_rtShadowRayBias("r_rtShadowRayBias", "0.25", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
                                 "ray origin bias for RT shadows (world units), helps remove near-light ring artifacts");
 static idCVar r_rtShadowSoftRadiusScale(
     "r_rtShadowSoftRadiusScale", "0.08", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT,
@@ -140,6 +140,9 @@ static idCVar r_rtShadowDebugMode(
     "0=normal, 1=biasDir.y (floor=white/wall=grey), 2=got-surface-normal (white) vs camera-fallback (black), "
     "3=dot(biasDir,lightDir) mapped 0..1; "
     "5=raw nDotL before clamp (dark=grazing angle=heavy bias pressure), "
+    "9=which bias term wins (black=base rayBias/nDotL, grey-to-white=the A12 depth-error floor, "
+    "brightness = floor size / 4 world units) — distant geometry should be bright; black-and-flickering "
+    "means raise r_rtShadowRayBias, white-and-flickering means the bias is not the problem, "
     "7=anisotropic cone half-angle sin(U) (tangent-plane 'right' axis), "
     "8=anisotropic cone half-angle sin(V) (tangent-plane 'up/fwd' axis) — 7/8 together show the "
     "elliptical soft-shadow cone shape (Phase 9 Stage 1); a spherical point light shows 7==8, an "
@@ -933,10 +936,12 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
         // A12: worldPos reconstruction error is d^2*ulp/znear; without this floor the
         // 0.15 bias is swamped past d~2739 (d~1581 at the cinematic znear 1) and the
         // origin self-shadows. 3x margin. Stays sub-pixel until d~10000.
-        {
-            extern idCVar r_znear;
-            ubo.biasErrCoeff = 1.8e-7f / Max(0.001f, r_znear.GetFloat());
-        }
+        //
+        // Near plane from the projection, not the r_znear cvar: game code writes that
+        // directly (3.0 -> 1.0 for cinematics), so a backend read can return a value
+        // this frame's depth buffer was never rasterised with, and the floor is then
+        // wrong for exactly the frames where znear moved. See VK_RT_EffectiveZNear.
+        ubo.biasErrCoeff = 1.8e-7f / Max(0.001f, VK_RT_EffectiveZNear(viewDef));
         ubo.debugMode = r_rtShadowDebugMode.GetInteger();
         ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
         ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;

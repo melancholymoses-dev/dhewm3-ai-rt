@@ -520,7 +520,7 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 | `r_fsrDebug` | `0` | §7. | ✅ U0 |
 | `r_fsrQuality` | `0` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). Default changed from the `1` written here — see §14 S6. | ✅ U3 |
 | `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`, 1 = sharpest. Mapped to `FsrRcasCon`'s attenuation-in-stops as `2·(1−s)`. Will also feed `enableSharpening`/`sharpness` on the FSR2 path. | ✅ U1 / U3 |
-| `r_fsrJitter` | `0` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. **Forced on under `r_fsr 2`**, which cannot reconstruct without it. | ✅ U2 / U3 |
+| `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. `r_fsr 2` needs it; default moved `0` → `1` at U3. Deliberately **not** forced — see §14 S3. | ✅ U2 / U3 |
 | `r_fsrMotionScale` | `16` | Render pixels of motion that saturate the `r_fsrDebug 7` overlay. | U2 |
 | `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
 | `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. | U5 |
@@ -979,7 +979,7 @@ display-sized images; `renderSize` is the sub-rect.
 | `frameTimeDelta` | wall clock via `SDL_GetPerformanceCounter`, clamped `[0.1, 1000]` ms — not `tr.frameShaderTime`, which stops in the menu |
 | `cameraNear` | per frame from `viewDef` incl. `cramZNear`; `cameraFar` 1e6 (finite, ignored under `DEPTH_INFINITE`, and avoids an `inf` in AMD's unused `fQ·fMin` term) |
 | `reset` | `VK_RT_DetectCameraCut` on the 3D view + `!prevFrameValid` + first frame after a context build |
-| jitter | `r_fsr 2` forces the Halton sequence on regardless of `r_fsrJitter`, and now calls the real `ffxFsr2GetJitterPhaseCount` / `ffxFsr2GetJitterOffset`. U2's hand port stays as the `DHEWM3_FSR2=OFF` fallback |
+| jitter | `r_fsrJitter` now defaults to `1` and calls the real `ffxFsr2GetJitterPhaseCount` / `ffxFsr2GetJitterOffset`; U2's hand port stays as the `DHEWM3_FSR2=OFF` fallback. **Not forced on under `r_fsr 2`** — briefly was, which made the one A/B that separates a flickering screen-space input from an unstable upscaler history impossible to run |
 
 Both sign conventions are **derived, not guessed**, from
 `fSrcUnjitteredPos = iPxLrPos + 0.5 − Jitter()` (`ffx_fsr2_upsample.h`) cross-checked
@@ -1020,11 +1020,40 @@ enable upscaling for every existing config), `1`-`4` = the §8.1 divisors, appli
 `ffxFsr2GetRenderResolutionFromQualityMode` so the presets survive `DHEWM3_FSR2=OFF` and so
 `VK_SnapExtent8` stays the single rounding rule.
 
+### S7 — what jitter exposed (2026-09-24, first run)
+
+FSR 2 runs well. Jitter turned three pre-existing, *static* errors into visible flicker,
+because a wrong-but-stationary value reads as correct and a wrong-and-moving one does not.
+
+| Symptom | Cause | Status |
+|---|---|---|
+| Shadow flicker at moderate range | `r_rtShadowRayBias` had been lowered to `0.05`, below A12's self-intersection margin | user set it to `0.25`; fixed |
+| Shadows differ from the non-RT path at `0.25` | peter-panning — the base bias is covering both the honest margin *and* the reconstruction error | open; the right fix is a smaller base bias once the floor is trustworthy |
+| Bad shadows in cinematics | the A12 floor (`d²·ulp/znear`) and the AO fade band both read the **`r_znear` cvar from the backend**. Game code writes it directly (3.0 → 1.0, `Game_local.cpp:4532`), so on the transition frame the value disagrees with the matrix the depth buffer was rasterised through | fixed — `VK_RT_EffectiveZNear(viewDef)` reads it off `projectionMatrix` instead, the way `vk_vol_froxel.cpp` already did |
+| Flicker on structures ~3000 units out | unresolved; see below | open |
+
+`renderView.cramZNear` is **not** involved and is not a lurking bug: it is never assigned
+anywhere in the tree, so `R_BuildProjection`'s `zNear *= 0.25` branch never runs.
+
+**The 3000-unit case is probably not the bias.** At that range one render pixel covers
+several world units, so the shadow boundary on a refinery is far sub-pixel, and one
+stochastic shadow ray per pixel gives a binary answer that jitter re-rolls every frame.
+`r_rtShadowDebugMode 9` (new) decides it: it paints black where the base bias wins and
+grey→white where the A12 floor wins, brightness = floor size / 4 units. Distant geometry
+reading **black** means raise the bias; reading **white** and still flickering means the
+bias already covers the reconstruction error and the cause is undersampling — a
+reactive-mask / denoiser problem, i.e. U4.
+
+Second discriminator, no code needed: undersampling scales with render resolution, bias
+error does not. Sweep `r_fsrRenderScale`.
+
 ### Outstanding after U3
 
 | Item | Note |
 |---|---|
-| Nothing observed in-game | the whole exit gate |
+| Exit gate not formally run | image quality vs native, the pillar-2 bleed check, FSR2 dispatch cost |
+| Distant shadow flicker | §14 S7 — instrument first with `r_rtShadowDebugMode 9` |
+| Base shadow bias vs non-RT match | §14 S7 |
 | VRAM figure not reported | FSR2 exposes only its host scratch size; the internal device total is not queryable through the 2.2.1 API. `r_vkLogRT` is the fallback |
 | `Changelog.md` entry | §10 item 5; FSR 1 never got one either. `THIRD-PARTY-LICENSES.md` (the actual MIT obligation) is done |
 | `.hlsl` files still in `libs/ffx-fsr2-api/shaders/` | A.4 says drop them; inert, never compiled |

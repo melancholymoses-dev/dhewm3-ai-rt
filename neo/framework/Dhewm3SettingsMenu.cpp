@@ -2878,9 +2878,9 @@ static void DrawRTOptionsMenu()
     if (fsrMode == 2)
     {
         ImGui::TextDisabled("FSR 2 is temporal: it reconstructs from motion vectors and a jittered\n"
-                            "sample grid, so jitter is forced on and cannot be disabled here. Watch\n"
-                            "for light bleeding into dark corridors after panning off a bright\n"
-                            "source - debug overlay 5 marks it.");
+                            "sample grid, so leave Sub-pixel Jitter on for normal play. Watch for\n"
+                            "light bleeding into dark corridors after panning off a bright source -\n"
+                            "debug overlay 5 marks it.");
     }
     else
     {
@@ -2889,9 +2889,9 @@ static void DrawRTOptionsMenu()
                             "crawls. No mode does anything at Render Scale 1.0.");
     }
 
-    ImGui::BeginDisabled(fsrMode == 2); // FSR 2 forces it on
+    // Left enabled under FSR 2 on purpose: toggling it is the A/B that separates a
+    // flickering screen-space input from an unstable upscaler history.
     RTCheckbox("Sub-pixel Jitter (Halton, needs Render Scale < 1.0)", rtCVars.fsrJitter);
-    ImGui::EndDisabled(); // fsrMode == 2
     RTSliderFloat("Motion Overlay Scale (render pixels that saturate mode 7)", rtCVars.fsrMotionScale, 1.0f, 64.0f,
                   "%.0f");
 

@@ -290,7 +290,21 @@ void main() {
     // A12: floor the bias at the depth-reconstruction error (grows as d^2), else the
     // origin sinks below the surface at range and self-shadows.
     float camDist     = length( worldPos - camPos );
-    float adaptBias   = max( baseBias / nDotL, params.biasErrCoeff * camDist * camDist );
+    float baseTerm    = baseBias / nDotL;
+    float floorTerm   = params.biasErrCoeff * camDist * camDist;
+    float adaptBias   = max( baseTerm, floorTerm );
+
+    // Debug mode 9: which of the two bias terms is in charge, and how big it is.
+    //   black         the base bias (rayBias/nDotL) dominates
+    //   grey->white   the A12 depth-error floor dominates; brightness = floorTerm/4 units
+    // Distant geometry should be bright.  If a flickering structure reads BLACK out
+    // there, the floor never engaged and raising rayBias is the fix; if it reads
+    // WHITE and still flickers, the bias is already covering the reconstruction error
+    // and the flicker is something else (undersampling, most likely).
+    if ( params.debugMode == 9 ) {
+        storeShadow( coord, floorTerm > baseTerm ? (0.35 + 0.65 * clamp( floorTerm / 4.0, 0.0, 1.0 )) : 0.0 );
+        return;
+    }
 
     // Keep the biased origin in front of the light so the ray segment only
     // covers [surface, light]. Overshooting the light creates false occlusion
