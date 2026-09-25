@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-24 · **Next work: arc 3 (FSR) — validate U1 and U2 in-game, then U3.**
+**Status reviewed:** 2026-09-24 · **Next work: arc 3 (FSR) — U0-U2 done, U3 (FSR 2 integration) is next.**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
@@ -33,7 +33,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol were over-**bright**; settled in tuning) |
 | 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
 | 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
-| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🟡 **U0 landed 2026-09-23** — render-resolution decoupling + bilinear resolve, `r_fsrRenderScale`. **U1 landed 2026-09-24** — FSR 1 (EASU+RCAS) behind `r_fsr 1`, AMD headers in `neo/libs/ffx-fsr/` (MIT); not yet validated in-game. **U2 landed 2026-09-24** — motion-vector attachment + Halton jitter + `r_fsrDebug 7` overlay; nothing consumes them yet, not yet validated in-game. U3-U5 not started; FSR 2 SDK choice unchanged (FidelityFX-FSR2 2.2.1, Vulkan, MIT). Open: mirror/subview dispatch rects, glass rect, RT-total measurement — see §4 Outstanding |
+| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🟡 **U0 landed 2026-09-23** — render-resolution decoupling + bilinear resolve, `r_fsrRenderScale`. **U1 landed 2026-09-24** — FSR 1 (EASU+RCAS) behind `r_fsr 1`, AMD headers in `neo/libs/ffx-fsr/` (MIT); exit met. **U2 landed 2026-09-24, exit met** — motion-vector attachment + Halton jitter + `r_fsrDebug 7` overlay; both MV axes verified, jitter inert to the RT denoisers. Nothing consumes the vectors yet — **U3 is next and unblocked**. U3-U5 not started; FSR 2 SDK choice unchanged (FidelityFX-FSR2 2.2.1, Vulkan, MIT). Open: mirror/subview dispatch rects, glass rect, RT-total measurement — see §4 Outstanding |
 
 - Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
 - U0 gated the screen-space composites on `hasRealCamera` — they had been running twice

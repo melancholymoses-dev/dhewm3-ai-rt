@@ -2,7 +2,8 @@
 
 **Status:** U0 landed 2026-09-23 (bilinear resolve, `r_fsrRenderScale`).
 U1 landed 2026-09-24 (FSR 1 behind `r_fsr 1`) and U2 landed 2026-09-24 (motion vectors +
-jitter + `r_fsrDebug 7`), both unvalidated in-game. U3-U5 not started.
+jitter + `r_fsrDebug 7`); both exits met in-game. **U3 is next and unblocked.**
+U3-U5 not started.
 **Written:** 2026-09-18
 **Owns:** render-resolution decoupling, AMD FidelityFX Super Resolution integration,
 motion vectors, jitter, and the licensing paperwork that comes with vendored code.
@@ -613,7 +614,7 @@ No third-party code. `vk_upscale.h/.cpp`, `vk.renderExtent`, `upscale_blit.comp`
 - **Sequencing note withdrawn** — G6 was decided on appearance, not cost, so U0 no longer
   had to precede it.
 
-### U1 — FSR 1 (EASU + RCAS)  🟡 landed 2026-09-24, not yet validated in-game
+### U1 — FSR 1 (EASU + RCAS)  🟡 landed 2026-09-24, exit met
 `r_fsr 1` runs three compute dispatches in `VK_RT_DispatchUpscale`, replacing the bilinear
 blit entirely:
 
@@ -656,7 +657,7 @@ Other implementation notes:
   bright static geometry is the easy case.
   Check with `r_fsrDebug 1` (cyan border = FSR 1 ran), `4` (point magnify), `6` (EASU only).
 
-### U2 — motion vectors + jitter  🟡 landed 2026-09-24, not yet validated in-game
+### U2 — motion vectors + jitter  🟡 landed 2026-09-24, exit met
 `motionVectors` attachment, the fourth colour-blend slot across `vk_pipeline.cpp`,
 `prevModelMatrix` on `idRenderEntityLocal`, the unjittered matrix pair, Halton jitter behind
 `R_SetupProjection`'s existing hook, and `motion_debug.comp`. **Nothing consumes the motion
@@ -670,6 +671,22 @@ Detailed change list in §13.
   flicker (i.e. `VK_RT_DetectCameraCut` is not firing on jitter — it compares camera
   position and orientation, which jitter does not change, so this should pass by
   construction; verify that it does).
+
+- **Exit: met 2026-09-24.** Both axes read their correct opposite poles (left/right, and
+  pitch matching the wheel legend), so §11's "motion-vector sign or scale wrong" risk is
+  retired. Forward motion produces a radial field with **a single zero at the focus of
+  expansion** — a miscomputed field does not produce one clean null. A parked camera reads
+  black everywhere including the viewmodel; doors differ from their frames. Jitter shows as
+  a light vibration on static geometry and nothing worse, and **lighting is unchanged** —
+  `VK_RT_DetectCameraCut` does not fire on jitter, which until now was an argument rather
+  than a measurement.
+- Fans, enemies, projectiles and gun bob all show, but that is the *rigid* component only.
+  Skinned deformation is still absent (§5) and the overlay cannot separate the two by eye.
+- Fast fans speckle: adjacent blade/background pixels get wildly different MVs. Real, not a
+  bug, and a reactive-mask candidate for U4.
+- **Still open for U3:** the sign of `jitterOffset` against *FSR2's* convention. The pitch
+  test proves the overlay and the MV field agree with each other, not that either matches
+  what `ffxFsr2ContextDispatch` expects.
 
 ### U3 — FSR 2 integration  🔴
 Vendor `neo/libs/ffx-fsr2-api/` at a pinned tag, add the CMake target and `src_fsr2` list,
