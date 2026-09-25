@@ -1,0 +1,77 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — fsr_easu.comp — AMD FidelityFX Super Resolution 1, EASU.
+
+Edge Adaptive Spatial Upsampling: magnifies the perceptual-space render
+sub-rect produced by fsr_prepare.comp to the full display extent.  Output
+stays in perceptual space for fsr_rcas.comp, which sharpens it and converts
+back to linear HDR.
+
+FsrEasuCon takes the viewport and the resource size separately, which is
+exactly §2's "render into the top-left sub-rect of a display-sized image"
+layout — viewport = renderExtent, resource = display extent.
+
+The AMD headers live in neo/libs/ffx-fsr/ and are on the glslc include path
+(see GLSLC_FLAGS in neo/CMakeLists.txt).  They are MIT, unmodified, and carry
+no dhewm3-rt notice.
+
+Descriptors (set 0):
+  binding 0 — srcPerceptual sampler2D (fsrPerceptual + clamp sampler)
+  binding 1 — dstEasu       rgba16f storage image (hdrUpscaled)
+
+FSR upscaling arc U1 — docs/plans/20260918_fsr_upscaling.md.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#define A_GPU  1
+#define A_GLSL 1
+#include "ffx_a.h"
+
+layout(set = 0, binding = 0) uniform sampler2D srcPerceptual;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dstEasu;
+
+layout(push_constant) uniform PC {
+    ivec2 renderExtent;  // EASU viewport — the valid sub-rect of srcPerceptual
+    ivec2 displayExtent; // resource size AND output size
+} pc;
+
+// EASU's tap callbacks: one gather4 per colour channel.
+AF4 FsrEasuRF(AF2 p) { return textureGather(srcPerceptual, p, 0); }
+AF4 FsrEasuGF(AF2 p) { return textureGather(srcPerceptual, p, 1); }
+AF4 FsrEasuBF(AF2 p) { return textureGather(srcPerceptual, p, 2); }
+
+#define FSR_EASU_F 1
+#include "ffx_fsr1.h"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.displayExtent.x || p.y >= pc.displayExtent.y)
+        return;
+
+    // Constants are a handful of reciprocals; computing them per-thread costs
+    // less than the uniform buffer it would take to hand them in.
+    AU4 con0, con1, con2, con3;
+    FsrEasuCon(con0, con1, con2, con3,
+               AF1(pc.renderExtent.x),  AF1(pc.renderExtent.y),
+               AF1(pc.displayExtent.x), AF1(pc.displayExtent.y),
+               AF1(pc.displayExtent.x), AF1(pc.displayExtent.y));
+
+    AF3 c;
+    FsrEasuF(c, AU2(p), con0, con1, con2, con3);
+    imageStore(dstEasu, p, AF4(c, 1.0));
+}

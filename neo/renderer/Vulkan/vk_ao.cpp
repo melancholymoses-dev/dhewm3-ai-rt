@@ -75,10 +75,11 @@ struct AOParamsUBO
 static_assert(sizeof(AOParamsUBO) == 112, "AOParamsUBO size mismatch");
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down) in framebuffer coordinates.
+// Isnt this redundant?  havent i done this twice over?
 static VkRect2D VK_RT_ComputeViewDispatchRect(const viewDef_t *viewDef)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;
@@ -119,7 +120,7 @@ static void VK_RT_CreateAOMaskImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
+        vkRTImage_t &ao = vkRT.aoMask[i];
         ao.width = width;
         ao.height = height;
 
@@ -246,7 +247,7 @@ static void VK_RT_DestroyAOMaskImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkAOMask_t &ao = vkRT.aoMask[i];
+        vkRTImage_t &ao = vkRT.aoMask[i];
         if (ao.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, ao.view, NULL);
@@ -593,7 +594,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     }
 
-    vkAOMask_t &ao = vkRT.aoMask[frameIdx];
+    vkRTImage_t &ao = vkRT.aoMask[frameIdx];
 
     // Same shape as the TLAS guard above: unconditional early-out, gated log.
     if (ao.image == VK_NULL_HANDLE)
@@ -677,8 +678,10 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
                                                       : "depth-gradient reconstruction (no G-buffer)"));
         }
     }
-    ubo.screenWidth = (int32_t)ao.width;
-    ubo.screenHeight = (int32_t)ao.height;
+    // NDC denominator for depth->world reconstruction, so it must be the extent
+    // the depth buffer was rasterised through, not the (display-sized) AO mask.
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
     ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
     ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;

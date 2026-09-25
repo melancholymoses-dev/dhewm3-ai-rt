@@ -132,8 +132,8 @@ static VkRect2D s_temporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 
 static VkRect2D VK_RT_ComputeViewDispatchRect(const viewDef_t *viewDef)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;
@@ -157,7 +157,7 @@ static VkRect2D VK_RT_ComputeViewDispatchRect(const viewDef_t *viewDef)
 // Allocate and transition one history image to VK_IMAGE_LAYOUT_GENERAL.
 // Uses a one-time submit + vkQueueWaitIdle — this is only called during
 // init/resize (outside the hot path) so the stall is acceptable.
-static bool VK_RT_AllocHistoryImage(vkAOMask_t &img, uint32_t width, uint32_t height)
+static bool VK_RT_AllocHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t height)
 {
     img.width = width;
     img.height = height;
@@ -265,7 +265,7 @@ static bool VK_RT_AllocHistoryImage(vkAOMask_t &img, uint32_t width, uint32_t he
 }
 
 // Free one history image (view → image → memory).  Caller owns the idle guarantee.
-static void VK_RT_FreeHistoryImage(vkAOMask_t &img)
+static void VK_RT_FreeHistoryImage(vkRTImage_t &img)
 {
     if (img.view != VK_NULL_HANDLE)
     {
@@ -476,8 +476,8 @@ void VK_RT_DispatchTemporalResolveAO(VkCommandBuffer cmd, const viewDef_t *viewD
     if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
         return;
 
-    vkAOMask_t &current = vkRT.aoMask[frameIdx];
-    vkAOMask_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
+    vkRTImage_t &current = vkRT.aoMask[frameIdx];
+    vkRTImage_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
 
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
@@ -805,8 +805,8 @@ void VK_RT_DispatchAtrousAO(VkCommandBuffer cmd)
         return;
     }
 
-    vkAOMask_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
-    vkAOMask_t &scratch = vkRT.aoScratch[frameIdx];
+    vkRTImage_t &history = vkRT.aoHistory; // single shared image — see vk_raytracing.h
+    vkRTImage_t &scratch = vkRT.aoScratch[frameIdx];
 
     if (history.image == VK_NULL_HANDLE || scratch.image == VK_NULL_HANDLE)
     {
@@ -952,7 +952,7 @@ static VkRect2D s_giTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 // RGBA16F GI history image allocation / deallocation
 // ---------------------------------------------------------------------------
 
-static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
+static bool VK_RT_AllocGIHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t height)
 {
     img.width = width;
     img.height = height;
@@ -1070,7 +1070,7 @@ static bool VK_RT_AllocGIHistoryImage(vkReflBuffer_t &img, uint32_t width, uint3
     return true;
 }
 
-static void VK_RT_FreeGIHistoryImage(vkReflBuffer_t &img)
+static void VK_RT_FreeGIHistoryImage(vkRTImage_t &img)
 {
     if (img.view != VK_NULL_HANDLE)
     {
@@ -1280,8 +1280,8 @@ void VK_RT_DispatchTemporalResolveGI(VkCommandBuffer cmd, const viewDef_t *viewD
     if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
         return;
 
-    vkReflBuffer_t &current = vkRT.giBuffer[frameIdx];
-    vkReflBuffer_t &history = vkRT.giHistory; // single shared image — see vk_raytracing.h
+    vkRTImage_t &current = vkRT.giBuffer[frameIdx];
+    vkRTImage_t &history = vkRT.giHistory; // single shared image — see vk_raytracing.h
 
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {

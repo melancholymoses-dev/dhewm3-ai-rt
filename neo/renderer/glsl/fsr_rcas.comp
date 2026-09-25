@@ -1,0 +1,105 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — fsr_rcas.comp — AMD FidelityFX Super Resolution 1, RCAS.
+
+Robust Contrast Adaptive Sharpening: the second half of the FSR 1 chain.
+Reads EASU's perceptual-space output, sharpens it, then undoes the gamma and
+the reversible tonemapper fsr_prepare.comp applied, writing linear HDR back
+into hdrScene.  Everything downstream — UI compositing, the Uchimura
+tonemap, screenshots — is therefore unchanged by the FSR 1 path.
+
+FSR_RCAS_DENOISE is on: this engine feeds the upscaler a stochastic RT noise
+floor with no anti-aliasing in front of it, which is exactly the input RCAS
+sharpens worst.  It is the cheapest lever against that and costs a few ALU.
+
+The AMD headers live in neo/libs/ffx-fsr/ and are on the glslc include path
+(see GLSLC_FLAGS in neo/CMakeLists.txt).  They are MIT, unmodified, and carry
+no dhewm3-rt notice.
+
+Descriptors (set 0):
+  binding 0 — srcEasu sampler2D (hdrUpscaled, perceptual space)
+  binding 1 — dstHdr  rgba16f storage image (hdrScene[slot], linear HDR)
+
+Push constants:
+  sharpness — RCAS attenuation in stops; 0 = sharpest, larger = softer
+  debugMode — r_fsrDebug (1 = cyan border, 6 = EASU only, no sharpening)
+
+FSR upscaling arc U1 — docs/plans/20260918_fsr_upscaling.md.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+#define A_GPU  1
+#define A_GLSL 1
+#include "ffx_a.h"
+
+layout(set = 0, binding = 0) uniform sampler2D srcEasu;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dstHdr;
+
+layout(push_constant) uniform PC {
+    float sharpness;
+    int   debugMode;
+} pc;
+
+// The 3x3 ring reaches one texel outside the image on every border; texelFetch
+// out of bounds is undefined, so clamp rather than trust it.
+AF4 FsrRcasLoadF(ASU2 p)
+{
+    ASU2 maxP = textureSize(srcEasu, 0) - ASU2(1, 1);
+    return texelFetch(srcEasu, clamp(p, ASU2(0, 0), maxP), 0);
+}
+void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {} // already perceptual
+
+#define FSR_RCAS_F 1
+#define FSR_RCAS_DENOISE 1
+#include "ffx_fsr1.h"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dstSize = imageSize(dstHdr);
+    if (p.x >= dstSize.x || p.y >= dstSize.y)
+        return;
+
+    AF3 c;
+    if (pc.debugMode == 6)
+    {
+        c = FsrRcasLoadF(ASU2(p)).rgb; // EASU only — what did RCAS actually add?
+    }
+    else
+    {
+        AU4 con;
+        FsrRcasCon(con, pc.sharpness);
+        FsrRcasF(c.r, c.g, c.b, AU2(p), con);
+    }
+
+    // Undo fsr_prepare.comp: gamma 2.0, then the reversible tonemapper.
+    // Sharpening can push a channel past 1.0, which would flip the sign of the
+    // inverse's denominator, so clamp the peak first (cap of 1024x gain).
+    c = clamp(c, AF3(0.0), AF3(1.0));
+    c = c * c;
+    AF1 m = min(max(max(c.r, c.g), c.b), 1.0 - (1.0 / 1024.0));
+    c *= 1.0 / (1.0 - m);
+
+    if (pc.debugMode == 1)
+    {
+        // Cyan, not U0's green: says the FSR 1 chain ran, not the bilinear blit.
+        if (p.x < 2 || p.y < 2 || p.x >= dstSize.x - 2 || p.y >= dstSize.y - 2)
+            c = AF3(0.0, 1.0, 1.0);
+    }
+
+    imageStore(dstHdr, p, AF4(c, 1.0));
+}

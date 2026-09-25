@@ -708,7 +708,7 @@ static void VK_RT_CreateGIImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &gb = vkRT.giBuffer[i];
+        vkRTImage_t &gb = vkRT.giBuffer[i];
         gb.width = width;
         gb.height = height;
 
@@ -829,7 +829,7 @@ static void VK_RT_DestroyGIImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &gb = vkRT.giBuffer[i];
+        vkRTImage_t &gb = vkRT.giBuffer[i];
         if (gb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, gb.view, NULL);
@@ -2513,8 +2513,8 @@ bool VK_RT_GIParamsBinding(int frameIdx, uint32_t *outOffset)
 
 static VkRect2D VK_RT_GI_ComputeDispatchRect(const viewDef_t *viewDef)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;
@@ -2557,7 +2557,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     s_lastGIDispatchFrame[frameIdx] = tr.frameCount;
 
-    vkReflBuffer_t &gb = vkRT.giBuffer[frameIdx];
+    vkRTImage_t &gb = vkRT.giBuffer[frameIdx];
     if (gb.image == VK_NULL_HANDLE)
     {
         common->Printf("VK RT GI: skip — giBuffer[%d] image is NULL\n", frameIdx);
@@ -2645,8 +2645,10 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.numSamples = idMath::ClampInt(1, 8, r_rtGISamples.GetInteger());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
     ubo.giStrength = idMath::ClampFloat(0.0f, 4.0f, r_rtGIStrength.GetFloat());
-    ubo.screenWidth = (int32_t)gb.width;
-    ubo.screenHeight = (int32_t)gb.height;
+    // NDC denominator for depth->world reconstruction, so it must be the extent
+    // the depth buffer was rasterised through, not the (display-sized) GI buffer.
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
     ubo.scissorOffsetX = (int32_t)dispatchRect.offset.x;
     ubo.scissorOffsetY = (int32_t)dispatchRect.offset.y;
     ubo.scissorExtentX = (int32_t)dispatchRect.extent.width;
@@ -2924,7 +2926,7 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
         return;
 
     const int frameIdx = vk.currentFrame;
-    vkReflBuffer_t &gb = vkRT.giBuffer[frameIdx];
+    vkRTImage_t &gb = vkRT.giBuffer[frameIdx];
     if (gb.image == VK_NULL_HANDLE || vkRT.giSampler == VK_NULL_HANDLE)
         return;
 
@@ -2976,7 +2978,7 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
 // Image helpers
 // ---------------------------------------------------------------------------
 
-static bool VK_RT_AllocGIAtrousImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
+static bool VK_RT_AllocGIAtrousImage(vkRTImage_t &img, uint32_t width, uint32_t height)
 {
     img.width = width;
     img.height = height;
@@ -3097,7 +3099,7 @@ static bool VK_RT_AllocGIAtrousImage(vkReflBuffer_t &img, uint32_t width, uint32
     return true;
 }
 
-static void VK_RT_FreeGIAtrousImage(vkReflBuffer_t &img)
+static void VK_RT_FreeGIAtrousImage(vkRTImage_t &img)
 {
     if (img.view != VK_NULL_HANDLE)
     {
@@ -3319,8 +3321,8 @@ void VK_RT_DispatchAtrousGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     }
 
-    vkReflBuffer_t &bufA = vkRT.giAtrousA[frameIdx];
-    vkReflBuffer_t &bufB = vkRT.giAtrousB[frameIdx];
+    vkRTImage_t &bufA = vkRT.giAtrousA[frameIdx];
+    vkRTImage_t &bufB = vkRT.giAtrousB[frameIdx];
 
     if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
     {
@@ -3638,12 +3640,12 @@ void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     const int frameIdx = vk.currentFrame;
 
-    const vkReflBuffer_t &albedoBuf = vkRT.gbufAlbedo[frameIdx];
+    const vkRTImage_t &albedoBuf = vkRT.gbufAlbedo[frameIdx];
     if (albedoBuf.view == VK_NULL_HANDLE)
         return;
 
-    vkReflBuffer_t &bufA = vkRT.giAtrousA[frameIdx];
-    vkReflBuffer_t &bufB = vkRT.giAtrousB[frameIdx];
+    vkRTImage_t &bufA = vkRT.giAtrousA[frameIdx];
+    vkRTImage_t &bufB = vkRT.giAtrousB[frameIdx];
     if (bufA.image == VK_NULL_HANDLE || bufB.image == VK_NULL_HANDLE)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -3655,7 +3657,7 @@ void VK_RT_DispatchGIAlbedoMod(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Covers all upstream states — à-trous ran (giReadView is A or B already) or
     // was skipped (giReadView is giHistory/giBuffer, matches neither, default A).
     const bool srcIsA = (vkRT.giReadView[frameIdx] == bufA.view);
-    vkReflBuffer_t &dst = srcIsA ? bufB : bufA;
+    vkRTImage_t &dst = srcIsA ? bufB : bufA;
 
     const VkRect2D dispatchRect = VK_RT_GI_ComputeDispatchRect(viewDef);
     if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)

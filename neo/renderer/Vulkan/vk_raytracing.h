@@ -54,12 +54,12 @@ static const uint32_t VK_MAT_MAX_TEXTURES = 4096; // max bindless texture slots
 static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots across all BLAS instances
 
 // Per-material-entry flags (must match GLSL definition in rt_material.glsl)
-#define VK_MAT_FLAG_ALPHA_TESTED 0x01u  // MC_PERFORATED — alpha discard in any-hit
-#define VK_MAT_FLAG_TWO_SIDED 0x02u     // CT_TWO_SIDED — no back-face cull
-#define VK_MAT_FLAG_GLASS 0x04u         // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
-#define VK_MAT_FLAG_PLAYER_BODY 0x08u   // noSelfShadow entity — routed to player_reflect hit group
-#define VK_MAT_FLAG_EMISSIVE 0x10u      // SL_AMBIENT stage present — surface emits its own light
-#define VK_MAT_FLAG_GUI_EMISSIVE 0x20u  // guiSurf/entity GUI surface — boost emissive in RT GI/refs
+#define VK_MAT_FLAG_ALPHA_TESTED 0x01u // MC_PERFORATED — alpha discard in any-hit
+#define VK_MAT_FLAG_TWO_SIDED 0x02u    // CT_TWO_SIDED — no back-face cull
+#define VK_MAT_FLAG_GLASS 0x04u        // MC_TRANSLUCENT — thin glass, flat F0=0.04 reflectance
+#define VK_MAT_FLAG_PLAYER_BODY 0x08u  // noSelfShadow entity — routed to player_reflect hit group
+#define VK_MAT_FLAG_EMISSIVE 0x10u     // SL_AMBIENT stage present — surface emits its own light
+#define VK_MAT_FLAG_GUI_EMISSIVE 0x20u // guiSurf/entity GUI surface — boost emissive in RT GI/refs
 // R4: MC_TRANSLUCENT *and* SURFTYPE_GLASS. VK_MAT_FLAG_GLASS alone is every translucent
 // (smoke, force fields, liquids), which must not act as a reflection plane.
 #define VK_MAT_FLAG_REAL_GLASS 0x40u
@@ -70,12 +70,12 @@ static const uint32_t VK_MAT_MAX_GEOMS = 16384;   // max total geometry slots ac
 // std430-compatible: all fields are 4 bytes, total = 32 bytes.
 struct VkMaterialEntry
 {
-    uint32_t diffuseTexIndex; // index into bindless texture array (0 = white fallback)
-    uint32_t normalTexIndex;  // index into bindless texture array (0 = flat normal)
-    float roughness;          // GGX roughness [0,1]; default 1.0 (fully diffuse)
-    uint32_t flags;           // VK_MAT_FLAG_*
-    uint32_t baseGeomIdx;     // offset into per-geometry VtxAddrTable/IdxAddrTable
-    float alphaThreshold;     // alpha test cutoff (MC_PERFORATED); default 0.5
+    uint32_t diffuseTexIndex;  // index into bindless texture array (0 = white fallback)
+    uint32_t normalTexIndex;   // index into bindless texture array (0 = flat normal)
+    float roughness;           // GGX roughness [0,1]; default 1.0 (fully diffuse)
+    uint32_t flags;            // VK_MAT_FLAG_*
+    uint32_t baseGeomIdx;      // offset into per-geometry VtxAddrTable/IdxAddrTable
+    float alphaThreshold;      // alpha test cutoff (MC_PERFORATED); default 0.5
     uint32_t maxVertex;        // numVerts-1 for this geometry; used for bounds check in rt_InterpolateUV
     uint32_t emissiveTexIndex; // bindless index of SL_AMBIENT stage image; 0 = no emissive
     uint32_t maxPrimId;        // numTriangles-1 for this geometry; 0xFFFFFFFF = no check.
@@ -185,8 +185,9 @@ struct vkShadowMask_t
     uint32_t layers;
 };
 
-// AO mask buffer (R8 UNORM, one pixel per screen pixel)
-struct vkAOMask_t
+// General Image Buffer for RT
+// Has image, memory, view and sizing.
+struct vkRTImage_t
 {
     VkImage image;
     VkDeviceMemory memory;
@@ -195,12 +196,8 @@ struct vkAOMask_t
     uint32_t height;
 };
 
-// Reflection colour buffer: RGBA16F per frame-in-flight slot.
-// Same storage layout as vkAOMask_t; format baked at alloc time.
-typedef vkAOMask_t vkReflBuffer_t;
-
 // Volumetric froxel grid: a 3D image (20260906_froxel_probe_gi.md Part A).
-// Separate from vkReflBuffer_t only because it needs a depth extent.
+// Separate from vkRTImage_t only because it needs a depth extent.
 struct vkFroxelGrid_t
 {
     VkImage image;
@@ -228,11 +225,10 @@ struct vkRTState_t
     int shadowDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // AO image and pipeline
-    vkAOMask_t aoMask[VK_MAX_FRAMES_IN_FLIGHT];
-    // A2 (amd_vulkan_cleanup.md): set by VK_RT_DispatchAO only once vkCmdTraceRaysKHR has
-    // been recorded for this slot, cleared before every early-out. The interaction pass
-    // must gate on this rather than on aoMask[].image being non-null — an image can exist
-    // and still hold nothing written this frame.
+    vkRTImage_t aoMask[VK_MAX_FRAMES_IN_FLIGHT];
+    // Set by VK_RT_DispatchAO only once vkCmdTraceRaysKHR is recorded for this slot,
+    // cleared before every early-out.  The interaction pass must gate on this, not on
+    // aoMask[].image: the image can exist and hold nothing written this frame.
     bool aoValid[VK_MAX_FRAMES_IN_FLIGHT];
     VkSampler aoMaskSampler; // nearest-clamp, used when sampling AO in the lighting pass
 
@@ -260,23 +256,10 @@ struct vkRTState_t
     VkDescriptorSet blurDescSetV[VK_MAX_FRAMES_IN_FLIGHT]; // vertical pass: blurTemp→shadowMask
     int blurDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // --------------------------------------------------------------------------
-    // Temporal EMA resolve (Step 5.2)
-    //
-    // Single shared history image, NOT one per frame-in-flight slot. The EMA
-    // recurrence (history = mix(history, current, alpha)) is inherently sequential
-    // across frames; giving each of the two in-flight slots its own history meant
-    // each one only updated every other frame, doubling the effective time constant
-    // and the screen-space ghosting under motion (see rt_temporal_cut_detection.md's
-    // sibling doc on cut detection for the related per-pass history discussion).
-    // Safe without per-slot isolation because every frame's RT work goes through one
-    // command buffer submitted to vk.graphicsQueue (vk_backend.cpp), so submission
-    // order already places last frame's write before this frame's read/write;
-    // VK_RT_DispatchTemporalResolveAO issues an explicit barrier for the memory
-    // dependency that ordering alone doesn't cover. aoMask (current) stays per-slot
-    // below — it's freshly written every frame with no cross-frame dependency.
-    // --------------------------------------------------------------------------
-    vkAOMask_t aoHistory; // accumulated EMA history, R8_UNORM
+    // SHARED, not per slot: the EMA recurrence is sequential across frames, so a
+    // per-slot history would only update every other frame and double the ghosting.
+    // Safe because all RT work goes through one queue, in submission order.
+    vkRTImage_t aoHistory; // accumulated EMA history, R8_UNORM
 
     // Temporal compute pipeline (temporal_resolve.comp)
     VkPipeline temporalPipeline;
@@ -296,31 +279,23 @@ struct vkRTState_t
     idVec3 aoPrevCamFwd;
 
     // --------------------------------------------------------------------------
-    // Atrous spatial filter (Step 5.2b)
+    // Ambient Occlusion Atrous spatial filter
     //
     // Ping-pong between aoHistory and aoScratch.  Descriptor set index alternates
     // per pass: [frameIdx][0] reads history → writes scratch (odd pass outputs);
     //           [frameIdx][1] reads scratch → writes history (even pass outputs).
     // aoReadView[i] is updated after each Atrous dispatch to point at whichever
     // image holds the final result.  The backend always samples aoReadView[i].
-    //
-    // Requires r_rtTemporal 1 (EMA must run first to supply a reasonable  input).
     // --------------------------------------------------------------------------
-    vkAOMask_t aoScratch[VK_MAX_FRAMES_IN_FLIGHT]; // ping-pong scratch, R8_UNORM, GENERAL
+    vkRTImage_t aoScratch[VK_MAX_FRAMES_IN_FLIGHT]; // ping-pong scratch, R8_UNORM, GENERAL
 
     VkPipeline atrousPipeline;
     VkPipelineLayout atrousPipelineLayout;
     VkDescriptorSetLayout atrousDescLayout;
     VkDescriptorPool atrousDescPool;
-    // [frameIdx][0]: binding0=aoHistory(in), binding1=aoScratch(out), binding2=depth
-    // [frameIdx][1]: binding0=aoScratch(in), binding1=aoHistory(out), binding2=depth
     VkDescriptorSet atrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][2];
     int atrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // View sampled by the interaction pass.  Initialised to aoHistory.view at
-    // CreateHistoryImages; updated at end of each DispatchAtrousAO to whichever
-    // image holds the final Atrous output (history if even pass count, scratch if odd).
-    // Falls back to aoHistory.view when Atrous is disabled (r_rtAtrousIterations 0).
     VkImageView aoReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
@@ -328,41 +303,40 @@ struct vkRTState_t
     //
     // One RGBA16F buffer per frame-in-flight slot.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t reflBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F reflection colour
-    VkSampler reflSampler;                              // linear-clamp for interaction shader
+    vkRTImage_t reflBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F reflection colour
+    VkSampler reflSampler;                           // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
-    // RT Global Illumination (Phase 6.1 — one-bounce, ambient-only)
+    // RT Global Illumination
     //
     // One RGBA16F buffer per frame-in-flight slot.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t giBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F GI colour (raw per-frame)
-    VkSampler giSampler;                              // linear-clamp for interaction shader
+    vkRTImage_t giBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F GI colour (raw per-frame)
+    VkSampler giSampler;                           // linear-clamp for interaction shader
 
     // --------------------------------------------------------------------------
-    // GI temporal EMA accumulation (Phase 6.2)
+    // GI temporal EMA accumulation
     //
-    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot — see the
-    //   AO temporal comment above for why. gi_temporal_resolve.comp blends giBuffer
-    //   (raw current frame) into it.
+    // giHistory: RGBA16F single shared accumulation buffer, NOT per-slot.
+    //   gi_temporal_resolve.comp blends giBuffer (raw current frame) into it.
     // giReadView: per-slot; updated each frame to point at giHistory when temporal
     //   is active, or giBuffer when r_rtGITemporal is off.  The composite pass
     //   and any future interaction-shader sampling should read from giReadView.
     // giHistoryValid / giPrevCamPos / giPrevCamFwd: camera-cut detection state,
     //   single instance alongside giHistory (same convention as AO's).
     // --------------------------------------------------------------------------
-    vkReflBuffer_t giHistory; // RGBA16F accumulated GI history
-    bool           giHistoryValid;
-    idVec3         giPrevCamPos;
-    idVec3         giPrevCamFwd;
-    VkImageView    giReadView[VK_MAX_FRAMES_IN_FLIGHT];             // composite reads from here
+    vkRTImage_t giHistory; // RGBA16F accumulated GI history
+    bool giHistoryValid;
+    idVec3 giPrevCamPos;
+    idVec3 giPrevCamFwd;
+    VkImageView giReadView[VK_MAX_FRAMES_IN_FLIGHT]; // composite reads from here
 
-    VkPipeline            giTemporalPipeline;
-    VkPipelineLayout      giTemporalPipelineLayout;
+    VkPipeline giTemporalPipeline;
+    VkPipelineLayout giTemporalPipelineLayout;
     VkDescriptorSetLayout giTemporalDescLayout;
-    VkDescriptorPool      giTemporalDescPool;
-    VkDescriptorSet       giTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool giTemporalDescPool;
+    VkDescriptorSet giTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int giTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // GI À-trous spatial filter (Phase 6.3)
@@ -379,39 +353,36 @@ struct vkRTState_t
     // DS[slot][0] is rebuilt each frame because giReadView may change
     // (temporal on/off).  DS[slot][1] and DS[slot][2] are stable after init.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t giAtrousA[VK_MAX_FRAMES_IN_FLIGHT]; // ping
-    vkReflBuffer_t giAtrousB[VK_MAX_FRAMES_IN_FLIGHT]; // pong
+    vkRTImage_t giAtrousA[VK_MAX_FRAMES_IN_FLIGHT]; // ping
+    vkRTImage_t giAtrousB[VK_MAX_FRAMES_IN_FLIGHT]; // pong
 
-    VkPipeline            giAtrousPipeline;
-    VkPipelineLayout      giAtrousPipelineLayout;
+    VkPipeline giAtrousPipeline;
+    VkPipelineLayout giAtrousPipelineLayout;
     VkDescriptorSetLayout giAtrousDescLayout;
-    VkDescriptorPool      giAtrousDescPool;
+    VkDescriptorPool giAtrousDescPool;
     // [slot][0..2]: first-pass (src→A), AtoB, BtoA
-    VkDescriptorSet       giAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
-    int                   giAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet giAtrousDescSets[VK_MAX_FRAMES_IN_FLIGHT][3];
+    int giAtrousDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // GI light list SSBO (Phase 6.1 Option B)
+    // GI light list SSBO
     //
     // One host-visible, persistently-mapped storage buffer per frame-in-flight
     // slot.  Filled each frame from viewDef->viewLights; consumed by
     // gi_ray.rchit to evaluate direct lighting at the secondary hit point.
     // --------------------------------------------------------------------------
-    VkBuffer       giLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkBuffer giLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
-    void          *giLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+    void *giLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Dedicated volumetric light selection (portal_area_lights.md follow-up, 2026-08-22).
+    // Dedicated volumetric light selection
     // Same GILightBuffer layout as giLightSsbo above, but filled with a SEPARATE
     // selection: the same admitted-candidate pool, filtered to lights that can
     // possibly reach within r_rtVolMaxDist of the camera, capped at r_rtVolMaxLights.
-    // Exists so a light GI legitimately wants (e.g. for a bounce far from the
-    // camera) but that can never appear in the fog can't consume a vol light slot
-    // and evict one that actually can. vol_march.comp reads this buffer, not
-    // giLightSsbo.
-    VkBuffer       volLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    // vol_march.comp reads this buffer, not giLightSsbo.
+    VkBuffer volLightSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory volLightSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
-    void          *volLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+    void *volLightSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline giPipeline;
     VkPipelineLayout giPipelineLayout;
@@ -429,11 +400,11 @@ struct vkRTState_t
 
     // Fullscreen composite pipeline — additively blends the GI buffer onto the
     // framebuffer once per view, before the per-light interaction draws.
-    VkPipeline              giCompositePipeline;
-    VkPipelineLayout        giCompositeLayout;
-    VkDescriptorSetLayout   giCompositeDescLayout;
-    VkDescriptorPool        giCompositeDescPool;
-    VkDescriptorSet         giCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    VkPipeline giCompositePipeline;
+    VkPipelineLayout giCompositeLayout;
+    VkDescriptorSetLayout giCompositeDescLayout;
+    VkDescriptorPool giCompositeDescPool;
+    VkDescriptorSet giCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkPipeline reflPipeline;
     VkPipelineLayout reflPipelineLayout;
@@ -449,19 +420,15 @@ struct vkRTState_t
     VkStridedDeviceAddressRegionKHR reflHitRegion;
     VkStridedDeviceAddressRegionKHR reflCallRegion;
 
-    // Fullscreen composite pipeline (Step 8, see docs/plans/gbuffer_normal_pass.md) —
-    // additively blends reflBuffer onto the framebuffer once per view, replacing the
-    // disabled per-light reflection block in interaction.frag. Only created when
-    // vk.gbufferSupported (the Fresnel/debug-mode math this replaces lives in
-    // reflect_ray.rgen, which needs gbufNormal). reflCompositeDebugPipeline is the
-    // same shader with blending disabled, selected when r_rtReflectionDebugMode is
-    // 2-7 so the visualization replaces rather than adds onto the lit scene.
-    VkPipeline              reflCompositePipeline;
-    VkPipeline              reflCompositeDebugPipeline;
-    VkPipelineLayout        reflCompositeLayout;
-    VkDescriptorSetLayout   reflCompositeDescLayout;
-    VkDescriptorPool        reflCompositeDescPool;
-    VkDescriptorSet         reflCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    // Fullscreen composite pipeline
+    // reflCompositeDebugPipeline is used when r_rtReflectionDebugMode is
+    // 2-7 so the visualization replaces the scene (since blend is off).
+    VkPipeline reflCompositePipeline;
+    VkPipeline reflCompositeDebugPipeline;
+    VkPipelineLayout reflCompositeLayout;
+    VkDescriptorSetLayout reflCompositeDescLayout;
+    VkDescriptorPool reflCompositeDescPool;
+    VkDescriptorSet reflCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
     // SBT buffers
     VkBuffer sbtBuffer;
@@ -480,9 +447,6 @@ struct vkRTState_t
     //   vtxAddrSSBO   — uint64_t[],        vertex buffer device address per instance
     //   idxAddrSSBO   — uint64_t[],        index  buffer device address per instance
     //
-    // One descriptor set (not per-frame) with a bindless sampler2D array at
-    // binding=3.  All VK_MAT_MAX_TEXTURES slots are initialised to the white
-    // fallback; slots are updated when new diffuse images appear in the scene.
     // --------------------------------------------------------------------------
     VkBuffer matTableSSBO;
     VkDeviceMemory matTableSSBOMemory;
@@ -504,7 +468,7 @@ struct vkRTState_t
     bool matTableInitialized;
 
     // --------------------------------------------------------------------------
-    // Volumetric Lighting (Phase 7.2)
+    // Volumetric Lighting
     //
     // volBuffer: RGBA16F per-slot scatter accumulation image (full resolution).
     //   Written by vol_march.comp (compute + ray queries).
@@ -513,159 +477,143 @@ struct vkRTState_t
     // volComposite*: graphics pipeline for additive composite (shares
     //   gi_composite.vert; separate vol_composite.frag).
     // --------------------------------------------------------------------------
-    vkReflBuffer_t volBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F volumetric scatter
-    VkSampler volSampler;                               // bilinear-clamp for composite
+    vkRTImage_t volBuffer[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F volumetric scatter
+    VkSampler volSampler;                           // bilinear-clamp for composite
 
-    VkPipeline            volMarchPipeline;
-    VkPipelineLayout      volMarchPipelineLayout;
+    VkPipeline volMarchPipeline;
+    VkPipelineLayout volMarchPipelineLayout;
     VkDescriptorSetLayout volMarchDescLayout;
-    VkDescriptorPool      volMarchDescPool;
-    VkDescriptorSet       volMarchDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool volMarchDescPool;
+    VkDescriptorSet volMarchDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int volMarchDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    VkPipeline            volCompositePipeline;
-    VkPipeline            volCompositeDebugPipeline; // r_rtVolDebugMode >= 1: blend disabled (replace)
-    VkPipeline            volCompositeAttenPipeline; // r_rtVolAttenuateBackground 1: dst *= src.a (F6)
-    VkPipelineLayout      volCompositeLayout;
+    VkPipeline volCompositePipeline;
+    VkPipeline volCompositeDebugPipeline;
+    VkPipeline volCompositeAttenPipeline;
+    VkPipelineLayout volCompositeLayout;
     VkDescriptorSetLayout volCompositeDescLayout;
-    VkDescriptorPool      volCompositeDescPool;
-    VkDescriptorSet       volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool volCompositeDescPool;
+    VkDescriptorSet volCompositeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Volumetric temporal EMA (Phase 7.2 — step 8)
     // volHistory is single shared, not per-slot — see the AO temporal comment above.
-    vkReflBuffer_t volHistory; // RGBA16F accumulated history
-    bool           volHistoryValid;
-    idVec3         volPrevCamPos;
-    idVec3         volPrevCamFwd;
-    VkImageView    volReadView[VK_MAX_FRAMES_IN_FLIGHT]; // → history when on, → volBuffer when off
+    vkRTImage_t volHistory;
+    bool volHistoryValid;
+    idVec3 volPrevCamPos;
+    idVec3 volPrevCamFwd;
+    VkImageView volReadView[VK_MAX_FRAMES_IN_FLIGHT];
 
-    VkPipeline            volTemporalPipeline;
-    VkPipelineLayout      volTemporalPipelineLayout;
+    VkPipeline volTemporalPipeline;
+    VkPipelineLayout volTemporalPipelineLayout;
     VkDescriptorSetLayout volTemporalDescLayout;
-    VkDescriptorPool      volTemporalDescPool;
-    VkDescriptorSet       volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool volTemporalDescPool;
+    VkDescriptorSet volTemporalDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int volTemporalDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // Volumetric bilateral filter (Phase 7.2 — step 10)
+    // Volumetric bilateral filter
     // Reads volHistory (storage image), writes filtered result to volBlurred.
-    // CompositeVolumetrics reads volBlurred when the pass is active.
-    vkReflBuffer_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
+    // CompositeVolumetrics reads volBlurred.
+    vkRTImage_t volBlurred[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA16F filtered output
 
-    VkPipeline            volBilateralPipeline;
-    VkPipelineLayout      volBilateralPipelineLayout;
+    VkPipeline volBilateralPipeline;
+    VkPipelineLayout volBilateralPipelineLayout;
     VkDescriptorSetLayout volBilateralDescLayout;
-    VkDescriptorPool      volBilateralDescPool;
-    VkDescriptorSet       volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool volBilateralDescPool;
+    VkDescriptorSet volBilateralDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int volBilateralDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // Volumetric froxel grid (20260906_froxel_probe_gi.md Part A)
+    // Volumetric froxel grid
     //
-    // World-space-cached replacement for the per-pixel march, selected by
-    // r_rtVolFroxel.  froxelScatter holds per-cell in-scattering (rgb, per unit
-    // length) + extinction (a); froxelIntegrated (F2) holds the accumulated
-    // camera->cell integral.  Both are per frame-in-flight slot because each is
-    // written and consumed inside the same frame.  The froxel-space EMA history
-    // (F4) will be a SINGLE shared image, not per slot — per-slot history is what
-    // silently halved the AO/GI/Vol update rate before the 2026-09-06 fix.
+    // World-space-cached replacement for the per-pixel march, selected by r_rtVolFroxel.
+    //  froxelScatter holds per-cell in-scattering (rgb, per unit length) + extinction (a);
+    //  froxelIntegrated (F2) holds the accumulated camera->cell integral.
+    // Both are per frame-in-flight slot because each is written and consumed inside
+    // the same frame.  The froxel-space EMA history(F4) will be a SINGLE shared image.
     // --------------------------------------------------------------------------
     vkFroxelGrid_t froxelScatter[VK_MAX_FRAMES_IN_FLIGHT];
     vkFroxelGrid_t froxelIntegrated[VK_MAX_FRAMES_IN_FLIGHT];
-    VkSampler      froxelSampler; // trilinear + clamp; the resolve's whole filter story
+    VkSampler froxelSampler; // trilinear + clamp;
 
-    VkPipeline            froxelFillPipeline;
-    VkPipelineLayout      froxelFillPipelineLayout;
+    VkPipeline froxelFillPipeline;
+    VkPipelineLayout froxelFillPipelineLayout;
     VkDescriptorSetLayout froxelFillDescLayout;
-    VkDescriptorPool      froxelFillDescPool;
-    VkDescriptorSet       froxelFillDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   froxelFillDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool froxelFillDescPool;
+    VkDescriptorSet froxelFillDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int froxelFillDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
-    VkPipeline            froxelIntegratePipeline;
-    VkPipelineLayout      froxelIntegratePipelineLayout;
+    VkPipeline froxelIntegratePipeline;
+    VkPipelineLayout froxelIntegratePipelineLayout;
     VkDescriptorSetLayout froxelIntegrateDescLayout;
-    VkDescriptorPool      froxelIntegrateDescPool;
-    VkDescriptorSet       froxelIntegrateDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   froxelIntegrateDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool froxelIntegrateDescPool;
+    VkDescriptorSet froxelIntegrateDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int froxelIntegrateDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Resolve: grid -> vkRT.volBuffer, so nothing downstream of the volumetric
     // composite has to learn about the grid.
-    VkPipeline            froxelResolvePipeline;
-    VkPipelineLayout      froxelResolvePipelineLayout;
+    VkPipeline froxelResolvePipeline;
+    VkPipelineLayout froxelResolvePipelineLayout;
     VkDescriptorSetLayout froxelResolveDescLayout;
-    VkDescriptorPool      froxelResolveDescPool;
-    VkDescriptorSet       froxelResolveDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   froxelResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool froxelResolveDescPool;
+    VkDescriptorSet froxelResolveDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int froxelResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
-    // GI irradiance probes (20260906_froxel_probe_gi.md Part B)
+    // GI irradiance probes
     //
-    // The two atlases are SINGLE, not per frame-in-flight slot: they are an EMA
-    // accumulator over world-space probes, and per-slot history is what silently
-    // halved the AO/GI/Vol update rate before the 2026-09-06 fix.  The scratch
-    // image is per slot — it holds one frame's rays with no cross-frame meaning,
-    // so per-slot is simply correct there.
+    // The two atlases are SINGLE, so they accumulate over all updates every frame.
+    // The scratch image is per slot — it holds one frame's rays with no cross-frame meaning,
     //
-    // giProbeDescLayout is bound at TWO different set indices: set 2 of the GI
-    // ray-tracing pipeline (for gi_probe_trace.rgen) and set 0 of the blend and
-    // border compute pipelines.  gi_probe_common.glsl declares its contents once
-    // for all of them, keyed on a GIPROBE_SET define.
+    // giProbeDescLayout binds at set 2 in the GI RT pipeline and set 0 in the
+    // blend/border/resolve compute ones; the GLSL side keys on GIPROBE_SET.
     // --------------------------------------------------------------------------
-    // G5b: the irradiance atlas holds 1 + K sets of tiles stacked vertically —
-    // bucket k's tile for probe p is at linear tile index p + k*probeCount, so
-    // nothing about gip_TileOrigin's addressing changes.  The distance atlas is
-    // NOT duplicated: occluder geometry is the same for every bucket.
-    vkReflBuffer_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED, (1+K) buckets tall
-    vkReflBuffer_t giProbeDistance;   // rg16f visibility moments (mean, mean^2), SHARED
-    vkReflBuffer_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT];     // rgba16f, raysPerProbe x probesPerFrame
-    // rgba16f, not the r11f_g11f_b10f the plan sketched: B10G11R11 storage-image
-    // support is optional in Vulkan and a GLSL format qualifier must match its
-    // view exactly, so a fallback would mean two shader variants. Alpha unused.
-    vkReflBuffer_t giProbeScratchFast[VK_MAX_FRAMES_IN_FLIGHT]; // G5b fast-bucket radiance, rgba16f
-    VkSampler      giProbeSampler;                           // bilinear-clamp for atlas fetches
+    vkRTImage_t giProbeIrradiance; // rgba16f octahedral irradiance atlas, SHARED, (1+K) buckets tall
+    vkRTImage_t giProbeDistance;   // rg16f visibility moments (mean, mean^2), SHARED
+    vkRTImage_t giProbeScratch[VK_MAX_FRAMES_IN_FLIGHT];     // rgba16f, raysPerProbe x probesPerFrame
+    vkRTImage_t giProbeScratchFast[VK_MAX_FRAMES_IN_FLIGHT]; // G5b fast-bucket radiance, rgba16f
+    VkSampler giProbeSampler;                                // bilinear-clamp for atlas fetches
 
     // CPU-owned (offset + flags), re-uploaded every frame, hence per slot.
-    VkBuffer       giProbeStateSsbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkBuffer giProbeStateSsbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giProbeStateSsboMemory[VK_MAX_FRAMES_IN_FLIGHT];
-    void          *giProbeStateSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+    void *giProbeStateSsboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // GPU-owned G4 classification statistics, read back by the CPU.  SHARED, not
-    // per slot: it is an EMA accumulator, and a per-slot copy only ever receives
-    // the GPU's write on alternating frames.
-    VkBuffer       giProbeStatsSsbo;
+    // GPU-owned G4 classification statistics, read back by the CPU.
+    VkBuffer giProbeStatsSsbo;
     VkDeviceMemory giProbeStatsSsboMemory;
-    void          *giProbeStatsSsboMapped;
+    void *giProbeStatsSsboMapped;
 
     // Per-slot snapshot of the above, filled by a copy at the end of the blend
     // pass.  The CPU reads THIS, not the live accumulator, which the previous
     // frame's blend may still be writing.
-    VkBuffer       giProbeStatsReadback[VK_MAX_FRAMES_IN_FLIGHT];
+    VkBuffer giProbeStatsReadback[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giProbeStatsReadbackMemory[VK_MAX_FRAMES_IN_FLIGHT];
-    void          *giProbeStatsReadbackMapped[VK_MAX_FRAMES_IN_FLIGHT];
+    void *giProbeStatsReadbackMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
-    VkBuffer       giProbeParamsUbo[VK_MAX_FRAMES_IN_FLIGHT];
+    VkBuffer giProbeParamsUbo[VK_MAX_FRAMES_IN_FLIGHT];
     VkDeviceMemory giProbeParamsUboMemory[VK_MAX_FRAMES_IN_FLIGHT];
-    void          *giProbeParamsUboMapped[VK_MAX_FRAMES_IN_FLIGHT];
+    void *giProbeParamsUboMapped[VK_MAX_FRAMES_IN_FLIGHT];
 
     VkDescriptorSetLayout giProbeDescLayout;
-    VkDescriptorPool      giProbeDescPool;
-    VkDescriptorSet       giProbeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   giProbeDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool giProbeDescPool;
+    VkDescriptorSet giProbeDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int giProbeDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Second raygen record in the GI SBT — gi_probe_trace.rgen.  Same pipeline,
     // same miss/hit regions; only the raygen region differs from giRgenRegion.
     VkStridedDeviceAddressRegionKHR giProbeRgenRegion;
 
-    VkPipeline       giProbeBlendPipeline;
+    VkPipeline giProbeBlendPipeline;
     VkPipelineLayout giProbeBlendPipelineLayout;
-    VkPipeline       giProbeBorderPipeline;
+    VkPipeline giProbeBorderPipeline;
     VkPipelineLayout giProbeBorderPipelineLayout;
 
-    VkPipeline            giProbeResolvePipeline;
-    VkPipelineLayout      giProbeResolvePipelineLayout;
+    VkPipeline giProbeResolvePipeline;
+    VkPipelineLayout giProbeResolvePipelineLayout;
     VkDescriptorSetLayout giProbeResolveDescLayout;
-    VkDescriptorPool      giProbeResolveDescPool;
-    VkDescriptorSet       giProbeResolveDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   giProbeResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool giProbeResolveDescPool;
+    VkDescriptorSet giProbeResolveDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int giProbeResolveDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
 
     // --------------------------------------------------------------------------
     // HDR scene buffer and Uchimura tonemap pipeline (Phase 8.1)
@@ -675,37 +623,45 @@ struct vkRTState_t
     // tonemapResolve: RGBA8_UNORM per-slot storage target that tonemap.comp writes
     //   to; blitted to the BGRA8 swapchain image after dispatch.
     // --------------------------------------------------------------------------
-    vkReflBuffer_t        hdrScene[VK_MAX_FRAMES_IN_FLIGHT];      // RGBA16F HDR accumulator
-    vkReflBuffer_t        tonemapResolve[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA8_UNORM resolve target
+    vkRTImage_t hdrScene[VK_MAX_FRAMES_IN_FLIGHT];       // RGBA16F HDR accumulator
+    vkRTImage_t tonemapResolve[VK_MAX_FRAMES_IN_FLIGHT]; // RGBA8_UNORM resolve target
 
-    VkPipeline            tonemapPipeline;
-    VkPipelineLayout      tonemapPipelineLayout;
+    VkPipeline tonemapPipeline;
+    VkPipelineLayout tonemapPipelineLayout;
     VkDescriptorSetLayout tonemapDescLayout;
-    VkDescriptorPool      tonemapDescPool;
-    VkDescriptorSet       tonemapDescSets[VK_MAX_FRAMES_IN_FLIGHT];
-    int                   tonemapDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorPool tonemapDescPool;
+    VkDescriptorSet tonemapDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int tonemapDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // Resolution Upscaler bounce-buffer.
+    // hdrScene (sub-rect) -> hdrUpscaled -> hdrScene (full)
+    vkRTImage_t hdrUpscaled;
+    VkPipeline upscalePipeline;
+    VkPipelineLayout upscalePipelineLayout;
+    VkDescriptorSetLayout upscaleDescLayout;
+    VkDescriptorPool upscaleDescPool;
+    VkDescriptorSet upscaleDescSets[VK_MAX_FRAMES_IN_FLIGHT];
+    int upscaleDescSetLastUpdatedFrameCount[VK_MAX_FRAMES_IN_FLIGHT];
+    VkSampler upscaleSampler; // linear clamp-to-edge, samples hdrScene
 
     // --------------------------------------------------------------------------
-    // G-buffer normal/F0 image, written by the depth prepass (see
-    // docs/plans/gbuffer_normal_pass.md).  rgb = world-space bump-mapped normal
-    // (× 0.5 + 0.5), a = normalized F0 (0 = "no data, use rt_ReconstructNormal").
-    // Gated on vk.gbufferSupported (requires independentBlend); left all-NULL
-    // when unsupported so the old depth-only path is used instead.
+    // G-buffer normal/F0 image, written by the depth prepass
+    //  rgb = world-space bump-mapped normal (× 0.5 + 0.5),
+    // a = normalized F0 (0 = "no data, use rt_ReconstructNormal").
     // --------------------------------------------------------------------------
-    vkReflBuffer_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM world normal + F0
+    vkRTImage_t gbufNormal[VK_MAX_FRAMES_IN_FLIGHT];
 
     // Receiver-albedo G-buffer target (docs/plans/gi_albedo_target.md): diffuse map
     // sample written by the same prepass as gbufNormal (attachment 2). Cleared to
     // WHITE — an unwritten pixel modulates GI by 1.0, i.e. legacy behavior.
     // Same vk.gbufferSupported gating and lifetime as gbufNormal.
-    vkReflBuffer_t gbufAlbedo[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM diffuse albedo
+    vkRTImage_t gbufAlbedo[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM diffuse albedo
 
     // GI albedo modulate pass (gi_albedo_target.md): after temporal + à-trous,
     // multiplies the denoised GI radiance by gbufAlbedo into whichever of
     // giAtrousA/B is NOT the current giReadView (always allocated, otherwise
     // idle this frame), then repoints giReadView at it. One descriptor set per
-    // frame slot, rewritten unconditionally every dispatch — unlike
-    // giAtrousDescSets there is no multi-pass reuse to cache against, since this
+    // frame slot, rewritten unconditionally every dispatch, since this
     // pass runs exactly once per frame.
     VkPipeline giAlbedoModPipeline;
     VkPipelineLayout giAlbedoModPipelineLayout;
@@ -713,9 +669,7 @@ struct vkRTState_t
     VkDescriptorPool giAlbedoModDescPool;
     VkDescriptorSet giAlbedoModDescSets[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // P6 (rt_optimization_tuning.md): true when any VK_MAT_FLAG_GLASS geometry is in
-    // this frame's TLAS. Lets the reflection rgen skip the per-pixel glass probe ray
-    // in glass-free scenes. Recomputed each TLAS build in vk_accelstruct.cpp.
+    // Recomputed each TLAS build in vk_accelstruct.cpp.
     bool sceneHasGlass;
 
     bool isInitialized;
@@ -877,9 +831,9 @@ void VK_RT_ResizeShadowMask(uint32_t width, uint32_t height);
 // ---------------------------------------------------------------------------
 enum vkRTLightClass_t
 {
-    RT_LIGHT_REAL = 0,   // shadow-casting map light — full GI/vol/shadow eligibility
-    RT_LIGHT_ACCENT,     // noShadows, radius < r_rtLightAccentMaxRadius — placed colored
-                         // accent; admitted to GI/vol, eligible for the noShadows unlock
+    RT_LIGHT_REAL = 0,     // shadow-casting map light — full GI/vol/shadow eligibility
+    RT_LIGHT_ACCENT,       // noShadows, radius < r_rtLightAccentMaxRadius — placed colored
+                           // accent; admitted to GI/vol, eligible for the noShadows unlock
     RT_LIGHT_AMBIENT_FILL, // ambientLight material, or noShadows at/above the accent
                            // radius threshold — semantic mapper fill; never admitted
     RT_LIGHT_FOG_BLEND     // fogLight or blendLight material — no RT falloff/occlusion volume
@@ -906,7 +860,7 @@ const char *VK_RT_LightClassName(vkRTLightClass_t cls);
 // ---------------------------------------------------------------------------
 struct vkRTCameraCutResult_t
 {
-    bool  isCut;
+    bool isCut;
     float posDelta;   // world units moved since the last call for this slot
     float angleDelta; // degrees rotated since the last call for this slot
 };
@@ -1188,9 +1142,9 @@ enum
     VK_VOL_CLASS_FLASHLIGHT = 2,
 };
 
-float VK_RT_VolExtinction(void);              // sigma_t, per world unit
-float VK_RT_VolAlbedo(void);                  // sigma_s / sigma_t, [0,1]
-float VK_RT_VolScatterScale(int lightClass);  // sigma_s * per-class radiance gain
+float VK_RT_VolExtinction(void);             // sigma_t, per world unit
+float VK_RT_VolAlbedo(void);                 // sigma_s / sigma_t, [0,1]
+float VK_RT_VolScatterScale(int lightClass); // sigma_s * per-class radiance gain
 
 // Shared dump helper: prints sigma_t/albedo/sigma_s, the T=0.5 distance, and each
 // class's effective albedo, flagging any above 1 as energy-creating.

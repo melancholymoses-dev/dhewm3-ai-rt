@@ -70,7 +70,7 @@ static void VK_RT_CreateHDRImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &hdr = vkRT.hdrScene[i];
+        vkRTImage_t &hdr = vkRT.hdrScene[i];
         hdr.width = width;
         hdr.height = height;
 
@@ -196,7 +196,7 @@ static void VK_RT_DestroyHDRImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &hdr = vkRT.hdrScene[i];
+        vkRTImage_t &hdr = vkRT.hdrScene[i];
         if (hdr.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, hdr.view, NULL);
@@ -264,7 +264,7 @@ static void VK_RT_CreateTonemapResolveImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &res = vkRT.tonemapResolve[i];
+        vkRTImage_t &res = vkRT.tonemapResolve[i];
         res.width = width;
         res.height = height;
 
@@ -369,7 +369,7 @@ static void VK_RT_DestroyTonemapResolveImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &res = vkRT.tonemapResolve[i];
+        vkRTImage_t &res = vkRT.tonemapResolve[i];
         if (res.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, res.view, NULL);

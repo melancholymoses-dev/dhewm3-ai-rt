@@ -377,7 +377,7 @@ static void VK_RT_CreateVolImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &vb = vkRT.volBuffer[i];
+        vkRTImage_t &vb = vkRT.volBuffer[i];
         vb.width = width;
         vb.height = height;
 
@@ -497,7 +497,7 @@ static void VK_RT_DestroyVolImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &vb = vkRT.volBuffer[i];
+        vkRTImage_t &vb = vkRT.volBuffer[i];
         if (vb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, vb.view, NULL);
@@ -876,8 +876,8 @@ static VkRect2D s_volTemporalDispatchRect[VK_MAX_FRAMES_IN_FLIGHT] = {};
 // or the upsample reads a texel this frame never touched.
 static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef, int scale = 1)
 {
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     const idScreenRect &s = viewDef->scissor;
 
     VkRect2D r;
@@ -914,7 +914,7 @@ static VkRect2D VK_RT_Vol_ComputeDispatchRect(const viewDef_t *viewDef, int scal
 // History image lifecycle (mirrors VK_RT_AllocGIHistoryImage pattern)
 // ---------------------------------------------------------------------------
 
-static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint32_t height)
+static bool VK_RT_AllocVolHistoryImage(vkRTImage_t &img, uint32_t width, uint32_t height)
 {
     img.width = width;
     img.height = height;
@@ -1027,7 +1027,7 @@ static bool VK_RT_AllocVolHistoryImage(vkReflBuffer_t &img, uint32_t width, uint
     return true;
 }
 
-static void VK_RT_FreeVolHistoryImage(vkReflBuffer_t &img)
+static void VK_RT_FreeVolHistoryImage(vkRTImage_t &img)
 {
     if (img.view != VK_NULL_HANDLE)
     {
@@ -1233,8 +1233,8 @@ void VK_RT_DispatchTemporalResolveVol(VkCommandBuffer cmd, const viewDef_t *view
     if (dispatchRect.extent.width == 0 || dispatchRect.extent.height == 0)
         return;
 
-    vkReflBuffer_t &current = vkRT.volBuffer[frameIdx];
-    vkReflBuffer_t &history = vkRT.volHistory; // single shared image — see vk_raytracing.h
+    vkRTImage_t &current = vkRT.volBuffer[frameIdx];
+    vkRTImage_t &history = vkRT.volHistory; // single shared image — see vk_raytracing.h
     if (current.image == VK_NULL_HANDLE || history.image == VK_NULL_HANDLE)
     {
         if (r_vkLogRT.GetInteger() >= 1)
@@ -1530,8 +1530,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     const int frameIdx = vk.currentFrame;
 
-    vkReflBuffer_t &histImg = vkRT.volHistory; // single shared image — see vk_raytracing.h
-    vkReflBuffer_t &blurredImg = vkRT.volBlurred[frameIdx];
+    vkRTImage_t &histImg = vkRT.volHistory; // single shared image — see vk_raytracing.h
+    vkRTImage_t &blurredImg = vkRT.volBlurred[frameIdx];
 
     if (histImg.image == VK_NULL_HANDLE || blurredImg.image == VK_NULL_HANDLE)
         return;
@@ -1539,7 +1539,7 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     // Input is whatever the temporal pass left as the current result: the history
     // image when temporal is on, otherwise the raw march output.  Both are at march
     // resolution, so the upsample source dimensions come from the image itself.
-    vkReflBuffer_t &srcImg = r_rtVolTemporal.GetBool() ? histImg : vkRT.volBuffer[frameIdx];
+    vkRTImage_t &srcImg = r_rtVolTemporal.GetBool() ? histImg : vkRT.volBuffer[frameIdx];
     if (srcImg.image == VK_NULL_HANDLE)
         return;
 
@@ -1640,8 +1640,8 @@ void VK_RT_DispatchVolBilateral(VkCommandBuffer cmd, const viewDef_t *viewDef)
     pc.offY = (int32_t)dispatchRect.offset.y;
     pc.extX = (int32_t)dispatchRect.extent.width;
     pc.extY = (int32_t)dispatchRect.extent.height;
-    pc.screenW = (int32_t)vk.swapchainExtent.width;
-    pc.screenH = (int32_t)vk.swapchainExtent.height;
+    pc.screenW = (int32_t)vk.renderExtent.width;
+    pc.screenH = (int32_t)vk.renderExtent.height;
     pc.sigma = idMath::ClampFloat(0.5f, 8.0f, r_rtVolBilateralSigma.GetFloat());
     pc.marchScale = s_volMarchScale;
     pc.marchW = (int32_t)srcImg.width;
@@ -1851,7 +1851,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
     if (VK_RT_VolFroxelActive())
         return;
 
-    vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
+    vkRTImage_t &vb = vkRT.volBuffer[frameIdx];
     if (vb.image == VK_NULL_HANDLE)
         return;
 
@@ -1956,8 +1956,8 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     // Scissor rect (GL Y-up → Vulkan Y-down, same conversion as GI), scaled into
     // march space — the shader indexes volBuf with it.
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const int w = (int)vk.renderExtent.width;
+    const int h = (int)vk.renderExtent.height;
     {
         const VkRect2D marchRect = VK_RT_Vol_ComputeDispatchRect(viewDef, s_volMarchScale);
         ubo.scissorOffsetX = (int32_t)marchRect.offset.x;
@@ -2151,7 +2151,7 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
         return;
 
     const int frameIdx = vk.currentFrame;
-    vkReflBuffer_t &vb = vkRT.volBuffer[frameIdx];
+    vkRTImage_t &vb = vkRT.volBuffer[frameIdx];
     if (vb.image == VK_NULL_HANDLE || vkRT.volSampler == VK_NULL_HANDLE)
         return;
 
@@ -2188,6 +2188,9 @@ void VK_RT_CompositeVolumetrics(VkCommandBuffer cmd)
 
     // P8: UV comes from the screen size, not the vol image size — they differ when
     // the compositor is reading the march-res image directly.
+    // Display extent, not renderExtent: the vol image is display-sized (or a fixed
+    // fraction of it) and written identity-mapped into the render sub-rect, so
+    // fragCoord / displayExtent lands on the right texel at either march scale.
     struct
     {
         float invScreen[2];

@@ -159,9 +159,9 @@ static idCVar r_rtGIProbeDump("r_rtGIProbeDump", "0", CVAR_RENDERER | CVAR_BOOL,
 
 extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
                             VkBuffer *outBuffer, VkDeviceMemory *outMemory);
-extern bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage,
-                                     VkMemoryPropertyFlags preferredProps, VkMemoryPropertyFlags requiredProps,
-                                     VkBuffer *outBuffer, VkDeviceMemory *outMemory);
+extern bool VK_CreateBufferPreferred(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags preferredProps,
+                                     VkMemoryPropertyFlags requiredProps, VkBuffer *outBuffer,
+                                     VkDeviceMemory *outMemory);
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern VkImageView VK_RT_GetNullGbufNormalView(void);
 
@@ -391,14 +391,14 @@ static bool VK_RT_GIProbeGeometryChanged(void)
 // 2D image lifecycle
 // ---------------------------------------------------------------------------
 
-static void VK_RT_FreeProbeImage(vkReflBuffer_t &img);
+static void VK_RT_FreeProbeImage(vkRTImage_t &img);
 
 // Non-fatal for the same reason VK_RT_AllocFroxelImage is: at
 // VK_GIPROBE_MAX_PROBES the distance atlas is 4608x4608 (85 MiB), the irradiance
 // atlas 2560x2560 (52 MiB), and the scratch image 128 MiB per slot — all from
 // CVar values the clamps accept. A refusal must stand the probe path down, not
 // terminate the renderer.
-static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, VkFormat format)
+static bool VK_RT_AllocProbeImage(vkRTImage_t &img, uint32_t w, uint32_t h, VkFormat format)
 {
     img.width = w;
     img.height = h;
@@ -550,7 +550,7 @@ static bool VK_RT_AllocProbeImage(vkReflBuffer_t &img, uint32_t w, uint32_t h, V
     return true;
 }
 
-static void VK_RT_FreeProbeImage(vkReflBuffer_t &img)
+static void VK_RT_FreeProbeImage(vkRTImage_t &img)
 {
     if (img.view != VK_NULL_HANDLE)
     {
@@ -767,13 +767,12 @@ static void VK_RT_CreateProbeResources(void)
         bool cached = true;
         for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
         {
-            cached &= VK_CreateBufferPreferred(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                               &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
+            cached &=
+                VK_CreateBufferPreferred(statsBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                             VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                         &vkRT.giProbeStatsReadback[i], &vkRT.giProbeStatsReadbackMemory[i]);
             VK_CHECK(vkMapMemory(vk.device, vkRT.giProbeStatsReadbackMemory[i], 0, statsBytes, 0,
                                  &vkRT.giProbeStatsReadbackMapped[i]));
             memset(vkRT.giProbeStatsReadbackMapped[i], 0, (size_t)statsBytes);
@@ -979,17 +978,17 @@ static bool VK_RT_BuildProbeParams(const viewDef_t *viewDef, GIProbeParamsUBO &u
     // DISTANCE atlas is not duplicated and keeps using atlas[1] alone.
     ubo.misc[3] = 1 + s_probeFastBuckets;
 
-    const vkReflBuffer_t &gb = vkRT.giBuffer[vk.currentFrame];
-    ubo.screen[0] = (int32_t)vk.swapchainExtent.width;
-    ubo.screen[1] = (int32_t)vk.swapchainExtent.height;
+    const vkRTImage_t &gb = vkRT.giBuffer[vk.currentFrame];
+    ubo.screen[0] = (int32_t)vk.renderExtent.width;
+    ubo.screen[1] = (int32_t)vk.renderExtent.height;
     ubo.screen[2] = (int32_t)Max(1u, gb.width);
     ubo.screen[3] = (int32_t)Max(1u, gb.height);
 
     // Resolve dispatch rect: the view scissor, GL Y-up -> Vulkan Y-down. Same
     // conversion VK_RT_GI_ComputeDispatchRect makes (static in vk_gi.cpp).
     {
-        const int fullW = (int)vk.swapchainExtent.width;
-        const int fullH = (int)vk.swapchainExtent.height;
+        const int fullW = (int)vk.renderExtent.width;
+        const int fullH = (int)vk.renderExtent.height;
         const idScreenRect &s = viewDef->scissor;
 
         const int x0 = idMath::ClampInt(0, fullW - 1, s.x1);
@@ -1683,8 +1682,7 @@ static bool VK_RT_GIProbeUpdate(const viewDef_t *viewDef, GIProbeParamsUBO &outU
         common->Printf("  scratch %ux%u (%.2f MiB/slot x2: primary + G5b fast)  state %.2f MiB/slot  stats %.2f MiB "
                        "shared  total ~%.1f MiB\n",
                        vkRT.giProbeScratch[frameIdx].width, vkRT.giProbeScratch[frameIdx].height, scratchMiB, stateMiB,
-                       statsMiB,
-                       irrMiB + distMiB + statsMiB + (scratchMiB * 2.0 + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
+                       statsMiB, irrMiB + distMiB + statsMiB + (scratchMiB * 2.0 + stateMiB) * VK_MAX_FRAMES_IN_FLIGHT);
         // G5b. A gain pinned at 1.000 with a nonzero fast count means every fast
         // light happens to be at its peak this instant; a gain of 0.000 with a
         // count of 0 is the no-flickering-light-in-range case and the fast atlas
@@ -1966,7 +1964,7 @@ void VK_RT_DispatchGIProbeResolve(VkCommandBuffer cmd, const viewDef_t *viewDef)
         return;
     s_lastResolveFrame[frameIdx] = tr.frameCount;
 
-    vkReflBuffer_t &gb = vkRT.giBuffer[frameIdx];
+    vkRTImage_t &gb = vkRT.giBuffer[frameIdx];
     if (gb.image == VK_NULL_HANDLE || vkRT.giProbeResolvePipeline == VK_NULL_HANDLE)
         return;
 

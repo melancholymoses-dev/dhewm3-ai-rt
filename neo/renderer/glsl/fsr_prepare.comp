@@ -1,0 +1,60 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — fsr_prepare.comp — HDR render sub-rect → perceptual space.
+
+FSR 1's EASU gathers raw texels one colour channel at a time, so any
+per-pixel colour transform has to happen before it runs.  This pass reads
+hdrScene's top-left renderExtent sub-rect, applies AMD's reversible
+tonemapper (c / (max(c) + 1)) plus a gamma-2.0 encode, and writes the result
+to fsrPerceptual.  fsr_rcas.comp undoes both at the end of the chain, so the
+whole FSR 1 path is transparent to the engine's real tonemap downstream.
+
+Dispatched over renderExtent plus a small pad ring: EASU's 12-tap kernel
+reaches two texels past its viewport, and everything outside the sub-rect of
+hdrScene is never written by the 3D pass.  Clamping the source coordinate
+edge-extends those pad texels instead of leaving them undefined.
+
+Descriptors (set 0):
+  binding 0 — srcHdr        rgba16f readonly storage image (hdrScene[slot])
+  binding 1 — dstPerceptual rgba16f storage image (fsrPerceptual)
+
+FSR upscaling arc U1 — docs/plans/20260918_fsr_upscaling.md.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly image2D srcHdr;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dstPerceptual;
+
+layout(push_constant) uniform PC {
+    ivec2 renderExtent;
+} pc;
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dstSize = imageSize(dstPerceptual);
+    if (p.x >= dstSize.x || p.y >= dstSize.y)
+        return;
+
+    ivec2 s = min(p, pc.renderExtent - 1);
+    vec3 c = max(imageLoad(srcHdr, s).rgb, vec3(0.0));
+
+    // Reversible tonemap: maps [0, inf) to [0, 1) and keeps hue.
+    c *= 1.0 / (max(max(c.r, c.g), c.b) + 1.0);
+    // Gamma 2.0 — cheap perceptual encode; EASU and RCAS both want one.
+    c = sqrt(c);
+
+    imageStore(dstPerceptual, p, vec4(c, 1.0));
+}

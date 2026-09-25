@@ -26,6 +26,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
+#include "renderer/Vulkan/vk_upscale.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 #include <cmath>
@@ -35,6 +36,26 @@ static bool s_frameActive = false;
 static VkCommandBuffer s_frameCmdBuf = VK_NULL_HANDLE;
 static uint32_t s_frameImageIndex = 0;
 static bool s_frameNeedsImageAcquireWait = false;
+
+// FSR U0: set once the render sub-rect has been resolved to display resolution.
+// Everything drawn after this point (UI, HUD, ImGui) uses the full display extent.
+static bool s_upscaleDone = false;
+
+// The extent every raster draw must use *right now*.  The 3D scene renders into
+// the top-left renderExtent sub-rect; once VK_RT_DispatchUpscale has resolved it
+// the frame is display-space again.  Every viewport and render-pass renderArea
+// goes through here — a single site that forgets it squeezes everything drawn
+// afterwards (UI, ImGui, the GI composite) back into the sub-rect.
+static VkExtent2D VK_CurrentDrawExtent(void)
+{
+    return s_upscaleDone ? vk.swapchainExtent : vk.renderExtent;
+}
+
+// Frontend screen rect (always display space) -> current draw space.
+static idScreenRect VK_ScaleToDrawSpace(const idScreenRect &s)
+{
+    return s_upscaleDone ? s : VK_RT_ScaleDisplayRect(s);
+}
 
 // Current view's scissor rect in VK coordinates (Y-down).
 // Set at the start of each VK_RB_DrawView from backEnd.viewDef->scissor.
@@ -137,18 +158,15 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.hdrRenderPassResume;
         rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
         rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = vk.swapchainExtent;
+        rpResume.renderArea.extent = drawExtent;
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        VkViewport viewport = {
+            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(newCmd, 0, 1, &viewport);
         vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
     }
@@ -321,6 +339,19 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_VOL_FROXEL_INTEGRATE,
     VK_RTPROF_PHASE_VOL_FROXEL_RESOLVE,
     VK_RTPROF_PHASE_VOL_COMPOSITE,
+
+    // Everything above is ray tracing and sums into the reported `total=`.
+    // Everything below is the rest of the frame and sums into `raster=`.
+    // Keep the split: `total=` is the number every recorded RT budget is quoted
+    // against, and folding raster into it would silently invalidate all of them.
+    VK_RTPROF_PHASE_RT_COUNT,
+
+    VK_RTPROF_PHASE_DEPTH_PREPASS = VK_RTPROF_PHASE_RT_COUNT,
+    VK_RTPROF_PHASE_INTERACTIONS,
+    VK_RTPROF_PHASE_SHADER_PASSES,
+    VK_RTPROF_PHASE_FOG_LIGHTS,
+    VK_RTPROF_PHASE_UPSCALE,
+    VK_RTPROF_PHASE_TONEMAP,
     VK_RTPROF_PHASE_COUNT
 };
 
@@ -386,6 +417,18 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "FroxelResolve";
     case VK_RTPROF_PHASE_VOL_COMPOSITE:
         return "VolComposite";
+    case VK_RTPROF_PHASE_DEPTH_PREPASS:
+        return "DepthPrepass";
+    case VK_RTPROF_PHASE_INTERACTIONS:
+        return "Interactions";
+    case VK_RTPROF_PHASE_SHADER_PASSES:
+        return "ShaderPasses";
+    case VK_RTPROF_PHASE_FOG_LIGHTS:
+        return "FogLights";
+    case VK_RTPROF_PHASE_UPSCALE:
+        return "Upscale";
+    case VK_RTPROF_PHASE_TONEMAP:
+        return "Tonemap";
     default:
         return "Unknown";
     }
@@ -580,13 +623,15 @@ static void VK_RTProfile_CollectAndLog(int slot)
     const int logEvery = Max(1, r_vkRTProfileLogEvery.GetInteger());
     if (mode >= 2 || (recordedFrame % logEvery) == 0)
     {
-        double totalMs = 0.0;
-        double totalCPUMs = 0.0;
+        // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
+        double totalMs = 0.0, rasterMs = 0.0;
+        double totalCPUMs = 0.0, rasterCPUMs = 0.0;
         for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
         {
-            totalMs += phaseMs[p];
+            const bool isRT = (p < VK_RTPROF_PHASE_RT_COUNT);
+            (isRT ? totalMs : rasterMs) += phaseMs[p];
             if (haveCPU)
-                totalCPUMs += s_rtProfCPUMs[slot][p];
+                (isRT ? totalCPUMs : rasterCPUMs) += s_rtProfCPUMs[slot][p];
         }
 
         // Enumerate the phases rather than hand-listing them: the old fixed format
@@ -602,8 +647,10 @@ static void VK_RTProfile_CollectAndLog(int slot)
                 cpuLine += va(" %s=%.3f", name, s_rtProfCPUMs[slot][p]);
         }
 
-        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f%s) CPU(total=%.3f%s) events=%u\n", recordedFrame,
-                       slot, totalMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0, cpuLine.c_str(), eventCount);
+        common->Printf("VK RT PROFILE: frame=%d slot=%d GPU(total=%.3f raster=%.3f%s) CPU(total=%.3f raster=%.3f%s) "
+                       "events=%u\n",
+                       recordedFrame, slot, totalMs, rasterMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0,
+                       haveCPU ? rasterCPUMs : 0.0, cpuLine.c_str(), eventCount);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -779,17 +826,22 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
-// Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down).
+// Convert backEnd.viewDef->scissor (GL Y-up window coords) to VkRect2D (VK Y-down),
+// scaled into whichever space is currently being drawn (§VK_CurrentDrawExtent).
 static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
 {
-    int h = (int)vk.swapchainExtent.height;
-    const idScreenRect &s = viewDef->scissor;
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    const int w = (int)drawExtent.width;
+    const int h = (int)drawExtent.height;
+
+    const idScreenRect s1 = VK_ScaleToDrawSpace(viewDef->scissor);
+
     VkRect2D r;
-    r.offset.x = idMath::ClampInt(0, (int)vk.swapchainExtent.width - 1, s.x1);
-    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top edge → VK top
-    int w2 = s.x2 - s.x1 + 1;
-    int h2 = s.y2 - s.y1 + 1;
-    r.extent.width = (uint32_t)idMath::ClampInt(1, (int)vk.swapchainExtent.width - r.offset.x, w2);
+    r.offset.x = idMath::ClampInt(0, w - 1, s1.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s1.y2); // GL top edge → VK top
+    int w2 = s1.x2 - s1.x1 + 1;
+    int h2 = s1.y2 - s1.y1 + 1;
+    r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, w2);
     r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, h2);
     return r;
 }
@@ -813,28 +865,36 @@ static VkRect2D VK_IntersectRect(VkRect2D a, VkRect2D b)
 
 // Convert drawSurf->scissorRect (viewport-local GL coordinates) to a Vulkan scissor
 // in absolute framebuffer coordinates and clamp to the current view scissor.
+// Scaled into whichever space is currently being drawn — post-upscale the 2D GUI
+// surfaces come through here too, and scaling them would clip the HUD to the sub-rect.
 static VkRect2D VK_ComputeDrawSurfScissor(const drawSurf_t *surf)
 {
     if (!surf || !backEnd.viewDef)
         return s_viewScissor;
 
-    const idScreenRect &s = surf->scissorRect;
-    if (s.IsEmpty())
+    // make a copy since modifying
+    idScreenRect disp = surf->scissorRect;
+
+    if (disp.IsEmpty())
         return VkRect2D{{0, 0}, {0, 0}};
 
-    const int w = (int)vk.swapchainExtent.width;
-    const int h = (int)vk.swapchainExtent.height;
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    const int w = (int)drawExtent.width;
+    const int h = (int)drawExtent.height;
 
-    const int absX1 = backEnd.viewDef->viewport.x1 + s.x1;
-    const int absY1 = backEnd.viewDef->viewport.y1 + s.y1; // GL bottom edge
-    const int absY2 = backEnd.viewDef->viewport.y1 + s.y2; // GL top edge
+    // shift by viewport, then scale.
+    disp.x1 += backEnd.viewDef->viewport.x1;
+    disp.x2 += backEnd.viewDef->viewport.x1;
+    disp.y1 += backEnd.viewDef->viewport.y1;
+    disp.y2 += backEnd.viewDef->viewport.y1;
+    const idScreenRect s = VK_ScaleToDrawSpace(disp);
 
     VkRect2D r;
-    r.offset.x = idMath::ClampInt(0, w - 1, absX1);
-    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - absY2); // GL top -> VK top
+    r.offset.x = idMath::ClampInt(0, w - 1, s.x1);
+    r.offset.y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top -> VK top
 
     const int rw = s.x2 - s.x1 + 1;
-    const int rh = absY2 - absY1 + 1;
+    const int rh = s.y2 - s.y1 + 1;
     if (rw <= 0 || rh <= 0)
         return VkRect2D{{0, 0}, {0, 0}};
 
@@ -1080,7 +1140,10 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
     int *ip = (int *)f;
     *ip = r_gammaInShader.GetBool() ? 1 : 0;
 
-    // screenSize (used by shader to compute shadow mask UV from gl_FragCoord)
+    // screenSize (used by shader to compute shadow mask / AO UV from gl_FragCoord).
+    // Stays swapchainExtent under FSR: the masks are display-sized and written
+    // identity-mapped into the render sub-rect, so uv = fragCoord / bufferSize.
+    // Using renderExtent here magnifies both masks by 1/renderScale.
     float *fsz = (float *)(ip + 1);
     fsz[0] = (float)vk.swapchainExtent.width;
     fsz[1] = (float)vk.swapchainExtent.height;
@@ -2196,9 +2259,9 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         // Use SURFTYPE_GLASS to target only actual glass materials — not coronas,
         // halos, particles, or other MC_TRANSLUCENT surfaces.
         if (mat->GetSurfaceType() == SURFTYPE_GLASS && !reflDebugActive && r_useRayTracing.GetBool() &&
-            r_rtReflections.GetBool() &&
-            vk.rayTracingSupported && vkRT.isInitialized && vkPipes.glassReflPipeline != VK_NULL_HANDLE &&
-            vkRT.reflSampler != VK_NULL_HANDLE && vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
+            r_rtReflections.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
+            vkPipes.glassReflPipeline != VK_NULL_HANDLE && vkRT.reflSampler != VK_NULL_HANDLE &&
+            vkRT.reflBuffer[vk.currentFrame].image != VK_NULL_HANDLE)
         {
             if (numPendingGlass < 256)
             {
@@ -2249,7 +2312,10 @@ static void VK_RB_DrawShaderPasses(VkCommandBuffer cmd)
         VkGuiUBO *ovUbo = (VkGuiUBO *)((uint8_t *)uboRings[vk.currentFrame].mapped + ovUboOffset);
         memset(ovUbo, 0, sizeof(*ovUbo));
         memcpy(ovUbo->modelViewProjection, mvp, 64);
-        // Stash render resolution in texGenS.xy — fragment uses it to compute screen UV.
+        // Stash the reflection buffer's resolution in texGenS.xy — fragment divides
+        // gl_FragCoord by it to get the screen UV.  That buffer is display-sized and
+        // written identity-mapped into the render sub-rect, so this is swapchainExtent
+        // even under FSR; renderExtent would magnify the reflection by 1/renderScale.
         // texMatrixS.z stays 0 so the vertex shader takes the normal (non-texgen) path.
         ovUbo->texGenS[0] = (float)vk.swapchainExtent.width;
         ovUbo->texGenS[1] = (float)vk.swapchainExtent.height;
@@ -3543,20 +3609,27 @@ static VkPipeline VK_RB_DrawShadowSurface(VkCommandBuffer cmd, const drawSurf_t 
 
 static VkRect2D VK_ComputeLightScissor(const viewLight_t *vLight)
 {
-    VkRect2D lightScissor = {{0, 0}, vk.swapchainExtent}; // default: full framebuffer
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    VkRect2D lightScissor = {{0, 0}, drawExtent}; // default: full draw extent
 
     if (!r_useScissor.GetBool() || r_vkLightFullScissor.GetBool())
         return lightScissor;
 
-    int h = (int)vk.swapchainExtent.height;
-    int absX1 = backEnd.viewDef->viewport.x1 + vLight->scissorRect.x1;
-    int absY1 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y1; // OpenGL bottom edge
-    int absY2 = backEnd.viewDef->viewport.y1 + vLight->scissorRect.y2; // OpenGL top edge
+    const int w = (int)drawExtent.width;
+    const int h = (int)drawExtent.height;
 
-    lightScissor.offset.x = absX1;
-    lightScissor.offset.y = h - 1 - absY2; // flip Y: OpenGL top edge -> Vulkan top edge
-    lightScissor.extent.width = vLight->scissorRect.x2 - vLight->scissorRect.x1 + 1;
-    lightScissor.extent.height = absY2 - absY1 + 1;
+    idScreenRect disp = vLight->scissorRect;
+    // shift by viewport, then scale.
+    disp.x1 += backEnd.viewDef->viewport.x1;
+    disp.x2 += backEnd.viewDef->viewport.x1;
+    disp.y1 += backEnd.viewDef->viewport.y1;
+    disp.y2 += backEnd.viewDef->viewport.y1;
+    const idScreenRect s = VK_ScaleToDrawSpace(disp);
+
+    lightScissor.offset.x = s.x1;
+    lightScissor.offset.y = h - 1 - s.y2; // flip Y: OpenGL top edge -> Vulkan top edge
+    lightScissor.extent.width = s.x2 - s.x1 + 1;
+    lightScissor.extent.height = s.y2 - s.y1 + 1;
     // Intersect with the view scissor so subview (mirror) rendering stays
     // confined to the mirror surface's screen bounds.
     return VK_IntersectRect(lightScissor, s_viewScissor);
@@ -3809,17 +3882,14 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
             rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rpResume.renderPass = vk.hdrRenderPassResume;
             rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+            const VkExtent2D drawExtent = VK_CurrentDrawExtent();
             rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = vk.swapchainExtent;
+            rpResume.renderArea.extent = drawExtent;
             rpResume.clearValueCount = 0;
             rpResume.pClearValues = NULL;
             vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-            VkViewport rtViewport = {0,
-                                     (float)vk.swapchainExtent.height,
-                                     (float)vk.swapchainExtent.width,
-                                     -(float)vk.swapchainExtent.height,
-                                     0.0f,
-                                     1.0f};
+            VkViewport rtViewport = {
+                0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
             vkCmdSetViewport(cmd, 0, 1, &rtViewport);
             vkCmdSetScissor(cmd, 0, 1, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
@@ -3853,7 +3923,8 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
         const VkRect2D shadowScissor =
-            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, vk.swapchainExtent}, s_viewScissor) : lightScissor;
+            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, VK_CurrentDrawExtent()}, s_viewScissor)
+                                 : lightScissor;
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -4338,6 +4409,8 @@ void VK_RB_DrawView(const void *data)
         return;
     }
 
+    VK_RT_UpdateRenderExtent();
+
     // When RT shadows are toggled on or off, cached interactions may be missing
     // stencil shadow volumes (skipped during creation when RT was on) or have
     // stale ones (present when RT was off). Invalidate all interactions so they
@@ -4484,37 +4557,79 @@ void VK_RB_DrawView(const void *data)
         clearValues[2].color = {{0.5f, 0.5f, 0.5f, 0.0f}};
         clearValues[3].color = {{1.0f, 1.0f, 1.0f, 1.0f}};
 
+        // A frame whose *first* view is already the 2D overlay (main menu, PDA,
+        // loading screens) has no 3D content to downscale, so it renders straight
+        // at display resolution and needs no resolve.  Declaring that up front is
+        // what makes VK_CurrentDrawExtent below return the right answer.
+        const bool firstIsGui = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
+        s_upscaleDone = firstIsGui;
+        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+
         VkRenderPassBeginInfo rpBegin = {};
         rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpBegin.renderPass = vk.hdrRenderPass;
         rpBegin.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
         rpBegin.renderArea.offset = {0, 0};
-        rpBegin.renderArea.extent = vk.swapchainExtent;
+        rpBegin.renderArea.extent = drawExtent;
         rpBegin.clearValueCount = vk.gbufferSupported ? 4 : 2;
         rpBegin.pClearValues = clearValues;
         vkCmdBeginRenderPass(cmdBuf, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
         // NOTE: the negative height inverts the effective winding order, so our pipelines
         // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        VkViewport viewport = {
+            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+
         // Set scissor from viewDef to confine subview rendering to mirror bounds.
         s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
         s_frameCmdBuf = cmdBuf;
         s_frameActive = true;
+
+        if (r_fsrDebug.GetInteger() >= 2)
+        {
+            common->Printf("VK FSR VIEW: FIRST gui=%d draw=%ux%u render=%ux%u display=%ux%u scissor=(%d,%d %ux%u)\n",
+                           firstIsGui ? 1 : 0, drawExtent.width, drawExtent.height, vk.renderExtent.width,
+                           vk.renderExtent.height, vk.swapchainExtent.width, vk.swapchainExtent.height,
+                           s_viewScissor.offset.x, s_viewScissor.offset.y, s_viewScissor.extent.width,
+                           s_viewScissor.extent.height);
+        }
     }
     else
     {
         // === Subsequent RC_DRAW_VIEW: render pass already open; reset viewport/scissor ===
+        // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
+        // viewaxis.  That is the boundary between 3D (render resolution) and UI
+        // (display resolution), so resolve the sub-rect here, before the UI draws.
+        const bool isGuiOverlay = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
+        if (isGuiOverlay && !s_upscaleDone && VK_RT_UpscaleActive())
+        {
+            vkCmdEndRenderPass(s_frameCmdBuf);
+            VK_SetRenderStage("RT_Upscale");
+            const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
+            int profUp = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_UPSCALE);
+            VK_RT_DispatchUpscale(s_frameCmdBuf);
+            VK_RTProfile_PhaseEnd(s_frameCmdBuf, profUp);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
+            s_upscaleDone = true;
+
+            VkRenderPassBeginInfo rpResume = {};
+            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rpResume.renderPass = vk.hdrRenderPassResume;
+            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+            rpResume.renderArea.offset = {0, 0};
+            rpResume.renderArea.extent = VK_CurrentDrawExtent(); // UI draws at display res
+            rpResume.clearValueCount = 0;
+            rpResume.pClearValues = NULL;
+            vkCmdBeginRenderPass(s_frameCmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+        }
+
         // Compute this view's scissor first; GL clears depth/stencil through the
         // active scissor for each view (important for subviews/mirrors).
+        // VK_ComputeViewScissor already skips the render-scale conversion once the
+        // frame is display-space, so no special case is needed here.
         s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
 
         // Each view has its own projection matrix, so depth values from the previous view
@@ -4537,16 +4652,24 @@ void VK_RB_DrawView(const void *data)
             vkCmdClearAttachments(s_frameCmdBuf, 1, &clearDepth, 1, &clearRect);
         }
 
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        const VkExtent2D vpExtent = VK_CurrentDrawExtent();
+        VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
         // Set scissor from viewDef — for the main view this is typically full-screen;
         // for subviews it confines rendering to the mirror surface's screen bounds.
         vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
+
+        if (r_fsrDebug.GetInteger() >= 2)
+        {
+            common->Printf("VK FSR VIEW: subsequent gui=%d upscaleDone=%d vp=%ux%u scissor=(%d,%d %ux%u) "
+                           "vdViewport=(%d,%d %d,%d) vdScissor=(%d,%d %d,%d) sub=%d mirror=%d\n",
+                           isGuiOverlay ? 1 : 0, s_upscaleDone ? 1 : 0, vpExtent.width, vpExtent.height,
+                           s_viewScissor.offset.x, s_viewScissor.offset.y, s_viewScissor.extent.width,
+                           s_viewScissor.extent.height, backEnd.viewDef->viewport.x1, backEnd.viewDef->viewport.y1,
+                           backEnd.viewDef->viewport.x2, backEnd.viewDef->viewport.y2, backEnd.viewDef->scissor.x1,
+                           backEnd.viewDef->scissor.y1, backEnd.viewDef->scissor.x2, backEnd.viewDef->scissor.y2,
+                           backEnd.viewDef->isSubview ? 1 : 0, backEnd.viewDef->isMirror ? 1 : 0);
+        }
     }
 
     VkCommandBuffer cmdBuf = s_frameCmdBuf;
@@ -4604,7 +4727,13 @@ void VK_RB_DrawView(const void *data)
     //   5. FogAllLights — fog volumes and blend lights (post-lighting atmospheric pass)
     VK_SetRenderStage("DepthPrepass");
     if (!r_skipDepthPrepass.GetBool())
+    {
+        const uint64_t cpuDepthStart = VK_RTProfile_CPUStamp();
+        int profDepth = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_DEPTH_PREPASS);
         VK_RB_FillDepthBuffer(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profDepth);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_DEPTH_PREPASS, cpuDepthStart);
+    }
 
     // Rebuild TLAS after the depth prepass so that depth values are populated before any
     // RT dispatch (shadow batch, AO, reflections, GI) reads from them.
@@ -4624,7 +4753,7 @@ void VK_RB_DrawView(const void *data)
         // modulate pass at the end of the RT block needs it in SHADER_READ_ONLY too.
         if (vk.gbufferSupported)
         {
-            vkReflBuffer_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
+            vkRTImage_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
             VkImageMemoryBarrier gbufToRead[2] = {};
             for (int gi = 0; gi < 2; gi++)
             {
@@ -4873,7 +5002,7 @@ void VK_RB_DrawView(const void *data)
         // that, matching the depth-barrier round-trip symmetry.
         if (vk.gbufferSupported)
         {
-            vkReflBuffer_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
+            vkRTImage_t *gbufImages[2] = {&vkRT.gbufNormal[vk.currentFrame], &vkRT.gbufAlbedo[vk.currentFrame]};
             VkImageMemoryBarrier gbufToAttach[2] = {};
             for (int gi = 0; gi < 2; gi++)
             {
@@ -4895,17 +5024,17 @@ void VK_RB_DrawView(const void *data)
         rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rpResume.renderPass = vk.hdrRenderPassResume;
         rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+        // Display extent once the resolve has run: this block also executes for the
+        // 2D overlay view, and resuming at renderExtent here is what squeezed the UI
+        // and the GI composite back into the top-left sub-rect.
+        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
         rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = vk.swapchainExtent;
+        rpResume.renderArea.extent = drawExtent;
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport viewport = {0,
-                               (float)vk.swapchainExtent.height,
-                               (float)vk.swapchainExtent.width,
-                               -(float)vk.swapchainExtent.height,
-                               0.0f,
-                               1.0f};
+        VkViewport viewport = {
+            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -4921,45 +5050,62 @@ void VK_RB_DrawView(const void *data)
                 return;
         }
 
-        // GI composite: blend the GI buffer onto the framebuffer once per view.
-        // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
-        // split-submit probes independently of the per-light interaction loop.
-        VK_SetRenderStage("GI_Composite");
-        const uint64_t rtCpuGICompStart = VK_RTProfile_CPUStamp();
-        int rtProfGIComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_COMPOSITE);
-        VK_RT_CompositeGI(cmdBuf);
-        VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIComp);
-        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_COMPOSITE, rtCpuGICompStart);
-        if ((splitMask & 512) != 0)
+        // The screen-space composites belong to the view that produced the buffers.
+        // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
+        // viewaxis (see hasRealCamera above, which already stands the RT dispatches
+        // down for it) and was compositing GI/refl/vol a second time over the
+        // finished frame.  Under FSR that second pass lands 1:1 on an
+        // already-upscaled image and paints the GI buffer into the top-left
+        // renderExtent corner; at native it just doubled the contribution
+        // invisibly.  Same guard, same reason.
+        if (hasRealCamera)
         {
-            if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
-                return;
-        }
+            // GI composite: blend the GI buffer onto the framebuffer once per view.
+            // Moved here (out of VK_RB_DrawInteractions) so it can be bracketed by
+            // split-submit probes independently of the per-light interaction loop.
+            VK_SetRenderStage("GI_Composite");
+            const uint64_t rtCpuGICompStart = VK_RTProfile_CPUStamp();
+            int rtProfGIComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_GI_COMPOSITE);
+            VK_RT_CompositeGI(cmdBuf);
+            VK_RTProfile_PhaseEnd(cmdBuf, rtProfGIComp);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_GI_COMPOSITE, rtCpuGICompStart);
+            if ((splitMask & 512) != 0)
+            {
+                if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterGIComposite", true))
+                    return;
+            }
 
-        // Reflection composite (Stage 3.5 / Step 8, see docs/plans/gbuffer_normal_pass.md):
-        // blend reflBuffer onto the framebuffer once per view, replacing the disabled
-        // per-light reflection block in interaction.frag. Same resume-pass slot as GI.
-        VK_SetRenderStage("Refl_Composite");
-        VK_RT_CompositeReflections(cmdBuf);
+            // Reflection composite (Stage 3.5 / Step 8, see docs/plans/gbuffer_normal_pass.md):
+            // blend reflBuffer onto the framebuffer once per view, replacing the disabled
+            // per-light reflection block in interaction.frag. Same resume-pass slot as GI.
+            VK_SetRenderStage("Refl_Composite");
+            VK_RT_CompositeReflections(cmdBuf);
 
-        // F6: with r_rtVolAttenuateBackground the composite multiplies the scene by
-        // the path transmittance, so it has to run after the surfaces exist —
-        // attenuating here would dim only GI and ambient and let every direct light
-        // land on top unattenuated. The late site below is the same render pass.
-        if (!VK_RT_VolCompositeAfterSurfaces())
-        {
-            VK_SetRenderStage("Vol_Composite");
-            const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
-            int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
-            VK_RT_CompositeVolumetrics(cmdBuf);
-            VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
+            // F6: with r_rtVolAttenuateBackground the composite multiplies the scene by
+            // the path transmittance, so it has to run after the surfaces exist —
+            // attenuating here would dim only GI and ambient and let every direct light
+            // land on top unattenuated. The late site below is the same render pass.
+            if (!VK_RT_VolCompositeAfterSurfaces())
+            {
+                VK_SetRenderStage("Vol_Composite");
+                const uint64_t rtCpuVolCompStart = VK_RTProfile_CPUStamp();
+                int rtProfVolComp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_VOL_COMPOSITE);
+                VK_RT_CompositeVolumetrics(cmdBuf);
+                VK_RTProfile_PhaseEnd(cmdBuf, rtProfVolComp);
+                VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_VOL_COMPOSITE, rtCpuVolCompStart);
+            }
         }
     }
 
     VK_SetRenderStage("Interactions");
     if (!r_skipInteractions.GetBool())
+    {
+        const uint64_t cpuInterStart = VK_RTProfile_CPUStamp();
+        int profInter = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_INTERACTIONS);
         VK_RB_DrawInteractions(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profInter);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_INTERACTIONS, cpuInterStart);
+    }
 
     const int splitMask = VK_GetEffectiveSplitSubmitMask();
     if ((splitMask & 2) != 0)
@@ -4976,7 +5122,13 @@ void VK_RB_DrawView(const void *data)
 
     VK_SetRenderStage("ShaderPasses");
     if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
+    {
+        const uint64_t cpuShaderStart = VK_RTProfile_CPUStamp();
+        int profShader = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_SHADER_PASSES);
         VK_RB_DrawShaderPasses(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profShader);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_SHADER_PASSES, cpuShaderStart);
+    }
 
     if ((splitMask & 4) != 0)
     {
@@ -5001,12 +5153,9 @@ void VK_RB_DrawView(const void *data)
         !backEnd.viewDef->isMirror)
     {
         VK_SetRenderStage("Vol_Composite");
-        VkViewport volViewport = {0,
-                                  (float)vk.swapchainExtent.height,
-                                  (float)vk.swapchainExtent.width,
-                                  -(float)vk.swapchainExtent.height,
-                                  0.0f,
-                                  1.0f};
+        const VkExtent2D volExtent = VK_CurrentDrawExtent();
+        VkViewport volViewport = {
+            0, (float)volExtent.height, (float)volExtent.width, -(float)volExtent.height, 0.0f, 1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &volViewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -5019,7 +5168,13 @@ void VK_RB_DrawView(const void *data)
 
     VK_SetRenderStage("FogLights");
     if (!r_skipFogLights.GetBool())
+    {
+        const uint64_t cpuFogStart = VK_RTProfile_CPUStamp();
+        int profFog = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_FOG_LIGHTS);
         VK_RB_FogAllLights(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profFog);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_FOG_LIGHTS, cpuFogStart);
+    }
 
     if ((splitMask & 8) != 0)
     {
@@ -5124,7 +5279,7 @@ void VK_RB_CopyRender(const void *data)
             common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u "
                            "isSubview=%d isMirror=%d clipPlanes=%d\n",
                            cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH,
-                           copyW, copyH, (unsigned)vk.swapchainExtent.width, (unsigned)vk.swapchainExtent.height,
+                           copyW, copyH, (unsigned)vk.renderExtent.width, (unsigned)vk.renderExtent.height,
                            backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1);
@@ -5149,8 +5304,18 @@ void VK_RB_CopyRender(const void *data)
     region.srcSubresource.mipLevel = 0;
     region.srcSubresource.baseArrayLayer = 0;
     region.srcSubresource.layerCount = 1;
-    region.srcOffsets[0] = {srcX, srcY, 0};
-    region.srcOffsets[1] = {srcX + copyW, srcY + copyH, 1};
+    // Source lives in the render sub-rect (identity once the resolve has run); dst is
+    // a display-resolution idImage, so the blit rescales. Clamp in display units, then
+    // scale only the source, and keep the far corner inside the valid region.
+    const VkExtent2D srcExtent = VK_CurrentDrawExtent();
+    const float scaleX = s_upscaleDone ? 1.0f : VK_RT_RenderScaleX();
+    const float scaleY = s_upscaleDone ? 1.0f : VK_RT_RenderScaleY();
+    const int rsX = (int)idMath::Floor(srcX * scaleX);
+    const int rsY = (int)idMath::Floor(srcY * scaleY);
+    const int rsX2 = idMath::ClampInt(rsX + 1, (int)srcExtent.width, rsX + (int)idMath::Ceil(copyW * scaleX));
+    const int rsY2 = idMath::ClampInt(rsY + 1, (int)srcExtent.height, rsY + (int)idMath::Ceil(copyH * scaleY));
+    region.srcOffsets[0] = {rsX, rsY, 0};
+    region.srcOffsets[1] = {rsX2, rsY2, 1};
 
     region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.dstSubresource.mipLevel = 0;
@@ -5175,15 +5340,16 @@ void VK_RB_CopyRender(const void *data)
     rpResume.renderPass = vk.hdrRenderPassResume;
     rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
     rpResume.renderArea.offset = {0, 0};
-    rpResume.renderArea.extent = vk.swapchainExtent;
+    rpResume.renderArea.extent = VK_CurrentDrawExtent();
     rpResume.clearValueCount = 0;
     rpResume.pClearValues = NULL;
     vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
     // Re-apply default viewport/scissor state (negative-height Y flip).
-    VkViewport viewport = {
-        0,   (float)vk.swapchainExtent.height, (float)vk.swapchainExtent.width, -(float)vk.swapchainExtent.height, 0.0f,
-        1.0f};
+    // Post-upscale the frame is display-space; restoring renderExtent here would
+    // silently shrink everything drawn after a mid-frame _currentRender capture.
+    const VkExtent2D vpExtent = VK_CurrentDrawExtent();
+    VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
     vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
     vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 }
@@ -5223,10 +5389,32 @@ void VK_RB_SwapBuffers()
 
     vkCmdEndRenderPass(cmdBuf);
 
+    // Fallback resolve: a frame with no 2D GUI overlay never hit the upscale in
+    // VK_RB_DrawView, so the sub-rect is still unresolved here.  No-op otherwise.
+    if (!s_upscaleDone && VK_RT_UpscaleActive())
+    {
+        if (r_fsrDebug.GetInteger() >= 2)
+            common->Printf("VK FSR VIEW: resolve ran in the SwapBuffers FALLBACK — no GUI overlay view was seen, "
+                           "so the UI (if any) drew at render resolution\n");
+        VK_SetRenderStage("RT_Upscale");
+        const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
+        int profUp = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_UPSCALE);
+        VK_RT_DispatchUpscale(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profUp);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
+        s_upscaleDone = true;
+    }
+
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.
     VK_SetRenderStage("RT_Tonemap");
-    VK_RT_DispatchTonemap(cmdBuf);
+    {
+        const uint64_t cpuTmStart = VK_RTProfile_CPUStamp();
+        int profTm = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_TONEMAP);
+        VK_RT_DispatchTonemap(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profTm);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_TONEMAP, cpuTmStart);
+    }
 
     // If a screenshot readback was requested, copy the swapchain image to the
     // staging buffer before presenting.  The image is in PRESENT_SRC_KHR after
@@ -5500,6 +5688,7 @@ void VKimp_PostInit(int width, int height)
         // wires them into the HDR framebuffers — see vk_tonemap.cpp.
         common->Printf("VK: initializing RT tonemapping\n");
         VK_RT_InitTonemap();
+        VK_RT_InitUpscale();
     }
 
     common->Printf("VK: Backend ready\n");

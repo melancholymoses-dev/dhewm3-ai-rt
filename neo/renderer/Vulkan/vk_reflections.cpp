@@ -31,6 +31,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
+#include "renderer/Vulkan/vk_upscale.h"
 
 #include <string.h>
 
@@ -343,7 +344,7 @@ static void VK_RT_CreateReflImages(uint32_t width, uint32_t height)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &rb = vkRT.reflBuffer[i];
+        vkRTImage_t &rb = vkRT.reflBuffer[i];
         rb.width = width;
         rb.height = height;
 
@@ -466,7 +467,7 @@ static void VK_RT_DestroyReflImages(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
-        vkReflBuffer_t &rb = vkRT.reflBuffer[i];
+        vkRTImage_t &rb = vkRT.reflBuffer[i];
         if (rb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, rb.view, NULL);
@@ -994,7 +995,14 @@ void VK_RT_ResizeReflections(uint32_t width, uint32_t height)
 // VK_RT_GlassScreenRect (R6)
 // Union of every SURFTYPE_GLASS surface's frontend scissorRect, in Vulkan Y-down
 // pixels. False = no glass in view, caller skips the dispatch. Y-flip matches
-// VK_ComputeDrawSurfScissor; the reflection buffer is swapchain-sized.
+// VK_ComputeDrawSurfScissor.
+//
+// The rect indexes reflBuffer, which stays display-sized but is written
+// identity-mapped into the render sub-rect, so the frontend's display-space rect
+// has to be scaled into render space and clamped against renderExtent — not
+// against the buffer. Getting this wrong traces a region the glass overlay never
+// samples, which reads as reflections quietly going missing rather than as
+// visible corruption.
 // ---------------------------------------------------------------------------
 
 static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint32_t bufH, int32_t *outX, int32_t *outY,
@@ -1027,19 +1035,25 @@ static bool VK_RT_GlassScreenRect(const viewDef_t *viewDef, uint32_t bufW, uint3
     glassRect.Expand();
     glassRect.Expand();
 
-    const int w = (int)bufW;
-    const int h = (int)bufH;
-    const int absX1 = viewDef->viewport.x1 + glassRect.x1;
-    const int absY1 = viewDef->viewport.y1 + glassRect.y1; // GL bottom edge
-    const int absY2 = viewDef->viewport.y1 + glassRect.y2; // GL top edge
+    // Valid region of the buffer: the render sub-rect, never the whole allocation.
+    const int w = idMath::ClampInt(1, (int)bufW, (int)vk.renderExtent.width);
+    const int h = idMath::ClampInt(1, (int)bufH, (int)vk.renderExtent.height);
 
-    const int rw = glassRect.x2 - glassRect.x1 + 1;
-    const int rh = absY2 - absY1 + 1;
+    // Shift by the viewport (display space), then scale into render space.
+    idScreenRect disp = glassRect;
+    disp.x1 += viewDef->viewport.x1;
+    disp.x2 += viewDef->viewport.x1;
+    disp.y1 += viewDef->viewport.y1;
+    disp.y2 += viewDef->viewport.y1;
+    const idScreenRect s = VK_RT_ScaleDisplayRect(disp);
+
+    const int rw = s.x2 - s.x1 + 1;
+    const int rh = s.y2 - s.y1 + 1;
     if (rw <= 0 || rh <= 0)
         return false;
 
-    const int x = idMath::ClampInt(0, w - 1, absX1);
-    const int y = idMath::ClampInt(0, h - 1, h - 1 - absY2); // GL top -> VK top
+    const int x = idMath::ClampInt(0, w - 1, s.x1);
+    const int y = idMath::ClampInt(0, h - 1, h - 1 - s.y2); // GL top -> VK top
 
     *outX = x;
     *outY = y;
@@ -1074,7 +1088,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     s_lastReflDispatchFrame[frameIdx] = tr.frameCount;
 
-    vkReflBuffer_t &rb = vkRT.reflBuffer[frameIdx];
+    vkRTImage_t &rb = vkRT.reflBuffer[frameIdx];
     if (rb.image == VK_NULL_HANDLE)
     {
         common->Printf("VK RT Refl: skip — reflBuffer[%d] image is NULL\n", frameIdx);
@@ -1147,8 +1161,10 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 
     ubo.maxDist = Max(1.0f, r_rtReflectionDistance.GetFloat());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
-    ubo.screenWidth = (int32_t)rb.width;
-    ubo.screenHeight = (int32_t)rb.height;
+    // NDC denominator for depth->world reconstruction, so it must be the extent
+    // the depth buffer was rasterised through, not the (display-sized) refl buffer.
+    ubo.screenWidth = (int32_t)vk.renderExtent.width;
+    ubo.screenHeight = (int32_t)vk.renderExtent.height;
     // Ceiling matches the settings-menu slider range.
     ubo.reflBlend = idMath::ClampFloat(0.0f, 5.0f, r_rtReflectionBlend.GetFloat());
     ubo.grazingMax = idMath::ClampFloat(0.0f, 1.0f, r_rtSpecGrazingMax.GetFloat());
@@ -1530,7 +1546,7 @@ void VK_RT_CompositeReflections(VkCommandBuffer cmd)
         return;
 
     const int frameIdx = vk.currentFrame;
-    vkReflBuffer_t &rb = vkRT.reflBuffer[frameIdx];
+    vkRTImage_t &rb = vkRT.reflBuffer[frameIdx];
     if (rb.image == VK_NULL_HANDLE || vkRT.reflSampler == VK_NULL_HANDLE)
         return;
 
