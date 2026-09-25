@@ -362,6 +362,9 @@ Recommend the first, implemented in U5, because the second makes U3's image-qual
 comparison against native resolution unfair in FSR2's disfavour and may produce a wrong
 verdict at the U3 gate.
 
+**2026-09-25: this happened.** U3 shipped without it and first gameplay reported exactly the
+predicted deficit. Promoted out of U5 into **U3a**, which now blocks the U3 gate.
+
 ---
 
 ## 5. Motion vectors (U2) — the real work
@@ -688,7 +691,7 @@ Detailed change list in §13.
   test proves the overlay and the MV field agree with each other, not that either matches
   what `ffxFsr2ContextDispatch` expects.
 
-### U3 — FSR 2 integration  🟡 code landed 2026-09-24, exit gate open
+### U3 — FSR 2 integration  🟡 landed 2026-09-24, runs well; gate blocked on U3a
 `r_fsr 2` drives the vendored FSR 2.2.1 library from `VK_RT_DispatchFsr2` in
 `vk_upscale.cpp`. Flags as planned: `HIGH_DYNAMIC_RANGE | DEPTH_INFINITE | AUTO_EXPOSURE`,
 `DEPTH_INVERTED` off, `DEBUG_CHECKING` added when `r_fsrDebug >= 2`. Context lifetime is
@@ -700,7 +703,49 @@ moves, the flags change, or the scale returns to 1.0. Detailed change list in §
   one** (pillar 2 — a gate, not a nice-to-have; use `r_fsrDebug 5`); RT total still ≈ 5.5 ms
   and FSR2's own dispatch ≤ 1.5 ms at 1080p; builds and runs clean on Linux/RADV as well as
   Windows.
-- **Not yet met:** nothing above has been observed. Windows build not run; Linux not tried.
+- **Status 2026-09-25:** builds and plays on Windows. Image quality good but soft at distance
+  (→ U3a). Minor ghosting on fast movement (→ U4). Perf not yet measured; Linux not tried.
+
+### U3a — texture LOD bias  🔴 blocks the U3 gate
+
+Pulled forward from U5. §4 predicted this would skew the U3 verdict; it did — first gameplay
+at Quality read "watercolor at distance, sharp up close", the signature of mip selection done
+in render-res footprints. RCAS helps a little because it sharpens what survived; it cannot
+restore detail the sampler never fetched.
+
+`bias = log2(renderW / displayW) - 1.0`, clamped to ±`maxSamplerLodBias`.
+
+| scale | source | bias |
+|---|---|---|
+| 1.0 | native | 0 (no FSR term) |
+| 1/1.5 | Quality | −1.58 |
+| 1/1.7 | Balanced | −1.77 |
+| 1/2.0 | Performance | −2.00 |
+| 1/3.0 | Ultra Perf | −2.58 |
+
+Samplers are baked per image at upload, so the bias cannot be a uniform: it needs a rebuild
+when the scale changes. That is a menu action, not a hot path.
+
+| File | Change |
+|---|---|
+| `vk_image.cpp:758` | add the FSR term to `lodBias`; same `maxLodBias` clamp |
+| `vk_image.cpp` | `VK_Image_RebuildSamplers()` — walk `globalImages`, recreate `vkd->sampler` only, bump `s_imageChangeCounter` |
+| `vk_image.cpp:806` | `VK_Image_UploadCubemap` takes the same term |
+| `vk_upscale.cpp:1537` | call the rebuild from `VK_RT_UpdateRenderExtent`'s extent-changed branch |
+| `vk_material_table.cpp` | confirm the change counter already forces a bindless refresh |
+
+Three hazards, in order of likelihood:
+- **Destroying a sampler still referenced by in-flight command buffers.** Needs a device idle
+  or the deferred-destroy path, not a bare `vkDestroySampler`.
+- **The 2D GUI shares these samplers** and renders at display resolution, so it would inherit
+  a negative bias it must not have. Expected to be moot — HUD images are mostly `mipLevels
+  == 1`, where `mipLodBias` is inert — but verify rather than assume.
+- **Stale bindless descriptors after the rebuild** — see the level-transition DEVICE_LOST
+  class of bug; validate against `backendData`.
+
+- **Exit:** at Quality, distant geometry reads sharp rather than watercolour with
+  `r_fsrSharpness` back at its 0.5 default; `image_lodbias` still works; no validation errors
+  on a `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged.
 
 ### U4 — reactive mask, T&C mask, denoiser retune  🔴
 `preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,
@@ -709,12 +754,17 @@ skinned geometry (whose MVs are known wrong — §5), the glass reflection overl
 and the viewmodel. Then sweep `r_rtGITemporalAlpha`, the AO EMA and the a-trous iteration
 counts *downward* and find out how much of our denoising FSR2 has made redundant.
 
+Observed 2026-09-25, first gameplay, consistent with the known-wrong skinned MVs: silhouette
+ghosting on weapon switch against a dark background, and on spiders leaping at the camera.
+Fades within a few frames; "not terrible". This is the symptom U4's T&C mask exists to fix —
+record it as the before-measurement rather than chasing it now.
+
 - **Exit:** muzzle flashes, fire and steam do not smear; monster ghosting is acceptable or
   the gap is documented with a measurement; the denoiser retune is recorded in
   `rt_optimization_tuning.md` with before/after ms.
 
 ### U5 — polish  🔴
-Mip bias (§4) with sampler rebuild; `r_fsrQuality` exposed in the video menu; the FSR 3.1
+`r_fsrQuality` exposed in the video menu; the FSR 3.1
 port evaluation now that the plumbing is proven; optionally skinned-MV double-buffering if
 U4 said it was needed; dynamic resolution (nearly free given §2's layout).
 
@@ -1080,7 +1130,7 @@ perturbing something?", so the warning tells the user to turn it off instead.
 
 | Item | Note |
 |---|---|
-| Exit gate not formally run | image quality vs native, the pillar-2 bleed check, FSR2 dispatch cost |
+| Exit gate not formally run | blocked on U3a — the mip bias makes the quality-vs-native comparison unfair until fixed. Perf numbers can be taken now; image quality cannot |
 | ~~Distant shadow flicker~~ | fixed — `r_rtShadowBiasErrMargin 6` (§14 S7) |
 | Blur depth edge-stop is raw device depth | `r_rtShadowBlurDepthThreshold 0.003` is a relative tolerance of `threshold·Z/znear` — ~100% at Z=1000, so it cannot reject anything past ~1000 units. Linearise via `proj[14]/(proj[10]−1)`. Deferred, not stacked on the margin fix |
 | GI / reflections / `vol_march` have no margin cvar | they share `rt_ReconstructWorldPos` with the same latent exposure |

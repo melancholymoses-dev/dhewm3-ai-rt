@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-24 · **Next work: arc 3 (FSR) — U0-U3 written, U3 needs its in-game exit gate run.**
+**Status reviewed:** 2026-09-25 · **Next work: arc 3 (FSR) — U3 plays well; U3a (texture LOD bias) blocks its exit gate.**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
@@ -33,7 +33,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol were over-**bright**; settled in tuning) |
 | 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
 | 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
-| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🟡 **U0 landed 2026-09-23** — render-resolution decoupling + bilinear resolve, `r_fsrRenderScale`. **U1 landed 2026-09-24** — FSR 1 (EASU+RCAS) behind `r_fsr 1`, AMD headers in `neo/libs/ffx-fsr/` (MIT); exit met. **U2 landed 2026-09-24, exit met** — motion-vector attachment + Halton jitter + `r_fsrDebug 7` overlay. **U3 code landed 2026-09-24, exit gate open** — FSR 2.2.1 compiled in (`DHEWM3_FSR2`), `r_fsr 2` dispatches it, `r_fsrQuality` presets, `r_fsrDebug 5` bleed overlay; needs three device features AMD's backend assumes (see §14 S2). **Nothing observed in-game yet.** U4-U5 not started. Open: mirror/subview dispatch rects, glass rect, RT-total measurement — see §4 Outstanding |
+| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🟡 **U0 landed 2026-09-23** — render-resolution decoupling + bilinear resolve, `r_fsrRenderScale`. **U1 landed 2026-09-24** — FSR 1 (EASU+RCAS) behind `r_fsr 1`, AMD headers in `neo/libs/ffx-fsr/` (MIT); exit met. **U2 landed 2026-09-24, exit met** — motion-vector attachment + Halton jitter + `r_fsrDebug 7` overlay. **U3 landed 2026-09-24** — FSR 2.2.1 compiled in (`DHEWM3_FSR2`), `r_fsr 2` dispatches it, `r_fsrQuality` presets, `r_fsrDebug 5` bleed overlay; needs three device features AMD's backend assumes (see §14 S2). Plays well 2026-09-25, but **🔴 U3a (texture LOD bias, §4) blocks the U3 gate** — samplers bake `mipLodBias` at upload and carry no render-scale term, so distant detail reads as watercolour and the quality-vs-native comparison is unfair. Perf numbers can still be taken. U4-U5 not started. Open: mirror/subview dispatch rects, glass rect, RT-total measurement — see §4 Outstanding |
 
 - Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
 - U0 gated the screen-space composites on `hasRealCamera` — they had been running twice
