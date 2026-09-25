@@ -37,6 +37,8 @@ idRenderEntityLocal::idRenderEntityLocal()
 {
     memset(&parms, 0, sizeof(parms));
     memset(modelMatrix, 0, sizeof(modelMatrix));
+    memset(prevModelMatrix, 0, sizeof(prevModelMatrix));
+    prevModelFrame = -1;
 
     world = NULL;
     index = 0;

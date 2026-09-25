@@ -55,21 +55,41 @@ idCVar r_rtGbufNormals("r_rtGbufNormals", "1", CVAR_RENDERER | CVAR_BOOL,
 // sampled by the GI albedo-modulate compute pass.
 // ---------------------------------------------------------------------------
 
+// The three prepass targets, in subpass colour-attachment order after hdrScene.
+// All three are COLOR_ATTACHMENT + SAMPLED only: R16G16_SFLOAT is a mandatory
+// colour-attachment and sampled format but NOT a mandatory storage-image one, so
+// motion_debug.comp texelFetches motionVectors rather than binding it as storage.
+static const int GBUF_TARGET_COUNT = 3;
+
+static vkRTImage_t *VK_RT_GBufferTarget(int target, int frame)
+{
+    switch (target)
+    {
+    case 0:
+        return &vkRT.gbufNormal[frame];
+    case 1:
+        return &vkRT.gbufAlbedo[frame];
+    default:
+        return &vkRT.motionVectors[frame];
+    }
+}
+
 static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
 {
-    for (int slot = 0; slot < 2 * VK_MAX_FRAMES_IN_FLIGHT; slot++)
+    for (int slot = 0; slot < GBUF_TARGET_COUNT * VK_MAX_FRAMES_IN_FLIGHT; slot++)
     {
-        // First VK_MAX_FRAMES_IN_FLIGHT slots: gbufNormal; then gbufAlbedo.
-        const bool isAlbedo = slot >= VK_MAX_FRAMES_IN_FLIGHT;
+        const int target = slot / VK_MAX_FRAMES_IN_FLIGHT;
         const int i = slot % VK_MAX_FRAMES_IN_FLIGHT;
-        vkRTImage_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
+        const bool isMotion = (target == 2);
+        const VkFormat format = isMotion ? VK_FORMAT_R16G16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+        vkRTImage_t &gb = *VK_RT_GBufferTarget(target, i);
         gb.width = width;
         gb.height = height;
 
         VkImageCreateInfo imgInfo = {};
         imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imgInfo.imageType = VK_IMAGE_TYPE_2D;
-        imgInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        imgInfo.format = format;
         imgInfo.extent = {width, height, 1};
         imgInfo.mipLevels = 1;
         imgInfo.arrayLayers = 1;
@@ -95,7 +115,7 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = gb.image;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        viewInfo.format = format;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
         VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &gb.view));
 
@@ -152,18 +172,16 @@ static void VK_RT_CreateGBufferImages(uint32_t width, uint32_t height)
     }
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf(
-            "VK RT GBuffer: allocated %dx%d R8G8B8A8_UNORM normal/F0 + albedo images (%d frames in flight)\n", width,
-            height, VK_MAX_FRAMES_IN_FLIGHT);
+        common->Printf("VK RT GBuffer: allocated %dx%d R8G8B8A8_UNORM normal/F0 + albedo and R16G16_SFLOAT motion "
+                       "vectors (%d frames in flight)\n",
+                       width, height, VK_MAX_FRAMES_IN_FLIGHT);
 }
 
 static void VK_RT_DestroyGBufferImages(void)
 {
-    for (int slot = 0; slot < 2 * VK_MAX_FRAMES_IN_FLIGHT; slot++)
+    for (int slot = 0; slot < GBUF_TARGET_COUNT * VK_MAX_FRAMES_IN_FLIGHT; slot++)
     {
-        const bool isAlbedo = slot >= VK_MAX_FRAMES_IN_FLIGHT;
-        const int i = slot % VK_MAX_FRAMES_IN_FLIGHT;
-        vkRTImage_t &gb = isAlbedo ? vkRT.gbufAlbedo[i] : vkRT.gbufNormal[i];
+        vkRTImage_t &gb = *VK_RT_GBufferTarget(slot / VK_MAX_FRAMES_IN_FLIGHT, slot % VK_MAX_FRAMES_IN_FLIGHT);
         if (gb.view != VK_NULL_HANDLE)
         {
             vkDestroyImageView(vk.device, gb.view, NULL);

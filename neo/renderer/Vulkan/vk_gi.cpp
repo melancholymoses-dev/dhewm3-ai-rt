@@ -1320,16 +1320,15 @@ static void VK_RT_InitGICompositePipeline(void)
     colorBlend.alphaBlendOp = VK_BLEND_OP_ADD;
     colorBlend.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
-    // Attachments 1-2 (gbufNormal, gbufAlbedo) are written only by the G-buffer
-    // prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
+    // Attachments 1-3 (gbufNormal, gbufAlbedo, motionVectors) are written only by the
+    // G-buffer prepass; every other pipeline on vk.hdrRenderPass supplies write-mask-0
     // fillers so the subpass's per-attachment blend-state count always matches.
-    VkPipelineColorBlendAttachmentState blendAttachments[3] = {colorBlend, {}, {}};
-    VK_FillSecondBlendAttachment(&blendAttachments[1]);
-    VK_FillSecondBlendAttachment(&blendAttachments[2]);
+    VkPipelineColorBlendAttachmentState blendAttachments[VK_HDR_COLOR_ATTACHMENT_COUNT] = {colorBlend};
+    const uint32_t blendCount = VK_FillHdrBlendAttachments(blendAttachments);
 
     VkPipelineColorBlendStateCreateInfo blendState = {};
     blendState.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blendState.attachmentCount = vk.gbufferSupported ? 3 : 1;
+    blendState.attachmentCount = blendCount;
     blendState.pAttachments = blendAttachments;
 
     // Dynamic viewport and scissor (composite covers full framebuffer).

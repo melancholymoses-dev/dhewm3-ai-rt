@@ -270,21 +270,28 @@ void VK_CreateRenderPass(void)
     // the prepass never writes modulate GI by 1.0 — i.e. legacy behavior.
     VkAttachmentDescription hdrAlb = hdrNorm; // same format/ops/layout contract as gbufNormal
 
-    VkAttachmentReference hdrColorRefs[3] = {
+    // Motion vectors (U2, docs/plans/20260918_fsr_upscaling.md §13): same ops and
+    // layout contract again, but R16G16_SFLOAT and cleared to (0,0) — a pixel the
+    // prepass never writes reports no motion.
+    VkAttachmentDescription hdrMotion = hdrNorm;
+    hdrMotion.format = VK_FORMAT_R16G16_SFLOAT;
+
+    VkAttachmentReference hdrColorRefs[VK_HDR_COLOR_ATTACHMENT_COUNT] = {
         {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // hdrScene
         {2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // gbufNormal
         {3, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // gbufAlbedo
+        {4, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}, // motionVectors
     };
 
     VkSubpassDescription hdrSubpass = {};
     hdrSubpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    hdrSubpass.colorAttachmentCount = vk.gbufferSupported ? 3 : 1;
+    hdrSubpass.colorAttachmentCount = vk.gbufferSupported ? VK_HDR_COLOR_ATTACHMENT_COUNT : 1;
     hdrSubpass.pColorAttachments = hdrColorRefs;
     hdrSubpass.pDepthStencilAttachment = &depthRef;
     rpInfo.pSubpasses = &hdrSubpass;
 
-    VkAttachmentDescription hdrAttachments[4] = {hdrColor, hdrDepth, hdrNorm, hdrAlb};
-    rpInfo.attachmentCount = vk.gbufferSupported ? 4 : 2;
+    VkAttachmentDescription hdrAttachments[5] = {hdrColor, hdrDepth, hdrNorm, hdrAlb, hdrMotion};
+    rpInfo.attachmentCount = vk.gbufferSupported ? 5 : 2;
     rpInfo.pAttachments = hdrAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPass));
 
@@ -302,8 +309,9 @@ void VK_CreateRenderPass(void)
     // initialLayout stays COLOR_ATTACHMENT_OPTIMAL — the barrier in vk_backend.cpp
     // (Step 6) round-trips it through SHADER_READ_ONLY_OPTIMAL and back before resume.
     hdrAlb = hdrNorm; // albedo rides the same LOAD + round-trip contract
+    hdrMotion.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 
-    VkAttachmentDescription hdrResumeAttachments[4] = {hdrColor, hdrDepth, hdrNorm, hdrAlb};
+    VkAttachmentDescription hdrResumeAttachments[5] = {hdrColor, hdrDepth, hdrNorm, hdrAlb, hdrMotion};
     rpInfo.pAttachments = hdrResumeAttachments;
     VK_CHECK(vkCreateRenderPass(vk.device, &rpInfo, NULL, &vk.hdrRenderPassResume));
 }

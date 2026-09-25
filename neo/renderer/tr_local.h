@@ -265,6 +265,13 @@ class idRenderEntityLocal : public idRenderEntity
 
     float modelMatrix[16]; // this is just a rearrangement of parms.axis and parms.origin
 
+    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): modelMatrix as of
+    // prevModelFrame, so R_SetEntityDefViewEntity can hand the backend a previous-frame
+    // transform for rigid entities.  Skinned and deform-generated geometry is not
+    // covered — those verts are regenerated into the vertex cache every frame (§5).
+    float prevModelMatrix[16];
+    int prevModelFrame; // tr.frameCount when prevModelMatrix was written; -1 = never
+
     idRenderWorldLocal *world;
     int index; // in world entityDefs
 
@@ -378,6 +385,12 @@ typedef struct viewEntity_s
 
     float modelMatrix[16];     // local coords to global coords
     float modelViewMatrix[16]; // local coords to eye coords
+
+    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): last frame's
+    // local->global transform, for the depth prepass to reproject against.  Equal to
+    // modelMatrix when the entity was not drawn last frame or teleported, which makes
+    // its motion vector camera-only instead of garbage.
+    float prevModelMatrix[16];
 } viewEntity_t;
 
 const int MAX_CLIP_PLANES = 1; // we may expand this to six for some subview issues
@@ -390,6 +403,15 @@ typedef struct viewDef_s
 
     float projectionMatrix[16];
     viewEntity_t worldSpace;
+
+    // --- U2 motion vectors + jitter (docs/plans/20260918_fsr_upscaling.md §13) ---
+    // projectionMatrix carries the sub-pixel jitter; motion vectors must not, or the
+    // jitter reappears as a 1-pixel shimmer the upscaler reads as real motion.  These
+    // are built as a separate pair, never by un-applying the jitter.
+    float unjitteredProjectionMatrix[16];
+    float prevViewProjMatrix[16]; // last frame's unjittered projection * worldSpace.modelViewMatrix
+    bool prevFrameValid;          // false for subviews, mirrors, the 2D overlay and the first frame
+    float jitterOffset[2];        // sub-pixel offset applied, in render-resolution pixels
 
     idRenderWorldLocal *renderWorld;
 

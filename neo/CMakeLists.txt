@@ -778,6 +778,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/fsr_prepare.comp
 	renderer/glsl/fsr_easu.comp
 	renderer/glsl/fsr_rcas.comp
+	renderer/glsl/motion_debug.comp
 )
 
 

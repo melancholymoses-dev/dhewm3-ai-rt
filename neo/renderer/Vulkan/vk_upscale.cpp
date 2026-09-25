@@ -30,6 +30,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include <math.h>
 #include <string.h>
 
 extern VkShaderModule VK_LoadSPIRV(const char *path);
@@ -55,6 +56,15 @@ struct FsrRcasPC
     int32_t debugMode;
 };
 
+// Must match motion_debug.comp.
+struct MotionDebugPC
+{
+    int32_t renderExtent[2];
+    int32_t displayExtent[2];
+    float motionScale;
+    float brightness;
+};
+
 idCVar r_fsr("r_fsr", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
              "Upscale filter used when r_fsrRenderScale < 1.0.  0 = bilinear resolve, "
              "1 = AMD FidelityFX Super Resolution 1 (EASU + RCAS), 2 = FSR 2 (not implemented yet).");
@@ -63,6 +73,11 @@ idCVar r_fsrRenderScale("r_fsrRenderScale", "1.0", CVAR_RENDERER | CVAR_FLOAT | 
 idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE, "FSR Debug Mode.");
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
+idCVar r_fsrJitter("r_fsrJitter", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Inert until a temporal "
+                   "upscaler consumes it (U3), so it only adds shimmer today.");
+idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                        "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
 
 // ---------------------------------------------------------------------------
 // FSR 1 (U1) resources.  Kept file-static: vk_upscale.cpp is the one
@@ -81,7 +96,9 @@ static vkRTImage_t s_fsrPerceptual; // display-res RGBA16F, perceptual space
 static fsrPass_t s_fsrPrepare;
 static fsrPass_t s_fsrEasu;
 static fsrPass_t s_fsrRcas;
+static fsrPass_t s_motionDebug; // U2, r_fsrDebug 7
 static bool s_fsr1Ready = false;
+static bool s_motionDebugReady = false;
 static int s_fsrLoggedMode = -1; // last r_fsr value announced to the console
 
 static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t height, const char *label)
@@ -505,6 +522,12 @@ static void VK_RT_CreateFsr1Pipelines(void)
         common->Printf("VK RT FSR1: EASU + RCAS pipelines initialized\n");
     else
         common->Warning("VK RT FSR1: pipeline setup failed — r_fsr 1 will fall back to the bilinear resolve");
+
+    // U2 motion-vector overlay — same two-binding shape, so it rides the same helper.
+    s_motionDebugReady = VK_RT_CreateFsrPass(s_motionDebug, "glprogs/glsl/motion_debug.comp.spv",
+                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(MotionDebugPC));
+    if (!s_motionDebugReady)
+        common->Warning("VK RT Upscale: motion_debug.comp failed to load — r_fsrDebug 7 unavailable");
 }
 
 static void VK_RT_DestroyFsr1Pipelines(void)
@@ -512,7 +535,9 @@ static void VK_RT_DestroyFsr1Pipelines(void)
     VK_RT_DestroyFsrPass(s_fsrPrepare);
     VK_RT_DestroyFsrPass(s_fsrEasu);
     VK_RT_DestroyFsrPass(s_fsrRcas);
+    VK_RT_DestroyFsrPass(s_motionDebug);
     s_fsr1Ready = false;
+    s_motionDebugReady = false;
 }
 
 // r_fsrDebug 4 is the point-magnify A/B, which lives on the bilinear path, so it
@@ -627,6 +652,144 @@ static void VK_RT_DispatchFsr1(VkCommandBuffer cmd, int frameIdx)
     toAttach.subresourceRange = colorRange;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
                          NULL, 0, NULL, 1, &toAttach);
+}
+
+/*
+===========================================================================
+Motion-vector overlay (U2), r_fsrDebug 7.
+
+Reuses the two-binding fsrPass_t shape: binding 0 texelFetches motionVectors
+through the upscale sampler (R16G16_SFLOAT is not a mandatory storage-image
+format, so the image carries SAMPLED usage only), binding 1 writes hdrScene.
+Dispatched from VK_RB_SwapBuffers after the resolve and before the tonemap,
+where hdrScene already holds the display-resolution frame and is in
+COLOR_ATTACHMENT_OPTIMAL.
+===========================================================================
+*/
+
+bool VK_RT_MotionDebugActive(void)
+{
+    return r_fsrDebug.GetInteger() == 7 && s_motionDebugReady && vk.gbufferSupported &&
+           vkRT.motionVectors[vk.currentFrame].image != VK_NULL_HANDLE;
+}
+
+void VK_RT_DispatchMotionDebug(VkCommandBuffer cmd)
+{
+    if (!VK_RT_MotionDebugActive())
+        return;
+
+    const int frameIdx = (int)vk.currentFrame;
+    const VkImageSubresourceRange colorRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const uint32_t dispW = vk.swapchainExtent.width;
+    const uint32_t dispH = vk.swapchainExtent.height;
+
+    // GENERAL is a legal layout for a sampled-image descriptor, which keeps the barrier
+    // pair below symmetric for both images.
+    VK_RT_WriteFsrPassDescriptors(s_motionDebug, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                  vkRT.motionVectors[frameIdx].view, VK_IMAGE_LAYOUT_GENERAL,
+                                  vkRT.hdrScene[frameIdx].view);
+
+    // Both images are colour attachments of the render pass that just ended, so both
+    // need moving to GENERAL and putting back — motionVectors' declared initialLayout
+    // on vk.hdrRenderPass is COLOR_ATTACHMENT_OPTIMAL and next frame's clear expects it.
+    VkImageMemoryBarrier toGeneral[2] = {};
+    VkImage images[2] = {vkRT.motionVectors[frameIdx].image, vkRT.hdrScene[frameIdx].image};
+    for (int i = 0; i < 2; i++)
+    {
+        toGeneral[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toGeneral[i].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        toGeneral[i].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        toGeneral[i].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        toGeneral[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toGeneral[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGeneral[i].image = images[i];
+        toGeneral[i].subresourceRange = colorRange;
+    }
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                         NULL, 0, NULL, 2, toGeneral);
+
+    MotionDebugPC pc;
+    pc.renderExtent[0] = (int32_t)vk.renderExtent.width;
+    pc.renderExtent[1] = (int32_t)vk.renderExtent.height;
+    pc.displayExtent[0] = (int32_t)dispW;
+    pc.displayExtent[1] = (int32_t)dispH;
+    pc.motionScale = r_fsrMotionScale.GetFloat();
+    if (pc.motionScale < 0.001f)
+        pc.motionScale = 0.001f;
+    // hdrScene is pre-tonemap linear HDR; the Uchimura curve downstream would otherwise
+    // crush the overlay into the toe and make "fast" and "very fast" look alike.
+    pc.brightness = 4.0f;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_motionDebug.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_motionDebug.layout, 0, 1,
+                            &s_motionDebug.descSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, s_motionDebug.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+
+    VkImageMemoryBarrier toAttach[2] = {};
+    for (int i = 0; i < 2; i++)
+    {
+        toAttach[i].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toAttach[i].srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        toAttach[i].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+        toAttach[i].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        toAttach[i].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        toAttach[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toAttach[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toAttach[i].image = images[i];
+        toAttach[i].subresourceRange = colorRange;
+    }
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
+                         NULL, 0, NULL, 2, toAttach);
+}
+
+/*
+===========================================================================
+Jitter (U2)
+
+A straight port of FSR 2.2.1's jitter sequence — halton(),
+ffxFsr2GetJitterPhaseCount and ffxFsr2GetJitterOffset
+(neo/libs/ffx-fsr2-api/ffx_fsr2.cpp:188-201, 1187-1212) — so that U3 switching
+to the real symbols does not shift the sequence.  Kept here rather than
+including the FSR2 headers so nothing outside U3 depends on that tree.
+===========================================================================
+*/
+
+static float VK_RT_Halton(int32_t index, int32_t base)
+{
+    float f = 1.0f, result = 0.0f;
+    for (int32_t cur = index; cur > 0;)
+    {
+        f /= (float)base;
+        result = result + f * (float)(cur % base);
+        cur = (int32_t)floorf((float)cur / (float)base);
+    }
+    return result;
+}
+
+/*
+Sub-pixel offset for this frame, in render-resolution pixels over [-0.5, +0.5],
+plus the render extent the caller should measure it against.  Returns false when
+the FSR jitter is not in play, leaving the outputs untouched so R_SetupProjection
+can fall back to r_jitter.
+*/
+bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
+{
+    if (!r_fsrJitter.GetBool() || !VK_RT_UpscaleActive() || vk.renderExtent.width == 0)
+        return false;
+
+    const int32_t phaseCount =
+        (int32_t)(8.0f * powf((float)vk.swapchainExtent.width / (float)vk.renderExtent.width, 2.0f));
+    if (phaseCount <= 0)
+        return false;
+
+    const int32_t index = (int32_t)(((uint32_t)tr.frameCount) % (uint32_t)phaseCount) + 1;
+    *jx = VK_RT_Halton(index, 2) - 0.5f;
+    *jy = VK_RT_Halton(index, 3) - 0.5f;
+    *renderW = (int)vk.renderExtent.width;
+    *renderH = (int)vk.renderExtent.height;
+    return true;
 }
 
 /*

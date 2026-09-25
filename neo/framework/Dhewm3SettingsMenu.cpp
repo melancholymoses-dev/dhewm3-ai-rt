@@ -2508,6 +2508,8 @@ struct RTCVars
     idCVar *fsrRenderScale = nullptr;
     idCVar *fsrSharpness = nullptr;
     idCVar *fsrDebug = nullptr;
+    idCVar *fsrJitter = nullptr;
+    idCVar *fsrMotionScale = nullptr;
 };
 
 static RTCVars rtCVars;
@@ -2590,6 +2592,8 @@ static void InitRTOptionsMenu()
     rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
     rtCVars.fsrSharpness = cvarSystem->Find("r_fsrSharpness");
     rtCVars.fsrDebug = cvarSystem->Find("r_fsrDebug");
+    rtCVars.fsrJitter = cvarSystem->Find("r_fsrJitter");
+    rtCVars.fsrMotionScale = cvarSystem->Find("r_fsrMotionScale");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2865,13 +2869,20 @@ static void DrawRTOptionsMenu()
                         "ray-traced noise floor along with the image. Keep sharpness low if it\n"
                         "crawls. Neither mode does anything at Render Scale 1.0.");
 
+    // Motion vectors (U2).  Nothing consumes them until FSR 2 lands, so jitter is off
+    // by default — on its own it only adds shimmer.
+    RTCheckbox("Sub-pixel Jitter (Halton, needs Render Scale < 1.0)", rtCVars.fsrJitter);
+    RTSliderFloat("Motion Overlay Scale (render pixels that saturate mode 7)", rtCVars.fsrMotionScale, 1.0f, 64.0f,
+                  "%.0f");
+
     static const char *const fsrDebugModes[] = {"Off",
                                                 "1 - resolve border (green = bilinear, cyan = FSR 1)",
                                                 "2 - per-view console log",
                                                 "3 - unused",
                                                 "4 - point magnify (no reconstruction, honest A/B)",
                                                 "5 - unused",
-                                                "6 - EASU only, no RCAS sharpening"};
+                                                "6 - EASU only, no RCAS sharpening",
+                                                "7 - motion vectors (hue = direction, value = speed)"};
     RTCombo("Upscale Debug Overlay", rtCVars.fsrDebug, fsrDebugModes, IM_ARRAYSIZE(fsrDebugModes));
 }
 

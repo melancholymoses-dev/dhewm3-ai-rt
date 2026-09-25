@@ -2632,10 +2632,13 @@ void idRenderSystemLocal::Init(void)
     common->Printf("R_Init: renderModelManager->Init done\n");
     fflush(NULL);
 
-    // set the identity space
+    // set the identity space.  [15] and the U2 prevModelMatrix are part of that
+    // identity — see R_SetViewMatrix for why upstream only needed the 3x4 block.
     identitySpace.modelMatrix[0 * 4 + 0] = 1.0f;
     identitySpace.modelMatrix[1 * 4 + 1] = 1.0f;
     identitySpace.modelMatrix[2 * 4 + 2] = 1.0f;
+    identitySpace.modelMatrix[3 * 4 + 3] = 1.0f;
+    memcpy(identitySpace.prevModelMatrix, identitySpace.modelMatrix, sizeof(identitySpace.prevModelMatrix));
 
     origWidth = origHeight = 0; // DG: for resetting width/height in EndFrame()
 }
