@@ -37,6 +37,23 @@ Code release.
 #include "renderer/Vulkan/vk_gbuffer.h"
 
 extern idCVar r_vkLogRT;
+extern idCVar r_useRayTracing;
+
+// True when the upscaler needs motion vectors this frame (vk_upscale.cpp).  Deliberately
+// free of any G-buffer term so the two predicates cannot recurse.
+extern bool VK_RT_UpscaleNeedsMotionVectors(void);
+
+// See vk_gbuffer.h.  Both pipelines are created together in VK_InitPipelines, so testing
+// one is enough to know the other exists.
+bool VK_GBufferPrepassActive(void)
+{
+    if (!vk.gbufferSupported || vkPipes.gbufferPipeline == VK_NULL_HANDLE)
+        return false;
+
+    // RT samples gbufNormal/gbufAlbedo; the upscaler only wants motionVectors.  Either
+    // consumer is reason enough to run the pass — it writes all three together.
+    return r_useRayTracing.GetBool() || VK_RT_UpscaleNeedsMotionVectors();
+}
 
 // P9 (docs/plans/rt_optimization_tuning.md): AO and GI read their shading normal
 // from this buffer instead of rebuilding it from depth gradients. Set 0 to force

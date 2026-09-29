@@ -13,6 +13,8 @@ extern idCVar r_fsrSharpness;
 extern idCVar r_fsrJitter;
 extern idCVar r_fsrMotionScale;
 extern idCVar r_fsrQuality;
+extern idCVar r_fsrMipBias;
+extern idCVar r_fsrMipBiasOffset;
 
 // U3: latch the 3D view's projection parameters for the FSR 2 dispatch, which runs
 // after the frame's last RC_DRAW_VIEW and cannot trust backEnd.viewDef by then (the

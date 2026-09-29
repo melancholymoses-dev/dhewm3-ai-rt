@@ -23,6 +23,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Image.h"
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
+#include "renderer/Vulkan/vk_upscale.h" // r_fsrMipBias — the FSR LOD term is baked per sampler
 
 #include <math.h> // log2, floor
 #include <string.h>
@@ -46,6 +47,7 @@ struct vkImageData_t
     VkSampler sampler;
     uint32_t width;
     uint32_t height;
+    uint32_t mipLevels;
 };
 
 // ---------------------------------------------------------------------------
@@ -186,6 +188,133 @@ static void VK_GetSamplerQualityLimits(float *outMaxAnisotropy, float *outMaxLod
         *outMaxAnisotropy = s_cachedMaxSamplerAnisotropy;
     if (outMaxLodBias)
         *outMaxLodBias = s_cachedMaxSamplerLodBias;
+}
+
+// ---------------------------------------------------------------------------
+// FSR texture LOD bias (U3a)
+//
+// Mip selection uses the derivatives of the rasterised pixel, so at a render
+// scale below 1 every texture picks a mip sized for the smaller grid and the
+// upscaler is handed detail that was never fetched.
+// log2(renderW/displayW) cancels the scale; r_fsrMipBiasOffset over-sharpens on
+// top so a temporal upscaler has high frequencies to reconstruct from.
+// ---------------------------------------------------------------------------
+
+static float VK_FsrLodBias(void)
+{
+    if (!r_fsrMipBias.GetBool())
+        return 0.0f;
+
+    const uint32_t rw = vk.renderExtent.width;
+    const uint32_t dw = vk.swapchainExtent.width;
+    // No term at all at native, so r_fsrRenderScale 1.0 stays a true bypass.
+    if (rw == 0 || dw == 0 || rw >= dw)
+        return 0.0f;
+
+    return log2f((float)rw / (float)dw) + r_fsrMipBiasOffset.GetFloat();
+}
+
+static float VK_ClampLodBias(float bias)
+{
+    float maxLodBias = 0.0f;
+    VK_GetSamplerQualityLimits(NULL, &maxLodBias);
+    if (bias > maxLodBias)
+        return maxLodBias;
+    if (bias < -maxLodBias)
+        return -maxLodBias;
+    return bias;
+}
+
+// Sampler recipe for a 2D image.  Shared by the upload path and
+// VK_Image_RebuildSamplers so a scale change cannot make the two drift.
+static void VK_BuildSamplerInfo2D(const idImage *img, uint32_t mipLevels, VkSamplerCreateInfo *out)
+{
+    float maxAniso = 1.0f;
+    VK_GetSamplerQualityLimits(&maxAniso, NULL);
+
+    memset(out, 0, sizeof(*out));
+    out->sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+
+    // TF_DEFAULT follows the global image_filter, exactly as GL's SetImageFilterAndRepeat
+    // does (Image_load.cpp).  GL packs minification and mipmap selection into one enum;
+    // Vulkan splits them into minFilter + mipmapMode, so this translates rather than maps.
+    // Without it image_filter was inert on this backend — ChangeTextureFilter would queue a
+    // full sampler rebuild that changed nothing.
+    bool baseLevelOnly = false;
+    if (img->filter == TF_DEFAULT && globalImages != NULL)
+    {
+        const GLenum glMin = globalImages->textureMinFilter;
+        const GLenum glMag = globalImages->textureMaxFilter;
+
+        out->minFilter =
+            (glMin == GL_NEAREST || glMin == GL_NEAREST_MIPMAP_NEAREST || glMin == GL_NEAREST_MIPMAP_LINEAR)
+                ? VK_FILTER_NEAREST
+                : VK_FILTER_LINEAR;
+        out->magFilter = (glMag == GL_NEAREST) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+        out->mipmapMode = (glMin == GL_LINEAR_MIPMAP_LINEAR || glMin == GL_NEAREST_MIPMAP_LINEAR)
+                              ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                              : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        // The two filters with no _MIPMAP_ term sample the base level only; maxLod below.
+        baseLevelOnly = (glMin == GL_NEAREST || glMin == GL_LINEAR);
+    }
+    else
+    {
+        out->magFilter = MapFilter(img->filter);
+        out->minFilter = out->magFilter;
+        out->mipmapMode = MapMipmapMode(img->filter);
+    }
+
+    out->addressModeU = MapRepeat(img->repeat);
+    out->addressModeV = out->addressModeU;
+    out->addressModeW = out->addressModeU;
+
+    float lodBias = idImageManager::image_lodbias.GetFloat();
+    if (img->depth == TD_BUMP)
+        lodBias += r_vkBumpMipBias.GetFloat();
+    // TF_DEFAULT is the engine's "this is a mipmapped world texture" marker; GL gives
+    // TF_LINEAR/TF_NEAREST a non-mipmap min filter.  Restricting the FSR term to
+    // TF_DEFAULT keeps the negative bias off GUI, HUD and font images, which draw at
+    // display resolution and must not inherit it.
+    if (img->filter == TF_DEFAULT)
+        lodBias += VK_FsrLodBias();
+    out->mipLodBias = VK_ClampLodBias(lodBias);
+
+    float requestedAniso = idImageManager::image_anisotropy.GetFloat();
+    if (requestedAniso < 1.0f)
+        requestedAniso = 1.0f;
+    if (requestedAniso > maxAniso)
+        requestedAniso = maxAniso;
+
+    // GL applies the global anisotropy to TF_DEFAULT only and forces 1 elsewhere
+    // (Image_load.cpp) — same contract the FSR bias above uses, so the two stay consistent.
+    const bool canUseAniso = (img->filter == TF_DEFAULT && mipLevels > 1 && requestedAniso > 1.0f);
+    out->anisotropyEnable = canUseAniso ? VK_TRUE : VK_FALSE;
+    out->maxAnisotropy = canUseAniso ? requestedAniso : 1.0f;
+    out->compareEnable = VK_FALSE;
+    out->minLod = 0.0f;
+    out->maxLod = baseLevelOnly ? 0.0f : (float)(mipLevels - 1);
+    out->borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+}
+
+// Sampler recipe for a cubemap: clamp-to-edge, linear, single level.  Ignores
+// img->filter and img->repeat, which VK_Image_UploadCubemap never consulted.
+// Shared with VK_Image_RebuildSamplers for the same no-drift reason as the 2D one.
+static void VK_BuildSamplerInfoCube(VkSamplerCreateInfo *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    out->magFilter = VK_FILTER_LINEAR;
+    out->minFilter = VK_FILTER_LINEAR;
+    out->mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    out->addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    out->addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    out->addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    out->minLod = 0.0f;
+    out->maxLod = 0.0f;
+    // Inert while maxLod is 0 — carried so a mipped cubemap later cannot silently
+    // miss the render-scale term.
+    out->mipLodBias = VK_ClampLodBias(VK_FsrLodBias());
+    out->borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
 
 // ---------------------------------------------------------------------------
@@ -738,45 +867,8 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
     }
 
     // --- VkSampler ---
-    VkFilter magFilter = MapFilter(img->filter);
-    VkFilter minFilter = magFilter;
-    VkSamplerMipmapMode mipmapMode = MapMipmapMode(img->filter);
-    VkSamplerAddressMode addrMode = MapRepeat(img->repeat);
-
-    VkSamplerCreateInfo samplerInfo = {};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = magFilter;
-    samplerInfo.minFilter = minFilter;
-    samplerInfo.mipmapMode = mipmapMode;
-    samplerInfo.addressModeU = addrMode;
-    samplerInfo.addressModeV = addrMode;
-    samplerInfo.addressModeW = addrMode;
-    float maxAniso = 1.0f;
-    float maxLodBias = 0.0f;
-    VK_GetSamplerQualityLimits(&maxAniso, &maxLodBias);
-
-    float lodBias = idImageManager::image_lodbias.GetFloat();
-    if (img->depth == TD_BUMP)
-        lodBias += r_vkBumpMipBias.GetFloat();
-    if (lodBias > maxLodBias)
-        lodBias = maxLodBias;
-    if (lodBias < -maxLodBias)
-        lodBias = -maxLodBias;
-    samplerInfo.mipLodBias = lodBias;
-
-    float requestedAniso = idImageManager::image_anisotropy.GetFloat();
-    if (requestedAniso < 1.0f)
-        requestedAniso = 1.0f;
-    if (requestedAniso > maxAniso)
-        requestedAniso = maxAniso;
-
-    const bool canUseAniso = (img->filter != TF_NEAREST && mipLevels > 1 && requestedAniso > 1.0f);
-    samplerInfo.anisotropyEnable = canUseAniso ? VK_TRUE : VK_FALSE;
-    samplerInfo.maxAnisotropy = canUseAniso ? requestedAniso : 1.0f;
-    samplerInfo.compareEnable = VK_FALSE;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = (float)(mipLevels - 1);
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    VkSamplerCreateInfo samplerInfo;
+    VK_BuildSamplerInfo2D(img, mipLevels, &samplerInfo);
     if (vkCreateSampler(vk.device, &samplerInfo, NULL, &vkd->sampler) != VK_SUCCESS)
     {
         common->Warning("VK_Image_Upload: vkCreateSampler failed for '%s'", img->imgName.c_str());
@@ -789,6 +881,7 @@ void VK_Image_Upload(idImage *img, const byte *pic, int width, int height)
 
     vkd->width = (uint32_t)width;
     vkd->height = (uint32_t)height;
+    vkd->mipLevels = mipLevels;
 
     img->backendData = vkd;
     s_imageChangeCounter++;
@@ -973,17 +1066,8 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
     }
 
     // --- Sampler (clamp-to-edge, linear, no mips) ---
-    VkSamplerCreateInfo samplerInfo = {};
-    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    VkSamplerCreateInfo samplerInfo;
+    VK_BuildSamplerInfoCube(&samplerInfo);
     if (vkCreateSampler(vk.device, &samplerInfo, NULL, &vkd->sampler) != VK_SUCCESS)
     {
         common->Warning("VK_Image_UploadCubemap: vkCreateSampler failed for '%s'", img->imgName.c_str());
@@ -997,9 +1081,119 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 
     vkd->width = (uint32_t)size;
     vkd->height = (uint32_t)size;
+    vkd->mipLevels = 1;
 
     img->backendData = vkd;
     s_imageChangeCounter++;
+}
+
+// ---------------------------------------------------------------------------
+// Sampler rebuild (U3a)
+//
+// mipLodBias is baked into each VkSampler at upload, so anything that changes it
+// — the FSR render scale, image_lodbias, image_anisotropy, image_filter — has to
+// recreate every sampler.  Deferred through a flag rather than done at the point
+// of the change: the only safe moment is past the frame fence and before the
+// command buffer opens, since descriptor sets already recorded this frame still
+// carry the old handles.  See VK_Image_ApplyPendingSamplerRebuild's call site.
+// ---------------------------------------------------------------------------
+
+static bool s_samplerRebuildPending = false;
+static int s_samplerRebuildQuietFrames = 0;
+
+// Coalesce requests before acting on one.  The menu's float sliders write their cvar on
+// every drag tick, and each rebuild is a vkDeviceWaitIdle plus a recreate of every loaded
+// sampler — a full GPU stall and O(images) allocations per frame for as long as the mouse
+// is down.  Waiting for the value to settle costs a few frames of stale bias, which is
+// invisible, and turns a drag into one rebuild instead of dozens.
+static const int SAMPLER_REBUILD_SETTLE_FRAMES = 6;
+
+void VK_Image_RequestSamplerRebuild(void)
+{
+    s_samplerRebuildPending = true;
+    s_samplerRebuildQuietFrames = 0;
+}
+
+// Every cvar VK_BuildSamplerInfo2D reads that nothing else already watches.
+// image_lodbias/anisotropy/filter come in through idImageManager::CheckCvars, and the
+// render scale through VK_RT_UpdateRenderExtent; these three have no other owner, and
+// a mip-bias cvar you cannot A/B live is useless for chasing moire.
+void VK_Image_CheckSamplerCvars(void)
+{
+    if (!r_fsrMipBias.IsModified() && !r_fsrMipBiasOffset.IsModified() && !r_vkBumpMipBias.IsModified())
+        return;
+    r_fsrMipBias.ClearModified();
+    r_fsrMipBiasOffset.ClearModified();
+    r_vkBumpMipBias.ClearModified();
+    VK_Image_RequestSamplerRebuild();
+}
+
+static void VK_Image_RebuildSamplers(void)
+{
+    if (!vk.isInitialized || !globalImages)
+        return;
+
+    vkDeviceWaitIdle(vk.device);
+
+    int rebuilt = 0;
+    int failed = 0;
+    float biasSeen = 0.0f;
+
+    for (int i = 0; i < globalImages->images.Num(); i++)
+    {
+        idImage *img = globalImages->images[i];
+        if (!img || !img->backendData)
+            continue;
+
+        vkImageData_t *vkd = (vkImageData_t *)img->backendData;
+
+        VkSamplerCreateInfo si;
+        if (vkd->cubeView != VK_NULL_HANDLE)
+        {
+            VK_BuildSamplerInfoCube(&si);
+        }
+        else
+        {
+            VK_BuildSamplerInfo2D(img, vkd->mipLevels ? vkd->mipLevels : 1, &si);
+            if (img->filter == TF_DEFAULT)
+                biasSeen = si.mipLodBias;
+        }
+
+        VkSampler ns = VK_NULL_HANDLE;
+        if (vkCreateSampler(vk.device, &si, NULL, &ns) != VK_SUCCESS)
+        {
+            failed++;
+            continue; // keep the old sampler; a missing one would read as garbage
+        }
+        if (vkd->sampler != VK_NULL_HANDLE)
+            vkDestroySampler(vk.device, vkd->sampler, NULL);
+        vkd->sampler = ns;
+        rebuilt++;
+    }
+
+    // The bindless RT descriptors bind vkRT.matSampler, not these, so nothing there
+    // actually changed — bump anyway so any future sampler cache cannot go stale
+    // silently.  Costs one descriptor-set rewrite on a menu action.
+    s_imageChangeCounter++;
+
+    common->Printf("VK Image: rebuilt %d samplers (%d failed), FSR mip bias %.2f "
+                   "(render %ux%u -> display %ux%u)\n",
+                   rebuilt, failed, biasSeen, vk.renderExtent.width, vk.renderExtent.height, vk.swapchainExtent.width,
+                   vk.swapchainExtent.height);
+}
+
+void VK_Image_ApplyPendingSamplerRebuild(void)
+{
+    // Stays pending until the device is up: ChangeTextureFilter runs during startup,
+    // long before there is anything to rebuild.
+    if (!s_samplerRebuildPending || !vk.isInitialized || !globalImages)
+        return;
+    // Let a run of requests settle first — see SAMPLER_REBUILD_SETTLE_FRAMES.
+    if (++s_samplerRebuildQuietFrames < SAMPLER_REBUILD_SETTLE_FRAMES)
+        return;
+    s_samplerRebuildPending = false;
+    s_samplerRebuildQuietFrames = 0;
+    VK_Image_RebuildSamplers();
 }
 
 // ---------------------------------------------------------------------------

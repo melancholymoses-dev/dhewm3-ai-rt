@@ -31,6 +31,8 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_image.h"
+#include "renderer/Vulkan/vk_gbuffer.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -96,11 +98,20 @@ idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
 idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
-                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  r_fsr 2 needs it and "
-                   "goes blurry without it; on the bilinear and FSR 1 paths it only adds shimmer.  Kept "
-                   "switchable so \"is the jitter perturbing something?\" stays an A/B rather than an argument.");
+                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Ignored unless FSR 2 is "
+                   "actually resolving this frame — nothing else reprojects it away, so it reads as a whole-screen "
+                   "shake.  FSR 2 needs it and goes blurry without it; 0 stays available as the A/B.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
+idCVar r_fsrMipBias("r_fsrMipBias", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                    "Bias texture mip selection by log2(renderW/displayW) + r_fsrMipBiasOffset while the render "
+                    "scale is below 1.  Without it every texture picks a mip sized for the smaller raster grid "
+                    "and no upscaler can put the detail back.  Rebuilds all samplers when changed.");
+idCVar r_fsrMipBiasOffset("r_fsrMipBiasOffset", "-1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                          "Extra mip bias added on top of log2(renderW/displayW).  -1.0 is the FSR 2 "
+                          "recommendation: a temporal upscaler wants over-sharp input to reconstruct from.  "
+                          "FSR 1 and the bilinear resolve have no history to average the aliasing out, so "
+                          "sweep toward 0 if they crawl.");
 
 // ---------------------------------------------------------------------------
 // FSR 1 (U1) resources.  Kept file-static: vk_upscale.cpp is the one
@@ -764,18 +775,19 @@ bool VK_RT_MotionDebugActive(void)
         vkRT.motionVectors[vk.currentFrame].image == VK_NULL_HANDLE)
         return false;
 
-    // The attachment is only ever written by the G-buffer prepass, which stands down
-    // when r_useRayTracing is off (VK_RB_FillDepthBuffer).  Without this the overlay
-    // would happily paint the whole screen with the cleared zero field — a black frame
-    // that reads as "motion vectors are broken" rather than "ray tracing is off".
-    if (!r_useRayTracing.GetBool())
+    // The attachment is only ever written by the G-buffer prepass.  Without this the
+    // overlay would happily paint the whole screen with the cleared zero field — a black
+    // frame that reads as "motion vectors are broken" rather than "nothing produced them".
+    // r_fsrDebug 7 is itself not r_fsr 2, so it cannot pull the prepass up on its own.
+    if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
         if (!warned)
         {
             warned = true;
-            common->Warning("VK RT Upscale: r_fsrDebug 7 needs r_useRayTracing 1 — motion vectors are written by "
-                            "the ray-tracing G-buffer prepass; overlay disabled");
+            common->Warning("VK RT Upscale: r_fsrDebug 7 needs the G-buffer prepass — set r_useRayTracing 1 (or run "
+                            "r_fsr 2 at a render scale below 1, which pulls the prepass up for its own motion "
+                            "vectors); overlay disabled");
         }
         return false;
     }
@@ -928,8 +940,8 @@ static uint32_t VK_RT_Fsr2WantedFlags(void)
     // DEPTH_INVERTED is deliberately absent — our depth is 0 at the near plane.
     // AUTO_EXPOSURE: the engine's tonemap is a fixed curve with no exposure of its
     // own, so there is no application exposure value to hand over.
-    uint32_t flags = FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INFINITE |
-                     FFX_FSR2_ENABLE_AUTO_EXPOSURE;
+    uint32_t flags =
+        FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INFINITE | FFX_FSR2_ENABLE_AUTO_EXPOSURE;
     if (r_fsrDebug.GetInteger() >= 2)
         flags |= FFX_FSR2_ENABLE_DEBUG_CHECKING;
     return flags;
@@ -967,8 +979,8 @@ static bool VK_RT_Fsr2CreateContext(void)
     }
 
     FfxFsr2ContextDescription desc = {};
-    FfxErrorCode err = ffxFsr2GetInterfaceVK(&desc.callbacks, s_fsr2Scratch, scratchSize, vk.physicalDevice,
-                                             vkGetDeviceProcAddr);
+    FfxErrorCode err =
+        ffxFsr2GetInterfaceVK(&desc.callbacks, s_fsr2Scratch, scratchSize, vk.physicalDevice, vkGetDeviceProcAddr);
     if (err != FFX_OK)
     {
         common->Warning("VK RT FSR2: ffxFsr2GetInterfaceVK failed (%d)", (int)err);
@@ -1017,19 +1029,39 @@ static bool VK_RT_Fsr2Requested(void)
     return r_fsr.GetInteger() == 2 && r_fsrDebug.GetInteger() != 4;
 }
 
-// Could FSR 2 resolve this frame?  Side-effect free, unlike VK_RT_Fsr2Ready — the
+// CAPABILITY, not demand: could FSR 2 run at all, ignoring whether there is a sub-rect to
+// resolve right now.  Deliberately free of any render-extent term — VK_RT_ResolvePathReady
+// asks downstream of this while deciding whether to *reduce* the extent, and "reduce only
+// if already reduced" latches at native forever.
+static bool VK_RT_Fsr2Capable(void)
+{
+    return VK_RT_Fsr2Requested() && vk.fsr2Supported && !s_fsr2CreateFailed;
+}
+
+// DEMAND: does the upscaler actually need motion vectors written this frame?  The extent
+// term keeps r_fsrRenderScale 1.0 a true bypass — at native FSR 2 dispatches nothing, so
+// running the three-attachment prepass for it would be pure cost.
+//
+// This is what decouples motion vectors from r_useRayTracing: FSR 2 wanting them is reason
+// enough to produce them.  Split from VK_GBufferPrepassActive's other term so the two
+// cannot recurse.
+bool VK_RT_UpscaleNeedsMotionVectors(void)
+{
+    return VK_RT_Fsr2Capable() && VK_RT_UpscaleActive();
+}
+
+// Could FSR 2 resolve, given a sub-rect?  Side-effect free, unlike VK_RT_Fsr2Ready — the
 // render-extent fallback asks this *before* the extent is settled and must not trigger
 // a context build at the old size.
 //
-// r_useRayTracing gates it because the motion attachment is written only by the G-buffer
-// prepass, which stands down with RT (VK_RB_FillDepthBuffer).  Feeding FSR2 that untouched
-// field would claim every pixel is static, so the history never reprojects and the whole
-// frame ghosts on camera motion — a failure that looks like a bad FSR2 setup rather than a
-// missing prepass.  Same reason VK_RT_MotionDebugActive refuses to draw.
+// Tests the G-buffer *capability* rather than VK_GBufferPrepassActive, for the same
+// no-cycle reason as above.  The motion attachment is written only by that prepass, and
+// feeding FSR2 an untouched field would claim every pixel is static — the history never
+// reprojects and the whole frame ghosts on camera motion.  Whether the prepass is running
+// *this* frame is VK_RT_Fsr2Ready's question, and it asks VK_GBufferPrepassActive directly.
 static bool VK_RT_Fsr2Possible(void)
 {
-    return VK_RT_Fsr2Requested() && vk.fsr2Supported && vk.gbufferSupported && r_useRayTracing.GetBool() &&
-           !s_fsr2CreateFailed;
+    return VK_RT_Fsr2Capable() && vk.gbufferSupported && vkPipes.gbufferPipeline != VK_NULL_HANDLE;
 }
 
 // Create / recreate / tear down as needed, and report whether this frame can dispatch.
@@ -1055,17 +1087,18 @@ static bool VK_RT_Fsr2Ready(void)
     }
 
     // No G-buffer prepass this frame means no motion vectors (see VK_RT_Fsr2Possible).
+    // r_fsr 2 now pulls the prepass up on its own, so reaching here means the hardware
+    // cannot run it at all (no independentBlend) rather than "RT is off".
     // Tear the context down rather than idle: it holds 60-250 MB of device memory, and a
-    // history built before RT was toggled is worthless once it comes back anyway.
-    if (!r_useRayTracing.GetBool())
+    // history built before the prepass went away is worthless once it comes back anyway.
+    if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
         if (!warned)
         {
             warned = true;
-            common->Warning("VK RT FSR2: r_fsr 2 needs r_useRayTracing 1 — motion vectors come from the ray-tracing "
-                            "G-buffer prepass; falling back to the bilinear resolve (set r_fsrJitter 0 too, or the "
-                            "jitter shimmers with nothing to reconcile it)");
+            common->Warning("VK RT FSR2: no G-buffer prepass, so no motion vectors — r_fsr 2 falls back to the "
+                            "bilinear resolve (jitter stands down with it)");
         }
         VK_RT_Fsr2DestroyContext();
         return false;
@@ -1076,10 +1109,10 @@ static bool VK_RT_Fsr2Ready(void)
         return false;
 
     const uint32_t wantFlags = VK_RT_Fsr2WantedFlags();
-    if (s_fsr2CtxValid && (s_fsr2CtxRender.width != vk.renderExtent.width ||
-                           s_fsr2CtxRender.height != vk.renderExtent.height ||
-                           s_fsr2CtxDisplay.width != vk.swapchainExtent.width ||
-                           s_fsr2CtxDisplay.height != vk.swapchainExtent.height || s_fsr2CtxFlags != wantFlags))
+    if (s_fsr2CtxValid &&
+        (s_fsr2CtxRender.width != vk.renderExtent.width || s_fsr2CtxRender.height != vk.renderExtent.height ||
+         s_fsr2CtxDisplay.width != vk.swapchainExtent.width || s_fsr2CtxDisplay.height != vk.swapchainExtent.height ||
+         s_fsr2CtxFlags != wantFlags))
     {
         VK_RT_Fsr2DestroyContext();
         s_fsr2CreateFailed = false; // a different configuration deserves a fresh try
@@ -1191,9 +1224,9 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 
     // Resource dimensions are the images' real (display) size; renderSize below is
     // the sub-rect FSR2 should actually read.
-    dd.color = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrScene[frameIdx].image, vkRT.hdrScene[frameIdx].view, dispW,
-                                       dispH, VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrScene",
-                                       FFX_RESOURCE_STATE_COMPUTE_READ);
+    dd.color =
+        ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrScene[frameIdx].image, vkRT.hdrScene[frameIdx].view, dispW, dispH,
+                                VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrScene", FFX_RESOURCE_STATE_COMPUTE_READ);
     dd.depth = ffxGetTextureResourceVK(&s_fsr2Ctx, vk.depthImage, vk.depthSampledView, dispW, dispH, vk.depthFormat,
                                        L"depth", FFX_RESOURCE_STATE_COMPUTE_READ);
     dd.motionVectors = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.motionVectors[frameIdx].image,
@@ -1313,7 +1346,8 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 
     VkImageMemoryBarrier depthRestore = depthToRead;
     depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    depthRestore.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    depthRestore.dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
     depthRestore.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
@@ -1322,6 +1356,10 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 
 #else // !DHEWM3_FSR2
 
+bool VK_RT_UpscaleNeedsMotionVectors(void)
+{
+    return false;
+}
 static bool VK_RT_Fsr2Possible(void)
 {
     return false;
@@ -1406,6 +1444,18 @@ bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
         return false;
     }
     if (!VK_RT_UpscaleActive() || vk.renderExtent.width == 0)
+        return false;
+
+    // Only FSR 2 consumes the jitter.  Without a temporal reprojection to undo it the
+    // offset is just a whole-image translation of +-0.5 RENDER pixels — +-1.5 display
+    // pixels at Ultra Performance — so every other resolve path visibly shakes.
+    //
+    // Ask whether FSR 2 will actually run, not whether r_fsr requested it: r_fsrDebug 4, an
+    // unsupported device, a failed context and hardware with no independentBlend (so no
+    // G-buffer prepass and no motion vectors) all fall back to the bilinear resolve with
+    // r_fsr still 2.  Fsr2Possible is deliberately side-effect free, which this frontend
+    // caller needs.
+    if (!VK_RT_Fsr2Possible())
         return false;
 
 #if defined(DHEWM3_FSR2)
@@ -1496,6 +1546,7 @@ void VK_RT_UpdateRenderExtent(void)
 {
     const VkExtent2D old = vk.renderExtent;
 
+
     // Clamp low so a fat-fingered cvar can't collapse the scene to the 64px floor.
     float scale = VK_RT_FsrTargetScale();
     if (scale < 0.3f)
@@ -1554,6 +1605,12 @@ void VK_RT_UpdateRenderExtent(void)
     vk.renderExtent.width = wn;
     vk.renderExtent.height = hn;
 
+    // U3a: the FSR mip bias is a function of the extent just committed, so request the
+    // rebuild after the write.  Queued, not done here — VK_RB_DrawView calls this with a
+    // command buffer open on the 2D overlay view.
+    if (wn != old.width || hn != old.height)
+        VK_Image_RequestSamplerRebuild();
+
     // VK_RT_DispatchUpscale is only reached while the extents differ, so it cannot be
     // the one that notices "we are back at native" or "r_fsr left 2".  Free FSR 2's
     // internal resources here instead — they are 60-250 MB of VRAM doing nothing.
@@ -1593,9 +1650,9 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
     const int mode = r_fsr.GetInteger();
     if (mode != s_fsrLoggedMode)
     {
-        const char *what = fsr2 ? "AMD FidelityFX Super Resolution 2"
-                                : (VK_RT_Fsr1Active() ? "AMD FidelityFX Super Resolution 1 (EASU + RCAS)"
-                                                      : "bilinear resolve");
+        const char *what =
+            fsr2 ? "AMD FidelityFX Super Resolution 2"
+                 : (VK_RT_Fsr1Active() ? "AMD FidelityFX Super Resolution 1 (EASU + RCAS)" : "bilinear resolve");
         common->Printf("VK RT Upscale: r_fsr %d -> %s, render %ux%u -> display %ux%u, sharpness %.2f\n", mode, what,
                        vk.renderExtent.width, vk.renderExtent.height, vk.swapchainExtent.width,
                        vk.swapchainExtent.height, r_fsrSharpness.GetFloat());

@@ -79,9 +79,9 @@ static idCVar r_rtGIFalloffMode("r_rtGIFalloffMode", "1", CVAR_RENDERER | CVAR_I
 
 // 1.0 is Doom's own light volume;
 // Also sizes the sphere pre-cull, which must not clip the falloff.
-static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.5", CVAR_RENDERER | CVAR_FLOAT,
+static idCVar r_rtGIFalloffReach("r_rtGIFalloffReach", "1.0", CVAR_RENDERER | CVAR_FLOAT,
                                  "How far past the light's box a point light reaches, in box-normalised units. "
-                                 "1.0 = stop at the box face (vanilla containment), 1.5 = default throw");
+                                 "1.0 = stop at the box face (vanilla containment), 1.5 = initial RT throw");
 
 static idCVar r_rtReflAmbientScale(
     "r_rtReflAmbientScale", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,

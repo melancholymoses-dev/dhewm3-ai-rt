@@ -23,6 +23,15 @@ Code release.
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
+// Will the depth prepass run the G-buffer pipeline this frame — i.e. are gbufNormal,
+// gbufAlbedo and motionVectors written rather than left at their clear values?
+//
+// The single predicate every consumer must ask.  Motion vectors are an upscaler input
+// that happens to be produced by the RT prepass, so four call sites each spelled out
+// their own version of this and one of them drifted: the FSR jitter kept firing with
+// r_useRayTracing 0, shifting the frustum with nothing to reproject it away.
+bool VK_GBufferPrepassActive(void);
+
 // Destroy all G-buffer resources.  Safe to call even if never initialized.
 // Called from VK_RT_ShutdownTonemap, after the HDR framebuffers that reference
 // gbufNormal[i].view have been destroyed.

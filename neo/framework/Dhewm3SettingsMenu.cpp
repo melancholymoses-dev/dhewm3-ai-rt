@@ -2508,10 +2508,14 @@ struct RTCVars
     idCVar *fsr = nullptr;
     idCVar *fsrRenderScale = nullptr;
     idCVar *fsrSharpness = nullptr;
-    idCVar *fsrDebug = nullptr;
     idCVar *fsrJitter = nullptr;
-    idCVar *fsrMotionScale = nullptr;
     idCVar *fsrQuality = nullptr;
+    idCVar *fsrMipBias = nullptr;
+    idCVar *fsrMipBiasOffset = nullptr;
+
+    // Texture filtering — same VkSampler as the mip bias, so they tune together.
+    idCVar *imageAnisotropy = nullptr;
+    idCVar *vkBumpMipBias = nullptr;
 };
 
 static RTCVars rtCVars;
@@ -2594,10 +2598,12 @@ static void InitRTOptionsMenu()
     rtCVars.fsr = cvarSystem->Find("r_fsr");
     rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
     rtCVars.fsrSharpness = cvarSystem->Find("r_fsrSharpness");
-    rtCVars.fsrDebug = cvarSystem->Find("r_fsrDebug");
     rtCVars.fsrJitter = cvarSystem->Find("r_fsrJitter");
-    rtCVars.fsrMotionScale = cvarSystem->Find("r_fsrMotionScale");
     rtCVars.fsrQuality = cvarSystem->Find("r_fsrQuality");
+    rtCVars.fsrMipBias = cvarSystem->Find("r_fsrMipBias");
+    rtCVars.fsrMipBiasOffset = cvarSystem->Find("r_fsrMipBiasOffset");
+    rtCVars.imageAnisotropy = cvarSystem->Find("image_anisotropy");
+    rtCVars.vkBumpMipBias = cvarSystem->Find("r_vkBumpMipBias");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2670,6 +2676,7 @@ static void DrawRTOptionsMenu()
         RTCheckbox("Temporal Denoising", rtCVars.rtDenoise);
         ImGui::EndTable();
     }
+
     // ---- Point light falloff -------------------------------------------------
     // Deliberately outside the per-feature disables: one model feeds GI,
     // reflections and volumetrics, so it must stay reachable with GI off.
@@ -2683,9 +2690,6 @@ static void DrawRTOptionsMenu()
         RTSliderFloat("Reach (1.0 = stop at light box)", rtCVars.rtGIFalloffReach, 1.0f, 3.0f, "%.2f");
         ImGui::EndTable();
     }
-    ImGui::TextDisabled("Shapes 1-2 trade the flat core for a gradient and read much darker:\n"
-                        "raise GI Strength and the volumetric class gains to compare fairly.\n"
-                        "Reach past 1.0 adds throw, and with it a low ambient floor.");
 
     // ---- Shadow settings -----------------------------------------------------
     const bool shadowsOn = rtCVars.rtShadows && rtCVars.rtShadows->GetBool();
@@ -2700,10 +2704,7 @@ static void DrawRTOptionsMenu()
         RTCheckbox("Depth-Aware Shadow Blur", rtCVars.rtShadowBlurDepthAware);
         RTSliderFloat("Shadow Ray Bias", rtCVars.rtShadowRayBias, 0.0f, 2.0f);
         RTSliderFloat("Shadow Bias Distance Margin", rtCVars.rtShadowBiasErrMargin, 1.0f, 32.0f, "%.1f");
-        ImGui::TextDisabled("Distance margin scales the bias floor that stops far geometry\n"
-                            "self-shadowing (depth->world error grows as distance squared).\n"
-                            "Raise it if distant structures flicker; debug overlay 9 turns\n"
-                            "white once the bias reaches a pixel and shadows start detaching.");
+
         ImGui::TableNextColumn();
         RTSliderFloat("Soft Shadow Radius Scale", rtCVars.rtShadowSoftRadiusScale, 0.0f, 1.0f);
         RTSliderFloat("Flashlight Bias (units)", rtCVars.rtFlashlightBias, 0.0f, 50.0f, "%.1f");
@@ -2856,11 +2857,13 @@ static void DrawRTOptionsMenu()
     ImGui::EndDisabled(); // !autoRelightOn
 
     ImGui::EndDisabled(); // !rtEnabled
+}
 
-    // ---- Resolution scaling (docs/plans/20260918_fsr_upscaling.md) -----------
-    // Outside the ray-tracing disable: the 3D scene renders into a sub-rect of
-    // the display-sized targets whether or not RT is on.  RT just benefits most,
-    // since nearly all of its cost is a function of pixel count.
+// Its own tab, and deliberately without the !rtEnabled disable: the 3D scene renders
+// into a sub-rect of the display-sized targets whether or not RT is on.
+// docs/plans/20260918_fsr_upscaling.md
+static void DrawUpscalingOptionsMenu()
+{
     ImGui::Spacing();
     ImGui::SeparatorText("Resolution Scaling / Upscaling");
 
@@ -2882,35 +2885,43 @@ static void DrawRTOptionsMenu()
     ImGui::BeginDisabled(fsrMode == 0);
     RTSliderFloat("Sharpness (RCAS)", rtCVars.fsrSharpness, 0.0f, 1.0f, "%.2f");
     ImGui::EndDisabled(); // fsrMode == 0
-    if (fsrMode == 2)
+
+    ImGui::BeginDisabled(fsrMode != 2);
+    RTCheckbox("Sub-pixel Jitter (FSR 2 only — other modes cannot reproject it away)", rtCVars.fsrJitter);
+    ImGui::EndDisabled(); // fsrMode != 2
+
+    // Same VkSampler as the mip bias below, so they tune against each other: a negative
+    // bias buys sharpness by moving toward the aliasing edge, anisotropy pays for it.
+    ImGui::Spacing();
+    ImGui::SeparatorText("Texture Filtering");
+
+    // image_anisotropy holds the ratio (1/2/4/8/16), not an index, so not RTCombo.
+    if (rtCVars.imageAnisotropy != nullptr)
     {
-        ImGui::TextDisabled("FSR 2 is temporal: it reconstructs from motion vectors and a jittered\n"
-                            "sample grid, so leave Sub-pixel Jitter on for normal play. Watch for\n"
-                            "light bleeding into dark corridors after panning off a bright source -\n"
-                            "debug overlay 5 marks it.");
-    }
-    else
-    {
-        ImGui::TextDisabled("FSR 1 is a spatial filter with no temporal history, so it sharpens the\n"
-                            "ray-traced noise floor along with the image. Keep sharpness low if it\n"
-                            "crawls. No mode does anything at Render Scale 1.0.");
+        static const char *const anisoNames[] = {"Off (1x)", "2x", "4x", "8x", "16x"};
+        static const int anisoValues[] = {1, 2, 4, 8, 16};
+        const int cur = rtCVars.imageAnisotropy->GetInteger();
+        int idx = 0;
+        for (int i = 0; i < IM_ARRAYSIZE(anisoValues); i++)
+            if (anisoValues[i] <= cur)
+                idx = i;
+        if (ImGui::Combo("Anisotropic Filtering", &idx, anisoNames, IM_ARRAYSIZE(anisoNames)))
+            rtCVars.imageAnisotropy->SetInteger(anisoValues[idx]);
+        AddCVarOptionTooltips(*rtCVars.imageAnisotropy);
     }
 
-    // Left enabled under FSR 2 on purpose: toggling it is the A/B that separates a
-    // flickering screen-space input from an unstable upscaler history.
-    RTCheckbox("Sub-pixel Jitter (Halton, needs Render Scale < 1.0)", rtCVars.fsrJitter);
-    RTSliderFloat("Motion Overlay Scale (render pixels that saturate mode 7)", rtCVars.fsrMotionScale, 1.0f, 64.0f,
-                  "%.0f");
+    RTCheckbox("Render-Scale Mip Bias (sharpens distant detail below 1.0 scale)", rtCVars.fsrMipBias);
+    const bool mipBiasOn = rtCVars.fsrMipBias && rtCVars.fsrMipBias->GetBool();
+    ImGui::BeginDisabled(!mipBiasOn);
+    RTSliderFloat("Mip Bias Offset (on top of log2(scale); 0 = exact, negative = sharper)", rtCVars.fsrMipBiasOffset,
+                  -2.0f, 0.0f, "%.2f");
+    ImGui::EndDisabled(); // !mipBiasOn
 
-    static const char *const fsrDebugModes[] = {"Off",
-                                                "1 - resolve border (green = bilinear, cyan = FSR 1)",
-                                                "2 - per-view console log",
-                                                "3 - unused",
-                                                "4 - point magnify (no reconstruction, honest A/B)",
-                                                "5 - FSR 2 light bleed (red = history lifted the black floor)",
-                                                "6 - EASU only, no RCAS sharpening",
-                                                "7 - motion vectors (hue = direction, value = speed)"};
-    RTCombo("Upscale Debug Overlay", rtCVars.fsrDebug, fsrDebugModes, IM_ARRAYSIZE(fsrDebugModes));
+    // Range reaches 4 because the render-scale bias is SUBTRACTED from this same
+    // sampler: at Ultra Performance that is -2.58, so anything under ~2.6 is still a
+    // net negative bias on normal maps and the knob appears to do nothing.
+    RTSliderFloat("Bump Map Mip Bias (positive = blur normal maps, kills specular sparkle)", rtCVars.vkBumpMipBias,
+                  0.0f, 4.0f, "%.2f");
 }
 
 // ---------------------------------------------------------------------------
@@ -3497,6 +3508,13 @@ void Com_DrawDhewm3SettingsMenu()
         {
             BeginTabChild("rtchild");
             DrawRTOptionsMenu();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Upscaling"))
+        {
+            BeginTabChild("upscalechild");
+            DrawUpscalingOptionsMenu();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }

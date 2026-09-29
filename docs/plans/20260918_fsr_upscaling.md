@@ -350,13 +350,8 @@ blurry, and FSR2 has less high-frequency detail to reconstruct than it should.
 The standard bias is `log2(renderWidth / displayWidth) - 1.0` (≈ −1.58 at Quality, −2.0 at
 Performance). Two options:
 
-- **Recreate samplers on scale change.** Add the FSR bias to the `lodBias` computation and
-  bump `VK_Image_ChangeCounter()` so `vk_material_table.cpp`'s bindless descriptors refresh
-  — that counter exists for exactly this class of problem (see `vk_image.h`). Costs a
-  device-idle sampler rebuild whenever `r_fsrQuality` changes, which is a menu action, not
-  a hot path.
-- Defer to U5 and ship U0–U4 at the default bias. Acceptable; it is a sharpness deficit,
-  not a correctness bug.
+✅ Resolved in U3a by recreating samplers on a scale change — see §9 U3a for what the two
+options above got wrong about the GUI and the bindless descriptors.
 
 Recommend the first, implemented in U5, because the second makes U3's image-quality
 comparison against native resolution unfair in FSR2's disfavour and may produce a wrong
@@ -523,10 +518,11 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 | `r_fsrDebug` | `0` | §7. | ✅ U0 |
 | `r_fsrQuality` | `0` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). Default changed from the `1` written here — see §14 S6. | ✅ U3 |
 | `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`, 1 = sharpest. Mapped to `FsrRcasCon`'s attenuation-in-stops as `2·(1−s)`. Will also feed `enableSharpening`/`sharpness` on the FSR2 path. | ✅ U1 / U3 |
-| `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. `r_fsr 2` needs it; default moved `0` → `1` at U3. Deliberately **not** forced — see §14 S3. | ✅ U2 / U3 |
+| `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. **Ignored unless `r_fsr 2`** as of U3a — nothing else reprojects it away. Reverses §14 S3. | ✅ U2 / U3 |
 | `r_fsrMotionScale` | `16` | Render pixels of motion that saturate the `r_fsrDebug 7` overlay. | U2 |
 | `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
-| `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. | U5 |
+| `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) + r_fsrMipBiasOffset` to every `TF_DEFAULT` sampler. Forces a sampler rebuild on change. | ✅ U3a |
+| `r_fsrMipBiasOffset` | `-1.0` | The constant term. FSR 2's recommendation; sweep toward `0` under `r_fsr 0`/`1`, which have no temporal history to absorb the extra aliasing. | ✅ U3a |
 
 Changing `r_fsr`, `r_fsrQuality` or `r_fsrRenderScale` requires a device-idle resource
 rebuild — route them through the same path `VK_RT_ResizeTonemap` already uses and treat
@@ -691,7 +687,7 @@ Detailed change list in §13.
   test proves the overlay and the MV field agree with each other, not that either matches
   what `ffxFsr2ContextDispatch` expects.
 
-### U3 — FSR 2 integration  🟡 landed 2026-09-24, runs well; gate blocked on U3a
+### U3 — FSR 2 integration  🟡 landed 2026-09-24; gate met 2026-09-28
 `r_fsr 2` drives the vendored FSR 2.2.1 library from `VK_RT_DispatchFsr2` in
 `vk_upscale.cpp`. Flags as planned: `HIGH_DYNAMIC_RANGE | DEPTH_INFINITE | AUTO_EXPOSURE`,
 `DEPTH_INVERTED` off, `DEBUG_CHECKING` added when `r_fsrDebug >= 2`. Context lifetime is
@@ -703,19 +699,21 @@ moves, the flags change, or the scale returns to 1.0. Detailed change list in §
   one** (pillar 2 — a gate, not a nice-to-have; use `r_fsrDebug 5`); RT total still ≈ 5.5 ms
   and FSR2's own dispatch ≤ 1.5 ms at 1080p; builds and runs clean on Linux/RADV as well as
   Windows.
-- **Status 2026-09-25:** builds and plays on Windows. Image quality good but soft at distance
-  (→ U3a). Minor ghosting on fast movement (→ U4). Perf not yet measured; Linux not tried.
+- **Status 2026-09-28:** builds and plays on Windows, stable with and without RT (U3c).
+  Sharpness at distance is a knob, not a defect — see U3a's trade-off. Ghosting on fast
+  movement remains, and animated characters are the worst of it (U3c's open item, then U4).
+  Perf not yet measured; Linux not tried.
 
-### U3a — texture LOD bias  🔴 blocks the U3 gate
+### U3a — texture LOD bias  🟡 landed 2026-09-28; works, but the trade-off is real
 
 Pulled forward from U5. §4 predicted this would skew the U3 verdict; it did — first gameplay
 at Quality read "watercolor at distance, sharp up close", the signature of mip selection done
 in render-res footprints. RCAS helps a little because it sharpens what survived; it cannot
 restore detail the sampler never fetched.
 
-`bias = log2(renderW / displayW) - 1.0`, clamped to ±`maxSamplerLodBias`.
+`bias = log2(renderW / displayW) + r_fsrMipBiasOffset`, clamped to ±`maxSamplerLodBias`.
 
-| scale | source | bias |
+| scale | source | bias (offset −1.0) |
 |---|---|---|
 | 1.0 | native | 0 (no FSR term) |
 | 1/1.5 | Quality | −1.58 |
@@ -723,29 +721,135 @@ restore detail the sampler never fetched.
 | 1/2.0 | Performance | −2.00 |
 | 1/3.0 | Ultra Perf | −2.58 |
 
-Samplers are baked per image at upload, so the bias cannot be a uniform: it needs a rebuild
-when the scale changes. That is a menu action, not a hot path.
+| File | Change |
+|---|---|
+| `vk_upscale.cpp` | `r_fsrMipBias` (bool, `1`), `r_fsrMipBiasOffset` (float, `-1.0`) |
+| `vk_image.cpp` | `VK_FsrLodBias()`, `VK_ClampLodBias()`, `VK_BuildSamplerInfo2D()` shared by upload and rebuild; `vkImageData_t::mipLevels` |
+| `vk_image.cpp` | `VK_Image_RequestSamplerRebuild()` sets a flag; `VK_Image_ApplyPendingSamplerRebuild()` does the device-idle rebuild and bumps `s_imageChangeCounter` |
+| `vk_upscale.cpp` | request the rebuild from `VK_RT_UpdateRenderExtent` — extent-changed branch, plus `IsModified` on the two new cvars |
+| `vk_backend.cpp` | apply it beside `VK_Image_DrainGarbage`, past the fence and before the command buffer opens |
+| `Image_init.cpp` | `ChangeTextureFilter`'s Vulkan branch requests a rebuild instead of returning — `image_lodbias`/`image_anisotropy` were dead on this backend |
+| `Dhewm3SettingsMenu.cpp` | both cvars under Resolution Scaling |
+
+Hazard resolutions:
+- **Sampler still referenced by a command buffer.** Not a device idle alone — that does not
+  cover a *recording* buffer, and `VK_RT_UpdateRenderExtent` runs per `RC_DRAW_VIEW`, so the
+  2D overlay view reaches it with one open. Hence the request/apply split.
+- **The 2D GUI.** The plan's `mipLevels == 1` reasoning is wrong: `CalcMipLevels` is
+  unconditional on dimensions, so HUD images are mipped here even though GL gives `TF_LINEAR`
+  a non-mipmap min filter. The FSR term is instead gated on `img->filter == TF_DEFAULT`,
+  which is the engine's own mipmapped-world-texture marker.
+- **Bindless descriptors.** Nothing to do: `RebuildBindlessDescriptors` binds
+  `vkRT.matSampler`, never `vkd->sampler`, and RT shaders have no derivatives so they use
+  explicit-LOD fetches. The counter is bumped anyway.
+
+- **Exit met:** distant geometry reads sharp rather than watercolour; `image_lodbias` works;
+  clean `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged. Console prints the achieved bias and
+  sampler count on every rebuild.
+
+**The trade-off (measured 2026-09-28).** A negative bias buys back detail and creates static
+moiré on tiling high-contrast surfaces — floor gratings first. Detail costs samples; a LOD
+bias adds none, it only selects which frequencies alias. At 1/3 scale one sample per 3×3
+display pixels cannot support −2.58, so the choice is blur, moiré, or a point between.
+
+| test | result |
+|---|---|
+| `r_fsrMipBias 0` | fringes gone, distance blurry |
+| offset `0` / `+1.0` (total −1.58 / −0.58) | monotonically less; residual near-camera at −0.58 |
+| `image_anisotropy 16` | lines sharper, **fringes unchanged** |
+| `r_skipBump 1` (flat normal) | unchanged |
+| `r_skipDiffuse` / `r_skipSpecular` alone | unchanged — both maps carry the bars |
+| `r_skipAmbient 1` | unchanged → not the additive `_fx` stage |
+| `r_skipInteractions 1` | black → the fringes are the interaction pass |
+| `r_useRayTracing 0` | unchanged → not RT |
+
+Flat normals make `diffuseMap·NdotL` and `specMap·specLookup(NdotH)` linear in the texture, so
+no BRDF prefilter (Toksvig/LEAN) can help — this is plain minification aliasing. Anisotropy
+buys 1–2 LOD levels and `mipLodBias` is added *after* aniso adjusts the selection, so it
+cannot close a −2.58 deficit; that is why it sharpened without fixing anything.
+
+Only FSR 2 breaks the trade-off, by raising the real sample count. Under `r_fsr 0`/`1` the
+honest bias is ~0.
+
+- **Recommended setting for Doom 3's art: `r_fsrMipBias 0`.** Tiling grates and tread plate
+  are everywhere and the moiré reads worse than the blur. Default left at `1`; flipping it is
+  one character in `vk_upscale.cpp` if we commit.
+- Deferred, not blocking: gate the −1.0 offset on `r_fsr 2` and add an `r_fsrMipBiasFloor`
+  so aggressive presets cannot reach −2.58. Worth doing only if we keep the bias on.
+- `r_vkBumpMipBias` stacks *additively* with the FSR term, so `4` at Ultra Performance is a
+  net **+1.42**, not +4. A blur-the-normals test at that value proves nothing; use
+  `r_skipBump 1`.
+
+### U3b — distance-correct LOD for ray-traced texture fetches  🔵 real, but not blocking
+
+**Not the grating artifact.** That was U3a's own bias (see the evidence table above);
+`r_useRayTracing 0` left it untouched. U3b is a separate, independently confirmed defect that
+no longer gates U3. Promote it when RT indirect terms start looking noisy at range.
+
+The RT passes never see any sampler cvar, and never select a mip by distance:
+
+| Fact | Where |
+|---|---|
+| Every RT material fetch is implicit-LOD `texture()`; **zero** `textureLod` calls across 8 sites | `rt_material.glsl`, `gi_ray.rahit`, `reflect_ray.rahit`, `shadow_ray.rahit`, `glass_probe.rahit`, `vol_march.comp`, `vol_froxel_fill.comp`, `gi_probe_resolve.comp` |
+| Ray-tracing stages have no derivatives, so there is no footprint to derive a LOD from — the fetch is not distance-correct at any range | GLSL: implicit LOD is a fragment-stage facility |
+| The bindless sampler is bias 0, aniso off, `maxLod = VK_LOD_CLAMP_NONE` | `vk_material_table.cpp:281-292` |
+| Bindless descriptors bind `vkRT.matSampler`, never the per-image sampler, so U3a's rebuild provably cannot reach them | `vk_material_table.cpp:198` |
+
+So GI bounce albedo, reflections, emissive, shadow alpha-test and both volumetric cookie
+paths all read mip 0 at any distance. That is the maximum-aliasing choice, no sampler cvar
+can reach it, and it worsens as the render scale drops because the indirect terms are
+computed at render resolution.
+
+The standard fix is **ray cones**: carry a cone width along the ray, widen it by
+`2·distance·tan(θ/2)` plus a surface-curvature term, convert to a texel footprint against the
+triangle's UV area, and call `textureLod`. Ray differentials are the more accurate
+alternative and cost more state per ray.
+
+- **Exit:** GI/reflection albedo at range visibly tracks the mip chain instead of mip 0;
+  no new cost above ~0.2 ms.
+- Narrow with `r_rtGI`, `r_rtReflections`, `r_rtAO` individually before building anything.
+
+Separate finding, parked: `interaction.frag:86` normalises the bump fetch one line after
+reading it, discarding the `length(N)` Toksvig measure our box-filtered `R8G8B8A8_UNORM` mip
+chain already computes. Not the grating bug — `r_skipBump 1` cleared normals — but a valid
+specular-AA opportunity if sparkle appears on curved or glossy surfaces.
+
+### U3c — jitter gate + motion vectors off the RT path  🟡 landed 2026-09-28
+
+Two producer/consumer gates disagreed, so `r_fsr 2` with `r_useRayTracing 0` rendered through
+a jittered frustum and resolved on the bilinear path: a ±0.5 render-pixel whole-image
+translation every frame (±1.5 display pixels at Ultra Perf). Four paths tripped it —
+`r_useRayTracing 0`, `r_fsrDebug 4`, an unsupported device, a failed context.
 
 | File | Change |
 |---|---|
-| `vk_image.cpp:758` | add the FSR term to `lodBias`; same `maxLodBias` clamp |
-| `vk_image.cpp` | `VK_Image_RebuildSamplers()` — walk `globalImages`, recreate `vkd->sampler` only, bump `s_imageChangeCounter` |
-| `vk_image.cpp:806` | `VK_Image_UploadCubemap` takes the same term |
-| `vk_upscale.cpp:1537` | call the rebuild from `VK_RT_UpdateRenderExtent`'s extent-changed branch |
-| `vk_material_table.cpp` | confirm the change counter already forces a bindless refresh |
+| `vk_gbuffer.cpp/.h` | **`VK_GBufferPrepassActive()`** — the one predicate: `gbufferSupported && pipeline && (r_useRayTracing ‖ VK_RT_UpscaleNeedsMotionVectors())` |
+| `vk_upscale.cpp` | capability/demand split: `Fsr2Capable()` (no extent term) → `UpscaleNeedsMotionVectors() = Capable && UpscaleActive()` → `Fsr2Possible() = Capable && gbuffer capability` |
+| `vk_upscale.cpp` | `VK_RT_GetFsrJitter` asks `VK_RT_Fsr2Possible()`, not `r_fsr == 2` |
+| `vk_upscale.cpp` | `Fsr2Possible`, `Fsr2Ready` teardown, `VK_RT_MotionDebugActive` all ask the shared predicate |
+| `vk_backend.cpp` | `VK_RB_FillDepthBuffer`'s `useGBuffer` is now `VK_GBufferPrepassActive()` |
 
-Three hazards, in order of likelihood:
-- **Destroying a sampler still referenced by in-flight command buffers.** Needs a device idle
-  or the deferred-destroy path, not a bare `vkDestroySampler`.
-- **The 2D GUI shares these samplers** and renders at display resolution, so it would inherit
-  a negative bias it must not have. Expected to be moot — HUD images are mostly `mipLevels
-  == 1`, where `mipLodBias` is inert — but verify rather than assume.
-- **Stale bindless descriptors after the rebuild** — see the level-transition DEVICE_LOST
-  class of bug; validate against `backendData`.
+Motion vectors are an upscaler input, so `r_fsr 2` now pulls the prepass up on its own.
+Safe because the G-buffer images were never RT-gated (`vk.gbufferSupported` alone), the
+pipeline layout is a UBO + 3 ordinary samplers with no acceleration structure, and
+`motionVectors`' barriers are self-contained in `VK_RT_DispatchFsr2`. Cost with RT off is two
+unread attachment writes in a depth-bound pass; an MV-only pipeline variant is not worth a
+permutation until profiling says so.
 
-- **Exit:** at Quality, distant geometry reads sharp rather than watercolour with
-  `r_fsrSharpness` back at its 0.5 default; `image_lodbias` still works; no validation errors
-  on a `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged.
+- **Exit met:** `r_fsr 2` + `r_useRayTracing 0` is stable and builds a real history;
+  `r_fsrDebug 7` draws in that config. Verified in-game 2026-09-28.
+- Reverses §14 S3's "kept switchable": `r_fsrJitter 0` under FSR 2 remains the A/B, but
+  jitter now stands down automatically wherever nothing reprojects it.
+- **The extent term is load-bearing in one direction only.** `Fsr2Possible` feeds
+  `VK_RT_ResolvePathReady`, which decides whether to *reduce* the extent — an extent test
+  there means "reduce only if already reduced" and latches at native. Demand carries it;
+  capability must not.
+- Review follow-ups landed with it: `image_filter` was inert on Vulkan (`TF_DEFAULT` now
+  translates `globalImages->textureMinFilter/MaxFilter`, since GL packs min+mipmap into one
+  enum); anisotropy now gated to `TF_DEFAULT` like GL; sampler rebuilds coalesce over 6
+  frames so a slider drag is one `vkDeviceWaitIdle`, not one per tick.
+- Still open: skinned/deform motion vectors. Characters reproject from the entity transform
+  only, so animated limbs lose their history — the "enemies look too smooth" artifact.
 
 ### U4 — reactive mask, T&C mask, denoiser retune  🔴
 `preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,
