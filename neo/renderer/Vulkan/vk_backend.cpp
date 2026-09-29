@@ -27,6 +27,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_gbuffer.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 #include <cmath>
@@ -2457,12 +2458,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
 
     const VkIndexType idxType = (sizeof(glIndex_t) == 4) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
 
-    // Stage 3.5: write the G-buffer normal/F0 attachment instead of the depth-only
-    // pipelines when RT is active and the hardware supports it (see Step 0 in
-    // docs/plans/gbuffer_normal_pass.md). Both new pipelines are created together in
-    // VK_InitPipelines, so checking one is enough to know the other exists too.
-    const bool useGBuffer =
-        r_useRayTracing.GetBool() && vk.gbufferSupported && vkPipes.gbufferPipeline != VK_NULL_HANDLE;
+    // Stage 3.5: write the G-buffer attachments instead of the depth-only pipelines (see
+    // Step 0 in docs/plans/gbuffer_normal_pass.md). RT wants gbufNormal/gbufAlbedo; FSR 2
+    // wants motionVectors, which is why this is no longer keyed on r_useRayTracing alone.
+    const bool useGBuffer = VK_GBufferPrepassActive();
     int gbufBumpFound = 0, gbufBumpFallback = 0, gbufSpecFound = 0, gbufSpecFallback = 0, gbufSurfCount = 0;
     // gi_albedo_target.md: albedo resolution breadcrumb, opaque-path only (the clip
     // path's diffuse always resolves — it's the material's alpha-test stage).

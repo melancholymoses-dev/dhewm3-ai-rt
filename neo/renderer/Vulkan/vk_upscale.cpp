@@ -32,6 +32,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
 #include "renderer/Vulkan/vk_image.h"
+#include "renderer/Vulkan/vk_gbuffer.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -97,9 +98,9 @@ idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
 idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
-                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Ignored unless r_fsr is 2 — "
-                   "nothing else reprojects it away, so it reads as a whole-screen shake.  FSR 2 needs it and goes "
-                   "blurry without it; 0 stays available as the A/B.");
+                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Ignored unless FSR 2 is "
+                   "actually resolving this frame — nothing else reprojects it away, so it reads as a whole-screen "
+                   "shake.  FSR 2 needs it and goes blurry without it; 0 stays available as the A/B.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
 idCVar r_fsrMipBias("r_fsrMipBias", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -774,18 +775,18 @@ bool VK_RT_MotionDebugActive(void)
         vkRT.motionVectors[vk.currentFrame].image == VK_NULL_HANDLE)
         return false;
 
-    // The attachment is only ever written by the G-buffer prepass, which stands down
-    // when r_useRayTracing is off (VK_RB_FillDepthBuffer).  Without this the overlay
-    // would happily paint the whole screen with the cleared zero field — a black frame
-    // that reads as "motion vectors are broken" rather than "ray tracing is off".
-    if (!r_useRayTracing.GetBool())
+    // The attachment is only ever written by the G-buffer prepass.  Without this the
+    // overlay would happily paint the whole screen with the cleared zero field — a black
+    // frame that reads as "motion vectors are broken" rather than "nothing produced them".
+    // r_fsrDebug 7 is itself not r_fsr 2, so it cannot pull the prepass up on its own.
+    if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
         if (!warned)
         {
             warned = true;
-            common->Warning("VK RT Upscale: r_fsrDebug 7 needs r_useRayTracing 1 — motion vectors are written by "
-                            "the ray-tracing G-buffer prepass; overlay disabled");
+            common->Warning("VK RT Upscale: r_fsrDebug 7 needs the G-buffer prepass — set r_useRayTracing 1 (or run "
+                            "r_fsr 2, which pulls the prepass up for its own motion vectors); overlay disabled");
         }
         return false;
     }
@@ -1027,19 +1028,27 @@ static bool VK_RT_Fsr2Requested(void)
     return r_fsr.GetInteger() == 2 && r_fsrDebug.GetInteger() != 4;
 }
 
+// Everything FSR 2 needs *except* the motion vectors, so VK_GBufferPrepassActive can ask
+// whether to run the prepass for the upscaler's sake without the two recursing.  This is
+// what decouples motion vectors from r_useRayTracing: FSR 2 asking for them is now reason
+// enough to produce them.
+bool VK_RT_UpscaleNeedsMotionVectors(void)
+{
+    return VK_RT_Fsr2Requested() && vk.fsr2Supported && !s_fsr2CreateFailed;
+}
+
 // Could FSR 2 resolve this frame?  Side-effect free, unlike VK_RT_Fsr2Ready — the
 // render-extent fallback asks this *before* the extent is settled and must not trigger
 // a context build at the old size.
 //
-// r_useRayTracing gates it because the motion attachment is written only by the G-buffer
-// prepass, which stands down with RT (VK_RB_FillDepthBuffer).  Feeding FSR2 that untouched
-// field would claim every pixel is static, so the history never reprojects and the whole
-// frame ghosts on camera motion — a failure that looks like a bad FSR2 setup rather than a
-// missing prepass.  Same reason VK_RT_MotionDebugActive refuses to draw.
+// VK_GBufferPrepassActive gates it because the motion attachment is written only by that
+// prepass.  Feeding FSR2 an untouched field would claim every pixel is static, so the
+// history never reprojects and the whole frame ghosts on camera motion — a failure that
+// looks like a bad FSR2 setup rather than a missing prepass.  Same reason
+// VK_RT_MotionDebugActive refuses to draw.
 static bool VK_RT_Fsr2Possible(void)
 {
-    return VK_RT_Fsr2Requested() && vk.fsr2Supported && vk.gbufferSupported && r_useRayTracing.GetBool() &&
-           !s_fsr2CreateFailed;
+    return VK_RT_UpscaleNeedsMotionVectors() && VK_GBufferPrepassActive();
 }
 
 // Create / recreate / tear down as needed, and report whether this frame can dispatch.
@@ -1065,17 +1074,18 @@ static bool VK_RT_Fsr2Ready(void)
     }
 
     // No G-buffer prepass this frame means no motion vectors (see VK_RT_Fsr2Possible).
+    // r_fsr 2 now pulls the prepass up on its own, so reaching here means the hardware
+    // cannot run it at all (no independentBlend) rather than "RT is off".
     // Tear the context down rather than idle: it holds 60-250 MB of device memory, and a
-    // history built before RT was toggled is worthless once it comes back anyway.
-    if (!r_useRayTracing.GetBool())
+    // history built before the prepass went away is worthless once it comes back anyway.
+    if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
         if (!warned)
         {
             warned = true;
-            common->Warning("VK RT FSR2: r_fsr 2 needs r_useRayTracing 1 — motion vectors come from the ray-tracing "
-                            "G-buffer prepass; falling back to the bilinear resolve (set r_fsrJitter 0 too, or the "
-                            "jitter shimmers with nothing to reconcile it)");
+            common->Warning("VK RT FSR2: no G-buffer prepass, so no motion vectors — r_fsr 2 falls back to the "
+                            "bilinear resolve (jitter stands down with it)");
         }
         VK_RT_Fsr2DestroyContext();
         return false;
@@ -1333,6 +1343,10 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 
 #else // !DHEWM3_FSR2
 
+bool VK_RT_UpscaleNeedsMotionVectors(void)
+{
+    return false;
+}
 static bool VK_RT_Fsr2Possible(void)
 {
     return false;
@@ -1421,8 +1435,14 @@ bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
 
     // Only FSR 2 consumes the jitter.  Without a temporal reprojection to undo it the
     // offset is just a whole-image translation of +-0.5 RENDER pixels — +-1.5 display
-    // pixels at Ultra Performance — so the bilinear and FSR 1 paths visibly shake.
-    if (r_fsr.GetInteger() != 2)
+    // pixels at Ultra Performance — so every other resolve path visibly shakes.
+    //
+    // Ask whether FSR 2 will actually run, not whether r_fsr requested it: r_fsrDebug 4, an
+    // unsupported device, a failed context and hardware with no independentBlend (so no
+    // G-buffer prepass and no motion vectors) all fall back to the bilinear resolve with
+    // r_fsr still 2.  Fsr2Possible is deliberately side-effect free, which this frontend
+    // caller needs.
+    if (!VK_RT_Fsr2Possible())
         return false;
 
 #if defined(DHEWM3_FSR2)

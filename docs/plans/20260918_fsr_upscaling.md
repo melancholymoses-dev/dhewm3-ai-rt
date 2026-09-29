@@ -687,7 +687,7 @@ Detailed change list in §13.
   test proves the overlay and the MV field agree with each other, not that either matches
   what `ffxFsr2ContextDispatch` expects.
 
-### U3 — FSR 2 integration  🟡 landed 2026-09-24, runs well; gate blocked on U3a
+### U3 — FSR 2 integration  🟡 landed 2026-09-24; gate met 2026-09-28
 `r_fsr 2` drives the vendored FSR 2.2.1 library from `VK_RT_DispatchFsr2` in
 `vk_upscale.cpp`. Flags as planned: `HIGH_DYNAMIC_RANGE | DEPTH_INFINITE | AUTO_EXPOSURE`,
 `DEPTH_INVERTED` off, `DEBUG_CHECKING` added when `r_fsrDebug >= 2`. Context lifetime is
@@ -699,10 +699,12 @@ moves, the flags change, or the scale returns to 1.0. Detailed change list in §
   one** (pillar 2 — a gate, not a nice-to-have; use `r_fsrDebug 5`); RT total still ≈ 5.5 ms
   and FSR2's own dispatch ≤ 1.5 ms at 1080p; builds and runs clean on Linux/RADV as well as
   Windows.
-- **Status 2026-09-25:** builds and plays on Windows. Image quality good but soft at distance
-  (→ U3a). Minor ghosting on fast movement (→ U4). Perf not yet measured; Linux not tried.
+- **Status 2026-09-28:** builds and plays on Windows, stable with and without RT (U3c).
+  Sharpness at distance is a knob, not a defect — see U3a's trade-off. Ghosting on fast
+  movement remains, and animated characters are the worst of it (U3c's open item, then U4).
+  Perf not yet measured; Linux not tried.
 
-### U3a — texture LOD bias  🟡 landed 2026-09-28, exit not yet validated
+### U3a — texture LOD bias  🟡 landed 2026-09-28; works, but the trade-off is real
 
 Pulled forward from U5. §4 predicted this would skew the U3 verdict; it did — first gameplay
 at Quality read "watercolor at distance, sharp up close", the signature of mip selection done
@@ -741,62 +743,105 @@ Hazard resolutions:
   `vkRT.matSampler`, never `vkd->sampler`, and RT shaders have no derivatives so they use
   explicit-LOD fetches. The counter is bumped anyway.
 
-- **Exit:** at Quality, distant geometry reads sharp rather than watercolour with
-  `r_fsrSharpness` back at its 0.5 default; `image_lodbias` still works; no validation errors
-  on a `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged. Console prints the achieved bias and
+- **Exit met:** distant geometry reads sharp rather than watercolour; `image_lodbias` works;
+  clean `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged. Console prints the achieved bias and
   sampler count on every rebuild.
-- Sweep `r_fsrMipBiasOffset` separately per mode. −1.0 is FSR 2's recommendation and assumes
-  a temporal history to average the extra aliasing out; `r_fsr 0` and `1` have none.
-- **Jitter is now ignored unless `r_fsr 2`** (2026-09-28). ±0.5 render pixels is ±1.5 display
-  pixels at Ultra Performance, and nothing but FSR 2 reprojects it away, so the bilinear and
-  FSR 1 paths shook. Reverses §14 S3's "kept switchable"; `r_fsrJitter 0` under FSR 2 is
-  still the A/B.
 
-### U3b — specular antialiasing (normal-map variance)  🔴 blocks the U3 gate
+**The trade-off (measured 2026-09-28).** A negative bias buys back detail and creates static
+moiré on tiling high-contrast surfaces — floor gratings first. Detail costs samples; a LOD
+bias adds none, it only selects which frequencies alias. At 1/3 scale one sample per 3×3
+display pixels cannot support −2.58, so the choice is blur, moiré, or a point between.
 
-U3a sharpened albedo and left a second artifact untouched: floor gratings shimmer at
-distance, worse as the render scale drops, and **no mip-bias setting removes it**. It is not
-texture moiré — it is specular aliasing from normal-map minification, so no sampler setting
-can fix it.
-
-Confirmed, not inferred:
-
-| Evidence | Where |
+| test | result |
 |---|---|
-| The grates are opaque (no alpha test), lit almost entirely by normals + specular | `base_floor.mtr`: `bumpmap addnormals(..._local.tga, heightmap(..._b.tga, 3))` |
-| The variance signal exists in our mips — box-filtered unit vectors in uncompressed `R8G8B8A8_UNORM`, nothing renormalises during generation | `vk_image.cpp` `vkCmdBlitImage` mip chain |
-| …and is discarded one line after the fetch | `interaction.frag:86` `N = normalize(N)` |
-| Specular is a sharp table lookup on `NdotH`, so lobe width is not a free parameter | `interaction.frag:112` `u_SpecularTable` |
+| `r_fsrMipBias 0` | fringes gone, distance blurry |
+| offset `0` / `+1.0` (total −1.58 / −0.58) | monotonically less; residual near-camera at −0.58 |
+| `image_anisotropy 16` | lines sharper, **fringes unchanged** |
+| `r_skipBump 1` (flat normal) | unchanged |
+| `r_skipDiffuse` / `r_skipSpecular` alone | unchanged — both maps carry the bars |
+| `r_skipAmbient 1` | unchanged → not the additive `_fx` stage |
+| `r_skipInteractions 1` | black → the fringes are the interaction pass |
+| `r_useRayTracing 0` | unchanged → not RT |
 
-`length(N)` before normalising **is** the Toksvig measure of how much normal variance the mip
-collapsed. Averaging normals and then lighting is not the same as averaging the lighting, and
-the gap widens with lobe sharpness — which is why anisotropy does nothing here (better inputs
-to the wrong operation) and why a negative mip bias feeds it.
+Flat normals make `diffuseMap·NdotL` and `specMap·specLookup(NdotH)` linear in the texture, so
+no BRDF prefilter (Toksvig/LEAN) can help — this is plain minification aliasing. Anisotropy
+buys 1–2 LOD levels and `mipLodBias` is added *after* aniso adjusts the selection, so it
+cannot close a −2.58 deficit; that is why it sharpened without fixing anything.
+
+Only FSR 2 breaks the trade-off, by raising the real sample count. Under `r_fsr 0`/`1` the
+honest bias is ~0.
+
+- **Recommended setting for Doom 3's art: `r_fsrMipBias 0`.** Tiling grates and tread plate
+  are everywhere and the moiré reads worse than the blur. Default left at `1`; flipping it is
+  one character in `vk_upscale.cpp` if we commit.
+- Deferred, not blocking: gate the −1.0 offset on `r_fsr 2` and add an `r_fsrMipBiasFloor`
+  so aggressive presets cannot reach −2.58. Worth doing only if we keep the bias on.
+- `r_vkBumpMipBias` stacks *additively* with the FSR term, so `4` at Ultra Performance is a
+  net **+1.42**, not +4. A blur-the-normals test at that value proves nothing; use
+  `r_skipBump 1`.
+
+### U3b — distance-correct LOD for ray-traced texture fetches  🔵 real, but not blocking
+
+**Not the grating artifact.** That was U3a's own bias (see the evidence table above);
+`r_useRayTracing 0` left it untouched. U3b is a separate, independently confirmed defect that
+no longer gates U3. Promote it when RT indirect terms start looking noisy at range.
+
+The RT passes never see any sampler cvar, and never select a mip by distance:
+
+| Fact | Where |
+|---|---|
+| Every RT material fetch is implicit-LOD `texture()`; **zero** `textureLod` calls across 8 sites | `rt_material.glsl`, `gi_ray.rahit`, `reflect_ray.rahit`, `shadow_ray.rahit`, `glass_probe.rahit`, `vol_march.comp`, `vol_froxel_fill.comp`, `gi_probe_resolve.comp` |
+| Ray-tracing stages have no derivatives, so there is no footprint to derive a LOD from — the fetch is not distance-correct at any range | GLSL: implicit LOD is a fragment-stage facility |
+| The bindless sampler is bias 0, aniso off, `maxLod = VK_LOD_CLAMP_NONE` | `vk_material_table.cpp:281-292` |
+| Bindless descriptors bind `vkRT.matSampler`, never the per-image sampler, so U3a's rebuild provably cannot reach them | `vk_material_table.cpp:198` |
+
+So GI bounce albedo, reflections, emissive, shadow alpha-test and both volumetric cookie
+paths all read mip 0 at any distance. That is the maximum-aliasing choice, no sampler cvar
+can reach it, and it worsens as the render scale drops because the indirect terms are
+computed at render resolution.
+
+The standard fix is **ray cones**: carry a cone width along the ray, widen it by
+`2·distance·tan(θ/2)` plus a surface-curvature term, convert to a texel footprint against the
+triangle's UV area, and call `textureLod`. Ray differentials are the more accurate
+alternative and cost more state per ray.
+
+- **Exit:** GI/reflection albedo at range visibly tracks the mip chain instead of mip 0;
+  no new cost above ~0.2 ms.
+- Narrow with `r_rtGI`, `r_rtReflections`, `r_rtAO` individually before building anything.
+
+Separate finding, parked: `interaction.frag:86` normalises the bump fetch one line after
+reading it, discarding the `length(N)` Toksvig measure our box-filtered `R8G8B8A8_UNORM` mip
+chain already computes. Not the grating bug — `r_skipBump 1` cleared normals — but a valid
+specular-AA opportunity if sparkle appears on curved or glossy surfaces.
+
+### U3c — jitter gate + motion vectors off the RT path  🟡 landed 2026-09-28
+
+Two producer/consumer gates disagreed, so `r_fsr 2` with `r_useRayTracing 0` rendered through
+a jittered frustum and resolved on the bilinear path: a ±0.5 render-pixel whole-image
+translation every frame (±1.5 display pixels at Ultra Perf). Four paths tripped it —
+`r_useRayTracing 0`, `r_fsrDebug 4`, an unsupported device, a failed context.
 
 | File | Change |
 |---|---|
-| `interaction.frag` | keep `len = length(N)` before normalising; attenuate specular by the Toksvig factor `len / (len + s·(1−len))` |
-| `rt_gbuf_normal.glsl` | same, so GI and reflections agree with the raster pass |
-| `rt_material.glsl` | carry the factor if the RT hit shaders re-derive specular |
-| new cvar | `r_specAAStrength` (0 = off, 1 = full) so it is an A/B, not a rebuild |
+| `vk_gbuffer.cpp/.h` | **`VK_GBufferPrepassActive()`** — the one predicate: `gbufferSupported && pipeline && (r_useRayTracing ‖ VK_RT_UpscaleNeedsMotionVectors())` |
+| `vk_upscale.cpp` | `VK_RT_UpscaleNeedsMotionVectors()` — FSR 2's half, no G-buffer term so the two cannot recurse |
+| `vk_upscale.cpp` | `VK_RT_GetFsrJitter` asks `VK_RT_Fsr2Possible()`, not `r_fsr == 2` |
+| `vk_upscale.cpp` | `Fsr2Possible`, `Fsr2Ready` teardown, `VK_RT_MotionDebugActive` all ask the shared predicate |
+| `vk_backend.cpp` | `VK_RB_FillDepthBuffer`'s `useGBuffer` is now `VK_GBufferPrepassActive()` |
 
-Open questions to settle by measurement, not argument:
-- The specular table is an authored LUT, so `s` is not a literal exponent. Start by fitting one
-  effective `s` per material-free global and see whether per-texel is even needed.
-- Whether attenuating intensity alone is enough, or `NdotH` also has to be pushed toward the
-  broad end of the table.
-- Whether the RT paths need it at all — they sample at explicit LOD, so their normal variance
-  may differ from the raster pass's.
+Motion vectors are an upscaler input, so `r_fsr 2` now pulls the prepass up on its own.
+Safe because the G-buffer images were never RT-gated (`vk.gbufferSupported` alone), the
+pipeline layout is a UBO + 3 ordinary samplers with no acceleration structure, and
+`motionVectors`' barriers are self-contained in `VK_RT_DispatchFsr2`. Cost with RT off is two
+unread attachment writes in a depth-bound pass; an MV-only pipeline variant is not worth a
+permutation until profiling says so.
 
-- **Exit:** at `r_fsrQuality 4`, the grating in Marine Headquarters stops shimmering with
-  `r_vkBumpMipBias` back at its 0.5 default and `r_fsrMipBias 1`; near-field specular
-  highlights are unchanged (compare screenshots at `r_specAAStrength` 0 vs 1); no new cost
-  above ~0.1 ms.
-- Diagnostic that stands in until then: `r_vkBumpMipBias 3.5` at Ultra Performance should
-  collapse the shimmer by brute force. It looks flat and plastic — it confirms the cause, it
-  is not a setting. The menu slider reaches 4.0 because the render-scale term subtracts 2.58
-  at that preset, so anything below ~2.6 is still a net negative bias and reads as "the knob
-  does nothing".
+- **Exit met:** `r_fsr 2` + `r_useRayTracing 0` is stable and builds a real history;
+  `r_fsrDebug 7` draws in that config. Verified in-game 2026-09-28.
+- Reverses §14 S3's "kept switchable": `r_fsrJitter 0` under FSR 2 remains the A/B, but
+  jitter now stands down automatically wherever nothing reprojects it.
+- Still open: skinned/deform motion vectors. Characters reproject from the entity transform
+  only, so animated limbs lose their history — the "enemies look too smooth" artifact.
 
 ### U4 — reactive mask, T&C mask, denoiser retune  🔴
 `preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,
