@@ -21,6 +21,13 @@ void VK_Image_Purge(idImage *img);
 // purge/reupload pair and so cannot detect one.
 uint32_t VK_Image_ChangeCounter(void);
 
+// U3a: mipLodBias is baked into each VkSampler at upload, so the FSR render-scale
+// term, image_lodbias, image_anisotropy and image_filter all need every sampler
+// recreated when they change.  Request queues it; Apply does the device-idle
+// rebuild and must be called only where no command buffer is recording.
+void VK_Image_RequestSamplerRebuild(void);
+void VK_Image_ApplyPendingSamplerRebuild(void);
+
 // Cinematic (video) image — updated each frame before the render pass.
 // cmd must be a recording command buffer outside any render pass.
 bool VK_Image_UpdateCinematic(VkCommandBuffer cmd, const byte *rgba, int w, int h);

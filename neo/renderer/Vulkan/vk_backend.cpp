@@ -165,8 +165,8 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
 
-        VkViewport viewport = {
-            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
+        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
+                               1.0f};
         vkCmdSetViewport(newCmd, 0, 1, &viewport);
         vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
     }
@@ -3954,9 +3954,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         // via shadowMaskSampler. Running both would produce double-shadowing.
         const bool useStencilShadows = !VK_RTShadowsEnabled();
         const bool useFullShadowScissor = r_vkShadowFullScissor.GetBool();
-        const VkRect2D shadowScissor =
-            useFullShadowScissor ? VK_IntersectRect(VkRect2D{{0, 0}, VK_CurrentDrawExtent()}, s_viewScissor)
-                                 : lightScissor;
+        const VkRect2D shadowScissor = useFullShadowScissor
+                                           ? VK_IntersectRect(VkRect2D{{0, 0}, VK_CurrentDrawExtent()}, s_viewScissor)
+                                           : lightScissor;
         // Interaction/shadow ordering mirrors RB_ARB2_DrawInteractions (draw_interaction.cpp):
         //   1. global shadow volumes (affect all surfaces including local)
         //   2. local interactions (unshadowed by global volumes — local means near-light)
@@ -4560,6 +4560,11 @@ void VK_RB_DrawView(const void *data)
         if (vk.rayTracingSupported)
             VK_RT_DrainBLASGarbage();
 
+        // U3a: recreate every VkSampler if the FSR render scale (or image_lodbias /
+        // filter / anisotropy) moved.  Here because it is the one point in the frame
+        // past the fence with no command buffer recording.
+        VK_Image_ApplyPendingSamplerRebuild();
+
         // Flush any texture/buffer uploads queued since the last frame.
         // Submits one command buffer + one fence wait, replacing the previous
         // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
@@ -4621,8 +4626,8 @@ void VK_RB_DrawView(const void *data)
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
         // NOTE: the negative height inverts the effective winding order, so our pipelines
         // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
-        VkViewport viewport = {
-            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
+        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
+                               1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
 
         // Set scissor from viewDef to confine subview rendering to mirror bounds.
@@ -5090,8 +5095,8 @@ void VK_RB_DrawView(const void *data)
         rpResume.clearValueCount = 0;
         rpResume.pClearValues = NULL;
         vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport viewport = {
-            0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
+        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
+                               1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 
@@ -5211,8 +5216,8 @@ void VK_RB_DrawView(const void *data)
     {
         VK_SetRenderStage("Vol_Composite");
         const VkExtent2D volExtent = VK_CurrentDrawExtent();
-        VkViewport volViewport = {
-            0, (float)volExtent.height, (float)volExtent.width, -(float)volExtent.height, 0.0f, 1.0f};
+        VkViewport volViewport = {0,   (float)volExtent.height, (float)volExtent.width, -(float)volExtent.height, 0.0f,
+                                  1.0f};
         vkCmdSetViewport(cmdBuf, 0, 1, &volViewport);
         vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
 

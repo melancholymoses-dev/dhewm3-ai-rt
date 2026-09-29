@@ -1042,10 +1042,12 @@ void idImageManager::ChangeTextureFilter(void)
     }
     textureLODBias = image_lodbias.GetFloat();
 
-    // change all the existing mipmap texture objects with default filtering
-    // (skip entirely for Vulkan — no GL texture objects exist)
+    // No GL texture objects exist on Vulkan; the equivalent state lives in each
+    // image's baked VkSampler, so queue a rebuild instead of walking them here.
     if (glConfig.isVulkan)
     {
+        extern void VK_Image_RequestSamplerRebuild(void);
+        VK_Image_RequestSamplerRebuild();
         return;
     }
 

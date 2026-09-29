@@ -350,13 +350,8 @@ blurry, and FSR2 has less high-frequency detail to reconstruct than it should.
 The standard bias is `log2(renderWidth / displayWidth) - 1.0` (≈ −1.58 at Quality, −2.0 at
 Performance). Two options:
 
-- **Recreate samplers on scale change.** Add the FSR bias to the `lodBias` computation and
-  bump `VK_Image_ChangeCounter()` so `vk_material_table.cpp`'s bindless descriptors refresh
-  — that counter exists for exactly this class of problem (see `vk_image.h`). Costs a
-  device-idle sampler rebuild whenever `r_fsrQuality` changes, which is a menu action, not
-  a hot path.
-- Defer to U5 and ship U0–U4 at the default bias. Acceptable; it is a sharpness deficit,
-  not a correctness bug.
+✅ Resolved in U3a by recreating samplers on a scale change — see §9 U3a for what the two
+options above got wrong about the GUI and the bindless descriptors.
 
 Recommend the first, implemented in U5, because the second makes U3's image-quality
 comparison against native resolution unfair in FSR2's disfavour and may produce a wrong
@@ -526,7 +521,8 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 | `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. `r_fsr 2` needs it; default moved `0` → `1` at U3. Deliberately **not** forced — see §14 S3. | ✅ U2 / U3 |
 | `r_fsrMotionScale` | `16` | Render pixels of motion that saturate the `r_fsrDebug 7` overlay. | U2 |
 | `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
-| `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) - 1.0`. Forces a sampler rebuild on change. | U5 |
+| `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) + r_fsrMipBiasOffset` to every `TF_DEFAULT` sampler. Forces a sampler rebuild on change. | ✅ U3a |
+| `r_fsrMipBiasOffset` | `-1.0` | The constant term. FSR 2's recommendation; sweep toward `0` under `r_fsr 0`/`1`, which have no temporal history to absorb the extra aliasing. | ✅ U3a |
 
 Changing `r_fsr`, `r_fsrQuality` or `r_fsrRenderScale` requires a device-idle resource
 rebuild — route them through the same path `VK_RT_ResizeTonemap` already uses and treat
@@ -706,16 +702,16 @@ moves, the flags change, or the scale returns to 1.0. Detailed change list in §
 - **Status 2026-09-25:** builds and plays on Windows. Image quality good but soft at distance
   (→ U3a). Minor ghosting on fast movement (→ U4). Perf not yet measured; Linux not tried.
 
-### U3a — texture LOD bias  🔴 blocks the U3 gate
+### U3a — texture LOD bias  🟡 landed 2026-09-28, exit not yet validated
 
 Pulled forward from U5. §4 predicted this would skew the U3 verdict; it did — first gameplay
 at Quality read "watercolor at distance, sharp up close", the signature of mip selection done
 in render-res footprints. RCAS helps a little because it sharpens what survived; it cannot
 restore detail the sampler never fetched.
 
-`bias = log2(renderW / displayW) - 1.0`, clamped to ±`maxSamplerLodBias`.
+`bias = log2(renderW / displayW) + r_fsrMipBiasOffset`, clamped to ±`maxSamplerLodBias`.
 
-| scale | source | bias |
+| scale | source | bias (offset −1.0) |
 |---|---|---|
 | 1.0 | native | 0 (no FSR term) |
 | 1/1.5 | Quality | −1.58 |
@@ -723,29 +719,34 @@ restore detail the sampler never fetched.
 | 1/2.0 | Performance | −2.00 |
 | 1/3.0 | Ultra Perf | −2.58 |
 
-Samplers are baked per image at upload, so the bias cannot be a uniform: it needs a rebuild
-when the scale changes. That is a menu action, not a hot path.
-
 | File | Change |
 |---|---|
-| `vk_image.cpp:758` | add the FSR term to `lodBias`; same `maxLodBias` clamp |
-| `vk_image.cpp` | `VK_Image_RebuildSamplers()` — walk `globalImages`, recreate `vkd->sampler` only, bump `s_imageChangeCounter` |
-| `vk_image.cpp:806` | `VK_Image_UploadCubemap` takes the same term |
-| `vk_upscale.cpp:1537` | call the rebuild from `VK_RT_UpdateRenderExtent`'s extent-changed branch |
-| `vk_material_table.cpp` | confirm the change counter already forces a bindless refresh |
+| `vk_upscale.cpp` | `r_fsrMipBias` (bool, `1`), `r_fsrMipBiasOffset` (float, `-1.0`) |
+| `vk_image.cpp` | `VK_FsrLodBias()`, `VK_ClampLodBias()`, `VK_BuildSamplerInfo2D()` shared by upload and rebuild; `vkImageData_t::mipLevels` |
+| `vk_image.cpp` | `VK_Image_RequestSamplerRebuild()` sets a flag; `VK_Image_ApplyPendingSamplerRebuild()` does the device-idle rebuild and bumps `s_imageChangeCounter` |
+| `vk_upscale.cpp` | request the rebuild from `VK_RT_UpdateRenderExtent` — extent-changed branch, plus `IsModified` on the two new cvars |
+| `vk_backend.cpp` | apply it beside `VK_Image_DrainGarbage`, past the fence and before the command buffer opens |
+| `Image_init.cpp` | `ChangeTextureFilter`'s Vulkan branch requests a rebuild instead of returning — `image_lodbias`/`image_anisotropy` were dead on this backend |
+| `Dhewm3SettingsMenu.cpp` | both cvars under Resolution Scaling |
 
-Three hazards, in order of likelihood:
-- **Destroying a sampler still referenced by in-flight command buffers.** Needs a device idle
-  or the deferred-destroy path, not a bare `vkDestroySampler`.
-- **The 2D GUI shares these samplers** and renders at display resolution, so it would inherit
-  a negative bias it must not have. Expected to be moot — HUD images are mostly `mipLevels
-  == 1`, where `mipLodBias` is inert — but verify rather than assume.
-- **Stale bindless descriptors after the rebuild** — see the level-transition DEVICE_LOST
-  class of bug; validate against `backendData`.
+Hazard resolutions:
+- **Sampler still referenced by a command buffer.** Not a device idle alone — that does not
+  cover a *recording* buffer, and `VK_RT_UpdateRenderExtent` runs per `RC_DRAW_VIEW`, so the
+  2D overlay view reaches it with one open. Hence the request/apply split.
+- **The 2D GUI.** The plan's `mipLevels == 1` reasoning is wrong: `CalcMipLevels` is
+  unconditional on dimensions, so HUD images are mipped here even though GL gives `TF_LINEAR`
+  a non-mipmap min filter. The FSR term is instead gated on `img->filter == TF_DEFAULT`,
+  which is the engine's own mipmapped-world-texture marker.
+- **Bindless descriptors.** Nothing to do: `RebuildBindlessDescriptors` binds
+  `vkRT.matSampler`, never `vkd->sampler`, and RT shaders have no derivatives so they use
+  explicit-LOD fetches. The counter is bumped anyway.
 
 - **Exit:** at Quality, distant geometry reads sharp rather than watercolour with
   `r_fsrSharpness` back at its 0.5 default; `image_lodbias` still works; no validation errors
-  on a `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged.
+  on a `r_fsrQuality` sweep 0→4→0; GUI/HUD unchanged. Console prints the achieved bias and
+  sampler count on every rebuild.
+- Sweep `r_fsrMipBiasOffset` separately per mode. −1.0 is FSR 2's recommendation and assumes
+  a temporal history to average the extra aliasing out; `r_fsr 0` and `1` have none.
 
 ### U4 — reactive mask, T&C mask, denoiser retune  🔴
 `preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,

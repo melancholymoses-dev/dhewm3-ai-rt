@@ -2512,6 +2512,8 @@ struct RTCVars
     idCVar *fsrJitter = nullptr;
     idCVar *fsrMotionScale = nullptr;
     idCVar *fsrQuality = nullptr;
+    idCVar *fsrMipBias = nullptr;
+    idCVar *fsrMipBiasOffset = nullptr;
 };
 
 static RTCVars rtCVars;
@@ -2598,6 +2600,8 @@ static void InitRTOptionsMenu()
     rtCVars.fsrJitter = cvarSystem->Find("r_fsrJitter");
     rtCVars.fsrMotionScale = cvarSystem->Find("r_fsrMotionScale");
     rtCVars.fsrQuality = cvarSystem->Find("r_fsrQuality");
+    rtCVars.fsrMipBias = cvarSystem->Find("r_fsrMipBias");
+    rtCVars.fsrMipBiasOffset = cvarSystem->Find("r_fsrMipBiasOffset");
 }
 
 // Helper: draw a bool CVar as a checkbox, with CVar name + description as tooltip.
@@ -2895,6 +2899,17 @@ static void DrawRTOptionsMenu()
                             "ray-traced noise floor along with the image. Keep sharpness low if it\n"
                             "crawls. No mode does anything at Render Scale 1.0.");
     }
+
+    // Outside the fsrMode disable: the bias is a property of the render scale, not of
+    // which filter resolves it, and the bilinear path is just as blurry without it.
+    RTCheckbox("Texture Mip Bias (sharpens distant detail at reduced render scale)", rtCVars.fsrMipBias);
+    const bool mipBiasOn = rtCVars.fsrMipBias && rtCVars.fsrMipBias->GetBool();
+    ImGui::BeginDisabled(!mipBiasOn);
+    RTSliderFloat("Mip Bias Offset (on top of log2(scale); 0 = exact, negative = sharper)",
+                  rtCVars.fsrMipBiasOffset, -2.0f, 0.0f, "%.2f");
+    ImGui::EndDisabled(); // !mipBiasOn
+    ImGui::TextDisabled("Changing either rebuilds every texture sampler on the next frame -\n"
+                        "a brief hitch, and the new bias is printed to the console.");
 
     // Left enabled under FSR 2 on purpose: toggling it is the A/B that separates a
     // flickering screen-space input from an unstable upscaler history.

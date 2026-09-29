@@ -31,6 +31,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_image.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -101,6 +102,15 @@ idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                    "switchable so \"is the jitter perturbing something?\" stays an A/B rather than an argument.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
+idCVar r_fsrMipBias("r_fsrMipBias", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                    "Bias texture mip selection by log2(renderW/displayW) + r_fsrMipBiasOffset while the render "
+                    "scale is below 1.  Without it every texture picks a mip sized for the smaller raster grid "
+                    "and no upscaler can put the detail back.  Rebuilds all samplers when changed.");
+idCVar r_fsrMipBiasOffset("r_fsrMipBiasOffset", "-1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                          "Extra mip bias added on top of log2(renderW/displayW).  -1.0 is the FSR 2 "
+                          "recommendation: a temporal upscaler wants over-sharp input to reconstruct from.  "
+                          "FSR 1 and the bilinear resolve have no history to average the aliasing out, so "
+                          "sweep toward 0 if they crawl.");
 
 // ---------------------------------------------------------------------------
 // FSR 1 (U1) resources.  Kept file-static: vk_upscale.cpp is the one
@@ -928,8 +938,8 @@ static uint32_t VK_RT_Fsr2WantedFlags(void)
     // DEPTH_INVERTED is deliberately absent — our depth is 0 at the near plane.
     // AUTO_EXPOSURE: the engine's tonemap is a fixed curve with no exposure of its
     // own, so there is no application exposure value to hand over.
-    uint32_t flags = FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INFINITE |
-                     FFX_FSR2_ENABLE_AUTO_EXPOSURE;
+    uint32_t flags =
+        FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FFX_FSR2_ENABLE_DEPTH_INFINITE | FFX_FSR2_ENABLE_AUTO_EXPOSURE;
     if (r_fsrDebug.GetInteger() >= 2)
         flags |= FFX_FSR2_ENABLE_DEBUG_CHECKING;
     return flags;
@@ -967,8 +977,8 @@ static bool VK_RT_Fsr2CreateContext(void)
     }
 
     FfxFsr2ContextDescription desc = {};
-    FfxErrorCode err = ffxFsr2GetInterfaceVK(&desc.callbacks, s_fsr2Scratch, scratchSize, vk.physicalDevice,
-                                             vkGetDeviceProcAddr);
+    FfxErrorCode err =
+        ffxFsr2GetInterfaceVK(&desc.callbacks, s_fsr2Scratch, scratchSize, vk.physicalDevice, vkGetDeviceProcAddr);
     if (err != FFX_OK)
     {
         common->Warning("VK RT FSR2: ffxFsr2GetInterfaceVK failed (%d)", (int)err);
@@ -1076,10 +1086,10 @@ static bool VK_RT_Fsr2Ready(void)
         return false;
 
     const uint32_t wantFlags = VK_RT_Fsr2WantedFlags();
-    if (s_fsr2CtxValid && (s_fsr2CtxRender.width != vk.renderExtent.width ||
-                           s_fsr2CtxRender.height != vk.renderExtent.height ||
-                           s_fsr2CtxDisplay.width != vk.swapchainExtent.width ||
-                           s_fsr2CtxDisplay.height != vk.swapchainExtent.height || s_fsr2CtxFlags != wantFlags))
+    if (s_fsr2CtxValid &&
+        (s_fsr2CtxRender.width != vk.renderExtent.width || s_fsr2CtxRender.height != vk.renderExtent.height ||
+         s_fsr2CtxDisplay.width != vk.swapchainExtent.width || s_fsr2CtxDisplay.height != vk.swapchainExtent.height ||
+         s_fsr2CtxFlags != wantFlags))
     {
         VK_RT_Fsr2DestroyContext();
         s_fsr2CreateFailed = false; // a different configuration deserves a fresh try
@@ -1191,9 +1201,9 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 
     // Resource dimensions are the images' real (display) size; renderSize below is
     // the sub-rect FSR2 should actually read.
-    dd.color = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrScene[frameIdx].image, vkRT.hdrScene[frameIdx].view, dispW,
-                                       dispH, VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrScene",
-                                       FFX_RESOURCE_STATE_COMPUTE_READ);
+    dd.color =
+        ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrScene[frameIdx].image, vkRT.hdrScene[frameIdx].view, dispW, dispH,
+                                VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrScene", FFX_RESOURCE_STATE_COMPUTE_READ);
     dd.depth = ffxGetTextureResourceVK(&s_fsr2Ctx, vk.depthImage, vk.depthSampledView, dispW, dispH, vk.depthFormat,
                                        L"depth", FFX_RESOURCE_STATE_COMPUTE_READ);
     dd.motionVectors = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.motionVectors[frameIdx].image,
@@ -1313,7 +1323,8 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 
     VkImageMemoryBarrier depthRestore = depthToRead;
     depthRestore.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    depthRestore.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    depthRestore.dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
     depthRestore.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     depthRestore.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
@@ -1496,6 +1507,15 @@ void VK_RT_UpdateRenderExtent(void)
 {
     const VkExtent2D old = vk.renderExtent;
 
+    // U3a: the mip bias is baked per sampler, so its own cvars need a rebuild too —
+    // the extent-changed branch below only catches a change of scale.
+    if (r_fsrMipBias.IsModified() || r_fsrMipBiasOffset.IsModified())
+    {
+        r_fsrMipBias.ClearModified();
+        r_fsrMipBiasOffset.ClearModified();
+        VK_Image_RequestSamplerRebuild();
+    }
+
     // Clamp low so a fat-fingered cvar can't collapse the scene to the 64px floor.
     float scale = VK_RT_FsrTargetScale();
     if (scale < 0.3f)
@@ -1554,6 +1574,12 @@ void VK_RT_UpdateRenderExtent(void)
     vk.renderExtent.width = wn;
     vk.renderExtent.height = hn;
 
+    // U3a: the FSR mip bias is a function of the extent just committed, so request the
+    // rebuild after the write.  Queued, not done here — VK_RB_DrawView calls this with a
+    // command buffer open on the 2D overlay view.
+    if (wn != old.width || hn != old.height)
+        VK_Image_RequestSamplerRebuild();
+
     // VK_RT_DispatchUpscale is only reached while the extents differ, so it cannot be
     // the one that notices "we are back at native" or "r_fsr left 2".  Free FSR 2's
     // internal resources here instead — they are 60-250 MB of VRAM doing nothing.
@@ -1593,9 +1619,9 @@ void VK_RT_DispatchUpscale(VkCommandBuffer cmd)
     const int mode = r_fsr.GetInteger();
     if (mode != s_fsrLoggedMode)
     {
-        const char *what = fsr2 ? "AMD FidelityFX Super Resolution 2"
-                                : (VK_RT_Fsr1Active() ? "AMD FidelityFX Super Resolution 1 (EASU + RCAS)"
-                                                      : "bilinear resolve");
+        const char *what =
+            fsr2 ? "AMD FidelityFX Super Resolution 2"
+                 : (VK_RT_Fsr1Active() ? "AMD FidelityFX Super Resolution 1 (EASU + RCAS)" : "bilinear resolve");
         common->Printf("VK RT Upscale: r_fsr %d -> %s, render %ux%u -> display %ux%u, sharpness %.2f\n", mode, what,
                        vk.renderExtent.width, vk.renderExtent.height, vk.swapchainExtent.width,
                        vk.swapchainExtent.height, r_fsrSharpness.GetFloat());
