@@ -1076,6 +1076,20 @@ void VK_Image_RequestSamplerRebuild(void)
     s_samplerRebuildPending = true;
 }
 
+// Every cvar VK_BuildSamplerInfo2D reads that nothing else already watches.
+// image_lodbias/anisotropy/filter come in through idImageManager::CheckCvars, and the
+// render scale through VK_RT_UpdateRenderExtent; these three have no other owner, and
+// a mip-bias cvar you cannot A/B live is useless for chasing moire.
+void VK_Image_CheckSamplerCvars(void)
+{
+    if (!r_fsrMipBias.IsModified() && !r_fsrMipBiasOffset.IsModified() && !r_vkBumpMipBias.IsModified())
+        return;
+    r_fsrMipBias.ClearModified();
+    r_fsrMipBiasOffset.ClearModified();
+    r_vkBumpMipBias.ClearModified();
+    VK_Image_RequestSamplerRebuild();
+}
+
 static void VK_Image_RebuildSamplers(void)
 {
     if (!vk.isInitialized || !globalImages)

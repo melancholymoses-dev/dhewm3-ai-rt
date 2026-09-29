@@ -97,9 +97,9 @@ idCVar r_fsrDebug("r_fsrDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE
 idCVar r_fsrSharpness("r_fsrSharpness", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                       "RCAS sharpening for r_fsr 1.  0 = softest, 1 = sharpest.");
 idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
-                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  r_fsr 2 needs it and "
-                   "goes blurry without it; on the bilinear and FSR 1 paths it only adds shimmer.  Kept "
-                   "switchable so \"is the jitter perturbing something?\" stays an A/B rather than an argument.");
+                   "Halton(2,3) sub-pixel jitter while upscaling, replacing r_jitter.  Ignored unless r_fsr is 2 — "
+                   "nothing else reprojects it away, so it reads as a whole-screen shake.  FSR 2 needs it and goes "
+                   "blurry without it; 0 stays available as the A/B.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
 idCVar r_fsrMipBias("r_fsrMipBias", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
@@ -1419,6 +1419,12 @@ bool VK_RT_GetFsrJitter(float *jx, float *jy, int *renderW, int *renderH)
     if (!VK_RT_UpscaleActive() || vk.renderExtent.width == 0)
         return false;
 
+    // Only FSR 2 consumes the jitter.  Without a temporal reprojection to undo it the
+    // offset is just a whole-image translation of +-0.5 RENDER pixels — +-1.5 display
+    // pixels at Ultra Performance — so the bilinear and FSR 1 paths visibly shake.
+    if (r_fsr.GetInteger() != 2)
+        return false;
+
 #if defined(DHEWM3_FSR2)
     const int32_t phaseCount =
         ffxFsr2GetJitterPhaseCount((int32_t)vk.renderExtent.width, (int32_t)vk.swapchainExtent.width);
@@ -1507,14 +1513,6 @@ void VK_RT_UpdateRenderExtent(void)
 {
     const VkExtent2D old = vk.renderExtent;
 
-    // U3a: the mip bias is baked per sampler, so its own cvars need a rebuild too —
-    // the extent-changed branch below only catches a change of scale.
-    if (r_fsrMipBias.IsModified() || r_fsrMipBiasOffset.IsModified())
-    {
-        r_fsrMipBias.ClearModified();
-        r_fsrMipBiasOffset.ClearModified();
-        VK_Image_RequestSamplerRebuild();
-    }
 
     // Clamp low so a fat-fingered cvar can't collapse the scene to the 64px floor.
     float scale = VK_RT_FsrTargetScale();

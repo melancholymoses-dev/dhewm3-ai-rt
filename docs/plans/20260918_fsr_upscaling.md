@@ -518,7 +518,7 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 | `r_fsrDebug` | `0` | §7. | ✅ U0 |
 | `r_fsrQuality` | `0` | `0` = use `r_fsrRenderScale`, `1` = Quality (1.5×), `2` = Balanced (1.7×), `3` = Performance (2.0×), `4` = Ultra Performance (3.0×). Default changed from the `1` written here — see §14 S6. | ✅ U3 |
 | `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`, 1 = sharpest. Mapped to `FsrRcasCon`'s attenuation-in-stops as `2·(1−s)`. Will also feed `enableSharpening`/`sharpness` on the FSR2 path. | ✅ U1 / U3 |
-| `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. `r_fsr 2` needs it; default moved `0` → `1` at U3. Deliberately **not** forced — see §14 S3. | ✅ U2 / U3 |
+| `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. **Ignored unless `r_fsr 2`** as of U3a — nothing else reprojects it away. Reverses §14 S3. | ✅ U2 / U3 |
 | `r_fsrMotionScale` | `16` | Render pixels of motion that saturate the `r_fsrDebug 7` overlay. | U2 |
 | `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
 | `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) + r_fsrMipBiasOffset` to every `TF_DEFAULT` sampler. Forces a sampler rebuild on change. | ✅ U3a |
@@ -747,6 +747,56 @@ Hazard resolutions:
   sampler count on every rebuild.
 - Sweep `r_fsrMipBiasOffset` separately per mode. −1.0 is FSR 2's recommendation and assumes
   a temporal history to average the extra aliasing out; `r_fsr 0` and `1` have none.
+- **Jitter is now ignored unless `r_fsr 2`** (2026-09-28). ±0.5 render pixels is ±1.5 display
+  pixels at Ultra Performance, and nothing but FSR 2 reprojects it away, so the bilinear and
+  FSR 1 paths shook. Reverses §14 S3's "kept switchable"; `r_fsrJitter 0` under FSR 2 is
+  still the A/B.
+
+### U3b — specular antialiasing (normal-map variance)  🔴 blocks the U3 gate
+
+U3a sharpened albedo and left a second artifact untouched: floor gratings shimmer at
+distance, worse as the render scale drops, and **no mip-bias setting removes it**. It is not
+texture moiré — it is specular aliasing from normal-map minification, so no sampler setting
+can fix it.
+
+Confirmed, not inferred:
+
+| Evidence | Where |
+|---|---|
+| The grates are opaque (no alpha test), lit almost entirely by normals + specular | `base_floor.mtr`: `bumpmap addnormals(..._local.tga, heightmap(..._b.tga, 3))` |
+| The variance signal exists in our mips — box-filtered unit vectors in uncompressed `R8G8B8A8_UNORM`, nothing renormalises during generation | `vk_image.cpp` `vkCmdBlitImage` mip chain |
+| …and is discarded one line after the fetch | `interaction.frag:86` `N = normalize(N)` |
+| Specular is a sharp table lookup on `NdotH`, so lobe width is not a free parameter | `interaction.frag:112` `u_SpecularTable` |
+
+`length(N)` before normalising **is** the Toksvig measure of how much normal variance the mip
+collapsed. Averaging normals and then lighting is not the same as averaging the lighting, and
+the gap widens with lobe sharpness — which is why anisotropy does nothing here (better inputs
+to the wrong operation) and why a negative mip bias feeds it.
+
+| File | Change |
+|---|---|
+| `interaction.frag` | keep `len = length(N)` before normalising; attenuate specular by the Toksvig factor `len / (len + s·(1−len))` |
+| `rt_gbuf_normal.glsl` | same, so GI and reflections agree with the raster pass |
+| `rt_material.glsl` | carry the factor if the RT hit shaders re-derive specular |
+| new cvar | `r_specAAStrength` (0 = off, 1 = full) so it is an A/B, not a rebuild |
+
+Open questions to settle by measurement, not argument:
+- The specular table is an authored LUT, so `s` is not a literal exponent. Start by fitting one
+  effective `s` per material-free global and see whether per-texel is even needed.
+- Whether attenuating intensity alone is enough, or `NdotH` also has to be pushed toward the
+  broad end of the table.
+- Whether the RT paths need it at all — they sample at explicit LOD, so their normal variance
+  may differ from the raster pass's.
+
+- **Exit:** at `r_fsrQuality 4`, the grating in Marine Headquarters stops shimmering with
+  `r_vkBumpMipBias` back at its 0.5 default and `r_fsrMipBias 1`; near-field specular
+  highlights are unchanged (compare screenshots at `r_specAAStrength` 0 vs 1); no new cost
+  above ~0.1 ms.
+- Diagnostic that stands in until then: `r_vkBumpMipBias 3.5` at Ultra Performance should
+  collapse the shimmer by brute force. It looks flat and plastic — it confirms the cause, it
+  is not a setting. The menu slider reaches 4.0 because the render-scale term subtracts 2.58
+  at that preset, so anything below ~2.6 is still a net negative bias and reads as "the knob
+  does nothing".
 
 ### U4 — reactive mask, T&C mask, denoiser retune  🔴
 `preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,

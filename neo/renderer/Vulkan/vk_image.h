@@ -28,6 +28,10 @@ uint32_t VK_Image_ChangeCounter(void);
 void VK_Image_RequestSamplerRebuild(void);
 void VK_Image_ApplyPendingSamplerRebuild(void);
 
+// Per-frame IsModified check for the sampler cvars with no other owner
+// (r_fsrMipBias, r_fsrMipBiasOffset, r_vkBumpMipBias).  Call before Apply.
+void VK_Image_CheckSamplerCvars(void);
+
 // Cinematic (video) image — updated each frame before the render pass.
 // cmd must be a recording command buffer outside any render pass.
 bool VK_Image_UpdateCinematic(VkCommandBuffer cmd, const byte *rgba, int w, int h);

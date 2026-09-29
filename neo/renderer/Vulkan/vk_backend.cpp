@@ -4561,8 +4561,9 @@ void VK_RB_DrawView(const void *data)
             VK_RT_DrainBLASGarbage();
 
         // U3a: recreate every VkSampler if the FSR render scale (or image_lodbias /
-        // filter / anisotropy) moved.  Here because it is the one point in the frame
-        // past the fence with no command buffer recording.
+        // filter / anisotropy / the mip-bias cvars) moved.  Here because it is the one
+        // point in the frame past the fence with no command buffer recording.
+        VK_Image_CheckSamplerCvars();
         VK_Image_ApplyPendingSamplerRebuild();
 
         // Flush any texture/buffer uploads queued since the last frame.
