@@ -234,9 +234,36 @@ static void VK_BuildSamplerInfo2D(const idImage *img, uint32_t mipLevels, VkSamp
 
     memset(out, 0, sizeof(*out));
     out->sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    out->magFilter = MapFilter(img->filter);
-    out->minFilter = out->magFilter;
-    out->mipmapMode = MapMipmapMode(img->filter);
+
+    // TF_DEFAULT follows the global image_filter, exactly as GL's SetImageFilterAndRepeat
+    // does (Image_load.cpp).  GL packs minification and mipmap selection into one enum;
+    // Vulkan splits them into minFilter + mipmapMode, so this translates rather than maps.
+    // Without it image_filter was inert on this backend — ChangeTextureFilter would queue a
+    // full sampler rebuild that changed nothing.
+    bool baseLevelOnly = false;
+    if (img->filter == TF_DEFAULT && globalImages != NULL)
+    {
+        const GLenum glMin = globalImages->textureMinFilter;
+        const GLenum glMag = globalImages->textureMaxFilter;
+
+        out->minFilter =
+            (glMin == GL_NEAREST || glMin == GL_NEAREST_MIPMAP_NEAREST || glMin == GL_NEAREST_MIPMAP_LINEAR)
+                ? VK_FILTER_NEAREST
+                : VK_FILTER_LINEAR;
+        out->magFilter = (glMag == GL_NEAREST) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+        out->mipmapMode = (glMin == GL_LINEAR_MIPMAP_LINEAR || glMin == GL_NEAREST_MIPMAP_LINEAR)
+                              ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                              : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        // The two filters with no _MIPMAP_ term sample the base level only; maxLod below.
+        baseLevelOnly = (glMin == GL_NEAREST || glMin == GL_LINEAR);
+    }
+    else
+    {
+        out->magFilter = MapFilter(img->filter);
+        out->minFilter = out->magFilter;
+        out->mipmapMode = MapMipmapMode(img->filter);
+    }
+
     out->addressModeU = MapRepeat(img->repeat);
     out->addressModeV = out->addressModeU;
     out->addressModeW = out->addressModeU;
@@ -258,12 +285,14 @@ static void VK_BuildSamplerInfo2D(const idImage *img, uint32_t mipLevels, VkSamp
     if (requestedAniso > maxAniso)
         requestedAniso = maxAniso;
 
-    const bool canUseAniso = (img->filter != TF_NEAREST && mipLevels > 1 && requestedAniso > 1.0f);
+    // GL applies the global anisotropy to TF_DEFAULT only and forces 1 elsewhere
+    // (Image_load.cpp) — same contract the FSR bias above uses, so the two stay consistent.
+    const bool canUseAniso = (img->filter == TF_DEFAULT && mipLevels > 1 && requestedAniso > 1.0f);
     out->anisotropyEnable = canUseAniso ? VK_TRUE : VK_FALSE;
     out->maxAnisotropy = canUseAniso ? requestedAniso : 1.0f;
     out->compareEnable = VK_FALSE;
     out->minLod = 0.0f;
-    out->maxLod = (float)(mipLevels - 1);
+    out->maxLod = baseLevelOnly ? 0.0f : (float)(mipLevels - 1);
     out->borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
 }
 
@@ -1070,10 +1099,19 @@ void VK_Image_UploadCubemap(idImage *img, const byte *const pic[6], int size)
 // ---------------------------------------------------------------------------
 
 static bool s_samplerRebuildPending = false;
+static int s_samplerRebuildQuietFrames = 0;
+
+// Coalesce requests before acting on one.  The menu's float sliders write their cvar on
+// every drag tick, and each rebuild is a vkDeviceWaitIdle plus a recreate of every loaded
+// sampler — a full GPU stall and O(images) allocations per frame for as long as the mouse
+// is down.  Waiting for the value to settle costs a few frames of stale bias, which is
+// invisible, and turns a drag into one rebuild instead of dozens.
+static const int SAMPLER_REBUILD_SETTLE_FRAMES = 6;
 
 void VK_Image_RequestSamplerRebuild(void)
 {
     s_samplerRebuildPending = true;
+    s_samplerRebuildQuietFrames = 0;
 }
 
 // Every cvar VK_BuildSamplerInfo2D reads that nothing else already watches.
@@ -1150,7 +1188,11 @@ void VK_Image_ApplyPendingSamplerRebuild(void)
     // long before there is anything to rebuild.
     if (!s_samplerRebuildPending || !vk.isInitialized || !globalImages)
         return;
+    // Let a run of requests settle first — see SAMPLER_REBUILD_SETTLE_FRAMES.
+    if (++s_samplerRebuildQuietFrames < SAMPLER_REBUILD_SETTLE_FRAMES)
+        return;
     s_samplerRebuildPending = false;
+    s_samplerRebuildQuietFrames = 0;
     VK_Image_RebuildSamplers();
 }
 

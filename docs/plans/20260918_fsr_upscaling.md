@@ -824,7 +824,7 @@ translation every frame (±1.5 display pixels at Ultra Perf). Four paths tripped
 | File | Change |
 |---|---|
 | `vk_gbuffer.cpp/.h` | **`VK_GBufferPrepassActive()`** — the one predicate: `gbufferSupported && pipeline && (r_useRayTracing ‖ VK_RT_UpscaleNeedsMotionVectors())` |
-| `vk_upscale.cpp` | `VK_RT_UpscaleNeedsMotionVectors()` — FSR 2's half, no G-buffer term so the two cannot recurse |
+| `vk_upscale.cpp` | capability/demand split: `Fsr2Capable()` (no extent term) → `UpscaleNeedsMotionVectors() = Capable && UpscaleActive()` → `Fsr2Possible() = Capable && gbuffer capability` |
 | `vk_upscale.cpp` | `VK_RT_GetFsrJitter` asks `VK_RT_Fsr2Possible()`, not `r_fsr == 2` |
 | `vk_upscale.cpp` | `Fsr2Possible`, `Fsr2Ready` teardown, `VK_RT_MotionDebugActive` all ask the shared predicate |
 | `vk_backend.cpp` | `VK_RB_FillDepthBuffer`'s `useGBuffer` is now `VK_GBufferPrepassActive()` |
@@ -840,6 +840,14 @@ permutation until profiling says so.
   `r_fsrDebug 7` draws in that config. Verified in-game 2026-09-28.
 - Reverses §14 S3's "kept switchable": `r_fsrJitter 0` under FSR 2 remains the A/B, but
   jitter now stands down automatically wherever nothing reprojects it.
+- **The extent term is load-bearing in one direction only.** `Fsr2Possible` feeds
+  `VK_RT_ResolvePathReady`, which decides whether to *reduce* the extent — an extent test
+  there means "reduce only if already reduced" and latches at native. Demand carries it;
+  capability must not.
+- Review follow-ups landed with it: `image_filter` was inert on Vulkan (`TF_DEFAULT` now
+  translates `globalImages->textureMinFilter/MaxFilter`, since GL packs min+mipmap into one
+  enum); anisotropy now gated to `TF_DEFAULT` like GL; sampler rebuilds coalesce over 6
+  frames so a slider drag is one `vkDeviceWaitIdle`, not one per tick.
 - Still open: skinned/deform motion vectors. Characters reproject from the entity transform
   only, so animated limbs lose their history — the "enemies look too smooth" artifact.
 

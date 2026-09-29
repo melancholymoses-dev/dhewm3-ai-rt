@@ -786,7 +786,8 @@ bool VK_RT_MotionDebugActive(void)
         {
             warned = true;
             common->Warning("VK RT Upscale: r_fsrDebug 7 needs the G-buffer prepass — set r_useRayTracing 1 (or run "
-                            "r_fsr 2, which pulls the prepass up for its own motion vectors); overlay disabled");
+                            "r_fsr 2 at a render scale below 1, which pulls the prepass up for its own motion "
+                            "vectors); overlay disabled");
         }
         return false;
     }
@@ -1028,27 +1029,39 @@ static bool VK_RT_Fsr2Requested(void)
     return r_fsr.GetInteger() == 2 && r_fsrDebug.GetInteger() != 4;
 }
 
-// Everything FSR 2 needs *except* the motion vectors, so VK_GBufferPrepassActive can ask
-// whether to run the prepass for the upscaler's sake without the two recursing.  This is
-// what decouples motion vectors from r_useRayTracing: FSR 2 asking for them is now reason
-// enough to produce them.
-bool VK_RT_UpscaleNeedsMotionVectors(void)
+// CAPABILITY, not demand: could FSR 2 run at all, ignoring whether there is a sub-rect to
+// resolve right now.  Deliberately free of any render-extent term — VK_RT_ResolvePathReady
+// asks downstream of this while deciding whether to *reduce* the extent, and "reduce only
+// if already reduced" latches at native forever.
+static bool VK_RT_Fsr2Capable(void)
 {
     return VK_RT_Fsr2Requested() && vk.fsr2Supported && !s_fsr2CreateFailed;
 }
 
-// Could FSR 2 resolve this frame?  Side-effect free, unlike VK_RT_Fsr2Ready — the
+// DEMAND: does the upscaler actually need motion vectors written this frame?  The extent
+// term keeps r_fsrRenderScale 1.0 a true bypass — at native FSR 2 dispatches nothing, so
+// running the three-attachment prepass for it would be pure cost.
+//
+// This is what decouples motion vectors from r_useRayTracing: FSR 2 wanting them is reason
+// enough to produce them.  Split from VK_GBufferPrepassActive's other term so the two
+// cannot recurse.
+bool VK_RT_UpscaleNeedsMotionVectors(void)
+{
+    return VK_RT_Fsr2Capable() && VK_RT_UpscaleActive();
+}
+
+// Could FSR 2 resolve, given a sub-rect?  Side-effect free, unlike VK_RT_Fsr2Ready — the
 // render-extent fallback asks this *before* the extent is settled and must not trigger
 // a context build at the old size.
 //
-// VK_GBufferPrepassActive gates it because the motion attachment is written only by that
-// prepass.  Feeding FSR2 an untouched field would claim every pixel is static, so the
-// history never reprojects and the whole frame ghosts on camera motion — a failure that
-// looks like a bad FSR2 setup rather than a missing prepass.  Same reason
-// VK_RT_MotionDebugActive refuses to draw.
+// Tests the G-buffer *capability* rather than VK_GBufferPrepassActive, for the same
+// no-cycle reason as above.  The motion attachment is written only by that prepass, and
+// feeding FSR2 an untouched field would claim every pixel is static — the history never
+// reprojects and the whole frame ghosts on camera motion.  Whether the prepass is running
+// *this* frame is VK_RT_Fsr2Ready's question, and it asks VK_GBufferPrepassActive directly.
 static bool VK_RT_Fsr2Possible(void)
 {
-    return VK_RT_UpscaleNeedsMotionVectors() && VK_GBufferPrepassActive();
+    return VK_RT_Fsr2Capable() && vk.gbufferSupported && vkPipes.gbufferPipeline != VK_NULL_HANDLE;
 }
 
 // Create / recreate / tear down as needed, and report whether this frame can dispatch.
