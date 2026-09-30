@@ -777,6 +777,26 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
                         vp[c * 4 + r] += proj[k * 4 + r] * mv[c * 4 + k];
                 }
             }
+            // Cropped subviews (remote cameras, mirrorRenderMap) rasterise into a sub-rect of
+            // the frame, but the rgen builds NDC over the full extent.  Map viewport NDC to
+            // full-frame NDC so the inverse lands on the right world position.
+            {
+                const idScreenRect &v = viewDef->viewport;
+                const float W = (float)Max(1u, vk.swapchainExtent.width);
+                const float H = (float)Max(1u, vk.swapchainExtent.height);
+                const float vw = (float)(v.x2 - v.x1 + 1);
+                const float vh = (float)(v.y2 - v.y1 + 1);
+                if (vw > 0.0f && vh > 0.0f && (v.x1 != 0 || v.y1 != 0 || vw < W || vh < H))
+                {
+                    const float sx = vw / W, ox = (2.0f * v.x1 + vw) / W - 1.0f;
+                    const float sy = vh / H, oy = (2.0f * v.y1 + vh) / H - 1.0f;
+                    for (int c = 0; c < 4; c++)
+                    {
+                        vp[c * 4 + 0] = sx * vp[c * 4 + 0] + ox * vp[c * 4 + 3];
+                        vp[c * 4 + 1] = sy * vp[c * 4 + 1] + oy * vp[c * 4 + 3];
+                    }
+                }
+            }
             idMat4 vpMat(idVec4(vp[0], vp[1], vp[2], vp[3]), idVec4(vp[4], vp[5], vp[6], vp[7]),
                          idVec4(vp[8], vp[9], vp[10], vp[11]), idVec4(vp[12], vp[13], vp[14], vp[15]));
             idMat4 invVP = vpMat.Inverse();

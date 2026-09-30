@@ -65,6 +65,14 @@ static idScreenRect VK_ScaleToDrawSpace(const idScreenRect &s)
 // reflected content from bleeding outside the mirror surface's screen bounds.
 static VkRect2D s_viewScissor;
 
+// Current view's viewport (Y-flipped, draw space).  Full draw extent for normal views;
+// remote-camera/mirrorRenderMap/xray subviews render into a crop in the bottom-left.
+static VkViewport s_viewViewport;
+
+// True once any subview has drawn colour this frame; later views must black out their
+// opaque surfaces in the depth prepass (GL does this unconditionally) or it shows through.
+static bool s_frameDrewSubview = false;
+
 // Last major render stage that was entered.  Updated just before each vkCmd* stage.
 // Printed on VK_ERROR_DEVICE_LOST so we know exactly where command recording got to.
 static const char *s_lastRenderStage = "(none)";
@@ -118,10 +126,7 @@ static void VK_ResumeHdrRenderPass(VkCommandBuffer cmd, const VkRect2D *scissor)
 
     if (scissor)
     {
-        // Negative height carries the GL Y-flip, as everywhere else in the backend.
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height,
-                               0.0f, 1.0f};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetViewport(cmd, 0, 1, &s_viewViewport);
         vkCmdSetScissor(cmd, 0, 1, scissor);
     }
 }
@@ -882,6 +887,29 @@ static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
     r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, w2);
     r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, h2);
     return r;
+}
+
+// GL glViewport(viewDef->viewport) equivalent.  Negative height carries the GL Y-flip;
+// with it, .y is the viewport's bottom edge in VK (Y-down) rows.
+static VkViewport VK_ComputeViewViewport(const viewDef_t *viewDef)
+{
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    const float dw = (float)drawExtent.width;
+    const float dh = (float)drawExtent.height;
+    VkViewport full = {0.0f, dh, dw, -dh, 0.0f, 1.0f};
+
+    // Full-display views (main view, 2D overlay, SS_SUBVIEW mirrors) keep the exact extent.
+    const idScreenRect &v = viewDef->viewport;
+    const int vw = v.x2 - v.x1 + 1;
+    const int vh = v.y2 - v.y1 + 1;
+    if (vw <= 0 || vh <= 0 ||
+        (v.x1 == 0 && v.y1 == 0 && vw >= (int)vk.swapchainExtent.width && vh >= (int)vk.swapchainExtent.height))
+        return full;
+
+    const float sx = s_upscaleDone ? 1.0f : VK_RT_RenderScaleX();
+    const float sy = s_upscaleDone ? 1.0f : VK_RT_RenderScaleY();
+    VkViewport vp = {v.x1 * sx, dh - v.y1 * sy, vw * sx, -(vh * sy), 0.0f, 1.0f};
+    return vp;
 }
 
 // Intersect two VkRect2D rects. Returns a zero-area rect if no overlap.
@@ -2494,8 +2522,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
     // GL parity: when the current (non-subview) view contains mirror surfaces,
     // the depth fill pass must also guard the color buffer so previously rendered
     // mirror subview color does not leak through unrelated geometry.
-    bool guardSubviewColor = false;
-    if (!backEnd.viewDef->isSubview)
+    // Remote cameras/xray have no SS_SUBVIEW surface in the parent view, but their
+    // crop still sits in the colour buffer, so any earlier subview also triggers it.
+    bool guardSubviewColor = s_frameDrewSubview;
+    if (!guardSubviewColor && !backEnd.viewDef->isSubview)
     {
         for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
         {
@@ -4650,9 +4680,9 @@ void VK_RB_DrawView(const void *data)
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
         // NOTE: the negative height inverts the effective winding order, so our pipelines
         // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
-                               1.0f};
-        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+        s_viewViewport = VK_ComputeViewViewport(backEnd.viewDef);
+        vkCmdSetViewport(cmdBuf, 0, 1, &s_viewViewport);
+        s_frameDrewSubview = false;
 
         // Set scissor from viewDef to confine subview rendering to mirror bounds.
         s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
@@ -4722,8 +4752,8 @@ void VK_RB_DrawView(const void *data)
         }
 
         const VkExtent2D vpExtent = VK_CurrentDrawExtent();
-        VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
-        vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
+        s_viewViewport = VK_ComputeViewViewport(backEnd.viewDef);
+        vkCmdSetViewport(s_frameCmdBuf, 0, 1, &s_viewViewport);
         // Set scissor from viewDef — for the main view this is typically full-screen;
         // for subviews it confines rendering to the mirror surface's screen bounds.
         vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
@@ -4814,6 +4844,9 @@ void VK_RB_DrawView(const void *data)
         VK_RTProfile_PhaseEnd(cmdBuf, profDepth);
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_DEPTH_PREPASS, cpuDepthStart);
     }
+    // Set after this view's own prepass so only later views guard against its colour.
+    if (backEnd.viewDef->isSubview)
+        s_frameDrewSubview = true;
 
     // Rebuild TLAS after the depth prepass so that depth values are populated before any
     // RT dispatch (shadow batch, AO, reflections, GI) reads from them.
@@ -5267,6 +5300,24 @@ void VK_RB_DrawView(const void *data)
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
 }
 
+// remoteRenderMap stages sample the capture with explicit UVs authored for GL's bottom-up
+// copy (the materials add "scale 1, -1").  TG_SCREEN captures (mirrorRenderMap, xray,
+// _currentRender) instead rely on the backend's flipped T plane, so they stay top-down.
+static bool VK_CopyWantsGLRowOrder(void)
+{
+    const viewDef_t *vd = backEnd.viewDef;
+    if (!vd || !vd->isSubview || !vd->subviewSurface || !vd->subviewSurface->material)
+        return false;
+    const idMaterial *mat = vd->subviewSurface->material;
+    for (int i = 0; i < mat->GetNumStages(); i++)
+    {
+        const textureStage_t &ts = mat->GetStage(i)->texture;
+        if (ts.dynamic == DI_REMOTE_RENDER && ts.texgen != TG_SCREEN && ts.texgen != TG_SCREEN2)
+            return true;
+    }
+    return false;
+}
+
 void VK_RB_CopyRender(const void *data)
 {
     const copyRenderCommand_t *cmd = (const copyRenderCommand_t *)data;
@@ -5359,12 +5410,12 @@ void VK_RB_CopyRender(const void *data)
         {
             s_copyRenderLog++;
             common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u "
-                           "isSubview=%d isMirror=%d clipPlanes=%d\n",
+                           "isSubview=%d isMirror=%d clipPlanes=%d glRowOrder=%d\n",
                            cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH,
                            copyW, copyH, (unsigned)vk.renderExtent.width, (unsigned)vk.renderExtent.height,
                            backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
-                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1);
+                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1, VK_CopyWantsGLRowOrder() ? 1 : 0);
         }
     }
 
@@ -5392,12 +5443,20 @@ void VK_RB_CopyRender(const void *data)
     const VkExtent2D srcExtent = VK_CurrentDrawExtent();
     const float scaleX = s_upscaleDone ? 1.0f : VK_RT_RenderScaleX();
     const float scaleY = s_upscaleDone ? 1.0f : VK_RT_RenderScaleY();
+    // cmd->y is a GL (bottom-origin) row; crops sit at the bottom of the frame.
+    const int srcTopVK = (int)vk.swapchainExtent.height - (srcY + copyH);
     const int rsX = (int)idMath::Floor(srcX * scaleX);
-    const int rsY = (int)idMath::Floor(srcY * scaleY);
+    const int rsY = (int)idMath::Floor((srcTopVK > 0 ? srcTopVK : 0) * scaleY);
     const int rsX2 = idMath::ClampInt(rsX + 1, (int)srcExtent.width, rsX + (int)idMath::Ceil(copyW * scaleX));
     const int rsY2 = idMath::ClampInt(rsY + 1, (int)srcExtent.height, rsY + (int)idMath::Ceil(copyH * scaleY));
     region.srcOffsets[0] = {rsX, rsY, 0};
     region.srcOffsets[1] = {rsX2, rsY2, 1};
+    if (VK_CopyWantsGLRowOrder())
+    {
+        // Reversed source rows flip the blit so dst row 0 is the bottom, like glCopyTexImage.
+        region.srcOffsets[0].y = rsY2;
+        region.srcOffsets[1].y = rsY;
+    }
 
     region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.dstSubresource.mipLevel = 0;
