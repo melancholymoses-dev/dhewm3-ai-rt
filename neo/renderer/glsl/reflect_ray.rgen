@@ -17,11 +17,9 @@ For every non-sky pixel:
      BEFORE the trace and returns early under r_rtReflectionMinWeight — an exact cull,
      since nothing in the weight depends on the trace. R2 scales the grazing ceiling
      with F0 (r_rtSpecGrazingGain) instead of a flat r_rtSpecGrazingMax.
-  3. Trace rays using a short bounce loop (max 2 iterations).
-     - On an opaque hit, rchit writes colour + transmittance=0 → stop.
-     - On a glass hit, rchit writes F0*tint + transmittance=0.96 + nextOrigin/Dir
-       so the loop fires a continuation ray straight through the glass.
-     - On a miss, rmiss writes sky colour + transmittance=0 → stop.
+  3. Trace the reflection ray. Glass along it is skipped in rahit (pure
+     transmission), so rchit/rmiss return the opaque hit or sky. The bounce loop
+     only continues if a hit shader sets transmittance > 0 (none currently do).
   4. Write the Fresnel-weighted radiance to the reflection RGBA16F buffer.
      Glass pixels are the exception: they store raw
      radiance + glassWeight in NEGATED alpha, a sentinel telling
@@ -253,8 +251,8 @@ void main()
     // Bias origin off surface to avoid self-intersection
     vec3 origin = reflOrigin + reflNormal * 0.5;
 
-    // Bounce loop: up to 2 iterations covers double-pane glass.
-    // Each glass hit contributes 5 % and passes 95 % to the next segment.
+    // Bounce loop: continues only while a hit shader returns transmittance > 0.
+    // Glass is skipped in rahit, so this is currently a single trace.
     vec3  accum  = vec3(0.0);
     float weight = 1.0;
     vec3  dir    = reflDir;
