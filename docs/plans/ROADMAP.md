@@ -74,6 +74,7 @@ Each of these cost a debugging session. They apply to any new RT code.
 | A shadow ray's cull mask is a parameter, never a constant | `noSelfShadow` is instance mask `0x01`; `0xFF` made the player self-shadow in reflections only |
 | A light's *current* value comes from `EvaluateRegisters()` + the stage's `color.registers[]` | Doom 3 puts flicker in material expressions. `shaderParms` is the constant amplitude — 74 animated materials were pinned at peak |
 | A mapped buffer the CPU **reads** needs `HOST_CACHED`, and should be memcpy'd out before use | `HOST_VISIBLE\|HOST_COHERENT` alone is write-combined; scalar reads cost ~200 ns each. Worth 3.26 → 0.03 ms on the probe classifier |
+| A mapped buffer (or descriptor set) the CPU **writes** while recording needs one copy per frame slot, indexed by `vk.currentFrame` | The previous frame is still on the GPU. The shared material table caused white/black triangles on the 9070 XT only (GPU-bound, CPU a frame ahead); `r_vkSerializeFrames 1` is the check |
 | Doom 3 winds front faces opposite to GL/Vulkan — use the vertex normal, not `gl_HitKindEXT` | Every visible surface reports back-facing |
 | A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Caused the GI checkerboard ghost |
 | Shared GLSL that compute shaders include must be **pipeline-agnostic** — no ray payload, no `traceRayEXT`, no TLAS. `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not | An RT-only built-in pulled into a compute shader silently killed all volumetric lighting once |

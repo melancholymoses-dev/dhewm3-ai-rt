@@ -236,6 +236,11 @@ static idCVar r_vkLowPerturbationMode(
 static idCVar r_vkSplitSubmitVerbose(
     "r_vkSplitSubmitVerbose", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Verbose split-submit logging (0=quiet, 1=print per-stage split-submit completion)");
+static idCVar r_vkSerializeFrames(
+    "r_vkSerializeFrames", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Debug: wait for each frame's GPU work to finish before recording the next, so the CPU never "
+    "writes shared host-visible buffers while a previous frame still reads them.  Artifacts that vanish "
+    "with this on are CPU/GPU races.");
 static idCVar r_vkRTProfile(
     "r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
     "RT GPU phase profiling with Vulkan timestamps (0=off, 1=periodic logs, 2=log every frame)");
@@ -5618,6 +5623,14 @@ void VK_RB_SwapBuffers()
         }
         s_readbackDone = true;
         s_readbackSubmitted = false;
+    }
+    else if (r_vkSerializeFrames.GetBool())
+    {
+        // Fence is not reset here; the next wait on this slot returns immediately.
+        VkResult serFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        if (serFence != VK_SUCCESS)
+            common->Warning("VK: r_vkSerializeFrames fence wait failed: %d (%s)", (int)serFence,
+                            VK_ResultToString(serFence));
     }
 
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;

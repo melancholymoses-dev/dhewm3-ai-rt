@@ -447,23 +447,25 @@ struct vkRTState_t
     //   vtxAddrSSBO   — uint64_t[],        vertex buffer device address per instance
     //   idxAddrSSBO   — uint64_t[],        index  buffer device address per instance
     //
+    // One copy per frame slot, indexed by vk.currentFrame: the CPU rewrites them
+    // while recording, and the previous frame's TLAS still indexes the old layout.
     // --------------------------------------------------------------------------
-    VkBuffer matTableSSBO;
-    VkDeviceMemory matTableSSBOMemory;
-    void *matTableMapped; // persistently mapped
+    VkBuffer matTableSSBO[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory matTableSSBOMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void *matTableMapped[VK_MAX_FRAMES_IN_FLIGHT]; // persistently mapped
 
-    VkBuffer vtxAddrSSBO;
-    VkDeviceMemory vtxAddrSSBOMemory;
-    void *vtxAddrMapped; // persistently mapped
+    VkBuffer vtxAddrSSBO[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory vtxAddrSSBOMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void *vtxAddrMapped[VK_MAX_FRAMES_IN_FLIGHT]; // persistently mapped
 
-    VkBuffer idxAddrSSBO;
-    VkDeviceMemory idxAddrSSBOMemory;
-    void *idxAddrMapped; // persistently mapped
+    VkBuffer idxAddrSSBO[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory idxAddrSSBOMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void *idxAddrMapped[VK_MAX_FRAMES_IN_FLIGHT]; // persistently mapped
 
     VkDescriptorSetLayout matDescLayout; // set=2: mat SSBO + vtx/idx addr + bindless textures
     VkDescriptorPool matDescPool;
-    VkDescriptorSet matDescSet; // single set — textures stable between frames
-    VkSampler matSampler;       // bilinear-clamp, used for all bindless slots
+    VkDescriptorSet matDescSet[VK_MAX_FRAMES_IN_FLIGHT]; // bind matDescSet[vk.currentFrame]
+    VkSampler matSampler;                                 // bilinear-clamp, used for all bindless slots
 
     bool matTableInitialized;
 

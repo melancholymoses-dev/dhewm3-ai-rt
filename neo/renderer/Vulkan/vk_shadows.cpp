@@ -1022,7 +1022,7 @@ static void VK_RT_RecordShadowTrace(VkCommandBuffer cmd, const viewDef_t *viewDe
                                 &uboOff);
         // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless textures)
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.shadowPipelineLayout, 1, 1,
-                                &vkRT.matDescSet, 0, NULL);
+                                &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
         const uint32_t dispatchW = dispatchRect.extent.width;
         const uint32_t dispatchH = dispatchRect.extent.height;

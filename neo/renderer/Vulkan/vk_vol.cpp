@@ -2065,7 +2065,7 @@ void VK_RT_DispatchVolumetrics(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.volMarchDescSets[frameIdx], 1, &uboOff);
     // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless
     // textures) — Stage 3 (rt_projected_light_cookies.md) light-cookie sampling.
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1, &vkRT.matDescSet, 0,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.volMarchPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame], 0,
                             NULL);
 
     uint32_t groupsX = ((uint32_t)ubo.scissorExtentX + 7) / 8;

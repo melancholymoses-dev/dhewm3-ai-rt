@@ -1304,7 +1304,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.reflDescSets[frameIdx], 1, &uboOff);
     // set=1: material table (MatTable SSBO, VtxAddrTable, IdxAddrTable, bindless textures)
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.reflPipelineLayout, 1, 1,
-                            &vkRT.matDescSet, 0, NULL);
+                            &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f\n", rectW, rectH, rectX, rectY,
