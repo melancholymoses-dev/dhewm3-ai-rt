@@ -106,7 +106,7 @@ Those should be copied to `base/def` alongside the shaders to take effect in gam
 Updated Plasma Rifle particles to shed blue light on pulses.
 Updated Rockets to show light.
 
-- There is also a material for tracking added GI accent lights in logging. 
+- There is also a material for tracking added GI accent lights in logging.   Game will break without it.
 
 # GENERAL NOTES
 
