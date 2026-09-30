@@ -722,7 +722,12 @@ void VK_TransitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout 
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        // Not FRAGMENT alone: bindless textures are sampled from the RT stages, and U4's
+        // preAlphaColor snapshot is read by FSR 2's compute passes.  A fragment-only
+        // destination leaves both of those reading memory the barrier never made visible.
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        if (vk.rayTracingSupported)
+            dstStage |= VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
     }
     else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {

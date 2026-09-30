@@ -1,0 +1,60 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — fsr_tc_mask.comp — FSR 2 transparency-and-composition mask.
+
+Extracts the per-pixel T&C class the G-buffer prepass stashed in gbufAlbedo's
+alpha channel into a standalone R8 mask, which is the shape
+ffxFsr2ContextDispatch wants for transparencyAndComposition.
+
+Alpha carries the mask because gbufAlbedo's rgb is the only part anything reads
+(gi_albedo_mod.comp) and its alpha was a constant 1.0 — a free render-resolution
+channel that avoids a fifth colour attachment and the ten pipeline-creation
+sites that would come with one.
+
+The prepass writes 1.0 - tcClass, so:
+  alpha == 1.0  ->  mask 0  (ordinary surface, or a pixel the prepass never
+                             wrote: sky and translucents clear to white)
+  alpha <  1.0  ->  mask 1 - alpha
+
+FSR 2's depth-clip pass already 3x3 max-dilates whatever it is given
+(PreProcessReactiveMasks, ffx_fsr2_depth_clip.h), so no dilation happens here.
+
+Descriptors (set 0):
+  binding 0 — srcAlbedo sampler2D    (gbufAlbedo; texelFetch only)
+  binding 1 — dstMask   r8 storage image (tcMask)
+
+Push constants (8 bytes, matches FsrTcMaskPC in vk_upscale.cpp):
+  ivec2 renderExtent — valid sub-rect of both images
+
+FSR upscaling arc U4 — docs/plans/20260918_fsr_upscaling.md §9.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcAlbedo;
+layout(set = 0, binding = 1, r8) uniform image2D dstMask;
+
+layout(push_constant) uniform PC {
+    ivec2 renderExtent;
+} pc;
+
+void main()
+{
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= pc.renderExtent.x || coord.y >= pc.renderExtent.y)
+        return;
+
+    float packed = texelFetch(srcAlbedo, coord, 0).a;
+    imageStore(dstMask, coord, vec4(clamp(1.0 - packed, 0.0, 1.0)));
+}

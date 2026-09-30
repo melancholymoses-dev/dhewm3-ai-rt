@@ -94,6 +94,38 @@ static void VK_DumpStageBreadcrumbs(void)
     }
 }
 
+// Reopen the HDR render pass after a mid-frame vkCmdEndRenderPass.  RT dispatches, image
+// copies and the upscale resolve all have to step outside it, and every one of those sites
+// rebuilt the identical VkRenderPassBeginInfo.  Only the scissor ever differed, so that is
+// the one parameter; pass NULL to leave viewport/scissor untouched.
+//
+// The extent comes from VK_CurrentDrawExtent, not vk.renderExtent: this runs for the 2D
+// overlay view too, and resuming at render extent there squeezed the UI and the GI
+// composite into the top-left sub-rect.
+static void VK_ResumeHdrRenderPass(VkCommandBuffer cmd, const VkRect2D *scissor)
+{
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+
+    VkRenderPassBeginInfo rpResume = {};
+    rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpResume.renderPass = vk.hdrRenderPassResume;
+    rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+    rpResume.renderArea.offset = {0, 0};
+    rpResume.renderArea.extent = drawExtent;
+    rpResume.clearValueCount = 0;
+    rpResume.pClearValues = NULL;
+    vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+
+    if (scissor)
+    {
+        // Negative height carries the GL Y-flip, as everywhere else in the backend.
+        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height,
+                               0.0f, 1.0f};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, scissor);
+    }
+}
+
 // Debug-only helper: submit the current command buffer mid-frame, wait for GPU idle,
 // then continue recording with a fresh command buffer and resumed render pass.
 // This isolates which stage chunk poisons the queue before final present submit.
@@ -154,23 +186,7 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
     }
 
     if (renderPassActive)
-    {
-        VkRenderPassBeginInfo rpResume = {};
-        rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpResume.renderPass = vk.hdrRenderPassResume;
-        rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
-        rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = drawExtent;
-        rpResume.clearValueCount = 0;
-        rpResume.pClearValues = NULL;
-        vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
-                               1.0f};
-        vkCmdSetViewport(newCmd, 0, 1, &viewport);
-        vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
-    }
+        VK_ResumeHdrRenderPass(newCmd, &s_viewScissor);
 
     s_frameCmdBuf = newCmd;
     *cmdBufInOut = newCmd;
@@ -1599,7 +1615,10 @@ struct VkGBufferUBO
     float alphaTestThreshold;      // 4 bytes  — gbuffer_clip.frag only
     float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
     float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
-    float _pad0;                   // 4 bytes
+    // U4 transparency-and-composition class, 0 = ordinary surface, 1 = motion vectors here
+    // are known wrong.  Written to gbufAlbedo's alpha (as 1 - tcClass) and extracted by
+    // fsr_tc_mask.comp; took over the old _pad0 slot, so the struct size is unchanged.
+    float tcClass;                 // 4 bytes
 }; // 368 bytes total
 
 // Every UBO here comes out of the one ring, whose stride is sized from
@@ -2847,7 +2866,18 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             ubo->alphaTestThreshold = useClipPipeline ? (alphaThreshold / alphaScale) : alphaThreshold;
             ubo->specF0Scale = r_rtSpecF0Scale.GetFloat();
             ubo->specF0Gamma = r_rtSpecF0Gamma.GetFloat();
-            ubo->_pad0 = 0.f;
+
+            // U4 T&C class.  Two families of surface reach the prepass with motion vectors
+            // FSR 2 must not trust:
+            //   - deformedSurface: MD5 skinned meshes and liquid, whose verts are
+            //     regenerated into the vertex cache every frame, so the prepass reprojects
+            //     them from the entity transform alone and limb motion is simply absent
+            //   - weaponDepthHack: the viewmodel, whose depth is remapped into [0, 0.5] and
+            //     therefore disagrees with its own screen motion
+            // Everything else (static world, rigid props) has exact motion vectors.
+            const bool tcDeformed = surf->geo->deformedSurface;
+            const bool tcViewmodel = surf->space->weaponDepthHack;
+            ubo->tcClass = (tcDeformed || tcViewmodel) ? 1.f : 0.f;
 
             VkDescriptorImageInfo bumpInfo = {}, specInfo = {};
             if (!VK_Image_GetDescriptorInfo(bumpImage, &bumpInfo))
@@ -3909,20 +3939,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             vkCmdEndRenderPass(cmd);
             VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor, s_shadowMaskLayer);
-            VkRenderPassBeginInfo rpResume = {};
-            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rpResume.renderPass = vk.hdrRenderPassResume;
-            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-            const VkExtent2D drawExtent = VK_CurrentDrawExtent();
-            rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = drawExtent;
-            rpResume.clearValueCount = 0;
-            rpResume.pClearValues = NULL;
-            vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-            VkViewport rtViewport = {
-                0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
-            vkCmdSetViewport(cmd, 0, 1, &rtViewport);
-            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+            // This light's scissor, not the view's — the interaction draws that follow are
+            // confined to it.
+            VK_ResumeHdrRenderPass(cmd, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
             s_interactionPipeTag = "opaque";
@@ -4666,15 +4685,9 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
             s_upscaleDone = true;
 
-            VkRenderPassBeginInfo rpResume = {};
-            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rpResume.renderPass = vk.hdrRenderPassResume;
-            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-            rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = VK_CurrentDrawExtent(); // UI draws at display res
-            rpResume.clearValueCount = 0;
-            rpResume.pClearValues = NULL;
-            vkCmdBeginRenderPass(s_frameCmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+            // NULL scissor: s_viewScissor for this view is computed just below, and the
+            // viewport is set there too.
+            VK_ResumeHdrRenderPass(s_frameCmdBuf, NULL);
         }
 
         // Compute this view's scissor first; GL clears depth/stencil through the
@@ -5082,23 +5095,7 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_SetRenderStage("ResumeRenderPass");
-        VkRenderPassBeginInfo rpResume = {};
-        rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpResume.renderPass = vk.hdrRenderPassResume;
-        rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-        // Display extent once the resolve has run: this block also executes for the
-        // 2D overlay view, and resuming at renderExtent here is what squeezed the UI
-        // and the GI composite back into the top-left sub-rect.
-        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
-        rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = drawExtent;
-        rpResume.clearValueCount = 0;
-        rpResume.pClearValues = NULL;
-        vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
-                               1.0f};
-        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+        VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
 
         if ((splitMask & 128) != 0)
         {
@@ -5180,6 +5177,24 @@ void VK_RB_DrawView(const void *data)
     {
         common->Printf("VK FRAME: interactions done — slot=%u frameCount=%d\n", vk.currentFrame, tr.frameCount);
         fflush(NULL);
+    }
+
+    // U4 (docs/plans/20260918_fsr_upscaling.md §9): build FSR 2's mask inputs here, after
+    // the interactions and before the blend stages — that boundary is the whole point of
+    // the pre-alpha snapshot.  The capture needs the render pass closed (a vkCmdCopyImage
+    // cannot be recorded inside one), so it costs one end/resume when enabled.
+    //
+    // Same real-camera gate as the RT dispatches above: the 2D overlay view arrives as a
+    // second RC_DRAW_VIEW with a zeroed viewaxis and has nothing pre-alpha about it, and a
+    // mirror/subview would overwrite the primary view's masks with its own.
+    if ((VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask()) &&
+        backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f && !backEnd.viewDef->isSubview &&
+        !backEnd.viewDef->isMirror)
+    {
+        VK_SetRenderStage("FSR_MaskCapture");
+        vkCmdEndRenderPass(cmdBuf);
+        VK_RT_CaptureReactiveInputs(cmdBuf);
+        VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
     }
 
     VK_SetRenderStage("ShaderPasses");
@@ -5396,24 +5411,11 @@ void VK_RB_CopyRender(const void *data)
     VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-    // Resume render pass so the rest of the frame can continue.
-    VkRenderPassBeginInfo rpResume = {};
-    rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpResume.renderPass = vk.hdrRenderPassResume;
-    rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-    rpResume.renderArea.offset = {0, 0};
-    rpResume.renderArea.extent = VK_CurrentDrawExtent();
-    rpResume.clearValueCount = 0;
-    rpResume.pClearValues = NULL;
-    vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Re-apply default viewport/scissor state (negative-height Y flip).
-    // Post-upscale the frame is display-space; restoring renderExtent here would
-    // silently shrink everything drawn after a mid-frame _currentRender capture.
-    const VkExtent2D vpExtent = VK_CurrentDrawExtent();
-    VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
-    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-    vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+    // Resume render pass so the rest of the frame can continue.  The helper's extent is
+    // VK_CurrentDrawExtent: post-upscale the frame is display-space, and restoring
+    // renderExtent here would silently shrink everything drawn after a mid-frame
+    // _currentRender capture.
+    VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
 }
 
 // ---------------------------------------------------------------------------
@@ -5472,6 +5474,11 @@ void VK_RB_SwapBuffers()
     // No-op unless the mode is selected.
     VK_SetRenderStage("RT_MotionDebug");
     VK_RT_DispatchMotionDebug(cmdBuf);
+
+    // U4 mask overlay (r_fsrDebug 3).  Same slot and the same reasoning; the two modes are
+    // mutually exclusive, so ordering between them does not matter.
+    VK_SetRenderStage("RT_MaskDebug");
+    VK_RT_DispatchMaskDebug(cmdBuf);
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.

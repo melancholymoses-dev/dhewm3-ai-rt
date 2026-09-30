@@ -83,6 +83,21 @@ struct Fsr2BleedPC
     float threshold;
 };
 
+// Must match fsr_tc_mask.comp (U4).
+struct FsrTcMaskPC
+{
+    int32_t renderExtent[2];
+};
+
+// Must match fsr_mask_debug.comp (U4, r_fsrDebug 3).
+struct FsrMaskDebugPC
+{
+    int32_t renderExtent[2];
+    int32_t displayExtent[2];
+    float brightness;
+    float sceneDim;
+};
+
 idCVar r_fsr("r_fsr", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
              "Upscale filter used when the render scale is below 1.0.  0 = bilinear resolve, "
              "1 = AMD FidelityFX Super Resolution 1 (EASU + RCAS), "
@@ -103,6 +118,21 @@ idCVar r_fsrJitter("r_fsrJitter", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                    "shake.  FSR 2 needs it and goes blurry without it; 0 stays available as the A/B.");
 idCVar r_fsrMotionScale("r_fsrMotionScale", "16", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                         "Render pixels of motion that saturate the r_fsrDebug 7 overlay.");
+idCVar r_fsrAutoReactive("r_fsrAutoReactive", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                         "Generate an FSR 2 reactive mask from a pre-alpha snapshot of the scene, so particles, "
+                         "glass and fog lean less on the temporal history and stop smearing.  Costs one "
+                         "render-resolution colour copy per frame.  0 = no reactive mask.");
+idCVar r_fsrReactiveCutoff("r_fsrReactiveCutoff", "0.05", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                           "How much a blend stage must change a pixel before it counts as reactive.  Measured "
+                           "after FSR 2's reversible tonemap, so the useful range is roughly [0.01, 0.3] however "
+                           "bright the HDR scene is.  Tune from r_fsrDebug 3, not by eye on the composite.");
+idCVar r_fsrReactiveScale("r_fsrReactiveScale", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                          "Multiplier applied to the pre/post-alpha delta before r_fsrReactiveCutoff.  Raise to "
+                          "catch faint effects (steam, thin smoke) that a fixed cutoff misses.");
+idCVar r_fsrTcMask("r_fsrTcMask", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                   "Feed FSR 2 a transparency-and-composition mask covering surfaces whose motion vectors are "
+                   "known wrong — skinned characters and the viewmodel, which reproject from the entity "
+                   "transform only.  Reduces their ghosting at the cost of some reconstructed detail on them.");
 idCVar r_fsrMipBias("r_fsrMipBias", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                     "Bias texture mip selection by log2(renderW/displayW) + r_fsrMipBiasOffset while the render "
                     "scale is below 1.  Without it every texture picks a mip sized for the smaller raster grid "
@@ -117,6 +147,9 @@ idCVar r_fsrMipBiasOffset("r_fsrMipBiasOffset", "-1.0", CVAR_RENDERER | CVAR_FLO
 // FSR 1 (U1) resources.  Kept file-static: vk_upscale.cpp is the one
 // translation unit that owns upscaling, and nothing else needs to see them.
 // ---------------------------------------------------------------------------
+// Source bindings a single fsrPass_t can carry.  Two is all U4's mask overlay needs.
+static const uint32_t FSR_PASS_MAX_SRC = 2;
+
 struct fsrPass_t
 {
     VkPipeline pipeline;
@@ -124,6 +157,7 @@ struct fsrPass_t
     VkDescriptorSetLayout descLayout;
     VkDescriptorPool descPool;
     VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT];
+    uint32_t numSrc; // source bindings; the storage destination sits at binding numSrc
 };
 
 // Per frame-in-flight for the same reason as vkRT.hdrUpscaled — see vk_raytracing.h.
@@ -132,12 +166,16 @@ static fsrPass_t s_fsrPrepare;
 static fsrPass_t s_fsrEasu;
 static fsrPass_t s_fsrRcas;
 static fsrPass_t s_motionDebug; // U2, r_fsrDebug 7
+static fsrPass_t s_fsrTcMask;   // U4, gbufAlbedo.a -> tcMask
+static fsrPass_t s_fsrMaskDebug; // U4, r_fsrDebug 3
 #if defined(DHEWM3_FSR2)
 static fsrPass_t s_fsr2Bleed; // U3, r_fsrDebug 5
 static bool s_fsr2BleedReady = false;
 #endif
 static bool s_fsr1Ready = false;
 static bool s_motionDebugReady = false;
+static bool s_fsrTcMaskReady = false;
+static bool s_fsrMaskDebugReady = false;
 static int s_fsrLoggedMode = -1; // last r_fsr value announced to the console
 
 // Set by VK_RT_DispatchUpscale once FSR 2 has actually run.  Read a frame later by
@@ -187,7 +225,8 @@ void VK_RT_CaptureFsrViewParams(const viewDef_t *viewDef)
     s_fsrView.jitterY = viewDef->jitterOffset[1];
 }
 
-static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t height, const char *label)
+static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t height, VkFormat format,
+                                     VkImageUsageFlags usage, const char *label)
 {
     up.width = width;
     up.height = height;
@@ -195,13 +234,13 @@ static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t h
     VkImageCreateInfo imgInfo = {};
     imgInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imgInfo.imageType = VK_IMAGE_TYPE_2D;
-    imgInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    imgInfo.format = format; //
     imgInfo.extent = {width, height, 1};
     imgInfo.mipLevels = 1;
     imgInfo.arrayLayers = 1;
     imgInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-    imgInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imgInfo.usage = usage; //;
     imgInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     VK_CHECK(vkCreateImage(vk.device, &imgInfo, NULL, &up.image));
 
@@ -237,7 +276,10 @@ static void VK_RT_CreateUpscaleImage(vkRTImage_t &up, uint32_t width, uint32_t h
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = up.image;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    // Must match the image's own format, not the RGBA16F this function used to hardcode —
+    // a view format that disagrees with its image is invalid, and R8_UNORM masks go
+    // through here now.
+    viewInfo.format = format;
     viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     VK_CHECK(vkCreateImageView(vk.device, &viewInfo, NULL, &up.view));
 
@@ -466,24 +508,32 @@ full-resolution copy the bilinear path needs.
 ===========================================================================
 */
 
-static bool VK_RT_CreateFsrPass(fsrPass_t &pass, const char *spvPath, VkDescriptorType srcType, uint32_t pushSize)
+// numSrc source bindings at 0..numSrc-1, then the storage-image destination at numSrc.
+// Every pass here is "read some images, write one" — U4's mask overlay is the first that
+// needs two sources, which is the only reason numSrc exists.
+static bool VK_RT_CreateFsrPass(fsrPass_t &pass, const char *spvPath, VkDescriptorType srcType, uint32_t pushSize,
+                                uint32_t numSrc = 1)
 {
     memset(&pass, 0, sizeof(pass));
+    pass.numSrc = numSrc;
 
-    VkDescriptorSetLayoutBinding bindings[2] = {};
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = srcType;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutBinding bindings[FSR_PASS_MAX_SRC + 1] = {};
+    for (uint32_t b = 0; b < numSrc; b++)
+    {
+        bindings[b].binding = b;
+        bindings[b].descriptorType = srcType;
+        bindings[b].descriptorCount = 1;
+        bindings[b].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
 
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[numSrc].binding = numSrc;
+    bindings[numSrc].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[numSrc].descriptorCount = 1;
+    bindings[numSrc].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCI.bindingCount = 2;
+    layoutCI.bindingCount = numSrc + 1;
     layoutCI.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutCI, NULL, &pass.descLayout));
 
@@ -522,7 +572,7 @@ static bool VK_RT_CreateFsrPass(fsrPass_t &pass, const char *spvPath, VkDescript
 
     VkDescriptorPoolSize poolSizes[2] = {};
     poolSizes[0].type = srcType;
-    poolSizes[0].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT;
+    poolSizes[0].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT * numSrc;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[1].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT;
 
@@ -563,34 +613,46 @@ static void VK_RT_DestroyFsrPass(fsrPass_t &pass)
 // per frame is nothing, and the views change on every resize and every bindless
 // purge.  Safe because the sets are per frame-in-flight and the slot's fence has
 // already been waited on.
-static void VK_RT_WriteFsrPassDescriptors(const fsrPass_t &pass, int frameIdx, VkDescriptorType srcType,
-                                          VkImageView srcView, VkImageLayout srcLayout, VkImageView dstView)
+static void VK_RT_WriteFsrPassDescriptorsN(const fsrPass_t &pass, int frameIdx, VkDescriptorType srcType,
+                                           const VkImageView *srcViews, uint32_t numSrc, VkImageLayout srcLayout,
+                                           VkImageView dstView)
 {
-    VkDescriptorImageInfo srcInfo = {};
-    srcInfo.sampler = (srcType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) ? vkRT.upscaleSampler : VK_NULL_HANDLE;
-    srcInfo.imageView = srcView;
-    srcInfo.imageLayout = srcLayout;
+    VkDescriptorImageInfo srcInfo[FSR_PASS_MAX_SRC] = {};
+    VkWriteDescriptorSet writes[FSR_PASS_MAX_SRC + 1] = {};
+
+    for (uint32_t s = 0; s < numSrc; s++)
+    {
+        srcInfo[s].sampler =
+            (srcType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) ? vkRT.upscaleSampler : VK_NULL_HANDLE;
+        srcInfo[s].imageView = srcViews[s];
+        srcInfo[s].imageLayout = srcLayout;
+
+        writes[s].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[s].dstSet = pass.descSets[frameIdx];
+        writes[s].dstBinding = s;
+        writes[s].descriptorCount = 1;
+        writes[s].descriptorType = srcType;
+        writes[s].pImageInfo = &srcInfo[s];
+    }
 
     VkDescriptorImageInfo dstInfo = {};
     dstInfo.imageView = dstView;
     dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    VkWriteDescriptorSet writes[2] = {};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = pass.descSets[frameIdx];
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = srcType;
-    writes[0].pImageInfo = &srcInfo;
+    writes[numSrc].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[numSrc].dstSet = pass.descSets[frameIdx];
+    writes[numSrc].dstBinding = numSrc;
+    writes[numSrc].descriptorCount = 1;
+    writes[numSrc].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[numSrc].pImageInfo = &dstInfo;
 
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = pass.descSets[frameIdx];
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[1].pImageInfo = &dstInfo;
+    vkUpdateDescriptorSets(vk.device, numSrc + 1, writes, 0, NULL);
+}
 
-    vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+static void VK_RT_WriteFsrPassDescriptors(const fsrPass_t &pass, int frameIdx, VkDescriptorType srcType,
+                                          VkImageView srcView, VkImageLayout srcLayout, VkImageView dstView)
+{
+    VK_RT_WriteFsrPassDescriptorsN(pass, frameIdx, srcType, &srcView, 1, srcLayout, dstView);
 }
 
 static void VK_RT_CreateFsr1Pipelines(void)
@@ -615,6 +677,18 @@ static void VK_RT_CreateFsr1Pipelines(void)
     if (!s_motionDebugReady)
         common->Warning("VK RT Upscale: motion_debug.comp failed to load — r_fsrDebug 7 unavailable");
 
+    // U4 masks.  The T&C extract is one-source; the overlay reads both masks, which is
+    // what numSrc exists for.
+    s_fsrTcMaskReady = VK_RT_CreateFsrPass(s_fsrTcMask, "glprogs/glsl/fsr_tc_mask.comp.spv",
+                                           VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(FsrTcMaskPC));
+    if (!s_fsrTcMaskReady)
+        common->Warning("VK RT Upscale: fsr_tc_mask.comp failed to load — r_fsrTcMask unavailable");
+
+    s_fsrMaskDebugReady = VK_RT_CreateFsrPass(s_fsrMaskDebug, "glprogs/glsl/fsr_mask_debug.comp.spv",
+                                              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(FsrMaskDebugPC), 2);
+    if (!s_fsrMaskDebugReady)
+        common->Warning("VK RT Upscale: fsr_mask_debug.comp failed to load — r_fsrDebug 3 unavailable");
+
 #if defined(DHEWM3_FSR2)
     // U3 bleed overlay (r_fsrDebug 5).  Two bindings is enough: binding 1 is a storage
     // image, so the shader reads FSR2's output and writes the tint back over it.
@@ -631,8 +705,12 @@ static void VK_RT_DestroyFsr1Pipelines(void)
     VK_RT_DestroyFsrPass(s_fsrEasu);
     VK_RT_DestroyFsrPass(s_fsrRcas);
     VK_RT_DestroyFsrPass(s_motionDebug);
+    VK_RT_DestroyFsrPass(s_fsrTcMask);
+    VK_RT_DestroyFsrPass(s_fsrMaskDebug);
     s_fsr1Ready = false;
     s_motionDebugReady = false;
+    s_fsrTcMaskReady = false;
+    s_fsrMaskDebugReady = false;
 #if defined(DHEWM3_FSR2)
     VK_RT_DestroyFsrPass(s_fsr2Bleed);
     s_fsr2BleedReady = false;
@@ -768,6 +846,177 @@ where hdrScene already holds the display-resolution frame and is in
 COLOR_ATTACHMENT_OPTIMAL.
 ===========================================================================
 */
+
+// ---------------------------------------------------------------------------
+// U4 reactive-mask inputs (docs/plans/20260918_fsr_upscaling.md §9)
+//
+// Both of FSR 2's masks are built from data that only exists mid-frame, between the
+// interactions and the blend stages:
+//   - preAlphaColor is hdrScene before anything translucent has drawn into it
+//   - tcMask comes out of gbufAlbedo's alpha, which the shader passes do not touch but
+//     which is easiest to read while the render pass is already closed
+// So they share one end/resume, driven from VK_RB_DrawView.  Must be called OUTSIDE a
+// render pass: a vkCmdCopyImage cannot be recorded inside one.
+// ---------------------------------------------------------------------------
+void VK_RT_CaptureReactiveInputs(VkCommandBuffer cmd)
+{
+    const int frameIdx = (int)vk.currentFrame;
+    const bool wantReactive = VK_RT_UpscaleNeedsReactiveMask();
+    const bool wantTc = VK_RT_UpscaleNeedsTcMask();
+
+    if (!wantReactive && !wantTc)
+        return;
+
+    // --- preAlphaColor <- hdrScene, render sub-rect only ------------------------
+    if (wantReactive && vkRT.preAlphaColor[frameIdx].image != VK_NULL_HANDLE)
+    {
+        const VkImage sceneImage = vkRT.hdrScene[frameIdx].image;
+        const VkImage preAlphaImage = vkRT.preAlphaColor[frameIdx].image;
+
+        VK_TransitionImageLayout(cmd, sceneImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        // UNDEFINED rather than whatever we left it in last frame: the copy overwrites the
+        // whole sub-rect, and discarding the rest saves tracking the previous layout.  FSR 2
+        // never reads outside renderSize, so the discarded margin is unobservable.
+        VK_TransitionImageLayout(cmd, preAlphaImage, VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkImageCopy region = {};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = region.srcSubresource;
+        region.extent = {vk.renderExtent.width, vk.renderExtent.height, 1};
+        vkCmdCopyImage(cmd, sceneImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, preAlphaImage,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        VK_TransitionImageLayout(cmd, sceneImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        // COMPUTE_READ is the state declared to ffxFsr2ContextGenerateReactiveMask.
+        VK_TransitionImageLayout(cmd, preAlphaImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    // --- tcMask <- gbufAlbedo.a -------------------------------------------------
+    if (wantTc && vkRT.tcMask[frameIdx].image != VK_NULL_HANDLE)
+    {
+        const VkImage albedoImage = vkRT.gbufAlbedo[frameIdx].image;
+        const VkImage maskImage = vkRT.tcMask[frameIdx].image;
+
+        VK_RT_WriteFsrPassDescriptors(s_fsrTcMask, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                      vkRT.gbufAlbedo[frameIdx].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                      vkRT.tcMask[frameIdx].view);
+
+        // gbufAlbedo was restored to COLOR_ATTACHMENT_OPTIMAL after the RT block (its
+        // declared initialLayout on vk.hdrRenderPass), so it round-trips here too.
+        VK_TransitionImageLayout(cmd, albedoImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        VK_TransitionImageLayout(cmd, maskImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+        FsrTcMaskPC pc;
+        pc.renderExtent[0] = (int32_t)vk.renderExtent.width;
+        pc.renderExtent[1] = (int32_t)vk.renderExtent.height;
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrTcMask.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrTcMask.layout, 0, 1,
+                                &s_fsrTcMask.descSets[frameIdx], 0, NULL);
+        vkCmdPushConstants(cmd, s_fsrTcMask.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, (vk.renderExtent.width + 7) / 8, (vk.renderExtent.height + 7) / 8, 1);
+
+        VK_TransitionImageLayout(cmd, albedoImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        // Left in GENERAL: that is the UNORDERED_ACCESS state declared to
+        // ffxFsr2ContextDispatch, which emits its own transition to COMPUTE_READ.
+    }
+
+    if (r_vkLogRT.GetInteger() >= 1)
+        common->Printf("VK FSR U4: captured %ux%u reactive=%d tc=%d slot=%u\n", vk.renderExtent.width,
+                       vk.renderExtent.height, wantReactive ? 1 : 0, wantTc ? 1 : 0, vk.currentFrame);
+}
+
+// r_fsrDebug 3: both masks side by side.  Same slot as the motion overlay — outside the
+// render pass, after the resolve, before the tonemap.
+bool VK_RT_MaskDebugActive(void)
+{
+    if (r_fsrDebug.GetInteger() != 3 || !s_fsrMaskDebugReady || !vk.gbufferSupported)
+        return false;
+    if (vkRT.reactiveMask[vk.currentFrame].image == VK_NULL_HANDLE ||
+        vkRT.tcMask[vk.currentFrame].image == VK_NULL_HANDLE)
+        return false;
+
+    // BOTH masks, not either: a mask nothing wrote would read as "this mask is empty"
+    // rather than "nothing generated it" (the trap VK_RT_MotionDebugActive guards below),
+    // and more practically, requiring both is what makes the layouts deterministic —
+    // ffxFsr2ContextDispatch leaves exactly the masks it bound as SRVs in
+    // SHADER_READ_ONLY_OPTIMAL, which is what the overlay's descriptors declare.
+    if (!VK_RT_UpscaleNeedsReactiveMask() || !VK_RT_UpscaleNeedsTcMask())
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            common->Warning("VK RT Upscale: r_fsrDebug 3 needs FSR 2 resolving with BOTH r_fsrAutoReactive and "
+                            "r_fsrTcMask on — the overlay compares the two");
+        }
+        return false;
+    }
+    return true;
+}
+
+void VK_RT_DispatchMaskDebug(VkCommandBuffer cmd)
+{
+    if (!VK_RT_MaskDebugActive())
+        return;
+
+    const int frameIdx = (int)vk.currentFrame;
+    const VkImageSubresourceRange colorRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const uint32_t dispW = vk.swapchainExtent.width;
+    const uint32_t dispH = vk.swapchainExtent.height;
+
+    // Both masks are in SHADER_READ_ONLY_OPTIMAL, not the GENERAL their producers left them
+    // in: ffxFsr2ContextDispatch bound each as an SRV and its addBarrier moved them to
+    // COMPUTE_READ (getVKImageLayoutFromResourceState, ffx_fsr2_vk.cpp:360) without putting
+    // them back.  VK_RT_MaskDebugActive's both-masks requirement is what makes that
+    // predictable, so no transition is needed here.
+    const VkImageView srcViews[2] = {vkRT.reactiveMask[frameIdx].view, vkRT.tcMask[frameIdx].view};
+    VK_RT_WriteFsrPassDescriptorsN(s_fsrMaskDebug, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, srcViews, 2,
+                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, vkRT.hdrScene[frameIdx].view);
+
+    VkImageMemoryBarrier toGeneral = {};
+    toGeneral.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toGeneral.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    toGeneral.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    toGeneral.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.image = vkRT.hdrScene[frameIdx].image;
+    toGeneral.subresourceRange = colorRange;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,
+                         NULL, 0, NULL, 1, &toGeneral);
+
+    FsrMaskDebugPC pc;
+    pc.renderExtent[0] = (int32_t)vk.renderExtent.width;
+    pc.renderExtent[1] = (int32_t)vk.renderExtent.height;
+    pc.displayExtent[0] = (int32_t)dispW;
+    pc.displayExtent[1] = (int32_t)dispH;
+    // hdrScene is pre-tonemap linear HDR and the Uchimura curve downstream would crush a
+    // 0-1 tint into the toe; same reasoning as the motion overlay's brightness.
+    pc.brightness = 4.0f;
+    pc.sceneDim = 0.15f;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrMaskDebug.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_fsrMaskDebug.layout, 0, 1,
+                            &s_fsrMaskDebug.descSets[frameIdx], 0, NULL);
+    vkCmdPushConstants(cmd, s_fsrMaskDebug.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+
+    VkImageMemoryBarrier toAttach = toGeneral;
+    toAttach.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    toAttach.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+    toAttach.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    toAttach.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
+                         NULL, 0, NULL, 1, &toAttach);
+}
 
 bool VK_RT_MotionDebugActive(void)
 {
@@ -1050,6 +1299,23 @@ bool VK_RT_UpscaleNeedsMotionVectors(void)
     return VK_RT_Fsr2Capable() && VK_RT_UpscaleActive();
 }
 
+// DEMAND (U4): must the backend snapshot hdrScene before the blend stages?  Same shape as
+// the motion-vector demand above, plus r_fsrAutoReactive — the snapshot is a render-res
+// image copy and is pure cost if no reactive mask will be generated from it.
+bool VK_RT_UpscaleNeedsReactiveMask(void)
+{
+    return r_fsrAutoReactive.GetBool() && VK_RT_Fsr2Capable() && VK_RT_UpscaleActive();
+}
+
+// DEMAND (U4): the T&C mask rides gbufAlbedo's alpha, so it additionally needs the
+// prepass that writes it.  Split from the reactive demand because the two are
+// independently switchable and the exit gate wants them A/B'd separately.
+bool VK_RT_UpscaleNeedsTcMask(void)
+{
+    return r_fsrTcMask.GetBool() && s_fsrTcMaskReady && VK_GBufferPrepassActive() && VK_RT_Fsr2Capable() &&
+           VK_RT_UpscaleActive();
+}
+
 // Could FSR 2 resolve, given a sub-rect?  Side-effect free, unlike VK_RT_Fsr2Ready — the
 // render-extent fallback asks this *before* the extent is settled and must not trigger
 // a context build at the old size.
@@ -1089,8 +1355,7 @@ static bool VK_RT_Fsr2Ready(void)
     // No G-buffer prepass this frame means no motion vectors (see VK_RT_Fsr2Possible).
     // r_fsr 2 now pulls the prepass up on its own, so reaching here means the hardware
     // cannot run it at all (no independentBlend) rather than "RT is off".
-    // Tear the context down rather than idle: it holds 60-250 MB of device memory, and a
-    // history built before the prepass went away is worthless once it comes back anyway.
+    // Tear the context down rather than idle: saves 60-250 MB of device memory.
     if (!VK_GBufferPrepassActive())
     {
         static bool warned = false;
@@ -1235,8 +1500,65 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
     dd.output = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrUpscaled[frameIdx].image, vkRT.hdrUpscaled[frameIdx].view,
                                         dispW, dispH, VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrUpscaled",
                                         FFX_RESOURCE_STATE_UNORDERED_ACCESS);
-    // exposure / reactive / transparencyAndComposition stay null: auto exposure is on
-    // and the masks are U4.
+    // --- U4 masks ----------------------------------------------------------------
+    // Deliberately NOT dd.enableAutoReactive: that runs FSR 2's internal TCR autogen and
+    // then overwrites BOTH mask inputs with its own resources (ffx_fsr2.cpp:1020-1024),
+    // which would silently discard the T&C mask the prepass built.  The standalone
+    // generate call fills our own image and leaves both dd fields ours to set.
+    const bool haveReactive = VK_RT_UpscaleNeedsReactiveMask() &&
+                              vkRT.preAlphaColor[frameIdx].image != VK_NULL_HANDLE &&
+                              vkRT.reactiveMask[frameIdx].image != VK_NULL_HANDLE;
+    const bool haveTc = VK_RT_UpscaleNeedsTcMask() && vkRT.tcMask[frameIdx].image != VK_NULL_HANDLE;
+
+    if (haveReactive)
+    {
+        // reactiveMask is written as a UAV by the generate pass; declare the layout it is
+        // actually in.  UNDEFINED as the old layout because the pass writes every texel of
+        // the sub-rect and nothing reads the margin.
+        VK_TransitionImageLayout(cmd, vkRT.reactiveMask[frameIdx].image, VK_IMAGE_LAYOUT_UNDEFINED,
+                                 VK_IMAGE_LAYOUT_GENERAL);
+
+        FfxFsr2GenerateReactiveDescription gr = {};
+        gr.commandList = ffxGetCommandListVK(cmd);
+        gr.colorOpaqueOnly = ffxGetTextureResourceVK(
+            &s_fsr2Ctx, vkRT.preAlphaColor[frameIdx].image, vkRT.preAlphaColor[frameIdx].view, dispW, dispH,
+            VK_FORMAT_R16G16B16A16_SFLOAT, L"preAlphaColor", FFX_RESOURCE_STATE_COMPUTE_READ);
+        gr.colorPreUpscale =
+            ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.hdrScene[frameIdx].image, vkRT.hdrScene[frameIdx].view, dispW,
+                                    dispH, VK_FORMAT_R16G16B16A16_SFLOAT, L"hdrScene", FFX_RESOURCE_STATE_COMPUTE_READ);
+        gr.outReactive = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.reactiveMask[frameIdx].image,
+                                                 vkRT.reactiveMask[frameIdx].view, dispW, dispH, VK_FORMAT_R8_UNORM,
+                                                 L"reactiveMask", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+        gr.renderSize.width = vk.renderExtent.width;
+        gr.renderSize.height = vk.renderExtent.height;
+        gr.scale = idMath::ClampFloat(0.0f, 8.0f, r_fsrReactiveScale.GetFloat());
+        gr.cutoffThreshold = idMath::ClampFloat(0.0f, 1.0f, r_fsrReactiveCutoff.GetFloat());
+        gr.binaryValue = 0.9f; // AMD's sample value; 1.0 disables history entirely and pops
+        // APPLY_TONEMAP is not optional here: hdrScene is pre-tonemap linear HDR, so without
+        // the reversible x/(max+1) compression the colour delta is unbounded and any fixed
+        // cutoff means something different in a bright room than a dark one.
+        gr.flags = FFX_FSR2_AUTOREACTIVEFLAGS_APPLY_TONEMAP | FFX_FSR2_AUTOREACTIVEFLAGS_APPLY_THRESHOLD |
+                   FFX_FSR2_AUTOREACTIVEFLAGS_USE_COMPONENTS_MAX;
+
+        const FfxErrorCode grErr = ffxFsr2ContextGenerateReactiveMask(&s_fsr2Ctx, &gr);
+        if (grErr != FFX_OK)
+            common->Warning("VK RT FSR2: ffxFsr2ContextGenerateReactiveMask failed (%d)", (int)grErr);
+
+        // UNORDERED_ACCESS is the truth after the generate pass; FSR 2 emits its own
+        // GENERAL -> SHADER_READ_ONLY barrier when it binds this as an SRV.
+        dd.reactive = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.reactiveMask[frameIdx].image,
+                                              vkRT.reactiveMask[frameIdx].view, dispW, dispH, VK_FORMAT_R8_UNORM,
+                                              L"reactiveMask", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    if (haveTc)
+    {
+        // Left in GENERAL by fsr_tc_mask.comp, same contract as the reactive mask above.
+        dd.transparencyAndComposition =
+            ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.tcMask[frameIdx].image, vkRT.tcMask[frameIdx].view, dispW, dispH,
+                                    VK_FORMAT_R8_UNORM, L"tcMask", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    // exposure stays null: auto exposure is on.
 
     dd.renderSize.width = vk.renderExtent.width;
     dd.renderSize.height = vk.renderExtent.height;
@@ -1357,6 +1679,14 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
 #else // !DHEWM3_FSR2
 
 bool VK_RT_UpscaleNeedsMotionVectors(void)
+{
+    return false;
+}
+bool VK_RT_UpscaleNeedsReactiveMask(void)
+{
+    return false;
+}
+bool VK_RT_UpscaleNeedsTcMask(void)
 {
     return false;
 }
@@ -1545,7 +1875,6 @@ static float VK_RT_FsrTargetScale(void)
 void VK_RT_UpdateRenderExtent(void)
 {
     const VkExtent2D old = vk.renderExtent;
-
 
     // Clamp low so a fat-fingered cvar can't collapse the scene to the 64px floor.
     float scale = VK_RT_FsrTargetScale();
@@ -1787,9 +2116,8 @@ void VK_RT_InitUpscale()
     VK_RT_ResizeUpscale(vk.swapchainExtent.width, vk.swapchainExtent.height);
     VK_RT_CreateUpscalePipeline();
     VK_RT_CreateFsr1Pipelines();
-    // Both pipeline sets have now either loaded or failed, so "no resolve path" is a
-    // real answer from here on.  Re-run the extent so the fallback can take effect on
-    // the very first frame rather than after it.
+    // Both pipeline sets have now either loaded or failed.
+    // Re-run the extent so the fallback can take effect on the very first frame rather than after it.
     s_upscaleInitDone = true;
     VK_RT_UpdateRenderExtent();
 }
@@ -1797,16 +2125,34 @@ void VK_RT_InitUpscale()
 void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
-    // Both extents move and every view FSR 2 holds is about to be destroyed.  A failed
-    // creation also gets a second chance: the new size may fit where the old did not.
     VK_RT_Fsr2DestroyContext();
     VK_RT_Fsr2ClearCreateFailure();
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
+        // Every image created below must also be destroyed here, or a window resize leaks
+        // one set per event.
         VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled[i]);
         VK_RT_DestroyUpscaleImage(s_fsrPerceptual[i]);
-        VK_RT_CreateUpscaleImage(vkRT.hdrUpscaled[i], width, height, "hdrUpscaled");
-        VK_RT_CreateUpscaleImage(s_fsrPerceptual[i], width, height, "fsrPerceptual");
+        VK_RT_DestroyUpscaleImage(vkRT.preAlphaColor[i]);
+        VK_RT_DestroyUpscaleImage(vkRT.reactiveMask[i]);
+        VK_RT_DestroyUpscaleImage(vkRT.tcMask[i]);
+        VK_RT_CreateUpscaleImage(
+            vkRT.hdrUpscaled[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, "hdrUpscaled");
+        VK_RT_CreateUpscaleImage(
+            s_fsrPerceptual[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, "fsrPerceptual");
+        // U4: preAlphaColor is the *destination* of the hdrScene snapshot, so TRANSFER_DST.
+        // reactiveMask matches the format FSR 2 uses for its own internal reactive resource
+        // (FFX_SURFACE_FORMAT_R8_UNORM, ffx_fsr2.cpp) — the generate-reactive pass writes it
+        // as a storage image, so the formats have to agree.
+        VK_RT_CreateUpscaleImage(vkRT.preAlphaColor[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "preAlphaColor");
+        VK_RT_CreateUpscaleImage(vkRT.reactiveMask[i], width, height, VK_FORMAT_R8_UNORM,
+                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "reactiveMask");
+        VK_RT_CreateUpscaleImage(vkRT.tcMask[i], width, height, VK_FORMAT_R8_UNORM,
+                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "tcMask");
+
         // The views changed, so the bound descriptors are stale.  (The FSR 1 passes
         // rewrite theirs every dispatch, so they need nothing here.)
         vkRT.upscaleDescSetLastUpdatedFrameCount[i] = -1;
@@ -1821,6 +2167,9 @@ void VK_RT_ShutdownUpscale(void)
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         VK_RT_DestroyUpscaleImage(vkRT.hdrUpscaled[i]);
+        VK_RT_DestroyUpscaleImage(vkRT.reactiveMask[i]);
+        VK_RT_DestroyUpscaleImage(vkRT.preAlphaColor[i]);
+        VK_RT_DestroyUpscaleImage(vkRT.tcMask[i]);
         VK_RT_DestroyUpscaleImage(s_fsrPerceptual[i]);
     }
     VK_RT_Fsr2DestroyContext();

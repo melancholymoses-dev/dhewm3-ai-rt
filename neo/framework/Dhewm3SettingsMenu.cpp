@@ -2509,6 +2509,10 @@ struct RTCVars
     idCVar *fsrRenderScale = nullptr;
     idCVar *fsrSharpness = nullptr;
     idCVar *fsrJitter = nullptr;
+    idCVar *fsrAutoReactive = nullptr;
+    idCVar *fsrReactiveCutoff = nullptr;
+    idCVar *fsrReactiveScale = nullptr;
+    idCVar *fsrTcMask = nullptr;
     idCVar *fsrQuality = nullptr;
     idCVar *fsrMipBias = nullptr;
     idCVar *fsrMipBiasOffset = nullptr;
@@ -2599,6 +2603,10 @@ static void InitRTOptionsMenu()
     rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
     rtCVars.fsrSharpness = cvarSystem->Find("r_fsrSharpness");
     rtCVars.fsrJitter = cvarSystem->Find("r_fsrJitter");
+    rtCVars.fsrAutoReactive = cvarSystem->Find("r_fsrAutoReactive");
+    rtCVars.fsrReactiveCutoff = cvarSystem->Find("r_fsrReactiveCutoff");
+    rtCVars.fsrReactiveScale = cvarSystem->Find("r_fsrReactiveScale");
+    rtCVars.fsrTcMask = cvarSystem->Find("r_fsrTcMask");
     rtCVars.fsrQuality = cvarSystem->Find("r_fsrQuality");
     rtCVars.fsrMipBias = cvarSystem->Find("r_fsrMipBias");
     rtCVars.fsrMipBiasOffset = cvarSystem->Find("r_fsrMipBiasOffset");
@@ -2888,6 +2896,17 @@ static void DrawUpscalingOptionsMenu()
 
     ImGui::BeginDisabled(fsrMode != 2);
     RTCheckbox("Sub-pixel Jitter (FSR 2 only — other modes cannot reproject it away)", rtCVars.fsrJitter);
+    RTCheckbox("Reactive Mask (stops particles, glass and fog smearing)", rtCVars.fsrAutoReactive);
+    // Tuned from r_fsrDebug 3, which shows both masks side by side — the cutoff is a number
+    // about HDR colour deltas and there is no reading it off the finished composite.
+    const bool reactiveOn = rtCVars.fsrAutoReactive && rtCVars.fsrAutoReactive->GetBool();
+    ImGui::BeginDisabled(!reactiveOn);
+    ImGui::Indent();
+    RTSliderFloat("Reactive Cutoff", rtCVars.fsrReactiveCutoff, 0.0f, 0.5f, "%.3f");
+    RTSliderFloat("Reactive Sensitivity", rtCVars.fsrReactiveScale, 0.25f, 4.0f, "%.2f");
+    ImGui::Unindent();
+    ImGui::EndDisabled(); // !reactiveOn
+    RTCheckbox("Transparency & Composition Mask (reduces character ghosting)", rtCVars.fsrTcMask);
     ImGui::EndDisabled(); // fsrMode != 2
 
     // Same VkSampler as the mip bias below, so they tune against each other: a negative

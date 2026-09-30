@@ -781,6 +781,8 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/fsr_rcas.comp
 	renderer/glsl/motion_debug.comp
 	renderer/glsl/fsr2_bleed_debug.comp
+	renderer/glsl/fsr_tc_mask.comp
+	renderer/glsl/fsr_mask_debug.comp
 )
 
 

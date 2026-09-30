@@ -191,8 +191,9 @@ Per frame-in-flight slot unless noted. Sizes quoted for 1920×1080 display.
 | `vkRT.motionVectors[i]` | `R16G16_SFLOAT` | display (written in render sub-rect) | COLOR_ATTACHMENT, SAMPLED (**not** STORAGE — not a mandatory storage format) | U2 | 8 MB ×2 |
 | `vkRT.hdrUpscaled[i]` | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED, TRANSFER_SRC | U0 | 16 MB ×2 |
 | `s_fsrPerceptual[i]` (file-static in `vk_upscale.cpp`) | `R16G16B16A16_SFLOAT` | display | STORAGE, SAMPLED | U1 | 16 MB ×2 |
-| `vkRT.preAlphaColor[i]` | `R16G16B16A16_SFLOAT` | display | TRANSFER_DST, SAMPLED | U4 | 16 MB ×2 |
-| `vkRT.reactiveMask[i]` | `R8_UNORM` | display | STORAGE, SAMPLED | U4 | 2 MB ×2 |
+| `vkRT.preAlphaColor[i]` | `R16G16B16A16_SFLOAT` | display | TRANSFER_DST, SAMPLED | ✅ U4 | 16 MB ×2 |
+| `vkRT.reactiveMask[i]` | `R8_UNORM` | display | STORAGE, SAMPLED | ✅ U4 | 2 MB ×2 |
+| `vkRT.tcMask[i]` | `R8_UNORM` | display | STORAGE, SAMPLED | ✅ U4 | 2 MB ×2 |
 | `vkRT.exposure1x1` | `R32_SFLOAT` | 1×1 | STORAGE, SAMPLED | U3 | — |
 | FSR2 internal resources | — | — | owned by the FSR2 context | U3 | **~150–250 MB at 1080p→4K; ~60–90 MB at 720p→1080p** |
 | FSR2 host scratch | host memory | `ffxFsr2GetScratchMemorySizeVK()` | — | U3 | ~1 MB |
@@ -496,7 +497,7 @@ downward if FSR2's history proves to be doing the job already.
 |---|---|---|
 | `1` | Green border (the resolve ran and covers the display extent) + magenta on any tap clamped off the sub-rect. | ✅ U0 |
 | `2` | **Taken by U0**: per-view console log — which view, `upscaleDone`, viewport, scissor, subview/mirror flags. Caught the GUI-first frame and the render-extent leak. U2's motion-vector overlay needs a different number. | ✅ U0 |
-| `3` | Reactive mask and transparency-and-composition mask, side by side. | U4 |
+| `3` | Reactive mask (left, green) and transparency-and-composition mask (right, orange), side by side over a dimmed scene. Needs **both** `r_fsrAutoReactive` and `r_fsrTcMask` on — that is what makes the mask layouts deterministic after the dispatch. | ✅ U4 |
 | `4` | Render at reduced resolution but *point-magnify* instead of upscaling — the honest "what did the resolution actually cost" A/B. **Forces the bilinear path, overriding `r_fsr`.** | ✅ U0 |
 | `5` | FSR 2 light-bleed check: red where the output is brighter than a 3×3 neighbourhood of the input, blue where darker. Pillar 2's gate. | ✅ U3 |
 | `6` | EASU output with RCAS sharpening skipped — isolates what RCAS contributes. | ✅ U1 |
@@ -520,7 +521,10 @@ Shipped in U0: `r_fsr`, `r_fsrRenderScale`, `r_fsrDebug` (all `CVAR_ARCHIVE`).
 | `r_fsrSharpness` | `0.5` | RCAS sharpness `[0,1]`, 1 = sharpest. Mapped to `FsrRcasCon`'s attenuation-in-stops as `2·(1−s)`. Will also feed `enableSharpening`/`sharpness` on the FSR2 path. | ✅ U1 / U3 |
 | `r_fsrJitter` | `1` | Halton(2,3) sub-pixel jitter while upscaling, replacing `r_jitter`'s whole-pixel noise. **Ignored unless `r_fsr 2`** as of U3a — nothing else reprojects it away. Reverses §14 S3. | ✅ U2 / U3 |
 | `r_fsrMotionScale` | `16` | Render pixels of motion that saturate the `r_fsrDebug 7` overlay. | U2 |
-| `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | U4 |
+| `r_fsrAutoReactive` | `1` | Use `ffxFsr2ContextGenerateReactiveMask` (costs one render-res colour copy) vs. no reactive mask. | ✅ U4 |
+| `r_fsrReactiveCutoff` | `0.05` | Pre/post-alpha delta that counts as reactive, measured after FSR 2's reversible tonemap so it is scene-brightness independent. Tune from `r_fsrDebug 3`. | ✅ U4 |
+| `r_fsrReactiveScale` | `1.0` | Multiplier on that delta before the cutoff. Raise to catch faint steam/smoke. | ✅ U4 |
+| `r_fsrTcMask` | `1` | Feed the transparency-and-composition mask (skinned meshes + viewmodel, from `gbufAlbedo.a`). | ✅ U4 |
 | `r_fsrMipBias` | `1` | `0` = leave `image_lodbias` alone, `1` = add `log2(scale) + r_fsrMipBiasOffset` to every `TF_DEFAULT` sampler. Forces a sampler rebuild on change. | ✅ U3a |
 | `r_fsrMipBiasOffset` | `-1.0` | The constant term. FSR 2's recommendation; sweep toward `0` under `r_fsr 0`/`1`, which have no temporal history to absorb the extra aliasing. | ✅ U3a |
 
@@ -851,21 +855,45 @@ permutation until profiling says so.
 - Still open: skinned/deform motion vectors. Characters reproject from the entity transform
   only, so animated limbs lose their history — the "enemies look too smooth" artifact.
 
-### U4 — reactive mask, T&C mask, denoiser retune  🔴
-`preAlphaColor` snapshot before `VK_RB_DrawShaderPasses`,
-`ffxFsr2ContextGenerateReactiveMask`, and a transparency-and-composition mask covering
-skinned geometry (whose MVs are known wrong — §5), the glass reflection overlay, particles
-and the viewmodel. Then sweep `r_rtGITemporalAlpha`, the AO EMA and the a-trous iteration
-counts *downward* and find out how much of our denoising FSR2 has made redundant.
+### U4 — reactive mask, T&C mask, denoiser retune  🟡 built 2026-09-29; not yet validated in-game
+Both masks built; the denoiser retune sweep is the open half of the gate.
+
+| Piece | Where |
+|---|---|
+| `preAlphaColor` snapshot + T&C extract | `VK_RT_CaptureReactiveInputs` (`vk_upscale.cpp`), called from `VK_RB_DrawView` between the interactions and `VK_RB_DrawShaderPasses` behind one end/resume |
+| Reactive mask | `ffxFsr2ContextGenerateReactiveMask` in `VK_RT_DispatchFsr2`; `APPLY_TONEMAP\|APPLY_THRESHOLD\|USE_COMPONENTS_MAX` |
+| T&C mask | `gbufAlbedo.a` = `1 - tcClass` from both gbuffer frags → `fsr_tc_mask.comp` → `vkRT.tcMask` |
+| Overlay | `fsr_mask_debug.comp`, `r_fsrDebug 3` |
+
+Three things that shaped it:
+
+- **`dd.enableAutoReactive` is not the route.** FSR 2's internal TCR autogen overwrites
+  *both* mask inputs with its own resources (`ffx_fsr2.cpp:1020-1024`), so it and a
+  hand-authored T&C mask are mutually exclusive. The standalone generate call is what
+  leaves both `dd` fields ours.
+- **`gbufAlbedo`'s alpha was free** — written as a constant `1.0` by both gbuffer frags,
+  cleared to white, and `gi_albedo_mod.comp` reads only `.rgb`. That avoided a fifth colour
+  attachment and the ten pipeline-creation sites it would have touched. Alpha stores
+  `1 - tcClass` so the white clear (sky, translucents) decodes to mask 0.
+- **`APPLY_TONEMAP` is mandatory, not optional.** The input is pre-tonemap linear HDR, so
+  without the reversible `x/(max+1)` compression the colour delta is unbounded and a fixed
+  cutoff means something different in a bright room than a dark one.
+
+T&C coverage is `tri->deformedSurface` (MD5 + liquid) plus `space->weaponDepthHack`
+(viewmodel). Particles, the glass overlay and fog lights are *not* in it and do not need to
+be — they draw after the snapshot, so the reactive mask catches them by construction.
 
 Observed 2026-09-25, first gameplay, consistent with the known-wrong skinned MVs: silhouette
 ghosting on weapon switch against a dark background, and on spiders leaping at the camera.
-Fades within a few frames; "not terrible". This is the symptom U4's T&C mask exists to fix —
-record it as the before-measurement rather than chasing it now.
+Fades within a few frames; "not terrible". That is the before-measurement.
 
 - **Exit:** muzzle flashes, fire and steam do not smear; monster ghosting is acceptable or
-  the gap is documented with a measurement; the denoiser retune is recorded in
+  the gap is documented with a measurement; the denoiser retune (`r_rtGITemporalAlpha`, the
+  AO EMA, the a-trous iteration counts, all swept *downward*) is recorded in
   `rt_optimization_tuning.md` with before/after ms.
+- **First check:** `r_fsr 2` + `r_fsrRenderScale 0.67` + `r_fsrDebug 3` — green on
+  particles/fire/glass on the left, orange on characters and the gun on the right, and
+  neither mask bleeding onto static walls. `r_vkLogRT 1` prints `VK FSR U4: captured ...`.
 
 ### U5 — polish  🔴
 `r_fsrQuality` exposed in the video menu; the FSR 3.1

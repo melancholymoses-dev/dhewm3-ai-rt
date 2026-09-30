@@ -635,12 +635,20 @@ struct vkRTState_t
 
     // Resolution Upscaler bounce-buffer.
     // hdrScene (sub-rect) -> hdrUpscaled -> hdrScene (full)
-    //
-    // Per frame-in-flight, not shared: the slot fence waited on at frame start belongs
-    // to frame N-1, so frame N+1 can be recorded and submitted while frame N is still
-    // executing.  A single shared image therefore lets frame N+1's compute write race
-    // frame N's transfer read (WAR), which shows up as intermittent flicker.
     vkRTImage_t hdrUpscaled[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // U4 FSR 2 masks (docs/plans/20260918_fsr_upscaling.md §9).  All display-sized with
+    // only the render sub-rect valid, like every other U0 buffer.
+    //   preAlphaColor: hdrScene snapshotted before the blend stages draw
+    //   reactiveMask:  ffxFsr2ContextGenerateReactiveMask's output — auto-detected
+    //                  alpha-blended pixels (particles, glass, fog)
+    //   tcMask:        transparency-and-composition, extracted from gbufAlbedo's alpha by
+    //                  fsr_tc_mask.comp — surfaces the prepass flagged as having motion
+    //                  vectors FSR 2 should not trust (skinned meshes, the viewmodel)
+    vkRTImage_t reactiveMask[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t preAlphaColor[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t tcMask[VK_MAX_FRAMES_IN_FLIGHT];
+
     VkPipeline upscalePipeline;
     VkPipelineLayout upscalePipelineLayout;
     VkDescriptorSetLayout upscaleDescLayout;
