@@ -1479,6 +1479,7 @@ idPlayer::idPlayer()
     previousWeapon = -1;
     weaponSwitchTime = 0;
     weaponEnabled = true;
+    ResetWeaponSel(); // dhewm3-rt
     weapon_soulcube = -1;
     weapon_pda = -1;
     weapon_fists = -1;
@@ -1675,6 +1676,7 @@ void idPlayer::Init(void)
     previousWeapon = -1;
     weaponSwitchTime = 0;
     weaponEnabled = true;
+    ResetWeaponSel(); // dhewm3-rt
     weapon_soulcube = SlotForWeapon("weapon_soulcube");
     weapon_pda = SlotForWeapon("weapon_pda");
     weapon_fists = SlotForWeapon("weapon_fists");
@@ -3551,7 +3553,7 @@ void idPlayer::UpdateHudWeapon(bool flashWeapon)
             {
                 weapstate++;
             }
-            if (idealWeapon == i)
+            if ((weapSelPending >= 0 ? weapSelPending : idealWeapon) == i) // dhewm3-rt: show the pending pick
             {
                 weapstate++;
             }
@@ -3603,6 +3605,7 @@ void idPlayer::DrawHUD(idUserInterface *_hud)
     weapon.GetEntity()->UpdateGUI();
 
     _hud->Redraw(gameLocal.realClientTime);
+    DrawWeaponSel(); // dhewm3-rt: centre-screen weapon selector
 
     // weapon targeting crosshair
     if (!GuiActive())
@@ -5318,6 +5321,340 @@ void idPlayer::SelectWeapon(int num, bool force)
         }
         UpdateHudWeapon();
     }
+}
+
+/*
+===============================================================================
+
+dhewm3-rt: D-pad weapon groups (C5) and the centre-screen selector (C5b).
+
+Each D-pad direction sends IMPULSE_30..33 for one weapon group; repeated presses step through
+the group.  The pick is held for pad_weapCommitMs and switched to once, so tapping through a
+group costs one weapon change.  Groups are classname lists, resolved to slots on use, so the
+same cvars work across game and d3xp slot layouts.
+
+===============================================================================
+*/
+
+idCVar pad_weapGroups("pad_weapGroups", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+                      "D-pad weapon groups: impulses 30-33 select and cycle weapon groups");
+idCVar pad_weapGroup0("pad_weapGroup0", "weapon_fists weapon_chainsaw weapon_flashlight weapon_grabber",
+                      CVAR_GAME | CVAR_ARCHIVE, "Weapon group 0 (D-pad left): up to 4 weapon classnames, in cycle order");
+idCVar pad_weapGroup1("pad_weapGroup1", "weapon_pistol weapon_shotgun weapon_shotgun_double weapon_machinegun",
+                      CVAR_GAME | CVAR_ARCHIVE, "Weapon group 1 (D-pad up): up to 4 weapon classnames, in cycle order");
+idCVar pad_weapGroup2("pad_weapGroup2", "weapon_chaingun weapon_plasmagun weapon_rocketlauncher",
+                      CVAR_GAME | CVAR_ARCHIVE, "Weapon group 2 (D-pad right): up to 4 weapon classnames, in cycle order");
+idCVar pad_weapGroup3("pad_weapGroup3", "weapon_handgrenade weapon_bfg weapon_soulcube weapon_bloodstone_passive",
+                      CVAR_GAME | CVAR_ARCHIVE, "Weapon group 3 (D-pad down): up to 4 weapon classnames, in cycle order");
+idCVar pad_weapCommitMs("pad_weapCommitMs", "250", CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEGER,
+                        "Delay after the last weapon group press before switching (ms). 0 = switch on every press", 0,
+                        1000);
+idCVar pad_weapOverlay("pad_weapOverlay", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+                       "Show the centre-screen weapon selector while choosing a weapon group");
+idCVar pad_weapOverlayFadeMs("pad_weapOverlayFadeMs", "1000", CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEGER,
+                             "How long the weapon selector stays up after the switch (ms)", 0, 5000);
+idCVar pad_weapDebug("pad_weapDebug", "0", CVAR_GAME | CVAR_BOOL,
+                     "Log weapon group presses, candidates and commits");
+
+static const int WEAPSEL_GROUPS = 4;
+static const int WEAPSEL_SLOTS = 4;
+static const int WEAPSEL_FADE_MS = 300; // fade-out at the end of pad_weapOverlayFadeMs
+
+static idCVar *const s_weapSelGroupCVars[WEAPSEL_GROUPS] = {&pad_weapGroup0, &pad_weapGroup1, &pad_weapGroup2,
+                                                            &pad_weapGroup3};
+
+// PDA/pickup icons from hud.gui; wide ones are 2:1.  Unlisted weapons fall back to the def's "icon".
+static const struct
+{
+    const char *weapon;
+    const char *icon;
+    bool wide;
+} s_weapSelIcons[] = {
+    {"weapon_fists", "guis/assets/hud/icons/fistw", false},
+    {"weapon_pistol", "guis/assets/hud/icons/pistolw", false},
+    {"weapon_shotgun", "guis/assets/hud/icons/shotgunw", true},
+    {"weapon_shotgun_double", "guis/assets/hud/icons/shotgunw", true},
+    {"weapon_machinegun", "guis/assets/hud/icons/machinegunw", true},
+    {"weapon_chaingun", "guis/assets/hud/icons/chaingunw", true},
+    {"weapon_handgrenade", "guis/assets/hud/icons/grenadew", false},
+    {"weapon_plasmagun", "guis/assets/hud/icons/plasmagunw", true},
+    {"weapon_rocketlauncher", "guis/assets/hud/icons/rocketlauncherw", true},
+    {"weapon_bfg", "guis/assets/hud/icons/bfgw", true},
+    {"weapon_soulcube", "guis/assets/hud/icons/scubew", false},
+    {"weapon_chainsaw", "guis/assets/hud/icons/chainsaww", true},
+    {"weapon_flashlight", "guis/assets/hud/icons/flashlightw", true},
+};
+
+void idPlayer::ResetWeaponSel(void)
+{
+    weapSelPending = -1;
+    weapSelCommitTime = 0;
+    weapSelHideTime = 0;
+    for (int i = 0; i < WEAPSEL_GROUPS; i++)
+    {
+        weapSelLast[i] = -1;
+    }
+    weapSelGui = NULL;
+}
+
+// Resolves a group cvar to weapon slots; returns the count.  Unknown classnames are skipped.
+int idPlayer::WeaponGroupSlots(int group, int *slots, bool logUnknown)
+{
+    const char *s = s_weapSelGroupCVars[group]->GetString();
+    int n = 0;
+    while (*s && n < WEAPSEL_SLOTS)
+    {
+        while (*s == ' ' || *s == ',')
+        {
+            s++;
+        }
+        const char *start = s;
+        while (*s && *s != ' ' && *s != ',')
+        {
+            s++;
+        }
+        if (s == start)
+        {
+            break;
+        }
+        const idStr name(start, 0, (int)(s - start));
+        const int slot = SlotForWeapon(name.c_str());
+        if (slot >= 0)
+        {
+            slots[n++] = slot;
+        }
+        else if (logUnknown && pad_weapDebug.GetBool())
+        {
+            gameLocal.Printf("WEAPSEL group %d: '%s' is not a player weapon, skipped\n", group, name.c_str());
+        }
+    }
+    return n;
+}
+
+// Owned, and has ammo or may be selected empty: the same test SelectWeapon applies.
+bool idPlayer::WeaponSelAvailable(int slot)
+{
+    if (slot < 0 || slot >= MAX_WEAPONS || !(inventory.weapons & (1 << slot)))
+    {
+        return false;
+    }
+    const char *weap = spawnArgs.GetString(va("def_weapon%d", slot));
+    if (!weap[0])
+    {
+        return false;
+    }
+    return inventory.HasAmmo(weap, true, this) != 0 || spawnArgs.GetBool(va("weapon%d_allowempty", slot));
+}
+
+// Rounds the player has for this weapon, -1 for weapons without ammo.
+int idPlayer::WeaponSelAmmo(int slot)
+{
+    const char *weap = spawnArgs.GetString(va("def_weapon%d", slot));
+    if (!weap[0])
+    {
+        return -1;
+    }
+    const ammo_t type = inventory.AmmoIndexForWeaponClass(weap, NULL);
+    if (type <= 0 || inventory.ammo[type] < 0)
+    {
+        return -1;
+    }
+    // d3xp keeps the loaded clip out of the inventory count.
+    return inventory.ammo[type] + Max(0, inventory.clip[slot]);
+}
+
+void idPlayer::CycleWeaponGroup(int group)
+{
+    if (!pad_weapGroups.GetBool() || group < 0 || group >= WEAPSEL_GROUPS)
+    {
+        return;
+    }
+    if (!weaponEnabled || spectating || gameLocal.inCinematic || health <= 0 || objectiveSystemOpen)
+    {
+        return;
+    }
+
+    int slots[WEAPSEL_SLOTS];
+    const int n = WeaponGroupSlots(group, slots, true);
+    const int cur = weapSelPending >= 0 ? weapSelPending : idealWeapon;
+
+    int curIndex = -1;
+    for (int i = 0; i < n; i++)
+    {
+        if (slots[i] == cur)
+        {
+            curIndex = i;
+        }
+    }
+
+    int pick = -1;
+    if (curIndex >= 0)
+    {
+        // Already in this group: step to the next available weapon, wrapping back to cur.
+        for (int k = 1; k <= n && pick < 0; k++)
+        {
+            const int s = slots[(curIndex + k) % n];
+            if (WeaponSelAvailable(s))
+            {
+                pick = s;
+            }
+        }
+    }
+    else
+    {
+        // Entering the group: its last pick, else its first available weapon.
+        for (int i = 0; i < n && pick < 0; i++)
+        {
+            if (slots[i] == weapSelLast[group] && WeaponSelAvailable(slots[i]))
+            {
+                pick = slots[i];
+            }
+        }
+        for (int i = 0; i < n && pick < 0; i++)
+        {
+            if (WeaponSelAvailable(slots[i]))
+            {
+                pick = slots[i];
+            }
+        }
+    }
+
+    if (pad_weapDebug.GetBool())
+    {
+        idStr list;
+        for (int i = 0; i < n; i++)
+        {
+            list += va(" %d%s", slots[i], WeaponSelAvailable(slots[i]) ? "" : "(unavailable)");
+        }
+        gameLocal.Printf("WEAPSEL group %d: slots[%s ] cur=%d pick=%d\n", group, list.c_str(), cur, pick);
+    }
+
+    // The selector shows even when the group is empty, so the press visibly did something.
+    weapSelHideTime = gameLocal.time + pad_weapOverlayFadeMs.GetInteger();
+    if (pick < 0)
+    {
+        return;
+    }
+    weapSelLast[group] = pick;
+
+    // MP: the server owns the switch, so no pending state.
+    const int commitMs = gameLocal.isMultiplayer ? 0 : pad_weapCommitMs.GetInteger();
+    if (commitMs <= 0)
+    {
+        weapSelPending = -1;
+        CommitWeaponSel(pick);
+    }
+    else
+    {
+        weapSelPending = pick;
+        weapSelCommitTime = gameLocal.time + commitMs;
+    }
+    UpdateHudWeapon();
+}
+
+// Sets idealWeapon directly: SelectWeapon would toggle back (flashlight, soul cube) on a repeat.
+void idPlayer::CommitWeaponSel(int slot)
+{
+    if (!weaponEnabled || spectating || gameLocal.inCinematic || health <= 0 || gameLocal.isClient)
+    {
+        return;
+    }
+    if (gameLocal.world->spawnArgs.GetBool("no_Weapons") || !WeaponSelAvailable(slot))
+    {
+        return;
+    }
+    if (pad_weapDebug.GetBool())
+    {
+        gameLocal.Printf("WEAPSEL commit slot %d (%s)\n", slot, spawnArgs.GetString(va("def_weapon%d", slot)));
+    }
+    idealWeapon = slot;
+}
+
+void idPlayer::UpdateWeaponSel(void)
+{
+    if (weapSelPending < 0 || gameLocal.time < weapSelCommitTime)
+    {
+        return;
+    }
+    CommitWeaponSel(weapSelPending);
+    weapSelPending = -1;
+    weapSelHideTime = gameLocal.time + pad_weapOverlayFadeMs.GetInteger();
+    UpdateHudWeapon(false);
+}
+
+void idPlayer::DrawWeaponSel(void)
+{
+    if (!pad_weapOverlay.GetBool() || objectiveSystemOpen || health <= 0)
+    {
+        return;
+    }
+    float alpha = 1.0f;
+    if (weapSelPending < 0)
+    {
+        alpha = idMath::ClampFloat(0.0f, 1.0f, (weapSelHideTime - gameLocal.time) / (float)WEAPSEL_FADE_MS);
+        if (alpha <= 0.0f)
+        {
+            return;
+        }
+    }
+
+    if (!weapSelGui)
+    {
+        weapSelGui = uiManager->FindGui("guis/weapsel.gui", true, false, true);
+        if (!weapSelGui)
+        {
+            return;
+        }
+        weapSelGui->Activate(true, gameLocal.time);
+    }
+
+    const int cur = weapSelPending >= 0 ? weapSelPending : idealWeapon;
+    for (int g = 0; g < WEAPSEL_GROUPS; g++)
+    {
+        int slots[WEAPSEL_SLOTS];
+        const int n = WeaponGroupSlots(g, slots, false);
+        int cell = 0;
+        for (int i = 0; i < n; i++)
+        {
+            const int slot = slots[i];
+            if (!(inventory.weapons & (1 << slot)))
+            {
+                continue; // unowned weapons are hidden; owned ones pack toward the centre
+            }
+            const char *weap = spawnArgs.GetString(va("def_weapon%d", slot));
+            const char *icon = NULL;
+            bool wide = false;
+            for (int k = 0; k < (int)(sizeof(s_weapSelIcons) / sizeof(s_weapSelIcons[0])); k++)
+            {
+                if (!idStr::Icmp(weap, s_weapSelIcons[k].weapon))
+                {
+                    icon = s_weapSelIcons[k].icon;
+                    wide = s_weapSelIcons[k].wide;
+                    break;
+                }
+            }
+            if (!icon)
+            {
+                const idDict *def = gameLocal.FindEntityDefDict(weap, false);
+                icon = def ? def->GetString("icon") : "";
+            }
+            const int ammo = WeaponSelAmmo(slot);
+            const idStr prefix = va("wsel_%d_%d_", g, cell);
+            weapSelGui->SetStateInt(prefix + "vis", wide ? 2 : 1);
+            weapSelGui->SetStateString(prefix + "icon", icon);
+            weapSelGui->SetStateString(prefix + "ammo", ammo >= 0 ? va("%d", ammo) : "");
+            weapSelGui->SetStateInt(prefix + "sel", slot == cur ? 1 : 0);
+            weapSelGui->SetStateInt(prefix + "empty", WeaponSelAvailable(slot) ? 0 : 1);
+            cell++;
+        }
+        for (; cell < WEAPSEL_SLOTS; cell++)
+        {
+            weapSelGui->SetStateInt(va("wsel_%d_%d_vis", g, cell), 0);
+        }
+    }
+    weapSelGui->SetStateFloat("wsel_alpha", alpha);
+    weapSelGui->StateChanged(gameLocal.time);
+    weapSelGui->Redraw(gameLocal.realClientTime);
 }
 
 /*
@@ -7714,6 +8051,13 @@ void idPlayer::PerformImpulse(int impulse)
         ClientSendEvent(EVENT_IMPULSE, &msg);
     }
 
+    // dhewm3-rt: D-pad weapon groups
+    if (impulse >= IMPULSE_30 && impulse <= IMPULSE_33)
+    {
+        CycleWeaponGroup(impulse - IMPULSE_30);
+        return;
+    }
+
     if (impulse >= IMPULSE_0 && impulse <= IMPULSE_12)
     {
         SelectWeapon(impulse, false);
@@ -8754,6 +9098,7 @@ void idPlayer::Think(void)
     }
     else if (health > 0)
     {
+        UpdateWeaponSel(); // dhewm3-rt: commit a pending D-pad group pick
         UpdateWeapon();
     }
 

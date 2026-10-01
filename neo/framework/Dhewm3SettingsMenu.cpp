@@ -1855,6 +1855,11 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_aimAssistStrength", "Aim assist strength", OT_FLOAT, 0.0f, 2.0f),
     CVarOption("joy_aimAssistSmallTargets", "Assist on crawlers (trites, ticks)", OT_BOOL),
 
+    CVarOption("Gamepad Weapon Select"),
+    CVarOption("pad_weapGroups", "D-pad weapon groups (bind D-pad to _impulse30-33)", OT_BOOL),
+    CVarOption("pad_weapCommitMs", "Switch delay after last press (ms)", OT_INT, 0, 1000),
+    CVarOption("pad_weapOverlay", "Show weapon selector", OT_BOOL),
+
     CVarOption("Gamepad Rumble"),
     CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
     CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 2.0f),

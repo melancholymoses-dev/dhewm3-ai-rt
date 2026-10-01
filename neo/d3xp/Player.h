@@ -694,6 +694,21 @@ class idPlayer : public idActor
     int previousWeapon;
     int weaponSwitchTime;
     bool weaponEnabled;
+
+    // dhewm3-rt: D-pad weapon groups (C5) and centre-screen selector (C5b).  Transient, not saved.
+    int weapSelPending;    // slot picked by group presses, switched to at weapSelCommitTime; -1 = none
+    int weapSelCommitTime; // gameLocal.time
+    int weapSelHideTime;   // the selector stays up until this gameLocal.time
+    int weapSelLast[4];    // last pick per group, the target when entering a group
+    idUserInterface *weapSelGui;
+    void ResetWeaponSel(void);
+    int WeaponGroupSlots(int group, int *slots, bool logUnknown);
+    bool WeaponSelAvailable(int slot);
+    int WeaponSelAmmo(int slot);
+    void CycleWeaponGroup(int group);
+    void CommitWeaponSel(int slot);
+    void UpdateWeaponSel(void);
+    void DrawWeaponSel(void);
     bool showWeaponViewModel;
 
     const idDeclSkin *skin;

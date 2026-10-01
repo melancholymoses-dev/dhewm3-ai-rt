@@ -14,7 +14,7 @@ Every assist is individually switchable off. `joy_aimAssist 0` and
 | C1 | Radial look stick, legacy curve on the magnitude (`joy_newLook`) | framework only | low | built 2026-09-30, untested |
 | C2 | Ramp latch fix, 333 ms ramp kept (`joy_lookRampFix`) | framework only | low | built 2026-09-30, untested |
 | C4 | Aim assist: friction + optional adhesion (`joy_aimAssist`) | framework + game/d3xp, no ABI bump | | built 2026-09-30, untested |
-| C5 | D-pad weapon groups, multi-press cycles (`pad_weapGroups`); C5b centre-screen selector (`pad_weapOverlay`) | game/d3xp + pad cfgs + new .gui | next after C3 | planned |
+| C5 | D-pad weapon groups, multi-press cycles (`pad_weapGroups`); C5b centre-screen selector (`pad_weapOverlay`) | game/d3xp + pad cfgs + new .gui | | built 2026-10-01, untested |
 | C6 | Radial weapon wheel | framework + game/d3xp + new .gui | parked | not planned for now |
 
 ## Playtest 2026-09-30 (stock defaults)
@@ -259,6 +259,8 @@ is inert (returns before touching the angles).
 
 ## C5 — D-pad weapon groups
 
+**Built 2026-10-01, not yet validated in-game.** Commit sets `idealWeapon` directly (`CommitWeaponSel`), bypassing `SelectWeapon` toggle-back and d3xp weapon toggles. Multiplayer commits immediately. After pulling, `exec gamepad.cfg` (or `gamepad-d3xp.cfg`) to pick up the D-pad binds.
+
 Each D-pad direction holds a group of up to 4 weapons. Pressing it selects the group; each further
 press steps to the next weapon in it. The stock pad cfgs bind the D-pad to 4 single weapons only.
 
@@ -293,6 +295,8 @@ toggle only on a re-press of the same slot; cycling always passes a different sl
 steps pistol→shotgun→machinegun. Empty the shotgun: Up skips it. `pad_weapCommitMs 0`: every press switches.
 
 ### C5b — Centre-screen selector (HL2 style)
+
+**Built 2026-10-01, not yet validated in-game.** Layout is generated (64×44 cells, 640×480 space); cell vars `wsel_G_N_{vis,icon,ammo,sel,empty}` + `wsel_alpha`. Unowned weapons are hidden and owned ones pack toward the centre. Icons from a classname table in `Player.cpp`, else the def's `icon` key. `neo/CMakeLists.txt` `deploy_base_overrides` now copies `base/guis`.
 
 Cross layout around the crosshair, one arm per D-pad direction. Each arm shows its group's icons, the
 pending pick highlighted, and its ammo count; weapons with no ammo are dimmed red, unowned ones hidden.
@@ -357,7 +361,7 @@ them only once `joy_newLook 1` has shipped as default for a while.
 | C1, C2 | `neo/framework/UsercmdGen.cpp`, `Dhewm3SettingsMenu.cpp` |
 | C3 | `neo/sys/events.cpp`, `neo/framework/{Rumble.cpp,Rumble.h,Common.h,Common.cpp,Session.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Game_local.h,Game_local.cpp,Player.cpp,Weapon.cpp}`, `neo/CMakeLists.txt`; C3b adds `neo/{game,d3xp}/{ai/AI.h,ai/AI.cpp,anim/Anim_Blend.cpp}` |
 | C4 | `neo/framework/{UsercmdGen.cpp,UsercmdGen.h,Common.h,Common.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{AimAssist.cpp,AimAssist.h,Player.h,Player.cpp}`, `neo/CMakeLists.txt` |
-| C5 | `neo/framework/{UsercmdGen.h,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Player.h,Player.cpp}`, `base/{gamepad.cfg,gamepad-d3xp.cfg}`; C5b adds `base/guis/weapsel.gui` |
+| C5 | `neo/framework/{UsercmdGen.h,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Player.h,Player.cpp}`, `base/{gamepad.cfg,gamepad-d3xp.cfg}`; C5b adds `base/guis/weapsel.gui`, `neo/CMakeLists.txt` (deploy `base/guis`) |
 
 C3 and C4 both need `neo/game/` and `neo/d3xp/` kept in sync. C4 adds new source
 files, so `src_game` and `src_d3xp` in `neo/CMakeLists.txt` need updating.
