@@ -433,7 +433,7 @@ viewEntity_t *R_SetEntityDefViewEntity(idRenderEntityLocal *def)
 
     R_AxisToModelMatrix(def->parms.axis, def->parms.origin, vModel->modelMatrix);
 
-    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): hand the backend
+    // U2 motion vectors (docs/plans/completed/20260918_fsr_upscaling.md §13): hand the backend
     // last frame's transform for this entity.  Two cases fall back to the current
     // matrix — meaning a camera-only motion vector rather than a wrong one:
     //   - the entity was not drawn last frame (disocclusion; FSR2 handles that itself)
@@ -1431,7 +1431,9 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
     // allow deferred entities to construct themselves
     if (def->parms.callback)
     {
+        const unsigned long long callbackTicks = R_ProfileTicks();
         callbackUpdate = R_IssueEntityDefCallback(def);
+        tr.pc.c_callbackUsec += R_ProfileUsecSince(callbackTicks);
     }
     else
     {
@@ -1463,7 +1465,19 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
     {
 
         // instantiate the snapshot of the dynamic model, possibly reusing memory from the cached snapshot
+        const unsigned long long instTicks = R_ProfileTicks();
         def->cachedDynamicModel = model->InstantiateDynamicModel(&def->parms, tr.viewDef, def->cachedDynamicModel);
+        const int instUsec = R_ProfileUsecSince(instTicks);
+        if (model->IsDynamicModel() == DM_CONTINUOUS)
+        {
+            tr.pc.c_dynContinuous++;
+            tr.pc.c_dynContinuousUsec += instUsec;
+        }
+        else
+        {
+            tr.pc.c_dynCached++;
+            tr.pc.c_dynCachedUsec += instUsec;
+        }
 
         if (def->cachedDynamicModel)
         {

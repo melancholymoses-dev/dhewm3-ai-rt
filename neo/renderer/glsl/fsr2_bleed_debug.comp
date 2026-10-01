@@ -31,7 +31,7 @@ Push constants (20 bytes, matches Fsr2BleedPC in vk_upscale.cpp):
   ivec2 displayExtent  — size of dstUpscaled
   float threshold      — linear-HDR luminance difference that counts as a bleed
 
-FSR upscaling arc U3 — docs/plans/20260918_fsr_upscaling.md §7.
+FSR upscaling arc U3 — docs/plans/completed/20260918_fsr_upscaling.md §7.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

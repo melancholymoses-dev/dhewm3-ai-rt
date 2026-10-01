@@ -401,6 +401,7 @@ struct vkRTState_t
     // Fullscreen composite pipeline — additively blends the GI buffer onto the
     // framebuffer once per view, before the per-light interaction draws.
     VkPipeline giCompositePipeline;
+    VkPipeline giCompositeDebugPipeline; // replace-blend variant for r_rtAODebug
     VkPipelineLayout giCompositeLayout;
     VkDescriptorSetLayout giCompositeDescLayout;
     VkDescriptorPool giCompositeDescPool;
@@ -447,23 +448,25 @@ struct vkRTState_t
     //   vtxAddrSSBO   — uint64_t[],        vertex buffer device address per instance
     //   idxAddrSSBO   — uint64_t[],        index  buffer device address per instance
     //
+    // One copy per frame slot, indexed by vk.currentFrame: the CPU rewrites them
+    // while recording, and the previous frame's TLAS still indexes the old layout.
     // --------------------------------------------------------------------------
-    VkBuffer matTableSSBO;
-    VkDeviceMemory matTableSSBOMemory;
-    void *matTableMapped; // persistently mapped
+    VkBuffer matTableSSBO[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory matTableSSBOMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void *matTableMapped[VK_MAX_FRAMES_IN_FLIGHT]; // persistently mapped
 
-    VkBuffer vtxAddrSSBO;
-    VkDeviceMemory vtxAddrSSBOMemory;
-    void *vtxAddrMapped; // persistently mapped
+    VkBuffer vtxAddrSSBO[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory vtxAddrSSBOMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void *vtxAddrMapped[VK_MAX_FRAMES_IN_FLIGHT]; // persistently mapped
 
-    VkBuffer idxAddrSSBO;
-    VkDeviceMemory idxAddrSSBOMemory;
-    void *idxAddrMapped; // persistently mapped
+    VkBuffer idxAddrSSBO[VK_MAX_FRAMES_IN_FLIGHT];
+    VkDeviceMemory idxAddrSSBOMemory[VK_MAX_FRAMES_IN_FLIGHT];
+    void *idxAddrMapped[VK_MAX_FRAMES_IN_FLIGHT]; // persistently mapped
 
     VkDescriptorSetLayout matDescLayout; // set=2: mat SSBO + vtx/idx addr + bindless textures
     VkDescriptorPool matDescPool;
-    VkDescriptorSet matDescSet; // single set — textures stable between frames
-    VkSampler matSampler;       // bilinear-clamp, used for all bindless slots
+    VkDescriptorSet matDescSet[VK_MAX_FRAMES_IN_FLIGHT]; // bind matDescSet[vk.currentFrame]
+    VkSampler matSampler;                                 // bilinear-clamp, used for all bindless slots
 
     bool matTableInitialized;
 
@@ -635,12 +638,20 @@ struct vkRTState_t
 
     // Resolution Upscaler bounce-buffer.
     // hdrScene (sub-rect) -> hdrUpscaled -> hdrScene (full)
-    //
-    // Per frame-in-flight, not shared: the slot fence waited on at frame start belongs
-    // to frame N-1, so frame N+1 can be recorded and submitted while frame N is still
-    // executing.  A single shared image therefore lets frame N+1's compute write race
-    // frame N's transfer read (WAR), which shows up as intermittent flicker.
     vkRTImage_t hdrUpscaled[VK_MAX_FRAMES_IN_FLIGHT];
+
+    // U4 FSR 2 masks (docs/plans/completed/20260918_fsr_upscaling.md §9).  All display-sized with
+    // only the render sub-rect valid, like every other U0 buffer.
+    //   preAlphaColor: hdrScene snapshotted before the blend stages draw
+    //   reactiveMask:  ffxFsr2ContextGenerateReactiveMask's output — auto-detected
+    //                  alpha-blended pixels (particles, glass, fog)
+    //   tcMask:        transparency-and-composition, extracted from gbufAlbedo's alpha by
+    //                  fsr_tc_mask.comp — surfaces the prepass flagged as having motion
+    //                  vectors FSR 2 should not trust (skinned meshes, the viewmodel)
+    vkRTImage_t reactiveMask[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t preAlphaColor[VK_MAX_FRAMES_IN_FLIGHT];
+    vkRTImage_t tcMask[VK_MAX_FRAMES_IN_FLIGHT];
+
     VkPipeline upscalePipeline;
     VkPipelineLayout upscalePipelineLayout;
     VkDescriptorSetLayout upscaleDescLayout;
@@ -662,7 +673,7 @@ struct vkRTState_t
     // Same vk.gbufferSupported gating and lifetime as gbufNormal.
     vkRTImage_t gbufAlbedo[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM diffuse albedo
 
-    // Motion vectors (U2, docs/plans/20260918_fsr_upscaling.md §13): per pixel, the
+    // Motion vectors (U2, docs/plans/completed/20260918_fsr_upscaling.md §13): per pixel, the
     // screen-space offset from this frame's position to last frame's, in GL NDC units
     // (Y up), written as attachment 3 by the same prepass. Cleared to (0,0), so sky,
     // translucent surfaces and anything the prepass skips read as "not moving".
@@ -711,6 +722,10 @@ void VK_RT_InitAO(void);
 // Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry.
 // Transitions depth to READ_ONLY_OPTIMAL for the dispatch, then restores to ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// AO image for fragment sampling this frame (denoised view or raw mask).  False, with the
+// white fallback filled in, when AO was not written this frame.
+bool VK_RT_GetAODescriptor(VkDescriptorImageInfo *out);
 
 // Resize AO mask when resolution changes
 void VK_RT_ResizeAOMask(uint32_t width, uint32_t height);
@@ -815,6 +830,22 @@ void VK_RT_DrainBLASGarbage(void);
 
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// r_vkRTProfile: BLAS work for the current tr.frameCount, valid after VK_RT_RebuildTLAS.
+struct vkRTBlasFrameStats_t
+{
+    int updates;          // in-place MODE_UPDATE refits
+    int rebuilds;         // full builds (new buffers + AS)
+    int tris;             // triangles across both
+    int dynamicInstances; // TLAS instances with a per-frame BLAS
+    double cpuMs;         // CPU time inside VK_RT_BuildBLASForModel
+};
+void VK_RT_GetBLASFrameStats(vkRTBlasFrameStats_t *out);
+
+// r_vkRTProfile GPU span over this frame's BLAS builds (vk_backend.cpp).  Begin is
+// idempotent within a frame; the backend closes a span left open by an early return.
+void VK_RTProfile_BLASGpuBegin(VkCommandBuffer cmd);
+void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd);
 
 // True when the TLAS will be rebuilt and consumed this frame (RT supported,
 // initialized, enabled, and at least one effect that needs it turned on).
@@ -1034,7 +1065,12 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Must be called INSIDE the main render pass, before the per-light interaction draws.
 // Reads from giReadView[currentFrame] (giHistory when temporal is active, else giBuffer).
 // Does nothing when r_rtGI is off or the composite pipeline is not ready.
+// GI is multiplied by AO here (r_rtAOIndirectStrength).
 void VK_RT_CompositeGI(VkCommandBuffer cmd);
+
+// r_rtAODebug view (replace blend).  Call inside the render pass after the shader
+// passes, same frame as VK_RT_CompositeGI; no-op when that didn't run.
+void VK_RT_CompositeGIDebug(VkCommandBuffer cmd);
 
 // ---------------------------------------------------------------------------
 // GI temporal EMA resolve (Phase 6.2)

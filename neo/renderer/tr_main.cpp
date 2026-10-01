@@ -1050,7 +1050,7 @@ void R_SetupProjection(viewDef_t *viewDef)
     int spanX = viewDef->viewport.x2 - viewDef->viewport.x1 + 1;
     int spanY = viewDef->viewport.y2 - viewDef->viewport.y1 + 1;
 
-    // U2 (docs/plans/20260918_fsr_upscaling.md §13): Halton(2,3) over [-0.5,+0.5] of a
+    // U2 (docs/plans/completed/20260918_fsr_upscaling.md §13): Halton(2,3) over [-0.5,+0.5] of a
     // render pixel, which is what a temporal upscaler needs.  It takes precedence over
     // r_jitter, whose whole-pixel white noise is for motion-blurred AA and is wrong
     // here; r_jitter keeps its old behaviour whenever the FSR path is off.  Subviews
@@ -1325,7 +1325,7 @@ void R_RenderView(viewDef_t *parms)
         R_ObliqueProjection(tr.viewDef);
     }
 
-    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): roll last frame's
+    // U2 motion vectors (docs/plans/completed/20260918_fsr_upscaling.md §13): roll last frame's
     // unjittered view-projection forward, for the primary view only.  Subviews, mirrors
     // and the 2D overlay keep prevFrameValid false, which makes the backend emit a zero
     // motion vector instead of reprojecting through a camera that was never theirs.
@@ -1354,7 +1354,9 @@ void R_RenderView(viewDef_t *parms)
 
     // identify all the visible portalAreas, and the entityDefs and
     // lightDefs that are in them and pass culling.
+    unsigned long long stageTicks = R_ProfileTicks();
     static_cast<idRenderWorldLocal *>(parms->renderWorld)->FindViewLightsAndEntities();
+    tr.pc.c_findViewUsec += R_ProfileUsecSince(stageTicks);
 
     // constrain the view frustum to the view lights and entities
     R_ConstrainViewFrustum();
@@ -1362,11 +1364,15 @@ void R_RenderView(viewDef_t *parms)
     // make sure that interactions exist for all light / entity combinations
     // that are visible
     // add any pre-generated light shadows, and calculate the light shader values
+    stageTicks = R_ProfileTicks();
     R_AddLightSurfaces();
+    tr.pc.c_addLightsUsec += R_ProfileUsecSince(stageTicks);
 
     // adds ambient surfaces and create any necessary interaction surfaces to add to the light
     // lists
+    stageTicks = R_ProfileTicks();
     R_AddModelSurfaces();
+    tr.pc.c_addModelsUsec += R_ProfileUsecSince(stageTicks);
 
     // any viewLight that didn't have visible surfaces can have it's shadows removed
     R_RemoveUnecessaryViewLights();

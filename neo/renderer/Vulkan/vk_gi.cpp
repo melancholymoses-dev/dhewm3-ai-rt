@@ -1226,6 +1226,39 @@ static void VK_RT_InitGIPipeline(void)
     common->Printf("VK RT GI: pipeline initialized\n");
 }
 
+// Matches CompositePC in gi_composite.frag.
+struct giCompositePC_t
+{
+    int32_t useAO;
+    float aoStrength;
+    int32_t debugMode;
+    float debugGain;
+};
+
+extern idCVar r_rtAOIndirectStrength; // vk_ao.cpp
+extern idCVar r_rtAODebug;
+extern idCVar r_rtAODebugGain;
+
+static bool s_giCompositeAOValid = false;   // AO bound by this frame's VK_RT_CompositeGI
+static int s_giCompositeWrittenFrame = -1; // tr.frameCount of the last descriptor write
+
+static void VK_RT_DrawGIComposite(VkCommandBuffer cmd, VkPipeline pipeline, int debugMode)
+{
+    giCompositePC_t pc = {};
+    pc.useAO = s_giCompositeAOValid ? 1 : 0;
+    pc.aoStrength = idMath::ClampFloat(0.0f, 1.0f, r_rtAOIndirectStrength.GetFloat());
+    pc.debugMode = debugMode;
+    pc.debugGain = Max(0.0f, r_rtAODebugGain.GetFloat());
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositeLayout, 0, 1,
+                            &vkRT.giCompositeDescSets[vk.currentFrame], 0, NULL);
+    vkCmdPushConstants(cmd, vkRT.giCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+
+    // 3 vertices, no vertex buffer — the vert shader generates the triangle from gl_VertexIndex.
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
 // ---------------------------------------------------------------------------
 // VK_RT_InitGICompositePipeline
 // Fullscreen additive pipeline that blends the GI buffer onto the framebuffer
@@ -1234,24 +1267,30 @@ static void VK_RT_InitGIPipeline(void)
 
 static void VK_RT_InitGICompositePipeline(void)
 {
-    // --- Descriptor set layout: 1 sampler binding ---
-    VkDescriptorSetLayoutBinding binding = {};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    // --- Descriptor set layout: binding 0 = GI, binding 1 = AO ---
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    for (int i = 0; i < 2; i++)
+    {
+        bindings[i].binding = (uint32_t)i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &binding;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.giCompositeDescLayout));
 
     // --- Pipeline layout ---
+    VkPushConstantRange pcRange = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(giCompositePC_t)};
     VkPipelineLayoutCreateInfo plInfo = {};
     plInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plInfo.setLayoutCount = 1;
     plInfo.pSetLayouts = &vkRT.giCompositeDescLayout;
+    plInfo.pushConstantRangeCount = 1;
+    plInfo.pPushConstantRanges = &pcRange;
     VK_CHECK(vkCreatePipelineLayout(vk.device, &plInfo, NULL, &vkRT.giCompositeLayout));
 
     // --- Shader modules ---
@@ -1355,11 +1394,16 @@ static void VK_RT_InitGICompositePipeline(void)
     pipelineInfo.subpass = 0;
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.giCompositePipeline));
 
+    // Debug variant (r_rtAODebug): blend off, so the view replaces the frame instead of adding to it.
+    blendAttachments[0].blendEnable = VK_FALSE;
+    VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
+                                       &vkRT.giCompositeDebugPipeline));
+
     vkDestroyShaderModule(vk.device, vertMod, NULL);
     vkDestroyShaderModule(vk.device, fragMod, NULL);
 
-    // --- Descriptor pool and sets (one per frame in flight) ---
-    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT};
+    // --- Descriptor pool and sets (one per frame in flight, 2 samplers each) ---
+    VkDescriptorPoolSize poolSize = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (uint32_t)VK_MAX_FRAMES_IN_FLIGHT * 2};
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
@@ -1464,6 +1508,11 @@ void VK_RT_ShutdownGI(void)
     {
         vkDestroyDescriptorSetLayout(vk.device, vkRT.giCompositeDescLayout, NULL);
         vkRT.giCompositeDescLayout = VK_NULL_HANDLE;
+    }
+    if (vkRT.giCompositeDebugPipeline != VK_NULL_HANDLE)
+    {
+        vkDestroyPipeline(vk.device, vkRT.giCompositeDebugPipeline, NULL);
+        vkRT.giCompositeDebugPipeline = VK_NULL_HANDLE;
     }
     if (vkRT.giCompositePipeline != VK_NULL_HANDLE)
     {
@@ -2843,7 +2892,7 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 0, 1,
                             &vkRT.giDescSets[frameIdx], 1, &uboOff);
     // set=1: material table
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame],
                             0, NULL);
     // set=2: probe resources. gi_ray.rgen never touches them, but the probe
     // raygen is a group in this same pipeline, so leaving the set unbound makes
@@ -2938,19 +2987,24 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
 
     // Update the descriptor set for this frame slot.  The GI image may have
     // been recreated (resize), so always write it before drawing.
-    VkDescriptorImageInfo imgInfo = {};
-    imgInfo.sampler = vkRT.giSampler;
-    imgInfo.imageView = readView;
-    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkDescriptorImageInfo imgInfo[2] = {};
+    imgInfo[0].sampler = vkRT.giSampler;
+    imgInfo[0].imageView = readView;
+    imgInfo[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    s_giCompositeAOValid = VK_RT_GetAODescriptor(&imgInfo[1]);
 
-    VkWriteDescriptorSet write = {};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = vkRT.giCompositeDescSets[frameIdx];
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &imgInfo;
-    vkUpdateDescriptorSets(vk.device, 1, &write, 0, NULL);
+    VkWriteDescriptorSet writes[2] = {};
+    for (int i = 0; i < 2; i++)
+    {
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = vkRT.giCompositeDescSets[frameIdx];
+        writes[i].dstBinding = (uint32_t)i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].pImageInfo = &imgInfo[i];
+    }
+    vkUpdateDescriptorSets(vk.device, 2, writes, 0, NULL);
+    s_giCompositeWrittenFrame = tr.frameCount;
 
     // Viewport and scissor are inherited from the caller (VK_RB_DrawView resumes
     // the render pass with the Y-flipped full viewport and s_viewScissor already
@@ -2958,15 +3012,36 @@ void VK_RT_CompositeGI(VkCommandBuffer cmd)
     // swapchain extent would leave subsequent interaction draws using the wrong
     // region, and the GI buffer outside the dispatch rect is already cleared to
     // black so blending it adds nothing visually.
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositePipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkRT.giCompositeLayout, 0, 1,
-                            &vkRT.giCompositeDescSets[frameIdx], 0, NULL);
-
-    // 3 vertices, no vertex buffer — the vert shader generates the triangle from gl_VertexIndex.
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+    VK_RT_DrawGIComposite(cmd, vkRT.giCompositePipeline, 0);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT GI: composite drawn frame=%d slot=%d\n", tr.frameCount, frameIdx);
+        common->Printf("VK RT GI: composite drawn frame=%d slot=%d ao=%d\n", tr.frameCount, frameIdx,
+                       s_giCompositeAOValid ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_CompositeGIDebug (public)
+// r_rtAODebug view, drawn late (after the shader passes) with the replace-blend
+// pipeline.  Reuses the descriptor set VK_RT_CompositeGI wrote this frame: updating
+// a set already referenced by this command buffer is not allowed.
+// ---------------------------------------------------------------------------
+
+void VK_RT_CompositeGIDebug(VkCommandBuffer cmd)
+{
+    const int mode = r_rtAODebug.GetInteger();
+    if (mode <= 0 || vkRT.giCompositeDebugPipeline == VK_NULL_HANDLE)
+        return;
+    if (s_giCompositeWrittenFrame != tr.frameCount)
+    {
+        static int s_warnedFrame = -1;
+        if (s_warnedFrame != tr.frameCount && r_vkLogRT.GetInteger() >= 1)
+        {
+            s_warnedFrame = tr.frameCount;
+            common->Printf("VK RT AO DEBUG: skipped, GI composite did not run this frame (needs r_rtGI 1)\n");
+        }
+        return;
+    }
+    VK_RT_DrawGIComposite(cmd, vkRT.giCompositeDebugPipeline, mode);
 }
 
 // ===========================================================================

@@ -12,6 +12,10 @@ extern idCVar r_fsrDebug;
 extern idCVar r_fsrSharpness;
 extern idCVar r_fsrJitter;
 extern idCVar r_fsrMotionScale;
+extern idCVar r_fsrAutoReactive;
+extern idCVar r_fsrReactiveCutoff;
+extern idCVar r_fsrReactiveScale;
+extern idCVar r_fsrTcMask;
 extern idCVar r_fsrQuality;
 extern idCVar r_fsrMipBias;
 extern idCVar r_fsrMipBiasOffset;
@@ -39,5 +43,24 @@ float VK_RT_RenderScaleX(void);
 float VK_RT_RenderScaleY(void);
 idScreenRect VK_RT_ScaleDisplayRect(const idScreenRect &s);
 bool VK_RT_UpscaleActive(void);
+
+// U4: does the FSR 2 path want a reactive mask this frame?  True means the backend owes it
+// a pre-alpha snapshot of hdrScene, taken between the interactions and the blend stages.
+bool VK_RT_UpscaleNeedsReactiveMask(void);
+
+// U4: and the transparency-and-composition mask, which the G-buffer prepass encodes into
+// gbufAlbedo's alpha channel.
+bool VK_RT_UpscaleNeedsTcMask(void);
+
+// U4: build both mask inputs.  Must be called OUTSIDE a render pass, after the interactions
+// and before VK_RB_DrawShaderPasses — a vkCmdCopyImage cannot be recorded inside a render
+// pass, and the snapshot is worthless once anything translucent has drawn.  No-op unless
+// one of the two demands above is true.
+void VK_RT_CaptureReactiveInputs(VkCommandBuffer cmd);
+
+// U4: r_fsrDebug 3 mask overlay.  Same slot as the motion overlay — outside a render pass,
+// after the resolve and before the tonemap; overwrites hdrScene.
+bool VK_RT_MaskDebugActive(void);
+void VK_RT_DispatchMaskDebug(VkCommandBuffer cmd);
 
 void VK_RT_DispatchUpscale(VkCommandBuffer cmd);

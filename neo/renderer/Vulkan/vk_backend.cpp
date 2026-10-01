@@ -65,6 +65,14 @@ static idScreenRect VK_ScaleToDrawSpace(const idScreenRect &s)
 // reflected content from bleeding outside the mirror surface's screen bounds.
 static VkRect2D s_viewScissor;
 
+// Current view's viewport (Y-flipped, draw space).  Full draw extent for normal views;
+// remote-camera/mirrorRenderMap/xray subviews render into a crop in the bottom-left.
+static VkViewport s_viewViewport;
+
+// True once any subview has drawn colour this frame; later views must black out their
+// opaque surfaces in the depth prepass (GL does this unconditionally) or it shows through.
+static bool s_frameDrewSubview = false;
+
 // Last major render stage that was entered.  Updated just before each vkCmd* stage.
 // Printed on VK_ERROR_DEVICE_LOST so we know exactly where command recording got to.
 static const char *s_lastRenderStage = "(none)";
@@ -91,6 +99,35 @@ static void VK_DumpStageBreadcrumbs(void)
         const int idx = (s_stageBreadcrumbHead + i) % VK_STAGE_BREADCRUMB_MAX;
         if (s_stageBreadcrumbs[idx][0] != '\0')
             common->Printf("  [%d] %s\n", i, s_stageBreadcrumbs[idx]);
+    }
+}
+
+// Reopen the HDR render pass after a mid-frame vkCmdEndRenderPass.  RT dispatches, image
+// copies and the upscale resolve all have to step outside it, and every one of those sites
+// rebuilt the identical VkRenderPassBeginInfo.  Only the scissor ever differed, so that is
+// the one parameter; pass NULL to leave viewport/scissor untouched.
+//
+// The extent comes from VK_CurrentDrawExtent, not vk.renderExtent: this runs for the 2D
+// overlay view too, and resuming at render extent there squeezed the UI and the GI
+// composite into the top-left sub-rect.
+static void VK_ResumeHdrRenderPass(VkCommandBuffer cmd, const VkRect2D *scissor)
+{
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+
+    VkRenderPassBeginInfo rpResume = {};
+    rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpResume.renderPass = vk.hdrRenderPassResume;
+    rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
+    rpResume.renderArea.offset = {0, 0};
+    rpResume.renderArea.extent = drawExtent;
+    rpResume.clearValueCount = 0;
+    rpResume.pClearValues = NULL;
+    vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+
+    if (scissor)
+    {
+        vkCmdSetViewport(cmd, 0, 1, &s_viewViewport);
+        vkCmdSetScissor(cmd, 0, 1, scissor);
     }
 }
 
@@ -154,23 +191,7 @@ static bool VK_DebugSplitSubmit(VkCommandBuffer *cmdBufInOut, const char *stageT
     }
 
     if (renderPassActive)
-    {
-        VkRenderPassBeginInfo rpResume = {};
-        rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpResume.renderPass = vk.hdrRenderPassResume;
-        rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
-        rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = drawExtent;
-        rpResume.clearValueCount = 0;
-        rpResume.pClearValues = NULL;
-        vkCmdBeginRenderPass(newCmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
-                               1.0f};
-        vkCmdSetViewport(newCmd, 0, 1, &viewport);
-        vkCmdSetScissor(newCmd, 0, 1, &s_viewScissor);
-    }
+        VK_ResumeHdrRenderPass(newCmd, &s_viewScissor);
 
     s_frameCmdBuf = newCmd;
     *cmdBufInOut = newCmd;
@@ -220,6 +241,11 @@ static idCVar r_vkLowPerturbationMode(
 static idCVar r_vkSplitSubmitVerbose(
     "r_vkSplitSubmitVerbose", "0", CVAR_RENDERER | CVAR_INTEGER,
     "Verbose split-submit logging (0=quiet, 1=print per-stage split-submit completion)");
+static idCVar r_vkSerializeFrames(
+    "r_vkSerializeFrames", "0", CVAR_RENDERER | CVAR_BOOL,
+    "Debug: wait for each frame's GPU work to finish before recording the next, so the CPU never "
+    "writes shared host-visible buffers while a previous frame still reads them.  Artifacts that vanish "
+    "with this on are CPU/GPU races.");
 static idCVar r_vkRTProfile(
     "r_vkRTProfile", "0", CVAR_RENDERER | CVAR_INTEGER,
     "RT GPU phase profiling with Vulkan timestamps (0=off, 1=periodic logs, 2=log every frame)");
@@ -353,7 +379,23 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_FOG_LIGHTS,
     VK_RTPROF_PHASE_UPSCALE,
     VK_RTPROF_PHASE_TONEMAP,
+
+    // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
+    VK_RTPROF_PHASE_NESTED_BEGIN,
+    VK_RTPROF_PHASE_BLAS = VK_RTPROF_PHASE_NESTED_BEGIN, // inside TLAS
     VK_RTPROF_PHASE_COUNT
+};
+
+// Whole-frame CPU costs outside the per-phase recording spans, per slot.
+struct vkRTProfileFrameCPU_t
+{
+    double fenceWaitMs; // vkWaitForFences at frame start: GPU-bound time shows up here
+    double acquireMs;
+    double drainMs;  // deferred image/buffer/BLAS destruction
+    double uploadMs; // VK_FlushPendingUploads: staging batch submit + wait
+    double submitMs;
+    double presentMs;
+    vkRTBlasFrameStats_t blas;
 };
 
 struct vkRTProfileEvent_t
@@ -374,6 +416,9 @@ static uint32_t s_rtProfNextQuery[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static int s_rtProfRecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static int s_rtProfCPURecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static double s_rtProfCPUMs[VK_MAX_FRAMES_IN_FLIGHT][VK_RTPROF_PHASE_COUNT] = {};
+static vkRTProfileFrameCPU_t s_rtProfFrameCPU[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_rtProfBLASEvent = -1;      // open BLAS GPU span, or -1
+static bool s_rtProfBLASSpanDone = false; // one BLAS span per frame
 static uint64_t s_rtProfCPUFreq = 0;
 static float s_rtProfTimestampPeriodNs = 0.0f;
 static bool s_rtProfReady = false;
@@ -430,6 +475,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "Upscale";
     case VK_RTPROF_PHASE_TONEMAP:
         return "Tonemap";
+    case VK_RTPROF_PHASE_BLAS:
+        return "TLAS.BLAS";
     default:
         return "Unknown";
     }
@@ -443,6 +490,13 @@ static bool VK_RTProfileEnabled()
 static uint64_t VK_RTProfile_CPUStamp(void)
 {
     return (s_rtProfCPUFreq > 0) ? SDL_GetPerformanceCounter() : 0;
+}
+
+static double VK_RTProfile_TicksToMs(uint64_t start, uint64_t end)
+{
+    if (s_rtProfCPUFreq == 0 || start == 0 || end <= start)
+        return 0.0;
+    return ((double)(end - start) * 1000.0) / (double)s_rtProfCPUFreq;
 }
 
 static void VK_RTProfile_AccumulateCPU(vkRTProfilePhase_t phase, uint64_t startCounter)
@@ -534,6 +588,9 @@ static void VK_RTProfile_BeginFrame(VkCommandBuffer cmd, int slot)
     s_rtProfCPURecordedFrameCount[slot] = -1;
     for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
         s_rtProfCPUMs[slot][p] = 0.0;
+    s_rtProfFrameCPU[slot] = {};
+    s_rtProfBLASEvent = -1;
+    s_rtProfBLASSpanDone = false;
     vkCmdResetQueryPool(cmd, s_rtProfQueryPools[slot], 0, VK_RTPROF_QUERY_COUNT);
 }
 
@@ -575,6 +632,23 @@ static void VK_RTProfile_PhaseEnd(VkCommandBuffer cmd, int eventIdx)
 
     const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][eventIdx];
     vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_rtProfQueryPools[slot], ev.queryEnd);
+}
+
+void VK_RTProfile_BLASGpuBegin(VkCommandBuffer cmd)
+{
+    if (s_rtProfBLASEvent >= 0 || s_rtProfBLASSpanDone)
+        return;
+    s_rtProfBLASEvent = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_BLAS);
+}
+
+// Every begun query must get its end timestamp: CollectAndLog waits on all of them.
+void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd)
+{
+    if (s_rtProfBLASEvent < 0)
+        return;
+    VK_RTProfile_PhaseEnd(cmd, s_rtProfBLASEvent);
+    s_rtProfBLASEvent = -1;
+    s_rtProfBLASSpanDone = true;
 }
 
 static void VK_RTProfile_CollectAndLog(int slot)
@@ -627,7 +701,7 @@ static void VK_RTProfile_CollectAndLog(int slot)
         // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
         double totalMs = 0.0, rasterMs = 0.0;
         double totalCPUMs = 0.0, rasterCPUMs = 0.0;
-        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        for (int p = 0; p < VK_RTPROF_PHASE_NESTED_BEGIN; p++)
         {
             const bool isRT = (p < VK_RTPROF_PHASE_RT_COUNT);
             (isRT ? totalMs : rasterMs) += phaseMs[p];
@@ -652,6 +726,27 @@ static void VK_RTProfile_CollectAndLog(int slot)
                        "events=%u\n",
                        recordedFrame, slot, totalMs, rasterMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0,
                        haveCPU ? rasterCPUMs : 0.0, cpuLine.c_str(), eventCount);
+
+        // Same frame as the line above: what the backend spent outside the recorded phases.
+        if (haveCPU)
+        {
+            const vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[slot];
+            common->Printf("VK FRAME PROFILE: frame=%d fenceWait=%.3f acquire=%.3f drain=%.3f upload=%.3f "
+                           "submit=%.3f present=%.3f BLAS(updates=%d rebuilds=%d tris=%d dynInst=%d)\n",
+                           recordedFrame, fc.fenceWaitMs, fc.acquireMs, fc.drainMs, fc.uploadMs, fc.submitMs,
+                           fc.presentMs, fc.blas.updates, fc.blas.rebuilds, fc.blas.tris, fc.blas.dynamicInstances);
+        }
+
+        // Latest completed EndFrame, i.e. a couple of frames newer than the GPU line.
+        const performanceCounters_t &pc = tr.pcLastFrame;
+        common->Printf("VK CPU PROFILE: game=%.3f frontend=%.3f (findView=%.3f addLights=%.3f addModels=%.3f "
+                       "callbacks=%d/%.3f dynCached=%d/%.3f dynContinuous=%d/%.3f vcAlloc=%d/%dKB/%.3f vcFree=%d) "
+                       "backend=%.3f\n",
+                       pc.c_gameTicUsec * 0.001, pc.c_frontEndUsec * 0.001, pc.c_findViewUsec * 0.001,
+                       pc.c_addLightsUsec * 0.001, pc.c_addModelsUsec * 0.001, pc.c_entityDefCallbacks,
+                       pc.c_callbackUsec * 0.001, pc.c_dynCached, pc.c_dynCachedUsec * 0.001, pc.c_dynContinuous,
+                       pc.c_dynContinuousUsec * 0.001, pc.c_vcAllocs, pc.c_vcAllocBytes >> 10,
+                       pc.c_vcAllocUsec * 0.001, pc.c_vcFrees, pc.c_backEndUsec * 0.001);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -827,7 +922,7 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
-// U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): the view-projection
+// U2 motion vectors (docs/plans/completed/20260918_fsr_upscaling.md §13): the view-projection
 // pair the G-buffer prepass reprojects against, both UNJITTERED and left in GL clip
 // space — only xy/w is read, and the Z remap above rewrites row 2 alone.  For the same
 // reason weaponDepthHack/modelDepthHack are not applied: they only scale or shift
@@ -861,6 +956,29 @@ static VkRect2D VK_ComputeViewScissor(const viewDef_t *viewDef)
     r.extent.width = (uint32_t)idMath::ClampInt(1, w - r.offset.x, w2);
     r.extent.height = (uint32_t)idMath::ClampInt(1, h - r.offset.y, h2);
     return r;
+}
+
+// GL glViewport(viewDef->viewport) equivalent.  Negative height carries the GL Y-flip;
+// with it, .y is the viewport's bottom edge in VK (Y-down) rows.
+static VkViewport VK_ComputeViewViewport(const viewDef_t *viewDef)
+{
+    const VkExtent2D drawExtent = VK_CurrentDrawExtent();
+    const float dw = (float)drawExtent.width;
+    const float dh = (float)drawExtent.height;
+    VkViewport full = {0.0f, dh, dw, -dh, 0.0f, 1.0f};
+
+    // Full-display views (main view, 2D overlay, SS_SUBVIEW mirrors) keep the exact extent.
+    const idScreenRect &v = viewDef->viewport;
+    const int vw = v.x2 - v.x1 + 1;
+    const int vh = v.y2 - v.y1 + 1;
+    if (vw <= 0 || vh <= 0 ||
+        (v.x1 == 0 && v.y1 == 0 && vw >= (int)vk.swapchainExtent.width && vh >= (int)vk.swapchainExtent.height))
+        return full;
+
+    const float sx = s_upscaleDone ? 1.0f : VK_RT_RenderScaleX();
+    const float sy = s_upscaleDone ? 1.0f : VK_RT_RenderScaleY();
+    VkViewport vp = {v.x1 * sx, dh - v.y1 * sy, vw * sx, -(vh * sy), 0.0f, 1.0f};
+    return vp;
 }
 
 // Intersect two VkRect2D rects. Returns a zero-area rect if no overlap.
@@ -976,7 +1094,7 @@ static bool VK_ComputeLocalViewOriginFromModelView(const viewEntity_t *space, fl
 
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
-// + screenSize vec2 + useShadowMask int + useAO int + lightScale float + pad float = 376 bytes -> round to 384.
+// + screenSize vec2 + useShadowMask int + aoDirectStrength float + lightScale float + pad float = 376 bytes -> round to 384.
 // FIXME: replace the raw pointer arithmetic used to write fields below with a proper mirrored C++ struct
 // (matching the GLSL InteractionParams layout), and add static_assert(offsetof(...)) checks to catch drift.
 static const uint32_t INTERACTION_UBO_SIZE = 384;
@@ -1218,22 +1336,31 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         }
     }
 
-    // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
-    int *useAOPtr = useSM + 1;
+    const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
+                          vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+
+    // aoDirectStrength: how much AO darkens direct diffuse; 0 = off (weapon surfaces skip AO
+    // same as shadow).  While GI composites, AO belongs on the indirect term instead
+    // (docs/plans/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
+    float *aoDirectPtr = (float *)(useSM + 1);
     // A2 (amd_vulkan_cleanup.md): aoValid, not just image != NULL. The image existing says
     // nothing about whether anything was written into it this frame — VK_RT_DispatchAO has
     // several early-return paths (RT off, invalid TLAS across a level load, empty scissor)
     // that leave it untouched, and the rgen only ever writes inside the view scissor.
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
                            vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.aoValid[vk.currentFrame];
-    *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
+    {
+        extern idCVar r_rtAODirectStrength; // vk_ao.cpp
+        const bool giTakesAO = giActive && vkRT.giCompositePipeline != VK_NULL_HANDLE;
+        const float directAO =
+            giTakesAO ? idMath::ClampFloat(0.0f, 1.0f, r_rtAODirectStrength.GetFloat()) : 1.0f;
+        *aoDirectPtr = (hasAOMask && !isWeaponDepthHack) ? directAO : 0.0f;
+    }
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed).
     // When GI is active, scale by the effective direct-light discount to compensate for the
     // additive GI contribution and keep overall luminance roughly consistent with the non-GI path.
-    float *lightScalePtr = (float *)(useAOPtr + 1);
-    const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
-                          vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+    float *lightScalePtr = aoDirectPtr + 1;
 
     const float directScale = idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat());
     *lightScalePtr = backEnd.overBright * (giActive ? directScale : 1.0f);
@@ -1599,7 +1726,10 @@ struct VkGBufferUBO
     float alphaTestThreshold;      // 4 bytes  — gbuffer_clip.frag only
     float specF0Scale;             // 4 bytes  — r_rtSpecF0Scale
     float specF0Gamma;             // 4 bytes  — r_rtSpecF0Gamma
-    float _pad0;                   // 4 bytes
+    // U4 transparency-and-composition class, 0 = ordinary surface, 1 = motion vectors here
+    // are known wrong.  Written to gbufAlbedo's alpha (as 1 - tcClass) and extracted by
+    // fsr_tc_mask.comp; took over the old _pad0 slot, so the struct size is unchanged.
+    float tcClass;                 // 4 bytes
 }; // 368 bytes total
 
 // Every UBO here comes out of the one ring, whose stride is sized from
@@ -2470,8 +2600,10 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
     // GL parity: when the current (non-subview) view contains mirror surfaces,
     // the depth fill pass must also guard the color buffer so previously rendered
     // mirror subview color does not leak through unrelated geometry.
-    bool guardSubviewColor = false;
-    if (!backEnd.viewDef->isSubview)
+    // Remote cameras/xray have no SS_SUBVIEW surface in the parent view, but their
+    // crop still sits in the colour buffer, so any earlier subview also triggers it.
+    bool guardSubviewColor = s_frameDrewSubview;
+    if (!guardSubviewColor && !backEnd.viewDef->isSubview)
     {
         for (int i = 0; i < backEnd.viewDef->numDrawSurfs; i++)
         {
@@ -2847,7 +2979,18 @@ static void VK_RB_FillDepthBuffer(VkCommandBuffer cmd)
             ubo->alphaTestThreshold = useClipPipeline ? (alphaThreshold / alphaScale) : alphaThreshold;
             ubo->specF0Scale = r_rtSpecF0Scale.GetFloat();
             ubo->specF0Gamma = r_rtSpecF0Gamma.GetFloat();
-            ubo->_pad0 = 0.f;
+
+            // U4 T&C class.  Two families of surface reach the prepass with motion vectors
+            // FSR 2 must not trust:
+            //   - deformedSurface: MD5 skinned meshes and liquid, whose verts are
+            //     regenerated into the vertex cache every frame, so the prepass reprojects
+            //     them from the entity transform alone and limb motion is simply absent
+            //   - weaponDepthHack: the viewmodel, whose depth is remapped into [0, 0.5] and
+            //     therefore disagrees with its own screen motion
+            // Everything else (static world, rigid props) has exact motion vectors.
+            const bool tcDeformed = surf->geo->deformedSurface;
+            const bool tcViewmodel = surf->space->weaponDepthHack;
+            ubo->tcClass = (tcDeformed || tcViewmodel) ? 1.f : 0.f;
 
             VkDescriptorImageInfo bumpInfo = {}, specInfo = {};
             if (!VK_Image_GetDescriptorInfo(bumpImage, &bumpInfo))
@@ -3909,20 +4052,9 @@ static void VK_RB_DrawInteractions(VkCommandBuffer cmd)
         {
             vkCmdEndRenderPass(cmd);
             VK_RT_DispatchShadowRaysForLight(cmd, backEnd.viewDef, vLight, lightScissor, s_shadowMaskLayer);
-            VkRenderPassBeginInfo rpResume = {};
-            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rpResume.renderPass = vk.hdrRenderPassResume;
-            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-            const VkExtent2D drawExtent = VK_CurrentDrawExtent();
-            rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = drawExtent;
-            rpResume.clearValueCount = 0;
-            rpResume.pClearValues = NULL;
-            vkCmdBeginRenderPass(cmd, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-            VkViewport rtViewport = {
-                0, (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f, 1.0f};
-            vkCmdSetViewport(cmd, 0, 1, &rtViewport);
-            vkCmdSetScissor(cmd, 0, 1, &lightScissor);
+            // This light's scissor, not the view's — the interaction draws that follow are
+            // confined to it.
+            VK_ResumeHdrRenderPass(cmd, &lightScissor);
             // Rebind the interaction pipeline after reopening the render pass.
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipes.interactionPipeline);
             s_interactionPipeTag = "opaque";
@@ -4387,6 +4519,32 @@ void VK_SetWindowMinimized(bool minimized)
     s_windowMinimized = minimized;
 }
 
+// Non-blocking drain for frames that skip the fence wait.  A slot is drained only once
+// its fence has signaled; an unsubmitted (reset) fence reads NOT_READY and is skipped.
+static void VK_DrainCompletedSlotGarbage()
+{
+    extern void VK_Image_DrainGarbage(uint32_t frameIdx);
+    extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
+
+    // Pending uploads may target buffers already queued for destruction; submit them first.
+    VK_FlushPendingUploads();
+
+    // Only drain once the whole GPU is idle: image frees queue into vk.currentFrame, which
+    // can be newer than that slot's fence (the last submit was the previous slot).
+    for (uint32_t f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+    {
+        if (vkGetFenceStatus(vk.device, vk.inFlightFences[f]) != VK_SUCCESS)
+            return;
+    }
+    for (uint32_t f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+    {
+        VK_Image_DrainGarbage(f);
+        VK_Buffer_DrainGarbage(f);
+    }
+    if (vk.rayTracingSupported)
+        VK_RT_DrainBLASGarbage();
+}
+
 // Swapchain needs recreation flag.
 // Set by VK_NotifyWindowModeChanged() when GLimp_SetScreenParms succeeds
 // (e.g., Alt+Enter fullscreen toggle).  On some drivers the SDL fullscreen
@@ -4436,6 +4594,10 @@ void VK_RB_DrawView(const void *data)
     // Skip the frame; SDL_WINDOWEVENT_RESTORED will clear this flag.
     if (s_windowMinimized)
     {
+        // The frontend keeps freeing vertex-cache buffers while frames are skipped, and the
+        // normal drain only runs after a fence wait.  Drain completed slots here so the
+        // garbage doesn't pile into one multi-thousand-buffer drain on restore.
+        VK_DrainCompletedSlotGarbage();
         SDL_Delay(10); // yield so we don't spin at 100% CPU while iconified
         return;
     }
@@ -4509,7 +4671,10 @@ void VK_RB_DrawView(const void *data)
             common->Printf("VK FRAME: fence-wait slot=%u frame=%d\n", vk.currentFrame, tr.frameCount);
             fflush(NULL);
         }
+        // Frame-start CPU spans; written into the slot after VK_RTProfile_BeginFrame clears it.
+        const uint64_t cpuFenceStart = VK_RTProfile_CPUStamp();
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
+        const uint64_t cpuFenceEnd = VK_RTProfile_CPUStamp();
         if (fenceResult != VK_SUCCESS)
         {
             // VK_ERROR_DEVICE_LOST (-4): GPU crashed executing the previous frame's command buffer.
@@ -4529,9 +4694,11 @@ void VK_RB_DrawView(const void *data)
 
         // --- Acquire swapchain image ---
         uint32_t imageIndex;
+        const uint64_t cpuAcquireStart = VK_RTProfile_CPUStamp();
         VkResult acquireResult =
             vkAcquireNextImageKHR(vk.device, vk.swapchain, UINT64_MAX, vk.imageAvailableSemaphores[vk.currentFrame],
                                   VK_NULL_HANDLE, &imageIndex);
+        const uint64_t cpuAcquireEnd = VK_RTProfile_CPUStamp();
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
         {
             common->Printf("VK Out of Date\n");
@@ -4551,24 +4718,30 @@ void VK_RB_DrawView(const void *data)
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
+        // Flush any texture/buffer uploads queued since the last frame.
+        // Submits one command buffer + one fence wait, replacing the previous
+        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
+        // Must precede the drain: the open batch can hold copies into buffers that were
+        // allocated and freed since the last flush, and destroying those first poisons it.
+        const uint64_t cpuUploadStart = VK_RTProfile_CPUStamp();
+        VK_FlushPendingUploads();
+        const uint64_t cpuUploadEnd = VK_RTProfile_CPUStamp();
+
         // Drain deferred image, buffer, and BLAS deletions queued during the previous use of this frame slot.
+        const uint64_t cpuDrainStart = VK_RTProfile_CPUStamp();
         extern void VK_Image_DrainGarbage(uint32_t frameIdx);
         VK_Image_DrainGarbage(vk.currentFrame);
         extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
         VK_Buffer_DrainGarbage(vk.currentFrame);
         if (vk.rayTracingSupported)
             VK_RT_DrainBLASGarbage();
+        const uint64_t cpuDrainEnd = VK_RTProfile_CPUStamp();
 
         // U3a: recreate every VkSampler if the FSR render scale (or image_lodbias /
         // filter / anisotropy / the mip-bias cvars) moved.  Here because it is the one
         // point in the frame past the fence with no command buffer recording.
         VK_Image_CheckSamplerCvars();
         VK_Image_ApplyPendingSamplerRebuild();
-
-        // Flush any texture/buffer uploads queued since the last frame.
-        // Submits one command buffer + one fence wait, replacing the previous
-        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
-        VK_FlushPendingUploads();
 
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
@@ -4587,6 +4760,14 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_RTProfile_BeginFrame(cmdBuf, (int)vk.currentFrame);
+        if (VK_RTProfileEnabled())
+        {
+            vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[vk.currentFrame];
+            fc.fenceWaitMs = VK_RTProfile_TicksToMs(cpuFenceStart, cpuFenceEnd);
+            fc.acquireMs = VK_RTProfile_TicksToMs(cpuAcquireStart, cpuAcquireEnd);
+            fc.drainMs = VK_RTProfile_TicksToMs(cpuDrainStart, cpuDrainEnd);
+            fc.uploadMs = VK_RTProfile_TicksToMs(cpuUploadStart, cpuUploadEnd);
+        }
 
         // Upload any cinematic frames before the render pass opens
         // (transfer ops are illegal inside a render pass).
@@ -4626,9 +4807,9 @@ void VK_RB_DrawView(const void *data)
         // Negative height flips Y to match OpenGL NDC convention (Y-up).
         // NOTE: the negative height inverts the effective winding order, so our pipelines
         // use VK_FRONT_FACE_CLOCKWISE (OpenGL CCW front faces become CW after Y-flip).
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
-                               1.0f};
-        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
+        s_viewViewport = VK_ComputeViewViewport(backEnd.viewDef);
+        vkCmdSetViewport(cmdBuf, 0, 1, &s_viewViewport);
+        s_frameDrewSubview = false;
 
         // Set scissor from viewDef to confine subview rendering to mirror bounds.
         s_viewScissor = VK_ComputeViewScissor(backEnd.viewDef);
@@ -4666,15 +4847,9 @@ void VK_RB_DrawView(const void *data)
             VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
             s_upscaleDone = true;
 
-            VkRenderPassBeginInfo rpResume = {};
-            rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rpResume.renderPass = vk.hdrRenderPassResume;
-            rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-            rpResume.renderArea.offset = {0, 0};
-            rpResume.renderArea.extent = VK_CurrentDrawExtent(); // UI draws at display res
-            rpResume.clearValueCount = 0;
-            rpResume.pClearValues = NULL;
-            vkCmdBeginRenderPass(s_frameCmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
+            // NULL scissor: s_viewScissor for this view is computed just below, and the
+            // viewport is set there too.
+            VK_ResumeHdrRenderPass(s_frameCmdBuf, NULL);
         }
 
         // Compute this view's scissor first; GL clears depth/stencil through the
@@ -4704,8 +4879,8 @@ void VK_RB_DrawView(const void *data)
         }
 
         const VkExtent2D vpExtent = VK_CurrentDrawExtent();
-        VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
-        vkCmdSetViewport(s_frameCmdBuf, 0, 1, &viewport);
+        s_viewViewport = VK_ComputeViewViewport(backEnd.viewDef);
+        vkCmdSetViewport(s_frameCmdBuf, 0, 1, &s_viewViewport);
         // Set scissor from viewDef — for the main view this is typically full-screen;
         // for subviews it confines rendering to the mirror surface's screen bounds.
         vkCmdSetScissor(s_frameCmdBuf, 0, 1, &s_viewScissor);
@@ -4796,6 +4971,9 @@ void VK_RB_DrawView(const void *data)
         VK_RTProfile_PhaseEnd(cmdBuf, profDepth);
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_DEPTH_PREPASS, cpuDepthStart);
     }
+    // Set after this view's own prepass so only later views guard against its colour.
+    if (backEnd.viewDef->isSubview)
+        s_frameDrewSubview = true;
 
     // Rebuild TLAS after the depth prepass so that depth values are populated before any
     // RT dispatch (shadow batch, AO, reflections, GI) reads from them.
@@ -4849,8 +5027,15 @@ void VK_RB_DrawView(const void *data)
         const uint64_t rtCpuTLASStart = VK_RTProfile_CPUStamp();
         int rtProfTLAS = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_TLAS);
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_BLASGpuEnd(cmdBuf); // no-op unless an early return left it open
         VK_RTProfile_PhaseEnd(cmdBuf, rtProfTLAS);
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_TLAS, rtCpuTLASStart);
+        if (VK_RTProfileEnabled())
+        {
+            vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[vk.currentFrame];
+            VK_RT_GetBLASFrameStats(&fc.blas);
+            s_rtProfCPUMs[vk.currentFrame][VK_RTPROF_PHASE_BLAS] = fc.blas.cpuMs;
+        }
         const int splitMask = VK_GetEffectiveSplitSubmitMask();
 
         if ((splitMask & 16) != 0)
@@ -5082,23 +5267,7 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_SetRenderStage("ResumeRenderPass");
-        VkRenderPassBeginInfo rpResume = {};
-        rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpResume.renderPass = vk.hdrRenderPassResume;
-        rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-        // Display extent once the resolve has run: this block also executes for the
-        // 2D overlay view, and resuming at renderExtent here is what squeezed the UI
-        // and the GI composite back into the top-left sub-rect.
-        const VkExtent2D drawExtent = VK_CurrentDrawExtent();
-        rpResume.renderArea.offset = {0, 0};
-        rpResume.renderArea.extent = drawExtent;
-        rpResume.clearValueCount = 0;
-        rpResume.pClearValues = NULL;
-        vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-        VkViewport viewport = {0,   (float)drawExtent.height, (float)drawExtent.width, -(float)drawExtent.height, 0.0f,
-                               1.0f};
-        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+        VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
 
         if ((splitMask & 128) != 0)
         {
@@ -5182,6 +5351,24 @@ void VK_RB_DrawView(const void *data)
         fflush(NULL);
     }
 
+    // U4 (docs/plans/completed/20260918_fsr_upscaling.md §9): build FSR 2's mask inputs here, after
+    // the interactions and before the blend stages — that boundary is the whole point of
+    // the pre-alpha snapshot.  The capture needs the render pass closed (a vkCmdCopyImage
+    // cannot be recorded inside one), so it costs one end/resume when enabled.
+    //
+    // Same real-camera gate as the RT dispatches above: the 2D overlay view arrives as a
+    // second RC_DRAW_VIEW with a zeroed viewaxis and has nothing pre-alpha about it, and a
+    // mirror/subview would overwrite the primary view's masks with its own.
+    if ((VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask()) &&
+        backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f && !backEnd.viewDef->isSubview &&
+        !backEnd.viewDef->isMirror)
+    {
+        VK_SetRenderStage("FSR_MaskCapture");
+        vkCmdEndRenderPass(cmdBuf);
+        VK_RT_CaptureReactiveInputs(cmdBuf);
+        VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
+    }
+
     VK_SetRenderStage("ShaderPasses");
     if (!r_skipAmbient.GetBool() && !r_skipShaderPasses.GetBool())
     {
@@ -5238,6 +5425,21 @@ void VK_RB_DrawView(const void *data)
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_FOG_LIGHTS, cpuFogStart);
     }
 
+    // r_rtAODebug: replaces the frame, so it goes after everything that blends onto it.
+    // Same real-camera gate as the vol composite; viewport/scissor restored for the same reason.
+    extern idCVar r_rtAODebug; // vk_ao.cpp
+    if (r_rtAODebug.GetInteger() > 0 && volHasRealCamera && !backEnd.viewDef->isSubview &&
+        !backEnd.viewDef->isMirror)
+    {
+        VK_SetRenderStage("AO_Debug");
+        const VkExtent2D dbgExtent = VK_CurrentDrawExtent();
+        VkViewport dbgViewport = {0, (float)dbgExtent.height, (float)dbgExtent.width, -(float)dbgExtent.height,
+                                  0.0f, 1.0f};
+        vkCmdSetViewport(cmdBuf, 0, 1, &dbgViewport);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+        VK_RT_CompositeGIDebug(cmdBuf);
+    }
+
     if ((splitMask & 8) != 0)
     {
         if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterFog", true))
@@ -5245,6 +5447,24 @@ void VK_RB_DrawView(const void *data)
     }
 
     // Submit/present deferred to VK_RB_SwapBuffers (called from RC_SWAP_BUFFERS)
+}
+
+// remoteRenderMap stages sample the capture with explicit UVs authored for GL's bottom-up
+// copy (the materials add "scale 1, -1").  TG_SCREEN captures (mirrorRenderMap, xray,
+// _currentRender) instead rely on the backend's flipped T plane, so they stay top-down.
+static bool VK_CopyWantsGLRowOrder(void)
+{
+    const viewDef_t *vd = backEnd.viewDef;
+    if (!vd || !vd->isSubview || !vd->subviewSurface || !vd->subviewSurface->material)
+        return false;
+    const idMaterial *mat = vd->subviewSurface->material;
+    for (int i = 0; i < mat->GetNumStages(); i++)
+    {
+        const textureStage_t &ts = mat->GetStage(i)->texture;
+        if (ts.dynamic == DI_REMOTE_RENDER && ts.texgen != TG_SCREEN && ts.texgen != TG_SCREEN2)
+            return true;
+    }
+    return false;
 }
 
 void VK_RB_CopyRender(const void *data)
@@ -5339,12 +5559,12 @@ void VK_RB_CopyRender(const void *data)
         {
             s_copyRenderLog++;
             common->Printf("VK COPYRENDER: img='%s' req=%dx%d src=(%d,%d) dstTex=%dx%d copy=%dx%d swap=%ux%u "
-                           "isSubview=%d isMirror=%d clipPlanes=%d\n",
+                           "isSubview=%d isMirror=%d clipPlanes=%d glRowOrder=%d\n",
                            cmd->image->imgName.c_str(), cmd->imageWidth, cmd->imageHeight, srcX, srcY, dstW, dstH,
                            copyW, copyH, (unsigned)vk.renderExtent.width, (unsigned)vk.renderExtent.height,
                            backEnd.viewDef ? backEnd.viewDef->isSubview ? 1 : 0 : -1,
                            backEnd.viewDef ? backEnd.viewDef->isMirror ? 1 : 0 : -1,
-                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1);
+                           backEnd.viewDef ? backEnd.viewDef->numClipPlanes : -1, VK_CopyWantsGLRowOrder() ? 1 : 0);
         }
     }
 
@@ -5372,12 +5592,20 @@ void VK_RB_CopyRender(const void *data)
     const VkExtent2D srcExtent = VK_CurrentDrawExtent();
     const float scaleX = s_upscaleDone ? 1.0f : VK_RT_RenderScaleX();
     const float scaleY = s_upscaleDone ? 1.0f : VK_RT_RenderScaleY();
+    // cmd->y is a GL (bottom-origin) row; crops sit at the bottom of the frame.
+    const int srcTopVK = (int)vk.swapchainExtent.height - (srcY + copyH);
     const int rsX = (int)idMath::Floor(srcX * scaleX);
-    const int rsY = (int)idMath::Floor(srcY * scaleY);
+    const int rsY = (int)idMath::Floor((srcTopVK > 0 ? srcTopVK : 0) * scaleY);
     const int rsX2 = idMath::ClampInt(rsX + 1, (int)srcExtent.width, rsX + (int)idMath::Ceil(copyW * scaleX));
     const int rsY2 = idMath::ClampInt(rsY + 1, (int)srcExtent.height, rsY + (int)idMath::Ceil(copyH * scaleY));
     region.srcOffsets[0] = {rsX, rsY, 0};
     region.srcOffsets[1] = {rsX2, rsY2, 1};
+    if (VK_CopyWantsGLRowOrder())
+    {
+        // Reversed source rows flip the blit so dst row 0 is the bottom, like glCopyTexImage.
+        region.srcOffsets[0].y = rsY2;
+        region.srcOffsets[1].y = rsY;
+    }
 
     region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.dstSubresource.mipLevel = 0;
@@ -5396,24 +5624,11 @@ void VK_RB_CopyRender(const void *data)
     VK_TransitionImageLayout(cmdBuf, vkRT.hdrScene[vk.currentFrame].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-    // Resume render pass so the rest of the frame can continue.
-    VkRenderPassBeginInfo rpResume = {};
-    rpResume.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpResume.renderPass = vk.hdrRenderPassResume;
-    rpResume.framebuffer = vk.hdrFramebuffers[vk.currentFrame];
-    rpResume.renderArea.offset = {0, 0};
-    rpResume.renderArea.extent = VK_CurrentDrawExtent();
-    rpResume.clearValueCount = 0;
-    rpResume.pClearValues = NULL;
-    vkCmdBeginRenderPass(cmdBuf, &rpResume, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Re-apply default viewport/scissor state (negative-height Y flip).
-    // Post-upscale the frame is display-space; restoring renderExtent here would
-    // silently shrink everything drawn after a mid-frame _currentRender capture.
-    const VkExtent2D vpExtent = VK_CurrentDrawExtent();
-    VkViewport viewport = {0, (float)vpExtent.height, (float)vpExtent.width, -(float)vpExtent.height, 0.0f, 1.0f};
-    vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
-    vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+    // Resume render pass so the rest of the frame can continue.  The helper's extent is
+    // VK_CurrentDrawExtent: post-upscale the frame is display-space, and restoring
+    // renderExtent here would silently shrink everything drawn after a mid-frame
+    // _currentRender capture.
+    VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
 }
 
 // ---------------------------------------------------------------------------
@@ -5472,6 +5687,11 @@ void VK_RB_SwapBuffers()
     // No-op unless the mode is selected.
     VK_SetRenderStage("RT_MotionDebug");
     VK_RT_DispatchMotionDebug(cmdBuf);
+
+    // U4 mask overlay (r_fsrDebug 3).  Same slot and the same reasoning; the two modes are
+    // mutually exclusive, so ordering between them does not matter.
+    VK_SetRenderStage("RT_MaskDebug");
+    VK_RT_DispatchMaskDebug(cmdBuf);
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.
@@ -5561,7 +5781,9 @@ void VK_RB_SwapBuffers()
     // incidentally gives the presentation engine time to finish processing OUT_OF_DATE.
     fflush(NULL);
     VK_SetRenderStage("vkQueueSubmit");
+    const uint64_t cpuSubmitStart = VK_RTProfile_CPUStamp();
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[submittedFrame]);
+    s_rtProfFrameCPU[submittedFrame].submitMs = VK_RTProfile_TicksToMs(cpuSubmitStart, VK_RTProfile_CPUStamp());
     if (submitResult != VK_SUCCESS)
     {
         s_frameNeedsImageAcquireWait = false;
@@ -5586,7 +5808,9 @@ void VK_RB_SwapBuffers()
     presentInfo.pSwapchains = &vk.swapchain;
     presentInfo.pImageIndices = &s_frameImageIndex;
 
+    const uint64_t cpuPresentStart = VK_RTProfile_CPUStamp();
     VkResult presentResult = vkQueuePresentKHR(vk.presentQueue, &presentInfo);
+    s_rtProfFrameCPU[submittedFrame].presentMs = VK_RTProfile_TicksToMs(cpuPresentStart, VK_RTProfile_CPUStamp());
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {
         common->Printf("VK: present returned %s, recreating swapchain\n",
@@ -5611,6 +5835,14 @@ void VK_RB_SwapBuffers()
         }
         s_readbackDone = true;
         s_readbackSubmitted = false;
+    }
+    else if (r_vkSerializeFrames.GetBool())
+    {
+        // Fence is not reset here; the next wait on this slot returns immediately.
+        VkResult serFence = vkWaitForFences(vk.device, 1, &vk.inFlightFences[submittedFrame], VK_TRUE, UINT64_MAX);
+        if (serFence != VK_SUCCESS)
+            common->Warning("VK: r_vkSerializeFrames fence wait failed: %d (%s)", (int)serFence,
+                            VK_ResultToString(serFence));
     }
 
     vk.currentFrame = (vk.currentFrame + 1) % VK_MAX_FRAMES_IN_FLIGHT;

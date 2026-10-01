@@ -1162,7 +1162,7 @@ void VK_RT_DispatchVolFroxelFill(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelFillPipelineLayout, 0, 1,
                             &vkRT.froxelFillDescSets[frameIdx], 1, &uboOff);
     // set=1: shared material table — light cookies, same bind as vol_march.comp.
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelFillPipelineLayout, 1, 1, &vkRT.matDescSet,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.froxelFillPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame],
                             0, NULL);
 
     const uint32_t groupsX = (grid.width + 3) / 4;

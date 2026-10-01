@@ -29,8 +29,22 @@ of the original Doom 3 GPL Source Code release.
 // ---------------------------------------------------------------------------
 
 // r_rtAO and r_rtAOSamples declared in RenderSystem_init.cpp — use extern here.
-static idCVar r_rtAORadius("r_rtAORadius", "64.0", CVAR_RENDERER | CVAR_FLOAT,
-                           "Max AO ray length in world units (default 64)");
+static idCVar r_rtAORadius("r_rtAORadius", "24.0", CVAR_RENDERER | CVAR_FLOAT,
+                           "Max AO ray length in world units. Keep below r_rtGIProbeSpacing: AO fills in "
+                           "the contact detail the probes can't resolve.");
+static idCVar r_rtAOFalloff("r_rtAOFalloff", "1", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
+                            "1 = a hit at distance t occludes by 1-(t/radius)^2; 0 = any hit inside the "
+                            "radius fully occludes (legacy)");
+idCVar r_rtAOIndirectStrength("r_rtAOIndirectStrength", "1.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                              "How strongly AO darkens GI (indirect light), 0-1");
+idCVar r_rtAODirectStrength("r_rtAODirectStrength", "0.0", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
+                            "How strongly AO darkens direct diffuse light while GI is on, 0-1. "
+                            "With GI off, AO always applies fully to direct light.");
+idCVar r_rtAODebug("r_rtAODebug", "0", CVAR_RENDERER | CVAR_INTEGER,
+                   "AO/GI debug view: 0 off, 1 raw AO mask, 2 GI x AO, 3 GI without AO (2/3 scaled by "
+                   "r_rtAODebugGain)");
+idCVar r_rtAODebugGain("r_rtAODebugGain", "4.0", CVAR_RENDERER | CVAR_FLOAT,
+                       "Brightness multiplier for r_rtAODebug 2/3");
 
 // Distance fade — depth-reconstruction error (2e-8*d^2) exceeds AO's 0.5 origin bias
 // past d=5000, sinking the origin below the surface (black speckle).
@@ -52,8 +66,9 @@ static idCVar r_rtAOFadeEnd("r_rtAOFadeEnd", "3000.0", CVAR_RENDERER | CVAR_FLOA
 //   ivec2 screenSize     offset  80  size  8  (ivec2 std140 align=8)
 //   ivec2 scissorOffset  offset  88  size  8
 //   ivec2 scissorExtent  offset  96  size  8
-//   ivec2 pad2           offset 104  size  8
-//   total: 112 bytes
+//   vec2  aoFade         offset 104  size  8
+//   int   aoFalloff      offset 112  size  4  (+ 3 int pad)
+//   total: 128 bytes
 // ---------------------------------------------------------------------------
 
 struct AOParamsUBO
@@ -71,8 +86,10 @@ struct AOParamsUBO
     int32_t scissorExtentY;
     float fadeStart; // was pad1[2] — vec2 matches ivec2 std140 layout, offset 104
     float fadeEnd;
+    int32_t aoFalloff;
+    int32_t pad[3];
 };
-static_assert(sizeof(AOParamsUBO) == 112, "AOParamsUBO size mismatch");
+static_assert(sizeof(AOParamsUBO) == 128, "AOParamsUBO size mismatch");
 
 // Convert viewDef->scissor (GL Y-up) to VkRect2D (VK Y-down) in framebuffer coordinates.
 // Isnt this redundant?  havent i done this twice over?
@@ -326,8 +343,10 @@ static void VK_RT_InitAOPipeline(void)
     VkShaderModule rgenModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rgen.spv");
     VkShaderModule rmissModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rmiss.spv");
     VkShaderModule rahitModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rahit.spv");
+    VkShaderModule rchitModule = VK_LoadSPIRV("glprogs/glsl/ao_ray.rchit.spv");
 
-    if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rahitModule == VK_NULL_HANDLE)
+    if (rgenModule == VK_NULL_HANDLE || rmissModule == VK_NULL_HANDLE || rahitModule == VK_NULL_HANDLE ||
+        rchitModule == VK_NULL_HANDLE)
     {
         common->Warning("VK RT AO: failed to load AO ray shader modules — RTAO disabled");
         if (rgenModule != VK_NULL_HANDLE)
@@ -336,11 +355,13 @@ static void VK_RT_InitAOPipeline(void)
             vkDestroyShaderModule(vk.device, rmissModule, NULL);
         if (rahitModule != VK_NULL_HANDLE)
             vkDestroyShaderModule(vk.device, rahitModule, NULL);
+        if (rchitModule != VK_NULL_HANDLE)
+            vkDestroyShaderModule(vk.device, rchitModule, NULL);
         return;
     }
 
     // --- Shader stages ---
-    VkPipelineShaderStageCreateInfo stages[3] = {};
+    VkPipelineShaderStageCreateInfo stages[4] = {};
 
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
@@ -357,10 +378,15 @@ static void VK_RT_InitAOPipeline(void)
     stages[2].module = rahitModule;
     stages[2].pName = "main";
 
+    stages[3].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[3].stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    stages[3].module = rchitModule;
+    stages[3].pName = "main";
+
     // --- Shader groups ---
     // Group 0: ray gen
     // Group 1: miss
-    // Group 2: hit (any-hit only, no closest-hit — AO only needs binary occlusion)
+    // Group 2: hit — any-hit skips non-opaque geometry, closest-hit reports the distance
     VkRayTracingShaderGroupCreateInfoKHR groups[3] = {};
 
     groups[0].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -380,14 +406,14 @@ static void VK_RT_InitAOPipeline(void)
     groups[2].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     groups[2].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     groups[2].generalShader = VK_SHADER_UNUSED_KHR;
-    groups[2].closestHitShader = VK_SHADER_UNUSED_KHR;
+    groups[2].closestHitShader = 3;
     groups[2].anyHitShader = 2;
     groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
 
     // --- RT pipeline ---
     VkRayTracingPipelineCreateInfoKHR rtPipeInfo = {};
     rtPipeInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rtPipeInfo.stageCount = 3;
+    rtPipeInfo.stageCount = 4;
     rtPipeInfo.pStages = stages;
     rtPipeInfo.groupCount = 3;
     rtPipeInfo.pGroups = groups;
@@ -400,6 +426,7 @@ static void VK_RT_InitAOPipeline(void)
     vkDestroyShaderModule(vk.device, rgenModule, NULL);
     vkDestroyShaderModule(vk.device, rmissModule, NULL);
     vkDestroyShaderModule(vk.device, rahitModule, NULL);
+    vkDestroyShaderModule(vk.device, rchitModule, NULL);
 
     // --- Shader Binding Table ---
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps = {};
@@ -657,6 +684,7 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
 
     ubo.aoRadius = Max(1.0f, r_rtAORadius.GetFloat());
+    ubo.aoFalloff = r_rtAOFalloff.GetBool() ? 1 : 0;
     ubo.numSamples = idMath::ClampInt(1, 16, r_rtAOSamples.GetInteger());
     ubo.frameIndex = (uint32_t)(tr.frameCount);
     // P9: 0 also when the G-buffer isn't available at all, so the shader's clamped
@@ -887,4 +915,30 @@ void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef)
     }
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT AO: dispatch complete\n");
+}
+
+// ---------------------------------------------------------------------------
+// VK_RT_GetAODescriptor
+// The AO image a fragment pass should sample this frame: the denoised read view when
+// temporal AO is live, else the raw mask.  Returns false (and the 1x1 white fallback)
+// when AO wasn't written this frame, so callers can also skip the multiply.
+// ---------------------------------------------------------------------------
+bool VK_RT_GetAODescriptor(VkDescriptorImageInfo *out)
+{
+    extern void VK_Image_GetFallbackDescriptorInfo(VkDescriptorImageInfo *);
+
+    const int f = vk.currentFrame;
+    const bool valid = r_useRayTracing.GetBool() && vk.rayTracingSupported && vkRT.isInitialized &&
+                       r_rtAO.GetBool() && vkRT.aoMask[f].image != VK_NULL_HANDLE && vkRT.aoValid[f];
+    if (!valid)
+    {
+        VK_Image_GetFallbackDescriptorInfo(out);
+        return false;
+    }
+
+    const bool useHistory = r_rtAOTemporal.GetBool() && vkRT.aoReadView[f] != VK_NULL_HANDLE && vkRT.aoHistoryValid;
+    out->sampler = vkRT.aoMaskSampler;
+    out->imageView = useHistory ? vkRT.aoReadView[f] : vkRT.aoMask[f].view;
+    out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    return true;
 }

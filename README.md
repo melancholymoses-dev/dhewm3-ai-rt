@@ -31,12 +31,19 @@ There is an archived _vkDoom3_ Vulkan implementation of Dhewm-BFG edition at  ht
 I have been using Claude Code (Sonnet 4.5) and GitHub Copilot (GPT 5-3 Codex) to develop code.  I mostly review their output, generate plans, and test it quickly.  This has mostly worked because:
 - Doom3 is a famous C++ code base.  
 - Well-established language (C++) and frameworks (Vulkan).
-- It is a very clean starting point with well optimized code and no cruft.  
-- More modern graphics techniques are well known at this point and incorporated into training corpus.
+- It is a very clean, optimized starting point with no cruft.  
+- More modern graphics techniques are well known at this point and incorporated into training corpus so the LLMs have good starting points.
 - There are good reference implementations to riff on
-- Quick build cycle, so failure and testing is rapid with quick failure modes that appear in minutes, not months.  
+- Quick build cycle, so testing is rapid with quick failure modes that appear in minutes, not months.  
 - I have some experience as a software dev in other domains and can guide the LLM or correct it when hung up.
-I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear. 
+I would be cautious about assuming any AI coding projects work this well in the real world when most of those conditions are not true or failure modes take longer to appear.  
+This is also a solo-dev hobby project - with no need to maintain coherence across multiple agents coding at once.
+
+## Testing
+
+Game has been built and tested on Nvidia 4070 Ti Super and a AMD 9070XT GPUs and AMD CPUs.
+Have primarily tested on Windows, but verified it runs on Linux too.  No attempts made at preserving Dhewm3's Mac builds since the 
+driver situation seems more complicated there.  
 
 # Ray Tracing Changes
 
@@ -72,6 +79,10 @@ The global illumination passes were washing out the color and killing the mood. 
 ![Volumetrics On](docs/img/screenshots/20260830_vol_on.jpg)
 ![Volumetrics Off](docs/img/screenshots/20260830_vol_off.jpg)
 
+7. FSR Upscaling
+
+Added Upscaling to try and buy back some time from RT effects.  Using 
+AMD Fidelity FX FSR2, with FSR1 as backup, and bilinear upscale as simplest version.  Mostly looks acceptable.  Some tradeoffs between bluriness and aliasing.  Likely sticking with FSR2 since FSR3 is harder to build on linux, and it works on AMD and Nvidia Hardware.  
 
 ## Useful Cvars
 
@@ -99,7 +110,7 @@ Those should be copied to `base/def` alongside the shaders to take effect in gam
 Updated Plasma Rifle particles to shed blue light on pulses.
 Updated Rockets to show light.
 
-- There is also a material for tracking added GI accent lights in logging. 
+- There is also a material for tracking added GI accent lights in logging.   Game will break without it.
 
 # GENERAL NOTES
 

@@ -51,7 +51,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     float u_ScreenWidth;
     float u_ScreenHeight;
     int   u_UseShadowMask;
-    int   u_UseAO;
+    float u_AODirectStrength;
     float u_LightScale;
 };
 

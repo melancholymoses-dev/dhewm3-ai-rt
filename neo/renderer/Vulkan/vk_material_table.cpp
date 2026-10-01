@@ -65,12 +65,19 @@ static const uint32_t MAT_MAX_INSTANCES = 4096;
 // s_bindlessImages[i] holds the idImage* assigned to slot i.
 // Index 0 is always the white fallback (diffuse) or flat-normal (normal).
 // When a new image is first encountered, it gets the next free slot.
-// s_bindlessDirty is set whenever a new slot is assigned.
+// s_bindlessDirty[slot] is set for every frame slot whenever a slot is assigned
+// or an image changes; each slot's descriptor set is rewritten on its own frame.
 // ---------------------------------------------------------------------------
 
 static idImage *s_bindlessImages[VK_MAT_MAX_TEXTURES];
 static uint32_t s_bindlessCount = 0;
-static bool s_bindlessDirty = false;
+static bool s_bindlessDirty[VK_MAX_FRAMES_IN_FLIGHT] = {};
+
+static void MarkBindlessDirty(bool dirty)
+{
+    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+        s_bindlessDirty[i] = dirty;
+}
 
 // The idImage::backendData (vkImageData_t*) each slot's descriptor was written
 // against.  idImage objects survive a level-load purge but their Vulkan image +
@@ -98,7 +105,7 @@ static void ValidateBindlessSlots(void)
     if (gen == s_bindlessImageGeneration)
         return;
 
-    s_bindlessDirty = true;
+    MarkBindlessDirty(true);
 
     if (r_vkLogRT.GetInteger() >= 1)
     {
@@ -142,7 +149,7 @@ static uint32_t GetOrAssignTexIndex(idImage *img)
 
     uint32_t idx = s_bindlessCount++;
     s_bindlessImages[idx] = img;
-    s_bindlessDirty = true;
+    MarkBindlessDirty(true);
     return idx;
 }
 
@@ -155,16 +162,19 @@ uint32_t VK_RT_GetOrAssignTexIndex(idImage *img)
 // ---------------------------------------------------------------------------
 // RebuildBindlessDescriptors
 //
-// Writes all assigned bindless slots into vkRT.matDescSet binding=3.
+// Writes all assigned bindless slots into the current frame slot's
+// vkRT.matDescSet binding=3.  Only that slot's set is touched: its fence has been
+// waited on, whereas the other slot's set may still be read by the GPU.
 // Uses the image's own VkImageView with vkRT.matSampler.
 // Unfilled slots (beyond s_bindlessCount) keep their initial fallback value.
-// Called when s_bindlessDirty is set.
+// Called when s_bindlessDirty[vk.currentFrame] is set.
 // ---------------------------------------------------------------------------
 
 static void RebuildBindlessDescriptors(void)
 {
     if (!vkRT.matTableInitialized || s_bindlessCount == 0)
         return;
+    const uint32_t frame = vk.currentFrame;
 
     // Build one VkDescriptorImageInfo per assigned slot.
     // Stack-allocate for the expected common case; heap for overflow.
@@ -202,7 +212,7 @@ static void RebuildBindlessDescriptors(void)
 
     VkWriteDescriptorSet write = {};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = vkRT.matDescSet;
+    write.dstSet = vkRT.matDescSet[frame];
     write.dstBinding = 3;
     write.dstArrayElement = 0;
     write.descriptorCount = s_bindlessCount;
@@ -213,12 +223,13 @@ static void RebuildBindlessDescriptors(void)
 
     if (r_vkLogRT.GetInteger() >= 2)
     {
-        common->Printf("VK RT MatTable: rebuilt bindless descriptors — %u textures\n", s_bindlessCount);
+        common->Printf("VK RT MatTable: rebuilt bindless descriptors — %u textures (slot %u)\n", s_bindlessCount,
+                       frame);
         fflush(NULL);
     }
 
     s_bindlessWritten = s_bindlessCount;
-    s_bindlessDirty = false;
+    s_bindlessDirty[frame] = false;
     // Read AFTER the descriptors are written: anything that purges or uploads
     // between here and the next validate must still be caught.
     s_bindlessImageGeneration = VK_Image_ChangeCounter();
@@ -241,7 +252,7 @@ static void RebuildBindlessDescriptors(void)
 
 void VK_RT_FlushBindlessTextures(void)
 {
-    if (s_bindlessDirty)
+    if (s_bindlessDirty[vk.currentFrame])
         RebuildBindlessDescriptors();
 }
 
@@ -262,19 +273,22 @@ void VK_RT_InitMaterialTable(void)
     const VkBufferUsageFlags ssboUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-    VK_CreateBuffer(matSSBOSize, ssboUsage, hostFlags, &vkRT.matTableSSBO, &vkRT.matTableSSBOMemory);
-    VK_CHECK(vkMapMemory(vk.device, vkRT.matTableSSBOMemory, 0, matSSBOSize, 0, &vkRT.matTableMapped));
+    for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+    {
+        VK_CreateBuffer(matSSBOSize, ssboUsage, hostFlags, &vkRT.matTableSSBO[f], &vkRT.matTableSSBOMemory[f]);
+        VK_CHECK(vkMapMemory(vk.device, vkRT.matTableSSBOMemory[f], 0, matSSBOSize, 0, &vkRT.matTableMapped[f]));
 
-    VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags, &vkRT.vtxAddrSSBO, &vkRT.vtxAddrSSBOMemory);
-    VK_CHECK(vkMapMemory(vk.device, vkRT.vtxAddrSSBOMemory, 0, addrSSBOSize, 0, &vkRT.vtxAddrMapped));
+        VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags, &vkRT.vtxAddrSSBO[f], &vkRT.vtxAddrSSBOMemory[f]);
+        VK_CHECK(vkMapMemory(vk.device, vkRT.vtxAddrSSBOMemory[f], 0, addrSSBOSize, 0, &vkRT.vtxAddrMapped[f]));
 
-    VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags, &vkRT.idxAddrSSBO, &vkRT.idxAddrSSBOMemory);
-    VK_CHECK(vkMapMemory(vk.device, vkRT.idxAddrSSBOMemory, 0, addrSSBOSize, 0, &vkRT.idxAddrMapped));
+        VK_CreateBuffer(addrSSBOSize, ssboUsage, hostFlags, &vkRT.idxAddrSSBO[f], &vkRT.idxAddrSSBOMemory[f]);
+        VK_CHECK(vkMapMemory(vk.device, vkRT.idxAddrSSBOMemory[f], 0, addrSSBOSize, 0, &vkRT.idxAddrMapped[f]));
 
-    // Zero-initialise so GPU reads zeros for uninitialised instances.
-    memset(vkRT.matTableMapped, 0, (size_t)matSSBOSize);
-    memset(vkRT.vtxAddrMapped, 0, (size_t)addrSSBOSize);
-    memset(vkRT.idxAddrMapped, 0, (size_t)addrSSBOSize);
+        // Zero-initialise so GPU reads zeros for uninitialised instances.
+        memset(vkRT.matTableMapped[f], 0, (size_t)matSSBOSize);
+        memset(vkRT.vtxAddrMapped[f], 0, (size_t)addrSSBOSize);
+        memset(vkRT.idxAddrMapped[f], 0, (size_t)addrSSBOSize);
+    }
 
     // --- Bilinear sampler for material textures ---
 
@@ -349,76 +363,72 @@ void VK_RT_InitMaterialTable(void)
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.matDescLayout));
 
-    // --- Descriptor pool ---
+    // --- Descriptor pool (one set per frame slot) ---
 
     VkDescriptorPoolSize poolSizes[2] = {
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3}, // 3 SSBOs
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAT_MAX_TEXTURES},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * VK_MAX_FRAMES_IN_FLIGHT}, // 3 SSBOs per set
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAT_MAX_TEXTURES * VK_MAX_FRAMES_IN_FLIGHT},
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-    poolInfo.maxSets = 1;
+    poolInfo.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
     poolInfo.poolSizeCount = 2;
     poolInfo.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolInfo, NULL, &vkRT.matDescPool));
 
-    // --- Allocate descriptor set ---
+    // --- Allocate descriptor sets ---
+
+    VkDescriptorSetLayout setLayouts[VK_MAX_FRAMES_IN_FLIGHT];
+    for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+        setLayouts[f] = vkRT.matDescLayout;
 
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     dsAlloc.descriptorPool = vkRT.matDescPool;
-    dsAlloc.descriptorSetCount = 1;
-    dsAlloc.pSetLayouts = &vkRT.matDescLayout;
-    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, &vkRT.matDescSet));
+    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.pSetLayouts = setLayouts;
+    VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, vkRT.matDescSet));
 
-    // --- Write SSBO descriptors (static — buffers never change, only content) ---
+    // --- Write SSBO descriptors (static — each set points at its own slot's buffers) ---
 
-    VkDescriptorBufferInfo matBufInfo = {};
-    matBufInfo.buffer = vkRT.matTableSSBO;
-    matBufInfo.offset = 0;
-    matBufInfo.range = matSSBOSize;
+    for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+    {
+        VkDescriptorBufferInfo matBufInfo = {};
+        matBufInfo.buffer = vkRT.matTableSSBO[f];
+        matBufInfo.offset = 0;
+        matBufInfo.range = matSSBOSize;
 
-    VkDescriptorBufferInfo vtxBufInfo = {};
-    vtxBufInfo.buffer = vkRT.vtxAddrSSBO;
-    vtxBufInfo.offset = 0;
-    vtxBufInfo.range = addrSSBOSize;
+        VkDescriptorBufferInfo vtxBufInfo = {};
+        vtxBufInfo.buffer = vkRT.vtxAddrSSBO[f];
+        vtxBufInfo.offset = 0;
+        vtxBufInfo.range = addrSSBOSize;
 
-    VkDescriptorBufferInfo idxBufInfo = {};
-    idxBufInfo.buffer = vkRT.idxAddrSSBO;
-    idxBufInfo.offset = 0;
-    idxBufInfo.range = addrSSBOSize;
+        VkDescriptorBufferInfo idxBufInfo = {};
+        idxBufInfo.buffer = vkRT.idxAddrSSBO[f];
+        idxBufInfo.offset = 0;
+        idxBufInfo.range = addrSSBOSize;
 
-    VkWriteDescriptorSet ssboWrites[3] = {};
-    ssboWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ssboWrites[0].dstSet = vkRT.matDescSet;
-    ssboWrites[0].dstBinding = 0;
-    ssboWrites[0].descriptorCount = 1;
-    ssboWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ssboWrites[0].pBufferInfo = &matBufInfo;
-
-    ssboWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ssboWrites[1].dstSet = vkRT.matDescSet;
-    ssboWrites[1].dstBinding = 1;
-    ssboWrites[1].descriptorCount = 1;
-    ssboWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ssboWrites[1].pBufferInfo = &vtxBufInfo;
-
-    ssboWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    ssboWrites[2].dstSet = vkRT.matDescSet;
-    ssboWrites[2].dstBinding = 2;
-    ssboWrites[2].descriptorCount = 1;
-    ssboWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    ssboWrites[2].pBufferInfo = &idxBufInfo;
-
-    vkUpdateDescriptorSets(vk.device, 3, ssboWrites, 0, NULL);
+        const VkDescriptorBufferInfo *bufInfos[3] = {&matBufInfo, &vtxBufInfo, &idxBufInfo};
+        VkWriteDescriptorSet ssboWrites[3] = {};
+        for (int b = 0; b < 3; b++)
+        {
+            ssboWrites[b].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            ssboWrites[b].dstSet = vkRT.matDescSet[f];
+            ssboWrites[b].dstBinding = (uint32_t)b;
+            ssboWrites[b].descriptorCount = 1;
+            ssboWrites[b].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            ssboWrites[b].pBufferInfo = bufInfos[b];
+        }
+        vkUpdateDescriptorSets(vk.device, 3, ssboWrites, 0, NULL);
+    }
 
     // --- Seed bindless slot 0 with fallback images ---
     // Slot 0 = white (diffuse fallback), slot 1 = flat normal fallback.
 
     s_bindlessCount = 0;
     s_bindlessWritten = 0;
-    s_bindlessDirty = false;
+    MarkBindlessDirty(false);
     s_bindlessImageGeneration = VK_Image_ChangeCounter();
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
     memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
@@ -429,9 +439,10 @@ void VK_RT_InitMaterialTable(void)
 
     vkRT.matTableInitialized = true;
 
-    common->Printf("VK RT MatTable: initialised — matSSBO=%u KB, addrSSBO=%u KB, "
+    common->Printf("VK RT MatTable: initialised — %d slots x (matSSBO=%u KB, addrSSBO=%u KB), "
                    "bindlessSlots=%u\n",
-                   (unsigned)(matSSBOSize / 1024), (unsigned)(addrSSBOSize / 1024), VK_MAT_MAX_TEXTURES);
+                   VK_MAX_FRAMES_IN_FLIGHT, (unsigned)(matSSBOSize / 1024), (unsigned)(addrSSBOSize / 1024),
+                   VK_MAT_MAX_TEXTURES);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,53 +454,30 @@ void VK_RT_ShutdownMaterialTable(void)
     if (!vkRT.matTableInitialized)
         return;
 
-    if (vkRT.matTableMapped)
+    for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
     {
-        vkUnmapMemory(vk.device, vkRT.matTableSSBOMemory);
-        vkRT.matTableMapped = NULL;
-    }
-    if (vkRT.vtxAddrMapped)
-    {
-        vkUnmapMemory(vk.device, vkRT.vtxAddrSSBOMemory);
-        vkRT.vtxAddrMapped = NULL;
-    }
-    if (vkRT.idxAddrMapped)
-    {
-        vkUnmapMemory(vk.device, vkRT.idxAddrSSBOMemory);
-        vkRT.idxAddrMapped = NULL;
-    }
-
-    if (vkRT.matTableSSBO != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(vk.device, vkRT.matTableSSBO, NULL);
-        vkRT.matTableSSBO = VK_NULL_HANDLE;
-    }
-    if (vkRT.matTableSSBOMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(vk.device, vkRT.matTableSSBOMemory, NULL);
-        vkRT.matTableSSBOMemory = VK_NULL_HANDLE;
-    }
-
-    if (vkRT.vtxAddrSSBO != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(vk.device, vkRT.vtxAddrSSBO, NULL);
-        vkRT.vtxAddrSSBO = VK_NULL_HANDLE;
-    }
-    if (vkRT.vtxAddrSSBOMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(vk.device, vkRT.vtxAddrSSBOMemory, NULL);
-        vkRT.vtxAddrSSBOMemory = VK_NULL_HANDLE;
-    }
-
-    if (vkRT.idxAddrSSBO != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(vk.device, vkRT.idxAddrSSBO, NULL);
-        vkRT.idxAddrSSBO = VK_NULL_HANDLE;
-    }
-    if (vkRT.idxAddrSSBOMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(vk.device, vkRT.idxAddrSSBOMemory, NULL);
-        vkRT.idxAddrSSBOMemory = VK_NULL_HANDLE;
+        VkBuffer *bufs[3] = {&vkRT.matTableSSBO[f], &vkRT.vtxAddrSSBO[f], &vkRT.idxAddrSSBO[f]};
+        VkDeviceMemory *mems[3] = {&vkRT.matTableSSBOMemory[f], &vkRT.vtxAddrSSBOMemory[f],
+                                   &vkRT.idxAddrSSBOMemory[f]};
+        void **maps[3] = {&vkRT.matTableMapped[f], &vkRT.vtxAddrMapped[f], &vkRT.idxAddrMapped[f]};
+        for (int b = 0; b < 3; b++)
+        {
+            if (*maps[b])
+            {
+                vkUnmapMemory(vk.device, *mems[b]);
+                *maps[b] = NULL;
+            }
+            if (*bufs[b] != VK_NULL_HANDLE)
+            {
+                vkDestroyBuffer(vk.device, *bufs[b], NULL);
+                *bufs[b] = VK_NULL_HANDLE;
+            }
+            if (*mems[b] != VK_NULL_HANDLE)
+            {
+                vkFreeMemory(vk.device, *mems[b], NULL);
+                *mems[b] = VK_NULL_HANDLE;
+            }
+        }
     }
 
     if (vkRT.matSampler != VK_NULL_HANDLE)
@@ -502,7 +490,8 @@ void VK_RT_ShutdownMaterialTable(void)
     {
         vkDestroyDescriptorPool(vk.device, vkRT.matDescPool, NULL);
         vkRT.matDescPool = VK_NULL_HANDLE;
-        vkRT.matDescSet = VK_NULL_HANDLE;
+        for (int f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+            vkRT.matDescSet[f] = VK_NULL_HANDLE;
     }
 
     if (vkRT.matDescLayout != VK_NULL_HANDLE)
@@ -513,7 +502,7 @@ void VK_RT_ShutdownMaterialTable(void)
 
     s_bindlessCount = 0;
     s_bindlessWritten = 0;
-    s_bindlessDirty = false;
+    MarkBindlessDirty(false);
     s_bindlessImageGeneration = VK_Image_ChangeCounter();
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
     memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
@@ -540,7 +529,7 @@ void VK_RT_MatTableLevelLoadReset(void)
 
     s_bindlessCount = 0;
     s_bindlessWritten = 0;
-    s_bindlessDirty = false;
+    MarkBindlessDirty(false);
     s_bindlessImageGeneration = VK_Image_ChangeCounter();
     memset(s_bindlessImages, 0, sizeof(s_bindlessImages));
     memset(s_bindlessBackendData, 0, sizeof(s_bindlessBackendData));
@@ -759,9 +748,10 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
     const size_t matEntrySize = sizeof(VkMaterialEntry);
     const size_t addrSize = sizeof(uint64_t);
 
-    uint8_t *matDst = (uint8_t *)vkRT.matTableMapped;
-    uint8_t *vtxDst = (uint8_t *)vkRT.vtxAddrMapped;
-    uint8_t *idxDst = (uint8_t *)vkRT.idxAddrMapped;
+    // Per-slot tables: the previous frame may still be reading the other copy.
+    uint8_t *matDst = (uint8_t *)vkRT.matTableMapped[vk.currentFrame];
+    uint8_t *vtxDst = (uint8_t *)vkRT.vtxAddrMapped[vk.currentFrame];
+    uint8_t *idxDst = (uint8_t *)vkRT.idxAddrMapped[vk.currentFrame];
 
     // Static block — material entries (one per geometry slot)
     if (rewriteStatic && staticMatCount > 0)
@@ -790,7 +780,7 @@ void VK_RT_UploadMatTableFrame(const VkMaterialEntry *staticEntries, uint32_t st
     // image cache LRU, vid_restart) — its old VkImageView is destroyed and
     // sampling the stale descriptor is a device lost.
     ValidateBindlessSlots();
-    if (s_bindlessDirty)
+    if (s_bindlessDirty[vk.currentFrame])
         RebuildBindlessDescriptors();
 
     // Debug summary of emissive tagging coverage.

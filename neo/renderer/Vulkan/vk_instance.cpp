@@ -376,7 +376,7 @@ static void VKimp_CreateDevice(void)
     vk12Features.descriptorBindingPartiallyBound =
         vk.rayTracingSupported && supportedVk12.descriptorBindingPartiallyBound;
     // Three features AMD's FSR 2.2.1 Vulkan backend assumes rather than requests
-    // (docs/plans/20260918_fsr_upscaling.md §11).  It probes the *physical device* for
+    // (docs/plans/completed/20260918_fsr_upscaling.md §11).  It probes the *physical device* for
     // fp16 and subgroup-size control and then uses them unconditionally, and its
     // barriers for the depth SRV carry only VK_IMAGE_ASPECT_DEPTH_BIT — illegal on our
     // combined D32S8 depth buffer without separateDepthStencilLayouts.  All three are
@@ -604,6 +604,15 @@ void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem)
     }
 }
 
+// Marks the batch unusable and says why — every later flush only logs "skipped".
+static void VK_PoisonUploadBatch(const char *stage, VkResult result, uint64_t batchId, uint32_t pendingCount)
+{
+    s_uploadBatchPoisoned = true;
+    common->Warning("VK: upload batch #%llu poisoned at %s: %d (%s), %u pending staging buffers",
+                    (unsigned long long)batchId, stage, (int)result, VK_ResultToString(result), pendingCount);
+    fflush(NULL);
+}
+
 void VK_FlushPendingUploads(void)
 {
     if (s_uploadCmdBuf == VK_NULL_HANDLE)
@@ -626,7 +635,7 @@ void VK_FlushPendingUploads(void)
     VkResult endResult = vkEndCommandBuffer(s_uploadCmdBuf);
     if (endResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkEndCommandBuffer", endResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -635,7 +644,7 @@ void VK_FlushPendingUploads(void)
     VkResult resetResult = vkResetFences(vk.device, 1, &s_uploadFence);
     if (resetResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkResetFences", resetResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -648,7 +657,7 @@ void VK_FlushPendingUploads(void)
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence);
     if (submitResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkQueueSubmit", submitResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -657,7 +666,7 @@ void VK_FlushPendingUploads(void)
     VkResult waitResult = vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX);
     if (waitResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkWaitForFences", waitResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -722,7 +731,12 @@ void VK_TransitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout 
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        // Not FRAGMENT alone: bindless textures are sampled from the RT stages, and U4's
+        // preAlphaColor snapshot is read by FSR 2's compute passes.  A fragment-only
+        // destination leaves both of those reading memory the barrier never made visible.
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        if (vk.rayTracingSupported)
+            dstStage |= VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
     }
     else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {

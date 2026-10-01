@@ -742,6 +742,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rgen
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
+	renderer/glsl/ao_ray.rchit
 	renderer/glsl/atrous_filter.comp	
 	renderer/glsl/gi_ray.rgen
 	renderer/glsl/gi_ray.rchit
@@ -781,6 +782,8 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/fsr_rcas.comp
 	renderer/glsl/motion_debug.comp
 	renderer/glsl/fsr2_bleed_debug.comp
+	renderer/glsl/fsr_tc_mask.comp
+	renderer/glsl/fsr_mask_debug.comp
 )
 
 
@@ -1081,7 +1084,7 @@ endif()
 
 # AMD FidelityFX Super Resolution 2.2.1 (MIT) — vendored unmodified in
 # libs/ffx-fsr2-api, see THIRD-PARTY-LICENSES.md and
-# docs/plans/20260918_fsr_upscaling.md Appendix A.  Compiled straight into the
+# docs/plans/completed/20260918_fsr_upscaling.md Appendix A.  Compiled straight into the
 # main target rather than as AMD's two static libs; upstream's CMakeLists.txt
 # files are kept on disk for provenance and never add_subdirectory'd.
 if(DHEWM3_FSR2)

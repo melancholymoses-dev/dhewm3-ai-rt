@@ -20,7 +20,7 @@ Descriptors (set 0):
   binding 0 — srcPerceptual sampler2D (fsrPerceptual + clamp sampler)
   binding 1 — dstEasu       rgba16f storage image (hdrUpscaled)
 
-FSR upscaling arc U1 — docs/plans/20260918_fsr_upscaling.md.
+FSR upscaling arc U1 — docs/plans/completed/20260918_fsr_upscaling.md.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

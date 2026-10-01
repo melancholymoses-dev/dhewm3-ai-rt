@@ -20,9 +20,11 @@ of the original Doom 3 GPL Source Code release.
 //   2. Take the world-space shading normal from the G-buffer the depth prepass
 //      wrote (P9); fall back to depth-buffer gradients where it has no data.
 //   3. Shoot numSamples cosine-weighted hemisphere rays.
-//   4. Write fraction of unoccluded rays (1.0=clear, 0.0=fully occluded).
+//   4. Write mean visibility (1.0=clear, 0.0=fully occluded).  With aoFalloff a hit
+//      at distance t counts as (t/R)^2 visible, so near occluders dominate.
 //
-// The AO image is sampled by interaction.frag to darken diffuse light.
+// The AO image multiplies GI in gi_composite.frag and, at r_rtAODirectStrength,
+// direct diffuse in interaction.frag.
 // Requires TLAS and depth buffer to be ready before dispatch.
 // ---------------------------------------------------------------------------
 
@@ -45,6 +47,10 @@ layout(set = 0, binding = 3) uniform AOParams {
     ivec2 scissorOffset;
     ivec2 scissorExtent;
     vec2  aoFade;       // x = r_rtAOFadeStart, y = r_rtAOFadeEnd (was pad2 — same offset/size)
+    int   aoFalloff;    // r_rtAOFalloff: 1 = distance-weighted, 0 = binary
+    int   pad0;
+    int   pad1;
+    int   pad2;
 } params;
 
 layout(location = 0) rayPayloadEXT float aoPayload;
@@ -151,27 +157,13 @@ void main()
         float bias  = max(0.5, 6.0e-8 * camDist * camDist);
         vec3 origin = worldPos + normal * bias;
 
-        // Initialize to 0.0 (occluded), mirroring shadow_ray.rgen's handling of the
-        // identical pattern. Opaque geometry bypasses the any-hit shader via
-        // VK_GEOMETRY_OPAQUE_BIT_KHR, and this pipeline has no closest-hit shader at all
-        // (every group in vk_ao.cpp sets closestHitShader = VK_SHADER_UNUSED_KHR, and the
-        // trace below passes gl_RayFlagsSkipClosestHitShaderEXT regardless) — so on an
-        // opaque hit NO shader runs and the payload keeps this value. That is what makes
-        // opaque surfaces occluders, exactly as ao_ray.rahit's header comment describes.
-        //
-        // Non-opaque geometry invokes ao_ray.rahit, which calls ignoreIntersectionEXT
-        // unconditionally so translucent steam never casts blocky AO; the ray continues
-        // to an opaque hit or a miss. On miss, ao_ray.rmiss writes 1.0 = unoccluded.
-        //
-        // 2026-08-30 (amd_vulkan_cleanup.md A5): this was 1.0, under a stale comment
-        // claiming the any-hit wrote 0.0 — it never has. With no closest-hit shader and
-        // opaque hits bypassing any-hit, nothing in the pipeline could write 0.0, so
-        // `unoccluded / N` was always exactly 1.0 and the mask was pure white wherever
-        // the raygen ran. RT AO had never darkened anything.
-        aoPayload = 0.0;
+        // Payload in = radius (ao_ray.rchit divides by it); out = nearest-hit t/R below
+        // 1.0, or 1.0 from ao_ray.rmiss.  Non-opaque hits are ignored by ao_ray.rahit.
+        // No TerminateOnFirstHit: the falloff needs the nearest hit, not the first found.
+        aoPayload = params.aoRadius;
         traceRayEXT(
             topLevelAS,
-            gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+            gl_RayFlagsNoneEXT,
             0xFF,               // cull mask (all instances)
             0,                  // SBT offset
             0,                  // SBT stride
@@ -182,7 +174,11 @@ void main()
             params.aoRadius,    // tMax
             0                   // payload location
         );
-        unoccluded += aoPayload;
+        float hitFrac = aoPayload;
+        if (hitFrac >= 1.0)
+            unoccluded += 1.0;                  // miss
+        else if (params.aoFalloff != 0)
+            unoccluded += hitFrac * hitFrac;    // far hits barely occlude
     }
 
     // Blend to unoccluded across the fade band so AO doesn't pop at the cutoff.

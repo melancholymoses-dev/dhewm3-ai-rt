@@ -2432,6 +2432,9 @@ struct RTCVars
     // AO fine-tuning
     idCVar *rtAOSamples = nullptr;
     idCVar *rtAORadius = nullptr;
+    idCVar *rtAOFalloff = nullptr;
+    idCVar *rtAOIndirectStrength = nullptr;
+    idCVar *rtAODirectStrength = nullptr;
     idCVar *rtTemporal = nullptr;
     idCVar *rtTemporalAlpha = nullptr;
     idCVar *rtAtrousIterations = nullptr;
@@ -2504,11 +2507,15 @@ struct RTCVars
     idCVar *rtGIProbes = nullptr;
     idCVar *rtGIProbeHysteresis = nullptr;
 
-    // Resolution scaling / upscaling (docs/plans/20260918_fsr_upscaling.md)
+    // Resolution scaling / upscaling (docs/plans/completed/20260918_fsr_upscaling.md)
     idCVar *fsr = nullptr;
     idCVar *fsrRenderScale = nullptr;
     idCVar *fsrSharpness = nullptr;
     idCVar *fsrJitter = nullptr;
+    idCVar *fsrAutoReactive = nullptr;
+    idCVar *fsrReactiveCutoff = nullptr;
+    idCVar *fsrReactiveScale = nullptr;
+    idCVar *fsrTcMask = nullptr;
     idCVar *fsrQuality = nullptr;
     idCVar *fsrMipBias = nullptr;
     idCVar *fsrMipBiasOffset = nullptr;
@@ -2542,6 +2549,9 @@ static void InitRTOptionsMenu()
     rtCVars.rtShadowStablePattern = cvarSystem->Find("r_rtShadowStablePattern");
     rtCVars.rtAOSamples = cvarSystem->Find("r_rtAOSamples");
     rtCVars.rtAORadius = cvarSystem->Find("r_rtAORadius");
+    rtCVars.rtAOFalloff = cvarSystem->Find("r_rtAOFalloff");
+    rtCVars.rtAOIndirectStrength = cvarSystem->Find("r_rtAOIndirectStrength");
+    rtCVars.rtAODirectStrength = cvarSystem->Find("r_rtAODirectStrength");
     rtCVars.rtTemporal = cvarSystem->Find("r_rtAOTemporal");
     rtCVars.rtTemporalAlpha = cvarSystem->Find("r_rtAOTemporalAlpha");
     rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
@@ -2599,6 +2609,10 @@ static void InitRTOptionsMenu()
     rtCVars.fsrRenderScale = cvarSystem->Find("r_fsrRenderScale");
     rtCVars.fsrSharpness = cvarSystem->Find("r_fsrSharpness");
     rtCVars.fsrJitter = cvarSystem->Find("r_fsrJitter");
+    rtCVars.fsrAutoReactive = cvarSystem->Find("r_fsrAutoReactive");
+    rtCVars.fsrReactiveCutoff = cvarSystem->Find("r_fsrReactiveCutoff");
+    rtCVars.fsrReactiveScale = cvarSystem->Find("r_fsrReactiveScale");
+    rtCVars.fsrTcMask = cvarSystem->Find("r_fsrTcMask");
     rtCVars.fsrQuality = cvarSystem->Find("r_fsrQuality");
     rtCVars.fsrMipBias = cvarSystem->Find("r_fsrMipBias");
     rtCVars.fsrMipBiasOffset = cvarSystem->Find("r_fsrMipBiasOffset");
@@ -2721,7 +2735,10 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTCheckbox("AO/GI Normals from G-buffer (P9)", rtCVars.rtGbufNormals);
         RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
-        RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
+        RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 128.0f, "%.1f");
+        RTCheckbox("AO Distance Falloff", rtCVars.rtAOFalloff);
+        RTSliderFloat("AO on Indirect Light (GI)", rtCVars.rtAOIndirectStrength, 0.0f, 1.0f, "%.2f");
+        RTSliderFloat("AO on Direct Light (with GI on)", rtCVars.rtAODirectStrength, 0.0f, 1.0f, "%.2f");
         ImGui::TableNextColumn();
         RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);
         RTSliderFloat("Temporal Blend Factor", rtCVars.rtTemporalAlpha, 0.0f, 1.0f);
@@ -2861,7 +2878,7 @@ static void DrawRTOptionsMenu()
 
 // Its own tab, and deliberately without the !rtEnabled disable: the 3D scene renders
 // into a sub-rect of the display-sized targets whether or not RT is on.
-// docs/plans/20260918_fsr_upscaling.md
+// docs/plans/completed/20260918_fsr_upscaling.md
 static void DrawUpscalingOptionsMenu()
 {
     ImGui::Spacing();
@@ -2888,6 +2905,17 @@ static void DrawUpscalingOptionsMenu()
 
     ImGui::BeginDisabled(fsrMode != 2);
     RTCheckbox("Sub-pixel Jitter (FSR 2 only — other modes cannot reproject it away)", rtCVars.fsrJitter);
+    RTCheckbox("Reactive Mask (stops particles, glass and fog smearing)", rtCVars.fsrAutoReactive);
+    // Tuned from r_fsrDebug 3, which shows both masks side by side — the cutoff is a number
+    // about HDR colour deltas and there is no reading it off the finished composite.
+    const bool reactiveOn = rtCVars.fsrAutoReactive && rtCVars.fsrAutoReactive->GetBool();
+    ImGui::BeginDisabled(!reactiveOn);
+    ImGui::Indent();
+    RTSliderFloat("Reactive Cutoff", rtCVars.fsrReactiveCutoff, 0.0f, 0.5f, "%.3f");
+    RTSliderFloat("Reactive Sensitivity", rtCVars.fsrReactiveScale, 0.25f, 4.0f, "%.2f");
+    ImGui::Unindent();
+    ImGui::EndDisabled(); // !reactiveOn
+    RTCheckbox("Transparency & Composition Mask (reduces character ghosting)", rtCVars.fsrTcMask);
     ImGui::EndDisabled(); // fsrMode != 2
 
     // Same VkSampler as the mip bias below, so they tune against each other: a negative

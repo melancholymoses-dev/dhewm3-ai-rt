@@ -25,7 +25,7 @@ Push constants:
   sharpness — RCAS attenuation in stops; 0 = sharpest, larger = softer
   debugMode — r_fsrDebug (1 = cyan border, 6 = EASU only, no sharpening)
 
-FSR upscaling arc U1 — docs/plans/20260918_fsr_upscaling.md.
+FSR upscaling arc U1 — docs/plans/completed/20260918_fsr_upscaling.md.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

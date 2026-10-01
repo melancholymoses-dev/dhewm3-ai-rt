@@ -22,6 +22,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_upscale.h"
 
 #include <string.h>
+#include <SDL.h>
 
 // ---------------------------------------------------------------------------
 // RT extension function pointer definitions (declared extern in vk_raytracing.h)
@@ -80,9 +81,15 @@ struct vkRTBlasBuildStats_t
     int singleBuildCount;
     int modelBuildCount;
     int summaryLoggedFrameCount;
+    // r_vkRTProfile: per-frame BLAS work, read back via VK_RT_GetBLASFrameStats.
+    int updateCount;
+    int rebuildCount;
+    int triCount;
+    uint64_t cpuTicks;
 };
 
-static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1};
+static vkRTBlasBuildStats_t s_blasBuildStats = {-1, 0, 0, 0, 0, -1, 0, 0, 0, 0};
+static int s_tlasDynamicInstances = 0;
 
 static idCVar r_vkRTReflDataDiag(
     "r_vkRTReflDataDiag", "0", CVAR_RENDERER | CVAR_INTEGER,
@@ -192,7 +199,37 @@ static void VK_RT_ResetBLASBuildStatsIfNewFrame()
         s_blasBuildStats.singleBuildCount = 0;
         s_blasBuildStats.modelBuildCount = 0;
         s_blasBuildStats.summaryLoggedFrameCount = -1;
+        s_blasBuildStats.updateCount = 0;
+        s_blasBuildStats.rebuildCount = 0;
+        s_blasBuildStats.triCount = 0;
+        s_blasBuildStats.cpuTicks = 0;
     }
+}
+
+// Accumulates the CPU time of one VK_RT_BuildBLASForModel call across its return paths.
+struct vkBLASCpuTimer_t
+{
+    uint64_t start;
+    vkBLASCpuTimer_t()
+    {
+        VK_RT_ResetBLASBuildStatsIfNewFrame();
+        start = SDL_GetPerformanceCounter();
+    }
+    ~vkBLASCpuTimer_t()
+    {
+        s_blasBuildStats.cpuTicks += SDL_GetPerformanceCounter() - start;
+    }
+};
+
+void VK_RT_GetBLASFrameStats(vkRTBlasFrameStats_t *out)
+{
+    VK_RT_ResetBLASBuildStatsIfNewFrame();
+    const uint64_t freq = SDL_GetPerformanceFrequency();
+    out->updates = s_blasBuildStats.updateCount;
+    out->rebuilds = s_blasBuildStats.rebuildCount;
+    out->tris = s_blasBuildStats.triCount;
+    out->dynamicInstances = s_tlasDynamicInstances;
+    out->cpuMs = freq ? (double)s_blasBuildStats.cpuTicks * 1000.0 / (double)freq : 0.0;
 }
 
 static void VK_RT_AccumulateBLASBuildStats(int gpuGeoms, int cpuGeoms, bool modelBuild)
@@ -573,6 +610,9 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
     if (!model || model->NumSurfaces() == 0)
         return NULL;
 
+    vkBLASCpuTimer_t cpuTimer;
+    VK_RTProfile_BLASGpuBegin(cmd);
+
     // --- Gather valid (shadow-casting) surfaces ---
     struct SurfEntry
     {
@@ -800,7 +840,11 @@ vkBLAS_t *VK_RT_BuildBLASForModel(idRenderModel *model, VkCommandBuffer cmd, vkB
             const VkAccelerationStructureBuildRangeInfoKHR *pRanges = updateRanges;
             vkCmdBuildAccelerationStructuresKHR(cmd, 1, &updateInfo, &pRanges);
 
-            VK_RT_AccumulateBLASBuildStats(0, validCount, true);
+            // Geometry counts were already accumulated above; adding them again here
+            // double-counted every update in the BLAS SRC log line.
+            s_blasBuildStats.updateCount++;
+            for (int i = 0; i < validCount; i++)
+                s_blasBuildStats.triCount += (int)prevBlas->geomPrimCounts[i];
             return prevBlas; // device address unchanged — TLAS signature stable
         }
     }
@@ -990,6 +1034,10 @@ fullRebuild:
     addrInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     addrInfo.accelerationStructure = blas->handle;
     blas->deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(vk.device, &addrInfo);
+
+    s_blasBuildStats.rebuildCount++;
+    for (int i = 0; i < validCount; i++)
+        s_blasBuildStats.triCount += (int)primCounts[i];
 
     blas->isValid = true;
     return blas;
@@ -1625,6 +1673,10 @@ void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef)
             dynamicGeomCount += geomCount;
         }
     }
+
+    // All BLAS builds are recorded by now; end the GPU span before the TLAS build.
+    VK_RTProfile_BLASGpuEnd(cmd);
+    s_tlasDynamicInstances = (int)dynamicCount;
 
     const uint32_t instanceCount = staticCount + dynamicCount;
 

@@ -60,6 +60,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
     }
 
     backEndStartTime = Sys_Milliseconds();
+    const unsigned long long backEndStartTicks = R_ProfileTicks();
 
     activeBackend->BeginCommandBatch();
 
@@ -106,6 +107,7 @@ void RB_ExecuteBackEndCommands(const emptyCommand_t *cmds)
     // stop rendering on this thread
     backEndFinishTime = Sys_Milliseconds();
     backEnd.pc.msec = backEndFinishTime - backEndStartTime;
+    backEnd.pc.usec = R_ProfileUsecSince(backEndStartTicks);
 
     if (r_debugRenderToTexture.GetInteger() == 1)
     {

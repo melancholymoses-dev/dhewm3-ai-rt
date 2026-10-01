@@ -270,7 +270,7 @@ void VK_CreateRenderPass(void)
     // the prepass never writes modulate GI by 1.0 — i.e. legacy behavior.
     VkAttachmentDescription hdrAlb = hdrNorm; // same format/ops/layout contract as gbufNormal
 
-    // Motion vectors (U2, docs/plans/20260918_fsr_upscaling.md §13): same ops and
+    // Motion vectors (U2, docs/plans/completed/20260918_fsr_upscaling.md §13): same ops and
     // layout contract again, but R16G16_SFLOAT and cleared to (0,0) — a pixel the
     // prepass never writes reports no motion.
     VkAttachmentDescription hdrMotion = hdrNorm;

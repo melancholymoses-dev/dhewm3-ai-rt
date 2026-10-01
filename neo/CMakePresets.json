@@ -7,10 +7,9 @@
     },
     "configurePresets": [
         {
-            "name": "vs2022-x64",
-            "displayName": "VS 2022 x64",
+            "name": "win-x64-base",
+            "hidden": true,
             "description": "Configure dhewm3_rt with Vulkan using local third-party libs",
-            "generator": "Visual Studio 17 2022",
             "architecture": {
                 "value": "x64",
                 "strategy": "set"
@@ -25,18 +24,42 @@
             "environment": {
                 "PATH": "$penv{PATH};${sourceDir}/../../dhewm3-libs/x86_64-w64-mingw32/bin"
             }
+        },
+        {
+            "name": "vs2026-x64",
+            "displayName": "VS 2026 x64",
+            "inherits": "win-x64-base",
+            "generator": "Visual Studio 18 2026"
+        },
+        {
+            "name": "vs2022-x64",
+            "displayName": "VS 2022 x64",
+            "inherits": "win-x64-base",
+            "generator": "Visual Studio 17 2022"
         }
     ],
     "buildPresets": [
         {
             "name": "release",
-            "displayName": "Build Release",
-            "configurePreset": "vs2022-x64",
+            "displayName": "Build Release (VS 2026)",
+            "configurePreset": "vs2026-x64",
             "configuration": "Release"
         },
         {
             "name": "debug",
-            "displayName": "Build Debug",
+            "displayName": "Build Debug (VS 2026)",
+            "configurePreset": "vs2026-x64",
+            "configuration": "Debug"
+        },
+        {
+            "name": "release-vs2022",
+            "displayName": "Build Release (VS 2022)",
+            "configurePreset": "vs2022-x64",
+            "configuration": "Release"
+        },
+        {
+            "name": "debug-vs2022",
+            "displayName": "Build Debug (VS 2022)",
             "configurePreset": "vs2022-x64",
             "configuration": "Debug"
         }

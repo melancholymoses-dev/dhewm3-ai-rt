@@ -1,0 +1,71 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — fsr_mask_debug.comp — r_fsrDebug 3 mask overlay.
+
+Both FSR 2 masks side by side over hdrScene, at display resolution, just before
+the tonemap.  This is how U4's cutoffs get tuned — the reactive threshold is a
+number about HDR colour deltas and there is no way to guess it by eye on the
+finished composite.
+
+  left half   reactiveMask  — green, auto-detected alpha-blended pixels
+  right half  tcMask        — orange, surfaces flagged by the prepass
+  divider     one white column down the middle
+  background  the scene, dimmed, so masked regions are identifiable
+
+Both masks are render-resolution with only the sub-rect valid, so display
+coordinates are scaled down before the fetch.  Mask value maps to colour
+intensity rather than a binary tint: the reactive mask is not binary unless
+APPLY_THRESHOLD is set, and a gradient where a step was expected is the tell
+that the flags went astray.
+
+FSR upscaling arc U4 — docs/plans/completed/20260918_fsr_upscaling.md §7.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcReactive;
+layout(set = 0, binding = 1) uniform sampler2D srcTc;
+layout(set = 0, binding = 2, rgba16f) uniform image2D dstScene;
+
+layout(push_constant) uniform PC {
+    ivec2 renderExtent;
+    ivec2 displayExtent;
+    float brightness;   // output multiplier, so the tonemap does not crush the tint
+    float sceneDim;     // how much of the underlying scene to keep
+} pc;
+
+void main()
+{
+    ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
+    if (dst.x >= pc.displayExtent.x || dst.y >= pc.displayExtent.y)
+        return;
+
+    // Display -> render sub-rect.  Point sampling: a mask is a classification, and
+    // interpolating it would invent values that no pixel was ever assigned.
+    vec2 uv = (vec2(dst) + 0.5) / vec2(pc.displayExtent);
+    ivec2 src = ivec2(uv * vec2(pc.renderExtent));
+    src = clamp(src, ivec2(0), pc.renderExtent - 1);
+
+    const int mid = pc.displayExtent.x / 2;
+    if (dst.x == mid) {
+        imageStore(dstScene, dst, vec4(vec3(pc.brightness), 1.0));
+        return;
+    }
+
+    vec3 tint = (dst.x < mid) ? vec3(0.0, 1.0, 0.2) * texelFetch(srcReactive, src, 0).r
+                              : vec3(1.0, 0.5, 0.0) * texelFetch(srcTc, src, 0).r;
+
+    vec3 scene = imageLoad(dstScene, dst).rgb * pc.sceneDim;
+    imageStore(dstScene, dst, vec4(scene + tint * pc.brightness, 1.0));
+}

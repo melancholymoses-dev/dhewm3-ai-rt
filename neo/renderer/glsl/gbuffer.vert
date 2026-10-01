@@ -45,7 +45,7 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_AlphaTestThreshold; // gbuffer_clip.frag only
     float u_SpecF0Scale;        // r_rtSpecF0Scale
     float u_SpecF0Gamma;        // r_rtSpecF0Gamma
-    float _pad0;
+    float u_TcClass;            // U4 T&C class, fragment-only (see gbuffer.frag)
 };
 
 layout(location = 0) out vec2 vary_TexCoord_Bump;

@@ -47,7 +47,7 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_AlphaTestThreshold;
     float u_SpecF0Scale;
     float u_SpecF0Gamma;
-    float _pad0;
+    float u_TcClass; // U4 T&C class — see gbuffer.frag
 };
 
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;
@@ -87,7 +87,7 @@ void main() {
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
-    outAlbedo = vec4(diffuseSample.rgb, 1.0);
+    outAlbedo = vec4(diffuseSample.rgb, 1.0 - u_TcClass);
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);
 }

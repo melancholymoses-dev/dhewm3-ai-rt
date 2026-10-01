@@ -15,8 +15,7 @@ Handles three cases:
      continues through the hole.
 
   2. Glass (translucent) geometry — MAT_FLAG_GLASS:
-     Accept the intersection without doing anything here.  rchit will
-     apply the Fresnel split (4 % reflect + 96 % straight-through).
+     Ignore the intersection so the ray transmits to whatever is behind.
 
   3. Any other non-opaque geometry:
      Accept and terminate traversal immediately (terminateRayEXT).
@@ -72,8 +71,9 @@ void main()
     }
     else if ((mat.flags & MAT_FLAG_GLASS) != 0u)
     {
-        // Accept — rchit handles the Fresnel split.
-        return;
+        // Pass straight through. Glass has no SL_DIFFUSE stage, so shading it in rchit
+        // gave flat unlit white; the second-order reflection it stood for is negligible.
+        ignoreIntersectionEXT;
     }
     else
     {

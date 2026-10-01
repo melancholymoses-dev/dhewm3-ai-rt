@@ -24,13 +24,44 @@ Code release.
 #version 450
 
 layout(set = 0, binding = 0) uniform sampler2D u_GIMap;
+layout(set = 0, binding = 1) uniform sampler2D u_AOMap; // RT AO (1=open) or 1x1 white fallback
+
+// docs/plans/20260930_AO_GI_refine.md: AO darkens indirect light here instead of
+// (or as well as, per r_rtAODirectStrength) the direct diffuse in interaction.frag.
+layout(push_constant) uniform CompositePC {
+    int   useAO;      // 0 when AO was not written this frame
+    float aoStrength; // r_rtAOIndirectStrength
+    int   debugMode;  // r_rtAODebug; non-zero only on the replace-blend debug pipeline
+    float debugGain;  // r_rtAODebugGain
+} pc;
 
 layout(location = 0) out vec4 fragColor;
 
 void main()
 {
-    // Divide by the actual GI image dimensions — avoids a push constant for
+    // Divide by the actual image dimensions — avoids a push constant for
     // screen size and correctly handles any resolution.
-    vec2 uv = gl_FragCoord.xy / vec2(textureSize(u_GIMap, 0));
-    fragColor = vec4(texture(u_GIMap, uv).rgb, 1.0);
+    vec2 uv   = gl_FragCoord.xy / vec2(textureSize(u_GIMap, 0));
+    vec3 gi   = texture(u_GIMap, uv).rgb;
+    float ao  = (pc.useAO != 0) ? texture(u_AOMap, gl_FragCoord.xy / vec2(textureSize(u_AOMap, 0))).r : 1.0;
+    float aoTerm = mix(1.0, ao, pc.aoStrength);
+
+    if (pc.debugMode == 1)
+    {
+        // Raw mask; red tint flags "AO not valid this frame" rather than reading as all-open.
+        fragColor = (pc.useAO != 0) ? vec4(vec3(ao), 1.0) : vec4(1.0, 0.3, 0.3, 1.0);
+        return;
+    }
+    if (pc.debugMode == 2)
+    {
+        fragColor = vec4(gi * aoTerm * pc.debugGain, 1.0);
+        return;
+    }
+    if (pc.debugMode == 3)
+    {
+        fragColor = vec4(gi * pc.debugGain, 1.0);
+        return;
+    }
+
+    fragColor = vec4(gi * aoTerm, 1.0);
 }

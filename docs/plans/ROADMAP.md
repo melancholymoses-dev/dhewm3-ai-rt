@@ -1,6 +1,6 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-28 · **Next work: arc 3 (FSR) — U4 (reactive/T&C masks), then skinned motion vectors.**
+**Status reviewed:** 2026-09-29 · **Next work: validate U4 in-game + the denoiser retune sweep, then skinned motion vectors.**
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
 designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
@@ -33,7 +33,8 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol were over-**bright**; settled in tuning) |
 | 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
 | 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
-| 3 | **FSR upscaling** — every RT pass is screen-resolution; decoupling render res is worth ~6.6 ms of 11.93 | `20260918_fsr_upscaling.md` | 🟡 **U0 landed 2026-09-23** — render-resolution decoupling + bilinear resolve, `r_fsrRenderScale`. **U1 landed 2026-09-24** — FSR 1 (EASU+RCAS) behind `r_fsr 1`, AMD headers in `neo/libs/ffx-fsr/` (MIT); exit met. **U2 landed 2026-09-24, exit met** — motion-vector attachment + Halton jitter + `r_fsrDebug 7` overlay. **U3 landed 2026-09-24** — FSR 2.2.1 compiled in (`DHEWM3_FSR2`), `r_fsr 2` dispatches it, `r_fsrQuality` presets, `r_fsrDebug 5` bleed overlay; needs three device features AMD's backend assumes (see §14 S2). Plays well 2026-09-25. **U3a landed 2026-09-28** — `r_fsrMipBias`/`r_fsrMipBiasOffset` add `log2(renderW/displayW)` to every `TF_DEFAULT` sampler; also makes `image_lodbias`/`image_anisotropy` live on the Vulkan backend for the first time. **U3c landed 2026-09-28, exit met** — `VK_GBufferPrepassActive()` unifies four copies of "are motion vectors available", fixing a whole-screen jitter shake and decoupling motion vectors from `r_useRayTracing`, so `r_fsr 2` works without RT. **U3 gate met 2026-09-28.** **The detail/aliasing trade-off is fundamental, not a bug** — a LOD bias adds no samples, it only picks which frequencies alias, so below scale 1 the choice is blur, moiré, or a point between; only FSR 2's accumulator breaks it. Doom 3's tiling grates make moiré the worse end, so `r_fsrMipBias 0` is the recommended setting (default still `1`). **U3b (RT texture LOD) demoted to 🔵 non-blocking** — RT fetches really are mip 0 at any distance, but `r_useRayTracing 0` showed that is not the grating artifact. U4 next; U5 not started. Open: skinned/deform motion vectors (animated characters lose history), mirror/subview dispatch rects, glass rect, RT-total measurement — see §4 Outstanding |
+| 3 | **FSR upscaling** — render resolution decoupled from display; FSR 1/2 resolve | `completed/20260918_fsr_upscaling.md` | ✅ **Closed 2026-09-30.** U0-U4 landed and validated in-game: `r_fsrRenderScale`, FSR 1 (`r_fsr 1`), motion vectors + Halton jitter, FSR 2.2.1 (`r_fsr 2`) with reactive and T&C masks, texture LOD bias. U4 denoiser retune dropped (~0.1-0.2 ms, no visible double-accumulation). 0.67 scale saves ~2.8 ms of RT at 1440p; arc 2's ~0.7 ms world-space floor caps further gains. U3b (RT texture LOD) and U5 (menu, FSR 3.1, dynamic res, skinned MVs) moved to backlog |
+| 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `20260930_AO_GI_refine.md` | 🟡 Built 2026-09-30, not yet validated in-game |
 
 - Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
 - U0 gated the screen-space composites on `hasRealCamera` — they had been running twice
@@ -54,11 +55,11 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 Shadows and AO are the two largest costs. **Not every remaining pass is
 screen-resolution** — arc 2 left a ~0.73 ms floor (TLAS, probe trace/blend, froxel
 fill/integrate) that render scale cannot touch, so 0.50 saves only 0.1 ms more than 0.67.
-See `20260918_fsr_upscaling.md` §12.
+See `completed/20260918_fsr_upscaling.md` §12.
 
-**Raster is uninstrumented** — the profiler covers RT phases only, and these runs were
-vsync-locked at 60, so the raster share of the frame is unknown. Wrapping the depth
-prepass / interaction loop / shader passes in profiler phases is the next measurement.
+**Raster is now instrumented** — `r_vkRTProfile 1` reports `raster=` (depth prepass,
+interactions, shader passes, fog lights, upscale, tonemap) plus `VK FRAME PROFILE` / `VK CPU PROFILE`
+lines. The rows above were vsync-locked RT-only runs; re-measure uncapped before quoting a raster share.
 
 **These are all from the fast card.** The 9070 XT runs the same content near 30 fps with
 dips into the teens; nothing above has been re-measured there, and it is the hardware the
@@ -74,6 +75,7 @@ Each of these cost a debugging session. They apply to any new RT code.
 | A shadow ray's cull mask is a parameter, never a constant | `noSelfShadow` is instance mask `0x01`; `0xFF` made the player self-shadow in reflections only |
 | A light's *current* value comes from `EvaluateRegisters()` + the stage's `color.registers[]` | Doom 3 puts flicker in material expressions. `shaderParms` is the constant amplitude — 74 animated materials were pinned at peak |
 | A mapped buffer the CPU **reads** needs `HOST_CACHED`, and should be memcpy'd out before use | `HOST_VISIBLE\|HOST_COHERENT` alone is write-combined; scalar reads cost ~200 ns each. Worth 3.26 → 0.03 ms on the probe classifier |
+| A mapped buffer (or descriptor set) the CPU **writes** while recording needs one copy per frame slot, indexed by `vk.currentFrame` | The previous frame is still on the GPU. The shared material table caused white/black triangles on the 9070 XT only (GPU-bound, CPU a frame ahead); `r_vkSerializeFrames 1` is the check |
 | Doom 3 winds front faces opposite to GL/Vulkan — use the vertex normal, not `gl_HitKindEXT` | Every visible surface reports back-facing |
 | A pixel-skipping pattern keys off a per-slot counter, never `tr.frameCount` | Caused the GI checkerboard ghost |
 | Shared GLSL that compute shaders include must be **pipeline-agnostic** — no ray payload, no `traceRayEXT`, no TLAS. `rt_light_struct.glsl` is that home; `rt_light_eval.glsl` is not | An RT-only built-in pulled into a compute shader silently killed all volumetric lighting once |
@@ -105,7 +107,7 @@ while new lighting techniques enhance without fighting too much.
 | Doc | Owns |
 |---|---|
 
-| `20260918_fsr_upscaling.md` | Render-resolution decoupling and FSR upscaling (arc #3). Also owns motion vectors and jitter, which any future upscaler/TAA would share. |
+| `20260930_AO_GI_refine.md` | AO falloff, AO on indirect vs direct light, `r_rtAODebug`. |
 | `20260906_bloom_plan.md` | Bloom post-process — unimplemented; the tonemapped HDR pipeline it needs now exists. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `20260924_controller_gunfeel.md` | Gamepad aim response, rumble, aim assist (C1-C4). Orthogonal to the lighting arc. |
@@ -119,6 +121,7 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 
 | Doc | Owns |
 |---|---|
+| `20260918_fsr_upscaling.md` | **Arc 3.** Render-resolution decoupling, FSR 1/2, motion vectors + jitter, FSR 2 masks. U5 deferred with a skinned-MV reopen trigger |
 | `20260906_froxel_probe_gi.md` | **Arc 2.** Froxel volumetrics + probe GI, both shipped as default. Includes G5b flicker factorization and the animated-light premise correction |
 | `20260919_dynamic_model_normals.md` | Skinned md5 meshes reaching the TLAS with bind-pose normals |
 | `20260918_reflection_brightness.md` | Reflection brightness + player self-shadowing in glass |
@@ -140,6 +143,8 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 | Item | Doc | Note |
 |---|---|---|
 | Controller gun-feel | `20260924_controller_gunfeel.md` | C1 (radial deadzone + curve) and C2 (accel) are framework-only and independent of the RT arc — can run any time. C3 rumble, C4 aim assist follow. Not scheduled. |
+| FSR U5 polish | `completed/20260918_fsr_upscaling.md` U5 | `r_fsrQuality` in the video menu, FSR 3.1 evaluation, dynamic resolution. Skinned-MV double-buffering only on the reopen trigger listed in U5 |
+| RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
 | Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
 | Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough - Skip|
 | Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |

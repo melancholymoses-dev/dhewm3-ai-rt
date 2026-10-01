@@ -52,7 +52,11 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_AlphaTestThreshold;
     float u_SpecF0Scale;
     float u_SpecF0Gamma;
-    float _pad0;
+    // U4 transparency-and-composition class (docs/plans/completed/20260918_fsr_upscaling.md §9):
+    // 1 = this surface's motion vectors are known wrong (skinned mesh, viewmodel), so FSR 2
+    // should lean less on its temporal history here.  Rides gbufAlbedo's alpha, whose only
+    // consumer reads .rgb; fsr_tc_mask.comp extracts it into the R8 mask FSR 2 wants.
+    float u_TcClass;
 };
 
 layout(set=0, binding=1) uniform sampler2D u_BumpMap;
@@ -93,7 +97,9 @@ void main() {
     float f0      = clamp(pow(max(specLum, 0.0), u_SpecF0Gamma) * u_SpecF0Scale, 0.0, 1.0);
 
     outGbuf   = vec4(nWS * 0.5 + 0.5, f0);
-    outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb, 1.0);
+    // Alpha carries 1 - tcClass so the attachment's white clear (a pixel the prepass never
+    // wrote: sky, translucents) decodes to a mask of 0 rather than 1.
+    outAlbedo = vec4(texture(u_DiffuseMap, vary_TexCoord_Diffuse).rgb, 1.0 - u_TcClass);
     outMotion = GBuf_MotionVector(vary_CurClip, vary_PrevClip);
     fragColor = vec4(0.0);
 }

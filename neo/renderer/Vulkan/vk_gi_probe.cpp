@@ -1797,7 +1797,7 @@ void VK_RT_DispatchGIProbeTrace(VkCommandBuffer cmd, const viewDef_t *viewDef)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 0, 1,
                             &vkRT.giDescSets[frameIdx], 1, &giParamsOffset);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet,
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 1, 1, &vkRT.matDescSet[vk.currentFrame],
                             0, NULL);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, vkRT.giPipelineLayout, 2, 1,
                             &vkRT.giProbeDescSets[frameIdx], 0, NULL);

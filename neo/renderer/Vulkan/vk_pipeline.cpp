@@ -52,7 +52,7 @@ struct VkInteractionUBO
     float screenWidth;   // framebuffer width  (for shadow mask UV)
     float screenHeight;  // framebuffer height (for shadow mask UV)
     int useShadowMask;   // 1 when RT shadow mask is valid this frame
-    int useAO;           // 1 when RT AO mask is valid this frame
+    float aoDirectStrength; // AO weight on direct diffuse, 0 = off (was int useAO, same offset)
     float lightScale;    // backEnd.overBright — final color multiplier before gamma
     int useReflections;  // 1 when RT reflection buffer is valid this frame
     float specF0Scale;   // r_rtSpecF0Scale — multiplier for the specular→F0 remap curve
