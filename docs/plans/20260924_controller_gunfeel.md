@@ -147,6 +147,7 @@ every 16 ms; the 150 ms timeout stops them if frames stall.
 | `joy_rumbleMinMs` | 90 | Shortest effect, so the motor spins up (after `Length`) |
 | `joy_rumbleFloor` | 0.2 | Lowest nonzero motor level, gets past the motor's dead band |
 | `joy_rumbleGamma` | 0.6 | Motor curve `floor + (1−floor)·v^gamma` after mixing; <1 lifts weak effects, 1.0 stays 1.0 |
+| `joy_rumbleIdleMs` | 5000 | No gamepad button or >25% stick/trigger push for this long → treated as not live (no rumble). 0 = never. Source: `Sys_LastGamepadInputMs` in `events.cpp` |
 | `joy_rumbleDebug` | 0 | 1 = log posts, 2 = also log motor updates (with pre-curve values) |
 
 Playtest 2026-09-30: Xbox One pad needed `joy_rumble 2`, which already saturated shotgun/flashlight/chainsaw
@@ -189,7 +190,7 @@ means something keeps posting; `FAILED` or `skipped` lines mean the stop never r
 | `monster_boss_cyberdemon`, `monster_boss_guardian` | 1.0 | 3000 |
 | `monster_demon_mancubus`, `monster_demon_d3xp_bruiser` | 0.6 | 1500 |
 | `monster_demon_hellknight` | 0.5 | 1500 |
-| `monster_demon_pinky` | 0.35 | 1000 |
+| `monster_demon_pinky` | 0.175 (halved after playtest 2026-10-01) | 1000 |
 
 No save-game fields: the table is read on each step. Hell knight's double sound on one frame is
 two posts into one slot; the mixer keeps the max.

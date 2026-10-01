@@ -1863,6 +1863,7 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_rumbleHit", "Hit confirmation", OT_FLOAT, 0.0f, 2.0f),
     CVarOption("joy_rumbleDamage", "Damage taken", OT_FLOAT, 0.0f, 2.0f),
     CVarOption("joy_rumbleSteps", "Big monster footsteps", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleIdleMs", "Mute after pad idle (ms, 0 = never)", OT_INT, 0, 30000),
     CVarOption("joy_rumbleLength", "Rumble length", OT_FLOAT, 0.5f, 2.0f),
     CVarOption("joy_rumbleFloor", "Weak rumble boost (floor)", OT_FLOAT, 0.0f, 0.6f),
     CVarOption("joy_rumbleGamma", "Rumble curve (1 = linear)", OT_FLOAT, 0.2f, 1.0f),

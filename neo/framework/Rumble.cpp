@@ -40,6 +40,8 @@ idCVar joy_rumbleDamage("joy_rumbleDamage", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "R
                         4.0f);
 idCVar joy_rumbleSteps("joy_rumbleSteps", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Rumble scale for big-monster footsteps", 0.0f, 4.0f);
+idCVar joy_rumbleIdleMs("joy_rumbleIdleMs", "5000", CVAR_INTEGER | CVAR_ARCHIVE,
+                        "Silence rumble when the gamepad has had no input for this long (ms). 0 = never", 0, 60000);
 idCVar joy_rumbleFloor("joy_rumbleFloor", "0.2", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Lowest nonzero motor level, to get past the motor's dead band. 0 = linear", 0.0f, 0.6f);
 idCVar joy_rumbleGamma("joy_rumbleGamma", "0.6", CVAR_FLOAT | CVAR_ARCHIVE,
@@ -72,6 +74,7 @@ static bool s_motorsOn = false;
 static int s_lastSendMs = 0;
 static int s_stopResends = 0;   // extra zero updates still owed after a stop
 static bool s_gameLive = false; // last Rumble_Frame verdict; posts outside a live game are dropped
+static bool s_padIdle = false;  // no gamepad input within joy_rumbleIdleMs
 
 static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire",   "melee", "hit",
                                                                              "damage", "step"};
@@ -164,10 +167,20 @@ void Rumble_Frame(bool gameLive)
 {
     const int now = Sys_Milliseconds();
     const float master = joy_rumble.GetFloat();
+
+    // Pad idle (playing on keyboard/mouse): handled like a menu, so nothing rumbles.
+    const int idleMs = joy_rumbleIdleMs.GetInteger();
+    const int lastPadMs = Sys_LastGamepadInputMs();
+    const bool padIdle = idleMs > 0 && (lastPadMs == 0 || now - lastPadMs > idleMs);
+    if (padIdle != s_padIdle && joy_rumbleDebug.GetInteger() >= 1)
+        common->Printf("RUMBLE pad %s\n", padIdle ? "idle (no gamepad input)" : "active");
+    s_padIdle = padIdle;
+    gameLive = gameLive && !padIdle;
+
     if (!gameLive || !RumbleEnabled())
     {
         if (gameLive != s_gameLive && joy_rumbleDebug.GetInteger() >= 1)
-            common->Printf("RUMBLE game %s\n", gameLive ? "live" : "not live (menu/console/loading)");
+            common->Printf("RUMBLE game %s\n", gameLive ? "live" : "not live (menu/console/loading/pad idle)");
         s_gameLive = gameLive;
         // Menu or disabled: stop the motors and drop pending effects, so nothing resumes later.
         Rumble_StopAll();

@@ -251,6 +251,7 @@ void Sys_EndMouseInputEvents(void);
 
 // joystick input polling
 void Sys_SetRumble(int device, int low, int hi);
+int Sys_LastGamepadInputMs(void); // dhewm3-rt: Sys_Milliseconds of last real pad input, 0 = never
 int Sys_PollJoystickInputEvents(int deviceNum);
 int Sys_ReturnJoystickInputEvent(const int n, int &action, int &value);
 void Sys_EndJoystickInputEvents();

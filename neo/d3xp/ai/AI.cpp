@@ -4218,7 +4218,7 @@ static const struct
 } s_stepRumble[] = {
     {"monster_boss_cyberdemon", 1.0f, 3000.0f},     {"monster_boss_guardian", 1.0f, 3000.0f},
     {"monster_demon_mancubus", 0.6f, 1500.0f},      {"monster_demon_d3xp_bruiser", 0.6f, 1500.0f},
-    {"monster_demon_hellknight", 0.5f, 1500.0f},    {"monster_demon_pinky", 0.35f, 1000.0f},
+    {"monster_demon_hellknight", 0.5f, 1500.0f},    {"monster_demon_pinky", 0.175f, 1000.0f},
 };
 
 void idAI::StepRumble(const char *soundKey)

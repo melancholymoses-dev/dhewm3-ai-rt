@@ -208,6 +208,8 @@ static enum D3_Gamepad_Type
 // dhewm3-rt: the most recently opened gamepad, the target for Sys_SetRumble.
 static SDL_GameController *rumbleGamepad = NULL;
 #endif
+// dhewm3-rt: Sys_Milliseconds of the last gamepad button or clear stick/trigger push; 0 = never.
+static int lastGamepadInputMs = 0;
 
 struct kbd_poll_t
 {
@@ -1680,6 +1682,7 @@ sysEvent_t Sys_GetEvent()
             }
 
             isDown = IS_SDL_BTN_DOWN(ev.cbutton);
+            lastGamepadInputMs = Sys_Milliseconds();
 
             res.evType = SE_KEY;
             res.evValue2 = isDown;
@@ -1726,6 +1729,11 @@ sysEvent_t Sys_GetEvent()
 
             sys_jEvents jEvent = mapjoyaxis((SDL_GameControllerAxis)ev.caxis.axis);
             joystick_polls.Append(joystick_poll_t(jEvent, ev.caxis.value));
+            // ~25% deflection, so stick drift on an untouched pad doesn't count as use.
+            if (abs(ev.caxis.value) > 8192)
+            {
+                lastGamepadInputMs = Sys_Milliseconds();
+            }
 
             if (jEvent == J_AXIS_LEFT_X)
             {
@@ -2072,6 +2080,11 @@ void Sys_EndMouseInputEvents()
 Joystick Input Methods
 ================
 */
+int Sys_LastGamepadInputMs(void)
+{
+    return lastGamepadInputMs;
+}
+
 // low/hi are motor strengths in [0, 65535].  Each update carries a short hardware timeout,
 // so if the caller stops refreshing (hitch, level load) the motors stop on their own.
 void Sys_SetRumble(int device, int low, int hi)
