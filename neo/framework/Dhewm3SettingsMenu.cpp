@@ -1839,6 +1839,21 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_deltaPerMSLook", "Look ramp rate (per ms, 0.003 = 333 ms to full)", OT_FLOAT, 0.0005f, 0.02f),
     CVarOption("joy_lookRampFix", "Restart look ramp on release/reversal", OT_BOOL),
 
+    // game cvars (registered by the game DLL), so hidden if the game doesn't provide them
+    CVarOption("Gamepad Aim Assist"),
+    CVarOption("joy_aimAssist",
+               [](idCVar &cvar) {
+                   int val = cvar.GetInteger();
+                   if (ImGui::Combo("Aim assist", &val, "Off\0Friction (look slows over targets)\0Friction + Adhesion "
+                                                         "(view follows targets)\0"))
+                   {
+                       cvar.SetInteger(val);
+                   }
+                   AddCVarOptionTooltips(cvar);
+               }),
+    CVarOption("joy_aimAssistStrength", "Aim assist strength", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_aimAssistSmallTargets", "Assist on crawlers (trites, ticks)", OT_BOOL),
+
     CVarOption("Gamepad Rumble"),
     CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
     CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 2.0f),

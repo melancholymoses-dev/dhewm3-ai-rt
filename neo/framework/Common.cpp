@@ -3906,6 +3906,10 @@ bool idCommonLocal::GetAdditionalFunction(idCommon::FunctionType ft, idCommon::F
         *out_fnptr = (idCommon::FunctionPointer)Rumble_Post;
         return true;
 
+    case idCommon::FT_GamepadLookActive:
+        *out_fnptr = (idCommon::FunctionPointer)Usercmd_GamepadLookActive;
+        return true;
+
     default:
         *out_fnptr = NULL;
         Warning("Called idCommon::SetCallback() with unknown FunctionType %d!\n", ft);

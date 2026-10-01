@@ -428,6 +428,13 @@ class idUsercmdGenLocal : public idUsercmdGen
     idVec2 rampLookDir;  // direction of the last joy_newLook frame, for reversal detection
     int lastJoyDebugMs;
 
+  public:
+    // C4: last poll times the look stick / mouse moved the view; aim assist is gamepad-only
+    int lastPadLookMs;
+    int lastMouseLookMs;
+
+  private:
+
     bool heldJump; // TODO: ???
 
     static idCVar in_yawSpeed;
@@ -530,6 +537,14 @@ idCVar in_useGamepad("in_useGamepad", "1", CVAR_ARCHIVE | CVAR_BOOL, "enables/di
 static idUsercmdGenLocal localUsercmdGen;
 idUsercmdGen *usercmdGen = &localUsercmdGen;
 
+// dhewm3-rt C4 (idCommon::FT_GamepadLookActive): true while the look stick, not the mouse,
+// is turning the view, so the game applies aim assist to gamepad input only.
+bool Usercmd_GamepadLookActive(void)
+{
+    const int padMs = localUsercmdGen.lastPadLookMs;
+    return padMs != 0 && Sys_Milliseconds() - padMs < 100 && padMs >= localUsercmdGen.lastMouseLookMs;
+}
+
 /*
 ================
 idUsercmdGenLocal::idUsercmdGenLocal
@@ -549,6 +564,7 @@ idUsercmdGenLocal::idUsercmdGenLocal(void)
     toggled_run.on = in_alwaysRun.GetBool();
 
     lastJoyDebugMs = 0;
+    lastPadLookMs = lastMouseLookMs = 0;
     ResetLookRamps();
 
     ClearAngles();
@@ -732,6 +748,11 @@ void idUsercmdGenLocal::MouseMove(void)
 
     history[historyCounter & 7][0] = mouseDx;
     history[historyCounter & 7][1] = mouseDy;
+
+    if (mouseDx != 0 || mouseDy != 0)
+    {
+        lastMouseLookMs = pollTime;
+    }
 
     // allow mouse movement to be smoothed together
     int smooth = m_smooth.GetInteger();
@@ -1070,6 +1091,7 @@ Without it this is the original latch, which kept the last value forever.
 float idUsercmdGenLocal::RampLook(float lookValue, lookRamp_t &ramp, int sign)
 {
     ramp.touched = true;
+    lastPadLookMs = pollTime;
     if (!joy_dampenLook.GetBool())
     {
         return lookValue;
@@ -1148,6 +1170,7 @@ void idUsercmdGenLocal::JoystickLook(float axis_x, float axis_y, float pitchSign
         return;
     }
 
+    lastPadLookMs = pollTime;
     const idVec2 dir(axis_x / m, axis_y / m);
     const float v = idMath::ClampFloat(0.0f, 1.0f, (m - dzIn) / (dzOut - dzIn));
     float s = JoystickShapeLook(v);

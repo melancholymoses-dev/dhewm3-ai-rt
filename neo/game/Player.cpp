@@ -5679,6 +5679,8 @@ void idPlayer::UpdateViewAngles(void)
         return;
     }
 
+    const idAngles prevViewAngles = viewAngles;
+
     // circularly clamp the angles with deltas
     for (i = 0; i < 3; i++)
     {
@@ -5695,6 +5697,10 @@ void idPlayer::UpdateViewAngles(void)
             viewAngles[i] = idMath::AngleNormalize180(SHORT2ANGLE(usercmd.angles[i]) + deltaViewAngles[i]);
         }
     }
+
+    // dhewm3-rt: gamepad aim assist; UpdateDeltaViewAngles below absorbs its change
+    aimAssist.Apply(this, prevViewAngles, viewAngles);
+
     if (!centerView.IsDone(gameLocal.time))
     {
         viewAngles.pitch = centerView.GetCurrentValue(gameLocal.time);

@@ -1120,6 +1120,7 @@ set(src_game
 	game/MultiplayerGame.cpp
 	game/Player.cpp
 	game/PlayerIcon.cpp
+	game/AimAssist.cpp
 	game/PlayerView.cpp
 	game/Projectile.cpp
 	game/Pvs.cpp
@@ -1194,6 +1195,7 @@ set(src_d3xp
 	d3xp/MultiplayerGame.cpp
 	d3xp/Player.cpp
 	d3xp/PlayerIcon.cpp
+	d3xp/AimAssist.cpp
 	d3xp/PlayerView.cpp
 	d3xp/Projectile.cpp
 	d3xp/Pvs.cpp

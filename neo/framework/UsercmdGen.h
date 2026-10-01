@@ -175,4 +175,7 @@ class idUsercmdGen
 
 extern idUsercmdGen *usercmdGen;
 
+// dhewm3-rt: engine-only; the game reaches it through idCommon::FT_GamepadLookActive.
+bool Usercmd_GamepadLookActive(void);
+
 #endif /* !__USERCMDGEN_H__ */

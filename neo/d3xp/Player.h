@@ -40,6 +40,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "Weapon.h"
 #include "Projectile.h"
 #include "PlayerIcon.h"
+#include "AimAssist.h"
 #include "GameEdit.h"
 
 class idAI;
@@ -782,6 +783,7 @@ class idPlayer : public idActor
     bool isTelefragged; // proper obituaries
 
     idPlayerIcon playerIcon;
+    idAimAssist aimAssist; // dhewm3-rt: gamepad aim assist, transient (not saved)
 
     bool selfSmooth;
 
