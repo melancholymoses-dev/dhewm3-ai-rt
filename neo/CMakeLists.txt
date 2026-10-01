@@ -871,6 +871,7 @@ set(src_framework
 	framework/File.cpp
 	framework/FileSystem.cpp
 	framework/KeyInput.cpp
+	framework/Rumble.cpp
 	framework/UsercmdGen.cpp
 	framework/Session_menu.cpp
 	framework/Session.cpp

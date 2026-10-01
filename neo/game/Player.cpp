@@ -3097,6 +3097,17 @@ void idPlayer::WeaponFireFeedback(const idDict *weaponDef)
 
     // update view feedback
     playerView.WeaponFireFeedback(weaponDef);
+
+    // dhewm3-rt: fire rumble.  rumble_low/hi/ms def keys override; else scale with recoilTime
+    // (pistol ~125, shotgun/rocket 325; weapons without recoil get a light default).
+    if (this == gameLocal.GetLocalPlayer() && gameLocal.isNewFrame)
+    {
+        const int recoilTime = weaponDef->GetInt("recoilTime");
+        const float defLow = recoilTime > 0 ? idMath::ClampFloat(0.15f, 0.9f, recoilTime / 360.0f) : 0.2f;
+        const int defMs = recoilTime > 0 ? idMath::ClampInt(60, 220, recoilTime * 2 / 3) : 70;
+        Game_Rumble(idCommon::RUMBLE_FIRE, weaponDef->GetFloat("rumble_low", va("%f", defLow)),
+                    weaponDef->GetFloat("rumble_hi", "0.35"), weaponDef->GetInt("rumble_ms", va("%d", defMs)));
+    }
 }
 
 /*
@@ -7741,6 +7752,13 @@ void idPlayer::DamageFeedback(idEntity *victim, idEntity *inflictor, int &damage
 {
     assert(!gameLocal.isClient);
     damage *= PowerUpModifier(BERSERK);
+
+    // dhewm3-rt: hit-confirm tick.  Melee passes the player as inflictor and rumbles in Event_Melee.
+    if (damage > 0 && victim != this && inflictor != this && victim->IsType(idActor::Type) &&
+        this == gameLocal.GetLocalPlayer())
+    {
+        Game_Rumble(idCommon::RUMBLE_HIT, 0.0f, idMath::ClampFloat(0.15f, 0.5f, 0.1f + damage / 150.0f), 50);
+    }
     if (damage && (victim != this) && victim->IsType(idActor::Type))
     {
         SetLastHitTime(gameLocal.time);
@@ -8002,6 +8020,15 @@ void idPlayer::Damage(idEntity *inflictor, idEntity *attacker, const idVec3 &dir
     if (health > 0)
     {
         playerView.DamageImpulse(localDamageVector, &damageDef->dict);
+
+        // dhewm3-rt: damage rumble, sized by the hit before armor so armored hits still land.
+        const int rumbleDamage = damage + armorSave;
+        if (rumbleDamage > 0 && this == gameLocal.GetLocalPlayer())
+        {
+            Game_Rumble(idCommon::RUMBLE_DAMAGE, idMath::ClampFloat(0.25f, 1.0f, 0.2f + rumbleDamage / 40.0f),
+                        idMath::ClampFloat(0.1f, 0.6f, rumbleDamage / 60.0f),
+                        idMath::ClampInt(120, 450, 100 + rumbleDamage * 8));
+        }
     }
 
     // do the damage

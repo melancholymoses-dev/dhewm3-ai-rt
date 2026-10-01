@@ -107,6 +107,9 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #define SDL_GameControllerGetVendor SDL_GetGamepadVendor
 #define SDL_GameControllerGetProduct SDL_GetGamepadProduct
 #define SDL_GameControllerOpen SDL_OpenGamepad
+#define SDL_GameControllerClose SDL_CloseGamepad
+#define SDL_GameControllerGetAttached SDL_GamepadConnected
+#define SDL_GameControllerRumble SDL_RumbleGamepad
 
 #define SDL_CONTROLLERAXISMOTION SDL_EVENT_GAMEPAD_AXIS_MOTION
 #define SDL_CONTROLLERBUTTONDOWN SDL_EVENT_GAMEPAD_BUTTON_DOWN
@@ -200,6 +203,11 @@ static enum D3_Gamepad_Type
     D3_GAMEPAD_PLAYSTATION,    // PS-like (geometric symbols instead of A/B/X/Y)
     D3_GAMEPAD_PLAYSTATION_OLD // PS2/PS3-like: the back button is called "select" instead of "share"
 } gamepadType = D3_GAMEPAD_XINPUT;
+
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+// dhewm3-rt: the most recently opened gamepad, the target for Sys_SetRumble.
+static SDL_GameController *rumbleGamepad = NULL;
+#endif
 
 struct kbd_poll_t
 {
@@ -885,6 +893,9 @@ enum
 
 static void setGamepadType(SDL_GameController *gc)
 {
+    // every open site calls this, so it doubles as "remember the pad for rumble"
+    rumbleGamepad = gc;
+
 #if SDL_VERSION_ATLEAST(2, 0, 12)
     const char *typestr = NULL;
     switch (SDL_GameControllerGetType(gc))
@@ -1791,6 +1802,11 @@ sysEvent_t Sys_GetEvent()
         case SDL_JOYDEVICEREMOVED:
             // TODO: hot swapping maybe.
             // lbOnControllerUnPlug(event.jdevice.which);
+            if (rumbleGamepad != NULL && !SDL_GameControllerGetAttached(rumbleGamepad))
+            {
+                SDL_GameControllerClose(rumbleGamepad);
+                rumbleGamepad = NULL;
+            }
             break;
 #endif // SDL2+
 
@@ -2056,12 +2072,23 @@ void Sys_EndMouseInputEvents()
 Joystick Input Methods
 ================
 */
+// low/hi are motor strengths in [0, 65535].  Each update carries a short hardware timeout,
+// so if the caller stops refreshing (hitch, level load) the motors stop on their own.
 void Sys_SetRumble(int device, int low, int hi)
 {
     // TODO: support multiple controllers.
     assert(device == 0);
-    // TODO: support rumble maybe.
-    assert(0);
+#if SDL_VERSION_ATLEAST(2, 0, 9)
+    const Uint32 RUMBLE_TIMEOUT_MS = 150;
+    if (rumbleGamepad == NULL || !in_useGamepad.GetBool())
+        return;
+    low = idMath::ClampInt(0, 0xFFFF, low);
+    hi = idMath::ClampInt(0, 0xFFFF, hi);
+    SDL_GameControllerRumble(rumbleGamepad, (Uint16)low, (Uint16)hi, RUMBLE_TIMEOUT_MS);
+#else
+    (void)low;
+    (void)hi;
+#endif
 }
 
 int Sys_PollJoystickInputEvents(int deviceNum)

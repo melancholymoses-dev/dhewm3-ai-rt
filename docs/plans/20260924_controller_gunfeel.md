@@ -10,7 +10,7 @@ Every assist is individually switchable off. `joy_aimAssist 0` and
 
 | # | Stage | Scope | Priority | Status |
 |---|---|---|---|---|
-| C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks | sys + framework + game/d3xp | **next** | not started |
+| C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks | sys + framework + game/d3xp | **next** | built 2026-09-30, untested |
 | C1 | Radial deadzone + magnitude curve, **calibrated to today's rates** | framework only | low | not started |
 | C2 | Latch fix only; keep the 333 ms ramp | framework only | low | not started |
 | C4 | Aim assist: friction only, opt-in | game/d3xp + `GAME_API_VERSION` bump | parked | not started |
@@ -150,55 +150,50 @@ under 120 ms.
 
 ## C3 — Rumble
 
-`Sys_SetRumble` is a stub that asserts, with zero callers. The
-`SDL_GameController*` handle is opened in three places and discarded every time.
+**Built 2026-09-30, not yet validated in-game.**
 
 | File | Change |
 |---|---|
-| [events.cpp:886-1022](../../neo/sys/events.cpp#L886) | Retain the opened handle in a static; clear on `SDL_JOYDEVICEREMOVED` |
-| [events.cpp:2059](../../neo/sys/events.cpp#L2059) | Implement via `SDL_GameControllerRumble`; add `#define SDL_GameControllerRumble SDL_RumbleGamepad` to the SDL3 shim at [line 95](../../neo/sys/events.cpp#L95) |
-| `UsercmdGen.cpp` | Effect mixer, ticked from `idUsercmdGenLocal::GetDirectUsercmd` at 60 Hz |
-| `framework/Common.h` + `Common.cpp` | `virtual void Rumble(float low, float hi, int ms)` on `idCommon` so game code can post effects |
+| `neo/sys/events.cpp` | `rumbleGamepad` = last pad opened (set in `setGamepadType`, which every open site calls); closed on `SDL_JOYDEVICEREMOVED` if detached. `Sys_SetRumble` → `SDL_GameControllerRumble` with a 150 ms hardware timeout; no-op if `in_useGamepad 0`. SDL3 shim gains `Close`/`GetAttached`/`Rumble` |
+| `neo/framework/Rumble.cpp/.h` (new) | Mixer + `joy_rumble*` cvars. Ticked by `Rumble_Frame()` on the main thread after `session->Frame()` |
+| `neo/framework/Common.h/.cpp` | `idCommon::FT_Rumble` + `rumbleCategory_t`, served through `GetAdditionalFunction`. **No `GAME_API_VERSION` bump**; an older engine returns false and the game stays silent |
+| `neo/framework/Session.cpp`, `Common.cpp` | `Rumble_StopAll()` on map load and shutdown |
+| `neo/{game,d3xp}/Game_local.*` | `Game_Rumble(category, low, hi, ms)` wrapper; fn pointer fetched in `Init` |
+| `Dhewm3SettingsMenu.cpp` | "Gamepad Rumble" block under Gamepad Settings |
+| `neo/CMakeLists.txt` | `framework/Rumble.cpp` |
 
-Mixer: a small fixed array of active effects, each `{low, hi, startMs, durMs}`
-with a linear decay envelope. Per tick, sum and clamp to 1.0, scale by
-`joy_rumble`, call `Sys_SetRumble`. Summing rather than replacing is what keeps
-a fire effect from cancelling a simultaneous hit effect.
+Mixer: one slot per category. A post into a busy slot keeps the stronger amplitude per motor
+and restarts the linear decay, so chaingun and chainsaw repeats hold a level instead of stacking.
+Slots sum across categories, then clamp and scale by `joy_rumble`. Motors are refreshed at most
+every 16 ms; the 150 ms timeout stops them if frames stall.
 
-Game hooks: all four already exist, and all four must be mirrored into
-`neo/d3xp/`. Every hook posts only when the owner is `gameLocal.GetLocalPlayer()`.
-
-| Event | Hook | Effect |
+| Event | Hook | Effect (low, hi, ms) |
 |---|---|---|
-| Weapon fired | [Player.cpp:3090](../../neo/game/Player.cpp#L3090) `WeaponFireFeedback` | Short, sharp. Reads `rumble_low`/`rumble_hi`/`rumble_ms` from the passed `weaponDef`, falling back to a default |
-| Melee strike | [Weapon.cpp:3524](../../neo/game/Weapon.cpp#L3524) `Event_Melee`, at the `hitSound` dispatch | `hit` (damaged an entity): heavy low-freq thump. Wall/prop strike (`hitSound` non-empty, `!hit`): light high-freq tap. Miss: nothing. Keys `rumble_hit_*` / `rumble_strike_*` on the `meleeDef`, so flashlight, fists, chainsaw and berserk differ in def files |
-| Hit confirm | [Player.cpp:7740](../../neo/game/Player.cpp#L7740) `DamageFeedback` | Very short high-freq tick, scaled by `damage`. Skip when `inflictor == this` (melee: `Event_Melee` passes `owner` as inflictor), so the melee thump isn't doubled |
-| Damage taken | [Player.cpp:7883](../../neo/game/Player.cpp#L7883) `Damage` | Longer low-freq, scaled by `damage` |
-
-`Event_Melee` respects `nextStrikeFx` (200 ms) for wall strikes by blanking `hitSound`;
-the rumble inherits that throttle for free. The chainsaw calls `Event_Melee` every
-frame, so hits need the same throttle, or chainsaw rumble must be a sustained effect.
-
-`WeaponFireFeedback` already carries the weapon dict for view kick, so
-per-weapon strength is def-file data, not a table in code. Shotgun and BFG get
-heavy keys; pistol stays light.
+| Weapon fired | `idPlayer::WeaponFireFeedback`; local player, `isNewFrame` | `rumble_low/hi/ms` keys, else low = `recoilTime/360` (pistol .35, shotgun/rocket .9), hi .35, ms = ⅔·recoilTime. No recoil (plasma, BFG, grenade): .2/.35/70 |
+| Melee, creature | `idWeapon::Event_Melee`, before the hit sound | `rumble_hit_*` keys on the meleeDef, else low = damage·berserk/50 (fists .4, flashlight .8, chainsaw 1), hi .3, 180 ms |
+| Melee, other surface | same; only when a strike sound plays (`nextStrikeFx` throttle) | `rumble_strike_*`, else .15/.45/60 |
+| Hit confirm | `idPlayer::DamageFeedback`; skipped when `inflictor == this` (melee) | 0 / .1+dmg/150 / 50 |
+| Damage taken | `idPlayer::Damage`, beside `DamageImpulse` | sized by damage + armorSave: .2+d/40, d/60, 100+8d ms (≤450) |
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `joy_rumble` | 1.0 | Master scale. **0 disables all rumble** |
+| `joy_rumbleEnable` | 1 | Master on/off. **0 disables all rumble** |
+| `joy_rumble` | 1.0 | Overall strength (0–2); 0 also disables |
 | `joy_rumbleFire` | 1.0 | Weapon-fire scale |
 | `joy_rumbleMelee` | 1.0 | Melee hit/strike scale |
 | `joy_rumbleHit` | 1.0 | Hit-confirm scale |
 | `joy_rumbleDamage` | 1.0 | Damage-taken scale |
+| `joy_rumbleDebug` | 0 | 1 = log posts, 2 = also log motor updates |
 
-**Check:** `joy_debugInput 1` prints active effect count and summed low/hi.
-Fire each weapon and confirm the envelope matches its def keys; `joy_rumble 0`
-must leave `Sys_SetRumble` uncalled, not called with zeroes.
+**Check:** `joy_rumbleDebug 2`. Fire each weapon and read the posted values; `joy_rumble 0`
+must produce no `RUMBLE` lines at all. Flashlight-melee a zombie, then a wall, then the air:
+thump, tap, nothing. Chainsaw a zombie: steady `slot=` values, not climbing.
 
-Flashlight-melee a zombie, then a wall, then the air: thump, tap, nothing.
+**Exit:** all events felt distinctly, no stuck motor on level load or weapon switch, master
+toggle silent.
 
-**Exit:** all four events felt distinctly, no stuck motor on level load or
-weapon switch, master toggle silent.
+**Follow-ups:** BFG and plasma use the no-recoil default. If they feel weak, give them
+`rumble_*` keys (def-file mod) or derive strength from the projectile's damage.
 
 ---
 
@@ -306,7 +301,7 @@ them only once `joy_newLook 1` has shipped as default for a while.
 |---|---|
 | C1 | `neo/framework/UsercmdGen.cpp`, `.h`, `Dhewm3SettingsMenu.cpp` |
 | C2 | `neo/framework/UsercmdGen.cpp`, `.h`, `Dhewm3SettingsMenu.cpp` |
-| C3 | `neo/sys/events.cpp`, `neo/sys/sys_public.h`, `neo/framework/UsercmdGen.cpp`, `Common.h`, `Common.cpp`, `neo/{game,d3xp}/Player.cpp`, `neo/{game,d3xp}/Weapon.cpp`, weapon + melee defs, `Dhewm3SettingsMenu.cpp` |
+| C3 | `neo/sys/events.cpp`, `neo/framework/{Rumble.cpp,Rumble.h,Common.h,Common.cpp,Session.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Game_local.h,Game_local.cpp,Player.cpp,Weapon.cpp}`, `neo/CMakeLists.txt` |
 | C4 | `neo/framework/Game.h`, `neo/game/{AimAssist.cpp,.h,Player.cpp,Player.h,Game_local.cpp}`, same five under `neo/d3xp/`, `neo/CMakeLists.txt`, `Dhewm3SettingsMenu.cpp` |
 
 C3 and C4 both need `neo/game/` and `neo/d3xp/` kept in sync. C4 adds new source

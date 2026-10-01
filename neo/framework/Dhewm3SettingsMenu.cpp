@@ -1830,6 +1830,14 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_powerScale", "If using power curve, this is the exponent", OT_FLOAT, 0.1f,
                10.0f), // TODO: what are sensible min/max values?
                        // TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they were "bad idea"
+
+    CVarOption("Gamepad Rumble"),
+    CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
+    CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleFire", "Weapon fire", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleMelee", "Melee hits", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleHit", "Hit confirmation", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleDamage", "Damage taken", OT_FLOAT, 0.0f, 2.0f),
 };
 
 struct VidMode
