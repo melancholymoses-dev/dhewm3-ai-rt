@@ -742,6 +742,7 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/ao_ray.rgen
 	renderer/glsl/ao_ray.rmiss
 	renderer/glsl/ao_ray.rahit
+	renderer/glsl/ao_ray.rchit
 	renderer/glsl/atrous_filter.comp	
 	renderer/glsl/gi_ray.rgen
 	renderer/glsl/gi_ray.rchit

@@ -2432,6 +2432,9 @@ struct RTCVars
     // AO fine-tuning
     idCVar *rtAOSamples = nullptr;
     idCVar *rtAORadius = nullptr;
+    idCVar *rtAOFalloff = nullptr;
+    idCVar *rtAOIndirectStrength = nullptr;
+    idCVar *rtAODirectStrength = nullptr;
     idCVar *rtTemporal = nullptr;
     idCVar *rtTemporalAlpha = nullptr;
     idCVar *rtAtrousIterations = nullptr;
@@ -2546,6 +2549,9 @@ static void InitRTOptionsMenu()
     rtCVars.rtShadowStablePattern = cvarSystem->Find("r_rtShadowStablePattern");
     rtCVars.rtAOSamples = cvarSystem->Find("r_rtAOSamples");
     rtCVars.rtAORadius = cvarSystem->Find("r_rtAORadius");
+    rtCVars.rtAOFalloff = cvarSystem->Find("r_rtAOFalloff");
+    rtCVars.rtAOIndirectStrength = cvarSystem->Find("r_rtAOIndirectStrength");
+    rtCVars.rtAODirectStrength = cvarSystem->Find("r_rtAODirectStrength");
     rtCVars.rtTemporal = cvarSystem->Find("r_rtAOTemporal");
     rtCVars.rtTemporalAlpha = cvarSystem->Find("r_rtAOTemporalAlpha");
     rtCVars.rtAtrousIterations = cvarSystem->Find("r_rtAtrousIterations");
@@ -2729,7 +2735,10 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTCheckbox("AO/GI Normals from G-buffer (P9)", rtCVars.rtGbufNormals);
         RTSliderInt("AO Samples", rtCVars.rtAOSamples, 1, 16);
-        RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 256.0f, "%.1f");
+        RTSliderFloat("AO Radius (world units)", rtCVars.rtAORadius, 1.0f, 128.0f, "%.1f");
+        RTCheckbox("AO Distance Falloff", rtCVars.rtAOFalloff);
+        RTSliderFloat("AO on Indirect Light (GI)", rtCVars.rtAOIndirectStrength, 0.0f, 1.0f, "%.2f");
+        RTSliderFloat("AO on Direct Light (with GI on)", rtCVars.rtAODirectStrength, 0.0f, 1.0f, "%.2f");
         ImGui::TableNextColumn();
         RTCheckbox("Temporal AO Accumulation", rtCVars.rtTemporal);
         RTSliderFloat("Temporal Blend Factor", rtCVars.rtTemporalAlpha, 0.0f, 1.0f);

@@ -67,7 +67,7 @@ layout(set=0, binding=0) uniform InteractionParams {
     float u_ScreenWidth;
     float u_ScreenHeight;
     int   u_UseShadowMask;
-    int   u_UseAO;       // 1 when RT AO mask is valid this frame
+    float u_AODirectStrength; // AO weight on direct diffuse; 0 = off or AO invalid this frame
     float u_LightScale;  // backEnd.overBright — multiply final color before gamma
     int   u_UseReflections;      // unused (Stage 3.5, Step 8) — kept so this block's
                                   // layout still matches VkInteractionUBO in vk_pipeline.cpp
@@ -136,13 +136,12 @@ void main() {
     }
 
     // --- RT ambient occlusion ---
-    // Applied to diffuse light: contact darkening in corners and crevices.
-    // Not applied to specular; AO modulates surface-level indirect light, not
-    // direct specular reflections.
+    // AO mainly darkens GI (gi_composite.frag); here it only touches direct diffuse at
+    // r_rtAODirectStrength (1.0 when GI is off).  Never applied to specular.
     float ao = 1.0;
-    if (u_UseAO != 0) {
+    if (u_AODirectStrength > 0.0) {
         vec2 aoUV = gl_FragCoord.xy / vec2(u_ScreenWidth, u_ScreenHeight);
-        ao = texture(u_AOMap, aoUV).r;
+        ao = mix(1.0, texture(u_AOMap, aoUV).r, u_AODirectStrength);
     }
 
     // --- RT reflections ---

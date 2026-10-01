@@ -15,9 +15,8 @@ of the original Doom 3 GPL Source Code release.
 
 // ao_ray.rahit — AO any-hit shader
 //
-// The AO rgen fires rays with gl_RayFlagsTerminateOnFirstHitEXT.
-// Opaque geometry (VK_GEOMETRY_OPAQUE_BIT_KHR) never reaches this shader — the
-// driver terminates the ray immediately, making opaque surfaces AO occluders.
+// Opaque geometry (VK_GEOMETRY_OPAQUE_BIT_KHR) never reaches this shader; its nearest
+// hit goes to ao_ray.rchit, which reports the distance for the AO falloff.
 //
 // Only non-opaque geometry (MC_TRANSLUCENT steam/glass, MC_PERFORATED alpha-tested)
 // reaches here.  We ignore all such hits so translucent steam does not cast blocky

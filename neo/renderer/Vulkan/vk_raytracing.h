@@ -401,6 +401,7 @@ struct vkRTState_t
     // Fullscreen composite pipeline — additively blends the GI buffer onto the
     // framebuffer once per view, before the per-light interaction draws.
     VkPipeline giCompositePipeline;
+    VkPipeline giCompositeDebugPipeline; // replace-blend variant for r_rtAODebug
     VkPipelineLayout giCompositeLayout;
     VkDescriptorSetLayout giCompositeDescLayout;
     VkDescriptorPool giCompositeDescPool;
@@ -721,6 +722,10 @@ void VK_RT_InitAO(void);
 // Depth must be in DEPTH_STENCIL_ATTACHMENT_OPTIMAL on entry.
 // Transitions depth to READ_ONLY_OPTIMAL for the dispatch, then restores to ATTACHMENT_OPTIMAL.
 void VK_RT_DispatchAO(VkCommandBuffer cmd, const viewDef_t *viewDef);
+
+// AO image for fragment sampling this frame (denoised view or raw mask).  False, with the
+// white fallback filled in, when AO was not written this frame.
+bool VK_RT_GetAODescriptor(VkDescriptorImageInfo *out);
 
 // Resize AO mask when resolution changes
 void VK_RT_ResizeAOMask(uint32_t width, uint32_t height);
@@ -1060,7 +1065,12 @@ void VK_RT_DispatchGI(VkCommandBuffer cmd, const viewDef_t *viewDef);
 // Must be called INSIDE the main render pass, before the per-light interaction draws.
 // Reads from giReadView[currentFrame] (giHistory when temporal is active, else giBuffer).
 // Does nothing when r_rtGI is off or the composite pipeline is not ready.
+// GI is multiplied by AO here (r_rtAOIndirectStrength).
 void VK_RT_CompositeGI(VkCommandBuffer cmd);
+
+// r_rtAODebug view (replace blend).  Call inside the render pass after the shader
+// passes, same frame as VK_RT_CompositeGI; no-op when that didn't run.
+void VK_RT_CompositeGIDebug(VkCommandBuffer cmd);
 
 // ---------------------------------------------------------------------------
 // GI temporal EMA resolve (Phase 6.2)

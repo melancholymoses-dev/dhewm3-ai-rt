@@ -604,6 +604,15 @@ void VK_DeferStagingFree(VkBuffer buf, VkDeviceMemory mem)
     }
 }
 
+// Marks the batch unusable and says why — every later flush only logs "skipped".
+static void VK_PoisonUploadBatch(const char *stage, VkResult result, uint64_t batchId, uint32_t pendingCount)
+{
+    s_uploadBatchPoisoned = true;
+    common->Warning("VK: upload batch #%llu poisoned at %s: %d (%s), %u pending staging buffers",
+                    (unsigned long long)batchId, stage, (int)result, VK_ResultToString(result), pendingCount);
+    fflush(NULL);
+}
+
 void VK_FlushPendingUploads(void)
 {
     if (s_uploadCmdBuf == VK_NULL_HANDLE)
@@ -626,7 +635,7 @@ void VK_FlushPendingUploads(void)
     VkResult endResult = vkEndCommandBuffer(s_uploadCmdBuf);
     if (endResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkEndCommandBuffer", endResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -635,7 +644,7 @@ void VK_FlushPendingUploads(void)
     VkResult resetResult = vkResetFences(vk.device, 1, &s_uploadFence);
     if (resetResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkResetFences", resetResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -648,7 +657,7 @@ void VK_FlushPendingUploads(void)
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &si, s_uploadFence);
     if (submitResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkQueueSubmit", submitResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;
@@ -657,7 +666,7 @@ void VK_FlushPendingUploads(void)
     VkResult waitResult = vkWaitForFences(vk.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX);
     if (waitResult != VK_SUCCESS)
     {
-        s_uploadBatchPoisoned = true;
+        VK_PoisonUploadBatch("vkWaitForFences", waitResult, batchId, pendingCount);
         VK_ReleasePendingStagingUploads();
         VK_DiscardUploadBatchCmdBuf();
         return;

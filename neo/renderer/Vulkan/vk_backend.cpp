@@ -1094,7 +1094,7 @@ static bool VK_ComputeLocalViewOriginFromModelView(const viewEntity_t *space, fl
 
 // Interaction UBO size (must match VkInteractionUBO in vk_pipeline.cpp).
 // Struct breakdown: 14 vec4s (224) + MVP mat4 (64) + 3 vec4s (48) + applyGamma/pad (16)
-// + screenSize vec2 + useShadowMask int + useAO int + lightScale float + pad float = 376 bytes -> round to 384.
+// + screenSize vec2 + useShadowMask int + aoDirectStrength float + lightScale float + pad float = 376 bytes -> round to 384.
 // FIXME: replace the raw pointer arithmetic used to write fields below with a proper mirrored C++ struct
 // (matching the GLSL InteractionParams layout), and add static_assert(offsetof(...)) checks to catch drift.
 static const uint32_t INTERACTION_UBO_SIZE = 384;
@@ -1336,22 +1336,31 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
         }
     }
 
-    // useAO: 1 when RT AO mask is valid this frame (weapon surfaces skip AO same as shadow)
-    int *useAOPtr = useSM + 1;
+    const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
+                          vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+
+    // aoDirectStrength: how much AO darkens direct diffuse; 0 = off (weapon surfaces skip AO
+    // same as shadow).  While GI composites, AO belongs on the indirect term instead
+    // (docs/plans/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
+    float *aoDirectPtr = (float *)(useSM + 1);
     // A2 (amd_vulkan_cleanup.md): aoValid, not just image != NULL. The image existing says
     // nothing about whether anything was written into it this frame — VK_RT_DispatchAO has
     // several early-return paths (RT off, invalid TLAS across a level load, empty scissor)
     // that leave it untouched, and the rgen only ever writes inside the view scissor.
     const bool hasAOMask = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtAO.GetBool() &&
                            vkRT.aoMask[vk.currentFrame].image != VK_NULL_HANDLE && vkRT.aoValid[vk.currentFrame];
-    *useAOPtr = (hasAOMask && !isWeaponDepthHack) ? 1 : 0;
+    {
+        extern idCVar r_rtAODirectStrength; // vk_ao.cpp
+        const bool giTakesAO = giActive && vkRT.giCompositePipeline != VK_NULL_HANDLE;
+        const float directAO =
+            giTakesAO ? idMath::ClampFloat(0.0f, 1.0f, r_rtAODirectStrength.GetFloat()) : 1.0f;
+        *aoDirectPtr = (hasAOMask && !isWeaponDepthHack) ? directAO : 0.0f;
+    }
 
     // lightScale: overBright factor from RB_DetermineLightScale (1.0 when no scaling needed).
     // When GI is active, scale by the effective direct-light discount to compensate for the
     // additive GI contribution and keep overall luminance roughly consistent with the non-GI path.
-    float *lightScalePtr = (float *)(useAOPtr + 1);
-    const bool giActive = r_useRayTracing.GetBool() && vkRT.isInitialized && r_rtGI.GetBool() &&
-                          vkRT.giBuffer[vk.currentFrame].image != VK_NULL_HANDLE;
+    float *lightScalePtr = aoDirectPtr + 1;
 
     const float directScale = idMath::ClampFloat(0.0f, 2.0f, r_rtGIDirectScale.GetFloat());
     *lightScalePtr = backEnd.overBright * (giActive ? directScale : 1.0f);
@@ -4517,6 +4526,9 @@ static void VK_DrainCompletedSlotGarbage()
     extern void VK_Image_DrainGarbage(uint32_t frameIdx);
     extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
 
+    // Pending uploads may target buffers already queued for destruction; submit them first.
+    VK_FlushPendingUploads();
+
     bool allIdle = true;
     for (uint32_t f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
     {
@@ -4706,6 +4718,15 @@ void VK_RB_DrawView(const void *data)
         vkResetFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame]);
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
+        // Flush any texture/buffer uploads queued since the last frame.
+        // Submits one command buffer + one fence wait, replacing the previous
+        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
+        // Must precede the drain: the open batch can hold copies into buffers that were
+        // allocated and freed since the last flush, and destroying those first poisons it.
+        const uint64_t cpuUploadStart = VK_RTProfile_CPUStamp();
+        VK_FlushPendingUploads();
+        const uint64_t cpuUploadEnd = VK_RTProfile_CPUStamp();
+
         // Drain deferred image, buffer, and BLAS deletions queued during the previous use of this frame slot.
         const uint64_t cpuDrainStart = VK_RTProfile_CPUStamp();
         extern void VK_Image_DrainGarbage(uint32_t frameIdx);
@@ -4721,13 +4742,6 @@ void VK_RB_DrawView(const void *data)
         // point in the frame past the fence with no command buffer recording.
         VK_Image_CheckSamplerCvars();
         VK_Image_ApplyPendingSamplerRebuild();
-
-        // Flush any texture/buffer uploads queued since the last frame.
-        // Submits one command buffer + one fence wait, replacing the previous
-        // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
-        const uint64_t cpuUploadStart = VK_RTProfile_CPUStamp();
-        VK_FlushPendingUploads();
-        const uint64_t cpuUploadEnd = VK_RTProfile_CPUStamp();
 
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
@@ -5409,6 +5423,21 @@ void VK_RB_DrawView(const void *data)
         VK_RB_FogAllLights(cmdBuf);
         VK_RTProfile_PhaseEnd(cmdBuf, profFog);
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_FOG_LIGHTS, cpuFogStart);
+    }
+
+    // r_rtAODebug: replaces the frame, so it goes after everything that blends onto it.
+    // Same real-camera gate as the vol composite; viewport/scissor restored for the same reason.
+    extern idCVar r_rtAODebug; // vk_ao.cpp
+    if (r_rtAODebug.GetInteger() > 0 && volHasRealCamera && !backEnd.viewDef->isSubview &&
+        !backEnd.viewDef->isMirror)
+    {
+        VK_SetRenderStage("AO_Debug");
+        const VkExtent2D dbgExtent = VK_CurrentDrawExtent();
+        VkViewport dbgViewport = {0, (float)dbgExtent.height, (float)dbgExtent.width, -(float)dbgExtent.height,
+                                  0.0f, 1.0f};
+        vkCmdSetViewport(cmdBuf, 0, 1, &dbgViewport);
+        vkCmdSetScissor(cmdBuf, 0, 1, &s_viewScissor);
+        VK_RT_CompositeGIDebug(cmdBuf);
     }
 
     if ((splitMask & 8) != 0)
