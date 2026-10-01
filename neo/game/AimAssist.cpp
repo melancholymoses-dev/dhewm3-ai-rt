@@ -31,7 +31,7 @@ idCVar joy_aimAssist("joy_aimAssist", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEG
                      "Gamepad aim assist: 0 = off, 1 = friction (look slows over a target), 2 = friction + "
                      "adhesion (view follows a moving target)",
                      0, 2);
-idCVar joy_aimAssistStrength("joy_aimAssistStrength", "1.0", CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT,
+idCVar joy_aimAssistStrength("joy_aimAssistStrength", "0.75", CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT,
                              "Aim assist overall strength, scales friction and adhesion", 0.0f, 2.0f);
 idCVar joy_aimAssistAngle("joy_aimAssistAngle", "6", CVAR_GAME | CVAR_ARCHIVE | CVAR_FLOAT,
                           "Aim assist cone, degrees from the target's edge", 1.0f, 20.0f);

@@ -29,15 +29,24 @@ Code release.
 
 idCVar joy_rumbleEnable("joy_rumbleEnable", "1", CVAR_BOOL | CVAR_ARCHIVE, "Enable gamepad rumble");
 idCVar joy_rumble("joy_rumble", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
-                  "Gamepad rumble overall strength. 0 also disables rumble", 0.0f, 2.0f);
+                  "Gamepad rumble overall strength. 0 also disables rumble", 0.0f, 4.0f);
 idCVar joy_rumbleFire("joy_rumbleFire", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for weapon fire", 0.0f,
-                      2.0f);
+                      4.0f);
 idCVar joy_rumbleMelee("joy_rumbleMelee", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for melee hits and strikes",
-                       0.0f, 2.0f);
+                       0.0f, 4.0f);
 idCVar joy_rumbleHit("joy_rumbleHit", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
-                     "Rumble scale for hit confirmation (your shots landing)", 0.0f, 2.0f);
+                     "Rumble scale for hit confirmation (your shots landing)", 0.0f, 4.0f);
 idCVar joy_rumbleDamage("joy_rumbleDamage", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for damage taken", 0.0f,
-                        2.0f);
+                        4.0f);
+idCVar joy_rumbleFloor("joy_rumbleFloor", "0.2", CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Lowest nonzero motor level, to get past the motor's dead band. 0 = linear", 0.0f, 0.6f);
+idCVar joy_rumbleGamma("joy_rumbleGamma", "0.6", CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Motor response curve; below 1 lifts weak effects more than strong ones. 1 = linear", 0.2f,
+                       1.0f);
+idCVar joy_rumbleLength("joy_rumbleLength", "1.5", CVAR_FLOAT | CVAR_ARCHIVE,
+                        "Scales every effect's duration. 1 = original lengths", 0.5f, 4.0f);
+idCVar joy_rumbleMinMs("joy_rumbleMinMs", "90", CVAR_INTEGER | CVAR_ARCHIVE,
+                       "Shortest effect in ms, so the motor has time to spin up. 0 = no minimum", 0, 300);
 idCVar joy_rumbleDebug("joy_rumbleDebug", "0", CVAR_INTEGER,
                        "1 = log each rumble post, 2 = also log every motor update");
 
@@ -93,6 +102,15 @@ static float SlotEnvelope(const rumbleSlot_t &s, int now)
     return t >= 1.0f ? 0.0f : 1.0f - idMath::ClampFloat(0.0f, 1.0f, t);
 }
 
+// Maps a mixed 0..1 motor level through the floor + gamma curve; 0 stays 0.
+static float MotorCurve(float v)
+{
+    if (v <= 0.0f)
+        return 0.0f;
+    const float base = joy_rumbleFloor.GetFloat();
+    return base + (1.0f - base) * idMath::Pow(v, joy_rumbleGamma.GetFloat());
+}
+
 void Rumble_Post(int category, float low, float hi, int durMs)
 {
     if (category < 0 || category >= idCommon::RUMBLE_NUM_CATEGORIES || durMs <= 0)
@@ -105,6 +123,7 @@ void Rumble_Post(int category, float low, float hi, int durMs)
     hi = idMath::ClampFloat(0.0f, 1.0f, hi * scale);
     if (low <= 0.0f && hi <= 0.0f)
         return;
+    durMs = Max((int)(durMs * joy_rumbleLength.GetFloat()), joy_rumbleMinMs.GetInteger());
 
     const int now = Sys_Milliseconds();
     rumbleSlot_t &s = s_slots[category];
@@ -168,6 +187,10 @@ void Rumble_Frame(bool gameLive)
     }
     low = idMath::ClampFloat(0.0f, 1.0f, low * master);
     hi = idMath::ClampFloat(0.0f, 1.0f, hi * master);
+    const float rawLow = low;
+    const float rawHi = hi;
+    low = MotorCurve(low);
+    hi = MotorCurve(hi);
 
     if (active == 0)
     {
@@ -184,7 +207,8 @@ void Rumble_Frame(bool gameLive)
     s_lastSendMs = now;
 
     if (joy_rumbleDebug.GetInteger() >= 2)
-        common->Printf("RUMBLE motors active=%d low=%.2f hi=%.2f\n", active, low, hi);
+        common->Printf("RUMBLE motors active=%d low=%.2f hi=%.2f (pre-curve %.2f %.2f)\n", active, low, hi, rawLow,
+                       rawHi);
 }
 
 void Rumble_StopAll(void)

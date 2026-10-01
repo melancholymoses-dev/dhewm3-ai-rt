@@ -13,7 +13,9 @@ Every assist is individually switchable off. `joy_aimAssist 0` and
 | C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks | sys + framework + game/d3xp | **next** | built 2026-09-30, untested |
 | C1 | Radial look stick, legacy curve on the magnitude (`joy_newLook`) | framework only | low | built 2026-09-30, untested |
 | C2 | Ramp latch fix, 333 ms ramp kept (`joy_lookRampFix`) | framework only | low | built 2026-09-30, untested |
-| C4 | Aim assist: friction only, opt-in | game/d3xp + `GAME_API_VERSION` bump | parked | not started |
+| C4 | Aim assist: friction + optional adhesion (`joy_aimAssist`) | framework + game/d3xp, no ABI bump | | built 2026-09-30, untested |
+| C5 | D-pad weapon groups, multi-press cycles (`pad_weapGroups`); C5b centre-screen selector (`pad_weapOverlay`) | game/d3xp + pad cfgs + new .gui | next after C3 | planned |
+| C6 | Radial weapon wheel | framework + game/d3xp + new .gui | parked | not planned for now |
 
 ## Playtest 2026-09-30 (stock defaults)
 
@@ -136,12 +138,20 @@ every 16 ms; the 150 ms timeout stops them if frames stall.
 | CVar | Default | Meaning |
 |---|---|---|
 | `joy_rumbleEnable` | 1 | Master on/off. **0 disables all rumble** |
-| `joy_rumble` | 1.0 | Overall strength (0–2); 0 also disables |
+| `joy_rumble` | 1.0 | Overall strength (0–4); 0 also disables |
 | `joy_rumbleFire` | 1.0 | Weapon-fire scale |
 | `joy_rumbleMelee` | 1.0 | Melee hit/strike scale |
 | `joy_rumbleHit` | 1.0 | Hit-confirm scale |
 | `joy_rumbleDamage` | 1.0 | Damage-taken scale |
-| `joy_rumbleDebug` | 0 | 1 = log posts, 2 = also log motor updates |
+| `joy_rumbleLength` | 1.5 | Scales every effect's duration |
+| `joy_rumbleMinMs` | 90 | Shortest effect, so the motor spins up (after `Length`) |
+| `joy_rumbleFloor` | 0.2 | Lowest nonzero motor level, gets past the motor's dead band |
+| `joy_rumbleGamma` | 0.6 | Motor curve `floor + (1−floor)·v^gamma` after mixing; <1 lifts weak effects, 1.0 stays 1.0 |
+| `joy_rumbleDebug` | 0 | 1 = log posts, 2 = also log motor updates (with pre-curve values) |
+
+Playtest 2026-09-30: Xbox One pad needed `joy_rumble 2`, which already saturated shotgun/flashlight/chainsaw
+at 1.0. Curve + length added instead of a bigger multiplier. Linear original: `Floor 0`, `Gamma 1`,
+`Length 1`, `MinMs 0`. Cap raised to 4× on all strength cvars.
 
 **Check:** `joy_rumbleDebug 2`. Fire each weapon and read the posted values; `joy_rumble 0`
 must produce no `RUMBLE` lines at all. Flashlight-melee a zombie, then a wall, then the air:
@@ -169,80 +179,129 @@ means something keeps posting; `FAILED` or `skipped` lines mean the stop never r
 
 ## C4 — Aim assist
 
-**Parked 2026-09-30.** The stock pad's scramble against close, fast, low enemies is
-part of the horror now. If revived: friction only (`joy_aimAssist 1`), default 0,
-and exclude targets below the eye-pitch cone so trites stay a panic. Adhesion is
-not planned.
+**Built 2026-09-30, not yet validated in-game.** Unparked: with C1 the stick moves freely
+off-axis, so holding a line on a target is harder than with the old axis-snapped aim.
 
-Two mechanisms, staged, both off by default until tuned:
+**No game ABI change.** Everything runs inside `idPlayer::UpdateViewAngles`, which already ends
+with `UpdateDeltaViewAngles(viewAngles)`, so any change to `viewAngles` folds into
+`deltaViewAngles` and persists. The engine contributes one function through
+`GetAdditionalFunction`: `FT_GamepadLookActive`, true while the look stick (not the mouse)
+moved the view in the last 100 ms. Mouse aim is never assisted.
 
-- **Friction** — scale look rate down while the reticle is near a valid target.
-  This is what the dead `GetAimAssistSensitivity` hook at
-  [UsercmdGen.cpp:936](../../neo/framework/UsercmdGen.cpp#L936) was for.
-- **Adhesion** — actively steer the reticle toward a moving target, proportional
-  to the target's screen-space velocity, only while the stick is being moved.
+| File | Change |
+|---|---|
+| `neo/framework/UsercmdGen.cpp/.h` | `lastPadLookMs` (look stick past deadzone, both paths), `lastMouseLookMs`; `Usercmd_GamepadLookActive()` |
+| `neo/framework/Common.h/.cpp` | `FT_GamepadLookActive` |
+| `neo/{game,d3xp}/AimAssist.cpp/.h` (new) | `idAimAssist`: target selection, friction, adhesion, cvars |
+| `neo/{game,d3xp}/Player.h/.cpp` | `aimAssist` member; `Apply(this, prevViewAngles, viewAngles)` after the usercmd is applied |
+| `neo/CMakeLists.txt` | `AimAssist.cpp` in `src_game` and `src_d3xp` |
+| `Dhewm3SettingsMenu.cpp` | "Gamepad Aim Assist": mode combo, strength, crawler toggle |
 
-Adhesion is the one that reads as "Destiny". It is also the one that feels like
-cheating if overdone, so it ships second and separately gated.
+**Target selection** (every frame while active): `idAI`, alive, visible (`TracePoint` from the eye), takes damage,
+other team, within range, and the angle from view to the target's **edge** ≤ the cone. Aim point is
+60% of bounds height (chest). Score = edge angle / cone; the current target gets a 0.25 bonus.
+Weight = 1 − edge/cone (1 anywhere on the silhouette).
 
-### ABI
+| Mechanism | Per frame |
+|---|---|
+| Friction | stick input × (1 − friction·strength·weight), capped at 95% reduction |
+| Adhesion (mode 2) | + Δ(eye→target angles since last frame) × adhesion·strength·weight, clamped to max rate |
 
-`idGame` gains two virtuals; `GAME_API_VERSION` goes 9 → 10
-([Game.h:391](../../neo/framework/Game.h#L391)). Both `neo/game/Game_local.cpp`
-and `neo/d3xp/Game_local.cpp` must implement them — the game is a real DLL
-boundary unless `HARDLINK_GAME` is set ([CMakeLists.txt:1719](../../neo/CMakeLists.txt#L1719)).
-
-```
-virtual float GetAimAssistSensitivity() = 0;       // friction, 1.0 = none
-virtual void  GetAimAssistAngle( idAngles &out ) = 0;  // adhesion, zero = none
-```
-
-### Game side
-
-New `game/AimAssist.cpp/.h` (mirrored to `d3xp/`), owned by `idPlayer`, updated
-once per think before `UpdateViewAngles`:
-
-1. Candidate set: entities in the PVS within `joy_aimAssistRange`, inside
-   `joy_aimAssistAngle` of the view axis, `health > 0`, and reachable by a trace
-   from the eye. Reuse the existing `idAI::GetAimDir` visibility pattern
-   ([AI.cpp:4592](../../neo/game/ai/AI.cpp#L4592)).
-2. Score by angular distance, prefer the previous frame's target with hysteresis
-   so the assist does not flick between two adjacent enemies.
-3. Friction: scale by angular distance, full effect on-target, none at the cone
-   edge.
-4. Adhesion: project target velocity to screen space, emit the angular delta
-   needed to track it, clamped to `joy_aimAssistMaxRate`.
-
-Adhesion must be applied through `deltaViewAngles` via `UpdateDeltaViewAngles`,
-not by writing `viewAngles` — the player derives `viewAngles` from the absolute
-`usercmd.angles` every frame ([Player.cpp:5684](../../neo/game/Player.cpp#L5684)),
-so a direct write is overwritten on the next tick.
-
-### Gating
+Skipped for: multiplayer, non-local player, any influence level, mouse input, and frames that
+change the view by more than 30° (teleport/`SetViewAngles` snaps).
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `joy_aimAssist` | 0 | **0 = off entirely.** 1 = friction only, 2 = friction + adhesion |
-| `joy_aimAssistRange` | 2000 | Max target distance |
-| `joy_aimAssistAngle` | 8 | Cone half-angle, degrees |
-| `joy_aimAssistFriction` | 0.5 | Look-rate scale on target |
-| `joy_aimAssistAdhesion` | 0.4 | Adhesion strength |
-| `joy_aimAssistMaxRate` | 60 | °/s ceiling on adhesion |
-| `joy_aimAssistDebug` | 0 | Overlay |
+| `joy_aimAssist` | 1 | **Toggle.** 0 off, 1 friction, 2 friction + adhesion |
+| `joy_aimAssistStrength` | 0.75 | Overall strength (0–2), scales both |
+| `joy_aimAssistSmallTargets` | 0 | Assist on crawlers (bounds ≤ 48 tall: trites, ticks). Off keeps the ankle-panic |
+| `joy_aimAssistAngle` | 6 | Cone, degrees from the target's edge |
+| `joy_aimAssistRange` | 2000 | |
+| `joy_aimAssistFriction` | 0.5 | |
+| `joy_aimAssistAdhesion` | 0.5 | |
+| `joy_aimAssistMaxRate` | 60 | °/s adhesion ceiling |
+| `joy_aimAssistDebug` | 0 | Yellow bounds = candidates that passed the cone + trace, green = target; 5 log lines/s |
 
-Hard gates beyond the CVar: no assist when `gameLocal.isMultiplayer` (it is
-client-side and unverifiable), no assist for mouse input, none while
-`influenceActive` or in a cinematic. Default 0 means a fresh install has stock
-aim until the player opts in.
+**Check:** `joy_aimAssistDebug 1`. Sweep the stick across a zombie: the log shows `friction`
+rising toward 0.5 at the centre and `in=` shrinking. Mode 2, strafing imp: nonzero `adhesion=`.
+Mouse only: no `AIMASSIST` lines. Trites: never green unless `joy_aimAssistSmallTargets 1`.
 
-**Check:** `joy_aimAssistDebug 1` draws the cone, every candidate, the selected
-target with its score, and the friction scale + adhesion °/s as text. Tune from
-that overlay, not by feel. `joy_aimAssist 0` must produce a bit-identical
-`usercmd` stream to a build without C4 — verify by recording a demo with the
-feature compiled in but disabled.
+**Exit:** tracking a strafing imp at mid range feels assisted, not magnetic; `joy_aimAssist 0`
+is inert (returns before touching the angles).
 
-**Exit:** tracking a strafing Imp at mid range feels assisted but not
-magnetic; `joy_aimAssist 0` provably inert; both `game/` and `d3xp/` build.
+---
+
+## C5 — D-pad weapon groups
+
+Each D-pad direction holds a group of up to 4 weapons. Pressing it selects the group; each further
+press steps to the next weapon in it. The stock pad cfgs bind the D-pad to 4 single weapons only.
+
+| Change | Where |
+|---|---|
+| `IMPULSE_30..33` = weapon group 0..3. Free in both games (d3xp uses 25 and 27) | `neo/framework/UsercmdGen.h` |
+| `CycleWeaponGroup(g)` from `PerformImpulse`. Group lists hold classnames, resolved with `SlotForWeapon`; missing classnames are skipped | `neo/{game,d3xp}/Player.{h,cpp}` |
+| Step rule: if `idealWeapon` (or the pending pick) is in the group, go to the next owned weapon with ammo (`HasAmmo` or `weaponN_allowempty`), wrapping. Otherwise go to the group's last-used weapon, else its first available one | same |
+| Commit delay: hold the pick as `pendingWeapon`, then call `SelectWeapon` once `pad_weapCommitMs` passes with no press. 0 = select on every press | same, ticked in `idPlayer::Think` |
+| HUD: `UpdateHudWeapon` highlights `pendingWeapon` when one is set, then fires `weaponChange`. Uses the existing `Weapon0..11` strip in `hud.gui`; no new art | same |
+| Binds: `JOY_DPAD_*` → `_impulse30..33` | `base/gamepad.cfg`, `base/gamepad-d3xp.cfg` |
+
+| CVar | Default | Meaning |
+|---|---|---|
+| `pad_weapGroups` | 1 | **Toggle.** 0 = impulses 30–33 do nothing (bind the D-pad back to stock) |
+| `pad_weapGroup0..3` | see below | Space-separated classnames, cycle order |
+| `pad_weapCommitMs` | 250 | Commit delay, 0 = immediate |
+| `pad_weapDebug` | 0 | Log group, candidates, skip reason (not owned / no ammo), commit |
+
+| Dir | Base default | d3xp default |
+|---|---|---|
+| Left (0) | fists, chainsaw, flashlight | + `weapon_grabber` |
+| Up (1) | pistol, shotgun, machinegun | same (+ double-barrel if separate class) |
+| Right (2) | chaingun, plasmagun, rocketlauncher | same |
+| Down (3) | handgrenade, bfg, soulcube | soulcube → `weapon_bloodstone_passive` |
+
+The d3xp classnames are not verified; d3xp `player.def` is not in the extracted paks. Check with
+`pad_weapDebug 1`, which logs unresolved classnames at spawn. Toggle weapons (flashlight, soul cube)
+toggle only on a re-press of the same slot; cycling always passes a different slot.
+
+**Check:** `pad_weapDebug 1`, `give all`. Tap Up 3× quickly: one switch to machinegun, and the HUD strip
+steps pistol→shotgun→machinegun. Empty the shotgun: Up skips it. `pad_weapCommitMs 0`: every press switches.
+
+### C5b — Centre-screen selector (HL2 style)
+
+Cross layout around the crosshair, one arm per D-pad direction. Each arm shows its group's icons, the
+pending pick highlighted, and its ammo count; weapons with no ammo are dimmed red, unowned ones hidden.
+
+| Change | Where |
+|---|---|
+| New `guis/weapsel.gui`: 4 arms × 4 slot windows, `background "gui::wsel_G_N_icon"` (same pattern as `hud.gui`'s `gui::itemicon`), HUD fonts for ammo, `onNamedEvent` show/fade | `base/guis/weapsel.gui` (loose) |
+| Icons: `guis/assets/hud/icons/*w.tga`. Widths vary (pistol 64×64, BFG 128×64): fixed-height boxes, width from a `wsel_G_N_wide` flag | — |
+| Per slot: icon, owned, ammo text, empty, highlight; plus `wsel_alpha`. Ammo per weapon from `idInventory` (`AmmoIndexForWeaponClass`, clip) | `neo/{game,d3xp}/Player.cpp` |
+| Load with `uiManager->FindGui` next to the HUD; draw from `DrawHUD` after `_hud->Redraw` | same |
+| Visibility: open on a group press, hold while `pendingWeapon` is set, fade over `pad_weapOverlayFadeMs` after commit. Hidden with the HUD (`g_showHud 0`), in cinematics, PDA, dead | same |
+
+| CVar | Default | Meaning |
+|---|---|---|
+| `pad_weapOverlay` | 1 | **Toggle.** 0 = the HUD strip only |
+| `pad_weapOverlayFadeMs` | 1000 | Hold + fade after commit |
+
+d3xp: grabber and artifact icons not located yet; until found, those slots fall back to the
+weapon def's `icon` key.
+
+**Check:** `give all`, tap Up 3×: the overlay appears, the highlight steps along the Up arm, then fades ~1 s
+after the switch. Empty the shotgun: its icon goes red and the cycle skips it. `g_showHud 0`: no overlay.
+
+---
+
+## C6 — Radial weapon wheel (parked)
+
+Parked: C5 covers the need. About 2–3× the work, mostly input routing.
+
+| Piece | Work |
+|---|---|
+| Input | While the wheel button is held, `UsercmdGen` stops look from the right stick and passes the stick direction in `usercmd.mx/my` (already the in-world GUI cursor path). Clear the look ramp on close to avoid a snap |
+| GUI | New `guis/weaponwheel.gui`: 12 fixed-angle `windowDef`s, icons from `guis/assets/hud/icons/*w.tga`. Shipped loose or in our pk4 |
+| Game | Fill state vars for each slot (owned, ammo from `idInventory`, highlight); draw from `DrawHUD`; select on release with C5's ownership/ammo rules |
+| Options | Slow time while open (single player); off in multiplayer |
 
 ---
 
@@ -256,7 +315,8 @@ the existing `joy_*` block at [line 1824](../../neo/framework/Dhewm3SettingsMenu
 |---|---|
 | Look stick | `joy_newLook`, `joy_lookDeadZone`, `joy_lookOuterDeadZone`, `joy_dampenLook`, `joy_deltaPerMSLook`, `joy_lookRampFix` (new "Gamepad Look Stick" heading) |
 | Rumble | `joy_rumbleEnable`, `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage` |
-| Aim assist | `joy_aimAssist` (combo: Off / Friction / Friction + Adhesion), then the five tuning floats |
+| Aim assist | `joy_aimAssist` (combo: Off / Friction / Friction + Adhesion), `joy_aimAssistStrength`, `joy_aimAssistSmallTargets`. Tuning floats are console-only |
+| Weapon groups | `pad_weapGroups`, `pad_weapCommitMs`, `pad_weapOverlay`. Group lists and fade time are console-only |
 
 `joy_gammaLook`, `joy_powerScale`, `joy_deadZone`, `joy_dampenLook` and
 `joy_deltaPerMSLook` stay for the legacy path and get a "legacy" label. Retire
@@ -270,7 +330,8 @@ them only once `joy_newLook 1` has shipped as default for a while.
 |---|---|
 | C1, C2 | `neo/framework/UsercmdGen.cpp`, `Dhewm3SettingsMenu.cpp` |
 | C3 | `neo/sys/events.cpp`, `neo/framework/{Rumble.cpp,Rumble.h,Common.h,Common.cpp,Session.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Game_local.h,Game_local.cpp,Player.cpp,Weapon.cpp}`, `neo/CMakeLists.txt` |
-| C4 | `neo/framework/Game.h`, `neo/game/{AimAssist.cpp,.h,Player.cpp,Player.h,Game_local.cpp}`, same five under `neo/d3xp/`, `neo/CMakeLists.txt`, `Dhewm3SettingsMenu.cpp` |
+| C4 | `neo/framework/{UsercmdGen.cpp,UsercmdGen.h,Common.h,Common.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{AimAssist.cpp,AimAssist.h,Player.h,Player.cpp}`, `neo/CMakeLists.txt` |
+| C5 | `neo/framework/{UsercmdGen.h,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Player.h,Player.cpp}`, `base/{gamepad.cfg,gamepad-d3xp.cfg}`; C5b adds `base/guis/weapsel.gui` |
 
 C3 and C4 both need `neo/game/` and `neo/d3xp/` kept in sync. C4 adds new source
 files, so `src_game` and `src_d3xp` in `neo/CMakeLists.txt` need updating.
