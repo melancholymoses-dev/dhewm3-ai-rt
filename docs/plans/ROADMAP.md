@@ -106,9 +106,8 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-
 | `20260930_AO_GI_refine.md` | AO falloff, AO on indirect vs direct light, `r_rtAODebug`. |
-| `20260906_bloom_plan.md` | Bloom post-process — unimplemented; the tonemapped HDR pipeline it needs now exists. |
+| `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. Unimplemented; revised 2026-09-30. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `20260924_controller_gunfeel.md` | Gamepad aim response, rumble, aim assist (C1-C4). Orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |

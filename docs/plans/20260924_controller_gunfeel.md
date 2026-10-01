@@ -8,15 +8,20 @@ curve. Rumble is a stub (`assert(0)`), aim assist is `#if 0`.
 Every assist is individually switchable off. `joy_aimAssist 0` and
 `joy_rumble 0` restore stock behaviour with no recompile.
 
-| # | Stage | Scope | Status |
-|---|---|---|---|
-| C1 | Radial deadzone + magnitude curve + input overlay | framework only | not started |
-| C2 | Acceleration model, replaces the latching limiter | framework only | not started |
-| C3 | Rumble: `Sys_SetRumble` + effect mixer + 3 game hooks | sys + framework + game/d3xp | not started |
-| C4 | Aim assist: friction then adhesion | game/d3xp + `GAME_API_VERSION` bump | not started |
+| # | Stage | Scope | Priority | Status |
+|---|---|---|---|---|
+| C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks | sys + framework + game/d3xp | **next** | not started |
+| C1 | Radial deadzone + magnitude curve, **calibrated to today's rates** | framework only | low | not started |
+| C2 | Latch fix only; keep the 333 ms ramp | framework only | low | not started |
+| C4 | Aim assist: friction only, opt-in | game/d3xp + `GAME_API_VERSION` bump | parked | not started |
 
-C3 before C4: rumble is self-contained, C4 is the only stage that touches the
-game ABI.
+## Playtest 2026-09-30 (stock defaults)
+
+| Observation | Plan consequence |
+|---|---|
+| Low sensitivity, "Resident Evil clunk", doesn't feel bad | Feel is a keeper. C1/C2 fix defects only; drop the 240→360 / 130→250 retune |
+| Panic with trites at the ankles (never on m/kb) | Slow pitch (130°/s) + 333 ms ramp is creating horror tension. Preserve it; C4 adhesion would erase it |
+| Rumble missing; wanted on flashlight melee | C3 first, with a melee hook |
 
 ---
 
@@ -83,8 +88,10 @@ viewangles[YAW]   -= dt * s * dir.x * joy_yawSpeed;
 viewangles[PITCH] += dt * s * dir.y * joy_pitchSpeed * invert;
 ```
 
-Turn-rate retune once the curve is in: `joy_yawSpeed` 240 → 360,
-`joy_pitchSpeed` 130 → 250. Both are already `CVAR_ARCHIVE` with a 600 ceiling.
+No turn-rate retune (playtest 2026-09-30). `joy_yawSpeed` 240 and `joy_pitchSpeed` 130
+stay. Pick `joy_lookCurve`/`joy_lookCurveBlend` defaults so full deflection and half
+deflection on a cardinal axis give the same °/s as the legacy path; read both from
+the overlay with `joy_newLook 0/1`.
 
 **Check:** `joy_debugInput 1` draws raw stick x/y, post-deadzone magnitude,
 shaped magnitude, and final °/s. Roll the stick around the rim at constant
@@ -97,6 +104,10 @@ still reachable via `joy_newLook 0`.
 ---
 
 ## C2 — Acceleration model
+
+**Rescoped 2026-09-30:** ship only the latch fix (per-direction ramp state, decay on
+release, reset in `Clear()`), with the existing 0→full ramp over 333 ms kept as the
+default. The boost model below is optional, behind `joy_lookAccelBoost` > 1.
 
 Replaces `joy_dampenLook`/`joy_deltaPerMSLook` for the `joy_newLook` path. The
 old CVars stay for the legacy path.
@@ -154,14 +165,19 @@ with a linear decay envelope. Per tick, sum and clamp to 1.0, scale by
 `joy_rumble`, call `Sys_SetRumble`. Summing rather than replacing is what keeps
 a fire effect from cancelling a simultaneous hit effect.
 
-Game hooks — all three already exist and all three must be mirrored into
-`neo/d3xp/`:
+Game hooks: all four already exist, and all four must be mirrored into
+`neo/d3xp/`. Every hook posts only when the owner is `gameLocal.GetLocalPlayer()`.
 
 | Event | Hook | Effect |
 |---|---|---|
 | Weapon fired | [Player.cpp:3090](../../neo/game/Player.cpp#L3090) `WeaponFireFeedback` | Short, sharp. Reads `rumble_low`/`rumble_hi`/`rumble_ms` from the passed `weaponDef`, falling back to a default |
-| Hit confirm | [Player.cpp:7740](../../neo/game/Player.cpp#L7740) `DamageFeedback` | Very short high-freq tick, scaled by `damage` |
+| Melee strike | [Weapon.cpp:3524](../../neo/game/Weapon.cpp#L3524) `Event_Melee`, at the `hitSound` dispatch | `hit` (damaged an entity): heavy low-freq thump. Wall/prop strike (`hitSound` non-empty, `!hit`): light high-freq tap. Miss: nothing. Keys `rumble_hit_*` / `rumble_strike_*` on the `meleeDef`, so flashlight, fists, chainsaw and berserk differ in def files |
+| Hit confirm | [Player.cpp:7740](../../neo/game/Player.cpp#L7740) `DamageFeedback` | Very short high-freq tick, scaled by `damage`. Skip when `inflictor == this` (melee: `Event_Melee` passes `owner` as inflictor), so the melee thump isn't doubled |
 | Damage taken | [Player.cpp:7883](../../neo/game/Player.cpp#L7883) `Damage` | Longer low-freq, scaled by `damage` |
+
+`Event_Melee` respects `nextStrikeFx` (200 ms) for wall strikes by blanking `hitSound`;
+the rumble inherits that throttle for free. The chainsaw calls `Event_Melee` every
+frame, so hits need the same throttle, or chainsaw rumble must be a sustained effect.
 
 `WeaponFireFeedback` already carries the weapon dict for view kick, so
 per-weapon strength is def-file data, not a table in code. Shotgun and BFG get
@@ -171,6 +187,7 @@ heavy keys; pistol stays light.
 |---|---|---|
 | `joy_rumble` | 1.0 | Master scale. **0 disables all rumble** |
 | `joy_rumbleFire` | 1.0 | Weapon-fire scale |
+| `joy_rumbleMelee` | 1.0 | Melee hit/strike scale |
 | `joy_rumbleHit` | 1.0 | Hit-confirm scale |
 | `joy_rumbleDamage` | 1.0 | Damage-taken scale |
 
@@ -178,12 +195,19 @@ heavy keys; pistol stays light.
 Fire each weapon and confirm the envelope matches its def keys; `joy_rumble 0`
 must leave `Sys_SetRumble` uncalled, not called with zeroes.
 
-**Exit:** all three events felt distinctly, no stuck motor on level load or
+Flashlight-melee a zombie, then a wall, then the air: thump, tap, nothing.
+
+**Exit:** all four events felt distinctly, no stuck motor on level load or
 weapon switch, master toggle silent.
 
 ---
 
 ## C4 — Aim assist
+
+**Parked 2026-09-30.** The stock pad's scramble against close, fast, low enemies is
+part of the horror now. If revived: friction only (`joy_aimAssist 1`), default 0,
+and exclude targets below the eye-pitch cone so trites stay a panic. Adhesion is
+not planned.
 
 Two mechanisms, staged, both off by default until tuned:
 
@@ -267,7 +291,7 @@ the existing `joy_*` block at [line 1824](../../neo/framework/Dhewm3SettingsMenu
 |---|---|
 | Aim response | `joy_newLook`, `joy_lookDeadZone`, `joy_lookOuterDeadZone`, `joy_lookCurve`, `joy_lookCurveBlend`, `joy_yawSpeed`, `joy_pitchSpeed` |
 | Acceleration | `joy_lookAccelTime`, `joy_lookAccelBoost`, `joy_lookAccelThreshold` |
-| Rumble | `joy_rumble`, `joy_rumbleFire`, `joy_rumbleHit`, `joy_rumbleDamage` |
+| Rumble | `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage` |
 | Aim assist | `joy_aimAssist` (combo: Off / Friction / Friction + Adhesion), then the five tuning floats |
 
 `joy_gammaLook`, `joy_powerScale`, `joy_deadZone`, `joy_dampenLook` and
@@ -282,7 +306,7 @@ them only once `joy_newLook 1` has shipped as default for a while.
 |---|---|
 | C1 | `neo/framework/UsercmdGen.cpp`, `.h`, `Dhewm3SettingsMenu.cpp` |
 | C2 | `neo/framework/UsercmdGen.cpp`, `.h`, `Dhewm3SettingsMenu.cpp` |
-| C3 | `neo/sys/events.cpp`, `neo/sys/sys_public.h`, `neo/framework/UsercmdGen.cpp`, `Common.h`, `Common.cpp`, `neo/game/Player.cpp`, `neo/d3xp/Player.cpp`, weapon defs, `Dhewm3SettingsMenu.cpp` |
+| C3 | `neo/sys/events.cpp`, `neo/sys/sys_public.h`, `neo/framework/UsercmdGen.cpp`, `Common.h`, `Common.cpp`, `neo/{game,d3xp}/Player.cpp`, `neo/{game,d3xp}/Weapon.cpp`, weapon + melee defs, `Dhewm3SettingsMenu.cpp` |
 | C4 | `neo/framework/Game.h`, `neo/game/{AimAssist.cpp,.h,Player.cpp,Player.h,Game_local.cpp}`, same five under `neo/d3xp/`, `neo/CMakeLists.txt`, `Dhewm3SettingsMenu.cpp` |
 
 C3 and C4 both need `neo/game/` and `neo/d3xp/` kept in sync. C4 adds new source
