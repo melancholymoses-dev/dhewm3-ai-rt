@@ -176,6 +176,9 @@ static bool s_fsr1Ready = false;
 static bool s_motionDebugReady = false;
 static bool s_fsrTcMaskReady = false;
 static bool s_fsrMaskDebugReady = false;
+// tr.frameCount of the last successful reactive-mask generate per slot; the overlay and
+// FSR 2 only consume the mask when this matches the current frame.
+static int s_reactiveMaskFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static int s_fsrLoggedMode = -1; // last r_fsr value announced to the console
 
 // Set by VK_RT_DispatchUpscale once FSR 2 has actually run.  Read a frame later by
@@ -941,6 +944,10 @@ bool VK_RT_MaskDebugActive(void)
     if (vkRT.reactiveMask[vk.currentFrame].image == VK_NULL_HANDLE ||
         vkRT.tcMask[vk.currentFrame].image == VK_NULL_HANDLE)
         return false;
+    // A failed generate leaves the mask undefined and in GENERAL, not the read layout
+    // the overlay's descriptors declare.
+    if (s_reactiveMaskFrame[vk.currentFrame] != tr.frameCount)
+        return false;
 
     // BOTH masks, not either: a mask nothing wrote would read as "this mask is empty"
     // rather than "nothing generated it" (the trap VK_RT_MotionDebugActive guards below),
@@ -1541,14 +1548,20 @@ static void VK_RT_DispatchFsr2(VkCommandBuffer cmd, int frameIdx)
                    FFX_FSR2_AUTOREACTIVEFLAGS_USE_COMPONENTS_MAX;
 
         const FfxErrorCode grErr = ffxFsr2ContextGenerateReactiveMask(&s_fsr2Ctx, &gr);
-        if (grErr != FFX_OK)
+        if (grErr == FFX_OK)
+        {
+            // UNORDERED_ACCESS is the truth after the generate pass; FSR 2 emits its own
+            // GENERAL -> SHADER_READ_ONLY barrier when it binds this as an SRV.
+            dd.reactive = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.reactiveMask[frameIdx].image,
+                                                  vkRT.reactiveMask[frameIdx].view, dispW, dispH, VK_FORMAT_R8_UNORM,
+                                                  L"reactiveMask", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+            s_reactiveMaskFrame[frameIdx] = tr.frameCount;
+        }
+        else
+        {
+            // Contents are undefined (discarded via UNDEFINED above): leave dd.reactive null.
             common->Warning("VK RT FSR2: ffxFsr2ContextGenerateReactiveMask failed (%d)", (int)grErr);
-
-        // UNORDERED_ACCESS is the truth after the generate pass; FSR 2 emits its own
-        // GENERAL -> SHADER_READ_ONLY barrier when it binds this as an SRV.
-        dd.reactive = ffxGetTextureResourceVK(&s_fsr2Ctx, vkRT.reactiveMask[frameIdx].image,
-                                              vkRT.reactiveMask[frameIdx].view, dispW, dispH, VK_FORMAT_R8_UNORM,
-                                              L"reactiveMask", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
     }
 
     if (haveTc)
@@ -2127,6 +2140,11 @@ void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
     vkDeviceWaitIdle(vk.device);
     VK_RT_Fsr2DestroyContext();
     VK_RT_Fsr2ClearCreateFailure();
+#if defined(DHEWM3_FSR2)
+    const bool fsr2Possible = vk.fsr2Supported && vk.gbufferSupported;
+#else
+    const bool fsr2Possible = false;
+#endif
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         // Every image created below must also be destroyed here, or a window resize leaks
@@ -2146,12 +2164,18 @@ void VK_RT_ResizeUpscale(uint32_t width, uint32_t height)
         // reactiveMask matches the format FSR 2 uses for its own internal reactive resource
         // (FFX_SURFACE_FORMAT_R8_UNORM, ffx_fsr2.cpp) — the generate-reactive pass writes it
         // as a storage image, so the formats have to agree.
-        VK_RT_CreateUpscaleImage(vkRT.preAlphaColor[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
-                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "preAlphaColor");
-        VK_RT_CreateUpscaleImage(vkRT.reactiveMask[i], width, height, VK_FORMAT_R8_UNORM,
-                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "reactiveMask");
-        VK_RT_CreateUpscaleImage(vkRT.tcMask[i], width, height, VK_FORMAT_R8_UNORM,
-                                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "tcMask");
+        // FSR 2-only (~158 MiB at 4K across two slots), so skipped when FSR 2 can never run.
+        // Gated on static capability, not r_fsr, so toggling the cvar needs no realloc.
+        // Every consumer null-checks these images.
+        if (fsr2Possible)
+        {
+            VK_RT_CreateUpscaleImage(vkRT.preAlphaColor[i], width, height, VK_FORMAT_R16G16B16A16_SFLOAT,
+                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, "preAlphaColor");
+            VK_RT_CreateUpscaleImage(vkRT.reactiveMask[i], width, height, VK_FORMAT_R8_UNORM,
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "reactiveMask");
+            VK_RT_CreateUpscaleImage(vkRT.tcMask[i], width, height, VK_FORMAT_R8_UNORM,
+                                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "tcMask");
+        }
 
         // The views changed, so the bound descriptors are stale.  (The FSR 1 passes
         // rewrite theirs every dispatch, so they need nothing here.)

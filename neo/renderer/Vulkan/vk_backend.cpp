@@ -4529,19 +4529,19 @@ static void VK_DrainCompletedSlotGarbage()
     // Pending uploads may target buffers already queued for destruction; submit them first.
     VK_FlushPendingUploads();
 
-    bool allIdle = true;
+    // Only drain once the whole GPU is idle: image frees queue into vk.currentFrame, which
+    // can be newer than that slot's fence (the last submit was the previous slot).
     for (uint32_t f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
     {
         if (vkGetFenceStatus(vk.device, vk.inFlightFences[f]) != VK_SUCCESS)
-        {
-            allIdle = false;
-            continue;
-        }
+            return;
+    }
+    for (uint32_t f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+    {
         VK_Image_DrainGarbage(f);
         VK_Buffer_DrainGarbage(f);
     }
-    // BLAS retirement is keyed on tr.frameCount, not a slot, so it needs every slot idle.
-    if (allIdle && vk.rayTracingSupported)
+    if (vk.rayTracingSupported)
         VK_RT_DrainBLASGarbage();
 }
 
