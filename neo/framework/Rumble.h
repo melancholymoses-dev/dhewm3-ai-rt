@@ -23,7 +23,8 @@ Code release.
 void Rumble_Post(int category, float low, float hi, int durMs);
 
 // Main thread, once per common frame: mix active effects and update the motors.
-void Rumble_Frame(void);
+// gameLive = false (menu, console, loading) stops the motors and drops pending effects.
+void Rumble_Frame(bool gameLive);
 
 // Kill all effects and stop the motors (shutdown, map change).
 void Rumble_StopAll(void);

@@ -54,8 +54,13 @@ struct rumbleSlot_t
 };
 
 static rumbleSlot_t s_slots[idCommon::RUMBLE_NUM_CATEGORIES];
+static const int RUMBLE_STOP_RESENDS = 4;
+static const int RUMBLE_STOP_RESEND_MS = 50;
+
 static bool s_motorsOn = false;
 static int s_lastSendMs = 0;
+static int s_stopResends = 0;   // extra zero updates still owed after a stop
+static bool s_gameLive = false; // last Rumble_Frame verdict; posts outside a live game are dropped
 
 static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire", "melee", "hit", "damage"};
 
@@ -92,7 +97,7 @@ void Rumble_Post(int category, float low, float hi, int durMs)
 {
     if (category < 0 || category >= idCommon::RUMBLE_NUM_CATEGORIES || durMs <= 0)
         return;
-    if (!RumbleEnabled())
+    if (!RumbleEnabled() || !s_gameLive)
         return;
 
     const float scale = CategoryScale(category)->GetFloat();
@@ -118,18 +123,37 @@ void Rumble_Post(int category, float low, float hi, int durMs)
     }
 }
 
-void Rumble_Frame(void)
+// Stops are re-sent a few times so one dropped stop cannot leave a motor running.
+static void ResendStops(int now)
 {
-    const float master = joy_rumble.GetFloat();
-    if (!RumbleEnabled())
+    if (s_stopResends > 0 && now - s_lastSendMs >= RUMBLE_STOP_RESEND_MS)
     {
-        // Disabled: one stop if the motors were running, then never touch the sys layer.
-        if (s_motorsOn)
-            Rumble_StopAll();
+        Sys_SetRumble(0, 0, 0);
+        s_lastSendMs = now;
+        s_stopResends--;
+        if (joy_rumbleDebug.GetInteger() >= 2)
+            common->Printf("RUMBLE stop resend (%d left)\n", s_stopResends);
+    }
+}
+
+void Rumble_Frame(bool gameLive)
+{
+    const int now = Sys_Milliseconds();
+    const float master = joy_rumble.GetFloat();
+    if (!gameLive || !RumbleEnabled())
+    {
+        if (gameLive != s_gameLive && joy_rumbleDebug.GetInteger() >= 1)
+            common->Printf("RUMBLE game %s\n", gameLive ? "live" : "not live (menu/console/loading)");
+        s_gameLive = gameLive;
+        // Menu or disabled: stop the motors and drop pending effects, so nothing resumes later.
+        Rumble_StopAll();
+        ResendStops(now);
         return;
     }
+    if (!s_gameLive && joy_rumbleDebug.GetInteger() >= 1)
+        common->Printf("RUMBLE game live\n");
+    s_gameLive = true;
 
-    const int now = Sys_Milliseconds();
     float low = 0.0f;
     float hi = 0.0f;
     int active = 0;
@@ -147,8 +171,8 @@ void Rumble_Frame(void)
 
     if (active == 0)
     {
-        if (s_motorsOn)
-            Rumble_StopAll();
+        Rumble_StopAll();
+        ResendStops(now);
         return;
     }
     if (now - s_lastSendMs < RUMBLE_MIN_SEND_MS)
@@ -156,6 +180,7 @@ void Rumble_Frame(void)
 
     Sys_SetRumble(0, (int)(low * 65535.0f), (int)(hi * 65535.0f));
     s_motorsOn = true;
+    s_stopResends = 0;
     s_lastSendMs = now;
 
     if (joy_rumbleDebug.GetInteger() >= 2)
@@ -169,7 +194,9 @@ void Rumble_StopAll(void)
     {
         Sys_SetRumble(0, 0, 0);
         s_motorsOn = false;
-        if (joy_rumbleDebug.GetInteger() >= 2)
+        s_stopResends = RUMBLE_STOP_RESENDS;
+        s_lastSendMs = Sys_Milliseconds();
+        if (joy_rumbleDebug.GetInteger() >= 1)
             common->Printf("RUMBLE motors stopped\n");
     }
 }

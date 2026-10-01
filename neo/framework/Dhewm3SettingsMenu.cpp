@@ -1831,6 +1831,14 @@ static CVarOption controlOptions[] = {
                10.0f), // TODO: what are sensible min/max values?
                        // TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they were "bad idea"
 
+    CVarOption("Gamepad Look Stick"),
+    CVarOption("joy_newLook", "Radial look stick (fixes diagonal aiming)", OT_BOOL),
+    CVarOption("joy_lookDeadZone", "Look stick inner deadzone (radial)", OT_FLOAT, 0.0f, 0.9f),
+    CVarOption("joy_lookOuterDeadZone", "Look stick full-deflection point (radial)", OT_FLOAT, 0.5f, 1.0f),
+    CVarOption("joy_dampenLook", "Ramp up look speed", OT_BOOL),
+    CVarOption("joy_deltaPerMSLook", "Look ramp rate (per ms, 0.003 = 333 ms to full)", OT_FLOAT, 0.0005f, 0.02f),
+    CVarOption("joy_lookRampFix", "Restart look ramp on release/reversal", OT_BOOL),
+
     CVarOption("Gamepad Rumble"),
     CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
     CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 2.0f),

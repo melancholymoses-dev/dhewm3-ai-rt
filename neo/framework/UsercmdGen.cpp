@@ -362,6 +362,20 @@ class idUsercmdGenLocal : public idUsercmdGen
     void CircleToSquare(float &axis_x, float &axis_y) const;
     void HandleJoystickAxis(int keyNum, float unclampedValue, float threshold, bool positive);
     void JoystickMove(void);
+
+    // dhewm3-rt C1/C2 (docs/plans/20260924_controller_gunfeel.md): radial look stick + ramp latch fix.
+    struct lookRamp_t
+    {
+        float value; // last (ramp-limited) look value
+        int sign;    // direction it was moving, -1/+1, 0 = none
+        bool touched; // pressed during the current JoystickMove
+    };
+    float JoystickShapeLook(float value) const;
+    float RampLook(float lookValue, lookRamp_t &ramp, int sign);
+    void ResetLookRamps(void);
+    bool LookStickSigns(int upKey, int leftKey, float &pitchSign, float &yawSign) const;
+    void JoystickLook(float axis_x, float axis_y, float pitchSign, float yawSign);
+    void JoystickDebugLog(float axis_x, float axis_y, const idVec3 &anglesBefore);
     void JoystickFakeMouse(float axis_x, float axis_y, float deadzone);
     void MouseMove(void);
     void CmdButtons(void);
@@ -408,8 +422,11 @@ class idUsercmdGenLocal : public idUsercmdGen
 
     int pollTime;
     int lastPollTime;
-    float lastLookValuePitch;
-    float lastLookValueYaw;
+    lookRamp_t rampPitch; // legacy per-axis path
+    lookRamp_t rampYaw;
+    lookRamp_t rampLook; // joy_newLook path: ramps the magnitude; sign unused
+    idVec2 rampLookDir;  // direction of the last joy_newLook frame, for reversal detection
+    int lastJoyDebugMs;
 
     bool heldJump; // TODO: ???
 
@@ -491,6 +508,20 @@ idCVar joy_dampenLook("joy_dampenLook", "1", CVAR_BOOL | CVAR_ARCHIVE, "Do not a
 idCVar joy_deltaPerMSLook("joy_deltaPerMSLook", "0.003", CVAR_FLOAT | CVAR_ARCHIVE,
                           "Max amount to be added on look per MS");
 
+// dhewm3-rt C1: radial look stick.  Same curve (joy_gammaLook/joy_powerScale) on the stick's
+// magnitude instead of per axis, so cardinal speeds match the legacy path.
+idCVar joy_newLook("joy_newLook", "1", CVAR_BOOL | CVAR_ARCHIVE,
+                   "Look stick uses a radial deadzone and curves its magnitude, preserving direction (0 = legacy "
+                   "per-axis handling)");
+idCVar joy_lookDeadZone("joy_lookDeadZone", "0.25", CVAR_FLOAT | CVAR_ARCHIVE,
+                        "Radial inner deadzone of the look stick (joy_newLook 1)", 0.0f, 0.9f);
+idCVar joy_lookOuterDeadZone("joy_lookOuterDeadZone", "0.95", CVAR_FLOAT | CVAR_ARCHIVE,
+                             "Look stick magnitude that counts as full deflection (joy_newLook 1)", 0.5f, 1.0f);
+// dhewm3-rt C2: joy_dampenLook ramp latch fix.
+idCVar joy_lookRampFix("joy_lookRampFix", "1", CVAR_BOOL | CVAR_ARCHIVE,
+                       "Look ramp (joy_dampenLook) restarts on stick release and direction reversal (0 = legacy latch)");
+idCVar joy_debugInput("joy_debugInput", "0", CVAR_BOOL, "Log look-stick input, shaped value, ramp and deg/s");
+
 idCVar in_useGamepad("in_useGamepad", "1", CVAR_ARCHIVE | CVAR_BOOL, "enables/disables the gamepad for PC use");
 
 // TODO idCVar in_mouseInvertLook( "in_mouseInvertLook", "0", CVAR_ARCHIVE | CVAR_BOOL, "inverts the look controls so
@@ -517,7 +548,8 @@ idUsercmdGenLocal::idUsercmdGenLocal(void)
     toggled_zoom.Clear();
     toggled_run.on = in_alwaysRun.GetBool();
 
-    lastLookValuePitch = lastLookValueYaw = 0.0f;
+    lastJoyDebugMs = 0;
+    ResetLookRamps();
 
     ClearAngles();
     Clear();
@@ -920,15 +952,7 @@ void idUsercmdGenLocal::HandleJoystickAxis(int keyNum, float unclampedValue, flo
         return;
     }
 
-    float lookValue = 0.0f;
-    if (joy_gammaLook.GetBool())
-    {
-        lookValue = idMath::Pow(1.04712854805f, value * 100.0f) * 0.01f;
-    }
-    else
-    {
-        lookValue = idMath::Pow(value, joy_powerScale.GetFloat());
-    }
+    float lookValue = JoystickShapeLook(value);
 
 #if 0 // TODO: aim assist maybe.
 	idGame * game = common->Game();
@@ -960,42 +984,26 @@ void idUsercmdGenLocal::HandleJoystickAxis(int keyNum, float unclampedValue, flo
         break;
     }
     case UB_LOOKUP: {
-        if (joy_dampenLook.GetBool())
-        {
-            lookValue = Min(lookValue, (pollTime - lastPollTime) * joy_deltaPerMSLook.GetFloat() + lastLookValuePitch);
-            lastLookValuePitch = lookValue;
-        }
+        lookValue = RampLook(lookValue, rampPitch, -1);
 
         float invertPitch = joy_invertLook.GetBool() ? -1.0f : 1.0f;
         viewangles[PITCH] -= MS2SEC(pollTime - lastPollTime) * lookValue * joy_pitchSpeed.GetFloat() * invertPitch;
         break;
     }
     case UB_LOOKDOWN: {
-        if (joy_dampenLook.GetBool())
-        {
-            lookValue = Min(lookValue, (pollTime - lastPollTime) * joy_deltaPerMSLook.GetFloat() + lastLookValuePitch);
-            lastLookValuePitch = lookValue;
-        }
+        lookValue = RampLook(lookValue, rampPitch, 1);
 
         float invertPitch = joy_invertLook.GetBool() ? -1.0f : 1.0f;
         viewangles[PITCH] += MS2SEC(pollTime - lastPollTime) * lookValue * joy_pitchSpeed.GetFloat() * invertPitch;
         break;
     }
     case UB_LEFT: {
-        if (joy_dampenLook.GetBool())
-        {
-            lookValue = Min(lookValue, (pollTime - lastPollTime) * joy_deltaPerMSLook.GetFloat() + lastLookValueYaw);
-            lastLookValueYaw = lookValue;
-        }
+        lookValue = RampLook(lookValue, rampYaw, -1);
         viewangles[YAW] += MS2SEC(pollTime - lastPollTime) * lookValue * joy_yawSpeed.GetFloat();
         break;
     }
     case UB_RIGHT: {
-        if (joy_dampenLook.GetBool())
-        {
-            lookValue = Min(lookValue, (pollTime - lastPollTime) * joy_deltaPerMSLook.GetFloat() + lastLookValueYaw);
-            lastLookValueYaw = lookValue;
-        }
+        lookValue = RampLook(lookValue, rampYaw, 1);
         viewangles[YAW] -= MS2SEC(pollTime - lastPollTime) * lookValue * joy_yawSpeed.GetFloat();
         break;
     }
@@ -1036,6 +1044,165 @@ void idUsercmdGenLocal::JoystickFakeMouse(float axis_x, float axis_y, float dead
 
 /*
 =================
+idUsercmdGenLocal::JoystickShapeLook
+
+Response curve for a deadzone-rescaled deflection in [0,1].  Shared by both look paths.
+=================
+*/
+float idUsercmdGenLocal::JoystickShapeLook(float value) const
+{
+    if (joy_gammaLook.GetBool())
+    {
+        return idMath::Pow(1.04712854805f, value * 100.0f) * 0.01f;
+    }
+    return idMath::Pow(value, joy_powerScale.GetFloat());
+}
+
+/*
+=================
+idUsercmdGenLocal::RampLook
+
+joy_dampenLook: limit how fast a look value may rise (joy_deltaPerMSLook per ms).  With
+joy_lookRampFix the ramp restarts on a direction flip; release resets it in JoystickMove.
+Without it this is the original latch, which kept the last value forever.
+=================
+*/
+float idUsercmdGenLocal::RampLook(float lookValue, lookRamp_t &ramp, int sign)
+{
+    ramp.touched = true;
+    if (!joy_dampenLook.GetBool())
+    {
+        return lookValue;
+    }
+    if (joy_lookRampFix.GetBool() && sign != ramp.sign)
+    {
+        ramp.value = 0.0f;
+    }
+    ramp.sign = sign;
+    lookValue = Min(lookValue, (pollTime - lastPollTime) * joy_deltaPerMSLook.GetFloat() + ramp.value);
+    ramp.value = lookValue;
+    return lookValue;
+}
+
+void idUsercmdGenLocal::ResetLookRamps(void)
+{
+    memset(&rampPitch, 0, sizeof(rampPitch));
+    memset(&rampYaw, 0, sizeof(rampYaw));
+    memset(&rampLook, 0, sizeof(rampLook));
+    rampLookDir.Zero();
+}
+
+/*
+=================
+idUsercmdGenLocal::LookStickSigns
+
+True if this stick's four directions are bound to exactly the look actions (either way
+round), i.e. it can be handled as one 2D vector.  Custom binds fall back to the legacy path.
+=================
+*/
+bool idUsercmdGenLocal::LookStickSigns(int upKey, int leftKey, float &pitchSign, float &yawSign) const
+{
+    const int up = idKeyInput::GetUsercmdAction(upKey);
+    const int down = idKeyInput::GetUsercmdAction(upKey + 1);
+    const int left = idKeyInput::GetUsercmdAction(leftKey);
+    const int right = idKeyInput::GetUsercmdAction(leftKey + 1);
+
+    if (up == UB_LOOKUP && down == UB_LOOKDOWN)
+        pitchSign = 1.0f;
+    else if (up == UB_LOOKDOWN && down == UB_LOOKUP)
+        pitchSign = -1.0f;
+    else
+        return false;
+
+    if (left == UB_LEFT && right == UB_RIGHT)
+        yawSign = 1.0f;
+    else if (left == UB_RIGHT && right == UB_LEFT)
+        yawSign = -1.0f;
+    else
+        return false;
+
+    return true;
+}
+
+/*
+=================
+idUsercmdGenLocal::JoystickLook
+
+C1: radial deadzone, curve applied to the magnitude, direction kept exactly.  The legacy
+path deadzones and curves each axis separately, which leaves a square dead region and bends
+off-axis pushes toward the nearest axis.
+=================
+*/
+void idUsercmdGenLocal::JoystickLook(float axis_x, float axis_y, float pitchSign, float yawSign)
+{
+    const float dzIn = joy_lookDeadZone.GetFloat();
+    const float dzOut = Max(joy_lookOuterDeadZone.GetFloat(), dzIn + 0.01f);
+    const float m = idMath::Sqrt(axis_x * axis_x + axis_y * axis_y);
+    if (m <= dzIn)
+    {
+        if (joy_lookRampFix.GetBool())
+        {
+            rampLook.value = 0.0f;
+            rampLookDir.Zero();
+        }
+        return;
+    }
+
+    const idVec2 dir(axis_x / m, axis_y / m);
+    const float v = idMath::ClampFloat(0.0f, 1.0f, (m - dzIn) / (dzOut - dzIn));
+    float s = JoystickShapeLook(v);
+
+    if (joy_dampenLook.GetBool())
+    {
+        // C2: more than 90 degrees from last poll's direction counts as a reversal
+        if (joy_lookRampFix.GetBool() && dir * rampLookDir < 0.0f)
+        {
+            rampLook.value = 0.0f;
+        }
+        s = Min(s, (pollTime - lastPollTime) * joy_deltaPerMSLook.GetFloat() + rampLook.value);
+        rampLook.value = s;
+    }
+    rampLookDir = dir;
+
+    const float dt = MS2SEC(pollTime - lastPollTime);
+    const float invertPitch = joy_invertLook.GetBool() ? -1.0f : 1.0f;
+    viewangles[YAW] -= dt * s * dir.x * joy_yawSpeed.GetFloat() * yawSign;
+    viewangles[PITCH] += dt * s * dir.y * joy_pitchSpeed.GetFloat() * invertPitch * pitchSign;
+}
+
+/*
+=================
+idUsercmdGenLocal::JoystickDebugLog
+
+joy_debugInput: ~10 lines/s while the right stick is off-centre.  inDeg is the stick angle,
+outDeg the turn direction normalised by yaw/pitch speed; on joy_newLook 1 they should match.
+=================
+*/
+void idUsercmdGenLocal::JoystickDebugLog(float axis_x, float axis_y, const idVec3 &anglesBefore)
+{
+    const int dtMs = pollTime - lastPollTime;
+    const float m = idMath::Sqrt(axis_x * axis_x + axis_y * axis_y);
+    if (dtMs <= 0 || m < 0.05f || pollTime - lastJoyDebugMs < 100)
+    {
+        return;
+    }
+    lastJoyDebugMs = pollTime;
+
+    const float yawRate = idMath::AngleDelta(viewangles[YAW], anglesBefore[YAW]) / MS2SEC(dtMs);
+    const float pitchRate = (viewangles[PITCH] - anglesBefore[PITCH]) / MS2SEC(dtMs);
+    const float outX = -yawRate / joy_yawSpeed.GetFloat();
+    const float outY = -pitchRate / joy_pitchSpeed.GetFloat();
+    const float inDeg = RAD2DEG(idMath::ATan(-axis_y, axis_x));
+    const float outDeg = (outX != 0.0f || outY != 0.0f) ? RAD2DEG(idMath::ATan(outY, outX)) : 0.0f;
+    const float ramp = joy_newLook.GetBool() ? rampLook.value : Max(rampPitch.value, rampYaw.value);
+
+    common->Printf("JOY look %s raw=(%.2f,%.2f) m=%.2f inDeg=%.1f outDeg=%.1f yaw=%.0f pitch=%.0f deg/s ramp=%.2f\n",
+                   joy_newLook.GetBool() ? "new" : "legacy", axis_x, axis_y, m, inDeg, outDeg, yawRate, pitchRate,
+                   ramp);
+}
+
+/*
+=================
 idUsercmdGenLocal::JoystickMove
 =================
 */
@@ -1043,31 +1210,58 @@ void idUsercmdGenLocal::JoystickMove()
 {
     float threshold = joy_deadZone.GetFloat();
     float triggerThreshold = joy_triggerThreshold.GetFloat();
+    const idVec3 anglesBefore = viewangles;
 
-    float axis_y = joystickAxis[AXIS_LEFT_Y];
-    float axis_x = joystickAxis[AXIS_LEFT_X];
-    CircleToSquare(axis_x, axis_y);
+    rampPitch.touched = false;
+    rampYaw.touched = false;
 
-    HandleJoystickAxis(K_JOY_STICK1_UP, axis_y, threshold, false);
-    HandleJoystickAxis(K_JOY_STICK1_DOWN, axis_y, threshold, true);
-    HandleJoystickAxis(K_JOY_STICK1_LEFT, axis_x, threshold, false);
-    HandleJoystickAxis(K_JOY_STICK1_RIGHT, axis_x, threshold, true);
+    for (int stick = 0; stick < 2; stick++)
+    {
+        const int upKey = stick == 0 ? K_JOY_STICK1_UP : K_JOY_STICK2_UP; // then DOWN, LEFT, RIGHT
+        float axis_x = joystickAxis[stick == 0 ? AXIS_LEFT_X : AXIS_RIGHT_X];
+        float axis_y = joystickAxis[stick == 0 ? AXIS_LEFT_Y : AXIS_RIGHT_Y];
+        float pitchSign, yawSign;
 
-    JoystickFakeMouse(axis_x, axis_y, threshold);
+        if (joy_newLook.GetBool() && LookStickSigns(upKey, upKey + 2, pitchSign, yawSign))
+        {
+            JoystickLook(axis_x, axis_y, pitchSign, yawSign);
+            CircleToSquare(axis_x, axis_y); // GUI fake mouse keeps its old mapping
+        }
+        else
+        {
+            // the circle->square remap is for forwardmove/rightmove; look keeps it only on this legacy path
+            CircleToSquare(axis_x, axis_y);
+            HandleJoystickAxis(upKey, axis_y, threshold, false);
+            HandleJoystickAxis(upKey + 1, axis_y, threshold, true);
+            HandleJoystickAxis(upKey + 2, axis_x, threshold, false);
+            HandleJoystickAxis(upKey + 3, axis_x, threshold, true);
+        }
 
-    axis_y = joystickAxis[AXIS_RIGHT_Y];
-    axis_x = joystickAxis[AXIS_RIGHT_X];
-    CircleToSquare(axis_x, axis_y);
+        JoystickFakeMouse(axis_x, axis_y, threshold);
+    }
 
-    HandleJoystickAxis(K_JOY_STICK2_UP, axis_y, threshold, false);
-    HandleJoystickAxis(K_JOY_STICK2_DOWN, axis_y, threshold, true);
-    HandleJoystickAxis(K_JOY_STICK2_LEFT, axis_x, threshold, false);
-    HandleJoystickAxis(K_JOY_STICK2_RIGHT, axis_x, threshold, true);
-
-    JoystickFakeMouse(axis_x, axis_y, threshold);
+    // C2: an axis that was not pushed this poll restarts its ramp
+    if (joy_lookRampFix.GetBool())
+    {
+        if (!rampPitch.touched)
+        {
+            rampPitch.value = 0.0f;
+            rampPitch.sign = 0;
+        }
+        if (!rampYaw.touched)
+        {
+            rampYaw.value = 0.0f;
+            rampYaw.sign = 0;
+        }
+    }
 
     HandleJoystickAxis(K_JOY_TRIGGER1, joystickAxis[AXIS_LEFT_TRIG], triggerThreshold, true);
     HandleJoystickAxis(K_JOY_TRIGGER2, joystickAxis[AXIS_RIGHT_TRIG], triggerThreshold, true);
+
+    if (joy_debugInput.GetBool())
+    {
+        JoystickDebugLog(joystickAxis[AXIS_RIGHT_X], joystickAxis[AXIS_RIGHT_Y], anglesBefore);
+    }
 }
 
 /*
@@ -1280,6 +1474,10 @@ void idUsercmdGenLocal::Clear(void)
     mouseDx = mouseDy = 0;
     mouseButton = 0;
     mouseDown = false;
+
+    // C2: the original never reset its ramp here (part of the latch); keep that for the A/B
+    if (joy_lookRampFix.GetBool())
+        ResetLookRamps();
 }
 
 /*

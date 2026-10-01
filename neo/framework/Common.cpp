@@ -2835,8 +2835,11 @@ void idCommonLocal::Frame(void)
             session->UpdateScreen(false);
         }
 
-        // after the game frame, so effects it posted reach the motors this frame
-        Rumble_Frame();
+        // after the game frame, so effects it posted reach the motors this frame.  No rumble
+        // while the game isn't live: main menu/pause GUI, console, loading screen, ImGui menus.
+        const bool rumbleGameLive = sessLocal.guiActive == NULL && !sessLocal.insideExecuteMapChange &&
+                                    !console->Active() && !D3::ImGuiHooks::ShouldShowCursor();
+        Rumble_Frame(rumbleGameLive);
 
         // report timing information
         if (com_speeds.GetBool())

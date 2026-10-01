@@ -11,8 +11,8 @@ Every assist is individually switchable off. `joy_aimAssist 0` and
 | # | Stage | Scope | Priority | Status |
 |---|---|---|---|---|
 | C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks | sys + framework + game/d3xp | **next** | built 2026-09-30, untested |
-| C1 | Radial deadzone + magnitude curve, **calibrated to today's rates** | framework only | low | not started |
-| C2 | Latch fix only; keep the 333 ms ramp | framework only | low | not started |
+| C1 | Radial look stick, legacy curve on the magnitude (`joy_newLook`) | framework only | low | built 2026-09-30, untested |
+| C2 | Ramp latch fix, 333 ms ramp kept (`joy_lookRampFix`) | framework only | low | built 2026-09-30, untested |
 | C4 | Aim assist: friction only, opt-in | game/d3xp + `GAME_API_VERSION` bump | parked | not started |
 
 ## Playtest 2026-09-30 (stock defaults)
@@ -52,99 +52,57 @@ axes of one stick as a vector.
 
 ---
 
-## C1 — Radial deadzone + magnitude curve
+## C1 — Radial look stick
 
-New CVars, legacy names untouched, so `joy_newLook 0` is bit-identical to today
-and the menu cursor path in `events.cpp` is unaffected.
+**Built 2026-09-30, not yet validated in-game.** All in `neo/framework/UsercmdGen.cpp`.
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `joy_newLook` | 1 | 0 = legacy per-axis path (A/B) |
-| `joy_lookDeadZone` | 0.12 | Radial inner deadzone |
+| `joy_newLook` | 1 | **Toggle.** 0 = legacy per-axis path, unchanged |
+| `joy_lookDeadZone` | 0.25 | Radial inner deadzone (= legacy `joy_deadZone`, so cardinal speeds match) |
 | `joy_lookOuterDeadZone` | 0.95 | Magnitude that counts as full deflection |
-| `joy_lookCurve` | 2.0 | Exponent applied to magnitude |
-| `joy_lookCurveBlend` | 0.7 | 0 = linear, 1 = pure exponent |
-| `joy_debugInput` | 0 | Overlay |
+| `joy_debugInput` | 0 | Logs ~10 lines/s while the right stick is off-centre |
 
-Changes in `JoystickMove`:
+| Change | Where |
+|---|---|
+| `LookStickSigns`: a stick takes the new path only if its 4 directions are bound to exactly `_lookUp/_lookDown/_left/_right` (either way round). Anything else stays legacy | `JoystickMove` |
+| `JoystickLook`: radial deadzone → rescale → **the existing curve** (`joy_gammaLook`/`joy_powerScale`) on the magnitude → split by the unit direction. No `CircleToSquare` | new |
+| Legacy curve moved into `JoystickShapeLook`, shared by both paths | `HandleJoystickAxis` |
+| GUI fake mouse still gets the `CircleToSquare` values | `JoystickMove` |
 
-1. `LookStickBound(up, down, left, right)` — returns true only if all four keys
-   map to `UB_LOOKUP`/`UB_LOOKDOWN`/`UB_LEFT`/`UB_RIGHT`, recording sign per
-   axis. False (custom binds, stick-as-buttons) falls through to the legacy four
-   `HandleJoystickAxis` calls.
-2. When true and `joy_newLook`, route that stick to a new `JoystickLook(x, y)`
-   and **skip `CircleToSquare`** — the circle→square remap exists for
-   `forwardmove`/`rightmove` and only inflates diagonal turn rates for look.
-3. The move stick keeps `CircleToSquare` and the existing path entirely.
+No new curve cvars: reusing the legacy curve on the magnitude reproduces today's cardinal
+speeds exactly (`joy_gammaLook 1` = 0.01·100^v, so half deflection is 10% speed). Diagonals
+are no longer inflated: the legacy path gave ~1.4× speed at full diagonal.
 
-`JoystickLook` math:
-
-```
-m = len(v);  if (m <= dzIn) return;
-dir = v / m;                                        // direction preserved exactly
-m = min(1, (m - dzIn) / (dzOut - dzIn));
-s = mix(m, pow(m, joy_lookCurve), joy_lookCurveBlend);
-viewangles[YAW]   -= dt * s * dir.x * joy_yawSpeed;
-viewangles[PITCH] += dt * s * dir.y * joy_pitchSpeed * invert;
-```
-
-No turn-rate retune (playtest 2026-09-30). `joy_yawSpeed` 240 and `joy_pitchSpeed` 130
-stay. Pick `joy_lookCurve`/`joy_lookCurveBlend` defaults so full deflection and half
-deflection on a cardinal axis give the same °/s as the legacy path; read both from
-the overlay with `joy_newLook 0/1`.
-
-**Check:** `joy_debugInput 1` draws raw stick x/y, post-deadzone magnitude,
-shaped magnitude, and final °/s. Roll the stick around the rim at constant
-magnitude — °/s must stay flat and the drawn direction must track the stick
-1:1. Push at 27° and confirm the output angle is still 27°.
-
-**Exit:** diagonal notch gone, no angular distortion off-cardinal, legacy path
-still reachable via `joy_newLook 0`.
+**Check:** `joy_debugInput 1`. Roll the stick around the rim: `inDeg` and `outDeg` should
+match and `m` should stay flat. A/B `joy_newLook 0/1` on a cardinal push: same `yaw=`/`pitch=`.
 
 ---
 
-## C2 — Acceleration model
+## C2 — Look ramp latch fix
 
-**Rescoped 2026-09-30:** ship only the latch fix (per-direction ramp state, decay on
-release, reset in `Clear()`), with the existing 0→full ramp over 333 ms kept as the
-default. The boost model below is optional, behind `joy_lookAccelBoost` > 1.
-
-Replaces `joy_dampenLook`/`joy_deltaPerMSLook` for the `joy_newLook` path. The
-old CVars stay for the legacy path.
+**Built 2026-09-30, not yet validated in-game.** The 333 ms ramp (`joy_dampenLook 1`,
+`joy_deltaPerMSLook 0.003`) is kept; only the latch is fixed. The boost/acceleration model
+was dropped.
 
 | CVar | Default | Meaning |
 |---|---|---|
-| `joy_lookAccelTime` | 100 | ms from centre to full rate |
-| `joy_lookAccelBoost` | 1.0 | Rate multiplier once fully ramped (>1 = outer-ring boost) |
-| `joy_lookAccelThreshold` | 0.85 | Magnitude above which the ramp engages |
+| `joy_lookRampFix` | 1 | **Toggle.** 0 = original latch, bit-identical |
 
-State: one signed ramp scalar per axis on `idUsercmdGenLocal`, replacing
-`lastLookValuePitch`/`lastLookValueYaw`.
+| Path | Ramp state | Reset when (fix on) |
+|---|---|---|
+| Legacy | `rampPitch`, `rampYaw` (replace `lastLookValuePitch/Yaw`) | axis not pushed this poll; direction sign flips; `Clear()` |
+| `joy_newLook` | `rampLook` on the magnitude, plus last direction | stick inside deadzone; direction turns > 90°; `Clear()` |
 
-| Condition | Behaviour |
-|---|---|
-| `m` above threshold | Ramp rises toward `joy_lookAccelBoost` over `joy_lookAccelTime` |
-| `m` below threshold | Ramp decays to 1.0 at the same rate |
-| Stick centred | Ramp resets to 1.0 immediately |
-| Direction sign flips | Ramp resets to 1.0 |
+Behaviour change: the latch made every flick after the first hit full speed instantly. With
+the fix, every flick ramps over 333 ms. If that reads slower than the playtest feel, raise
+`joy_deltaPerMSLook` or set `joy_lookRampFix 0`.
 
-The last two rows are the latch fix. Reset must also happen in `Clear()`, not
-just the constructor.
+`USERCMD_HZ` = 60 and short-quantised `usercmd.angles` (0.0055°) are the input ceiling; not
+changed.
 
-`joy_lookAccelBoost 1.0` gives no acceleration at all — a pure linear curve,
-which is what a player who wants raw output asks for.
-
-Input granularity is `USERCMD_HZ` = 60 ([UsercmdGen.h:43](../../neo/framework/UsercmdGen.h#L43)),
-and `usercmd.angles` is short-quantised to 0.0055°. Neither is worth changing;
-note them so a later "still not snappy" report gets measured against the right
-ceiling.
-
-**Check:** `joy_debugInput 1` gains a ramp-value readout. Flick the stick to a
-rim and back repeatedly — the first flick and the tenth must show the same °/s
-trace. Reverse direction mid-turn and confirm the ramp drops to 1.0.
-
-**Exit:** no latch, `joy_lookAccelBoost 1.0` measurably linear, flick response
-under 120 ms.
+**Check:** `joy_debugInput 1`. Flick to the rim repeatedly: the `ramp=` trace climbs from 0
+the same way every time. Reverse mid-turn: `ramp=` drops to 0.
 
 ---
 
@@ -191,6 +149,18 @@ thump, tap, nothing. Chainsaw a zombie: steady `slot=` values, not climbing.
 
 **Exit:** all events felt distinctly, no stuck motor on level load or weapon switch, master
 toggle silent.
+
+**Playtest bug 2026-09-30:** a motor started in the menu and ran until exit. Root cause not
+yet identified. Changes:
+
+| Change | Where |
+|---|---|
+| `Rumble_Frame(gameLive)`: not live = `sessLocal.guiActive`, loading, console, or an ImGui menu. Not live → stop, drop pending effects, ignore posts | `Common.cpp`, `Rumble.cpp` |
+| Every stop is re-sent 4× at 50 ms | `Rumble.cpp` |
+| `joy_rumbleDebug 1` logs live/not-live transitions, stops and any SDL failure (`SDL_GetError`); `2` logs every SDL call | `Rumble.cpp`, `events.cpp` |
+
+If it recurs, capture `joy_rumbleDebug 2`. A run of `RUMBLE sdl ... ok` lines with nonzero values
+means something keeps posting; `FAILED` or `skipped` lines mean the stop never reached the pad.
 
 **Follow-ups:** BFG and plasma use the no-recoil default. If they feel weak, give them
 `rumble_*` keys (def-file mod) or derive strength from the projectile's damage.
@@ -284,9 +254,8 @@ the existing `joy_*` block at [line 1824](../../neo/framework/Dhewm3SettingsMenu
 
 | Group | Entries |
 |---|---|
-| Aim response | `joy_newLook`, `joy_lookDeadZone`, `joy_lookOuterDeadZone`, `joy_lookCurve`, `joy_lookCurveBlend`, `joy_yawSpeed`, `joy_pitchSpeed` |
-| Acceleration | `joy_lookAccelTime`, `joy_lookAccelBoost`, `joy_lookAccelThreshold` |
-| Rumble | `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage` |
+| Look stick | `joy_newLook`, `joy_lookDeadZone`, `joy_lookOuterDeadZone`, `joy_dampenLook`, `joy_deltaPerMSLook`, `joy_lookRampFix` (new "Gamepad Look Stick" heading) |
+| Rumble | `joy_rumbleEnable`, `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage` |
 | Aim assist | `joy_aimAssist` (combo: Off / Friction / Friction + Adhesion), then the five tuning floats |
 
 `joy_gammaLook`, `joy_powerScale`, `joy_deadZone`, `joy_dampenLook` and
@@ -299,8 +268,7 @@ them only once `joy_newLook 1` has shipped as default for a while.
 
 | Stage | Files |
 |---|---|
-| C1 | `neo/framework/UsercmdGen.cpp`, `.h`, `Dhewm3SettingsMenu.cpp` |
-| C2 | `neo/framework/UsercmdGen.cpp`, `.h`, `Dhewm3SettingsMenu.cpp` |
+| C1, C2 | `neo/framework/UsercmdGen.cpp`, `Dhewm3SettingsMenu.cpp` |
 | C3 | `neo/sys/events.cpp`, `neo/framework/{Rumble.cpp,Rumble.h,Common.h,Common.cpp,Session.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Game_local.h,Game_local.cpp,Player.cpp,Weapon.cpp}`, `neo/CMakeLists.txt` |
 | C4 | `neo/framework/Game.h`, `neo/game/{AimAssist.cpp,.h,Player.cpp,Player.h,Game_local.cpp}`, same five under `neo/d3xp/`, `neo/CMakeLists.txt`, `Dhewm3SettingsMenu.cpp` |
 

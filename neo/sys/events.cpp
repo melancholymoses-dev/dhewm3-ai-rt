@@ -109,7 +109,6 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #define SDL_GameControllerOpen SDL_OpenGamepad
 #define SDL_GameControllerClose SDL_CloseGamepad
 #define SDL_GameControllerGetAttached SDL_GamepadConnected
-#define SDL_GameControllerRumble SDL_RumbleGamepad
 
 #define SDL_CONTROLLERAXISMOTION SDL_EVENT_GAMEPAD_AXIS_MOTION
 #define SDL_CONTROLLERBUTTONDOWN SDL_EVENT_GAMEPAD_BUTTON_DOWN
@@ -167,6 +166,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 extern idCVar in_useGamepad; // from UsercmdGen.cpp
 extern idCVar joy_deadZone;  // ditto
+extern idCVar joy_rumbleDebug; // from Rumble.cpp
 
 // NOTE: g++-4.7 doesn't like when this is static (for idCmdSystem::ArgCompletion_String<kbdNames>)
 const char *_in_kbdNames[] = {
@@ -2081,10 +2081,24 @@ void Sys_SetRumble(int device, int low, int hi)
 #if SDL_VERSION_ATLEAST(2, 0, 9)
     const Uint32 RUMBLE_TIMEOUT_MS = 150;
     if (rumbleGamepad == NULL || !in_useGamepad.GetBool())
+    {
+        if (joy_rumbleDebug.GetInteger() >= 2)
+            common->Printf("RUMBLE sdl skipped: %s\n", rumbleGamepad == NULL ? "no gamepad handle" : "in_useGamepad 0");
         return;
+    }
     low = idMath::ClampInt(0, 0xFFFF, low);
     hi = idMath::ClampInt(0, 0xFFFF, hi);
-    SDL_GameControllerRumble(rumbleGamepad, (Uint16)low, (Uint16)hi, RUMBLE_TIMEOUT_MS);
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+    const bool ok = SDL_RumbleGamepad(rumbleGamepad, (Uint16)low, (Uint16)hi, RUMBLE_TIMEOUT_MS);
+#else
+    const bool ok = SDL_GameControllerRumble(rumbleGamepad, (Uint16)low, (Uint16)hi, RUMBLE_TIMEOUT_MS) == 0;
+#endif
+    // a failed stop is the likely cause of a stuck motor, so always report failures when debugging
+    if (joy_rumbleDebug.GetInteger() >= 2 || (!ok && joy_rumbleDebug.GetInteger() >= 1))
+    {
+        common->Printf("RUMBLE sdl low=%d hi=%d ms=%u -> %s%s\n", low, hi, (unsigned)RUMBLE_TIMEOUT_MS,
+                       ok ? "ok" : "FAILED: ", ok ? "" : SDL_GetError());
+    }
 #else
     (void)low;
     (void)hi;
