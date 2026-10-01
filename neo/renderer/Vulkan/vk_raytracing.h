@@ -826,6 +826,22 @@ void VK_RT_DrainBLASGarbage(void);
 // Rebuild TLAS from all visible entities this frame
 void VK_RT_RebuildTLAS(VkCommandBuffer cmd, const viewDef_t *viewDef);
 
+// r_vkRTProfile: BLAS work for the current tr.frameCount, valid after VK_RT_RebuildTLAS.
+struct vkRTBlasFrameStats_t
+{
+    int updates;          // in-place MODE_UPDATE refits
+    int rebuilds;         // full builds (new buffers + AS)
+    int tris;             // triangles across both
+    int dynamicInstances; // TLAS instances with a per-frame BLAS
+    double cpuMs;         // CPU time inside VK_RT_BuildBLASForModel
+};
+void VK_RT_GetBLASFrameStats(vkRTBlasFrameStats_t *out);
+
+// r_vkRTProfile GPU span over this frame's BLAS builds (vk_backend.cpp).  Begin is
+// idempotent within a frame; the backend closes a span left open by an early return.
+void VK_RTProfile_BLASGpuBegin(VkCommandBuffer cmd);
+void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd);
+
 // True when the TLAS will be rebuilt and consumed this frame (RT supported,
 // initialized, enabled, and at least one effect that needs it turned on).
 // Callable from the frontend; gates work that only RT geometry requires.

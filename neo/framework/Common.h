@@ -85,6 +85,7 @@ extern int time_gameFrame; // game logic time
 extern int time_gameDraw;  // game present time
 extern int time_frontend;  // renderer frontend time
 extern int time_backend;   // renderer backend time
+extern int time_gameFrameUsec; // dhewm3-rt: game logic time in usec, consumed by the r_vkRTProfile CPU line
 
 extern int com_frameTime;          // time for the current frame in milliseconds
 extern volatile int com_ticNumber; // 60 hz tics, incremented by async function

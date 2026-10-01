@@ -894,6 +894,8 @@ Fades within a few frames; "not terrible". That is the before-measurement.
 - **First check:** `r_fsr 2` + `r_fsrRenderScale 0.67` + `r_fsrDebug 3` — green on
   particles/fire/glass on the left, orange on characters and the gun on the right, and
   neither mask bleeding onto static walls. `r_vkLogRT 1` prints `VK FSR U4: captured ...`.
+- All confirmed.
+
 
 ### U5 — polish  🔴
 `r_fsrQuality` exposed in the video menu; the FSR 3.1
@@ -1012,15 +1014,17 @@ passes beat the ratio because halving 1440p drops them out of a bandwidth-satura
 **CPU is flat across all three scales** (~0.28-0.31 ms, mostly TLAS build 0.17 + probe-trace
 setup 0.08). Neither is resolution-dependent. FSR buys nothing CPU-side.
 
-### Not measured: raster
+### Not measured at U0: raster (now instrumented)
 
-`r_vkRTProfile` instruments 21 RT events and nothing else — no timer around
-`DepthPrepass` / `Interactions` / `DrawShaderPasses` / tonemap, and no frame-total GPU
-timer. Frame rate was vsync-locked at 60 throughout, so frame time carries no headroom
-signal either. **Any raster figure would be invented.** To get one: uncap the framerate, and
-wrap the raster blocks in `VK_RTProfile_PhaseBegin/End` — mechanical, and raster should
-scale *well* with render resolution (fill-bound, not draw-call-bound, at these triangle
-counts), so it may hold the remaining win at 0.50.
+The table above predates raster timing; the run was also vsync-locked. `r_vkRTProfile 1`
+now reports `raster=` (DepthPrepass, Interactions, ShaderPasses, FogLights, Upscale,
+Tonemap) plus two CPU lines. Re-measure uncapped before quoting a raster figure.
+
+| Log line | Contents |
+|---|---|
+| `VK RT PROFILE` | GPU + recording-CPU per phase; `TLAS.BLAS` is nested in `TLAS`, excluded from totals |
+| `VK FRAME PROFILE` | fenceWait / acquire / drain / upload / submit / present ms; BLAS updates, rebuilds, tris, dynamic instances |
+| `VK CPU PROFILE` | game tick, frontend split (findView, addLights, addModels, callbacks, dynCached, dynContinuous, vertex-cache allocs/frees), backend total |
 
 ### Open: the AMD 9070 XT is the case that matters
 

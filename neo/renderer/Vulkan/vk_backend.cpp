@@ -379,7 +379,23 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_FOG_LIGHTS,
     VK_RTPROF_PHASE_UPSCALE,
     VK_RTPROF_PHASE_TONEMAP,
+
+    // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
+    VK_RTPROF_PHASE_NESTED_BEGIN,
+    VK_RTPROF_PHASE_BLAS = VK_RTPROF_PHASE_NESTED_BEGIN, // inside TLAS
     VK_RTPROF_PHASE_COUNT
+};
+
+// Whole-frame CPU costs outside the per-phase recording spans, per slot.
+struct vkRTProfileFrameCPU_t
+{
+    double fenceWaitMs; // vkWaitForFences at frame start: GPU-bound time shows up here
+    double acquireMs;
+    double drainMs;  // deferred image/buffer/BLAS destruction
+    double uploadMs; // VK_FlushPendingUploads: staging batch submit + wait
+    double submitMs;
+    double presentMs;
+    vkRTBlasFrameStats_t blas;
 };
 
 struct vkRTProfileEvent_t
@@ -400,6 +416,9 @@ static uint32_t s_rtProfNextQuery[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static int s_rtProfRecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static int s_rtProfCPURecordedFrameCount[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 static double s_rtProfCPUMs[VK_MAX_FRAMES_IN_FLIGHT][VK_RTPROF_PHASE_COUNT] = {};
+static vkRTProfileFrameCPU_t s_rtProfFrameCPU[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static int s_rtProfBLASEvent = -1;      // open BLAS GPU span, or -1
+static bool s_rtProfBLASSpanDone = false; // one BLAS span per frame
 static uint64_t s_rtProfCPUFreq = 0;
 static float s_rtProfTimestampPeriodNs = 0.0f;
 static bool s_rtProfReady = false;
@@ -456,6 +475,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "Upscale";
     case VK_RTPROF_PHASE_TONEMAP:
         return "Tonemap";
+    case VK_RTPROF_PHASE_BLAS:
+        return "TLAS.BLAS";
     default:
         return "Unknown";
     }
@@ -469,6 +490,13 @@ static bool VK_RTProfileEnabled()
 static uint64_t VK_RTProfile_CPUStamp(void)
 {
     return (s_rtProfCPUFreq > 0) ? SDL_GetPerformanceCounter() : 0;
+}
+
+static double VK_RTProfile_TicksToMs(uint64_t start, uint64_t end)
+{
+    if (s_rtProfCPUFreq == 0 || start == 0 || end <= start)
+        return 0.0;
+    return ((double)(end - start) * 1000.0) / (double)s_rtProfCPUFreq;
 }
 
 static void VK_RTProfile_AccumulateCPU(vkRTProfilePhase_t phase, uint64_t startCounter)
@@ -560,6 +588,9 @@ static void VK_RTProfile_BeginFrame(VkCommandBuffer cmd, int slot)
     s_rtProfCPURecordedFrameCount[slot] = -1;
     for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
         s_rtProfCPUMs[slot][p] = 0.0;
+    s_rtProfFrameCPU[slot] = {};
+    s_rtProfBLASEvent = -1;
+    s_rtProfBLASSpanDone = false;
     vkCmdResetQueryPool(cmd, s_rtProfQueryPools[slot], 0, VK_RTPROF_QUERY_COUNT);
 }
 
@@ -601,6 +632,23 @@ static void VK_RTProfile_PhaseEnd(VkCommandBuffer cmd, int eventIdx)
 
     const vkRTProfileEvent_t &ev = s_rtProfEvents[slot][eventIdx];
     vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, s_rtProfQueryPools[slot], ev.queryEnd);
+}
+
+void VK_RTProfile_BLASGpuBegin(VkCommandBuffer cmd)
+{
+    if (s_rtProfBLASEvent >= 0 || s_rtProfBLASSpanDone)
+        return;
+    s_rtProfBLASEvent = VK_RTProfile_PhaseBegin(cmd, VK_RTPROF_PHASE_BLAS);
+}
+
+// Every begun query must get its end timestamp: CollectAndLog waits on all of them.
+void VK_RTProfile_BLASGpuEnd(VkCommandBuffer cmd)
+{
+    if (s_rtProfBLASEvent < 0)
+        return;
+    VK_RTProfile_PhaseEnd(cmd, s_rtProfBLASEvent);
+    s_rtProfBLASEvent = -1;
+    s_rtProfBLASSpanDone = true;
 }
 
 static void VK_RTProfile_CollectAndLog(int slot)
@@ -653,7 +701,7 @@ static void VK_RTProfile_CollectAndLog(int slot)
         // `total` is RT only — see the VK_RTPROF_PHASE_RT_COUNT comment.
         double totalMs = 0.0, rasterMs = 0.0;
         double totalCPUMs = 0.0, rasterCPUMs = 0.0;
-        for (int p = 0; p < VK_RTPROF_PHASE_COUNT; p++)
+        for (int p = 0; p < VK_RTPROF_PHASE_NESTED_BEGIN; p++)
         {
             const bool isRT = (p < VK_RTPROF_PHASE_RT_COUNT);
             (isRT ? totalMs : rasterMs) += phaseMs[p];
@@ -678,6 +726,27 @@ static void VK_RTProfile_CollectAndLog(int slot)
                        "events=%u\n",
                        recordedFrame, slot, totalMs, rasterMs, gpuLine.c_str(), haveCPU ? totalCPUMs : 0.0,
                        haveCPU ? rasterCPUMs : 0.0, cpuLine.c_str(), eventCount);
+
+        // Same frame as the line above: what the backend spent outside the recorded phases.
+        if (haveCPU)
+        {
+            const vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[slot];
+            common->Printf("VK FRAME PROFILE: frame=%d fenceWait=%.3f acquire=%.3f drain=%.3f upload=%.3f "
+                           "submit=%.3f present=%.3f BLAS(updates=%d rebuilds=%d tris=%d dynInst=%d)\n",
+                           recordedFrame, fc.fenceWaitMs, fc.acquireMs, fc.drainMs, fc.uploadMs, fc.submitMs,
+                           fc.presentMs, fc.blas.updates, fc.blas.rebuilds, fc.blas.tris, fc.blas.dynamicInstances);
+        }
+
+        // Latest completed EndFrame, i.e. a couple of frames newer than the GPU line.
+        const performanceCounters_t &pc = tr.pcLastFrame;
+        common->Printf("VK CPU PROFILE: game=%.3f frontend=%.3f (findView=%.3f addLights=%.3f addModels=%.3f "
+                       "callbacks=%d/%.3f dynCached=%d/%.3f dynContinuous=%d/%.3f vcAlloc=%d/%dKB/%.3f vcFree=%d) "
+                       "backend=%.3f\n",
+                       pc.c_gameTicUsec * 0.001, pc.c_frontEndUsec * 0.001, pc.c_findViewUsec * 0.001,
+                       pc.c_addLightsUsec * 0.001, pc.c_addModelsUsec * 0.001, pc.c_entityDefCallbacks,
+                       pc.c_callbackUsec * 0.001, pc.c_dynCached, pc.c_dynCachedUsec * 0.001, pc.c_dynContinuous,
+                       pc.c_dynContinuousUsec * 0.001, pc.c_vcAllocs, pc.c_vcAllocBytes >> 10,
+                       pc.c_vcAllocUsec * 0.001, pc.c_vcFrees, pc.c_backEndUsec * 0.001);
     }
 
     s_rtProfRecordedFrameCount[slot] = -1;
@@ -4441,6 +4510,29 @@ void VK_SetWindowMinimized(bool minimized)
     s_windowMinimized = minimized;
 }
 
+// Non-blocking drain for frames that skip the fence wait.  A slot is drained only once
+// its fence has signaled; an unsubmitted (reset) fence reads NOT_READY and is skipped.
+static void VK_DrainCompletedSlotGarbage()
+{
+    extern void VK_Image_DrainGarbage(uint32_t frameIdx);
+    extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
+
+    bool allIdle = true;
+    for (uint32_t f = 0; f < VK_MAX_FRAMES_IN_FLIGHT; f++)
+    {
+        if (vkGetFenceStatus(vk.device, vk.inFlightFences[f]) != VK_SUCCESS)
+        {
+            allIdle = false;
+            continue;
+        }
+        VK_Image_DrainGarbage(f);
+        VK_Buffer_DrainGarbage(f);
+    }
+    // BLAS retirement is keyed on tr.frameCount, not a slot, so it needs every slot idle.
+    if (allIdle && vk.rayTracingSupported)
+        VK_RT_DrainBLASGarbage();
+}
+
 // Swapchain needs recreation flag.
 // Set by VK_NotifyWindowModeChanged() when GLimp_SetScreenParms succeeds
 // (e.g., Alt+Enter fullscreen toggle).  On some drivers the SDL fullscreen
@@ -4490,6 +4582,10 @@ void VK_RB_DrawView(const void *data)
     // Skip the frame; SDL_WINDOWEVENT_RESTORED will clear this flag.
     if (s_windowMinimized)
     {
+        // The frontend keeps freeing vertex-cache buffers while frames are skipped, and the
+        // normal drain only runs after a fence wait.  Drain completed slots here so the
+        // garbage doesn't pile into one multi-thousand-buffer drain on restore.
+        VK_DrainCompletedSlotGarbage();
         SDL_Delay(10); // yield so we don't spin at 100% CPU while iconified
         return;
     }
@@ -4563,7 +4659,10 @@ void VK_RB_DrawView(const void *data)
             common->Printf("VK FRAME: fence-wait slot=%u frame=%d\n", vk.currentFrame, tr.frameCount);
             fflush(NULL);
         }
+        // Frame-start CPU spans; written into the slot after VK_RTProfile_BeginFrame clears it.
+        const uint64_t cpuFenceStart = VK_RTProfile_CPUStamp();
         VkResult fenceResult = vkWaitForFences(vk.device, 1, &vk.inFlightFences[vk.currentFrame], VK_TRUE, UINT64_MAX);
+        const uint64_t cpuFenceEnd = VK_RTProfile_CPUStamp();
         if (fenceResult != VK_SUCCESS)
         {
             // VK_ERROR_DEVICE_LOST (-4): GPU crashed executing the previous frame's command buffer.
@@ -4583,9 +4682,11 @@ void VK_RB_DrawView(const void *data)
 
         // --- Acquire swapchain image ---
         uint32_t imageIndex;
+        const uint64_t cpuAcquireStart = VK_RTProfile_CPUStamp();
         VkResult acquireResult =
             vkAcquireNextImageKHR(vk.device, vk.swapchain, UINT64_MAX, vk.imageAvailableSemaphores[vk.currentFrame],
                                   VK_NULL_HANDLE, &imageIndex);
+        const uint64_t cpuAcquireEnd = VK_RTProfile_CPUStamp();
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
         {
             common->Printf("VK Out of Date\n");
@@ -4606,12 +4707,14 @@ void VK_RB_DrawView(const void *data)
         common->DPrintf("VK: frame slot %u, image %u\n", vk.currentFrame, imageIndex);
 
         // Drain deferred image, buffer, and BLAS deletions queued during the previous use of this frame slot.
+        const uint64_t cpuDrainStart = VK_RTProfile_CPUStamp();
         extern void VK_Image_DrainGarbage(uint32_t frameIdx);
         VK_Image_DrainGarbage(vk.currentFrame);
         extern void VK_Buffer_DrainGarbage(uint32_t frameIdx);
         VK_Buffer_DrainGarbage(vk.currentFrame);
         if (vk.rayTracingSupported)
             VK_RT_DrainBLASGarbage();
+        const uint64_t cpuDrainEnd = VK_RTProfile_CPUStamp();
 
         // U3a: recreate every VkSampler if the FSR render scale (or image_lodbias /
         // filter / anisotropy / the mip-bias cvars) moved.  Here because it is the one
@@ -4622,7 +4725,9 @@ void VK_RB_DrawView(const void *data)
         // Flush any texture/buffer uploads queued since the last frame.
         // Submits one command buffer + one fence wait, replacing the previous
         // per-upload vkQueueWaitIdle pattern that caused area-entry hitching.
+        const uint64_t cpuUploadStart = VK_RTProfile_CPUStamp();
         VK_FlushPendingUploads();
+        const uint64_t cpuUploadEnd = VK_RTProfile_CPUStamp();
 
         // Reset per-frame allocators (shared across all views in this EndFrame)
         uboRings[vk.currentFrame].offset = 0;
@@ -4641,6 +4746,14 @@ void VK_RB_DrawView(const void *data)
         }
 
         VK_RTProfile_BeginFrame(cmdBuf, (int)vk.currentFrame);
+        if (VK_RTProfileEnabled())
+        {
+            vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[vk.currentFrame];
+            fc.fenceWaitMs = VK_RTProfile_TicksToMs(cpuFenceStart, cpuFenceEnd);
+            fc.acquireMs = VK_RTProfile_TicksToMs(cpuAcquireStart, cpuAcquireEnd);
+            fc.drainMs = VK_RTProfile_TicksToMs(cpuDrainStart, cpuDrainEnd);
+            fc.uploadMs = VK_RTProfile_TicksToMs(cpuUploadStart, cpuUploadEnd);
+        }
 
         // Upload any cinematic frames before the render pass opens
         // (transfer ops are illegal inside a render pass).
@@ -4900,8 +5013,15 @@ void VK_RB_DrawView(const void *data)
         const uint64_t rtCpuTLASStart = VK_RTProfile_CPUStamp();
         int rtProfTLAS = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_TLAS);
         VK_RT_RebuildTLAS(cmdBuf, backEnd.viewDef);
+        VK_RTProfile_BLASGpuEnd(cmdBuf); // no-op unless an early return left it open
         VK_RTProfile_PhaseEnd(cmdBuf, rtProfTLAS);
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_TLAS, rtCpuTLASStart);
+        if (VK_RTProfileEnabled())
+        {
+            vkRTProfileFrameCPU_t &fc = s_rtProfFrameCPU[vk.currentFrame];
+            VK_RT_GetBLASFrameStats(&fc.blas);
+            s_rtProfCPUMs[vk.currentFrame][VK_RTPROF_PHASE_BLAS] = fc.blas.cpuMs;
+        }
         const int splitMask = VK_GetEffectiveSplitSubmitMask();
 
         if ((splitMask & 16) != 0)
@@ -5632,7 +5752,9 @@ void VK_RB_SwapBuffers()
     // incidentally gives the presentation engine time to finish processing OUT_OF_DATE.
     fflush(NULL);
     VK_SetRenderStage("vkQueueSubmit");
+    const uint64_t cpuSubmitStart = VK_RTProfile_CPUStamp();
     VkResult submitResult = vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.inFlightFences[submittedFrame]);
+    s_rtProfFrameCPU[submittedFrame].submitMs = VK_RTProfile_TicksToMs(cpuSubmitStart, VK_RTProfile_CPUStamp());
     if (submitResult != VK_SUCCESS)
     {
         s_frameNeedsImageAcquireWait = false;
@@ -5657,7 +5779,9 @@ void VK_RB_SwapBuffers()
     presentInfo.pSwapchains = &vk.swapchain;
     presentInfo.pImageIndices = &s_frameImageIndex;
 
+    const uint64_t cpuPresentStart = VK_RTProfile_CPUStamp();
     VkResult presentResult = vkQueuePresentKHR(vk.presentQueue, &presentInfo);
+    s_rtProfFrameCPU[submittedFrame].presentMs = VK_RTProfile_TicksToMs(cpuPresentStart, VK_RTProfile_CPUStamp());
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR)
     {
         common->Printf("VK: present returned %s, recreating swapchain\n",

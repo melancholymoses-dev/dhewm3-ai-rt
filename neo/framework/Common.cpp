@@ -144,6 +144,7 @@ int time_gameFrame;
 int time_gameDraw;
 int time_frontend; // renderSystem frontend time
 int time_backend;  // renderSystem backend time
+int time_gameFrameUsec;
 
 int com_frameTime;          // time for the current frame in milliseconds
 int com_frameNumber;        // variable frame number

@@ -40,6 +40,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "framework/Session_local.h"
 
+#include <SDL.h>
+
 #if defined(__AROS__)
 #define CDKEY_FILEPATH CDKEY_FILE
 #define XPKEY_FILEPATH XPKEY_FILE
@@ -3331,10 +3333,14 @@ void idSessionLocal::RunGameTic()
 
     // run the game logic every player move
     int start = Sys_Milliseconds();
+    const Uint64 startTicks = SDL_GetPerformanceCounter();
     gameReturn_t ret = game->RunFrame(&cmd);
 
     int end = Sys_Milliseconds();
     time_gameFrame += end - start; // note time used for com_speeds
+    const Uint64 tickFreq = SDL_GetPerformanceFrequency();
+    if (tickFreq != 0)
+        time_gameFrameUsec += (int)((SDL_GetPerformanceCounter() - startTicks) * 1000000ull / tickFreq);
 
     // check for constency failure from a recorded command
     if (cmdDemoFile)

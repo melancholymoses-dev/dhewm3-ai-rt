@@ -636,7 +636,24 @@ typedef struct
     int c_entityUpdates, c_lightUpdates, c_entityReferences, c_lightReferences;
     int c_guiSurfs;
     int frontEndMsec; // sum of time in all RE_RenderScene's in a frame
+
+    // dhewm3-rt: microsecond CPU breakdown for the r_vkRTProfile "VK CPU PROFILE" line.
+    int c_frontEndUsec;          // all RenderScene calls
+    int c_findViewUsec;          // FindViewLightsAndEntities
+    int c_addLightsUsec;         // R_AddLightSurfaces
+    int c_addModelsUsec;         // R_AddModelSurfaces (includes the dynamic-model spans below)
+    int c_callbackUsec;          // R_IssueEntityDefCallback (game-side animation updates)
+    int c_dynCached, c_dynCachedUsec;         // DM_CACHED instantiations (MD5 skinning, etc.)
+    int c_dynContinuous, c_dynContinuousUsec; // DM_CONTINUOUS instantiations (particles, beams)
+    int c_vcAllocs, c_vcAllocBytes, c_vcAllocUsec; // static vertex-cache device buffers created
+    int c_vcFrees;
+    int c_gameTicUsec;  // game->RunFrame, copied from time_gameFrameUsec at EndFrame
+    int c_backEndUsec;  // previous backend run, copied from backEnd.pc at EndFrame
 } performanceCounters_t;
+
+// dhewm3-rt: microsecond clock for the c_*Usec counters above.
+unsigned long long R_ProfileTicks(void);
+int R_ProfileUsecSince(unsigned long long startTicks);
 
 typedef struct
 {
@@ -681,6 +698,7 @@ typedef struct
 
     float maxLightValue; // for light scale
     int msec;            // total msec for backend run
+    int usec;            // dhewm3-rt: same, microseconds (r_vkRTProfile CPU line)
 } backEndCounters_t;
 
 // all state modified by the back end is separated
@@ -840,6 +858,7 @@ class idRenderSystemLocal : public idRenderSystem
     viewDef_t *viewDef;
 
     performanceCounters_t pc; // performance counters
+    performanceCounters_t pcLastFrame; // dhewm3-rt: pc as of the last EndFrame, for r_vkRTProfile
 
     drawSurfsCommand_t lockSurfacesCmd; // use this when r_lockSurfaces = 1
     // renderView_t			lockSurfacesRenderView;

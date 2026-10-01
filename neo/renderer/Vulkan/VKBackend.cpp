@@ -101,11 +101,16 @@ void VKBackend::VertexCache_Alloc(vertCache_t **vc, void *data, int size, bool i
     vertexCache.Alloc(data, size, vc, indexBuffer);
     if (*vc && data && (*vc)->tag != TAG_TEMP)
     {
+        const unsigned long long allocTicks = R_ProfileTicks();
         VK_VertexCache_Alloc(*vc, data, size, indexBuffer);
+        tr.pc.c_vcAllocUsec += R_ProfileUsecSince(allocTicks);
+        tr.pc.c_vcAllocs++;
+        tr.pc.c_vcAllocBytes += size;
     }
 }
 void VKBackend::VertexCache_Free(vertCache_t *vc)
 {
+    tr.pc.c_vcFrees++;
     VK_VertexCache_Free(vc);
 }
 

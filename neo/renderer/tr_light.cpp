@@ -1431,7 +1431,9 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
     // allow deferred entities to construct themselves
     if (def->parms.callback)
     {
+        const unsigned long long callbackTicks = R_ProfileTicks();
         callbackUpdate = R_IssueEntityDefCallback(def);
+        tr.pc.c_callbackUsec += R_ProfileUsecSince(callbackTicks);
     }
     else
     {
@@ -1463,7 +1465,19 @@ idRenderModel *R_EntityDefDynamicModel(idRenderEntityLocal *def)
     {
 
         // instantiate the snapshot of the dynamic model, possibly reusing memory from the cached snapshot
+        const unsigned long long instTicks = R_ProfileTicks();
         def->cachedDynamicModel = model->InstantiateDynamicModel(&def->parms, tr.viewDef, def->cachedDynamicModel);
+        const int instUsec = R_ProfileUsecSince(instTicks);
+        if (model->IsDynamicModel() == DM_CONTINUOUS)
+        {
+            tr.pc.c_dynContinuous++;
+            tr.pc.c_dynContinuousUsec += instUsec;
+        }
+        else
+        {
+            tr.pc.c_dynCached++;
+            tr.pc.c_dynCachedUsec += instUsec;
+        }
 
         if (def->cachedDynamicModel)
         {

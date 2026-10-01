@@ -810,6 +810,7 @@ void idRenderWorldLocal::RenderScene(const renderView_t *renderView)
     tr.guiModel->Clear();
 
     int startTime = Sys_Milliseconds();
+    const unsigned long long startTicks = R_ProfileTicks();
 
     // setup view parms for the initial view
     //
@@ -917,6 +918,7 @@ void idRenderWorldLocal::RenderScene(const renderView_t *renderView)
     int endTime = Sys_Milliseconds();
 
     tr.pc.frontEndMsec += endTime - startTime;
+    tr.pc.c_frontEndUsec += R_ProfileUsecSince(startTicks);
 
     // prepare for any 2D drawing after this
     tr.guiModel->Clear();

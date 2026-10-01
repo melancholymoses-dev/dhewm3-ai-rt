@@ -41,6 +41,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 #include "renderer/tr_local.h"
 
+#include <SDL.h>
+
 idRenderSystemLocal tr;
 idRenderSystem *renderSystem = &tr;
 
@@ -120,8 +122,28 @@ static void R_PerformanceCounters(void)
         common->Printf("lightScale: %f\n", backEnd.pc.maxLightValue);
     }
 
+    // Runs before this frame's backend, so backEnd.pc still holds the previous backend run
+    // and time_gameFrameUsec the game tics since the last EndFrame.
+    tr.pc.c_gameTicUsec = time_gameFrameUsec;
+    tr.pc.c_backEndUsec = backEnd.pc.usec;
+    time_gameFrameUsec = 0;
+    tr.pcLastFrame = tr.pc;
+
     memset(&tr.pc, 0, sizeof(tr.pc));
     memset(&backEnd.pc, 0, sizeof(backEnd.pc));
+}
+
+unsigned long long R_ProfileTicks(void)
+{
+    return (unsigned long long)SDL_GetPerformanceCounter();
+}
+
+int R_ProfileUsecSince(unsigned long long startTicks)
+{
+    const unsigned long long freq = (unsigned long long)SDL_GetPerformanceFrequency();
+    if (freq == 0)
+        return 0;
+    return (int)(((unsigned long long)SDL_GetPerformanceCounter() - startTicks) * 1000000ull / freq);
 }
 
 /*
