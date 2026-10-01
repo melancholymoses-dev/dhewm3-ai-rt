@@ -1,9 +1,8 @@
 # FSR upscaling for dhewm3-rt
 
-**Status:** U0 landed 2026-09-23 (bilinear resolve, `r_fsrRenderScale`).
-U1 landed 2026-09-24 (FSR 1 behind `r_fsr 1`) and U2 landed 2026-09-24 (motion vectors +
-jitter + `r_fsrDebug 7`); both exits met in-game. **U3 code landed 2026-09-24 —
-built, not yet validated in-game; its exit gate is open.** U4-U5 not started.
+**Status:** ✅ **Closed 2026-09-30.** U0-U4 landed with exits met in-game (U4's
+denoiser retune dropped — see U4). U3b stays non-blocking; U5 deferred, with the
+skinned-MV reopen trigger listed there.
 **Written:** 2026-09-18
 **Owns:** render-resolution decoupling, AMD FidelityFX Super Resolution integration,
 motion vectors, jitter, and the licensing paperwork that comes with vendored code.
@@ -598,7 +597,7 @@ in exchange for an imaginary one.
 
 ## 9. Chunks
 
-### U0 — resolution decoupling + bilinear resolve  🟡 landed 2026-09-23
+### U0 — resolution decoupling + bilinear resolve  ✅ landed 2026-09-23
 No third-party code. `vk_upscale.h/.cpp`, `vk.renderExtent`, `upscale_blit.comp`, §4's rule.
 `r_fsrRenderScale < 1` renders the 3D scene into the sub-rect, bilinear-resolves it into
 `hdrUpscaled`, copies back into `hdrScene`, and lets the UI draw on top at full resolution.
@@ -617,7 +616,7 @@ No third-party code. `vk_upscale.h/.cpp`, `vk.renderExtent`, `upscale_blit.comp`
 - **Sequencing note withdrawn** — G6 was decided on appearance, not cost, so U0 no longer
   had to precede it.
 
-### U1 — FSR 1 (EASU + RCAS)  🟡 landed 2026-09-24, exit met
+### U1 — FSR 1 (EASU + RCAS)  ✅ landed 2026-09-24, exit met
 `r_fsr 1` runs three compute dispatches in `VK_RT_DispatchUpscale`, replacing the bilinear
 blit entirely:
 
@@ -660,7 +659,7 @@ Other implementation notes:
   bright static geometry is the easy case.
   Check with `r_fsrDebug 1` (cyan border = FSR 1 ran), `4` (point magnify), `6` (EASU only).
 
-### U2 — motion vectors + jitter  🟡 landed 2026-09-24, exit met
+### U2 — motion vectors + jitter  ✅ landed 2026-09-24, exit met
 `motionVectors` attachment, the fourth colour-blend slot across `vk_pipeline.cpp`,
 `prevModelMatrix` on `idRenderEntityLocal`, the unjittered matrix pair, Halton jitter behind
 `R_SetupProjection`'s existing hook, and `motion_debug.comp`. **Nothing consumes the motion
@@ -691,7 +690,7 @@ Detailed change list in §13.
   test proves the overlay and the MV field agree with each other, not that either matches
   what `ffxFsr2ContextDispatch` expects.
 
-### U3 — FSR 2 integration  🟡 landed 2026-09-24; gate met 2026-09-28
+### U3 — FSR 2 integration  ✅ landed 2026-09-24; gate met 2026-09-28
 `r_fsr 2` drives the vendored FSR 2.2.1 library from `VK_RT_DispatchFsr2` in
 `vk_upscale.cpp`. Flags as planned: `HIGH_DYNAMIC_RANGE | DEPTH_INFINITE | AUTO_EXPOSURE`,
 `DEPTH_INVERTED` off, `DEBUG_CHECKING` added when `r_fsrDebug >= 2`. Context lifetime is
@@ -708,7 +707,7 @@ moves, the flags change, or the scale returns to 1.0. Detailed change list in §
   movement remains, and animated characters are the worst of it (U3c's open item, then U4).
   Perf not yet measured; Linux not tried.
 
-### U3a — texture LOD bias  🟡 landed 2026-09-28; works, but the trade-off is real
+### U3a — texture LOD bias  ✅ landed 2026-09-28; works, but the trade-off is real
 
 Pulled forward from U5. §4 predicted this would skew the U3 verdict; it did — first gameplay
 at Quality read "watercolor at distance, sharp up close", the signature of mip selection done
@@ -818,7 +817,7 @@ reading it, discarding the `length(N)` Toksvig measure our box-filtered `R8G8B8A
 chain already computes. Not the grating bug — `r_skipBump 1` cleared normals — but a valid
 specular-AA opportunity if sparkle appears on curved or glossy surfaces.
 
-### U3c — jitter gate + motion vectors off the RT path  🟡 landed 2026-09-28
+### U3c — jitter gate + motion vectors off the RT path  ✅ landed 2026-09-28
 
 Two producer/consumer gates disagreed, so `r_fsr 2` with `r_useRayTracing 0` rendered through
 a jittered frustum and resolved on the bilinear path: a ±0.5 render-pixel whole-image
@@ -855,8 +854,10 @@ permutation until profiling says so.
 - Still open: skinned/deform motion vectors. Characters reproject from the entity transform
   only, so animated limbs lose their history — the "enemies look too smooth" artifact.
 
-### U4 — reactive mask, T&C mask, denoiser retune  🟡 built 2026-09-29; not yet validated in-game
-Both masks built; the denoiser retune sweep is the open half of the gate.
+### U4 — reactive mask, T&C mask, denoiser retune  ✅ closed 2026-09-30
+Both masks built and validated in-game. The denoiser retune sweep was dropped: denoise
+runs at render resolution since U0, so the estimated saving is ~0.1-0.2 ms, and no
+double-accumulation ghosting was visible.
 
 | Piece | Where |
 |---|---|
@@ -894,13 +895,26 @@ Fades within a few frames; "not terrible". That is the before-measurement.
 - **First check:** `r_fsr 2` + `r_fsrRenderScale 0.67` + `r_fsrDebug 3` — green on
   particles/fire/glass on the left, orange on characters and the gun on the right, and
   neither mask bleeding onto static walls. `r_vkLogRT 1` prints `VK FSR U4: captured ...`.
-- All confirmed.
+- All confirmed; muzzle flash, fire, steam and monster ghosting acceptable in play (2026-09-30).
 
 
-### U5 — polish  🔴
-`r_fsrQuality` exposed in the video menu; the FSR 3.1
-port evaluation now that the plumbing is proven; optionally skinned-MV double-buffering if
-U4 said it was needed; dynamic resolution (nearly free given §2's layout).
+### U5 — polish  ⏸ deferred
+`r_fsrQuality` exposed in the video menu; the FSR 3.1 port evaluation; dynamic resolution
+(nearly free given §2's layout); skinned-MV double-buffering only if the trigger below fires.
+
+**Skinned-MV reopen trigger.** Motion vectors come from the entity transform only, so limbs
+moving relative to the body reproject with the torso's vector.
+
+| Sign | Where to look |
+|---|---|
+| Trailing copies / smeared outline for a few frames | Fast melee (imp swipes, pinky legs, zombie lunges) |
+| Moving parts ghost while the gun body stays sharp | Viewmodel reload / switch / fire |
+| Mouth and jaw smear | Close-up cutscene dialogue |
+| Limbs softer or noisier than the world (T&C mask hiding trails) | Characters against high-contrast backgrounds |
+
+Pure translation (strafing, sliding) smearing is a different bug. Confirm with
+`r_fsrDebug 7` (one flat colour over a limb that moves differently), then decide with
+`r_fsr 1` vs `r_fsr 2` at the same scale: characters clearly worse under FSR 2 means do it.
 
 ---
 

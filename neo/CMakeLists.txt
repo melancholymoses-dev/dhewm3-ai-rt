@@ -1084,7 +1084,7 @@ endif()
 
 # AMD FidelityFX Super Resolution 2.2.1 (MIT) — vendored unmodified in
 # libs/ffx-fsr2-api, see THIRD-PARTY-LICENSES.md and
-# docs/plans/20260918_fsr_upscaling.md Appendix A.  Compiled straight into the
+# docs/plans/completed/20260918_fsr_upscaling.md Appendix A.  Compiled straight into the
 # main target rather than as AMD's two static libs; upstream's CMakeLists.txt
 # files are kept on disk for provenance and never add_subdirectory'd.
 if(DHEWM3_FSR2)

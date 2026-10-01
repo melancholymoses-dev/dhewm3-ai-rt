@@ -848,7 +848,7 @@ COLOR_ATTACHMENT_OPTIMAL.
 */
 
 // ---------------------------------------------------------------------------
-// U4 reactive-mask inputs (docs/plans/20260918_fsr_upscaling.md §9)
+// U4 reactive-mask inputs (docs/plans/completed/20260918_fsr_upscaling.md §9)
 //
 // Both of FSR 2's masks are built from data that only exists mid-frame, between the
 // interactions and the blend stages:

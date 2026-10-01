@@ -52,7 +52,7 @@ layout(set=0, binding=0) uniform GBufferParams {
     float u_AlphaTestThreshold;
     float u_SpecF0Scale;
     float u_SpecF0Gamma;
-    // U4 transparency-and-composition class (docs/plans/20260918_fsr_upscaling.md §9):
+    // U4 transparency-and-composition class (docs/plans/completed/20260918_fsr_upscaling.md §9):
     // 1 = this surface's motion vectors are known wrong (skinned mesh, viewmodel), so FSR 2
     // should lean less on its temporal history here.  Rides gbufAlbedo's alpha, whose only
     // consumer reads .rgb; fsr_tc_mask.comp extracts it into the R8 mask FSR 2 wants.

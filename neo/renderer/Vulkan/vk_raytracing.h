@@ -640,7 +640,7 @@ struct vkRTState_t
     // hdrScene (sub-rect) -> hdrUpscaled -> hdrScene (full)
     vkRTImage_t hdrUpscaled[VK_MAX_FRAMES_IN_FLIGHT];
 
-    // U4 FSR 2 masks (docs/plans/20260918_fsr_upscaling.md §9).  All display-sized with
+    // U4 FSR 2 masks (docs/plans/completed/20260918_fsr_upscaling.md §9).  All display-sized with
     // only the render sub-rect valid, like every other U0 buffer.
     //   preAlphaColor: hdrScene snapshotted before the blend stages draw
     //   reactiveMask:  ffxFsr2ContextGenerateReactiveMask's output — auto-detected
@@ -673,7 +673,7 @@ struct vkRTState_t
     // Same vk.gbufferSupported gating and lifetime as gbufNormal.
     vkRTImage_t gbufAlbedo[VK_MAX_FRAMES_IN_FLIGHT]; // R8G8B8A8_UNORM diffuse albedo
 
-    // Motion vectors (U2, docs/plans/20260918_fsr_upscaling.md §13): per pixel, the
+    // Motion vectors (U2, docs/plans/completed/20260918_fsr_upscaling.md §13): per pixel, the
     // screen-space offset from this frame's position to last frame's, in GL NDC units
     // (Y up), written as attachment 3 by the same prepass. Cleared to (0,0), so sky,
     // translucent surfaces and anything the prepass skips read as "not moving".

@@ -79,6 +79,10 @@ The global illumination passes were washing out the color and killing the mood. 
 ![Volumetrics On](docs/img/screenshots/20260830_vol_on.jpg)
 ![Volumetrics Off](docs/img/screenshots/20260830_vol_off.jpg)
 
+7. FSR Upscaling
+
+Added Upscaling to try and buy back some time from RT effects.  Using 
+AMD Fidelity FX FSR2, with FSR1 as backup, and bilinear upscale as simplest version.  Mostly looks acceptable.  Some tradeoffs between bluriness and aliasing.  Likely sticking with FSR2 since FSR3 is harder to build on linux, and it works on AMD and Nvidia Hardware.  
 
 ## Useful Cvars
 

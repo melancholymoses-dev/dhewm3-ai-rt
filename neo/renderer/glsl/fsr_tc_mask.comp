@@ -27,7 +27,7 @@ Descriptors (set 0):
 Push constants (8 bytes, matches FsrTcMaskPC in vk_upscale.cpp):
   ivec2 renderExtent — valid sub-rect of both images
 
-FSR upscaling arc U4 — docs/plans/20260918_fsr_upscaling.md §9.
+FSR upscaling arc U4 — docs/plans/completed/20260918_fsr_upscaling.md §9.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

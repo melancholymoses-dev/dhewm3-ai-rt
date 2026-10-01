@@ -376,7 +376,7 @@ static void VKimp_CreateDevice(void)
     vk12Features.descriptorBindingPartiallyBound =
         vk.rayTracingSupported && supportedVk12.descriptorBindingPartiallyBound;
     // Three features AMD's FSR 2.2.1 Vulkan backend assumes rather than requests
-    // (docs/plans/20260918_fsr_upscaling.md §11).  It probes the *physical device* for
+    // (docs/plans/completed/20260918_fsr_upscaling.md §11).  It probes the *physical device* for
     // fp16 and subgroup-size control and then uses them unconditionally, and its
     // barriers for the depth SRV carry only VK_IMAGE_ASPECT_DEPTH_BIT — illegal on our
     // combined D32S8 depth buffer without separateDepthStencilLayouts.  All three are

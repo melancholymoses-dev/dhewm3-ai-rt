@@ -2507,7 +2507,7 @@ struct RTCVars
     idCVar *rtGIProbes = nullptr;
     idCVar *rtGIProbeHysteresis = nullptr;
 
-    // Resolution scaling / upscaling (docs/plans/20260918_fsr_upscaling.md)
+    // Resolution scaling / upscaling (docs/plans/completed/20260918_fsr_upscaling.md)
     idCVar *fsr = nullptr;
     idCVar *fsrRenderScale = nullptr;
     idCVar *fsrSharpness = nullptr;
@@ -2878,7 +2878,7 @@ static void DrawRTOptionsMenu()
 
 // Its own tab, and deliberately without the !rtEnabled disable: the 3D scene renders
 // into a sub-rect of the display-sized targets whether or not RT is on.
-// docs/plans/20260918_fsr_upscaling.md
+// docs/plans/completed/20260918_fsr_upscaling.md
 static void DrawUpscalingOptionsMenu()
 {
     ImGui::Spacing();

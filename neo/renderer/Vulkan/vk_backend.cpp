@@ -922,7 +922,7 @@ static vkUBORing_t uboRings[VK_MAX_FRAMES_IN_FLIGHT];
 // Y flip is handled via negative viewport height, not here.
 static float s_projVk[16];
 
-// U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): the view-projection
+// U2 motion vectors (docs/plans/completed/20260918_fsr_upscaling.md §13): the view-projection
 // pair the G-buffer prepass reprojects against, both UNJITTERED and left in GL clip
 // space — only xy/w is read, and the Z remap above rewrites row 2 alone.  For the same
 // reason weaponDepthHack/modelDepthHack are not applied: they only scale or shift
@@ -5351,7 +5351,7 @@ void VK_RB_DrawView(const void *data)
         fflush(NULL);
     }
 
-    // U4 (docs/plans/20260918_fsr_upscaling.md §9): build FSR 2's mask inputs here, after
+    // U4 (docs/plans/completed/20260918_fsr_upscaling.md §9): build FSR 2's mask inputs here, after
     // the interactions and before the blend stages — that boundary is the whole point of
     // the pre-alpha snapshot.  The capture needs the render pass closed (a vkCmdCopyImage
     // cannot be recorded inside one), so it costs one end/resume when enabled.

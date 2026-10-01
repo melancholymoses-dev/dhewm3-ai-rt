@@ -19,7 +19,7 @@ intensity rather than a binary tint: the reactive mask is not binary unless
 APPLY_THRESHOLD is set, and a gradient where a step was expected is the tell
 that the flags went astray.
 
-FSR upscaling arc U4 — docs/plans/20260918_fsr_upscaling.md §7.
+FSR upscaling arc U4 — docs/plans/completed/20260918_fsr_upscaling.md §7.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

@@ -433,7 +433,7 @@ viewEntity_t *R_SetEntityDefViewEntity(idRenderEntityLocal *def)
 
     R_AxisToModelMatrix(def->parms.axis, def->parms.origin, vModel->modelMatrix);
 
-    // U2 motion vectors (docs/plans/20260918_fsr_upscaling.md §13): hand the backend
+    // U2 motion vectors (docs/plans/completed/20260918_fsr_upscaling.md §13): hand the backend
     // last frame's transform for this entity.  Two cases fall back to the current
     // matrix — meaning a camera-only motion vector rather than a wrong one:
     //   - the entity was not drawn last frame (disocclusion; FSR2 handles that itself)
