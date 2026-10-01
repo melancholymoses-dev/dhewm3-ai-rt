@@ -1844,8 +1844,9 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_aimAssist",
                [](idCVar &cvar) {
                    int val = cvar.GetInteger();
-                   if (ImGui::Combo("Aim assist", &val, "Off\0Friction (look slows over targets)\0Friction + Adhesion "
-                                                         "(view follows targets)\0"))
+                   if (ImGui::Combo("Aim assist", &val,
+                                    "Off\0Friction (look slows over targets)\0Friction + Adhesion "
+                                    "(view follows targets)\0"))
                    {
                        cvar.SetInteger(val);
                    }
@@ -1856,12 +1857,13 @@ static CVarOption controlOptions[] = {
 
     CVarOption("Gamepad Rumble"),
     CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
-    CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 4.0f),
-    CVarOption("joy_rumbleFire", "Weapon fire", OT_FLOAT, 0.0f, 4.0f),
-    CVarOption("joy_rumbleMelee", "Melee hits", OT_FLOAT, 0.0f, 4.0f),
-    CVarOption("joy_rumbleHit", "Hit confirmation", OT_FLOAT, 0.0f, 4.0f),
-    CVarOption("joy_rumbleDamage", "Damage taken", OT_FLOAT, 0.0f, 4.0f),
-    CVarOption("joy_rumbleLength", "Rumble length", OT_FLOAT, 0.5f, 4.0f),
+    CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleFire", "Weapon fire", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleMelee", "Melee hits", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleHit", "Hit confirmation", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleDamage", "Damage taken", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleSteps", "Big monster footsteps", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleLength", "Rumble length", OT_FLOAT, 0.5f, 2.0f),
     CVarOption("joy_rumbleFloor", "Weak rumble boost (floor)", OT_FLOAT, 0.0f, 0.6f),
     CVarOption("joy_rumbleGamma", "Rumble curve (1 = linear)", OT_FLOAT, 0.2f, 1.0f),
     CVarOption("joy_rumbleMinMs", "Shortest rumble (ms)", OT_INT, 0, 300),

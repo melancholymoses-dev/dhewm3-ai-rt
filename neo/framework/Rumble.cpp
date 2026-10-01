@@ -38,6 +38,8 @@ idCVar joy_rumbleHit("joy_rumbleHit", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
                      "Rumble scale for hit confirmation (your shots landing)", 0.0f, 4.0f);
 idCVar joy_rumbleDamage("joy_rumbleDamage", "1.0", CVAR_FLOAT | CVAR_ARCHIVE, "Rumble scale for damage taken", 0.0f,
                         4.0f);
+idCVar joy_rumbleSteps("joy_rumbleSteps", "1.0", CVAR_FLOAT | CVAR_ARCHIVE,
+                       "Rumble scale for big-monster footsteps", 0.0f, 4.0f);
 idCVar joy_rumbleFloor("joy_rumbleFloor", "0.2", CVAR_FLOAT | CVAR_ARCHIVE,
                        "Lowest nonzero motor level, to get past the motor's dead band. 0 = linear", 0.0f, 0.6f);
 idCVar joy_rumbleGamma("joy_rumbleGamma", "0.6", CVAR_FLOAT | CVAR_ARCHIVE,
@@ -71,7 +73,8 @@ static int s_lastSendMs = 0;
 static int s_stopResends = 0;   // extra zero updates still owed after a stop
 static bool s_gameLive = false; // last Rumble_Frame verdict; posts outside a live game are dropped
 
-static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire", "melee", "hit", "damage"};
+static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire",   "melee", "hit",
+                                                                             "damage", "step"};
 
 static bool RumbleEnabled(void)
 {
@@ -88,6 +91,8 @@ static idCVar *CategoryScale(int category)
         return &joy_rumbleMelee;
     case idCommon::RUMBLE_HIT:
         return &joy_rumbleHit;
+    case idCommon::RUMBLE_STEP:
+        return &joy_rumbleSteps;
     default:
         return &joy_rumbleDamage;
     }

@@ -304,6 +304,7 @@ class idCommon
         RUMBLE_MELEE,
         RUMBLE_HIT,
         RUMBLE_DAMAGE,
+        RUMBLE_STEP, // big-monster footsteps; append new categories so older engines reject them
         RUMBLE_NUM_CATEGORIES
     };
 

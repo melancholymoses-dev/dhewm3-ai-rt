@@ -4082,6 +4082,72 @@ void idAI::EnemyDead(void)
 
 /*
 =====================
+idAI::StepRumble
+
+dhewm3-rt: heavy monsters shake the gamepad as they walk.  Strength and range come from a
+classname-prefix table; "rumble_step" / "rumble_step_range" def keys override it.
+=====================
+*/
+static const struct
+{
+    const char *prefix;
+    float strength;
+    float range;
+} s_stepRumble[] = {
+    {"monster_boss_cyberdemon", 1.0f, 3000.0f},     {"monster_boss_guardian", 1.0f, 3000.0f},
+    {"monster_demon_mancubus", 0.6f, 1500.0f},      {"monster_demon_d3xp_bruiser", 0.6f, 1500.0f},
+    {"monster_demon_hellknight", 0.5f, 1500.0f},    {"monster_demon_pinky", 0.35f, 1000.0f},
+};
+
+void idAI::StepRumble(const char *soundKey)
+{
+    if (idStr::Icmp(soundKey, "snd_footstep") && idStr::Icmp(soundKey, "snd_deepfs") &&
+        idStr::Icmp(soundKey, "snd_handstep"))
+    {
+        return;
+    }
+    if (gameLocal.isMultiplayer || health <= 0)
+    {
+        return;
+    }
+
+    float strength = 0.0f;
+    float range = 0.0f;
+    const char *defName = GetEntityDefName();
+    for (int i = 0; i < (int)(sizeof(s_stepRumble) / sizeof(s_stepRumble[0])); i++)
+    {
+        if (!idStr::Icmpn(defName, s_stepRumble[i].prefix, idStr::Length(s_stepRumble[i].prefix)))
+        {
+            strength = s_stepRumble[i].strength;
+            range = s_stepRumble[i].range;
+            break;
+        }
+    }
+    strength = spawnArgs.GetFloat("rumble_step", va("%f", strength));
+    range = spawnArgs.GetFloat("rumble_step_range", va("%f", range));
+    if (strength <= 0.0f || range <= 0.0f)
+    {
+        return;
+    }
+
+    // Felt through the floor: nothing while the player is airborne.
+    idPlayer *player = gameLocal.GetLocalPlayer();
+    if (!player || !player->GetPhysics()->HasGroundContacts())
+    {
+        return;
+    }
+    const float dist = (player->GetPhysics()->GetOrigin() - GetPhysics()->GetOrigin()).Length();
+    if (dist >= range)
+    {
+        return;
+    }
+    // Squared falloff, since the motor curve's floor lifts distant steps.
+    const float falloff = Square(1.0f - dist / range);
+    Game_Rumble(idCommon::RUMBLE_STEP, strength * falloff, 0.0f, 200);
+}
+
+/*
+=====================
 idAI::TalkTo
 =====================
 */

@@ -10,7 +10,7 @@ Every assist is individually switchable off. `joy_aimAssist 0` and
 
 | # | Stage | Scope | Priority | Status |
 |---|---|---|---|---|
-| C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks | sys + framework + game/d3xp | **next** | built 2026-09-30, untested |
+| C3 | Rumble: `Sys_SetRumble` + effect mixer + 4 game hooks; C3b monster footsteps | sys + framework + game/d3xp | **next** | built 2026-09-30, untested |
 | C1 | Radial look stick, legacy curve on the magnitude (`joy_newLook`) | framework only | low | built 2026-09-30, untested |
 | C2 | Ramp latch fix, 333 ms ramp kept (`joy_lookRampFix`) | framework only | low | built 2026-09-30, untested |
 | C4 | Aim assist: friction + optional adhesion (`joy_aimAssist`) | framework + game/d3xp, no ABI bump | | built 2026-09-30, untested |
@@ -172,6 +172,31 @@ yet identified. Changes:
 If it recurs, capture `joy_rumbleDebug 2`. A run of `RUMBLE sdl ... ok` lines with nonzero values
 means something keeps posting; `FAILED` or `skipped` lines mean the stop never reached the pad.
 
+### C3b — Big-monster footsteps
+
+**Built 2026-10-01, not yet validated in-game.** Walk anims play steps as frame commands
+(`sound_body snd_footstep`, hell knight adds `sound_body2 snd_deepfs`, pinky `snd_handstep`).
+
+| Change | Where |
+|---|---|
+| `RUMBLE_STEP` appended to `rumbleCategory_t`; older engines reject it via the bounds check | `neo/framework/Common.h` |
+| `joy_rumbleSteps` scale, `"step"` debug name | `neo/framework/Rumble.cpp`, `Dhewm3SettingsMenu.cpp` |
+| `FC_SOUND_BODY`/`BODY2` with a `snd_*` key → `idAI::StepRumble(key)` | `neo/{game,d3xp}/anim/Anim_Blend.cpp` |
+| `StepRumble`: step keys only; strength/range from a classname-prefix table, overridden by `rumble_step` / `rumble_step_range` def keys. Local player, single player, on the ground. Low motor, 200 ms, × (1 − dist/range)² | `neo/{game,d3xp}/ai/AI.{h,cpp}` |
+
+| Monster prefix | Strength | Range |
+|---|---|---|
+| `monster_boss_cyberdemon`, `monster_boss_guardian` | 1.0 | 3000 |
+| `monster_demon_mancubus`, `monster_demon_d3xp_bruiser` | 0.6 | 1500 |
+| `monster_demon_hellknight` | 0.5 | 1500 |
+| `monster_demon_pinky` | 0.35 | 1000 |
+
+No save-game fields: the table is read on each step. Hell knight's double sound on one frame is
+two posts into one slot; the mixer keeps the max.
+
+**Check:** `joy_rumbleDebug 1`, `spawn monster_demon_hellknight`: `RUMBLE post step` per footfall,
+values falling as it walks away, none while jumping. `joy_rumbleSteps 0`: no step posts.
+
 **Follow-ups:** BFG and plasma use the no-recoil default. If they feel weak, give them
 `rumble_*` keys (def-file mod) or derive strength from the projectile's damage.
 
@@ -314,7 +339,7 @@ the existing `joy_*` block at [line 1824](../../neo/framework/Dhewm3SettingsMenu
 | Group | Entries |
 |---|---|
 | Look stick | `joy_newLook`, `joy_lookDeadZone`, `joy_lookOuterDeadZone`, `joy_dampenLook`, `joy_deltaPerMSLook`, `joy_lookRampFix` (new "Gamepad Look Stick" heading) |
-| Rumble | `joy_rumbleEnable`, `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage` |
+| Rumble | `joy_rumbleEnable`, `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage`, `joy_rumbleSteps`, `joy_rumbleLength`, `joy_rumbleFloor`, `joy_rumbleGamma`, `joy_rumbleMinMs` |
 | Aim assist | `joy_aimAssist` (combo: Off / Friction / Friction + Adhesion), `joy_aimAssistStrength`, `joy_aimAssistSmallTargets`. Tuning floats are console-only |
 | Weapon groups | `pad_weapGroups`, `pad_weapCommitMs`, `pad_weapOverlay`. Group lists and fade time are console-only |
 
@@ -329,7 +354,7 @@ them only once `joy_newLook 1` has shipped as default for a while.
 | Stage | Files |
 |---|---|
 | C1, C2 | `neo/framework/UsercmdGen.cpp`, `Dhewm3SettingsMenu.cpp` |
-| C3 | `neo/sys/events.cpp`, `neo/framework/{Rumble.cpp,Rumble.h,Common.h,Common.cpp,Session.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Game_local.h,Game_local.cpp,Player.cpp,Weapon.cpp}`, `neo/CMakeLists.txt` |
+| C3 | `neo/sys/events.cpp`, `neo/framework/{Rumble.cpp,Rumble.h,Common.h,Common.cpp,Session.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Game_local.h,Game_local.cpp,Player.cpp,Weapon.cpp}`, `neo/CMakeLists.txt`; C3b adds `neo/{game,d3xp}/{ai/AI.h,ai/AI.cpp,anim/Anim_Blend.cpp}` |
 | C4 | `neo/framework/{UsercmdGen.cpp,UsercmdGen.h,Common.h,Common.cpp,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{AimAssist.cpp,AimAssist.h,Player.h,Player.cpp}`, `neo/CMakeLists.txt` |
 | C5 | `neo/framework/{UsercmdGen.h,Dhewm3SettingsMenu.cpp}`, `neo/{game,d3xp}/{Player.h,Player.cpp}`, `base/{gamepad.cfg,gamepad-d3xp.cfg}`; C5b adds `base/guis/weapsel.gui` |
 

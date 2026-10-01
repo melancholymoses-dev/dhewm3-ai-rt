@@ -293,6 +293,8 @@ class idAI : public idActor
     idActor *GetEnemy(void) const;
     void TalkTo(idActor *actor);
     talkState_t GetTalkState(void) const;
+    // dhewm3-rt: gamepad rumble for a big monster's footstep frame command (soundKey is the snd_* key).
+    void StepRumble(const char *soundKey);
 
     bool GetAimDir(const idVec3 &firePos, idEntity *aimAtEnt, const idEntity *ignore, idVec3 &aimDir) const;
 
