@@ -62,6 +62,21 @@ Also catches the placed `lights/roundfire_spectrumLight` reveal lights (caverns1
 Check: `r_rtGILightDump 1` near a spawn shows `lights/spectrumlight cls=SPECTRUM ... REJECT`,
 absent from `[vol selection]`.
 
+## A5 — projected light range from `light_end`
+
+GI/vol took a projected light's range from `|target|`. GL uses `end - start`
+(`R_SetLightProject`; `Light.cpp` defaults `end` to `target`). The sentry flashlight
+(`ai_character_sentry.script`) sets `light_target "1 0 0"`, `light_end 640`, so it read as a
+1-unit cone and barely reached the fog.
+
+| Change | Where |
+|---|---|
+| `projReach = max(|axis·end|, |axis·target|)` drives admission radius, importance, vol cull, cone reach | `vk_gi.cpp` |
+| Cone half-angle still from target vs right/up | `vk_gi.cpp` |
+
+Check: `r_rtGILightDump 1` near a sentry with its light on (mars_city1/2, comm1):
+`lights/sentrylight ... radius= 640.0 ... isProjected=1`, present in `[vol selection]` with `reach=704`.
+
 ## Open checks
 
 - Viewmodel: AO at weapon pixels is computed from hacked depth; interactions skip it, the
