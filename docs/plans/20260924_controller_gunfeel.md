@@ -259,7 +259,7 @@ is inert (returns before touching the angles).
 
 ## C5 — D-pad weapon groups
 
-**Built 2026-10-01, not yet validated in-game.** Commit sets `idealWeapon` directly (`CommitWeaponSel`), bypassing `SelectWeapon` toggle-back and d3xp weapon toggles. Multiplayer commits immediately. After pulling, `exec gamepad.cfg` (or `gamepad-d3xp.cfg`) to pick up the D-pad binds.
+**Built 2026-10-01, not yet validated in-game.** Commit sets `idealWeapon` directly (`CommitWeaponSel`), bypassing `SelectWeapon` toggle-back and d3xp weapon toggles. Multiplayer commits immediately. `idCommonLocal::InitGame` (`neo/framework/Common.cpp`) now auto-execs `gamepad.cfg`/`gamepad-d3xp.cfg` (picked by `fs_game`) after `default.cfg` on every launch, so the D-pad binds apply with no manual `exec` step; a saved rebind still overrides it.
 
 Each D-pad direction holds a group of up to 4 weapons. Pressing it selects the group; each further
 press steps to the next weapon in it. The stock pad cfgs bind the D-pad to 4 single weapons only.
@@ -272,12 +272,14 @@ press steps to the next weapon in it. The stock pad cfgs bind the D-pad to 4 sin
 | Commit delay: hold the pick as `pendingWeapon`, then call `SelectWeapon` once `pad_weapCommitMs` passes with no press. 0 = select on every press | same, ticked in `idPlayer::Think` |
 | HUD: `UpdateHudWeapon` highlights `pendingWeapon` when one is set, then fires `weaponChange`. Uses the existing `Weapon0..11` strip in `hud.gui`; no new art | same |
 | Binds: `JOY_DPAD_*` → `_impulse30..33` | `base/gamepad.cfg`, `base/gamepad-d3xp.cfg` |
+| Overshoot fix: `CycleWeaponGroup(g, dir)` takes a direction; `weapSelActiveGroup` remembers which group a D-pad press opened. While the selector is up (`weapSelPending` set or before `weapSelHideTime`), the prev/next-weapon shoulder buttons (`IMPULSE_14/15`) call `StepActiveWeaponGroup(±1)` to step back/forward within that group instead of the global weapon cycle; they fall back to `NextWeapon`/`PrevWeapon` once it's closed | `neo/{game,d3xp}/Player.{h,cpp}` |
 
 | CVar | Default | Meaning |
 |---|---|---|
 | `pad_weapGroups` | 1 | **Toggle.** 0 = impulses 30–33 do nothing (bind the D-pad back to stock) |
 | `pad_weapGroup0..3` | see below | Space-separated classnames, cycle order |
 | `pad_weapCommitMs` | 250 | Commit delay, 0 = immediate |
+| `pad_weapGroupShoulderStep` | 1 | **Toggle.** 0 = shoulder buttons always do the global weapon cycle, never step within a group |
 | `pad_weapDebug` | 0 | Log group, candidates, skip reason (not owned / no ammo), commit |
 
 | Dir | Base default | d3xp default |
@@ -293,6 +295,9 @@ toggle only on a re-press of the same slot; cycling always passes a different sl
 
 **Check:** `pad_weapDebug 1`, `give all`. Tap Up 3× quickly: one switch to machinegun, and the HUD strip
 steps pistol→shotgun→machinegun. Empty the shotgun: Up skips it. `pad_weapCommitMs 0`: every press switches.
+Overshoot: tap Up to machinegun, then tap the left-shoulder button — `WEAPSEL group 1 dir -1` in the
+log, stepping back to shotgun. Right shoulder steps forward again. Let the selector fade, then shoulder
+taps should do the normal global weapon cycle instead.
 
 ### C5b — Centre-screen selector (HL2 style)
 
@@ -346,7 +351,7 @@ the existing `joy_*` block at [line 1824](../../neo/framework/Dhewm3SettingsMenu
 | Look stick | `joy_newLook`, `joy_lookDeadZone`, `joy_lookOuterDeadZone`, `joy_dampenLook`, `joy_deltaPerMSLook`, `joy_lookRampFix` (new "Gamepad Look Stick" heading) |
 | Rumble | `joy_rumbleEnable`, `joy_rumble`, `joy_rumbleFire`, `joy_rumbleMelee`, `joy_rumbleHit`, `joy_rumbleDamage`, `joy_rumbleSteps`, `joy_rumbleLength`, `joy_rumbleFloor`, `joy_rumbleGamma`, `joy_rumbleMinMs` |
 | Aim assist | `joy_aimAssist` (combo: Off / Friction / Friction + Adhesion), `joy_aimAssistStrength`, `joy_aimAssistSmallTargets`. Tuning floats are console-only |
-| Weapon groups | `pad_weapGroups`, `pad_weapCommitMs`, `pad_weapOverlay`. Group lists and fade time are console-only |
+| Weapon groups | `pad_weapGroups`, `pad_weapCommitMs`, `pad_weapOverlay`, `pad_weapGroupShoulderStep`. Group lists and fade time are console-only |
 
 `joy_gammaLook`, `joy_powerScale`, `joy_deadZone`, `joy_dampenLook` and
 `joy_deltaPerMSLook` stay for the legacy path and get a "legacy" label. Retire

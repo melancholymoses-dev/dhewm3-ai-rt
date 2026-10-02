@@ -3686,6 +3686,19 @@ void idCommonLocal::InitGame(void)
     cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "exec editor.cfg\n");
     cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "exec default.cfg\n");
 
+    // Controller D-pad weapon-group binds (docs/plans/20260924_controller_gunfeel.md, C5).
+    // Runs before the saved config so a manual rebind still overrides it; picked by
+    // fs_game since d3xp's gamepad.cfg differs (JOY_TRIGGER1 impulse number).
+    const char *fs_game = cvarSystem->GetCVarString("fs_game");
+    if (fs_game && !idStr::Icmp(fs_game, "d3xp"))
+    {
+        cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "exec gamepad-d3xp.cfg\n");
+    }
+    else
+    {
+        cmdSystem->BufferCommandText(CMD_EXEC_APPEND, "exec gamepad.cfg\n");
+    }
+
     // skip the config file if "safe" is on the command line
     if (!SafeMode())
     {

@@ -4254,6 +4254,9 @@ idCVar pad_weapOverlay("pad_weapOverlay", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_B
                        "Show the centre-screen weapon selector while choosing a weapon group");
 idCVar pad_weapOverlayFadeMs("pad_weapOverlayFadeMs", "1000", CVAR_GAME | CVAR_ARCHIVE | CVAR_INTEGER,
                              "How long the weapon selector stays up after the switch (ms)", 0, 5000);
+idCVar pad_weapGroupShoulderStep("pad_weapGroupShoulderStep", "1", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+                                 "While the weapon group selector is open, the prev/next weapon shoulder "
+                                 "buttons step back/forward within the active group instead of the global cycle");
 idCVar pad_weapDebug("pad_weapDebug", "0", CVAR_GAME | CVAR_BOOL,
                      "Log weapon group presses, candidates and commits");
 
@@ -4295,6 +4298,7 @@ void idPlayer::ResetWeaponSel(void)
     {
         weapSelLast[i] = -1;
     }
+    weapSelActiveGroup = -1;
     weapSelGui = NULL;
 }
 
@@ -4363,7 +4367,7 @@ int idPlayer::WeaponSelAmmo(int slot)
     return inventory.ammo[type];
 }
 
-void idPlayer::CycleWeaponGroup(int group)
+void idPlayer::CycleWeaponGroup(int group, int dir)
 {
     if (!pad_weapGroups.GetBool() || group < 0 || group >= WEAPSEL_GROUPS)
     {
@@ -4373,6 +4377,8 @@ void idPlayer::CycleWeaponGroup(int group)
     {
         return;
     }
+
+    weapSelActiveGroup = group;
 
     int slots[WEAPSEL_SLOTS];
     const int n = WeaponGroupSlots(group, slots, true);
@@ -4390,10 +4396,16 @@ void idPlayer::CycleWeaponGroup(int group)
     int pick = -1;
     if (curIndex >= 0)
     {
-        // Already in this group: step to the next available weapon, wrapping back to cur.
+        // Already in this group: step to the next (or, with dir -1, previous) available
+        // weapon, wrapping around cur.
         for (int k = 1; k <= n && pick < 0; k++)
         {
-            const int s = slots[(curIndex + k) % n];
+            int idx = (curIndex + dir * k) % n;
+            if (idx < 0)
+            {
+                idx += n;
+            }
+            const int s = slots[idx];
             if (WeaponSelAvailable(s))
             {
                 pick = s;
@@ -4426,7 +4438,7 @@ void idPlayer::CycleWeaponGroup(int group)
         {
             list += va(" %d%s", slots[i], WeaponSelAvailable(slots[i]) ? "" : "(unavailable)");
         }
-        gameLocal.Printf("WEAPSEL group %d: slots[%s ] cur=%d pick=%d\n", group, list.c_str(), cur, pick);
+        gameLocal.Printf("WEAPSEL group %d dir %d: slots[%s ] cur=%d pick=%d\n", group, dir, list.c_str(), cur, pick);
     }
 
     // The selector shows even when the group is empty, so the press visibly did something.
@@ -4450,6 +4462,24 @@ void idPlayer::CycleWeaponGroup(int group)
         weapSelCommitTime = gameLocal.time + commitMs;
     }
     UpdateHudWeapon();
+}
+
+// While the selector is showing, lets the prev/next weapon shoulder buttons back up or
+// re-advance within the group a D-pad press just opened, to correct an overshoot without
+// cycling through every owned weapon. Returns false (caller should fall back to the global
+// weapon cycle) once the selector has closed or no group is active.
+bool idPlayer::StepActiveWeaponGroup(int dir)
+{
+    if (!pad_weapGroupShoulderStep.GetBool() || weapSelActiveGroup < 0)
+    {
+        return false;
+    }
+    if (weapSelPending < 0 && gameLocal.time >= weapSelHideTime)
+    {
+        return false;
+    }
+    CycleWeaponGroup(weapSelActiveGroup, dir);
+    return true;
 }
 
 // Sets idealWeapon directly: SelectWeapon would toggle back (flashlight, soul cube) on a repeat.
@@ -6856,11 +6886,17 @@ void idPlayer::PerformImpulse(int impulse)
         break;
     }
     case IMPULSE_14: {
-        NextWeapon();
+        if (!StepActiveWeaponGroup(1))
+        {
+            NextWeapon();
+        }
         break;
     }
     case IMPULSE_15: {
-        PrevWeapon();
+        if (!StepActiveWeaponGroup(-1))
+        {
+            PrevWeapon();
+        }
         break;
     }
     case IMPULSE_17: {

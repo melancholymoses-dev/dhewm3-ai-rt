@@ -34,7 +34,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_0_0_empty"), (1 - 0.7 * "gui::wsel_0_0_empty"), ((0.65 + 0.35 * "gui::wsel_0_0_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_0_0_ammo {
-		rect	216, 250, 64, 12
+		rect	216, 248, 64, 16
 		visible	("gui::wsel_0_0_vis" != 0)
 		text	"gui::wsel_0_0_ammo"
 		font	"fonts/bank"
@@ -61,7 +61,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_0_1_empty"), (1 - 0.7 * "gui::wsel_0_1_empty"), ((0.65 + 0.35 * "gui::wsel_0_1_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_0_1_ammo {
-		rect	148, 250, 64, 12
+		rect	148, 248, 64, 16
 		visible	("gui::wsel_0_1_vis" != 0)
 		text	"gui::wsel_0_1_ammo"
 		font	"fonts/bank"
@@ -88,7 +88,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_0_2_empty"), (1 - 0.7 * "gui::wsel_0_2_empty"), ((0.65 + 0.35 * "gui::wsel_0_2_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_0_2_ammo {
-		rect	80, 250, 64, 12
+		rect	80, 248, 64, 16
 		visible	("gui::wsel_0_2_vis" != 0)
 		text	"gui::wsel_0_2_ammo"
 		font	"fonts/bank"
@@ -115,7 +115,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_0_3_empty"), (1 - 0.7 * "gui::wsel_0_3_empty"), ((0.65 + 0.35 * "gui::wsel_0_3_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_0_3_ammo {
-		rect	12, 250, 64, 12
+		rect	12, 248, 64, 16
 		visible	("gui::wsel_0_3_vis" != 0)
 		text	"gui::wsel_0_3_ammo"
 		font	"fonts/bank"
@@ -142,7 +142,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_1_0_empty"), (1 - 0.7 * "gui::wsel_1_0_empty"), ((0.65 + 0.35 * "gui::wsel_1_0_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_1_0_ammo {
-		rect	288, 194, 64, 12
+		rect	288, 192, 64, 16
 		visible	("gui::wsel_1_0_vis" != 0)
 		text	"gui::wsel_1_0_ammo"
 		font	"fonts/bank"
@@ -169,7 +169,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_1_1_empty"), (1 - 0.7 * "gui::wsel_1_1_empty"), ((0.65 + 0.35 * "gui::wsel_1_1_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_1_1_ammo {
-		rect	288, 146, 64, 12
+		rect	288, 144, 64, 16
 		visible	("gui::wsel_1_1_vis" != 0)
 		text	"gui::wsel_1_1_ammo"
 		font	"fonts/bank"
@@ -196,7 +196,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_1_2_empty"), (1 - 0.7 * "gui::wsel_1_2_empty"), ((0.65 + 0.35 * "gui::wsel_1_2_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_1_2_ammo {
-		rect	288, 98, 64, 12
+		rect	288, 96, 64, 16
 		visible	("gui::wsel_1_2_vis" != 0)
 		text	"gui::wsel_1_2_ammo"
 		font	"fonts/bank"
@@ -223,7 +223,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_1_3_empty"), (1 - 0.7 * "gui::wsel_1_3_empty"), ((0.65 + 0.35 * "gui::wsel_1_3_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_1_3_ammo {
-		rect	288, 50, 64, 12
+		rect	288, 48, 64, 16
 		visible	("gui::wsel_1_3_vis" != 0)
 		text	"gui::wsel_1_3_ammo"
 		font	"fonts/bank"
@@ -250,7 +250,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_2_0_empty"), (1 - 0.7 * "gui::wsel_2_0_empty"), ((0.65 + 0.35 * "gui::wsel_2_0_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_2_0_ammo {
-		rect	360, 250, 64, 12
+		rect	360, 248, 64, 16
 		visible	("gui::wsel_2_0_vis" != 0)
 		text	"gui::wsel_2_0_ammo"
 		font	"fonts/bank"
@@ -277,7 +277,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_2_1_empty"), (1 - 0.7 * "gui::wsel_2_1_empty"), ((0.65 + 0.35 * "gui::wsel_2_1_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_2_1_ammo {
-		rect	428, 250, 64, 12
+		rect	428, 248, 64, 16
 		visible	("gui::wsel_2_1_vis" != 0)
 		text	"gui::wsel_2_1_ammo"
 		font	"fonts/bank"
@@ -304,7 +304,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_2_2_empty"), (1 - 0.7 * "gui::wsel_2_2_empty"), ((0.65 + 0.35 * "gui::wsel_2_2_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_2_2_ammo {
-		rect	496, 250, 64, 12
+		rect	496, 248, 64, 16
 		visible	("gui::wsel_2_2_vis" != 0)
 		text	"gui::wsel_2_2_ammo"
 		font	"fonts/bank"
@@ -331,7 +331,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_2_3_empty"), (1 - 0.7 * "gui::wsel_2_3_empty"), ((0.65 + 0.35 * "gui::wsel_2_3_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_2_3_ammo {
-		rect	564, 250, 64, 12
+		rect	564, 248, 64, 16
 		visible	("gui::wsel_2_3_vis" != 0)
 		text	"gui::wsel_2_3_ammo"
 		font	"fonts/bank"
@@ -358,7 +358,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_3_0_empty"), (1 - 0.7 * "gui::wsel_3_0_empty"), ((0.65 + 0.35 * "gui::wsel_3_0_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_3_0_ammo {
-		rect	288, 306, 64, 12
+		rect	288, 304, 64, 16
 		visible	("gui::wsel_3_0_vis" != 0)
 		text	"gui::wsel_3_0_ammo"
 		font	"fonts/bank"
@@ -385,7 +385,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_3_1_empty"), (1 - 0.7 * "gui::wsel_3_1_empty"), ((0.65 + 0.35 * "gui::wsel_3_1_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_3_1_ammo {
-		rect	288, 354, 64, 12
+		rect	288, 352, 64, 16
 		visible	("gui::wsel_3_1_vis" != 0)
 		text	"gui::wsel_3_1_ammo"
 		font	"fonts/bank"
@@ -412,7 +412,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_3_2_empty"), (1 - 0.7 * "gui::wsel_3_2_empty"), ((0.65 + 0.35 * "gui::wsel_3_2_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_3_2_ammo {
-		rect	288, 402, 64, 12
+		rect	288, 400, 64, 16
 		visible	("gui::wsel_3_2_vis" != 0)
 		text	"gui::wsel_3_2_ammo"
 		font	"fonts/bank"
@@ -439,7 +439,7 @@ windowDef Desktop {
 		matcolor	1, (1 - 0.7 * "gui::wsel_3_3_empty"), (1 - 0.7 * "gui::wsel_3_3_empty"), ((0.65 + 0.35 * "gui::wsel_3_3_sel") * "gui::wsel_alpha")
 	}
 	windowDef wsel_3_3_ammo {
-		rect	288, 450, 64, 12
+		rect	288, 448, 64, 16
 		visible	("gui::wsel_3_3_vis" != 0)
 		text	"gui::wsel_3_3_ammo"
 		font	"fonts/bank"

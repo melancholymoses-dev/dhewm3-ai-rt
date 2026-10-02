@@ -700,12 +700,15 @@ class idPlayer : public idActor
     int weapSelCommitTime; // gameLocal.time
     int weapSelHideTime;   // the selector stays up until this gameLocal.time
     int weapSelLast[4];    // last pick per group, the target when entering a group
+    int weapSelActiveGroup; // group last entered by a D-pad press, -1 = none; lets the
+                             // prev/next weapon shoulder buttons back up within it
     idUserInterface *weapSelGui;
     void ResetWeaponSel(void);
     int WeaponGroupSlots(int group, int *slots, bool logUnknown);
     bool WeaponSelAvailable(int slot);
     int WeaponSelAmmo(int slot);
-    void CycleWeaponGroup(int group);
+    void CycleWeaponGroup(int group, int dir = 1);
+    bool StepActiveWeaponGroup(int dir);
     void CommitWeaponSel(int slot);
     void UpdateWeaponSel(void);
     void DrawWeaponSel(void);

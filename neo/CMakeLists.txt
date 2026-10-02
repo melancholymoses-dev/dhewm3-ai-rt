@@ -1638,6 +1638,7 @@ endif()
 	set(BASE_MATERIALS_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/materials")
 	set(BASE_GUIS_SRC_DIR "${CMAKE_SOURCE_DIR}/../base/guis")
 	set(BASE_GUIS_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/guis")
+	set(BASE_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base")
 	add_custom_target(deploy_base_overrides ALL
 		COMMAND "${CMAKE_COMMAND}" -E make_directory "${BASE_DEF_EXE_DIR}"
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory
@@ -1651,7 +1652,11 @@ endif()
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory
 				"${BASE_GUIS_SRC_DIR}"
 				"${BASE_GUIS_EXE_DIR}"
-		COMMENT "Copying loose base/def, base/materials and base/guis overrides to exe/base/ for self-contained dev builds"
+		COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+				"${CMAKE_SOURCE_DIR}/../base/gamepad.cfg"
+				"${CMAKE_SOURCE_DIR}/../base/gamepad-d3xp.cfg"
+				"${BASE_EXE_DIR}"
+		COMMENT "Copying loose base/def, base/materials, base/guis and gamepad cfgs to exe/base/ for self-contained dev builds"
 	)
 
 	# Deploy to the user config base dir whenever any SPV changes — not tied to
