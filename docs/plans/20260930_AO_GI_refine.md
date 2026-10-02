@@ -46,6 +46,22 @@ of the GI composite:
 | 2 | GI × AO, scaled by `r_rtAODebugGain` |
 | 3 | GI without AO, same gain (A/B against 2) |
 
+## A4 — drop spectrum lights from GI / volumetrics
+
+Monster teleport FX (`fx/teleporter*.fx`) spawn `lights/spectrumLight` (`spectrum 1`, 2× white,
+radius 500). GL only applies a spectrum light to matching-spectrum surfaces
+(`Interaction.cpp`), but GI/vol admitted it as REAL → white fog burst on every pentagram spawn.
+
+| Change | Where |
+|---|---|
+| New class `RT_LIGHT_SPECTRUM` for `Spectrum() != 0`; not admitted to GI or vol | `vk_light_classify.cpp`, `vk_raytracing.h` |
+
+Also catches the placed `lights/roundfire_spectrumLight` reveal lights (caverns1, alphalabs3, …).
+`lights/squareblast` (the brief floor flash, spectrum 0) is kept.
+
+Check: `r_rtGILightDump 1` near a spawn shows `lights/spectrumlight cls=SPECTRUM ... REJECT`,
+absent from `[vol selection]`.
+
 ## Open checks
 
 - Viewmodel: AO at weapon pixels is computed from hacked depth; interactions skip it, the

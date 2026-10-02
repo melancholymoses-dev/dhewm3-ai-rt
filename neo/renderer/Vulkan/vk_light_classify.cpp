@@ -55,6 +55,12 @@ vkRTLightClass_t VK_RT_ClassifyLight(const renderLight_t &parms, const idMateria
     if (lightShader != NULL && (lightShader->IsFogLight() || lightShader->IsBlendLight()))
         return RT_LIGHT_FOG_BLEND;
 
+    // Spectrum lights only light surfaces with the same spectrum (Interaction.cpp), so
+    // they light neither the medium nor ordinary bounce surfaces.  Teleport FX use one
+    // at 2x white / radius 500, which read as a white fog burst.
+    if (lightShader != NULL && lightShader->Spectrum() != 0)
+        return RT_LIGHT_SPECTRUM;
+
     // ambientLight materials are non-directional paint-bucket fills (no
     // falloff origin to speak of) — always AMBIENT_FILL regardless of radius
     // or the entity noShadows bit.
@@ -88,6 +94,8 @@ const char *VK_RT_LightClassName(vkRTLightClass_t cls)
             return "AMBIENT_FILL";
         case RT_LIGHT_FOG_BLEND:
             return "FOG_BLEND";
+        case RT_LIGHT_SPECTRUM:
+            return "SPECTRUM";
         default:
             return "?";
     }
