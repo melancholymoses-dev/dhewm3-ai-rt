@@ -2,10 +2,14 @@
 ===========================================================================
 Annex K shims for the vendored AMD FSR 2.2.1 sources.
 
-ffx_fsr2.cpp and vk/ffx_fsr2_vk.cpp call wcscpy_s / wcstombs_s, which only
-exist in MSVC's CRT.  Rather than patch AMD's files (which must stay
-byte-identical to the pinned upstream tag), this header is force-included into
-the four FSR2 translation units on non-MSVC compilers via -include.
+ffx_fsr2.cpp and vk/ffx_fsr2_vk.cpp call wcscpy_s / wcstombs_s / _countof,
+which only exist in MSVC's CRT.  Rather than patch AMD's files (which must
+stay byte-identical to the pinned upstream tag), this header is force-included
+into the four FSR2 translation units on non-MSVC compilers via -include.
+
+vk/ffx_fsr2_vk.cpp also uses std::wstring_convert, which libstdc++ declares in
+<locale> rather than <codecvt>; the file only includes the latter, so pull in
+<locale> here too.
 
 It lives outside libs/ffx-fsr2-api/ deliberately: that directory is upstream's
 and nothing of ours belongs in it.
@@ -27,6 +31,11 @@ Code release.
 #include <cerrno>
 #include <cstdlib>
 #include <cwchar>
+#include <locale>
+
+#ifndef _countof
+#define _countof(array) (sizeof(array) / sizeof((array)[0]))
+#endif
 
 // MSVC's array-reference overload: the destination bound is deduced, so the
 // call sites need no change.  Truncates rather than overruns.
