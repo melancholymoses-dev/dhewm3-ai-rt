@@ -1919,7 +1919,14 @@ static CVarOption videoOptionsImmediately[] = {
                        {
                            curVsync = -1;
                        }
-                       if (GLimp_SetSwapInterval(curVsync))
+                       if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
+                       {
+                           // Vulkan has no GL context for GLimp_SetSwapInterval to act on --
+                           // just set the cvar; R_CheckCvars() picks up the change and
+                           // rebuilds the swapchain with the matching present mode.
+                           r_swapInterval.SetInteger(curVsync);
+                       }
+                       else if (GLimp_SetSwapInterval(curVsync))
                        {
                            r_swapInterval.SetInteger(curVsync);
                            // this was just set with GLimp_SetSwapInterval(), no reason to set it again in
