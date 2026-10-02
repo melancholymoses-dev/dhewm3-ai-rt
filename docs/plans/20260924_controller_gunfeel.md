@@ -259,7 +259,7 @@ is inert (returns before touching the angles).
 
 ## C5 — D-pad weapon groups
 
-**Built 2026-10-01, not yet validated in-game.** Commit sets `idealWeapon` directly (`CommitWeaponSel`), bypassing `SelectWeapon` toggle-back and d3xp weapon toggles. Multiplayer commits immediately. `idCommonLocal::InitGame` (`neo/framework/Common.cpp`) now auto-execs `gamepad.cfg`/`gamepad-d3xp.cfg` (picked by `fs_game`) after `default.cfg` on every launch, so the D-pad binds apply with no manual `exec` step; a saved rebind still overrides it.
+**Built 2026-10-01, not yet validated in-game.** Commit sets `idealWeapon` directly (`CommitWeaponSel`), bypassing `SelectWeapon` toggle-back and d3xp weapon toggles. Multiplayer commits immediately. `gamepad.cfg`/`gamepad-d3xp.cfg` are not auto-exec'd (removed 2026-10-02: it reset user binds every launch); run `exec gamepad.cfg` (or `gamepad-d3xp.cfg`) once manually.
 
 Each D-pad direction holds a group of up to 4 weapons. Pressing it selects the group; each further
 press steps to the next weapon in it. The stock pad cfgs bind the D-pad to 4 single weapons only.
