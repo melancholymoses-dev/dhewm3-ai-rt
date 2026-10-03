@@ -1,11 +1,10 @@
 # Projectile Glow in Reflections
 
-**Status:** E0–E4 built and working in-game 2026-10-02 (plasma, rockets, lost souls). Remaining:
-the last weapons/monsters in the E3 check list, then flip `r_rtReflGlow` to default 1. Explosions
-are out of scope until E5. Supersedes AR3 / "Sprite / Particle Effects in RT Reflections" in
-`completed/20260423_reflection_enhancements.md`.
-**Owns:** projectile and smoke-system glows (plasma, fireballs, rocket exhaust, lost-soul flames,
-trails) in glass reflections.
+**Status:** E0–E4 working in-game 2026-10-02 (plasma, rockets, lost souls); `r_rtReflGlow` and
+`r_rtReflGlowSmoke` default on. E5 (explosions) and E6 (Mars City scanner beam) code landed
+2026-10-02, untested. Remaining: the weapon/monster check list. Supersedes AR3 / "Sprite /
+Particle Effects in RT Reflections" in `completed/20260423_reflection_enhancements.md`.
+**Owns:** projectile, explosion, smoke-system and additive-translucent glows in glass reflections.
 
 ## Why the earlier attempts failed
 
@@ -39,7 +38,7 @@ t = dot(c − o, d);  if 0 < t < hitT and |o + t·d − c| < r:
 
 | CVar | Default | Notes |
 |---|---|---|
-| `r_rtReflGlow` | 0 | Master switch. Flip to 1 after the remaining checks |
+| `r_rtReflGlow` | 1 | Master switch for E1–E6 (`glowGain` is 0 when off) |
 | `r_rtReflGlowGain` | 1.0 | Multiplies emitter rgb (menu) |
 | `r_rtReflGlowScale` | 1.0 | Multiplies emitter radius |
 | `r_rtReflGlowDist` | 1024 | Max distance from the view origin |
@@ -84,20 +83,43 @@ t = dot(c − o, d);  if 0 < t < hitT and |o + t·d − c| < r:
 | 10+ emitters | `refl` phase +≤ 0.05 ms on the 9070 XT |
 | `r_rtReflGlow 0` | Identical to before the change |
 
-Then set `r_rtReflGlow 1` and record tuned values here.
+Record tuned values here.
 
-## E5 — Explosions (proposed, not started)
+## E5 — Explosions (code landed, untested)
 
-Explosions are intentionally absent: `Explode` swaps the projectile's model to `model_detonate`
-(e.g. `rocketExplosion.prt`) and clears `rtGlow`. A disc has no notion of particle age, so a
-kept tag would leave a constant glow until the entity is removed (often seconds after the fireball).
+`Explode` swaps the projectile's model to `model_detonate` (`rocketExplosion.prt`,
+`plasmaimpact.prt`, `bfgExplosion.prt`). A disc has no notion of particle age, so without an
+envelope a kept tag glows until the entity is removed (≥ 3 s).
 
 | Change | Where |
 |---|---|
-| Keep `rtGlow` through `Explode` | `Projectile.cpp` (both) |
-| For `.prt` emitters, age = view time + `SHADERPARM_TIMEOFFSET`; scale rgb by the chosen stage's fadeIn/fadeOut envelope over `particleLife`, drop after `particleLife + timeOffset` | `vk_rt_emitters.cpp` |
+| `rtGlow` re-set before `Show()` only when the new model is `model_detonate`; impact sparks/ricochets stay untagged. `Restore` also keeps it for `EXPLODED` | `Projectile.cpp` (both) |
+| `ParticleStageEnvelope`: stage age as in `idRenderModelPrt` (view time + `SHADERPARM_TIMEOFFSET` − stage `timeOffset`). Looping stages (`cycles` 0) → 1. Otherwise one fade-in/fade-out ramp over `particleLife·(1 + spawnBunching)` of the current cycle, 0 after the last | `vk_rt_emitters.cpp` (`PickParticleStage`, so `.prt` and deform-particle surfaces both get it) |
 
-Check: rocket explosion in glass flashes and fades with the raster fireball; no lingering disc.
+Check: rocket, plasma and BFG impacts in glass flash and fade with the raster blast; mode 8 disc
+disappears with it; fireballs in flight unchanged.
+
+## E6 — Additive translucent surfaces as glow triangles (code landed, untested)
+
+The Mars City 1 bio-scanner sheet is `bioscanbeam.lwo` (`func_static`), material
+`textures/sfx/bioscanbeam`: `translucent`, `noshadows`, `blend add`, animated `rgb neontable2`.
+
+| Attempt | Result |
+|---|---|
+| v1: record emissive `GLASS` hits in `reflect_ray.rahit` | No effect, reverted. The BLAS filter drops every `noshadows` surface except window glass, so the beam was never in the TLAS. Admitting it would expose it to `gi_ray.rahit` (accepts translucent hits) and the vol ray queries (forced `Opaque`): the earlier attempts' failure mode |
+| v2: upload the triangles to the emitter SSBO, intersect analytically in the rgen | Current |
+
+| Change | Where |
+|---|---|
+| `IsGlowOnlyMaterial`: translucent + `MF_NOSHADOWS`, not `SURFTYPE_GLASS`, no deform (exactly the BLAS exclusion) with an additive stage | `vk_rt_emitters.cpp` |
+| Untagged entities: static model, ≤ 16 surfaces, within `r_rtReflGlowDist`; qualifying surfaces ≤ 128 tris, nearest first | same |
+| Per frame: world-space tris + st, rgb from `EvaluateRegisters` (beam flicker kept), stage image | same; buffer is now `vkRTEmitterBuffer_t` (64 discs + 128 tris) |
+| `RtGlowTri` + two-sided Möller–Trumbore; tris loop in `ReflEmitterGlow`, same `hitT` occlusion and mode 8 colours | `rt_emitter.glsl`, `reflect_ray.rgen` |
+| `glowTriCount` in the last `ReflParams` padding slot | `vk_reflections.cpp` |
+
+World-area surfaces (not entities) are not collected. Texture scroll/rotate is ignored.
+`r_vkLogRT 1` prints `VK RT Emitter glow tris:` with candidate, surface and tri counts.
+Check: Mars City 1 bio-scanner, beam visible in the glass and hidden behind the frame.
 
 ## Cut
 

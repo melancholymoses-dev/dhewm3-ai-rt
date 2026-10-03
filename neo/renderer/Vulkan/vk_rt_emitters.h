@@ -23,8 +23,9 @@ Code release.
 
 #include "renderer/Vulkan/vk_common.h"
 
-// Must match RT_MAX_EMITTERS in rt_emitter.glsl.
+// Must match RT_MAX_EMITTERS / RT_MAX_GLOW_TRIS in rt_emitter.glsl.
 #define VK_RT_MAX_EMITTERS 64
+#define VK_RT_MAX_GLOW_TRIS 128
 
 // std430 mirror of RtEmitter in rt_emitter.glsl — 32 bytes.
 struct vkRTEmitter_t
@@ -33,6 +34,23 @@ struct vkRTEmitter_t
     float radius;
     float rgb[3];
     uint32_t texIndex; // bindless matTextures slot; 0 = procedural falloff
+};
+
+// std430 mirror of RtGlowTri — 80 bytes. World-space triangle of an additive translucent
+// surface the BLAS excludes (noshadows), e.g. the Mars City bio-scanner beam.
+struct vkRTGlowTri_t
+{
+    float v[3][4]; // xyz + s per vertex
+    float t[4];    // t per vertex, w unused
+    float rgb[3];
+    uint32_t texIndex;
+};
+
+// Emitter SSBO layout: VK_RT_MAX_EMITTERS discs, then VK_RT_MAX_GLOW_TRIS triangles.
+struct vkRTEmitterBuffer_t
+{
+    vkRTEmitter_t emitters[VK_RT_MAX_EMITTERS];
+    vkRTGlowTri_t tris[VK_RT_MAX_GLOW_TRIS];
 };
 
 void VK_RT_InitReflEmitters(void);
@@ -46,5 +64,6 @@ void VK_RT_BuildReflEmitters(const struct viewDef_s *viewDef);
 
 VkBuffer VK_RT_GetReflEmitterBuffer(int frameIdx);
 uint32_t VK_RT_GetReflEmitterCount(int frameIdx);
+uint32_t VK_RT_GetReflGlowTriCount(int frameIdx);
 
 #endif // __VK_RT_EMITTERS_H__

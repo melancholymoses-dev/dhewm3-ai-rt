@@ -63,13 +63,14 @@ extern void VK_CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemor
 
 static VkBuffer s_emitterBuf[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static VkDeviceMemory s_emitterMem[VK_MAX_FRAMES_IN_FLIGHT] = {};
-static vkRTEmitter_t *s_emitterMapped[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static vkRTEmitterBuffer_t *s_emitterMapped[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static uint32_t s_emitterCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
+static uint32_t s_glowTriCount[VK_MAX_FRAMES_IN_FLIGHT] = {};
 static int s_emitterFrame[VK_MAX_FRAMES_IN_FLIGHT] = {-1, -1};
 
 void VK_RT_InitReflEmitters(void)
 {
-    const VkDeviceSize size = sizeof(vkRTEmitter_t) * VK_RT_MAX_EMITTERS;
+    const VkDeviceSize size = sizeof(vkRTEmitterBuffer_t);
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
         if (s_emitterBuf[i] != VK_NULL_HANDLE)
@@ -80,8 +81,9 @@ void VK_RT_InitReflEmitters(void)
         void *mapped = NULL;
         VK_CHECK(vkMapMemory(vk.device, s_emitterMem[i], 0, size, 0, &mapped));
         memset(mapped, 0, size);
-        s_emitterMapped[i] = (vkRTEmitter_t *)mapped;
+        s_emitterMapped[i] = (vkRTEmitterBuffer_t *)mapped;
         s_emitterCount[i] = 0;
+        s_glowTriCount[i] = 0;
         s_emitterFrame[i] = -1;
     }
 }
@@ -103,6 +105,7 @@ void VK_RT_ShutdownReflEmitters(void)
         }
         s_emitterMapped[i] = NULL;
         s_emitterCount[i] = 0;
+        s_glowTriCount[i] = 0;
     }
 }
 
@@ -115,6 +118,11 @@ uint32_t VK_RT_GetReflEmitterCount(int frameIdx)
 {
     // A slot not rebuilt this frame holds last frame's projectiles.
     return (s_emitterFrame[frameIdx] == tr.frameCount) ? s_emitterCount[frameIdx] : 0u;
+}
+
+uint32_t VK_RT_GetReflGlowTriCount(int frameIdx)
+{
+    return (s_emitterFrame[frameIdx] == tr.frameCount) ? s_glowTriCount[frameIdx] : 0u;
 }
 
 // Blend add (ONE, ONE) or (SRC_ALPHA, ONE): stages that only brighten, like raster glows.
@@ -481,6 +489,121 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
     }
 }
 
+// Translucent, noshadows, not window glass, no deform: exactly what the BLAS filter drops
+// (vk_accelstruct.cpp), so these surfaces can only reach reflections as glow triangles.
+static bool IsGlowOnlyMaterial(const idMaterial *mat)
+{
+    return mat && mat->Coverage() == MC_TRANSLUCENT && mat->TestMaterialFlag(MF_NOSHADOWS) &&
+           mat->GetSurfaceType() != SURFTYPE_GLASS && mat->Deform() == DFRM_NONE;
+}
+
+struct glowSurfCandidate_t
+{
+    const idRenderEntityLocal *ent;
+    const srfTriangles_t *tri;
+    const idMaterial *mat;
+    idVec3 rgb;
+    idImage *image;
+    float distSq;
+};
+
+static const int MAX_GLOW_SURFS = 64;
+static const int MAX_GLOW_ENT_SURFACES = 16; // skip big static models outright
+
+// Glow-only surfaces of one untagged entity, inserted nearest first.
+static void CollectGlowSurfaces(const idRenderEntityLocal *ent, const viewDef_t *viewDef, float maxDistSq,
+                                glowSurfCandidate_t *list, int &num)
+{
+    const renderEntity_t &parms = ent->parms;
+    const idRenderModel *model = parms.hModel;
+    if (parms.callback || model->IsDynamicModel() != DM_STATIC || model->NumSurfaces() > MAX_GLOW_ENT_SURFACES)
+        return;
+
+    idVec3 centre;
+    R_LocalPointToGlobal(ent->modelMatrix, ent->referenceBounds.GetCenter(), centre);
+    const float distSq = (centre - viewDef->renderView.vieworg).LengthSqr();
+    if (distSq > maxDistSq)
+        return;
+
+    for (int s = 0; s < model->NumSurfaces(); s++)
+    {
+        const modelSurface_t *surf = model->Surface(s);
+        const srfTriangles_t *tri = surf->geometry;
+        if (!tri || !tri->verts || !tri->indexes || tri->numIndexes < 3 ||
+            tri->numIndexes / 3 > VK_RT_MAX_GLOW_TRIS)
+            continue;
+        const idMaterial *mat = parms.customShader ? parms.customShader : surf->shader;
+        if (parms.customSkin && mat)
+            mat = parms.customSkin->RemapShaderBySkin(mat);
+        if (!IsGlowOnlyMaterial(mat))
+            continue;
+
+        glowSurfCandidate_t c;
+        c.rgb.Zero();
+        c.image = NULL;
+        float lum = 0.0f;
+        if (!PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), c.rgb, c.image, lum))
+            continue;
+        c.ent = ent;
+        c.tri = tri;
+        c.mat = mat;
+        c.distSq = distSq;
+
+        int at = num;
+        while (at > 0 && list[at - 1].distSq > distSq)
+            at--;
+        if (at >= MAX_GLOW_SURFS)
+            continue;
+        for (int k = Min(num, MAX_GLOW_SURFS - 1); k > at; k--)
+            list[k] = list[k - 1];
+        list[at] = c;
+        num = Min(num + 1, MAX_GLOW_SURFS);
+    }
+}
+
+// World-space triangles of the nearest glow surfaces into the slot's buffer. Returns the count.
+static int WriteGlowTris(const glowSurfCandidate_t *list, int num, vkRTGlowTri_t *out, bool log)
+{
+    int numTris = 0;
+    int numSurfs = 0;
+    for (int i = 0; i < num; i++)
+    {
+        const glowSurfCandidate_t &c = list[i];
+        const int surfTris = c.tri->numIndexes / 3;
+        if (numTris + surfTris > VK_RT_MAX_GLOW_TRIS)
+            continue;
+        const uint32_t texIndex = c.image ? VK_RT_GetOrAssignTexIndex(c.image) : 0u;
+        for (int k = 0; k < surfTris; k++)
+        {
+            vkRTGlowTri_t &g = out[numTris++];
+            for (int v = 0; v < 3; v++)
+            {
+                const idDrawVert &dv = c.tri->verts[c.tri->indexes[k * 3 + v]];
+                idVec3 p;
+                R_LocalPointToGlobal(c.ent->modelMatrix, dv.xyz, p);
+                g.v[v][0] = p.x;
+                g.v[v][1] = p.y;
+                g.v[v][2] = p.z;
+                g.v[v][3] = dv.st.x;
+                g.t[v] = dv.st.y;
+            }
+            g.t[3] = 0.0f;
+            g.rgb[0] = c.rgb.x;
+            g.rgb[1] = c.rgb.y;
+            g.rgb[2] = c.rgb.z;
+            g.texIndex = texIndex;
+        }
+        numSurfs++;
+        if (log && numSurfs <= 8)
+            common->Printf("  glow surf ent=%d model='%s' mtr='%s' tris=%d rgb=(%.2f %.2f %.2f) dist=%.0f\n",
+                           c.ent->parms.entityNum, c.ent->parms.hModel->Name(), c.mat->GetName(), surfTris,
+                           c.rgb.x, c.rgb.y, c.rgb.z, idMath::Sqrt(c.distSq));
+    }
+    if (log)
+        common->Printf("VK RT Emitter glow tris: candidates=%d surfaces=%d tris=%d\n", num, numSurfs, numTris);
+    return numTris;
+}
+
 void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
 {
     const int slot = vk.currentFrame;
@@ -493,6 +616,7 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
         return;
     s_emitterFrame[slot] = tr.frameCount;
     s_emitterCount[slot] = 0;
+    s_glowTriCount[slot] = 0;
 
     if (!r_rtReflGlow.GetBool() && r_rtReflectionDebugMode.GetInteger() != 8)
         return;
@@ -514,13 +638,20 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
     int numSmoke = 0;
     int numTagged = 0;
     const bool wantSmoke = r_rtReflGlowSmoke.GetBool();
+    static glowSurfCandidate_t glowSurfs[MAX_GLOW_SURFS];
+    int numGlowSurfs = 0;
 
     const idRenderWorldLocal *world = viewDef->renderWorld;
     for (int i = 0; i < world->entityDefs.Num(); i++)
     {
         const idRenderEntityLocal *ent = world->entityDefs[i];
-        if (!ent || !ent->parms.rtGlow || !ent->parms.hModel || ent->parms.weaponDepthHack)
+        if (!ent || !ent->parms.hModel || ent->parms.weaponDepthHack)
             continue;
+        if (!ent->parms.rtGlow)
+        {
+            CollectGlowSurfaces(ent, viewDef, maxDistSq, glowSurfs, numGlowSurfs);
+            continue;
+        }
         numTagged++;
 
         if (idStr::Cmp(ent->parms.hModel->Name(), SMOKE_MODEL_NAME) == 0)
@@ -554,8 +685,9 @@ void VK_RT_BuildReflEmitters(const viewDef_t *viewDef)
         kept[numKept++] = smokeKept[k];
 
     for (int k = 0; k < numKept; k++)
-        s_emitterMapped[slot][k] = kept[k].e;
+        s_emitterMapped[slot]->emitters[k] = kept[k].e;
     s_emitterCount[slot] = (uint32_t)numKept;
+    s_glowTriCount[slot] = (uint32_t)WriteGlowTris(glowSurfs, numGlowSurfs, s_emitterMapped[slot]->tris, log);
 
     if (log)
         common->Printf("VK RT Emitters: tagged=%d projectiles=%d smoke=%d kept=%d slot=%d%s\n", numTagged,

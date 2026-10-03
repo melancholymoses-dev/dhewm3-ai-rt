@@ -119,8 +119,9 @@ idCVar r_rtReflectionDebugMode(
 //   int    rectOriginY    offset 108 size  4
 //   int    reflMode       offset 112 size  4  (r_rtReflectionMode)
 //   int    emitterCount   offset 116 size  4  (vk_rt_emitters.cpp, 0 = none)
-//   float  glowGain       offset 120 size  4  (r_rtReflGlowGain)
-//   total: 124 bytes, padded to 128 — std140 rounds the block up to a multiple of
+//   float  glowGain       offset 120 size  4  (r_rtReflGlowGain, 0 when r_rtReflGlow is off)
+//   int    glowTriCount   offset 124 size  4  (vk_rt_emitters.cpp glow triangles)
+//   total: 128 bytes — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
@@ -142,7 +143,7 @@ struct ReflParamsUBO
     int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
     int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
     float glowGain;       // r_rtReflGlowGain
-    float _pad;           // std140 block rounds to 128; range must cover it
+    int32_t glowTriCount; // additive translucent triangles after the discs in binding 6
 };
 static_assert(sizeof(ReflParamsUBO) == 128, "ReflParamsUBO size mismatch");
 
@@ -162,6 +163,7 @@ extern uint32_t VK_RT_GetGILightBufferSize(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
+extern idCVar r_rtReflGlow;     // vk_rt_emitters.cpp
 extern idCVar r_rtReflGlowGain; // vk_rt_emitters.cpp
 
 // ---------------------------------------------------------------------------
@@ -1193,7 +1195,9 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.rectOriginY = rectY;
     ubo.reflMode = glassOnly ? 1 : 2;
     ubo.emitterCount = (int32_t)VK_RT_GetReflEmitterCount(frameIdx);
-    ubo.glowGain = Max(0.0f, r_rtReflGlowGain.GetFloat());
+    ubo.glowTriCount = (int32_t)VK_RT_GetReflGlowTriCount(frameIdx);
+    // 0 when off, so the glow triangles are also dropped in the rgen.
+    ubo.glowGain = r_rtReflGlow.GetBool() ? Max(0.0f, r_rtReflGlowGain.GetFloat()) : 0.0f;
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).
