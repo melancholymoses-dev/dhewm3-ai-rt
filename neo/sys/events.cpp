@@ -210,6 +210,45 @@ static SDL_GameController *rumbleGamepad = NULL;
 #endif
 // dhewm3-rt: Sys_Milliseconds of the last gamepad button or clear stick/trigger push; 0 = never.
 static int lastGamepadInputMs = 0;
+// Held controls send no further events, so Sys_LastGamepadInputMs also reports "now" while any
+// button is down or any axis is past the activity threshold.
+static const int GAMEPAD_ACTIVE_AXIS = 8192; // ~25%, so stick drift on an untouched pad doesn't count
+static unsigned int gamepadHeldButtons = 0;
+static unsigned int gamepadHeldAxes = 0;
+
+static void TrackGamepadHeld(const SDL_Event &ev)
+{
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+    switch (ev.type)
+    {
+    case SDL_CONTROLLERBUTTONDOWN:
+    case SDL_CONTROLLERBUTTONUP:
+        if (ev.cbutton.button < 32)
+        {
+            const unsigned int bit = 1u << ev.cbutton.button;
+            if (ev.type == SDL_CONTROLLERBUTTONDOWN)
+                gamepadHeldButtons |= bit;
+            else
+                gamepadHeldButtons &= ~bit;
+        }
+        break;
+    case SDL_CONTROLLERAXISMOTION:
+        if (ev.caxis.axis < 32)
+        {
+            const unsigned int bit = 1u << ev.caxis.axis;
+            if (abs(ev.caxis.value) > GAMEPAD_ACTIVE_AXIS)
+                gamepadHeldAxes |= bit;
+            else
+                gamepadHeldAxes &= ~bit;
+        }
+        break;
+    case SDL_JOYDEVICEREMOVED:
+        // A detached pad sends no release events.
+        gamepadHeldButtons = gamepadHeldAxes = 0;
+        break;
+    }
+#endif
+}
 
 struct kbd_poll_t
 {
@@ -1319,6 +1358,8 @@ sysEvent_t Sys_GetEvent()
     // loop until there is an event we care about (will return then) or no more events
     while (SDL_PollEvent(&ev))
     {
+        TrackGamepadHeld(ev); // before ImGui, which swallows some controller events
+
         if (D3::ImGuiHooks::ProcessEvent(&ev))
         {
             // ImGui has used the event, so it shouldn't also be handled by the game
@@ -1729,8 +1770,7 @@ sysEvent_t Sys_GetEvent()
 
             sys_jEvents jEvent = mapjoyaxis((SDL_GameControllerAxis)ev.caxis.axis);
             joystick_polls.Append(joystick_poll_t(jEvent, ev.caxis.value));
-            // ~25% deflection, so stick drift on an untouched pad doesn't count as use.
-            if (abs(ev.caxis.value) > 8192)
+            if (abs(ev.caxis.value) > GAMEPAD_ACTIVE_AXIS)
             {
                 lastGamepadInputMs = Sys_Milliseconds();
             }
@@ -2082,6 +2122,10 @@ Joystick Input Methods
 */
 int Sys_LastGamepadInputMs(void)
 {
+    if (gamepadHeldButtons != 0 || gamepadHeldAxes != 0)
+    {
+        lastGamepadInputMs = Sys_Milliseconds();
+    }
     return lastGamepadInputMs;
 }
 

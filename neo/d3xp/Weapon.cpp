@@ -4427,12 +4427,12 @@ void idWeapon::Event_Melee(void)
         }
 
         idThread::ReturnInt(hit);
-        owner->WeaponFireFeedback(&weaponDef->dict);
+        owner->WeaponFireFeedback(&weaponDef->dict, false); // melee rumble is posted above
         return;
     }
 
     idThread::ReturnInt(0);
-    owner->WeaponFireFeedback(&weaponDef->dict);
+    owner->WeaponFireFeedback(&weaponDef->dict, false);
 }
 
 /*

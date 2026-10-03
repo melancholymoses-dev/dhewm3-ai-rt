@@ -3090,7 +3090,7 @@ WeaponFireFeedback
 Called when a weapon fires, generates head twitches, etc
 ==================
 */
-void idPlayer::WeaponFireFeedback(const idDict *weaponDef)
+void idPlayer::WeaponFireFeedback(const idDict *weaponDef, bool fireRumble)
 {
     // force a blink
     blink_time = 0;
@@ -3103,7 +3103,7 @@ void idPlayer::WeaponFireFeedback(const idDict *weaponDef)
 
     // dhewm3-rt: fire rumble.  rumble_low/hi/ms def keys override; else scale with recoilTime
     // (pistol ~125, shotgun/rocket 325; weapons without recoil get a light default).
-    if (this == gameLocal.GetLocalPlayer() && gameLocal.isNewFrame)
+    if (fireRumble && this == gameLocal.GetLocalPlayer() && gameLocal.isNewFrame)
     {
         const int recoilTime = weaponDef->GetInt("recoilTime");
         const float defLow = recoilTime > 0 ? idMath::ClampFloat(0.15f, 0.9f, recoilTime / 360.0f) : 0.2f;
@@ -4293,6 +4293,7 @@ void idPlayer::ResetWeaponSel(void)
 {
     weapSelPending = -1;
     weapSelCommitTime = 0;
+    weapSelBaseWeapon = -1;
     weapSelHideTime = 0;
     for (int i = 0; i < WEAPSEL_GROUPS; i++)
     {
@@ -4460,6 +4461,7 @@ void idPlayer::CycleWeaponGroup(int group, int dir)
     {
         weapSelPending = pick;
         weapSelCommitTime = gameLocal.time + commitMs;
+        weapSelBaseWeapon = idealWeapon;
     }
     UpdateHudWeapon();
 }
@@ -4502,7 +4504,24 @@ void idPlayer::CommitWeaponSel(int slot)
 
 void idPlayer::UpdateWeaponSel(void)
 {
-    if (weapSelPending < 0 || gameLocal.time < weapSelCommitTime)
+    if (weapSelPending < 0)
+    {
+        return;
+    }
+    // Something else changed the weapon (number key, PDA, pickup, script): it is newer, so drop the pick.
+    if (idealWeapon != weapSelBaseWeapon)
+    {
+        if (pad_weapDebug.GetBool())
+        {
+            gameLocal.Printf("WEAPSEL cancel slot %d: idealWeapon changed %d -> %d\n", weapSelPending,
+                             weapSelBaseWeapon, idealWeapon);
+        }
+        weapSelPending = -1;
+        weapSelHideTime = gameLocal.time;
+        UpdateHudWeapon(false);
+        return;
+    }
+    if (gameLocal.time < weapSelCommitTime)
     {
         return;
     }

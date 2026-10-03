@@ -2779,6 +2779,14 @@ void idCommonLocal::InitSIMD(void)
     com_forceGenericSIMD.ClearModified();
 }
 
+// dhewm3-rt: no rumble while the game isn't live: main menu/pause GUI, console, loading
+// screen, ImGui menus.  Also checked on each post, as the state can change mid-frame.
+bool Rumble_GameLive(void)
+{
+    return sessLocal.guiActive == NULL && !sessLocal.insideExecuteMapChange && !console->Active() &&
+           !D3::ImGuiHooks::ShouldShowCursor();
+}
+
 /*
 =================
 idCommonLocal::Frame
@@ -2835,11 +2843,8 @@ void idCommonLocal::Frame(void)
             session->UpdateScreen(false);
         }
 
-        // after the game frame, so effects it posted reach the motors this frame.  No rumble
-        // while the game isn't live: main menu/pause GUI, console, loading screen, ImGui menus.
-        const bool rumbleGameLive = sessLocal.guiActive == NULL && !sessLocal.insideExecuteMapChange &&
-                                    !console->Active() && !D3::ImGuiHooks::ShouldShowCursor();
-        Rumble_Frame(rumbleGameLive);
+        // after the game frame, so effects it posted reach the motors this frame.
+        Rumble_Frame(Rumble_GameLive());
 
         // report timing information
         if (com_speeds.GetBool())

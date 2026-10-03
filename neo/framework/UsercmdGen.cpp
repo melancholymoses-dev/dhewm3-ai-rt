@@ -542,7 +542,7 @@ idUsercmdGen *usercmdGen = &localUsercmdGen;
 bool Usercmd_GamepadLookActive(void)
 {
     const int padMs = localUsercmdGen.lastPadLookMs;
-    return padMs != 0 && Sys_Milliseconds() - padMs < 100 && padMs >= localUsercmdGen.lastMouseLookMs;
+    return padMs != 0 && Sys_Milliseconds() - padMs < 100 && padMs > localUsercmdGen.lastMouseLookMs;
 }
 
 /*

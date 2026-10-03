@@ -418,7 +418,7 @@ class idPlayer : public idActor
 
     void DrawHUD(idUserInterface *hud);
 
-    void WeaponFireFeedback(const idDict *weaponDef);
+    void WeaponFireFeedback(const idDict *weaponDef, bool fireRumble = true); // dhewm3-rt: false for melee
 
     float DefaultFov(void) const;
     float CalcFov(bool honorZoom);
@@ -601,6 +601,7 @@ class idPlayer : public idActor
     // dhewm3-rt: D-pad weapon groups (C5) and centre-screen selector (C5b).  Transient, not saved.
     int weapSelPending;    // slot picked by group presses, switched to at weapSelCommitTime; -1 = none
     int weapSelCommitTime; // gameLocal.time
+    int weapSelBaseWeapon; // idealWeapon when the pick was queued; if it changes, a newer selection wins
     int weapSelHideTime;   // the selector stays up until this gameLocal.time
     int weapSelLast[4];    // last pick per group, the target when entering a group
     int weapSelActiveGroup; // group last entered by a D-pad press, -1 = none; lets the

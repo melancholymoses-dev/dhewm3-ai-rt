@@ -147,7 +147,7 @@ every 16 ms; the 150 ms timeout stops them if frames stall.
 | `joy_rumbleMinMs` | 90 | Shortest effect, so the motor spins up (after `Length`) |
 | `joy_rumbleFloor` | 0.2 | Lowest nonzero motor level, gets past the motor's dead band |
 | `joy_rumbleGamma` | 0.6 | Motor curve `floor + (1−floor)·v^gamma` after mixing; <1 lifts weak effects, 1.0 stays 1.0 |
-| `joy_rumbleIdleMs` | 5000 | No gamepad button or >25% stick/trigger push for this long → treated as not live (no rumble). 0 = never. Source: `Sys_LastGamepadInputMs` in `events.cpp` |
+| `joy_rumbleIdleMs` | 5000 | No gamepad button or >25% stick/trigger push for this long → treated as not live (no rumble). 0 = never. Source: `Sys_LastGamepadInputMs` in `events.cpp`, which counts held buttons/axes as current input |
 | `joy_rumbleDebug` | 0 | 1 = log posts, 2 = also log motor updates (with pre-curve values) |
 
 Playtest 2026-09-30: Xbox One pad needed `joy_rumble 2`, which already saturated shotgun/flashlight/chainsaw
@@ -172,6 +172,17 @@ yet identified. Changes:
 
 If it recurs, capture `joy_rumbleDebug 2`. A run of `RUMBLE sdl ... ok` lines with nonzero values
 means something keeps posting; `FAILED` or `skipped` lines mean the stop never reached the pad.
+
+**Review fixes 2026-10-02 (PR comments):**
+
+| Fix | Where |
+|---|---|
+| `Rumble_Post` checks `Rumble_GameLive()` and pad idle fresh, not the last `Rumble_Frame` verdict, so the first shot after waking the pad or closing a menu isn't dropped | `Rumble.cpp`, `Rumble.h`, `Common.cpp` |
+| Held buttons and axes past 25% keep `Sys_LastGamepadInputMs` current; tracked before the ImGui filter, cleared on pad removal. Before, a held trigger or stick went idle after 5 s | `events.cpp` |
+| Melee calls `WeaponFireFeedback(def, false)`: no FIRE rumble on swings. The chainsaw idling in the air no longer rumbles | `{game,d3xp}/Player.{h,cpp}`, `Weapon.cpp` |
+
+**Check:** hold the chaingun trigger for 10 s: rumble continues, no `RUMBLE pad idle`. Leave the pad 6 s,
+then fire: the first shot posts. Flashlight-melee the air: no `RUMBLE post fire`.
 
 ### C3b — Big-monster footsteps
 
@@ -212,7 +223,8 @@ off-axis, so holding a line on a target is harder than with the old axis-snapped
 with `UpdateDeltaViewAngles(viewAngles)`, so any change to `viewAngles` folds into
 `deltaViewAngles` and persists. The engine contributes one function through
 `GetAdditionalFunction`: `FT_GamepadLookActive`, true while the look stick (not the mouse)
-moved the view in the last 100 ms. Mouse aim is never assisted.
+moved the view in the last 100 ms. Mouse aim is never assisted: if both moved in the same poll,
+the mouse wins (strict `>` on the timestamps, fixed 2026-10-02).
 
 | File | Change |
 |---|---|
@@ -270,6 +282,7 @@ press steps to the next weapon in it. The stock pad cfgs bind the D-pad to 4 sin
 | `CycleWeaponGroup(g)` from `PerformImpulse`. Group lists hold classnames, resolved with `SlotForWeapon`; missing classnames are skipped | `neo/{game,d3xp}/Player.{h,cpp}` |
 | Step rule: if `idealWeapon` (or the pending pick) is in the group, go to the next owned weapon with ammo (`HasAmmo` or `weaponN_allowempty`), wrapping. Otherwise go to the group's last-used weapon, else its first available one | same |
 | Commit delay: hold the pick as `pendingWeapon`, then call `SelectWeapon` once `pad_weapCommitMs` passes with no press. 0 = select on every press | same, ticked in `idPlayer::Think` |
+| Cancel (2026-10-02): `weapSelBaseWeapon` records `idealWeapon` when the pick is queued. If anything else changes `idealWeapon` before the commit (number key, PDA, pickup, out-of-ammo switch, script), the pick is dropped and the selector hides. Check: `pad_weapDebug 1`, tap Up then a number key within 250 ms → `WEAPSEL cancel` | same, `UpdateWeaponSel` |
 | HUD: `UpdateHudWeapon` highlights `pendingWeapon` when one is set, then fires `weaponChange`. Uses the existing `Weapon0..11` strip in `hud.gui`; no new art | same |
 | Binds: `JOY_DPAD_*` → `_impulse30..33` | `base/gamepad.cfg`, `base/gamepad-d3xp.cfg` |
 | Overshoot fix: `CycleWeaponGroup(g, dir)` takes a direction; `weapSelActiveGroup` remembers which group a D-pad press opened. While the selector is up (`weapSelPending` set or before `weapSelHideTime`), the prev/next-weapon shoulder buttons (`IMPULSE_14/15`) call `StepActiveWeaponGroup(±1)` to step back/forward within that group instead of the global weapon cycle; they fall back to `NextWeapon`/`PrevWeapon` once it's closed | `neo/{game,d3xp}/Player.{h,cpp}` |

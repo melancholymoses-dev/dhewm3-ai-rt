@@ -73,7 +73,7 @@ static const int RUMBLE_STOP_RESEND_MS = 50;
 static bool s_motorsOn = false;
 static int s_lastSendMs = 0;
 static int s_stopResends = 0;   // extra zero updates still owed after a stop
-static bool s_gameLive = false; // last Rumble_Frame verdict; posts outside a live game are dropped
+static bool s_gameLive = false; // last Rumble_Frame verdict, for transition logging
 static bool s_padIdle = false;  // no gamepad input within joy_rumbleIdleMs
 
 static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fire",   "melee", "hit",
@@ -82,6 +82,14 @@ static const char *const s_categoryNames[idCommon::RUMBLE_NUM_CATEGORIES] = {"fi
 static bool RumbleEnabled(void)
 {
     return joy_rumbleEnable.GetBool() && joy_rumble.GetFloat() > 0.0f;
+}
+
+// Playing on keyboard/mouse: handled like a menu, so nothing rumbles.
+static bool PadIdle(int now)
+{
+    const int idleMs = joy_rumbleIdleMs.GetInteger();
+    const int lastPadMs = Sys_LastGamepadInputMs();
+    return idleMs > 0 && (lastPadMs == 0 || now - lastPadMs > idleMs);
 }
 
 static idCVar *CategoryScale(int category)
@@ -123,7 +131,10 @@ void Rumble_Post(int category, float low, float hi, int durMs)
 {
     if (category < 0 || category >= idCommon::RUMBLE_NUM_CATEGORIES || durMs <= 0)
         return;
-    if (!RumbleEnabled() || !s_gameLive)
+    // Live state checked fresh, not from the last Rumble_Frame, so the first shot after the
+    // pad wakes or a menu closes isn't dropped.
+    const int now = Sys_Milliseconds();
+    if (!RumbleEnabled() || !Rumble_GameLive() || PadIdle(now))
         return;
 
     const float scale = CategoryScale(category)->GetFloat();
@@ -133,7 +144,6 @@ void Rumble_Post(int category, float low, float hi, int durMs)
         return;
     durMs = Max((int)(durMs * joy_rumbleLength.GetFloat()), joy_rumbleMinMs.GetInteger());
 
-    const int now = Sys_Milliseconds();
     rumbleSlot_t &s = s_slots[category];
     const float env = SlotEnvelope(s, now);
     const int remaining = env > 0.0f ? s.startMs + s.durMs - now : 0;
@@ -168,10 +178,7 @@ void Rumble_Frame(bool gameLive)
     const int now = Sys_Milliseconds();
     const float master = joy_rumble.GetFloat();
 
-    // Pad idle (playing on keyboard/mouse): handled like a menu, so nothing rumbles.
-    const int idleMs = joy_rumbleIdleMs.GetInteger();
-    const int lastPadMs = Sys_LastGamepadInputMs();
-    const bool padIdle = idleMs > 0 && (lastPadMs == 0 || now - lastPadMs > idleMs);
+    const bool padIdle = PadIdle(now);
     if (padIdle != s_padIdle && joy_rumbleDebug.GetInteger() >= 1)
         common->Printf("RUMBLE pad %s\n", padIdle ? "idle (no gamepad input)" : "active");
     s_padIdle = padIdle;

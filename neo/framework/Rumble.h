@@ -26,6 +26,9 @@ void Rumble_Post(int category, float low, float hi, int durMs);
 // gameLive = false (menu, console, loading) stops the motors and drops pending effects.
 void Rumble_Frame(bool gameLive);
 
+// Menu, console, loading or ImGui up = false.  Defined in Common.cpp, which owns that state.
+bool Rumble_GameLive(void);
+
 // Kill all effects and stop the motors (shutdown, map change).
 void Rumble_StopAll(void);
 
