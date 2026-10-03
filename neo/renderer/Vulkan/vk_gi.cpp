@@ -1715,8 +1715,10 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
         // a real projected/spot light's lightRadius is always (0,0,0). Reading it
         // unconditionally here made every projected light's radius 0 — failing the
         // admit gate below and zeroing its importance even if admitted.
-        float radius =
-            isProjected ? (p.axis * p.target).Length() : Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
+        // Projected range is light_end (R_SetLightProject's falloff plane); Light.cpp defaults
+        // end to target. Sentry flashlights use target "1 0 0" + end 640, so |target| reads 1.
+        const float projReach = Max((p.axis * p.end).Length(), (p.axis * p.target).Length());
+        float radius = isProjected ? projReach : Max(Max(p.lightRadius.x, p.lightRadius.y), p.lightRadius.z);
 
         // The light's colour is the EVALUATED colour of its material's chosen
         // stage, not its raw shaderParms.
@@ -1935,11 +1937,13 @@ void VK_RT_UploadGILights(const viewDef_t *viewDef)
             else
             {
                 // p.target is LOCAL space; rotate by p.axis to get world-space direction.
+                // Cone angle comes from target vs right/up; range from projReach (light_end).
                 idVec3 toTarget = p.axis * p.target;
-                float reach = toTarget.Length();
-                idVec3 dir = (reach > 0.001f) ? toTarget / reach : idVec3(0, 0, 1);
+                float targetLen = toTarget.Length();
+                idVec3 dir = (targetLen > 0.001f) ? toTarget / targetLen : idVec3(0, 0, 1);
                 float maxHalf = Max(p.right.Length(), p.up.Length());
-                float cosHalf = reach / idMath::Sqrt(reach * reach + maxHalf * maxHalf);
+                float cosHalf = targetLen / idMath::Sqrt(targetLen * targetLen + maxHalf * maxHalf);
+                float reach = projReach;
                 c.entry.coneDir[0] = dir.x;
                 c.entry.coneDir[1] = dir.y;
                 c.entry.coneDir[2] = dir.z;

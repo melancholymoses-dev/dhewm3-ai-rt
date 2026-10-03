@@ -84,6 +84,10 @@ const int IMPULSE_26 = 26; // <unused>
 const int IMPULSE_27 = 27; // <unused>
 const int IMPULSE_28 = 28; // vote yes
 const int IMPULSE_29 = 29; // vote no
+const int IMPULSE_30 = 30; // dhewm3-rt: weapon group 0 (D-pad left)
+const int IMPULSE_31 = 31; // dhewm3-rt: weapon group 1 (D-pad up)
+const int IMPULSE_32 = 32; // dhewm3-rt: weapon group 2 (D-pad right)
+const int IMPULSE_33 = 33; // dhewm3-rt: weapon group 3 (D-pad down)
 const int IMPULSE_40 = 40; // use vehicle
 
 // usercmd_t->flags
@@ -174,5 +178,8 @@ class idUsercmdGen
 };
 
 extern idUsercmdGen *usercmdGen;
+
+// dhewm3-rt: engine-only; the game reaches it through idCommon::FT_GamepadLookActive.
+bool Usercmd_GamepadLookActive(void);
 
 #endif /* !__USERCMDGEN_H__ */

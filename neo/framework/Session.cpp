@@ -39,6 +39,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "renderer/ModelManager.h"
 
 #include "framework/Session_local.h"
+#include "framework/Rumble.h"
 
 #include <SDL.h>
 
@@ -1852,6 +1853,7 @@ void idSessionLocal::ExecuteMapChange(bool noFadeWipe)
     // for the synchronous networking we needed to roll the angles over from
     // level to level, but now we can just clear everything
     usercmdGen->InitForNewMap();
+    Rumble_StopAll();
     memset(&mapSpawnData.mapSpawnUsercmd, 0, sizeof(mapSpawnData.mapSpawnUsercmd));
 
     // set the user info

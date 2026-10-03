@@ -3412,6 +3412,16 @@ void idWeapon::Event_Melee(void)
 
     if (!gameLocal.isClient)
     {
+        // dhewm3-rt: rev buzz on every melee call.  The chainsaw script calls melee() every 100 ms
+        // while firing, so this holds a mild buzz; hits and strikes below override it in the slot.
+        if (owner == gameLocal.GetLocalPlayer())
+        {
+            const idDict &md = meleeDef->dict;
+            const bool saw = !idStr::Icmp(weaponDef->GetName(), "weapon_chainsaw");
+            Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_rev_low", "0"),
+                        md.GetFloat("rumble_rev_hi", saw ? "0.08" : "0"), md.GetInt("rumble_rev_ms", "150"));
+        }
+
         idVec3 start = playerViewOrigin;
         idVec3 end = start + playerViewAxis[0] * (meleeDistance * owner->PowerUpModifier(MELEE_DISTANCE));
         gameLocal.clip.TracePoint(tr, start, end, MASK_SHOT_RENDERMODEL, owner);
@@ -3521,6 +3531,26 @@ void idWeapon::Event_Melee(void)
             }
         }
 
+        // dhewm3-rt: melee rumble.  Thump when a creature takes the hit (the chainsaw re-posts every
+        // frame and the mixer holds that as a buzz); light tap on anything else that played a strike
+        // sound, which nextStrikeFx already throttles to one per 200 ms.  Miss: nothing.
+        if (ent && owner == gameLocal.GetLocalPlayer())
+        {
+            const idDict &md = meleeDef->dict;
+            if (hit && (ent->IsType(idActor::Type) || ent->IsType(idAFAttachment::Type)))
+            {
+                const float dmg = md.GetFloat("damage") * owner->PowerUpModifier(MELEE_DAMAGE);
+                const float defLow = idMath::ClampFloat(0.4f, 1.0f, dmg / 50.0f);
+                Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_hit_low", va("%f", defLow)),
+                            md.GetFloat("rumble_hit_hi", "0.3"), md.GetInt("rumble_hit_ms", "180"));
+            }
+            else if (*hitSound != '\0')
+            {
+                Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_strike_low", "0.15"),
+                            md.GetFloat("rumble_strike_hi", "0.45"), md.GetInt("rumble_strike_ms", "60"));
+            }
+        }
+
         if (*hitSound != '\0')
         {
             const idSoundShader *snd = declManager->FindSound(hitSound);
@@ -3528,12 +3558,12 @@ void idWeapon::Event_Melee(void)
         }
 
         idThread::ReturnInt(hit);
-        owner->WeaponFireFeedback(&weaponDef->dict);
+        owner->WeaponFireFeedback(&weaponDef->dict, false); // melee rumble is posted above
         return;
     }
 
     idThread::ReturnInt(0);
-    owner->WeaponFireFeedback(&weaponDef->dict);
+    owner->WeaponFireFeedback(&weaponDef->dict, false);
 }
 
 /*

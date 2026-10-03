@@ -40,6 +40,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "Weapon.h"
 #include "Projectile.h"
 #include "PlayerIcon.h"
+#include "AimAssist.h"
 #include "GameEdit.h"
 
 class idAI;
@@ -417,7 +418,7 @@ class idPlayer : public idActor
 
     void DrawHUD(idUserInterface *hud);
 
-    void WeaponFireFeedback(const idDict *weaponDef);
+    void WeaponFireFeedback(const idDict *weaponDef, bool fireRumble = true); // dhewm3-rt: false for melee
 
     float DefaultFov(void) const;
     float CalcFov(bool honorZoom);
@@ -596,6 +597,25 @@ class idPlayer : public idActor
     int previousWeapon;
     int weaponSwitchTime;
     bool weaponEnabled;
+
+    // dhewm3-rt: D-pad weapon groups (C5) and centre-screen selector (C5b).  Transient, not saved.
+    int weapSelPending;    // slot picked by group presses, switched to at weapSelCommitTime; -1 = none
+    int weapSelCommitTime; // gameLocal.time
+    int weapSelBaseWeapon; // idealWeapon when the pick was queued; if it changes, a newer selection wins
+    int weapSelHideTime;   // the selector stays up until this gameLocal.time
+    int weapSelLast[4];    // last pick per group, the target when entering a group
+    int weapSelActiveGroup; // group last entered by a D-pad press, -1 = none; lets the
+                             // prev/next weapon shoulder buttons back up within it
+    idUserInterface *weapSelGui;
+    void ResetWeaponSel(void);
+    int WeaponGroupSlots(int group, int *slots, bool logUnknown);
+    bool WeaponSelAvailable(int slot);
+    int WeaponSelAmmo(int slot);
+    void CycleWeaponGroup(int group, int dir = 1);
+    bool StepActiveWeaponGroup(int dir);
+    void CommitWeaponSel(int slot);
+    void UpdateWeaponSel(void);
+    void DrawWeaponSel(void);
     bool showWeaponViewModel;
 
     const idDeclSkin *skin;
@@ -677,6 +697,7 @@ class idPlayer : public idActor
     bool isTelefragged; // proper obituaries
 
     idPlayerIcon playerIcon;
+    idAimAssist aimAssist; // dhewm3-rt: gamepad aim assist, transient (not saved)
 
     bool selfSmooth;
 

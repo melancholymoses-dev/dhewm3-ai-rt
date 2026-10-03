@@ -879,7 +879,9 @@ enum vkRTLightClass_t
                            // accent; admitted to GI/vol, eligible for the noShadows unlock
     RT_LIGHT_AMBIENT_FILL, // ambientLight material, or noShadows at/above the accent
                            // radius threshold — semantic mapper fill; never admitted
-    RT_LIGHT_FOG_BLEND     // fogLight or blendLight material — no RT falloff/occlusion volume
+    RT_LIGHT_FOG_BLEND,    // fogLight or blendLight material — no RT falloff/occlusion volume
+    RT_LIGHT_SPECTRUM      // material "spectrum N" (N != 0) — only lights matching-spectrum
+                           // surfaces (teleport pentagram reveal); never admitted
 };
 
 vkRTLightClass_t VK_RT_ClassifyLight(const renderLight_t &parms, const idMaterial *lightShader);

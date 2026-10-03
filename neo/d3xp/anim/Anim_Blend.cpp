@@ -1041,6 +1041,11 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                             "Framecommand 'sound_body' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
                             ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
                     }
+                    // dhewm3-rt: footstep rumble for big monsters
+                    if (ent->IsType(idAI::Type))
+                    {
+                        static_cast<idAI *>(ent)->StepRumble(command.string->c_str());
+                    }
                 }
                 else
                 {
@@ -1056,6 +1061,11 @@ void idAnim::CallFrameCommands(idEntity *ent, int from, int to) const
                         gameLocal.Warning(
                             "Framecommand 'sound_body2' on entity '%s', anim '%s', frame %d: Could not find sound '%s'",
                             ent->name.c_str(), FullName(), frame + 1, command.string->c_str());
+                    }
+                    // dhewm3-rt: footstep rumble for big monsters
+                    if (ent->IsType(idAI::Type))
+                    {
+                        static_cast<idAI *>(ent)->StepRumble(command.string->c_str());
                     }
                 }
                 else

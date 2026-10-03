@@ -308,6 +308,13 @@ void idGameLocal::Clear(void)
 #endif
 }
 
+static void (*rumbleFnPtr)(int category, float low, float hi, int durMs) = NULL;
+void Game_Rumble(int category, float low, float hi, int durMs)
+{
+    if (rumbleFnPtr)
+        rumbleFnPtr(category, low, hi, durMs);
+}
+
 static bool (*updateDebuggerFnPtr)(idInterpreter *interpreter, idProgram *program, int instructionPointer) = NULL;
 bool updateGameDebugger(idInterpreter *interpreter, idProgram *program, int instructionPointer)
 {
@@ -441,6 +448,8 @@ void idGameLocal::Init(void)
 
     // debugger support
     common->GetAdditionalFunction(idCommon::FT_UpdateDebugger, (idCommon::FunctionPointer *)&updateDebuggerFnPtr, NULL);
+    // dhewm3-rt: gamepad rumble
+    common->GetAdditionalFunction(idCommon::FT_Rumble, (idCommon::FunctionPointer *)&rumbleFnPtr, NULL);
 }
 
 /*

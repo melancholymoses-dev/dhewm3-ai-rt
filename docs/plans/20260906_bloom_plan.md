@@ -1,215 +1,105 @@
-# Phase 8.0 — Bloom Post-Processing
+# Bloom
 
-**Date:** 2026-05-15
-**Branch:** TBD
+**Status:** unimplemented. Revised 2026-09-30 against the FSR / froxel-vol / probe-GI pipeline.
+**Owns:** screen-space bloom, its debug views and cvars.
 
----
+Bloom adds a short glow around light-emitting surfaces: fixtures, screens, flames, muzzle
+flashes, projectiles. It is not a haze pass. The volumetrics already light the air, and a
+wide low-threshold bloom would lift dark regions, which breaks pillars 2 and 3.
 
-## Overview
+## Constraints from the current pipeline
 
-Bloom is a screen-space post-process that simulates light bleeding and lens glow around
-bright areas.  It is complementary to — not a replacement for — the volumetric lighting
-implemented in Phase 7.2.  Together they produce the complete effect: volumetrics fill the
-air volume with in-scattered light; bloom makes the brightest parts of that result (and
-emissive surfaces, torch flames, etc.) glow outward into surrounding pixels.
-
-Doom 3's original engine had a material-based bloom system (`textures/smf/bloom2/*`) routed
-through `FullscreenFX_Bloom` in `PlayerView.cpp`.  This does not translate to the Vulkan RT
-pipeline: `VK_RB_CopyRender()` is currently a no-op stub and the material-based approach
-requires fixed-function pipeline state we no longer have.
-
-The replacement is a modern compute-shader bloom operating on the final composited HDR image
-before it is presented.
-
----
-
-## What Already Exists
-
-| Component | Location | Status |
-|-----------|----------|--------|
-| Game bloom state (`bloomEnabled`, `bloomSpeed`, `bloomIntensity`) | `neo/d3xp/Player.h:420-422` | Exists, unused |
-| `Event_ToggleBloom()` / `Event_SetBloomParms()` | `neo/d3xp/Player.cpp:9016,9031` | Exists, game fires events |
-| `FullscreenFX_Bloom` class | `neo/d3xp/PlayerView.h:337-350`, `PlayerView.cpp:1664-1759` | Exists, calls `CopyRender` which is a no-op |
-| `VK_RB_CopyRender()` | `neo/renderer/Vulkan/vk_backend.cpp:~4443` | **No-op stub** |
-| Bloom shaders | (none) | **Missing** |
-| Material files `textures/smf/bloom2/*` | (none in repo) | Pak asset only — not usable in Vulkan |
-
----
+| Fact | Consequence |
+|---|---|
+| `r_lightScale` 2 overbright: lit walls and specular reach HDR lum ≈ 2 | A luminance threshold alone blooms lit walls *before* fixtures (blend-add stages sit ≈ 1). Source must be emissive-weighted |
+| Tonemap runs in `VK_RB_SwapBuffers`, **after** the GUI/HUD drew into `hdrScene` | "Bloom just before tonemap" (old plan) would bloom the HUD and menus |
+| 3D→GUI boundary is the upscale slot (`vk_backend.cpp` ~4840), with a SwapBuffers fallback | Bloom blur+composite go here, at display res, after FSR (AMD's guidance) |
+| U4 already splits the frame at "interactions done / shader passes next" | That boundary gives an emissive source: `after_shader_passes − before_shader_passes` |
+| Vol composite (default late site) and fog lights draw *after* shader passes | The diff excludes them, so fog shafts never bloom |
+| `preAlphaColor` exists only when FSR 2 is possible, at full size | Bloom owns a half-res snapshot instead; no FSR dependency |
+| `VK_RB_CopyRender` is implemented now (no longer a stub) | RoE's scripted `FullscreenFX_Bloom` may run on top; check for doubling in B4 |
 
 ## Design
 
-### Algorithm — Dual Kawase Blur
-
-Dual Kawase is a good fit: fewer texture samples than Gaussian for equivalent quality,
-naturally GPU-friendly, scales with resolution, and trivially implemented in compute.
-
 ```
-Frame HDR image
-       │
-       ▼
-[1] Threshold pass   → bright_0  (half resolution)
-       │
-       ▼
-[2] Downsample chain → bright_1, bright_2, bright_3   (quarter, eighth, sixteenth)
-       │
-       ▼
-[3] Upsample chain   → merged back to half resolution
-       │
-       ▼
-[4] Composite pass   → final image (additive blend bloom onto HDR, then tonemapped)
+interactions → [B1a pre-snapshot, ½ render res] → shader passes → [B1b extract] → vol → fog → ...
+... → upscale → [B2 Kawase down/up chain + composite, display res] → GUI/HUD → tonemap
 ```
 
-Three shaders cover all four steps:
-- `bloom_threshold.comp` — downsample + luminance threshold into half-res bright buffer
-- `bloom_blur.comp`      — one Kawase downsample OR upsample step (dispatched multiple times)
-- `bloom_composite.comp` — additive blend of blurred result onto the HDR framebuffer
+Extract (B1b): `src = max(curr − pre, 0)·emissiveWeight + softKnee(curr, threshold)·litWeight`.
+Defaults: `emissiveWeight 1`, `litWeight 0`. First downsample uses a Karis (1/(1+lum)) average so
+GI/reflection fireflies and sub-pixel FSR-jittered sparks don't turn into flashing blobs.
 
-### CVars
+## CVars
 
-| CVar | Default | Description |
-|------|---------|-------------|
-| `r_rtBloom` | 0 | Enable bloom (0=off, 1=on) |
-| `r_rtBloomThreshold` | 1.2 | Luminance threshold; pixels above this are extracted |
-| `r_rtBloomStrength` | 0.5 | Additive blend weight of the blurred result |
-| `r_rtBloomRadius` | 3 | Number of downsample/upsample steps (1–5) |
-
----
-
-## Implementation Steps
-
-### Step 1 — Shaders
-
-**`neo/renderer/glsl/bloom_threshold.comp`**
-
-- Input:  `rgba16f` storage image of the composited HDR frame (read-only)
-- Output: `rgba16f` storage image at half resolution (the bright buffer mip 0)
-- Logic:  sample the 2×2 neighbourhood around each half-res texel with a box filter;
-  compute luminance (`dot(rgb, vec3(0.2126, 0.7152, 0.0722))`); if luminance exceeds
-  `threshold`, write the colour, else write black.
-- UBO: `BloomParams` — threshold, strength, texel sizes
-
-**`neo/renderer/glsl/bloom_blur.comp`**
-
-- Two modes via specialization constant `DOWNSAMPLE` (0/1)
-- Downsample: 13-tap Kawase downsample (used by COD / Sledgehammer, widely documented)
-- Upsample:   tent filter upsample that additively blends into the destination mip
-- Input/output: two `rgba16f` storage images (src mip N → dst mip N+1 or vice versa)
-
-**`neo/renderer/glsl/bloom_composite.comp`**
-
-- Reads the HDR frame and the blurred bright buffer
-- Writes: `HDR + bloom_buffer * strength` back to the HDR image
-- Runs at full resolution; output is consumed by the existing tonemap pass
-
-Add all three to `CMakeLists.txt` under `GLSL_SOURCES` and add the `.comp` files to
-`GLSL_INCLUDES` for the SPIR-V compile step.
+| CVar | Default | Range | Notes |
+|---|---|---|---|
+| `r_rtBloom` | 0 | 0/1 | Default flips to 1 after B4 |
+| `r_rtBloomThreshold` | 0.8 | 0.2–4 | Soft-knee threshold, pre-exposure units |
+| `r_rtBloomKnee` | 0.5 | 0–1 | |
+| `r_rtBloomLitWeight` | 0 | 0–1 | 0 = emissive-only |
+| `r_rtBloomStrength` | 0.15 | 0–1 | Additive weight |
+| `r_rtBloomMips` | 4 | 2–6 | Radius; keep tight |
+| `r_rtBloomDebug` | 0 | 0–3 | See B0/B3 |
 
 ---
 
-### Step 2 — Bloom Images
+## B0 — Measure before building
 
-Add to `VkGlobals` (or a dedicated `VkBloomResources` struct in `vk_bloom.cpp`):
+| Change | Where |
+|---|---|
+| `r_rtBloomDebug 1`: luminance bands of `hdrScene` (<0.5 black, 0.5–1 blue, 1–2 green, 2–4 yellow, >4 red) | `tonemap.comp` branch, push constant 16 → 20 B; `vk_tonemap.cpp` |
 
-```cpp
-// Bright-pass mip chain: mip 0 = half-res, mip N = (half >> N)
-// Dual Kawase needs BLOOM_MIP_LEVELS = r_rtBloomRadius + 1 images (max 6).
-static constexpr int BLOOM_MIP_LEVELS = 6;
-VkImage     bloomImages[BLOOM_MIP_LEVELS];
-VkImageView bloomViews[BLOOM_MIP_LEVELS];
-VkDeviceMemory bloomMemory[BLOOM_MIP_LEVELS];
-```
+Check: Mars City 1/2, Alpha Labs, a Delta lab, Hell. Screenshot fixtures, monitors, flames,
+muzzle flash, plasma, sky, and the brightest lit wall beside a point light. Record in this doc
+whether emissives and lit surfaces overlap in band. If they do not, `litWeight` may be raised
+later; the emissive path is built either way.
 
-Create at swapchain init / resize; destroy on shutdown.  Format `VK_FORMAT_R16G16B16A16_SFLOAT`.
+## B1 — Source capture
 
----
+| Change | Where |
+|---|---|
+| `bloom_prepass.comp`: 2×2 box of `hdrScene` → `bloomPre` (½ render res, rgba16f) | new shader; dispatched next to the U4 capture (end/resume render pass) |
+| `bloom_extract.comp`: same downsample of current `hdrScene`, diff vs `bloomPre`, soft-knee, Karis weight → `bloomMip[0]` | new shader; after shader passes, before `Vol_Composite` |
+| Gate both on real camera, not subview, not mirror (same test as U4) | `vk_backend.cpp` |
+| Images per frame slot: `bloomPre`, `bloomMip[0..5]`; resize with render extent | new `vk_bloom.cpp/.h` |
 
-### Step 3 — C++ Pass (`vk_bloom.cpp` / `vk_bloom.h`)
+Check: `r_rtBloomDebug 2` shows `bloomMip[0]` upscaled: fixtures/screens/particles lit,
+walls and fog black. Decals (blend filter) must not appear (clamped negative).
 
-New file: `neo/renderer/Vulkan/vk_bloom.cpp`
+## B2 — Blur chain + composite
 
-Public API:
-```cpp
-void VK_BloomInit();          // create pipelines, descriptor sets
-void VK_BloomResize();        // recreate images when swapchain changes
-void VK_BloomRender(VkCommandBuffer cmd, VkImageView hdrView);
-void VK_BloomShutdown();
-```
+| Change | Where |
+|---|---|
+| `bloom_down.comp` (13-tap) and `bloom_up.comp` (3×3 tent, additive into next mip up) | new shaders |
+| `bloom_composite.comp`: `hdrScene += bilinear(bloomMip[0]) · strength` over the display rect | new shader |
+| `VK_RT_DispatchBloom(cmd)` at the 3D→GUI boundary after `VK_RT_DispatchUpscale`, **also when upscale is inactive**, plus the SwapBuffers fallback; skip when `firstIsGui` | `vk_backend.cpp` |
+| Profiler phase `VK_RTPROF_PHASE_BLOOM` | `vk_backend.cpp`, profile enum |
+| Shaders in `CMakeLists.txt`; `vk_bloom.cpp` in sources | `CMakeLists.txt` |
 
-`VK_BloomRender` sequence:
-1. Barrier: HDR image → `GENERAL` for compute read
-2. Dispatch `bloom_threshold.comp` at half-res
-3. Loop `r_rtBloomRadius` times: dispatch `bloom_blur.comp` (DOWNSAMPLE=1) at progressively smaller mips
-4. Loop `r_rtBloomRadius` times in reverse: dispatch `bloom_blur.comp` (DOWNSAMPLE=0) upsampling back
-5. Dispatch `bloom_composite.comp` at full res
-6. Barrier: HDR image → `SHADER_READ_ONLY_OPTIMAL` for tonemap
+Check: HUD, PDA and main menu show no bloom. `r_fsr 0/1/2` and `r_fsrRenderScale 0.67/1.0`
+give the same glow size on screen. `r_vkRTProfile 1` reports `bloom=`.
 
-Skip all dispatches if `r_rtBloom->GetBool() == false`.
+## B3 — Debug + menu
 
----
+| Change | Where |
+|---|---|
+| `r_rtBloomDebug 3`: bloom-only (composite result minus scene), gain ×4 | `bloom_composite.comp` |
+| "Bloom" block under the tonemap section: enable, strength, threshold, mips, lit weight | `Dhewm3SettingsMenu.cpp` (`RTCVars` + draw) |
 
-### Step 4 — Wire into Backend
+## B4 — Tune against the pillars
 
-In `vk_backend.cpp`, after the RT composite pass and before tonemapping (or as the first
-step of tonemapping if they share a pass):
+| Check | Pass condition |
+|---|---|
+| Dark corridor with one fixture | Black stays black ≥ 1 fixture-width away (pillar 2) |
+| Fog-lit room (vol on) | No added haze; shafts unchanged with bloom on/off (pillar 3) |
+| Moving camera past GI-noisy area | No flicker in `r_rtBloomDebug 2` |
+| RoE scripted bloom scene | No double glow; if doubled, skip ours while `player->bloomEnabled` |
+| Cost on 9070 XT at 1440p | ≤ 0.3 ms |
 
-```cpp
-if (r_rtBloom && r_rtBloom->GetBool())
-    VK_BloomRender(cmd, hdrImageView);
-```
+Then set `r_rtBloom 1` default and record the tuned values here.
 
-Also register `r_rtBloom` etc. in the settings menu (`Dhewm3SettingsMenu.cpp`) under a new
-**Post-Processing** section, using the same two-column `ImGui::BeginTable` layout as the
-Volumetric section.
+## Cut
 
----
-
-### Step 5 — Settings Menu
-
-Add to `RTCVars` struct:
-```cpp
-idCVar *rtBloom            = nullptr;
-idCVar *rtBloomThreshold   = nullptr;
-idCVar *rtBloomStrength    = nullptr;
-idCVar *rtBloomRadius      = nullptr;
-```
-
-Add `DrawRTOptionsMenu` section **Post-Processing** with a checkbox for bloom enable and
-sliders for threshold (0.5–3.0), strength (0.0–2.0), radius (1–5).
-
----
-
-### Step 6 — Deferred / Optional
-
-- **Lens dirt texture** — multiply bloom result by a screen-space dirt/scratch mask before
-  composite for a cinematic look.  Low priority.
-- **Anamorphic streaks** — directional horizontal blur on the brightest pixels only.
-  Cosmetic, skip unless requested.
-- **HDR tonemapping interaction** — ensure bloom is applied before the Reinhard/ACES
-  tonemap so it participates in exposure correctly.  Check the existing tonemap pass order.
-
----
-
-## File Checklist
-
-| File | Action |
-|------|--------|
-| `neo/renderer/glsl/bloom_threshold.comp` | **Create** |
-| `neo/renderer/glsl/bloom_blur.comp` | **Create** |
-| `neo/renderer/glsl/bloom_composite.comp` | **Create** |
-| `neo/renderer/Vulkan/vk_bloom.h` | **Create** |
-| `neo/renderer/Vulkan/vk_bloom.cpp` | **Create** |
-| `neo/renderer/Vulkan/vk_backend.cpp` | **Modify** — call `VK_BloomRender` after composite |
-| `neo/framework/Dhewm3SettingsMenu.cpp` | **Modify** — add Post-Processing section |
-| `CMakeLists.txt` | **Modify** — add shaders + vk_bloom.cpp |
-
----
-
-## Notes
-
-- The game-level `FullscreenFX_Bloom` / `Event_ToggleBloom` hooks can be left in place;
-  they currently no-op because `VK_RB_CopyRender` does nothing.  They do not need to be
-  removed or wired up — bloom will be controlled via CVars directly.
-- Bloom operates on the half-resolution bright buffer so total dispatch cost is modest:
-  three threshold + six blur + one composite = 10 passes over small images.
-- Volumetric output feeds naturally into bloom: if `r_rtBloom` is on, bright fog shafts
-  will glow at their peaks, reinforcing the atmospheric effect.
+Lens dirt, anamorphic streaks, and full-scene luminance bloom as the default. All three
+push the image toward a soft or cinematic look that fights the high-contrast art.

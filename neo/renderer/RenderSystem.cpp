@@ -292,8 +292,20 @@ static void R_CheckCvars(void)
 
     if (r_swapInterval.IsModified())
     {
-        GLimp_SetSwapInterval(r_swapInterval.GetInteger());
         r_swapInterval.ClearModified();
+
+        if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
+        {
+            // GL swap interval doesn't apply to a Vulkan window (no GL context) --
+            // the Vulkan path reads r_swapInterval directly when choosing a present
+            // mode (vk_swapchain.cpp), so just force a swapchain rebuild.
+            extern void VK_NotifyWindowModeChanged();
+            VK_NotifyWindowModeChanged();
+        }
+        else
+        {
+            GLimp_SetSwapInterval(r_swapInterval.GetInteger());
+        }
     }
 
     if (r_windowResizable.IsModified())

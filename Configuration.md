@@ -104,6 +104,22 @@ of Doom3 BFG, see gamepad.cfg and gamepad-d3xp.cfg in the [base/ directory](./ba
 Put them in your base/ folder, open the console and enter `exec gamepad.cfg` for the base game,
 or `exec gamepad-d3xp.cfg` for Resurrection of Evil (probably also works for Doom3: Lost Mission).
 
+**dhewm3-rt:** this fork execs the matching file (`gamepad.cfg` or `gamepad-d3xp.cfg`, picked by
+`fs_game`) automatically on every launch, right after `default.cfg` and before your saved config —
+see `idCommonLocal::InitGame` in [neo/framework/Common.cpp](./neo/framework/Common.cpp). So on a
+fresh install the D-pad binds below work with no manual `exec` step. Any binding you change
+yourself afterward (saved to your config file) still takes priority. If you edit `gamepad.cfg` /
+`gamepad-d3xp.cfg` to customize the controller layout, those edits apply on next launch the same
+way — no separate `exec` needed, just restart (or re-run `exec gamepad.cfg` from the console to
+pick it up immediately). Run the `deploy_base_overrides` CMake target (built automatically by
+`ALL`) if you edit these files in the source tree and run from a build directory, so the edited
+copy reaches `<exe>/base/`.
+
+dhewm3-rt also remaps the D-pad to **weapon groups** instead of single weapons (see
+[docs/plans/20260924_controller_gunfeel.md](./docs/plans/20260924_controller_gunfeel.md), stage C5):
+each direction holds up to 4 weapons, first press selects the group, further presses cycle through
+it. Tunable via `pad_weapGroups`, `pad_weapGroup0..3`, `pad_weapCommitMs`, `pad_weapOverlay`.
+
 **Alternative gamepad configs** based on the layout of the Doom3 port for the original XBox
 are available [**here**](https://github.com/dhewm/dhewm3/issues/536#issuecomment-1928710201).
 
@@ -119,10 +135,8 @@ are available [**here**](https://github.com/dhewm/dhewm3/issues/536#issuecomment
 * `Left Trigger`: Flashlight
 * `Left Shoulder Button`: Previous Weapon
 * `Right Shoulder Button`: Next Weapon
-* `DPad Up`: Grenade
-* `DPad Down`: BFG
-* `DPad Left`: Soulcube
-* `DPad Right`: Fists/Grabber
+* `DPad Up`/`Down`/`Left`/`Right`: Weapon group select/cycle (dhewm3-rt; see note above).
+  Stock dhewm3 binds these to single weapons (Grenade/BFG/Soulcube/Fists) instead.
 * `Back`: PDA (Nintendo: `-`, Playstation: `Select`/`Share`)
 * `Start`: Open/Close Menu (just like the Escape key; Nintendo: `+`, Playstation 4/5: `Options`)
 

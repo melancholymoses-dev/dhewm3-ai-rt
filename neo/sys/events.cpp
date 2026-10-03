@@ -107,6 +107,8 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #define SDL_GameControllerGetVendor SDL_GetGamepadVendor
 #define SDL_GameControllerGetProduct SDL_GetGamepadProduct
 #define SDL_GameControllerOpen SDL_OpenGamepad
+#define SDL_GameControllerClose SDL_CloseGamepad
+#define SDL_GameControllerGetAttached SDL_GamepadConnected
 
 #define SDL_CONTROLLERAXISMOTION SDL_EVENT_GAMEPAD_AXIS_MOTION
 #define SDL_CONTROLLERBUTTONDOWN SDL_EVENT_GAMEPAD_BUTTON_DOWN
@@ -164,6 +166,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 
 extern idCVar in_useGamepad; // from UsercmdGen.cpp
 extern idCVar joy_deadZone;  // ditto
+extern idCVar joy_rumbleDebug; // from Rumble.cpp
 
 // NOTE: g++-4.7 doesn't like when this is static (for idCmdSystem::ArgCompletion_String<kbdNames>)
 const char *_in_kbdNames[] = {
@@ -200,6 +203,52 @@ static enum D3_Gamepad_Type
     D3_GAMEPAD_PLAYSTATION,    // PS-like (geometric symbols instead of A/B/X/Y)
     D3_GAMEPAD_PLAYSTATION_OLD // PS2/PS3-like: the back button is called "select" instead of "share"
 } gamepadType = D3_GAMEPAD_XINPUT;
+
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+// dhewm3-rt: the most recently opened gamepad, the target for Sys_SetRumble.
+static SDL_GameController *rumbleGamepad = NULL;
+#endif
+// dhewm3-rt: Sys_Milliseconds of the last gamepad button or clear stick/trigger push; 0 = never.
+static int lastGamepadInputMs = 0;
+// Held controls send no further events, so Sys_LastGamepadInputMs also reports "now" while any
+// button is down or any axis is past the activity threshold.
+static const int GAMEPAD_ACTIVE_AXIS = 8192; // ~25%, so stick drift on an untouched pad doesn't count
+static unsigned int gamepadHeldButtons = 0;
+static unsigned int gamepadHeldAxes = 0;
+
+static void TrackGamepadHeld(const SDL_Event &ev)
+{
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+    switch (ev.type)
+    {
+    case SDL_CONTROLLERBUTTONDOWN:
+    case SDL_CONTROLLERBUTTONUP:
+        if (ev.cbutton.button < 32)
+        {
+            const unsigned int bit = 1u << ev.cbutton.button;
+            if (ev.type == SDL_CONTROLLERBUTTONDOWN)
+                gamepadHeldButtons |= bit;
+            else
+                gamepadHeldButtons &= ~bit;
+        }
+        break;
+    case SDL_CONTROLLERAXISMOTION:
+        if (ev.caxis.axis < 32)
+        {
+            const unsigned int bit = 1u << ev.caxis.axis;
+            if (abs(ev.caxis.value) > GAMEPAD_ACTIVE_AXIS)
+                gamepadHeldAxes |= bit;
+            else
+                gamepadHeldAxes &= ~bit;
+        }
+        break;
+    case SDL_JOYDEVICEREMOVED:
+        // A detached pad sends no release events.
+        gamepadHeldButtons = gamepadHeldAxes = 0;
+        break;
+    }
+#endif
+}
 
 struct kbd_poll_t
 {
@@ -885,6 +934,9 @@ enum
 
 static void setGamepadType(SDL_GameController *gc)
 {
+    // every open site calls this, so it doubles as "remember the pad for rumble"
+    rumbleGamepad = gc;
+
 #if SDL_VERSION_ATLEAST(2, 0, 12)
     const char *typestr = NULL;
     switch (SDL_GameControllerGetType(gc))
@@ -1306,6 +1358,8 @@ sysEvent_t Sys_GetEvent()
     // loop until there is an event we care about (will return then) or no more events
     while (SDL_PollEvent(&ev))
     {
+        TrackGamepadHeld(ev); // before ImGui, which swallows some controller events
+
         if (D3::ImGuiHooks::ProcessEvent(&ev))
         {
             // ImGui has used the event, so it shouldn't also be handled by the game
@@ -1669,6 +1723,7 @@ sysEvent_t Sys_GetEvent()
             }
 
             isDown = IS_SDL_BTN_DOWN(ev.cbutton);
+            lastGamepadInputMs = Sys_Milliseconds();
 
             res.evType = SE_KEY;
             res.evValue2 = isDown;
@@ -1715,6 +1770,10 @@ sysEvent_t Sys_GetEvent()
 
             sys_jEvents jEvent = mapjoyaxis((SDL_GameControllerAxis)ev.caxis.axis);
             joystick_polls.Append(joystick_poll_t(jEvent, ev.caxis.value));
+            if (abs(ev.caxis.value) > GAMEPAD_ACTIVE_AXIS)
+            {
+                lastGamepadInputMs = Sys_Milliseconds();
+            }
 
             if (jEvent == J_AXIS_LEFT_X)
             {
@@ -1791,6 +1850,11 @@ sysEvent_t Sys_GetEvent()
         case SDL_JOYDEVICEREMOVED:
             // TODO: hot swapping maybe.
             // lbOnControllerUnPlug(event.jdevice.which);
+            if (rumbleGamepad != NULL && !SDL_GameControllerGetAttached(rumbleGamepad))
+            {
+                SDL_GameControllerClose(rumbleGamepad);
+                rumbleGamepad = NULL;
+            }
             break;
 #endif // SDL2+
 
@@ -2056,12 +2120,46 @@ void Sys_EndMouseInputEvents()
 Joystick Input Methods
 ================
 */
+int Sys_LastGamepadInputMs(void)
+{
+    if (gamepadHeldButtons != 0 || gamepadHeldAxes != 0)
+    {
+        lastGamepadInputMs = Sys_Milliseconds();
+    }
+    return lastGamepadInputMs;
+}
+
+// low/hi are motor strengths in [0, 65535].  Each update carries a short hardware timeout,
+// so if the caller stops refreshing (hitch, level load) the motors stop on their own.
 void Sys_SetRumble(int device, int low, int hi)
 {
     // TODO: support multiple controllers.
     assert(device == 0);
-    // TODO: support rumble maybe.
-    assert(0);
+#if SDL_VERSION_ATLEAST(2, 0, 9)
+    const Uint32 RUMBLE_TIMEOUT_MS = 150;
+    if (rumbleGamepad == NULL || !in_useGamepad.GetBool())
+    {
+        if (joy_rumbleDebug.GetInteger() >= 2)
+            common->Printf("RUMBLE sdl skipped: %s\n", rumbleGamepad == NULL ? "no gamepad handle" : "in_useGamepad 0");
+        return;
+    }
+    low = idMath::ClampInt(0, 0xFFFF, low);
+    hi = idMath::ClampInt(0, 0xFFFF, hi);
+#if SDL_VERSION_ATLEAST(3, 0, 0)
+    const bool ok = SDL_RumbleGamepad(rumbleGamepad, (Uint16)low, (Uint16)hi, RUMBLE_TIMEOUT_MS);
+#else
+    const bool ok = SDL_GameControllerRumble(rumbleGamepad, (Uint16)low, (Uint16)hi, RUMBLE_TIMEOUT_MS) == 0;
+#endif
+    // a failed stop is the likely cause of a stuck motor, so always report failures when debugging
+    if (joy_rumbleDebug.GetInteger() >= 2 || (!ok && joy_rumbleDebug.GetInteger() >= 1))
+    {
+        common->Printf("RUMBLE sdl low=%d hi=%d ms=%u -> %s%s\n", low, hi, (unsigned)RUMBLE_TIMEOUT_MS,
+                       ok ? "ok" : "FAILED: ", ok ? "" : SDL_GetError());
+    }
+#else
+    (void)low;
+    (void)hi;
+#endif
 }
 
 int Sys_PollJoystickInputEvents(int deviceNum)

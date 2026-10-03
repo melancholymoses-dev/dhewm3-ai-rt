@@ -705,6 +705,10 @@ class idGameLocal : public idGame
 extern idGameLocal gameLocal;
 extern idAnimManager animationLib;
 
+// dhewm3-rt: post a gamepad rumble effect (idCommon::FT_Rumble; category is an idCommon::rumbleCategory_t).
+// No-op on engines without it.
+void Game_Rumble(int category, float low, float hi, int durMs);
+
 //============================================================================
 
 class idGameError : public idException

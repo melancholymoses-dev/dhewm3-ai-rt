@@ -61,6 +61,7 @@ LLC, c/o ZeniMax Media Inc., Suite 120, Rockville, Maryland 20850 USA.
 #include "sys/sys_imgui.h"
 
 #include "framework/Common.h"
+#include "framework/Rumble.h"
 
 #include "GameCallbacks_local.h"
 #include "Session_local.h" // DG: For FT_IsDemo/isDemo() hack
@@ -2778,6 +2779,14 @@ void idCommonLocal::InitSIMD(void)
     com_forceGenericSIMD.ClearModified();
 }
 
+// dhewm3-rt: no rumble while the game isn't live: main menu/pause GUI, console, loading
+// screen, ImGui menus.  Also checked on each post, as the state can change mid-frame.
+bool Rumble_GameLive(void)
+{
+    return sessLocal.guiActive == NULL && !sessLocal.insideExecuteMapChange && !console->Active() &&
+           !D3::ImGuiHooks::ShouldShowCursor();
+}
+
 /*
 =================
 idCommonLocal::Frame
@@ -2833,6 +2842,9 @@ void idCommonLocal::Frame(void)
             // normal, in-sequence screen update
             session->UpdateScreen(false);
         }
+
+        // after the game frame, so effects it posted reach the motors this frame.
+        Rumble_Frame(Rumble_GameLive());
 
         // report timing information
         if (com_speeds.GetBool())
@@ -3808,6 +3820,7 @@ void idCommonLocal::ShutdownGame(bool reloading)
 
     // shut down the user command input code
     usercmdGen->Shutdown();
+    Rumble_StopAll();
 
     // shut down the event loop
     eventLoop->Shutdown();
@@ -3892,6 +3905,14 @@ bool idCommonLocal::GetAdditionalFunction(idCommon::FunctionType ft, idCommon::F
     case idCommon::FT_UpdateDebugger:
         *out_fnptr = (idCommon::FunctionPointer)updateDebugger;
         com_debuggerSupported = true;
+        return true;
+
+    case idCommon::FT_Rumble:
+        *out_fnptr = (idCommon::FunctionPointer)Rumble_Post;
+        return true;
+
+    case idCommon::FT_GamepadLookActive:
+        *out_fnptr = (idCommon::FunctionPointer)Usercmd_GamepadLookActive;
         return true;
 
     default:

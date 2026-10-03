@@ -289,6 +289,23 @@ class idCommon
         // it returns true if the game debugger is active.
         // relevant for mods.
         FT_UpdateDebugger,
+        // dhewm3-rt: gamepad rumble.  Signature void fn(int category, float low, float hi, int durMs):
+        // category is a rumbleCategory_t, low/hi are motor amplitudes in [0,1] decaying to 0 over durMs.
+        FT_Rumble,
+        // dhewm3-rt: signature bool fn(void).  True while the gamepad look stick (not the mouse) is
+        // turning the view; the game uses it to apply aim assist to gamepad input only.
+        FT_GamepadLookActive,
+    };
+
+    // dhewm3-rt: rumble categories for FT_Rumble; each has its own joy_rumble* scale cvar.
+    enum rumbleCategory_t
+    {
+        RUMBLE_FIRE = 0,
+        RUMBLE_MELEE,
+        RUMBLE_HIT,
+        RUMBLE_DAMAGE,
+        RUMBLE_STEP, // big-monster footsteps; append new categories so older engines reject them
+        RUMBLE_NUM_CATEGORIES
     };
 
     // returns true if that function is available in this version of dhewm3

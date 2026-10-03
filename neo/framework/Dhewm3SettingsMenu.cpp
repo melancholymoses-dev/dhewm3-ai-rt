@@ -1830,6 +1830,50 @@ static CVarOption controlOptions[] = {
     CVarOption("joy_powerScale", "If using power curve, this is the exponent", OT_FLOAT, 0.1f,
                10.0f), // TODO: what are sensible min/max values?
                        // TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they were "bad idea"
+
+    CVarOption("Gamepad Look Stick"),
+    CVarOption("joy_newLook", "Radial look stick (fixes diagonal aiming)", OT_BOOL),
+    CVarOption("joy_lookDeadZone", "Look stick inner deadzone (radial)", OT_FLOAT, 0.0f, 0.9f),
+    CVarOption("joy_lookOuterDeadZone", "Look stick full-deflection point (radial)", OT_FLOAT, 0.5f, 1.0f),
+    CVarOption("joy_dampenLook", "Ramp up look speed", OT_BOOL),
+    CVarOption("joy_deltaPerMSLook", "Look ramp rate (per ms, 0.003 = 333 ms to full)", OT_FLOAT, 0.0005f, 0.02f),
+    CVarOption("joy_lookRampFix", "Restart look ramp on release/reversal", OT_BOOL),
+
+    // game cvars (registered by the game DLL), so hidden if the game doesn't provide them
+    CVarOption("Gamepad Aim Assist"),
+    CVarOption("joy_aimAssist",
+               [](idCVar &cvar) {
+                   int val = cvar.GetInteger();
+                   if (ImGui::Combo("Aim assist", &val,
+                                    "Off\0Friction (look slows over targets)\0Friction + Adhesion "
+                                    "(view follows targets)\0"))
+                   {
+                       cvar.SetInteger(val);
+                   }
+                   AddCVarOptionTooltips(cvar);
+               }),
+    CVarOption("joy_aimAssistStrength", "Aim assist strength", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_aimAssistSmallTargets", "Assist on crawlers (trites, ticks)", OT_BOOL),
+
+    CVarOption("Gamepad Weapon Select"),
+    CVarOption("pad_weapGroups", "D-pad weapon groups (bind D-pad to _impulse30-33)", OT_BOOL),
+    CVarOption("pad_weapCommitMs", "Switch delay after last press (ms)", OT_INT, 0, 1000),
+    CVarOption("pad_weapOverlay", "Show weapon selector", OT_BOOL),
+    CVarOption("pad_weapGroupShoulderStep", "Shoulder buttons step within selector instead of cycling all weapons", OT_BOOL),
+
+    CVarOption("Gamepad Rumble"),
+    CVarOption("joy_rumbleEnable", "Enable rumble", OT_BOOL),
+    CVarOption("joy_rumble", "Overall rumble strength", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleFire", "Weapon fire", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleMelee", "Melee hits", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleHit", "Hit confirmation", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleDamage", "Damage taken", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleSteps", "Big monster footsteps", OT_FLOAT, 0.0f, 2.0f),
+    CVarOption("joy_rumbleIdleMs", "Mute after pad idle (ms, 0 = never)", OT_INT, 0, 30000),
+    CVarOption("joy_rumbleLength", "Rumble length", OT_FLOAT, 0.5f, 2.0f),
+    CVarOption("joy_rumbleFloor", "Weak rumble boost (floor)", OT_FLOAT, 0.0f, 0.6f),
+    CVarOption("joy_rumbleGamma", "Rumble curve (1 = linear)", OT_FLOAT, 0.2f, 1.0f),
+    CVarOption("joy_rumbleMinMs", "Shortest rumble (ms)", OT_INT, 0, 300),
 };
 
 struct VidMode
@@ -1876,7 +1920,14 @@ static CVarOption videoOptionsImmediately[] = {
                        {
                            curVsync = -1;
                        }
-                       if (GLimp_SetSwapInterval(curVsync))
+                       if (idStr::Icmp(r_backend.GetString(), "vulkan") == 0)
+                       {
+                           // Vulkan has no GL context for GLimp_SetSwapInterval to act on --
+                           // just set the cvar; R_CheckCvars() picks up the change and
+                           // rebuilds the swapchain with the matching present mode.
+                           r_swapInterval.SetInteger(curVsync);
+                       }
+                       else if (GLimp_SetSwapInterval(curVsync))
                        {
                            r_swapInterval.SetInteger(curVsync);
                            // this was just set with GLimp_SetSwapInterval(), no reason to set it again in

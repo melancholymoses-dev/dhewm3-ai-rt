@@ -58,6 +58,16 @@ static VkSurfaceFormatKHR VK_ChooseSurfaceFormat(VkPhysicalDevice physDev)
     return formats[0]; // last resort fallback
 }
 
+static bool VK_PresentModeSupported(const VkPresentModeKHR *modes, uint32_t count, VkPresentModeKHR mode)
+{
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (modes[i] == mode)
+            return true;
+    }
+    return false;
+}
+
 static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
 {
     uint32_t count = 0;
@@ -65,12 +75,28 @@ static VkPresentModeKHR VK_ChoosePresentMode(VkPhysicalDevice physDev)
     VkPresentModeKHR *modes = (VkPresentModeKHR *)alloca(sizeof(VkPresentModeKHR) * count);
     vkGetPhysicalDeviceSurfacePresentModesKHR(physDev, vk.surface, &count, modes);
 
-    // Prefer mailbox (triple-buffer), fall back to FIFO (vsync)
-    for (uint32_t i = 0; i < count; i++)
+    int swapInterval = r_swapInterval.GetInteger();
+    if (swapInterval != 0)
     {
-        if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
-            return modes[i];
+        // Vsync on: FIFO is the only mode every Vulkan driver is required to
+        // support and the only one that guarantees tear-free presentation.
+        // Mailbox is tear-free per spec too, but it's the mode most often
+        // broken by driver/compositor bugs on Linux (notably NVIDIA's driver
+        // under X11 without compositing) -- FIFO is the safe default.
+        // Adaptive (-1) uses FIFO_RELAXED when available: same as FIFO, but a
+        // frame that's already late presents immediately instead of waiting
+        // out a full extra vblank.
+        if (swapInterval < 0 && VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_FIFO_RELAXED_KHR))
+            return VK_PRESENT_MODE_FIFO_RELAXED_KHR;
+        return VK_PRESENT_MODE_FIFO_KHR;
     }
+
+    // Vsync off: uncapped framerate, tearing accepted. Prefer immediate (no
+    // present-time blocking at all), fall back to mailbox, then FIFO.
+    if (VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_IMMEDIATE_KHR))
+        return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    if (VK_PresentModeSupported(modes, count, VK_PRESENT_MODE_MAILBOX_KHR))
+        return VK_PRESENT_MODE_MAILBOX_KHR;
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
