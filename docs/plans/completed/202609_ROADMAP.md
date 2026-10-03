@@ -1,9 +1,11 @@
 # RT Roadmap
 
-**Status reviewed:** 2026-09-29 · **Next work: validate U4 in-game + the denoiser retune sweep, then skinned motion vectors.**
+**Status reviewed:** 2026-09-29 · 
 **This is the entry point.** If you're wondering what to work on or which plan doc
 is authoritative, start here. This file owns *ordering* and *status*; detailed
-designs live in the linked docs. Prior cycle: `completed/202608_ROADMAP.md`.
+designs live in the linked docs. Prior cycle: `completed/202609_ROADMAP.md`.
+
+September handled controller, upscaling, improved volumetrics.
 
 ---
 
@@ -29,18 +31,10 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 
 | # | Item | Doc | Status |
 |---|---|---|---|
-| 1 | **Reflection gating rework** — glass-only instead of a flat per-pixel rate over the whole screen | `completed/20260911_reflection_gating.md` | ✅ Closed 2026-09-18 |
-| 1b | **Reflection brightness** — reflections dim, player self-shadowing in glass | `completed/20260918_reflection_brightness.md` | ✅ Closed 2026-09-19. B2 dropped (GI/vol were over-**bright**; settled in tuning) |
-| 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
-| 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
-| 3 | **FSR upscaling** — render resolution decoupled from display; FSR 1/2 resolve | `completed/20260918_fsr_upscaling.md` | ✅ **Closed 2026-09-30.** U0-U4 landed and validated in-game: `r_fsrRenderScale`, FSR 1 (`r_fsr 1`), motion vectors + Halton jitter, FSR 2.2.1 (`r_fsr 2`) with reactive and T&C masks, texture LOD bias. U4 denoiser retune dropped (~0.1-0.2 ms, no visible double-accumulation). 0.67 scale saves ~2.8 ms of RT at 1440p; arc 2's ~0.7 ms world-space floor caps further gains. U3b (RT texture LOD) and U5 (menu, FSR 3.1, dynamic res, skinned MVs) moved to backlog |
-| 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `20260930_AO_GI_refine.md` | 🟡 Built 2026-09-30, not yet validated in-game |
-
-- Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
-- U0 gated the screen-space composites on `hasRealCamera` — they had been running twice
-  per frame (3D view + 2D GUI overlay view), doubling the GI/refl/vol contribution. Noted
-  because it shifted the baseline the current constants sit on.
-
+| 1 | Projectiles in reflections | `20261002_reflection_enhancements.md`  | Try to handle reflections of particles. | In progress |
+| 2 | `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. Unimplemented; revised 2026-09-30. | Not started |
+| 3| `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. | Modeling started | 
+-----------------------
 ### Measured RT budget
 
 `r_vkRTProfile 1`, Mars City, median GPU ms per phase. **RTX 4070 Ti Super, 2560×1440.**
@@ -86,12 +80,6 @@ Each of these cost a debugging session. They apply to any new RT code.
   **dropped** — with opaque geometry never reflecting there is nothing to classify.
   Threshold tuning cannot help: the worst artifacts are the *highest*-F0 pixels while any
   threshold culls from the bottom.
-- **Albedo is the volumetric lever**, not extinction and not the tonemap toe. It cuts
-  in-scatter while leaving attenuation intact, so the medium darkens more than it glows and
-  lit-vs-unlit contrast goes *up*. Per-class radiance gains carry punch (6:1 point:directed in play); 
-- **Do not "fix" RT direct lighting being half the raster path's.** True at the source
-  (`r_lightScale` = 2 is not applied to the RT upload), but the downstream gains overshot
-  it — GI and vol read *over*-bright. This was a tuning matter, not a plumbing fix.
 - **The tonemap toe has two regimes.** At `r_rtTonemapToe 2.7` slope is <0.33 below
   luminance 0.07 but *exceeds 1.0* between 0.12 and 0.3. Evaluate the whole curve before
   blaming tonemapping.
@@ -106,9 +94,7 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-| `20260930_AO_GI_refine.md` | AO falloff, AO on indirect vs direct light, `r_rtAODebug`. |
-| `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. Unimplemented; revised 2026-09-30. |
-| `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
+
 | `20260924_controller_gunfeel.md` | Gamepad aim response, rumble, aim assist (C1-C4). Orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
@@ -116,24 +102,12 @@ while new lighting techniques enhance without fighting too much.
 
 ## Completed
 
-All in `completed/`. Waves 1-7 of the original roadmap are done.
-
-| Doc | Owns |
-|---|---|
-| `20260918_fsr_upscaling.md` | **Arc 3.** Render-resolution decoupling, FSR 1/2, motion vectors + jitter, FSR 2 masks. U5 deferred with a skinned-MV reopen trigger |
-| `20260906_froxel_probe_gi.md` | **Arc 2.** Froxel volumetrics + probe GI, both shipped as default. Includes G5b flicker factorization and the animated-light premise correction |
-| `20260919_dynamic_model_normals.md` | Skinned md5 meshes reaching the TLAS with bind-pose normals |
-| `20260918_reflection_brightness.md` | Reflection brightness + player self-shadowing in glass |
-| `20260911_reflection_gating.md` | Reflections narrowed to glass-only |
-| `20260917_vol_transport_coefficients.md` | Volumetric medium split into σ_t + albedo + per-class radiance gains |
-| `20260905_rt_projected_light_cookies.md` | Projected-light cookie/gobo textures across all four consumers |
-| `20260831_rt_temporal_cut_detection.md` | Camera-cut detection; also the degenerate GUI `RC_DRAW_VIEW` re-running every RT pass |
-| `20260826_amd_vulkan_cleanup.md` | AMD-vs-NVIDIA RT correctness. A1/A3/A5/A8/A11/A12 landed; A2/A4/A6/A7 minor/latent |
-| `20260810_auto_relight.md` | Shadow-casting lights synthesized from emissive panels |
-| `20260808_gbuffer_normal_pass.md` | G-buffer normal/F0 prepass |
-| `20260816_portal_area_lights.md` | Stage 2 (transition blend) shelved, now unblocked — not scheduled |
-| `202608_rt_optimization_tuning.md` | Perf items P1-P10, light-list L1, tuning items T1-T6. Waves 2-4 done; T3 dropped, T5 won't-fix, All completed 2026-9-21 (`r_rtGIFalloffMode` 1 chosen, with reach=1) |
-| `20260831_rt_parallel_sun_lights.md` | Sun/parallel lights. **Not pursuing** |
+| Name | Doc | Owns |
+|---|---|-----|
+| Controller gun-feel | `20260924_controller_gunfeel.md` | C1 (radial deadzone + curve) and C2 (accel) are framework-only and independent of the RT arc — can run any time. C3 rumble, C4 aim assist follow. Added weapon select and rumble. |
+| FSR U5 polish | `completed/20260918_fsr_upscaling.md` U5 | `r_fsrQuality` in the video menu, FSR 3.1 evaluation, dynamic resolution. Skinned-MV double-buffering only on the reopen trigger listed in U5 |
+| RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
+| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
 
 ---
 
@@ -141,12 +115,3 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 
 | Item | Doc | Note |
 |---|---|---|
-| Controller gun-feel | `20260924_controller_gunfeel.md` | C1 (radial deadzone + curve) and C2 (accel) are framework-only and independent of the RT arc — can run any time. C3 rumble, C4 aim assist follow. Not scheduled. |
-| FSR U5 polish | `completed/20260918_fsr_upscaling.md` U5 | `r_fsrQuality` in the video menu, FSR 3.1 evaluation, dynamic resolution. Skinned-MV double-buffering only on the reopen trigger listed in U5 |
-| RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
-| Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
-| Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough - Skip|
-| Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |
-| Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
-| Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight - Skip |
-| Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Polish. |

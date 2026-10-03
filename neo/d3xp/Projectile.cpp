@@ -216,6 +216,10 @@ void idProjectile::Restore(idRestoreGame *savefile)
         lightDefHandle = gameRenderWorld->AddLightDef(&renderLight);
     }
 #endif
+
+    // dhewm3-rt: rtGlow is not in the savegame format; derive it from state.
+    renderEntity.rtGlow = (state == CREATED || state == LAUNCHED);
+    UpdateVisuals();
 }
 
 /*
@@ -287,6 +291,7 @@ void idProjectile::Create(idEntity *owner, const idVec3 &start, const idVec3 &di
     }
 #endif
 
+    renderEntity.rtGlow = true; // dhewm3-rt: glows in RT reflections (vk_rt_emitters.cpp)
     UpdateVisuals();
 
     state = CREATED;
@@ -892,6 +897,7 @@ void idProjectile::Fizzle(void)
     physicsObj.GetClipModel()->Unlink();
     physicsObj.PutToRest();
 
+    renderEntity.rtGlow = false; // dhewm3-rt: detonated, drop from RT reflection emitters
     Hide();
     FreeLightDef();
 
@@ -976,6 +982,7 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
         smokeFlyTime = 0;
     }
 
+    renderEntity.rtGlow = false; // dhewm3-rt: detonated, drop from RT reflection emitters
     Hide();
     FreeLightDef();
 

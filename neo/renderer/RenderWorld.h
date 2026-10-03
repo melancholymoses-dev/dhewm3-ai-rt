@@ -162,6 +162,10 @@ typedef struct renderEntity_s
     int forceUpdate;      // force an update (NOTE: not a bool to keep this struct a multiple of 4 bytes)
     int timeGroup;
     int xrayIndex;
+
+    // dhewm3-rt: in-flight projectile; drawn as a glow in RT reflections (vk_rt_emitters.cpp).
+    // Kept last so the offsets of the fields above stay unchanged.
+    bool rtGlow;
 } renderEntity_t;
 
 typedef struct renderLight_s

@@ -77,6 +77,7 @@ void main()
     // Each BLAS geometry has its own VkMaterialEntry so this gives the correct
     // per-surface texture, flags, etc.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
+    reflPayload.hitT = gl_HitTEXT;
 
     // Guard: out-of-range custom index → return black with no continuation.
     if (matIdx >= uint(materials.length()))

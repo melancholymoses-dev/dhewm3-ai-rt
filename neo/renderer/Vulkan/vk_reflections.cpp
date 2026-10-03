@@ -32,6 +32,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_rt_emitters.h"
 
 #include <string.h>
 
@@ -95,7 +96,9 @@ idCVar r_rtReflectionDebugMode(
     "    decisive 'dark subject vs weak interface' measurement — a dim player here means the\n"
     "    lighting chain is short (B2/B4), a bright one means the glass weight is (B3).\n"
     "7 = mode 6 scaled x8, so the subject reads through the tonemap toe while judging it.\n"
-    "Modes 2-7 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
+    "8 = mode 6 plus projectile emitter discs (r_rtReflGlow): green = visible, red = behind\n"
+    "    the reflected surface. Emitters are collected even with r_rtReflGlow 0.\n"
+    "Modes 2-8 require r_rtReflections 1 — they ride on the reflection ray dispatch, force the\n"
     "full-screen launch grid, and are displayed via refl_composite.frag with blending disabled\n"
     "(replace, not add). The per-surface glass overlay is suppressed while they are active.");
 
@@ -115,7 +118,9 @@ idCVar r_rtReflectionDebugMode(
 //   int    rectOriginX    offset 104 size  4  (R6 launch-grid origin)
 //   int    rectOriginY    offset 108 size  4
 //   int    reflMode       offset 112 size  4  (r_rtReflectionMode)
-//   total: 116 bytes, padded to 128 — std140 rounds the block up to a multiple of
+//   int    emitterCount   offset 116 size  4  (vk_rt_emitters.cpp, 0 = none)
+//   float  glowGain       offset 120 size  4  (r_rtReflGlowGain)
+//   total: 124 bytes, padded to 128 — std140 rounds the block up to a multiple of
 //   16, and uboInfo.range is sizeof(ReflParamsUBO), which must not be smaller.
 // ---------------------------------------------------------------------------
 
@@ -134,8 +139,10 @@ struct ReflParamsUBO
     float grazingGain;     // r_rtSpecGrazingGain — low-F0 grazing ceiling as a multiple of F0 (R2)
     int32_t rectOriginX;   // R6 — launch-grid origin; rgen adds this to gl_LaunchIDEXT
     int32_t rectOriginY;
-    int32_t reflMode; // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
-    float _pad[3];    // std140 block rounds to 128; range must cover it
+    int32_t reflMode;     // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
+    int32_t emitterCount; // projectile glow discs in the emitter SSBO (binding 6)
+    float glowGain;       // r_rtReflGlowGain
+    float _pad;           // std140 block rounds to 128; range must cover it
 };
 static_assert(sizeof(ReflParamsUBO) == 128, "ReflParamsUBO size mismatch");
 
@@ -155,6 +162,7 @@ extern uint32_t VK_RT_GetGILightBufferSize(void);
 
 extern idCVar r_useRayTracing;
 extern idCVar r_vkLogRT;
+extern idCVar r_rtReflGlowGain; // vk_rt_emitters.cpp
 
 // ---------------------------------------------------------------------------
 // Null light SSBO — zeroed buffer with numLights = 0, bound when the GI light
@@ -507,8 +515,9 @@ static void VK_RT_InitReflPipeline(void)
     //            per-frame image when vk.gbufferSupported, otherwise a 1x1
     //            null image (a=0, same "no data" sentinel) — see
     //            VK_RT_CreateNullGbufNormal / VK_RT_DispatchReflections.
+    // binding 6: projectile emitter SSBO (vk_rt_emitters.cpp), one per frame slot.
 
-    VkDescriptorSetLayoutBinding bindings[6] = {};
+    VkDescriptorSetLayoutBinding bindings[7] = {};
 
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
@@ -541,9 +550,14 @@ static void VK_RT_InitReflPipeline(void)
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
 
+    bindings[6].binding = 6;
+    bindings[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo = {};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 6;
+    layoutInfo.bindingCount = 7;
     layoutInfo.pBindings = bindings;
     VK_CHECK(vkCreateDescriptorSetLayout(vk.device, &layoutInfo, NULL, &vkRT.reflDescLayout));
 
@@ -837,7 +851,7 @@ static void VK_RT_InitReflPipeline(void)
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, VK_MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_MAX_FRAMES_IN_FLIGHT * 2},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, VK_MAX_FRAMES_IN_FLIGHT},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT}, // GI light SSBO
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_MAX_FRAMES_IN_FLIGHT * 2}, // GI light SSBO + emitters
     };
     VkDescriptorPoolCreateInfo poolInfo = {};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -874,6 +888,7 @@ static void VK_RT_InitReflPipeline(void)
 
     VK_RT_CreateNullLightSsbo();
     VK_RT_CreateNullGbufNormal();
+    VK_RT_InitReflEmitters();
 
     common->Printf("VK RT Refl: pipeline initialized\n");
 }
@@ -964,6 +979,7 @@ void VK_RT_ShutdownReflections(void)
     }
     VK_RT_DestroyNullLightSsbo();
     VK_RT_DestroyNullGbufNormal();
+    VK_RT_ShutdownReflEmitters();
     VK_RT_DestroyReflImages();
 }
 
@@ -1176,6 +1192,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
     ubo.rectOriginX = rectX;
     ubo.rectOriginY = rectY;
     ubo.reflMode = glassOnly ? 1 : 2;
+    ubo.emitterCount = (int32_t)VK_RT_GetReflEmitterCount(frameIdx);
+    ubo.glowGain = Max(0.0f, r_rtReflGlowGain.GetFloat());
     memcpy(uboMapped, &ubo, sizeof(ReflParamsUBO));
 
     // --- Update descriptor set (once per frame slot when frameCount changes).
@@ -1245,7 +1263,12 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         gbufInfo.imageView = gbufView;
         gbufInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        VkWriteDescriptorSet writes[6] = {};
+        VkDescriptorBufferInfo emitterInfo = {};
+        emitterInfo.buffer = VK_RT_GetReflEmitterBuffer(frameIdx);
+        emitterInfo.offset = 0;
+        emitterInfo.range = VK_WHOLE_SIZE;
+
+        VkWriteDescriptorSet writes[7] = {};
 
         writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].pNext = &tlasWrite;
@@ -1289,7 +1312,14 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
         writes[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[5].pImageInfo = &gbufInfo;
 
-        vkUpdateDescriptorSets(vk.device, 6, writes, 0, NULL);
+        writes[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet = ds;
+        writes[6].dstBinding = 6;
+        writes[6].descriptorCount = 1;
+        writes[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[6].pBufferInfo = &emitterInfo;
+
+        vkUpdateDescriptorSets(vk.device, 7, writes, 0, NULL);
         vkRT.reflDescSetLastUpdatedFrameCount[frameIdx] = tr.frameCount;
         s_lastReflTlasHandle[frameIdx] = vkRT.tlas[frameIdx].handle;
         s_lastReflStorageView[frameIdx] = rb.view;
@@ -1307,8 +1337,8 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
                             &vkRT.matDescSet[vk.currentFrame], 0, NULL);
 
     if (r_vkLogRT.GetInteger() >= 1)
-        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f\n", rectW, rectH, rectX, rectY,
-                       ubo.reflMode, ubo.maxDist);
+        common->Printf("VK RT Refl: dispatch %ux%u at (%d,%d) mode=%d maxDist=%.1f emitters=%d\n", rectW, rectH,
+                       rectX, rectY, ubo.reflMode, ubo.maxDist, ubo.emitterCount);
 
     vkCmdTraceRaysKHR(cmd, &vkRT.reflRgenRegion, &vkRT.reflMissRegion, &vkRT.reflHitRegion, &vkRT.reflCallRegion, rectW,
                       rectH, 1);
@@ -1354,7 +1384,7 @@ void VK_RT_DispatchReflections(VkCommandBuffer cmd, const viewDef_t *viewDef)
 //
 // Two pipeline objects share this layout/shader: reflCompositePipeline (additive,
 // normal operation) and reflCompositeDebugPipeline (blend disabled) selected by
-// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-7, so the debug
+// VK_RT_CompositeReflections when r_rtReflectionDebugMode is 2-8, so the debug
 // visualization baked into reflBuffer by the rgen replaces the lit scene instead
 // of adding onto it.
 // ---------------------------------------------------------------------------
@@ -1483,7 +1513,7 @@ static void VK_RT_InitReflCompositePipeline(void)
 
     VK_CHECK(vkCreateGraphicsPipelines(vk.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &vkRT.reflCompositePipeline));
 
-    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-7's
+    // --- Debug variant: blend disabled (replace), so r_rtReflectionDebugMode 2-8's
     // visualization (baked into reflBuffer by the rgen) isn't muddied by additive
     // blending onto the already-lit scene. ---
     VkPipelineColorBlendAttachmentState replaceBlend = {};

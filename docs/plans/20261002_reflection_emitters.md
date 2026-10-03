@@ -1,7 +1,21 @@
 # Projectile Glow in Reflections
 
-**Status:** unimplemented. Drafted 2026-10-02. Supersedes AR3 / "Sprite / Particle Effects in RT
-Reflections" in `completed/20260423_reflection_enhancements.md`.
+**Status:** E0–E3 code landed 2026-10-02, not yet built or run. Next: E0 inventory, then the
+E2/E3 checks. Supersedes AR3 / "Sprite / Particle Effects in RT Reflections" in
+`completed/20260423_reflection_enhancements.md`.
+
+### As built (differences from the stages below)
+
+| Item | Implemented as |
+|---|---|
+| Emitter fill site | `VK_RT_BuildReflEmitters` in `vk_backend.cpp` right after `VK_RT_UploadGILights`, before `VK_RT_FlushBindlessTextures`. Gated to the primary 3D view, once per frame slot |
+| `rtGlow` field | Last member of `renderEntity_t`, so existing offsets don't move. Cleared in `Fizzle`/`Explode` before `Hide()`; `Restore` derives it from `state`; demo reader zeroes it |
+| `.prt` lookup | `declManager->FindType(DECL_PARTICLE, model->Name(), false)`; no `Model_local.h` accessor |
+| Stage choice | Brightest enabled stage with blend `(ONE, ONE)` or `(SRC_ALPHA, ONE)`; `customShader`/`customSkin` honoured |
+| `matTextures` in rgen | Declared directly (set 1, binding 3); `rt_material.glsl` can't be included in a raygen shader |
+| Projectiles with no additive stage | Skipped and logged; light-colour fallback not built |
+| Debug mode 8 | Mode 6 raw radiance with discs added on top: green in front of the hit, red behind |
+| Menu | "Projectiles in Reflections" + "Projectile Glow Gain" in Reflection Settings |
 **Owns:** plasma bolts, imp fireballs, rockets, BFG balls etc. appearing in glass reflections.
 
 ## Why the earlier attempts failed
@@ -78,7 +92,7 @@ Check: E0's log matches what the buffer holds (log count and first entry from th
 | Change | Where |
 |---|---|
 | `float hitT` in `ReflPayload`; rchit writes `gl_HitTEXT`, miss writes `maxDist` | `reflect_payload.glsl`, `reflect_ray.rchit`, `player_reflect.rchit`, `reflect_ray.rmiss` |
-| Emitter loop after the first trace segment, before `imageStore`; adds into `accum` so the glass Fresnel weight and `reflBlend` apply unchanged | `reflect_ray.rgen` (includes `rt_material.glsl` for `matTextures`; set 1 already has `RAYGEN`) |
+| Emitter loop after the first trace segment, before `imageStore`; adds into `accum` so the glass Fresnel weight and `reflBlend` apply unchanged | `reflect_ray.rgen` (declares `matTextures` directly; set 1 already has `RAYGEN`) |
 | `emitterCount`, `glowGain` in `ReflParams`; `REFL_DEBUG_MAX_MODE` 7 → 8 | `reflect_ray.rgen`, `vk_reflections.cpp`, `vk_raytracing.h` |
 | New include `rt_emitter.glsl` (struct + intersect) in `GLSL_INCLUDES` | `CMakeLists.txt` |
 

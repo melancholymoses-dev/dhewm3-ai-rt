@@ -64,6 +64,7 @@ void main()
 {
     // Mirror distance: look up diffuse texture and apply per-light shadowed irradiance.
     uint matIdx = uint(gl_InstanceCustomIndexEXT) + uint(gl_GeometryIndexEXT);
+    reflPayload.hitT = gl_HitTEXT;
     if (matIdx >= uint(materials.length()))
     {
         reflPayload.colour        = vec3(0.0);

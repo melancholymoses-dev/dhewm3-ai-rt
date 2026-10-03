@@ -20,6 +20,8 @@ For every non-sky pixel:
   3. Trace the reflection ray. Glass along it is skipped in rahit (pure
      transmission), so rchit/rmiss return the opaque hit or sky. The bounce loop
      only continues if a hit shader sets transmittance > 0 (none currently do).
+     Projectile glow discs (rt_emitter.glsl) nearer than the first hit are added
+     here; projectiles are not in the TLAS. Mode 8 shows the discs.
   4. Write the Fresnel-weighted radiance to the reflection RGBA16F buffer.
      Glass pixels are the exception: they store raw
      radiance + glassWeight in NEGATED alpha, a sentinel telling
@@ -43,6 +45,7 @@ of the original Doom 3 GPL Source Code release.
 
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : enable
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topLevelAS;
 layout(set = 0, binding = 1, rgba16f) uniform image2D reflImage;
@@ -70,7 +73,19 @@ layout(set = 0, binding = 3) uniform ReflParams {
     int    rectOriginX;   // R6 — launch-grid origin, added to gl_LaunchIDEXT below
     int    rectOriginY;
     int    reflMode;      // r_rtReflectionMode — 1 glass-only, 2 legacy full-screen
+    int    emitterCount;  // projectile glow discs in emitterBuf (0 = r_rtReflGlow off)
+    float  glowGain;      // r_rtReflGlowGain
 } params;
+
+// Projectile glow emitters (vk_rt_emitters.cpp), filled per frame slot.
+#include "rt_emitter.glsl"
+layout(set = 0, binding = 6, std430) readonly buffer EmitterBuf {
+    RtEmitter emitters[RT_MAX_EMITTERS];
+} emitterBuf;
+
+// Only the bindless array from the shared material set. rt_material.glsl is not
+// included: its rt_InterpolateNormal uses a hit-shader-only built-in.
+layout(set = 1, binding = 3) uniform sampler2D matTextures[4096];
 
 #include "reflect_payload.glsl"
 layout(location = 0) rayPayloadEXT ReflPayload reflPayload;
@@ -82,6 +97,44 @@ layout(location = 1) rayPayloadEXT GlassProbePayload glassProbe;
 // B0 debug mode 7: fixed gain on raw accum so the reflected subject reads through the
 // tonemap toe while mode 6 is judged (docs/plans/20260918_reflection_brightness.md F3).
 const float REFL_DEBUG_GAIN = 8.0;
+
+// Projectile glows along (o, d) in front of the reflected surface at hitT. With
+// debugDiscs (mode 8) returns flat discs instead: green in front, red behind.
+vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT, bool debugDiscs)
+{
+    vec3 sum = vec3(0.0);
+    int n = min(params.emitterCount, RT_MAX_EMITTERS);
+    for (int i = 0; i < n; i++)
+    {
+        RtEmitter e = emitterBuf.emitters[i];
+        float t, rho2;
+        vec2  uv;
+        if (!rt_EmitterDisc(e, o, d, t, uv, rho2))
+            continue;
+        if (debugDiscs)
+        {
+            sum += (t < hitT) ? vec3(0.0, 0.5, 0.0) : vec3(0.5, 0.0, 0.0);
+            continue;
+        }
+        if (t >= hitT)
+            continue;
+
+        vec3 tex;
+        if (e.texIndex == 0u)
+        {
+            float f = 1.0 - rho2;
+            tex = vec3(f * f);
+        }
+        else
+        {
+            // Soft rim: the disc clips the texture's corners, which may not be black.
+            tex = textureLod(matTextures[nonuniformEXT(e.texIndex)], uv, 0.0).rgb *
+                  (1.0 - smoothstep(0.8, 1.0, sqrt(rho2)));
+        }
+        sum += e.rgb * tex;
+    }
+    return debugDiscs ? sum : sum * params.glowGain;
+}
 
 
 void main()
@@ -257,10 +310,15 @@ void main()
     float weight = 1.0;
     vec3  dir    = reflDir;
 
+    // First segment, for the emitter discs below.
+    vec3  segOrigin = origin;
+    float segHitT   = params.maxDist;
+
     for (int i = 0; i < 2 && weight > 0.01; i++)
     {
         reflPayload.colour        = vec3(0.0);
         reflPayload.transmittance = 0.0;
+        reflPayload.hitT          = params.maxDist;
 
         traceRayEXT(
             topLevelAS,
@@ -276,6 +334,8 @@ void main()
             0               // payload location
         );
 
+        if (i == 0)
+            segHitT = reflPayload.hitT;
         accum  += weight * reflPayload.colour;
         weight *= reflPayload.transmittance;
         if (reflPayload.transmittance > 0.0)
@@ -284,6 +344,18 @@ void main()
             dir    = reflPayload.nextDir;
         }
     }
+
+    if (params.debugMode == 8)
+    {
+        // Emitter check: raw radiance (as mode 6) with every disc on the ray overlaid.
+        imageStore(reflImage, coord, vec4(accum + ReflEmitterGlow(segOrigin, reflDir, segHitT, true), 1.0));
+        return;
+    }
+
+    // Projectile glows. Added before the Fresnel/glass weight so they read like the
+    // rest of the reflected scene.
+    if (params.emitterCount > 0)
+        accum += ReflEmitterGlow(segOrigin, reflDir, segHitT, false);
 
     if (params.debugMode == 6 || params.debugMode == 7)
     {

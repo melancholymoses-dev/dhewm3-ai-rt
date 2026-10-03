@@ -692,6 +692,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_ao.cpp
 	renderer/Vulkan/vk_temporal.cpp
 	renderer/Vulkan/vk_reflections.cpp
+	renderer/Vulkan/vk_rt_emitters.cpp
 	renderer/Vulkan/vk_gi.cpp
 	renderer/Vulkan/vk_gi_probe.cpp
 	renderer/Vulkan/vk_vol.cpp
@@ -800,6 +801,7 @@ list(APPEND GLSLC_FLAGS "-I${CMAKE_SOURCE_DIR}/libs/ffx-fsr")
 # Listing them as DEPENDS ensures any change triggers recompilation of all shaders.
 set(GLSL_INCLUDES
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/reflect_payload.glsl"
+	"${CMAKE_SOURCE_DIR}/renderer/glsl/rt_emitter.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/glass_probe_payload.glsl"	
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_shadow_payload.glsl"
 	"${CMAKE_SOURCE_DIR}/renderer/glsl/gi_payload.glsl"	

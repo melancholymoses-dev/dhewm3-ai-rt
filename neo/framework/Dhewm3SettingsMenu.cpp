@@ -2495,6 +2495,8 @@ struct RTCVars
     idCVar *rtReflectionBlend = nullptr;
     idCVar *rtSpecF0Scale = nullptr;
     idCVar *rtSpecF0Gamma = nullptr;
+    idCVar *rtReflGlow = nullptr;
+    idCVar *rtReflGlowGain = nullptr;
 
     // GI fine-tuning
     idCVar *rtGITemporal = nullptr;
@@ -2610,6 +2612,8 @@ static void InitRTOptionsMenu()
     rtCVars.rtReflectionBlend = cvarSystem->Find("r_rtReflectionBlend");
     rtCVars.rtSpecF0Scale = cvarSystem->Find("r_rtSpecF0Scale");
     rtCVars.rtSpecF0Gamma = cvarSystem->Find("r_rtSpecF0Gamma");
+    rtCVars.rtReflGlow = cvarSystem->Find("r_rtReflGlow");
+    rtCVars.rtReflGlowGain = cvarSystem->Find("r_rtReflGlowGain");
     rtCVars.rtGITemporal = cvarSystem->Find("r_rtGITemporal");
     rtCVars.rtGITemporalAlpha = cvarSystem->Find("r_rtGITemporalAlpha");
     rtCVars.rtGISamples = cvarSystem->Find("r_rtGISamples");
@@ -2807,6 +2811,10 @@ static void DrawRTOptionsMenu()
         ImGui::TableNextColumn();
         RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
         RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 5.0f);
+        RTCheckbox("Projectiles in Reflections", rtCVars.rtReflGlow);
+        ImGui::BeginDisabled(!(rtCVars.rtReflGlow && rtCVars.rtReflGlow->GetBool()));
+        RTSliderFloat("Projectile Glow Gain", rtCVars.rtReflGlowGain, 0.0f, 4.0f, "%.2f");
+        ImGui::EndDisabled();
         ImGui::TableNextColumn();
         RTSliderFloat("Specular F0 Scale (Fresnel intensity)", rtCVars.rtSpecF0Scale, 0.0f, 1.0f);
         RTSliderFloat("Specular F0 Gamma (metal gate)", rtCVars.rtSpecF0Gamma, 0.5f, 5.0f, "%.2f");
