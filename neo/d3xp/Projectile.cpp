@@ -218,7 +218,7 @@ void idProjectile::Restore(idRestoreGame *savefile)
 #endif
 
     // dhewm3-rt: rtGlow is not in the savegame format; derive it from state.
-    renderEntity.rtGlow = (state == CREATED || state == LAUNCHED);
+    renderEntity.rtGlow = (state == CREATED || state == LAUNCHED || state == EXPLODED);
     UpdateVisuals();
 }
 
@@ -982,7 +982,7 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
         smokeFlyTime = 0;
     }
 
-    renderEntity.rtGlow = false; // dhewm3-rt: detonated, drop from RT reflection emitters
+    renderEntity.rtGlow = false; // dhewm3-rt: re-set below if a blast model replaces it
     Hide();
     FreeLightDef();
 
@@ -1050,11 +1050,14 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
 
     if (fxname && *fxname)
     {
+        // dhewm3-rt: blast particles (model_detonate) glow in RT reflections; impact sparks don't.
+        const bool isBlast = idStr::Cmp(fxname, spawnArgs.GetString("model_detonate")) == 0;
         SetModel(fxname);
         renderEntity.shaderParms[SHADERPARM_RED] = renderEntity.shaderParms[SHADERPARM_GREEN] =
             renderEntity.shaderParms[SHADERPARM_BLUE] = renderEntity.shaderParms[SHADERPARM_ALPHA] = 1.0f;
         renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.time);
         renderEntity.shaderParms[SHADERPARM_DIVERSITY] = gameLocal.random.CRandomFloat();
+        renderEntity.rtGlow = isBlast;
         Show();
         removeTime = (removeTime > 3000) ? removeTime : 3000;
     }

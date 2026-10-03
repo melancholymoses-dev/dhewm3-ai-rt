@@ -107,7 +107,7 @@ while new lighting techniques enhance without fighting too much.
 | Doc | Owns |
 |---|---|
 | `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. Unimplemented; revised 2026-09-30. |
-| `20261002_reflection_emitters.md` | Projectile glow in glass reflections via an analytic emitter list. Code landed 2026-10-02, untested. |
+| `20261002_reflection_emitters.md` | Projectile and smoke-particle glows in glass reflections via an analytic emitter list. Working in-game 2026-10-02; last weapon checks, then default on. E5 (explosions) proposed. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
@@ -148,7 +148,7 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 | RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
 | Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
 | Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough - Skip|
-| Projectiles in reflections | `20261002_reflection_emitters.md` | New approach: analytic emitter list traced in `reflect_ray.rgen`, no TLAS change. Code landed 2026-10-02; needs build + in-game checks |
+| Projectiles in reflections | `20261002_reflection_emitters.md` | Working in-game (plasma, rockets, lost souls). Remaining weapon checks + E5 explosions |
 | Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
 | Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight - Skip |
 | Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Option A (deferred glass overlays) is in `VK_RB_DrawShaderPasses`; re-check in-game, likely closable |

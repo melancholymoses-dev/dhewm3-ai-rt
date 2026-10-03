@@ -204,12 +204,12 @@ entityDef projectile_plasmablast {
 
 	"mtr_light_shader"			"lights/impflash"
 	"light_color"				"0.0 0.36 0.5"
-	"light_radius"				"80"
+	"light_radius"				"120"
 	"light_offset"				"0 0 0"
 
 	"mtr_explode_light_shader"	"muzzleflash"
 	"explode_light_color"		"0 0.36 0.5"
-	"explode_light_radius"		"100"
+	"explode_light_radius"		"160"
 	"explode_light_fadetime"	"0.25"
 
 	"snd_fly"					"plasma_flight"					// sound effect while in the air
