@@ -115,6 +115,35 @@ turn red behind pillars. Mode 0: plasma reads blue and round in glass at any wal
 
 Then default `r_rtReflGlow 1` and record tuned values here.
 
+## E4 — Smoke-system glows (lost souls, trails, sparks)
+
+Lost-soul flames (`lost_flame1`, `pfiresmall2`, `blend add`) are emitted through
+`gameLocal.smokeParticles`: one shared render entity (`_SmokeParticle_Snapshot_`) whose callback
+rebuilds world-space quads for every active smoke system each frame, one surface per particle
+stage. It has ±100000 bounds and does no frustum culling, so particles behind the player are in it.
+The same entity carries gun smoke, impact puffs, rocket/fireball trails and blood.
+
+| Change | Where |
+|---|---|
+| Set `renderEntity.rtGlow = true` on the smoke entity in `idSmokeParticles::Init` | `neo/game/SmokeParticles.cpp`, `neo/d3xp/SmokeParticles.cpp` |
+| Smoke path in `EvalEmitter`: for each surface whose material has an additive stage, walk its quads (centre = mean of 4 verts, radius = half the diagonal, colour = vertex colour × stage rgb) | `vk_rt_emitters.cpp` |
+| Drop quads below `r_rtReflGlowSmokeMinLum` (default 0.3): faded or dim additive smoke | same |
+| Merge surviving quads into one disc per (material, 32-unit grid cell): rgb summed, radius = cluster extent | same |
+| Smoke discs share the 64-slot budget; projectiles keep priority, smoke fills the rest nearest-first | same |
+| `r_rtReflGlowSmoke` 0/1, default 0 until tuned | same + menu |
+
+| Risk | Mitigation / check |
+|---|---|
+| Additive smoke (`smokepuff`, muzzle smoke) reads as glowing blobs or haze in glass; lifts dark rooms (pillar 2) | Luminance floor; mode 8 in a firefight. If it still hazes, switch to a material allow-list |
+| Hundreds of quads in a firefight; nearest-first popping at the cap | Grid merge; log quad and cluster counts at `r_vkLogRT 1` |
+| Player's own muzzle smoke at the camera fills the glass | Skip clusters within ~32 units of the view origin |
+| Trails become a chain of discs | Accept; trail glow is short-lived |
+| Callback geometry is frame-temporary | Read it from `ent->dynamicModel` in the same frame only; never cache |
+
+No TLAS or raster change, so transparency is still untouched.
+Check: dark room with a lost soul, mode 8 shows one disc per flame; `r_rtReflGlowSmoke 0` is
+identical to E3.
+
 ## Cut
 
 | Item | Reason |

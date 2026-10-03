@@ -163,7 +163,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     const renderEntity_t &parms = ent->parms;
     idRenderModel *model = parms.hModel;
 
-    idVec3 rgb(0.0f);
+    idVec3 rgb(0.0f, 0.0f, 0.0f);
     idImage *image = NULL;
     const idMaterial *chosenMat = NULL;
     float lum = 0.0f;
@@ -199,7 +199,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
             const idMaterial *mat = parms.customShader ? parms.customShader : surf->shader;
             if (parms.customSkin && mat)
                 mat = parms.customSkin->RemapShaderBySkin(mat);
-            if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f), rgb, image, lum))
+            if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), rgb, image, lum))
                 chosenMat = mat;
         }
         // Half the largest extent: the size of a deform-sprite quad.

@@ -2810,7 +2810,7 @@ static void DrawRTOptionsMenu()
     {
         ImGui::TableNextColumn();
         RTSliderFloat("Max Reflection Distance", rtCVars.rtReflectionDistance, 100.0f, 5000.0f, "%.0f");
-        RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 5.0f);
+        RTSliderFloat("Reflection Blend", rtCVars.rtReflectionBlend, 0.0f, 10.0f);
         RTCheckbox("Projectiles in Reflections", rtCVars.rtReflGlow);
         ImGui::BeginDisabled(!(rtCVars.rtReflGlow && rtCVars.rtReflGlow->GetBool()));
         RTSliderFloat("Projectile Glow Gain", rtCVars.rtReflGlowGain, 0.0f, 4.0f, "%.2f");
