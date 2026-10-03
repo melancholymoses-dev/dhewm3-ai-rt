@@ -132,6 +132,7 @@ every 16 ms; the 150 ms timeout stops them if frames stall.
 | Weapon fired | `idPlayer::WeaponFireFeedback`; local player, `isNewFrame` | `rumble_low/hi/ms` keys, else low = `recoilTime/360` (pistol .35, shotgun/rocket .9), hi .35, ms = ⅔·recoilTime. No recoil (plasma, BFG, grenade): .2/.35/70 |
 | Melee, creature | `idWeapon::Event_Melee`, before the hit sound | `rumble_hit_*` keys on the meleeDef, else low = damage·berserk/50 (fists .4, flashlight .8, chainsaw 1), hi .3, 180 ms |
 | Melee, other surface | same; only when a strike sound plays (`nextStrikeFx` throttle) | `rumble_strike_*`, else .15/.45/60 |
+| Melee rev (chainsaw) | same, every call; the chainsaw script calls `melee()` every 100 ms while firing. Hits/strikes override it in the MELEE slot | `rumble_rev_*`, else `weapon_chainsaw` 0/.08/150, others 0 |
 | Hit confirm | `idPlayer::DamageFeedback`; skipped when `inflictor == this` (melee) | 0 / .1+dmg/150 / 50 |
 | Damage taken | `idPlayer::Damage`, beside `DamageImpulse` | sized by damage + armorSave: .2+d/40, d/60, 100+8d ms (≤450) |
 
@@ -156,7 +157,7 @@ at 1.0. Curve + length added instead of a bigger multiplier. Linear original: `F
 
 **Check:** `joy_rumbleDebug 2`. Fire each weapon and read the posted values; `joy_rumble 0`
 must produce no `RUMBLE` lines at all. Flashlight-melee a zombie, then a wall, then the air:
-thump, tap, nothing. Chainsaw a zombie: steady `slot=` values, not climbing.
+thump, tap, nothing. Chainsaw a zombie: steady `slot=` values, not climbing. Chainsaw the air: steady `post melee in=(0.00,0.08,…)` every 100 ms.
 
 **Exit:** all events felt distinctly, no stuck motor on level load or weapon switch, master
 toggle silent.
@@ -179,7 +180,7 @@ means something keeps posting; `FAILED` or `skipped` lines mean the stop never r
 |---|---|
 | `Rumble_Post` checks `Rumble_GameLive()` and pad idle fresh, not the last `Rumble_Frame` verdict, so the first shot after waking the pad or closing a menu isn't dropped | `Rumble.cpp`, `Rumble.h`, `Common.cpp` |
 | Held buttons and axes past 25% keep `Sys_LastGamepadInputMs` current; tracked before the ImGui filter, cleared on pad removal. Before, a held trigger or stick went idle after 5 s | `events.cpp` |
-| Melee calls `WeaponFireFeedback(def, false)`: no FIRE rumble on swings. The chainsaw idling in the air no longer rumbles | `{game,d3xp}/Player.{h,cpp}`, `Weapon.cpp` |
+| Melee calls `WeaponFireFeedback(def, false)`: no FIRE rumble on swings. The chainsaw revving in the air gets the MELEE rev buzz instead (C3 event table) | `{game,d3xp}/Player.{h,cpp}`, `Weapon.cpp` |
 
 **Check:** hold the chaingun trigger for 10 s: rumble continues, no `RUMBLE pad idle`. Leave the pad 6 s,
 then fire: the first shot posts. Flashlight-melee the air: no `RUMBLE post fire`.

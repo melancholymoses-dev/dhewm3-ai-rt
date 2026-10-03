@@ -4272,6 +4272,16 @@ void idWeapon::Event_Melee(void)
 
     if (!gameLocal.isClient)
     {
+        // dhewm3-rt: rev buzz on every melee call.  The chainsaw script calls melee() every 100 ms
+        // while firing, so this holds a mild buzz; hits and strikes below override it in the slot.
+        if (owner == gameLocal.GetLocalPlayer())
+        {
+            const idDict &md = meleeDef->dict;
+            const bool saw = !idStr::Icmp(weaponDef->GetName(), "weapon_chainsaw");
+            Game_Rumble(idCommon::RUMBLE_MELEE, md.GetFloat("rumble_rev_low", "0"),
+                        md.GetFloat("rumble_rev_hi", saw ? "0.08" : "0"), md.GetInt("rumble_rev_ms", "150"));
+        }
+
         idVec3 start = playerViewOrigin;
         idVec3 end = start + playerViewAxis[0] * (meleeDistance * owner->PowerUpModifier(MELEE_DISTANCE));
         gameLocal.clip.TracePoint(tr, start, end, MASK_SHOT_RENDERMODEL, owner);
