@@ -2,7 +2,7 @@
 ===========================================================================
 
 AimAssist.cpp - gamepad aim assist for the local player.
-docs/plans/20260924_controller_gunfeel.md C4.  Mirrored in neo/d3xp/.
+docs/plans/completed/20260924_controller_gunfeel.md C4.  Mirrored in neo/d3xp/.
 
 Friction scales this frame's stick-driven turn down while the view is over a target.
 Adhesion turns the view by a fraction of the target's angular motion around the eye.

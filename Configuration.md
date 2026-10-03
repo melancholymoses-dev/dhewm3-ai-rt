@@ -116,7 +116,7 @@ pick it up immediately). Run the `deploy_base_overrides` CMake target (built aut
 copy reaches `<exe>/base/`.
 
 dhewm3-rt also remaps the D-pad to **weapon groups** instead of single weapons (see
-[docs/plans/20260924_controller_gunfeel.md](./docs/plans/20260924_controller_gunfeel.md), stage C5):
+[docs/plans/completed/20260924_controller_gunfeel.md](./docs/plans/completed/20260924_controller_gunfeel.md), stage C5):
 each direction holds up to 4 weapons, first press selects the group, further presses cycle through
 it. Tunable via `pad_weapGroups`, `pad_weapGroup0..3`, `pad_weapCommitMs`, `pad_weapOverlay`.
 

@@ -1,7 +1,7 @@
 /*
 ===========================================================================
 
-Rumble.cpp - gamepad rumble mixer (docs/plans/20260924_controller_gunfeel.md C3).
+Rumble.cpp - gamepad rumble mixer (docs/plans/completed/20260924_controller_gunfeel.md C3).
 
 One slot per idCommon::rumbleCategory_t.  A post into a busy slot keeps the stronger
 amplitude per motor and restarts the decay, so rapid repeats (chaingun, chainsaw) hold

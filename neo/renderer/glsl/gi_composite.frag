@@ -26,7 +26,7 @@ Code release.
 layout(set = 0, binding = 0) uniform sampler2D u_GIMap;
 layout(set = 0, binding = 1) uniform sampler2D u_AOMap; // RT AO (1=open) or 1x1 white fallback
 
-// docs/plans/20260930_AO_GI_refine.md: AO darkens indirect light here instead of
+// docs/plans/completed/20260930_AO_GI_refine.md: AO darkens indirect light here instead of
 // (or as well as, per r_rtAODirectStrength) the direct diffuse in interaction.frag.
 layout(push_constant) uniform CompositePC {
     int   useAO;      // 0 when AO was not written this frame

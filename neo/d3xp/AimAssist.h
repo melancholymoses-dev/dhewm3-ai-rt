@@ -2,7 +2,7 @@
 ===========================================================================
 
 AimAssist.h - gamepad aim assist for the local player (friction + adhesion).
-docs/plans/20260924_controller_gunfeel.md C4.  Mirrored in neo/d3xp/.
+docs/plans/completed/20260924_controller_gunfeel.md C4.  Mirrored in neo/d3xp/.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source

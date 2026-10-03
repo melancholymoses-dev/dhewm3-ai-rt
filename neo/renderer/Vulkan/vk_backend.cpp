@@ -1341,7 +1341,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // aoDirectStrength: how much AO darkens direct diffuse; 0 = off (weapon surfaces skip AO
     // same as shadow).  While GI composites, AO belongs on the indirect term instead
-    // (docs/plans/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
+    // (docs/plans/completed/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
     float *aoDirectPtr = (float *)(useSM + 1);
     // A2 (amd_vulkan_cleanup.md): aoValid, not just image != NULL. The image existing says
     // nothing about whether anything was written into it this frame — VK_RT_DispatchAO has

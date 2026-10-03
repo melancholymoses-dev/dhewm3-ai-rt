@@ -363,7 +363,7 @@ class idUsercmdGenLocal : public idUsercmdGen
     void HandleJoystickAxis(int keyNum, float unclampedValue, float threshold, bool positive);
     void JoystickMove(void);
 
-    // dhewm3-rt C1/C2 (docs/plans/20260924_controller_gunfeel.md): radial look stick + ramp latch fix.
+    // dhewm3-rt C1/C2 (docs/plans/completed/20260924_controller_gunfeel.md): radial look stick + ramp latch fix.
     struct lookRamp_t
     {
         float value; // last (ramp-limited) look value

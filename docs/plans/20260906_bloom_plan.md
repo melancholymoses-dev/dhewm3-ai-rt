@@ -18,6 +18,8 @@ wide low-threshold bloom would lift dark regions, which breaks pillars 2 and 3.
 | Vol composite (default late site) and fog lights draw *after* shader passes | The diff excludes them, so fog shafts never bloom |
 | `preAlphaColor` exists only when FSR 2 is possible, at full size | Bloom owns a half-res snapshot instead; no FSR dependency |
 | `VK_RB_CopyRender` is implemented now (no longer a stub) | RoE's scripted `FullscreenFX_Bloom` may run on top; check for doubling in B4 |
+| Deferred glass overlays draw at the end of `VK_RB_DrawShaderPasses` | Glass reflections land in the diff and bloom. Wanted for reflected fixtures/projectiles; watch for glass panes glowing as a whole in B4 |
+| `blend add` smoke (e.g. `textures/particles/smokepuff`) and alpha smoke over dark backgrounds give a positive diff | The emissive term needs its own threshold, not only the lit term |
 
 ## Design
 
@@ -26,7 +28,8 @@ interactions → [B1a pre-snapshot, ½ render res] → shader passes → [B1b ex
 ... → upscale → [B2 Kawase down/up chain + composite, display res] → GUI/HUD → tonemap
 ```
 
-Extract (B1b): `src = max(curr − pre, 0)·emissiveWeight + softKnee(curr, threshold)·litWeight`.
+Extract (B1b): `src = softKnee(max(curr − pre, 0), emissiveThreshold)·emissiveWeight + softKnee(curr, threshold)·litWeight`.
+`emissiveThreshold` starts at 0.5; B0's bands for smoke vs fixtures set it.
 Defaults: `emissiveWeight 1`, `litWeight 0`. First downsample uses a Karis (1/(1+lum)) average so
 GI/reflection fireflies and sub-pixel FSR-jittered sparks don't turn into flashing blobs.
 
@@ -36,6 +39,7 @@ GI/reflection fireflies and sub-pixel FSR-jittered sparks don't turn into flashi
 |---|---|---|---|
 | `r_rtBloom` | 0 | 0/1 | Default flips to 1 after B4 |
 | `r_rtBloomThreshold` | 0.8 | 0.2–4 | Soft-knee threshold, pre-exposure units |
+| `r_rtBloomEmissiveThreshold` | 0.5 | 0–2 | Soft-knee on the emissive diff; keeps smoke out |
 | `r_rtBloomKnee` | 0.5 | 0–1 | |
 | `r_rtBloomLitWeight` | 0 | 0–1 | 0 = emissive-only |
 | `r_rtBloomStrength` | 0.15 | 0–1 | Additive weight |

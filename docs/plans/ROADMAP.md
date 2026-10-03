@@ -34,7 +34,7 @@ Every stage below serves these; anything that fights them gets cut or demoted.
 | 1c | **Stale dynamic-model normals in RT** — skinned meshes reached the TLAS with bind-pose normals | `completed/20260919_dynamic_model_normals.md` | ✅ Closed 2026-09-19. 0.16 ms with 12 characters on screen |
 | 2 | **Froxel volumetrics + probe GI** — vol/GI sampling moved into world-space caches | `completed/20260906_froxel_probe_gi.md` | ✅ **Closed 2026-09-19.** Both default (`r_rtVolFroxel 1`, `r_rtGIProbes 1`); old paths kept as A/B. Vol 1.63 → 0.29 ms, GI 4.41 → ~1.3 ms |
 | 3 | **FSR upscaling** — render resolution decoupled from display; FSR 1/2 resolve | `completed/20260918_fsr_upscaling.md` | ✅ **Closed 2026-09-30.** U0-U4 landed and validated in-game: `r_fsrRenderScale`, FSR 1 (`r_fsr 1`), motion vectors + Halton jitter, FSR 2.2.1 (`r_fsr 2`) with reactive and T&C masks, texture LOD bias. U4 denoiser retune dropped (~0.1-0.2 ms, no visible double-accumulation). 0.67 scale saves ~2.8 ms of RT at 1440p; arc 2's ~0.7 ms world-space floor caps further gains. U3b (RT texture LOD) and U5 (menu, FSR 3.1, dynamic res, skinned MVs) moved to backlog |
-| 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `20260930_AO_GI_refine.md` | 🟡 Built 2026-09-30, not yet validated in-game |
+| 3b | **AO / GI refinement** — AO distance falloff; AO moved from direct light onto GI | `completed/20260930_AO_GI_refine.md` | ✅ Closed 2026-10-02. Two open checks not run (viewmodel AO in debug mode 2, AO cost) |
 
 - Constants are tuned and a default is selected (raster fallout, reach=1). Closed.
 - U0 gated the screen-space composites on `hasRealCamera` — they had been running twice
@@ -106,10 +106,9 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-| `20260930_AO_GI_refine.md` | AO falloff, AO on indirect vs direct light, `r_rtAODebug`. |
 | `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. Unimplemented; revised 2026-09-30. |
+| `20261002_reflection_emitters.md` | Projectile glow in glass reflections via an analytic emitter list. Unimplemented. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
-| `20260924_controller_gunfeel.md` | Gamepad aim response, rumble, aim assist (C1-C4). Orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 
 ---
@@ -120,6 +119,8 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 
 | Doc | Owns |
 |---|---|
+| `20260930_AO_GI_refine.md` | **Arc 3b.** AO distance falloff, AO on GI instead of direct light, `r_rtAODebug`, spectrum lights out of GI/vol, projected range from `light_end` |
+| `20260924_controller_gunfeel.md` | Gamepad: radial look stick + ramp fix, rumble (incl. monster steps, chainsaw rev), aim assist, D-pad weapon groups + selector. C6 wheel parked |
 | `20260918_fsr_upscaling.md` | **Arc 3.** Render-resolution decoupling, FSR 1/2, motion vectors + jitter, FSR 2 masks. U5 deferred with a skinned-MV reopen trigger |
 | `20260906_froxel_probe_gi.md` | **Arc 2.** Froxel volumetrics + probe GI, both shipped as default. Includes G5b flicker factorization and the animated-light premise correction |
 | `20260919_dynamic_model_normals.md` | Skinned md5 meshes reaching the TLAS with bind-pose normals |
@@ -141,12 +142,13 @@ All in `completed/`. Waves 1-7 of the original roadmap are done.
 
 | Item | Doc | Note |
 |---|---|---|
-| Controller gun-feel | `20260924_controller_gunfeel.md` | C1 (radial deadzone + curve) and C2 (accel) are framework-only and independent of the RT arc — can run any time. C3 rumble, C4 aim assist follow. Not scheduled. |
+| Controller gun-feel leftovers | `completed/20260924_controller_gunfeel.md` | C6 radial wheel (parked), BFG/plasma rumble keys, d3xp classname/icon verification, legacy look-cvar retirement. Listed at the top of the doc |
+| AO/GI open checks | `completed/20260930_AO_GI_refine.md` | Dark viewmodel in `r_rtAODebug 2`; AO cost of closest-hit vs first-hit traversal |
 | FSR U5 polish | `completed/20260918_fsr_upscaling.md` U5 | `r_fsrQuality` in the video menu, FSR 3.1 evaluation, dynamic resolution. Skinned-MV double-buffering only on the reopen trigger listed in U5 |
 | RT texture LOD (U3b) | `completed/20260918_fsr_upscaling.md` U3b | RT fetches sample mip 0 at any distance. Real, but not the grating artifact |
 | Adaptive probe hysteresis (was G5 fix 2) | `completed/20260906_froxel_probe_gi.md` | Boost alpha when a probe's new value differs sharply from `prev`. The answer for **doors and moving lights** — G5b handles flicker and explicitly cannot help here. Needs a lower-variance estimator first (`r_rtGIProbeRays 256`), so it costs ~+0.5 ms before it starts - Skip|
 | Probe relocation / per-area isolation | `completed/20260906_froxel_probe_gi.md` | Dropped from G4. Revisit only if leaks reappear on a map where Chebyshev isn't enough - Skip|
-| Projectiles in reflections | `completed/20260423_reflection_enhancements.md` AR3 | Sprite attempt reverted (`f37f071b`); needs a new approach. |
+| Projectiles in reflections | `20261002_reflection_emitters.md` | New approach: analytic emitter list traced in `reflect_ray.rgen`, no TLAS change. Not scheduled |
 | Roughness-blurred reflections | — | Now the *only* route to reflective non-glass surfaces: sharp mirror reflection is why opaque geometry looks wrong, so "dimmer" can't fix it. Affordable for the first time now the traced pixel set is tiny. Not scheduled. |
 | Runtime emissive-state lights | `completed/20260810_auto_relight.md` | v2 of auto-relight - Skip |
-| Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Polish. |
+| Translucent square borders over reflections | `completed/20260423_reflection_enhancements.md` | Option A (deferred glass overlays) is in `VK_RB_DrawShaderPasses`; re-check in-game, likely closable |

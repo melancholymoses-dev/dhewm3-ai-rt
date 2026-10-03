@@ -4,7 +4,7 @@ dhewm3-rt Ambient Occlusion — closest-hit
 
 Returns the nearest opaque hit distance as a fraction of the AO radius, so the raygen can
 weight occlusion by distance instead of treating every hit inside the radius as full
-occlusion.  See docs/plans/20260930_AO_GI_refine.md.
+occlusion.  See docs/plans/completed/20260930_AO_GI_refine.md.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI, and
 may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source Code.
