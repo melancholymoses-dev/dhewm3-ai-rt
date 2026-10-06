@@ -1,5 +1,16 @@
 # Controller gun-feel
 
+**Status:** ✅ Closed 2026-10-02. C1-C5b built; C6 parked. Per-stage "untested" notes below are
+historical.
+
+| Left open (not scheduled) | Section |
+|---|---|
+| C6 radial weapon wheel | C6 |
+| BFG/plasma use the no-recoil fire rumble; give them `rumble_*` keys if weak | C3b follow-ups |
+| d3xp group classnames unverified (`pad_weapDebug 1` logs unresolved ones) | C5 |
+| d3xp grabber/artifact selector icons fall back to the def's `icon` key | C5b |
+| Retire legacy look cvars once `joy_newLook 1` has shipped a while | Settings menu |
+
 Target: snappy stick aim and physical weapon feedback on a gamepad. Doom 3's
 gamepad path is the BFG backport in `neo/framework/UsercmdGen.cpp`; it has a
 latching rate limiter on by default, an axial deadzone, and a per-axis response
@@ -31,11 +42,11 @@ Every assist is individually switchable off. `joy_aimAssist 0` and
 
 | Where | What it does now |
 |---|---|
-| [UsercmdGen.cpp:1042](../../neo/framework/UsercmdGen.cpp#L1042) `JoystickMove` | Calls `CircleToSquare` on **both** sticks, then dispatches each stick as 4 independent scalars |
-| [UsercmdGen.cpp:889](../../neo/framework/UsercmdGen.cpp#L889) `HandleJoystickAxis` | Per-axis deadzone, per-axis `Pow` curve, integrates into `viewangles[]` |
-| [UsercmdGen.cpp:963](../../neo/framework/UsercmdGen.cpp#L963) `joy_dampenLook` | Rate-limits `lookValue` to +0.003/ms → 333 ms to full |
-| [events.cpp:1747](../../neo/sys/events.cpp#L1747) | Duplicate deadzone for `joyAxis[]`, **menu cursor only** |
-| [events.cpp:1707](../../neo/sys/events.cpp#L1707) | Hardcoded 50% digital threshold for stick-as-button |
+| [UsercmdGen.cpp:1042](../../../neo/framework/UsercmdGen.cpp#L1042) `JoystickMove` | Calls `CircleToSquare` on **both** sticks, then dispatches each stick as 4 independent scalars |
+| [UsercmdGen.cpp:889](../../../neo/framework/UsercmdGen.cpp#L889) `HandleJoystickAxis` | Per-axis deadzone, per-axis `Pow` curve, integrates into `viewangles[]` |
+| [UsercmdGen.cpp:963](../../../neo/framework/UsercmdGen.cpp#L963) `joy_dampenLook` | Rate-limits `lookValue` to +0.003/ms → 333 ms to full |
+| [events.cpp:1747](../../../neo/sys/events.cpp#L1747) | Duplicate deadzone for `joyAxis[]`, **menu cursor only** |
+| [events.cpp:1707](../../../neo/sys/events.cpp#L1707) | Hardcoded 50% digital threshold for stick-as-button |
 
 Three defects, all confirmed by reading:
 
@@ -44,7 +55,7 @@ Three defects, all confirmed by reading:
 - **Per-axis curve.** `pow(x,k)/pow(y,k) = (x/y)^k` rotates the output toward the
   nearest cardinal axis. At `joy_powerScale 2`, a 27° push aims at 14°.
 - **The limiter latches.** `lastLookValueYaw` is written only inside the pressed
-  branch and initialised only in the constructor ([line 520](../../neo/framework/UsercmdGen.cpp#L520)).
+  branch and initialised only in the constructor ([line 520](../../../neo/framework/UsercmdGen.cpp#L520)).
   It never decays on release, and left/right share one variable, so reversing
   direction inherits the opposite direction's ramp.
 
@@ -357,8 +368,8 @@ Parked: C5 covers the need. About 2–3× the work, mostly input routing.
 ## Settings menu
 
 All new CVars go in the Controls section of
-[Dhewm3SettingsMenu.cpp](../../neo/framework/Dhewm3SettingsMenu.cpp), extending
-the existing `joy_*` block at [line 1824](../../neo/framework/Dhewm3SettingsMenu.cpp#L1824).
+[Dhewm3SettingsMenu.cpp](../../../neo/framework/Dhewm3SettingsMenu.cpp), extending
+the existing `joy_*` block at [line 1824](../../../neo/framework/Dhewm3SettingsMenu.cpp#L1824).
 
 | Group | Entries |
 |---|---|

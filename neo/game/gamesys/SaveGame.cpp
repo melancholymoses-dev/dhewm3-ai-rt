@@ -1499,6 +1499,10 @@ void idRestoreGame::ReadRenderEntity(renderEntity_t &renderEntity)
     ReadBool(renderEntity.weaponDepthHack);
 
     ReadInt(renderEntity.forceUpdate);
+
+    // dhewm3-rt: not in the savegame format, and some callers (idEntityFx::Restore) read
+    // into uninitialised POD storage. idProjectile::Restore re-derives it.
+    renderEntity.rtGlow = false;
 }
 
 /*

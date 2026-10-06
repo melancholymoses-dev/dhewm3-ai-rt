@@ -430,25 +430,17 @@ brushDef3
 // entity 20
 {
 "classname" "light"
-"name" "light_7"
-"light_center" "0 0 0"
-"light_radius" "320 320 320"
-"origin" "440 216 144"
-}
-// entity 21
-{
-"classname" "light"
 "name" "light_8"
-"origin" "-144 -112 56"
-"texture" "lights/defaultPointLight"
 "_color" "1.000 0.891 0.512"
-"parallel" "0"
 "light_right" "128 0 0"
 "light_target" "0 0 -256"
 "light_up" "0 128 0"
+"origin" "-144 -112 56"
+"parallel" "0"
 "rotation" "-0.0844656 -0.897357 0.433146 0.187215 -0.44125 -0.877639 0.97868 0.00696127 0.205269"
+"texture" "lights/defaultPointLight"
 }
-// entity 22
+// entity 21
 {
 "classname" "trigger_presize"
 "name" "trigger_presize_1"
@@ -457,39 +449,74 @@ brushDef3
 "target1" "char_sentry_flashlight_1"
 "wait" "0.1"
 }
-// entity 23
+// entity 22
 {
 "classname" "path_cycleanim"
 "name" "path_cycleanim_1"
 "origin" "224 -24 48"
 "target0" "path_cycleanim_3"
 }
-// entity 24
+// entity 23
 {
 "classname" "path_cycleanim"
 "name" "path_cycleanim_2"
 "origin" "232 296 48"
 "target0" "path_cycleanim_1"
 }
-// entity 25
+// entity 24
 {
 "classname" "path_cycleanim"
 "name" "path_cycleanim_3"
 "origin" "400 -24 48"
 "target0" "path_cycleanim_4"
 }
-// entity 26
+// entity 25
 {
 "classname" "path_cycleanim"
 "name" "path_cycleanim_4"
 "origin" "424 288 48"
 "target0" "path_cycleanim_2"
 }
-// entity 27
+// entity 26
 {
 "classname" "char_sentry_flashlight"
 "name" "char_sentry_flashlight_1"
 "origin" "224 -104 16"
 "rotation" "1 0 0 0 1 0 0 0 1"
 "target0" "path_cycleanim_1"
+}
+// entity 27
+{
+"classname" "weapon_bfg"
+"name" "weapon_bfg_1"
+"origin" "56 184 40"
+"rotation" "1 0 0 0 1 0 0 0 1"
+}
+// entity 28
+{
+"classname" "ammo_bfg_small"
+"name" "ammo_bfg_small_1"
+"origin" "88 130.018 48.259"
+"rotation" "1 0 0 0 0.967623 0.252401 0 -0.252401 0.967623"
+}
+// entity 29
+{
+"classname" "delta1_hellknight"
+"name" "delta1_hellknight_1"
+"origin" "552 216 8"
+"rotation" "1 0 0 0 1 0 0 0 1"
+}
+// entity 30
+{
+"classname" "monster_demon_pinky"
+"name" "monster_demon_pinky_1"
+"origin" "664 216 0"
+"rotation" "1 0 0 0 1 0 0 0 1"
+}
+// entity 31
+{
+"classname" "monster_boss_cyberdemon"
+"name" "monster_boss_cyberdemon_1"
+"origin" "600 344 40"
+"rotation" "1 0 0 0 1 0 0 0 1"
 }

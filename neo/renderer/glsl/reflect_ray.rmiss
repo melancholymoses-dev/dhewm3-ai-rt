@@ -30,4 +30,5 @@ void main()
 
     reflPayload.colour        = color;
     reflPayload.transmittance = 0.0;  // stop — sky has no continuation
+    reflPayload.hitT          = gl_RayTmaxEXT;
 }

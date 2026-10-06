@@ -90,6 +90,8 @@ void idSmokeParticles::Init(void)
 
     // we certainly don't want particle shadows
     renderEntity.noShadow = 1;
+    // dhewm3-rt: additive smoke stages glow in RT reflections (vk_rt_emitters.cpp, r_rtReflGlowSmoke)
+    renderEntity.rtGlow = true;
 
     // huge bounds, so it will be present in every world area
     renderEntity.bounds.AddPoint(idVec3(-100000, -100000, -100000));
@@ -333,22 +335,26 @@ idSmokeParticles::UpdateRenderEntity
 bool idSmokeParticles::UpdateRenderEntity(renderEntity_s *renderEntity, const renderView_t *renderView)
 {
 
-    // FIXME: re-use model surfaces
-    renderEntity->hModel->InitEmpty(smokeParticle_SnapshotName);
-
     // this may be triggered by a model trace or other non-view related source,
     // to which we should look like an empty model
     if (!renderView)
     {
+        renderEntity->hModel->InitEmpty(smokeParticle_SnapshotName);
+        currentParticleTime = -1; // dhewm3-rt: emptied, so the next view must regenerate
         return false;
     }
 
     // don't regenerate it if it is current
+    // dhewm3-rt: keep the current surfaces instead of emptying first; a second callback in
+    // the same frame used to leave the model empty for later readers (RT reflection glows).
     if (renderView->time == currentParticleTime && !renderView->forceUpdate)
     {
         return false;
     }
     currentParticleTime = renderView->time;
+
+    // FIXME: re-use model surfaces
+    renderEntity->hModel->InitEmpty(smokeParticle_SnapshotName);
 
     particleGen_t g;
 

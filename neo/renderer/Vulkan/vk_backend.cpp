@@ -28,6 +28,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_buffer.h"
 #include "renderer/Vulkan/vk_upscale.h"
 #include "renderer/Vulkan/vk_gbuffer.h"
+#include "renderer/Vulkan/vk_rt_emitters.h"
 #include "sys/sys_imgui.h"
 #include <SDL.h>
 #include <cmath>
@@ -1341,7 +1342,7 @@ static void VK_RB_DrawInteraction(const drawInteraction_t *din)
 
     // aoDirectStrength: how much AO darkens direct diffuse; 0 = off (weapon surfaces skip AO
     // same as shadow).  While GI composites, AO belongs on the indirect term instead
-    // (docs/plans/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
+    // (docs/plans/completed/20260930_AO_GI_refine.md), so only r_rtAODirectStrength reaches here.
     float *aoDirectPtr = (float *)(useSM + 1);
     // A2 (amd_vulkan_cleanup.md): aoValid, not just image != NULL. The image existing says
     // nothing about whether anything was written into it this frame — VK_RT_DispatchAO has
@@ -5048,6 +5049,10 @@ void VK_RB_DrawView(const void *data)
         // Reflections dispatch before GI, so this ensures reflection hit shaders
         // always see the current frame's light list.
         VK_RT_UploadGILights(backEnd.viewDef);
+
+        // Projectile glows for reflections. Before the flush below so a newly seen
+        // projectile texture gets its bindless slot written this frame.
+        VK_RT_BuildReflEmitters(backEnd.viewDef);
 
         // rt_projected_light_cookies.md: light collection above may have just
         // registered a brand-new cookie image (VK_RT_GetOrAssignTexIndex) — this

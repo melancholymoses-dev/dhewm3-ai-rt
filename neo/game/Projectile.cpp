@@ -147,6 +147,21 @@ void idProjectile::Save(idSaveGame *savefile) const
 
 /*
 ================
+idProjectile::IsBlastModel
+
+dhewm3-rt: Explode() swaps in model_detonate for a real blast, or a smokespark /
+ricochet / smoke model for a plain impact. Only the first glows in RT reflections.
+================
+*/
+bool idProjectile::IsBlastModel(void) const
+{
+    const char *detonate = spawnArgs.GetString("model_detonate");
+    return detonate && *detonate && renderEntity.hModel &&
+           idStr::Icmp(renderEntity.hModel->Name(), detonate) == 0;
+}
+
+/*
+================
 idProjectile::Restore
 ================
 */
@@ -195,6 +210,11 @@ void idProjectile::Restore(idRestoreGame *savefile)
         gameLocal.smokeParticles->EmitSmoke(smokeFly, gameLocal.time, gameLocal.random.RandomFloat(),
                                             GetPhysics()->GetOrigin(), GetPhysics()->GetAxis());
     }
+
+    // dhewm3-rt: rtGlow is not in the savegame format; derive it from state. An exploded
+    // projectile only glows while it wears the blast model, matching Explode().
+    renderEntity.rtGlow = (state == CREATED || state == LAUNCHED) || (state == EXPLODED && IsBlastModel());
+    UpdateVisuals();
 }
 
 /*
@@ -259,6 +279,7 @@ void idProjectile::Create(idEntity *owner, const idVec3 &start, const idVec3 &di
 
     damagePower = 1.0f;
 
+    renderEntity.rtGlow = true; // dhewm3-rt: glows in RT reflections (vk_rt_emitters.cpp)
     UpdateVisuals();
 
     state = CREATED;
@@ -849,6 +870,7 @@ void idProjectile::Fizzle(void)
     physicsObj.GetClipModel()->Unlink();
     physicsObj.PutToRest();
 
+    renderEntity.rtGlow = false; // dhewm3-rt: detonated, drop from RT reflection emitters
     Hide();
     FreeLightDef();
 
@@ -933,6 +955,7 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
         smokeFlyTime = 0;
     }
 
+    renderEntity.rtGlow = false; // dhewm3-rt: re-set below if a blast model replaces it
     Hide();
     FreeLightDef();
 
@@ -980,6 +1003,7 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
             renderEntity.shaderParms[SHADERPARM_BLUE] = renderEntity.shaderParms[SHADERPARM_ALPHA] = 1.0f;
         renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.time);
         renderEntity.shaderParms[SHADERPARM_DIVERSITY] = gameLocal.random.CRandomFloat();
+        renderEntity.rtGlow = IsBlastModel(); // dhewm3-rt: blast glows, impact sparks don't
         Show();
         removeTime = (removeTime > 3000) ? removeTime : 3000;
     }
