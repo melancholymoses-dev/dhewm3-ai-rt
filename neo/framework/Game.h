@@ -388,7 +388,9 @@ class idGameEditExt : public idGameEdit
 ===============================================================================
 */
 
-const int GAME_API_VERSION = 9;
+// dhewm3-rt: 10 adds renderEntity_t::rtGlow, so a game DLL built against 9 passes a
+// struct four bytes short of what the renderer copies. Bump on any shared-struct change.
+const int GAME_API_VERSION = 10;
 
 typedef struct
 {

@@ -122,7 +122,8 @@ vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT, bool debugDiscs)
             continue;
 
         vec3 tex;
-        if (e.texIndex == 0u)
+        uint slot = rt_EmitterTexSlot(e.texIndex);
+        if (slot == 0u)
         {
             float f = 1.0 - rho2;
             tex = vec3(f * f);
@@ -130,8 +131,8 @@ vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT, bool debugDiscs)
         else
         {
             // Soft rim: the disc clips the texture's corners, which may not be black.
-            tex = textureLod(matTextures[nonuniformEXT(e.texIndex)], uv, 0.0).rgb *
-                  (1.0 - smoothstep(0.8, 1.0, sqrt(rho2)));
+            vec4 texel = textureLod(matTextures[nonuniformEXT(slot)], uv, 0.0);
+            tex = rt_EmitterTexColor(texel, e.texIndex) * (1.0 - smoothstep(0.8, 1.0, sqrt(rho2)));
         }
         sum += e.rgb * tex;
     }
@@ -152,8 +153,10 @@ vec3 ReflEmitterGlow(vec3 o, vec3 d, float hitT, bool debugDiscs)
         }
         if (t >= hitT)
             continue;
-        vec3 tex = (g.texIndex == 0u) ? vec3(1.0)
-                                      : textureLod(matTextures[nonuniformEXT(g.texIndex)], uv, 0.0).rgb;
+        uint slot = rt_EmitterTexSlot(g.texIndex);
+        vec3 tex = vec3(1.0);
+        if (slot != 0u)
+            tex = rt_EmitterTexColor(textureLod(matTextures[nonuniformEXT(slot)], uv, 0.0), g.texIndex);
         sum += g.rgb * tex;
     }
     return debugDiscs ? sum : sum * params.glowGain;

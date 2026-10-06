@@ -27,13 +27,17 @@ Code release.
 #define VK_RT_MAX_EMITTERS 64
 #define VK_RT_MAX_GLOW_TRIS 128
 
+// texIndex flag: the stage blends (SRC_ALPHA, ONE), so the shader must weight the
+// texture by its own alpha. Must match RT_EMITTER_SRCALPHA in rt_emitter.glsl.
+#define VK_RT_EMITTER_SRCALPHA 0x80000000u
+
 // std430 mirror of RtEmitter in rt_emitter.glsl — 32 bytes.
 struct vkRTEmitter_t
 {
     float pos[3];
     float radius;
     float rgb[3];
-    uint32_t texIndex; // bindless matTextures slot; 0 = procedural falloff
+    uint32_t texIndex; // bindless matTextures slot (0 = procedural falloff) | flags
 };
 
 // std430 mirror of RtGlowTri — 80 bytes. World-space triangle of an additive translucent

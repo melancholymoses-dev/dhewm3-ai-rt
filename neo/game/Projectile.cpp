@@ -147,6 +147,21 @@ void idProjectile::Save(idSaveGame *savefile) const
 
 /*
 ================
+idProjectile::IsBlastModel
+
+dhewm3-rt: Explode() swaps in model_detonate for a real blast, or a smokespark /
+ricochet / smoke model for a plain impact. Only the first glows in RT reflections.
+================
+*/
+bool idProjectile::IsBlastModel(void) const
+{
+    const char *detonate = spawnArgs.GetString("model_detonate");
+    return detonate && *detonate && renderEntity.hModel &&
+           idStr::Icmp(renderEntity.hModel->Name(), detonate) == 0;
+}
+
+/*
+================
 idProjectile::Restore
 ================
 */
@@ -196,8 +211,9 @@ void idProjectile::Restore(idRestoreGame *savefile)
                                             GetPhysics()->GetOrigin(), GetPhysics()->GetAxis());
     }
 
-    // dhewm3-rt: rtGlow is not in the savegame format; derive it from state.
-    renderEntity.rtGlow = (state == CREATED || state == LAUNCHED || state == EXPLODED);
+    // dhewm3-rt: rtGlow is not in the savegame format; derive it from state. An exploded
+    // projectile only glows while it wears the blast model, matching Explode().
+    renderEntity.rtGlow = (state == CREATED || state == LAUNCHED) || (state == EXPLODED && IsBlastModel());
     UpdateVisuals();
 }
 
@@ -982,14 +998,12 @@ void idProjectile::Explode(const trace_t &collision, idEntity *ignore)
 
     if (fxname && *fxname)
     {
-        // dhewm3-rt: blast particles (model_detonate) glow in RT reflections; impact sparks don't.
-        const bool isBlast = idStr::Cmp(fxname, spawnArgs.GetString("model_detonate")) == 0;
         SetModel(fxname);
         renderEntity.shaderParms[SHADERPARM_RED] = renderEntity.shaderParms[SHADERPARM_GREEN] =
             renderEntity.shaderParms[SHADERPARM_BLUE] = renderEntity.shaderParms[SHADERPARM_ALPHA] = 1.0f;
         renderEntity.shaderParms[SHADERPARM_TIMEOFFSET] = -MS2SEC(gameLocal.time);
         renderEntity.shaderParms[SHADERPARM_DIVERSITY] = gameLocal.random.CRandomFloat();
-        renderEntity.rtGlow = isBlast;
+        renderEntity.rtGlow = IsBlastModel(); // dhewm3-rt: blast glows, impact sparks don't
         Show();
         removeTime = (removeTime > 3000) ? removeTime : 3000;
     }

@@ -17,12 +17,26 @@ Code release.
 #define RT_MAX_EMITTERS  64   // must match VK_RT_MAX_EMITTERS
 #define RT_MAX_GLOW_TRIS 128  // must match VK_RT_MAX_GLOW_TRIS
 
+// texIndex flag: the source stage blends (SRC_ALPHA, ONE), so its texture alpha scales
+// the contribution. Must match VK_RT_EMITTER_SRCALPHA in vk_rt_emitters.h.
+#define RT_EMITTER_SRCALPHA 0x80000000u
+
 struct RtEmitter {
     vec3  pos;
     float radius;
     vec3  rgb;
-    uint  texIndex;   // matTextures slot; 0 = procedural falloff
+    uint  texIndex;   // matTextures slot (0 = procedural falloff) | flags
 };
+
+uint rt_EmitterTexSlot(uint texIndex)   { return texIndex & ~RT_EMITTER_SRCALPHA; }
+bool rt_EmitterSrcAlpha(uint texIndex)  { return (texIndex & RT_EMITTER_SRCALPHA) != 0u; }
+
+// Texture contribution of an emitter sample. A (SRC_ALPHA, ONE) stage is weighted by
+// its alpha, so transparent texels with bright rgb don't read as solid glow.
+vec3 rt_EmitterTexColor(vec4 texel, uint texIndex)
+{
+    return rt_EmitterSrcAlpha(texIndex) ? texel.rgb * texel.a : texel.rgb;
+}
 
 // World-space triangle of an additive translucent surface the BLAS excludes
 // (noshadows, e.g. the Mars City bio-scanner beam). Mirrors vkRTGlowTri_t, 80 bytes.
@@ -32,7 +46,7 @@ struct RtGlowTri {
     vec4  v2;
     vec4  t;          // xyz = t per vertex
     vec3  rgb;
-    uint  texIndex;
+    uint  texIndex;   // matTextures slot | flags, as RtEmitter
 };
 
 // Two-sided Moller-Trumbore. On a hit, t is the ray distance and uv the interpolated texcoord.

@@ -131,6 +131,10 @@ class idProjectile : public idEntity
 
     projectileState_t state;
 
+    // dhewm3-rt: current model is the blast particle (model_detonate), the only
+    // exploded state that glows in RT reflections. Impact sparks and ricochets don't.
+    bool IsBlastModel(void) const;
+
   private:
     bool netSyncPhysics;
 

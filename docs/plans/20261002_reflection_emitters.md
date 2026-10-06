@@ -55,11 +55,11 @@ t = dot(c − o, d);  if 0 < t < hitT and |o + t·d − c| < r:
 
 | Area | Files | What |
 |---|---|---|
-| Tag | `RenderWorld.h` | `bool rtGlow`, last member of `renderEntity_t` so existing offsets don't move. Demo reader zeroes it |
+| Tag | `RenderWorld.h` | `bool rtGlow`, last member of `renderEntity_t` so existing offsets don't move. Demo reader and both `idRestoreGame::ReadRenderEntity` zero it; `GAME_API_VERSION` 9 → 10 |
 | Projectiles | `game/`, `d3xp/` `Projectile.cpp` | Set in `Create`; cleared in `Fizzle`/`Explode` before `Hide()`; `Restore` derives it from `state` (not in the savegame) |
 | Smoke | `game/`, `d3xp/` `SmokeParticles.cpp` | `Init` tags the shared smoke entity. `UpdateRenderEntity` now only empties the model on a non-view callback or when regenerating (see findings) |
 | Emitter list | `vk_rt_emitters.cpp/.h` | `VK_RT_BuildReflEmitters`, called in `vk_backend.cpp` after `VK_RT_UploadGILights`, before `VK_RT_FlushBindlessTextures`. Primary 3D view only, once per frame slot. SSBO per frame slot, binding 6 |
-| Stage choice | same | Brightest enabled stage with blend `(ONE, ONE)` or `(SRC_ALPHA, ONE)`, colour from `EvaluateRegisters`. `customShader`/`customSkin` honoured |
+| Stage choice | same | Brightest enabled stage with blend `(ONE, ONE)` or `(SRC_ALPHA, ONE)`, colour from `EvaluateRegisters`. `customShader`/`customSkin` honoured. `(SRC_ALPHA, ONE)` sets `VK_RT_EMITTER_SRCALPHA` in `texIndex` so the shader weights the texel by its alpha; smoke quads also apply vertex alpha and honour `SVC_INVERSE_MODULATE` |
 | Particle decls | same | `.prt` models and `deform particle`/`particle2` surfaces use the decl's brightest additive stage, radius = stage size. Deform surfaces are placed at their own bounds (rocket tail) |
 | Smoke clusters | same | Quads of the smoke entity's additive surfaces, luminance floor, skip within 32 units of the camera, merged per (surface, grid cell) with area-weighted rgb. Projectiles first, smoke fills the rest nearest-first |
 | Shader | `reflect_ray.rgen`, `rt_emitter.glsl`, `reflect_payload.glsl`, both rchits, rmiss | `hitT` in the payload; emitter loop; `matTextures` declared directly (`rt_material.glsl` can't be included in raygen) |
@@ -93,7 +93,7 @@ envelope a kept tag glows until the entity is removed (≥ 3 s).
 
 | Change | Where |
 |---|---|
-| `rtGlow` re-set before `Show()` only when the new model is `model_detonate`; impact sparks/ricochets stay untagged. `Restore` also keeps it for `EXPLODED` | `Projectile.cpp` (both) |
+| `rtGlow` re-set before `Show()` only when the new model is `model_detonate`; impact sparks/ricochets stay untagged. `Explode` and `Restore` share `IsBlastModel()`, so a restored `EXPLODED` spark stays untagged | `Projectile.cpp` (both) |
 | `ParticleStageEnvelope`: stage age as in `idRenderModelPrt` (view time + `SHADERPARM_TIMEOFFSET` − stage `timeOffset`). Looping stages (`cycles` 0) → 1. Otherwise one fade-in/fade-out ramp over `particleLife·(1 + spawnBunching)` of the current cycle, 0 after the last | `vk_rt_emitters.cpp` (`PickParticleStage`, so `.prt` and deform-particle surfaces both get it) |
 
 Check: rocket, plasma and BFG impacts in glass flash and fade with the raster blast; mode 8 disc

@@ -92,16 +92,17 @@ void VK_RT_ShutdownReflEmitters(void)
 {
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {
+        // The buffer must go before the memory it is bound to (VUID-vkFreeMemory-memory-00677).
+        if (s_emitterBuf[i] != VK_NULL_HANDLE)
+        {
+            vkDestroyBuffer(vk.device, s_emitterBuf[i], NULL);
+            s_emitterBuf[i] = VK_NULL_HANDLE;
+        }
         if (s_emitterMem[i] != VK_NULL_HANDLE)
         {
             vkUnmapMemory(vk.device, s_emitterMem[i]);
             vkFreeMemory(vk.device, s_emitterMem[i], NULL);
             s_emitterMem[i] = VK_NULL_HANDLE;
-        }
-        if (s_emitterBuf[i] != VK_NULL_HANDLE)
-        {
-            vkDestroyBuffer(vk.device, s_emitterBuf[i], NULL);
-            s_emitterBuf[i] = VK_NULL_HANDLE;
         }
         s_emitterMapped[i] = NULL;
         s_emitterCount[i] = 0;
@@ -174,6 +175,16 @@ static bool PickAdditiveStage(const idMaterial *mat, const renderEntity_t &parms
     return found;
 }
 
+// Bindless slot for a stage's image, plus the flags the shader needs to reproduce the
+// stage's blend. 0 with no flags means "no image": the shader uses its procedural falloff.
+static uint32_t EmitterTexIndex(idImage *image, const shaderStage_t *stage)
+{
+    uint32_t texIndex = image ? VK_RT_GetOrAssignTexIndex(image) : 0u;
+    if (stage && (stage->drawStateBits & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_SRC_ALPHA)
+        texIndex |= VK_RT_EMITTER_SRCALPHA;
+    return texIndex;
+}
+
 struct emitterCandidate_t
 {
     vkRTEmitter_t e;
@@ -218,7 +229,7 @@ static float ParticleStageEnvelope(const idParticleStage *ps, const renderEntity
 // io values only when a stage beats ioLum.
 static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &parms, const viewDef_t *viewDef,
                               idVec3 &ioRgb, idImage *&ioImage, float &ioLum, const idMaterial *&ioMat,
-                              float &ioRadius)
+                              float &ioRadius, const shaderStage_t **ioStage)
 {
     bool found = false;
     for (int i = 0; i < prt->stages.Num(); i++)
@@ -229,7 +240,8 @@ static bool PickParticleStage(const idDeclParticle *prt, const renderEntity_t &p
         const float env = ParticleStageEnvelope(ps, parms, viewDef);
         if (env <= 0.0f)
             continue;
-        if (PickAdditiveStage(ps->material, parms, viewDef, ps->color.ToVec3() * env, ioRgb, ioImage, ioLum))
+        if (PickAdditiveStage(ps->material, parms, viewDef, ps->color.ToVec3() * env, ioRgb, ioImage, ioLum,
+                              ioStage))
         {
             ioMat = ps->material;
             ioRadius = Max(ps->size.from, ps->size.to);
@@ -248,6 +260,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     idVec3 rgb(0.0f, 0.0f, 0.0f);
     idImage *image = NULL;
     const idMaterial *chosenMat = NULL;
+    const shaderStage_t *chosenStage = NULL;
     float lum = 0.0f;
     float radius = 0.0f;
     idVec3 pos = parms.origin;
@@ -258,7 +271,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     {
         const idDeclParticle *prt =
             static_cast<const idDeclParticle *>(declManager->FindType(DECL_PARTICLE, model->Name(), false));
-        if (!prt || !PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, radius))
+        if (!prt || !PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, radius, &chosenStage))
             return false;
     }
     else
@@ -284,7 +297,8 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
             {
                 const idDeclParticle *prt = static_cast<const idDeclParticle *>(mat->GetDeformDecl());
                 float prtRadius = 0.0f;
-                if (prt && PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, prtRadius))
+                if (prt &&
+                    PickParticleStage(prt, parms, viewDef, rgb, image, lum, chosenMat, prtRadius, &chosenStage))
                 {
                     radius = prtRadius;
                     winIsParticle = true;
@@ -295,7 +309,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
                 }
                 continue;
             }
-            if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), rgb, image, lum))
+            if (PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), rgb, image, lum, &chosenStage))
             {
                 chosenMat = mat;
                 winIsParticle = false;
@@ -326,7 +340,7 @@ static bool EvalEmitter(const idRenderEntityLocal *ent, const viewDef_t *viewDef
     out.e.rgb[0] = rgb.x;
     out.e.rgb[1] = rgb.y;
     out.e.rgb[2] = rgb.z;
-    out.e.texIndex = image ? VK_RT_GetOrAssignTexIndex(image) : 0u;
+    out.e.texIndex = EmitterTexIndex(image, chosenStage);
     out.distSq = (pos - viewDef->renderView.vieworg).LengthSqr();
     out.ent = ent;
     out.matName = chosenMat->GetName();
@@ -357,6 +371,7 @@ struct smokeCluster_t
     idVec3 energy; // sum of quad rgb * r^2, so merged brightness is area-weighted
     idImage *image;
     const idMaterial *mat;
+    const shaderStage_t *stage;
 };
 
 // The smoke entity's quads (rebuilt this frame by its game callback, world space) merged
@@ -388,7 +403,9 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
         if (!PickAdditiveStage(surf->shader, ent->parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), stageRgb, image,
                                stageLum, &stage))
             continue;
-        const bool useVertColor = stage && stage->vertexColor != SVC_IGNORE;
+        const stageVertexColor_t vertColorMode = stage ? stage->vertexColor : SVC_IGNORE;
+        // (SRC_ALPHA, ONE): the fragment's alpha scales the whole contribution.
+        const bool srcAlpha = stage && (stage->drawStateBits & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_SRC_ALPHA;
 
         // Particle quads are 4 consecutive verts (idSmokeParticles::UpdateRenderEntity).
         for (int v = 0; v + 3 < tri->numVerts; v += 4)
@@ -398,12 +415,21 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
             const idVec3 centre = (q[0].xyz + q[1].xyz + q[2].xyz + q[3].xyz) * 0.25f;
 
             idVec3 rgb = stageRgb;
-            if (useVertColor)
+            if (vertColorMode != SVC_IGNORE)
             {
+                // Quad-averaged vertex colour, applied the way the raster path does
+                // (vk_backend.cpp): modulate by it, or by its inverse.
                 const float k = 1.0f / (4.0f * 255.0f);
-                rgb.x *= (q[0].color[0] + q[1].color[0] + q[2].color[0] + q[3].color[0]) * k;
-                rgb.y *= (q[0].color[1] + q[1].color[1] + q[2].color[1] + q[3].color[1]) * k;
-                rgb.z *= (q[0].color[2] + q[1].color[2] + q[2].color[2] + q[3].color[2]) * k;
+                idVec4 vc;
+                for (int ch = 0; ch < 4; ch++)
+                    vc[ch] = (q[0].color[ch] + q[1].color[ch] + q[2].color[ch] + q[3].color[ch]) * k;
+                if (vertColorMode == SVC_INVERSE_MODULATE)
+                    vc = idVec4(1.0f, 1.0f, 1.0f, 1.0f) - vc;
+                rgb.x *= vc.x;
+                rgb.y *= vc.y;
+                rgb.z *= vc.z;
+                if (srcAlpha)
+                    rgb *= vc.w;
             }
             if (0.2126f * rgb.x + 0.7152f * rgb.y + 0.0722f * rgb.z < minLum)
                 continue;
@@ -445,6 +471,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
                 sc.energy.Zero();
                 sc.image = image;
                 sc.mat = surf->shader;
+                sc.stage = stage;
             }
             smokeCluster_t &sc = clusters[c];
             sc.bounds.AddBounds(idBounds(centre - idVec3(r, r, r), centre + idVec3(r, r, r)));
@@ -470,7 +497,7 @@ static void CollectSmokeEmitters(const idRenderEntityLocal *ent, const viewDef_t
         cand.e.rgb[0] = rgb.x;
         cand.e.rgb[1] = rgb.y;
         cand.e.rgb[2] = rgb.z;
-        cand.e.texIndex = sc.image ? VK_RT_GetOrAssignTexIndex(sc.image) : 0u;
+        cand.e.texIndex = EmitterTexIndex(sc.image, sc.stage);
         cand.distSq = (pos - viewOrg).LengthSqr();
         cand.ent = ent;
         cand.matName = sc.mat->GetName();
@@ -504,6 +531,7 @@ struct glowSurfCandidate_t
     const idMaterial *mat;
     idVec3 rgb;
     idImage *image;
+    const shaderStage_t *stage;
     float distSq;
 };
 
@@ -541,8 +569,9 @@ static void CollectGlowSurfaces(const idRenderEntityLocal *ent, const viewDef_t 
         glowSurfCandidate_t c;
         c.rgb.Zero();
         c.image = NULL;
+        c.stage = NULL;
         float lum = 0.0f;
-        if (!PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), c.rgb, c.image, lum))
+        if (!PickAdditiveStage(mat, parms, viewDef, idVec3(1.0f, 1.0f, 1.0f), c.rgb, c.image, lum, &c.stage))
             continue;
         c.ent = ent;
         c.tri = tri;
@@ -572,7 +601,7 @@ static int WriteGlowTris(const glowSurfCandidate_t *list, int num, vkRTGlowTri_t
         const int surfTris = c.tri->numIndexes / 3;
         if (numTris + surfTris > VK_RT_MAX_GLOW_TRIS)
             continue;
-        const uint32_t texIndex = c.image ? VK_RT_GetOrAssignTexIndex(c.image) : 0u;
+        const uint32_t texIndex = EmitterTexIndex(c.image, c.stage);
         for (int k = 0; k < surfTris; k++)
         {
             vkRTGlowTri_t &g = out[numTris++];
