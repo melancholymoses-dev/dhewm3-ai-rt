@@ -16,13 +16,14 @@ Descriptors (set 0):
   binding 0 — hdrIn  rgba16f storage image (readonly) — HDR accumulator
   binding 1 — ldrOut rgba8   storage image             — swapchain target
 
-Push constants (16 bytes, matches TonemapPC in vk_tonemap.cpp):
+Push constants (20 bytes, matches TonemapPC in vk_tonemap.cpp):
   float exposure      — r_rtTonemapExposure  (default 1.0)
   float toeStrength   — r_rtTonemapToe       (default 2.0)
   float linearStart   — r_rtTonemapLinStart  (default 0.22)
   float linearLength  — r_rtTonemapLinLen    (default 0.40)
+  int   debugMode     — r_rtBloomDebug == 1 selects the luminance-band view
 
-Phase 8.1 — Tonemapping.
+Phase 8.1 — Tonemapping.  B0 of the bloom plan added the band overlay.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -45,10 +46,26 @@ layout(push_constant) uniform PC {
     float toeStrength;   // r_rtTonemapToe        (default 2.0 — moderate black crush)
     float linearStart;   // r_rtTonemapLinStart   (default 0.22)
     float linearLength;  // r_rtTonemapLinLen     (default 0.40)
+    int   debugMode;     // 1 = luminance bands (bloom plan B0), 0 = normal
 } pc;
 
 // Rec. 709 / sRGB luminance weights.
 const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
+
+// B0: which luminance band does this pixel sit in, before exposure?  Bloom's
+// thresholds are quoted in these same pre-exposure units, so the bands read
+// directly as threshold candidates.
+//
+// Written straight to the LDR output, bypassing the Uchimura curve — a band
+// pushed through the toe would no longer be distinguishable from its neighbour.
+vec3 LuminanceBand(float lum)
+{
+    if (lum < 0.5)  return vec3(0.0, 0.0, 0.0);  // below any useful threshold
+    if (lum < 1.0)  return vec3(0.0, 0.0, 1.0);  // blend-add stages sit near here
+    if (lum < 2.0)  return vec3(0.0, 1.0, 0.0);  // r_lightScale 2 overbright walls
+    if (lum < 4.0)  return vec3(1.0, 1.0, 0.0);
+    return vec3(1.0, 0.0, 0.0);
+}
 
 // Uchimura / Gran Turismo filmic curve applied to a scalar luminance value.
 // P=1 (display max), a=1 (linear contrast), b=0 (pedestal).
@@ -85,7 +102,15 @@ void main()
     if (coord.x >= dims.x || coord.y >= dims.y)
         return;
 
-    vec3  hdr = imageLoad(hdrIn, coord).rgb * pc.exposure;
+    vec3 raw = imageLoad(hdrIn, coord).rgb;
+
+    if (pc.debugMode == 1)
+    {
+        imageStore(ldrOut, coord, vec4(LuminanceBand(dot(raw, LUMINANCE_WEIGHTS)), 1.0));
+        return;
+    }
+
+    vec3  hdr = raw * pc.exposure;
     float lum = dot(hdr, LUMINANCE_WEIGHTS);
 
     vec3 mapped;

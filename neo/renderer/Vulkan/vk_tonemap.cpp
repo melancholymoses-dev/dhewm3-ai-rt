@@ -61,6 +61,7 @@ idCVar r_rtTonemapLinLen("r_rtTonemapLinLen", "0.40", CVAR_RENDERER | CVAR_ARCHI
 
 extern VkShaderModule VK_LoadSPIRV(const char *path);
 extern idCVar r_vkLogRT;
+extern idCVar r_rtBloomDebug; // vk_bloom.cpp
 
 // ---------------------------------------------------------------------------
 // HDR images (RGBA16F — colour attachment for scene passes)
@@ -417,7 +418,7 @@ static void VK_RT_CreateTonemapPipeline(void)
     VkPushConstantRange pushRange = {};
     pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushRange.offset = 0;
-    pushRange.size = 16; // TonemapPC: exposure, toeStrength, linearStart, linearLength
+    pushRange.size = 20; // TonemapPC: exposure, toeStrength, linearStart, linearLength, debugMode
 
     VkPipelineLayoutCreateInfo plCI = {};
     plCI.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -669,11 +670,16 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
         float toeStrength;
         float linearStart;
         float linearLength;
+        int32_t debugMode;
     } pc;
     pc.exposure = r_rtTonemapExposure.GetFloat();
     pc.toeStrength = r_rtTonemapToe.GetFloat();
     pc.linearStart = r_rtTonemapLinStart.GetFloat();
     pc.linearLength = r_rtTonemapLinLen.GetFloat();
+    // B0 luminance bands.  The tonemap is the only pass that sees the finished frame
+    // and writes LDR, so the bands go here rather than in vk_bloom.cpp; mode 2 and up
+    // belong to the bloom passes themselves.
+    pc.debugMode = (r_rtBloomDebug.GetInteger() == 1) ? 1 : 0;
 
     // 4. Bind pipeline and dispatch (8×8 workgroups).
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.tonemapPipeline);

@@ -27,6 +27,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_bloom.h"
 #include "renderer/Vulkan/vk_gbuffer.h"
 #include "renderer/Vulkan/vk_rt_emitters.h"
 #include "sys/sys_imgui.h"
@@ -379,6 +380,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_SHADER_PASSES,
     VK_RTPROF_PHASE_FOG_LIGHTS,
     VK_RTPROF_PHASE_UPSCALE,
+    VK_RTPROF_PHASE_BLOOM,
     VK_RTPROF_PHASE_TONEMAP,
 
     // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
@@ -474,6 +476,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "FogLights";
     case VK_RTPROF_PHASE_UPSCALE:
         return "Upscale";
+    case VK_RTPROF_PHASE_BLOOM:
+        return "Bloom";
     case VK_RTPROF_PHASE_TONEMAP:
         return "Tonemap";
     case VK_RTPROF_PHASE_BLAS:
@@ -5364,13 +5368,33 @@ void VK_RB_DrawView(const void *data)
     // Same real-camera gate as the RT dispatches above: the 2D overlay view arrives as a
     // second RC_DRAW_VIEW with a zeroed viewaxis and has nothing pre-alpha about it, and a
     // mirror/subview would overwrite the primary view's masks with its own.
-    if ((VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask()) &&
+    //
+    // Bloom B1a shares the same slot and the same gate for the same reasons: its
+    // snapshot is only meaningful before the blend stages, it is a compute dispatch
+    // that cannot be recorded inside a render pass, and a mirror/subview would
+    // overwrite the primary view's snapshot with its own.  One end/resume covers both.
+    const bool fsrWantsCapture = VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask();
+    const bool bloomWantsCapture = VK_RT_BloomActive();
+    if ((fsrWantsCapture || bloomWantsCapture) &&
         backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f && !backEnd.viewDef->isSubview &&
         !backEnd.viewDef->isMirror)
     {
-        VK_SetRenderStage("FSR_MaskCapture");
+        VK_SetRenderStage("PreAlphaCapture");
         vkCmdEndRenderPass(cmdBuf);
-        VK_RT_CaptureReactiveInputs(cmdBuf);
+        if (fsrWantsCapture)
+        {
+            VK_SetRenderStage("FSR_MaskCapture");
+            VK_RT_CaptureReactiveInputs(cmdBuf);
+        }
+        if (bloomWantsCapture)
+        {
+            VK_SetRenderStage("Bloom_Prepass");
+            const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+            int profBloom = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_BLOOM);
+            VK_RT_BloomPrepass(cmdBuf);
+            VK_RTProfile_PhaseEnd(cmdBuf, profBloom);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+        }
         VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
     }
 
@@ -5388,6 +5412,24 @@ void VK_RB_DrawView(const void *data)
     {
         if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterShaderPasses", true))
             return;
+    }
+
+    // Bloom B1b: diff against the B1a snapshot while the frame holds exactly the
+    // interactions plus the blend stages.  Everything after this point — the late vol
+    // composite and Doom 3's fog lights — is a separate medium that must not bloom, so
+    // this is the last honest moment.  Same real-camera gate as the prepass; compute,
+    // so it needs the pass closed.
+    if (VK_RT_BloomActive() && backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f &&
+        !backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror)
+    {
+        VK_SetRenderStage("Bloom_Extract");
+        vkCmdEndRenderPass(cmdBuf);
+        const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+        int profBloom = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_BLOOM);
+        VK_RT_BloomExtract(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profBloom);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+        VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
     }
 
     // F6 late composite site: after interactions and blend stages (surface radiance,
@@ -5698,6 +5740,12 @@ void VK_RB_SwapBuffers()
     VK_SetRenderStage("RT_MaskDebug");
     VK_RT_DispatchMaskDebug(cmdBuf);
 
+    // Bloom source overlay (r_rtBloomDebug 2).  Same slot again: after the resolve so it
+    // magnifies crisply at display resolution, before the tonemap so hdrScene is still
+    // what gets read.  No-op unless the mode is selected.
+    VK_SetRenderStage("RT_BloomDebug");
+    VK_RT_DispatchBloomDebug(cmdBuf);
+
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.
     VK_SetRenderStage("RT_Tonemap");
@@ -5994,6 +6042,9 @@ void VKimp_PostInit(int width, int height)
         common->Printf("VK: initializing RT tonemapping\n");
         VK_RT_InitTonemap();
         VK_RT_InitUpscale();
+        // After the upscale: bloom's images are sized off the swapchain extent, but its
+        // dispatches read vk.renderExtent, which VK_RT_InitUpscale establishes.
+        VK_RT_InitBloom();
     }
 
     common->Printf("VK: Backend ready\n");

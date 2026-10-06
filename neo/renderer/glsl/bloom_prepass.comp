@@ -1,0 +1,59 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — bloom_prepass.comp — B1a half-res snapshot of hdrScene.
+
+Plain 2x2 box of hdrScene's render sub-rect into bloomPre.  Dispatched after the
+interactions and before the blend stages, so bloomPre holds the scene with direct
+light, GI and reflections but nothing emissive-additive.  bloom_extract.comp then
+subtracts it to isolate the blend stages.
+
+The box must stay a plain average: bloom_extract runs the identical box over the
+current frame and diffs the two, and a weighted average would make the two
+operators disagree.
+
+Descriptors (set 0):
+  binding 0 — hdrIn  rgba16f storage image (readonly), display-sized
+  binding 1 — preOut rgba16f storage image (writeonly), half display-sized
+
+docs/plans/20260906_bloom_plan.md B1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly  image2D hdrIn;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D preOut;
+
+layout(push_constant) uniform PC {
+    ivec2 srcExtent; // valid render sub-rect of hdrIn
+    ivec2 dstExtent; // (srcExtent + 1) / 2
+} pc;
+
+void main()
+{
+    ivec2 d = ivec2(gl_GlobalInvocationID.xy);
+    if (d.x >= pc.dstExtent.x || d.y >= pc.dstExtent.y)
+        return;
+
+    // Clamp to the sub-rect, not the image: hdrScene outside renderExtent was
+    // never written this frame.
+    ivec2 maxS = pc.srcExtent - 1;
+    ivec2 s = d * 2;
+
+    vec3 sum = imageLoad(hdrIn, min(s, maxS)).rgb +
+               imageLoad(hdrIn, min(s + ivec2(1, 0), maxS)).rgb +
+               imageLoad(hdrIn, min(s + ivec2(0, 1), maxS)).rgb +
+               imageLoad(hdrIn, min(s + ivec2(1, 1), maxS)).rgb;
+
+    imageStore(preOut, d, vec4(sum * 0.25, 1.0));
+}

@@ -1,0 +1,109 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — bloom_extract.comp — B1b emissive bloom source.
+
+Runs after the blend stages.  Takes the same plain 2x2 box of hdrScene that
+bloom_prepass.comp took before them, subtracts bloomPre, and soft-knees the
+positive remainder into bloomMip[0].  What survives is what the blend stages
+added: fixture glows, screens, flames, muzzle flashes, projectiles, plus the
+deferred glass overlays.
+
+Two terms, weighted separately:
+  emissive — softKnee(max(curr - pre, 0)), the diff.  Default weight 1.
+  lit      — softKnee(curr), a plain luminance threshold.  Default weight 0,
+             because r_lightScale 2 puts lit walls near HDR lum 2 and they would
+             bloom before the fixtures do.
+
+A `blend filter` stage (decals) darkens, so its diff is negative and clamps to
+zero.  The diff also cancels GI and reflection fireflies, which sit in bloomPre
+and the current frame alike — so the emissive term needs no Karis average.  The
+lit term has no such cancellation and gets one.
+
+Descriptors (set 0):
+  binding 0 — hdrIn  rgba16f storage image (readonly), display-sized
+  binding 1 — preIn  rgba16f storage image (readonly), half display-sized
+  binding 2 — mipOut rgba16f storage image (writeonly), half display-sized
+
+docs/plans/20260906_bloom_plan.md B1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly  image2D hdrIn;
+layout(set = 0, binding = 1, rgba16f) uniform readonly  image2D preIn;
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D mipOut;
+
+layout(push_constant) uniform PC {
+    ivec2 srcExtent;          // valid render sub-rect of hdrIn
+    ivec2 dstExtent;          // (srcExtent + 1) / 2
+    float threshold;          // r_rtBloomThreshold, on the lit term
+    float emissiveThreshold;  // r_rtBloomEmissiveThreshold, on the diff
+    float knee;               // r_rtBloomKnee, a fraction of each threshold
+    float emissiveWeight;     // 1 by default
+    float litWeight;          // 0 by default
+    float clampMax;           // bounds a single blown texel
+} pc;
+
+const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
+
+// Unity/COD soft knee: quadratic ramp over [t - k, t + k], linear above.
+// rq is never negative, so the result never is either.
+vec3 SoftKnee(vec3 c, float threshold, float kneeFrac)
+{
+    float knee = max(threshold * kneeFrac, 1e-4);
+    float br = max(c.r, max(c.g, c.b));
+    float rq = clamp(br - threshold + knee, 0.0, 2.0 * knee);
+    rq = (rq * rq) / (4.0 * knee);
+    return c * (max(rq, br - threshold) / max(br, 1e-4));
+}
+
+void main()
+{
+    ivec2 d = ivec2(gl_GlobalInvocationID.xy);
+    if (d.x >= pc.dstExtent.x || d.y >= pc.dstExtent.y)
+        return;
+
+    ivec2 maxS = pc.srcExtent - 1;
+    ivec2 s = d * 2;
+
+    vec3 t0 = imageLoad(hdrIn, min(s, maxS)).rgb;
+    vec3 t1 = imageLoad(hdrIn, min(s + ivec2(1, 0), maxS)).rgb;
+    vec3 t2 = imageLoad(hdrIn, min(s + ivec2(0, 1), maxS)).rgb;
+    vec3 t3 = imageLoad(hdrIn, min(s + ivec2(1, 1), maxS)).rgb;
+
+    vec3 src = vec3(0.0);
+
+    if (pc.emissiveWeight > 0.0)
+    {
+        // Plain box, matching bloom_prepass.comp exactly — the subtraction is only
+        // meaningful if both sides used the same operator.
+        vec3 currBox = (t0 + t1 + t2 + t3) * 0.25;
+        vec3 diff = max(currBox - imageLoad(preIn, d).rgb, vec3(0.0));
+        src += SoftKnee(diff, pc.emissiveThreshold, pc.knee) * pc.emissiveWeight;
+    }
+
+    if (pc.litWeight > 0.0)
+    {
+        // Karis average: weight each tap by 1/(1+lum) so a single sub-pixel spark
+        // cannot dominate the box and flash as the camera moves.
+        float w0 = 1.0 / (1.0 + dot(t0, LUMINANCE_WEIGHTS));
+        float w1 = 1.0 / (1.0 + dot(t1, LUMINANCE_WEIGHTS));
+        float w2 = 1.0 / (1.0 + dot(t2, LUMINANCE_WEIGHTS));
+        float w3 = 1.0 / (1.0 + dot(t3, LUMINANCE_WEIGHTS));
+        vec3 karis = (t0 * w0 + t1 * w1 + t2 * w2 + t3 * w3) / max(w0 + w1 + w2 + w3, 1e-4);
+        src += SoftKnee(karis, pc.threshold, pc.knee) * pc.litWeight;
+    }
+
+    imageStore(mipOut, d, vec4(min(src, vec3(pc.clampMax)), 1.0));
+}

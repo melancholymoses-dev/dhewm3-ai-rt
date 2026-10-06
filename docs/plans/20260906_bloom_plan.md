@@ -1,6 +1,7 @@
 # Bloom
 
-**Status:** unimplemented. Revised 2026-09-30 against the FSR / froxel-vol / probe-GI pipeline.
+**Status:** B0 + B1 written 2026-10-06, **not yet validated in-game**. B2-B4 open.
+Revised 2026-09-30 against the FSR / froxel-vol / probe-GI pipeline.
 **Owns:** screen-space bloom, its debug views and cvars.
 
 Bloom adds a short glow around light-emitting surfaces: fixtures, screens, flames, muzzle
@@ -30,46 +31,77 @@ interactions → [B1a pre-snapshot, ½ render res] → shader passes → [B1b ex
 
 Extract (B1b): `src = softKnee(max(curr − pre, 0), emissiveThreshold)·emissiveWeight + softKnee(curr, threshold)·litWeight`.
 `emissiveThreshold` starts at 0.5; B0's bands for smoke vs fixtures set it.
-Defaults: `emissiveWeight 1`, `litWeight 0`. First downsample uses a Karis (1/(1+lum)) average so
-GI/reflection fireflies and sub-pixel FSR-jittered sparks don't turn into flashing blobs.
+Defaults: `emissiveWeight 1` (not a cvar), `litWeight 0`.
+
+**Karis placement, changed during B1.** The plan had the first downsample Karis-weighted.
+It can't be: the extract subtracts `bloomPre`, and a weighted average makes the two
+operators disagree, so the diff stops meaning "what the blend stages added". Instead:
+
+| Term | Downsample | Firefly defence |
+|---|---|---|
+| emissive (diff) | plain 2×2 box, same as `bloom_prepass` | the diff itself — a GI/reflection firefly sits in both `pre` and `curr` and cancels |
+| lit | Karis 2×2 | the Karis weights |
+| both | — | `clampMax` 16.0, a hard ceiling in `bloom_extract.comp` |
+
+Karis on mip0→mip1 moves to B2's `bloom_down.comp`, which is where most
+implementations put it anyway.
 
 ## CVars
 
 | CVar | Default | Range | Notes |
 |---|---|---|---|
-| `r_rtBloom` | 0 | 0/1 | Default flips to 1 after B4 |
+| `r_rtBloom` | 0 | 0/1 | Drives the B1 capture only until B2 lands. Default flips to 1 after B4 |
 | `r_rtBloomThreshold` | 0.8 | 0.2–4 | Soft-knee threshold, pre-exposure units |
 | `r_rtBloomEmissiveThreshold` | 0.5 | 0–2 | Soft-knee on the emissive diff; keeps smoke out |
 | `r_rtBloomKnee` | 0.5 | 0–1 | |
 | `r_rtBloomLitWeight` | 0 | 0–1 | 0 = emissive-only |
 | `r_rtBloomStrength` | 0.15 | 0–1 | Additive weight |
-| `r_rtBloomMips` | 4 | 2–6 | Radius; keep tight |
-| `r_rtBloomDebug` | 0 | 0–3 | See B0/B3 |
+| `r_rtBloomMips` | 4 | 2–6 | Radius; keep tight. Consumed by B2 |
+| `r_rtBloomDebug` | 0 | 0–3 | 1 and 2 live; 3 is B3 |
+
+`emissiveWeight` is deliberately not a cvar — the design is emissive-sourced and the only
+honest A/B against it is `r_rtBloomLitWeight`.
 
 ---
 
-## B0 — Measure before building
+## B0 — Measure before building ✅ written, unvalidated
 
 | Change | Where |
 |---|---|
-| `r_rtBloomDebug 1`: luminance bands of `hdrScene` (<0.5 black, 0.5–1 blue, 1–2 green, 2–4 yellow, >4 red) | `tonemap.comp` branch, push constant 16 → 20 B; `vk_tonemap.cpp` |
+| `r_rtBloomDebug 1`: luminance bands of `hdrScene` (<0.5 black, 0.5–1 blue, 1–2 green, 2–4 yellow, >4 red) | `tonemap.comp` `LuminanceBand`, push constant 16 → 20 B; `vk_tonemap.cpp` |
+
+Bands are read **before** exposure and bypass the Uchimura curve — a band pushed through
+the toe stops being distinguishable from its neighbour. The cvar thresholds are quoted in
+those same units.
 
 Check: Mars City 1/2, Alpha Labs, a Delta lab, Hell. Screenshot fixtures, monitors, flames,
 muzzle flash, plasma, sky, and the brightest lit wall beside a point light. Record in this doc
 whether emissives and lit surfaces overlap in band. If they do not, `litWeight` may be raised
 later; the emissive path is built either way.
 
-## B1 — Source capture
+## B1 — Source capture ✅ written, unvalidated
 
 | Change | Where |
 |---|---|
-| `bloom_prepass.comp`: 2×2 box of `hdrScene` → `bloomPre` (½ render res, rgba16f) | new shader; dispatched next to the U4 capture (end/resume render pass) |
-| `bloom_extract.comp`: same downsample of current `hdrScene`, diff vs `bloomPre`, soft-knee, Karis weight → `bloomMip[0]` | new shader; after shader passes, before `Vol_Composite` |
-| Gate both on real camera, not subview, not mirror (same test as U4) | `vk_backend.cpp` |
-| Images per frame slot: `bloomPre`, `bloomMip[0..5]`; resize with render extent | new `vk_bloom.cpp/.h` |
+| `bloom_prepass.comp`: plain 2×2 box of `hdrScene` → `bloomPre` | new shader; shares the U4 capture's end/resume |
+| `bloom_extract.comp`: same box of current `hdrScene`, diff vs `bloomPre`, soft-knee → `bloomMip[0]` | new shader; after shader passes, before the late `Vol_Composite` |
+| `bloom_debug.comp`: `r_rtBloomDebug 2`, mip0 magnified into `hdrScene`, gain ×4 | new shader; SwapBuffers slot beside the FSR overlays |
+| Both capture sites gated on real camera, not subview, not mirror (same test as U4) | `vk_backend.cpp` |
+| Images per frame slot: `bloomPre`, `bloomMip[0..5]`, all rgba16f, permanently `GENERAL` | new `vk_bloom.cpp/.h` |
+| `VK_RTPROF_PHASE_BLOOM` (pulled forward from B2; both dispatches accumulate into it) | `vk_backend.cpp` |
+
+Sizing: images are **half the display extent** with only the top-left `renderExtent/2`
+sub-rect valid — the convention every other U0 buffer follows, so `r_fsrRenderScale` stays a
+push constant instead of a reallocation. All six mips are allocated regardless of
+`r_rtBloomMips`, for the same reason.
+
+The extract refuses to run unless a prepass filled the same slot on the same `tr.frameCount`;
+a stale snapshot would diff as a bloom source smeared over everything that moved. That also
+stands the debug view down on the main menu, where no 3D view exists.
 
 Check: `r_rtBloomDebug 2` shows `bloomMip[0]` upscaled: fixtures/screens/particles lit,
 walls and fog black. Decals (blend filter) must not appear (clamped negative).
+`r_vkRTProfile 1` reports `Bloom=`.
 
 ## B2 — Blur chain + composite
 
