@@ -106,7 +106,7 @@ while new lighting techniques enhance without fighting too much.
 
 | Doc | Owns |
 |---|---|
-| `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. B0 (luminance bands) + B1 (source capture) written 2026-10-06, awaiting in-game validation; B2-B4 open. |
+| `20260906_bloom_plan.md` | Bloom: emissive-sourced, composited after FSR and before the HUD. B0-B2 validated 2026-10-07; B3's settings menu written. Remaining: `r_rtBloomDebug 3` then the B4 strength sweep — the 0.15 default is swallowed by the tonemap toe. |
 | `see_first_person_player_model.md` | First-person player body; orthogonal to the lighting arc. |
 | `../vulkan_debugging.md` | Not a plan — the reference for getting Vulkan validation/GPU-AV output out of this engine. Load it before chasing any AMD-vs-NVIDIA or device-lost bug. |
 

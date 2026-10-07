@@ -788,6 +788,9 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/fsr_mask_debug.comp
 	renderer/glsl/bloom_prepass.comp
 	renderer/glsl/bloom_extract.comp
+	renderer/glsl/bloom_down.comp
+	renderer/glsl/bloom_up.comp
+	renderer/glsl/bloom_composite.comp
 	renderer/glsl/bloom_debug.comp
 )
 

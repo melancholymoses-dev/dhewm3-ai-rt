@@ -44,6 +44,10 @@ static bool s_frameNeedsImageAcquireWait = false;
 // Everything drawn after this point (UI, HUD, ImGui) uses the full display extent.
 static bool s_upscaleDone = false;
 
+// Bloom B2: set once the blur chain and composite have run, so the SwapBuffers
+// fallback does not composite a second time on a frame that had a GUI overlay view.
+static bool s_bloomDone = false;
+
 // The extent every raster draw must use *right now*.  The 3D scene renders into
 // the top-left renderExtent sub-rect; once VK_RT_DispatchUpscale has resolved it
 // the frame is display-space again.  Every viewport and render-pass renderArea
@@ -4798,6 +4802,9 @@ void VK_RB_DrawView(const void *data)
         // what makes VK_CurrentDrawExtent below return the right answer.
         const bool firstIsGui = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
         s_upscaleDone = firstIsGui;
+        // Same reasoning for bloom: a frame that opens on the 2D overlay has no 3D
+        // content, so there is nothing to glow and the menu must stay clean.
+        s_bloomDone = firstIsGui;
         const VkExtent2D drawExtent = VK_CurrentDrawExtent();
 
         VkRenderPassBeginInfo rpBegin = {};
@@ -4840,17 +4847,38 @@ void VK_RB_DrawView(const void *data)
         // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
         // viewaxis.  That is the boundary between 3D (render resolution) and UI
         // (display resolution), so resolve the sub-rect here, before the UI draws.
+        // Bloom's composite belongs to the same boundary, and unlike the resolve it runs
+        // at every render scale — the glow has to land before the UI does whether or not
+        // anything was upscaled.  So the two share one end/resume, entered if EITHER
+        // wants it.
         const bool isGuiOverlay = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
-        if (isGuiOverlay && !s_upscaleDone && VK_RT_UpscaleActive())
+        const bool needUpscale = !s_upscaleDone && VK_RT_UpscaleActive();
+        const bool needBloom = !s_bloomDone && VK_RT_BloomCompositeActive();
+        if (isGuiOverlay && (needUpscale || needBloom))
         {
             vkCmdEndRenderPass(s_frameCmdBuf);
-            VK_SetRenderStage("RT_Upscale");
-            const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
-            int profUp = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_UPSCALE);
-            VK_RT_DispatchUpscale(s_frameCmdBuf);
-            VK_RTProfile_PhaseEnd(s_frameCmdBuf, profUp);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
-            s_upscaleDone = true;
+            if (needUpscale)
+            {
+                VK_SetRenderStage("RT_Upscale");
+                const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
+                int profUp = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_UPSCALE);
+                VK_RT_DispatchUpscale(s_frameCmdBuf);
+                VK_RTProfile_PhaseEnd(s_frameCmdBuf, profUp);
+                VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
+                s_upscaleDone = true;
+            }
+            // Strictly after the resolve: AMD's guidance, and it is what makes the glow
+            // the same size on screen at every r_fsrRenderScale.
+            if (needBloom)
+            {
+                VK_SetRenderStage("RT_Bloom");
+                const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+                int profBloom = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_BLOOM);
+                VK_RT_DispatchBloom(s_frameCmdBuf);
+                VK_RTProfile_PhaseEnd(s_frameCmdBuf, profBloom);
+                VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+                s_bloomDone = true;
+            }
 
             // NULL scissor: s_viewScissor for this view is computed just below, and the
             // viewport is set there too.
@@ -5727,6 +5755,20 @@ void VK_RB_SwapBuffers()
         VK_RTProfile_PhaseEnd(cmdBuf, profUp);
         VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
         s_upscaleDone = true;
+    }
+
+    // Bloom B2 fallback, same shape and the same cause as the resolve above: a frame
+    // with no 2D overlay view never reached the 3D->GUI boundary.  Still after the
+    // resolve, and still before the tonemap.
+    if (!s_bloomDone && VK_RT_BloomCompositeActive())
+    {
+        VK_SetRenderStage("RT_Bloom");
+        const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+        int profBloom = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_BLOOM);
+        VK_RT_DispatchBloom(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profBloom);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+        s_bloomDone = true;
     }
 
     // U2 motion-vector overlay (r_fsrDebug 7).  After the resolve so it draws crisp at

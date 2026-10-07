@@ -72,6 +72,17 @@ void VK_RT_BloomPrepass(VkCommandBuffer cmd);
 // matching prepass ran this frame in this slot.
 void VK_RT_BloomExtract(VkCommandBuffer cmd);
 
+// B2: does the blur chain and composite want to run this frame?  Gated on r_rtBloom
+// alone, unlike VK_RT_BloomActive — r_rtBloomDebug 2 pulls the capture up by itself
+// and must not start compositing glow the user switched off.
+bool VK_RT_BloomCompositeActive(void);
+
+// B2: the down/up blur chain followed by the additive composite into hdrScene.  Must
+// be OUTSIDE the render pass, at the 3D->GUI boundary: after VK_RT_DispatchUpscale so
+// the glow is display-resolution and scale-independent, and before the UI draws, since
+// the tonemap (and therefore the HUD's arrival in hdrScene) comes later.
+void VK_RT_DispatchBloom(VkCommandBuffer cmd);
+
 // r_rtBloomDebug 2: bloomMip[0] magnified over the display, replacing the frame.
 // Same slot as the FSR debug overlays — outside the render pass, after the resolve
 // and before the tonemap.

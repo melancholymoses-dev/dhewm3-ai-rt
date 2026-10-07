@@ -80,8 +80,13 @@ struct bloomPass_t
     VkPipelineLayout layout;
     VkDescriptorSetLayout descLayout;
     VkDescriptorPool descPool;
-    VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT];
+    // The blur chain dispatches a pass once per level with a different pair of views
+    // each time, so one set per frame slot is not enough — a later level would
+    // overwrite the descriptors an earlier, still-unsubmitted dispatch points at.
+    // Indexed [frameIdx * setsPerFrame + level].
+    VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS];
     uint32_t numSrc;
+    uint32_t setsPerFrame;
 };
 
 // Per frame-in-flight, like every other screen-space buffer: the previous frame is
@@ -92,10 +97,14 @@ static vkRTImage_t s_bloomMip[VK_MAX_FRAMES_IN_FLIGHT][VK_BLOOM_MAX_MIPS];
 static bloomPass_t s_bloomPrepass;
 static bloomPass_t s_bloomExtract;
 static bloomPass_t s_bloomDebug;
+static bloomPass_t s_bloomDown;
+static bloomPass_t s_bloomUp;
+static bloomPass_t s_bloomComposite;
 
 static bool s_prepassReady;
 static bool s_extractReady;
 static bool s_debugReady;
+static bool s_chainReady;
 
 // Linear clamp sampler for the debug magnify.  Separate from vkRT.upscaleSampler so
 // bloom does not depend on VK_RT_InitUpscale having run first.
@@ -112,6 +121,12 @@ static const float BLOOM_CLAMP_MAX = 16.0f;
 
 // Pre-tonemap gain on the debug view; see bloom_debug.comp.
 static const float BLOOM_DEBUG_GAIN = 4.0f;
+
+// Upsample tap offset in source texels, and the mix weight toward each blurred
+// lower mip.  0.5 scatter keeps the chain's total weight at 1 whatever
+// r_rtBloomMips is, so that cvar stays a radius control — see bloom_up.comp.
+static const float BLOOM_UP_RADIUS = 1.0f;
+static const float BLOOM_UP_SCATTER = 0.5f;
 
 // Must match bloom_prepass.comp.
 struct BloomPrepassPC
@@ -142,6 +157,34 @@ struct BloomDebugPC
     float gain;
 };
 
+// Must match bloom_down.comp.
+struct BloomDownPC
+{
+    int32_t srcValid[2];
+    int32_t srcImage[2];
+    int32_t dstValid[2];
+    int32_t karis;
+};
+
+// Must match bloom_up.comp.
+struct BloomUpPC
+{
+    int32_t srcValid[2];
+    int32_t srcImage[2];
+    int32_t dstValid[2];
+    float radius;
+    float scatter;
+};
+
+// Must match bloom_composite.comp.
+struct BloomCompositePC
+{
+    int32_t srcValid[2];
+    int32_t srcImage[2];
+    int32_t displayExtent[2];
+    float strength;
+};
+
 // ---------------------------------------------------------------------------
 // Images
 // ---------------------------------------------------------------------------
@@ -154,6 +197,27 @@ static uint32_t VK_RT_BloomMipDim(uint32_t displayDim, int mip)
     for (int i = 0; i <= mip; i++)
         d = (d + 1) / 2;
     return d > 0 ? d : 1;
+}
+
+// The VALID sub-rect of mip `mip`, derived from the render extent rather than the
+// allocated (display-derived) size.  The two only agree at render scale 1.0, and
+// every chain dispatch has to bound itself by this one.
+static void VK_RT_BloomLevelValid(int mip, uint32_t *w, uint32_t *h)
+{
+    *w = VK_RT_BloomMipDim(vk.renderExtent.width, mip);
+    *h = VK_RT_BloomMipDim(vk.renderExtent.height, mip);
+}
+
+// r_rtBloomMips, clamped to what is allocated and to the 2 levels the chain needs
+// to do anything at all.
+static int VK_RT_BloomMipCount(void)
+{
+    int n = r_rtBloomMips.GetInteger();
+    if (n < 2)
+        n = 2;
+    if (n > VK_BLOOM_MAX_MIPS)
+        n = VK_BLOOM_MAX_MIPS;
+    return n;
 }
 
 static void VK_RT_CreateBloomImage(vkRTImage_t &img, uint32_t width, uint32_t height, const char *label)
@@ -297,10 +361,12 @@ static void VK_RT_DestroyBloomImage(vkRTImage_t &img)
 // vk_upscale.cpp's fsrPass_t helper; duplicated rather than shared because that one
 // is file-static to the upscaler and reaches for vkRT.upscaleSampler.
 static bool VK_RT_CreateBloomPass(bloomPass_t &pass, const char *spvPath, VkDescriptorType srcType, uint32_t pushSize,
-                                  uint32_t numSrc)
+                                  uint32_t numSrc, uint32_t setsPerFrame = 1)
 {
     memset(&pass, 0, sizeof(pass));
     pass.numSrc = numSrc;
+    pass.setsPerFrame = setsPerFrame;
+    const uint32_t totalSets = VK_MAX_FRAMES_IN_FLIGHT * setsPerFrame;
 
     VkDescriptorSetLayoutBinding bindings[BLOOM_PASS_MAX_SRC + 1] = {};
     for (uint32_t b = 0; b < numSrc; b++)
@@ -356,25 +422,25 @@ static bool VK_RT_CreateBloomPass(bloomPass_t &pass, const char *spvPath, VkDesc
 
     VkDescriptorPoolSize poolSizes[2] = {};
     poolSizes[0].type = srcType;
-    poolSizes[0].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT * numSrc;
+    poolSizes[0].descriptorCount = totalSets * numSrc;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[1].descriptorCount = VK_MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].descriptorCount = totalSets;
 
     VkDescriptorPoolCreateInfo poolCI = {};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.maxSets = VK_MAX_FRAMES_IN_FLIGHT;
+    poolCI.maxSets = totalSets;
     poolCI.poolSizeCount = 2;
     poolCI.pPoolSizes = poolSizes;
     VK_CHECK(vkCreateDescriptorPool(vk.device, &poolCI, NULL, &pass.descPool));
 
-    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT];
-    for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
+    VkDescriptorSetLayout layouts[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS];
+    for (uint32_t i = 0; i < totalSets; i++)
         layouts[i] = pass.descLayout;
 
     VkDescriptorSetAllocateInfo dsAlloc = {};
     dsAlloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     dsAlloc.descriptorPool = pass.descPool;
-    dsAlloc.descriptorSetCount = VK_MAX_FRAMES_IN_FLIGHT;
+    dsAlloc.descriptorSetCount = totalSets;
     dsAlloc.pSetLayouts = layouts;
     VK_CHECK(vkAllocateDescriptorSets(vk.device, &dsAlloc, pass.descSets));
     return true;
@@ -396,11 +462,18 @@ static void VK_RT_DestroyBloomPass(bloomPass_t &pass)
 // Rewritten every dispatch: a handful of writes per frame is nothing, and the views
 // change on every resize.  Safe because the sets are per frame-in-flight and the
 // slot's fence has already been waited on.
-static void VK_RT_WriteBloomDescriptors(const bloomPass_t &pass, int frameIdx, VkDescriptorType srcType,
+// `level` picks among this pass's per-frame sets; 0 for the single-dispatch passes.
+static VkDescriptorSet VK_RT_BloomSet(const bloomPass_t &pass, int frameIdx, uint32_t level)
+{
+    return pass.descSets[frameIdx * pass.setsPerFrame + level];
+}
+
+static void VK_RT_WriteBloomDescriptors(const bloomPass_t &pass, int frameIdx, uint32_t level, VkDescriptorType srcType,
                                         const VkImageView *srcViews, uint32_t numSrc, VkImageView dstView)
 {
     VkDescriptorImageInfo srcInfo[BLOOM_PASS_MAX_SRC] = {};
     VkWriteDescriptorSet writes[BLOOM_PASS_MAX_SRC + 1] = {};
+    const VkDescriptorSet set = VK_RT_BloomSet(pass, frameIdx, level);
 
     for (uint32_t s = 0; s < numSrc; s++)
     {
@@ -409,7 +482,7 @@ static void VK_RT_WriteBloomDescriptors(const bloomPass_t &pass, int frameIdx, V
         srcInfo[s].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         writes[s].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[s].dstSet = pass.descSets[frameIdx];
+        writes[s].dstSet = set;
         writes[s].dstBinding = s;
         writes[s].descriptorCount = 1;
         writes[s].descriptorType = srcType;
@@ -421,7 +494,7 @@ static void VK_RT_WriteBloomDescriptors(const bloomPass_t &pass, int frameIdx, V
     dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     writes[numSrc].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[numSrc].dstSet = pass.descSets[frameIdx];
+    writes[numSrc].dstSet = set;
     writes[numSrc].dstBinding = numSrc;
     writes[numSrc].descriptorCount = 1;
     writes[numSrc].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -518,7 +591,7 @@ void VK_RT_BloomPrepass(VkCommandBuffer cmd)
     const uint32_t dstH = (srcH + 1) / 2;
 
     const VkImageView srcView = vkRT.hdrScene[frameIdx].view;
-    VK_RT_WriteBloomDescriptors(s_bloomPrepass, frameIdx, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &srcView, 1,
+    VK_RT_WriteBloomDescriptors(s_bloomPrepass, frameIdx, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &srcView, 1,
                                 s_bloomPre[frameIdx].view);
 
     VK_RT_BloomSceneToGeneral(cmd, frameIdx, VK_ACCESS_SHADER_READ_BIT);
@@ -531,7 +604,7 @@ void VK_RT_BloomPrepass(VkCommandBuffer cmd)
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomPrepass.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomPrepass.layout, 0, 1,
-                            &s_bloomPrepass.descSets[frameIdx], 0, NULL);
+                            &s_bloomPrepass.descSets[frameIdx * s_bloomPrepass.setsPerFrame], 0, NULL);
     vkCmdPushConstants(cmd, s_bloomPrepass.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vkCmdDispatch(cmd, (dstW + 7) / 8, (dstH + 7) / 8, 1);
 
@@ -568,7 +641,7 @@ void VK_RT_BloomExtract(VkCommandBuffer cmd)
     const uint32_t dstH = (srcH + 1) / 2;
 
     const VkImageView srcViews[2] = {vkRT.hdrScene[frameIdx].view, s_bloomPre[frameIdx].view};
-    VK_RT_WriteBloomDescriptors(s_bloomExtract, frameIdx, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, srcViews, 2,
+    VK_RT_WriteBloomDescriptors(s_bloomExtract, frameIdx, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, srcViews, 2,
                                 s_bloomMip[frameIdx][0].view);
 
     VK_RT_BloomSceneToGeneral(cmd, frameIdx, VK_ACCESS_SHADER_READ_BIT);
@@ -599,7 +672,7 @@ void VK_RT_BloomExtract(VkCommandBuffer cmd)
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomExtract.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomExtract.layout, 0, 1,
-                            &s_bloomExtract.descSets[frameIdx], 0, NULL);
+                            &s_bloomExtract.descSets[frameIdx * s_bloomExtract.setsPerFrame], 0, NULL);
     vkCmdPushConstants(cmd, s_bloomExtract.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vkCmdDispatch(cmd, (dstW + 7) / 8, (dstH + 7) / 8, 1);
 
@@ -608,6 +681,143 @@ void VK_RT_BloomExtract(VkCommandBuffer cmd)
     if (r_vkLogRT.GetInteger() >= 1)
         common->Printf("VK RT Bloom: extract %ux%u emThresh=%.2f knee=%.2f litW=%.2f slot=%d\n", dstW, dstH,
                        pc.emissiveThreshold, pc.knee, pc.litWeight, frameIdx);
+}
+
+// ---------------------------------------------------------------------------
+// B2: blur chain + composite
+// ---------------------------------------------------------------------------
+
+bool VK_RT_BloomCompositeActive(void)
+{
+    // r_rtBloom specifically, NOT VK_RT_BloomActive: r_rtBloomDebug 2 pulls the source
+    // capture up on its own so the view has something to show, and it must not start
+    // compositing glow the user switched off.
+    if (!r_rtBloom.GetBool() || !s_chainReady)
+        return false;
+    if (!VK_RT_BloomActive())
+        return false;
+    // The chain reads what the extract wrote this frame in this slot.  Without a
+    // matching extract there is nothing to blur, and mip0 holds another frame's source.
+    if (s_preFrame[vk.currentFrame] != tr.frameCount)
+        return false;
+    return true;
+}
+
+// Everything between dispatches here touches bloom images only, which never leave
+// GENERAL, so a plain memory dependency is all each step needs.  SHADER_READ is in
+// both masks because the up chain reads and writes the same image.
+static void VK_RT_BloomChainBarrier(VkCommandBuffer cmd)
+{
+    VkMemoryBarrier mb = {};
+    mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0,
+                         NULL, 0, NULL);
+}
+
+void VK_RT_DispatchBloom(VkCommandBuffer cmd)
+{
+    if (!VK_RT_BloomCompositeActive())
+        return;
+
+    const int frameIdx = (int)vk.currentFrame;
+    const int mips = VK_RT_BloomMipCount();
+    const uint32_t dispW = vk.swapchainExtent.width;
+    const uint32_t dispH = vk.swapchainExtent.height;
+
+    // --- Down: mip[k] -> mip[k+1] -------------------------------------------------
+    for (int k = 0; k + 1 < mips; k++)
+    {
+        uint32_t sw, sh, dw, dh;
+        VK_RT_BloomLevelValid(k, &sw, &sh);
+        VK_RT_BloomLevelValid(k + 1, &dw, &dh);
+
+        const VkImageView srcView = s_bloomMip[frameIdx][k].view;
+        VK_RT_WriteBloomDescriptors(s_bloomDown, frameIdx, (uint32_t)k, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    &srcView, 1, s_bloomMip[frameIdx][k + 1].view);
+
+        BloomDownPC pc;
+        pc.srcValid[0] = (int32_t)sw;
+        pc.srcValid[1] = (int32_t)sh;
+        pc.srcImage[0] = (int32_t)s_bloomMip[frameIdx][k].width;
+        pc.srcImage[1] = (int32_t)s_bloomMip[frameIdx][k].height;
+        pc.dstValid[0] = (int32_t)dw;
+        pc.dstValid[1] = (int32_t)dh;
+        // Only the first level: see bloom_down.comp.
+        pc.karis = (k == 0) ? 1 : 0;
+
+        VK_RT_BloomChainBarrier(cmd);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomDown.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomDown.layout, 0, 1,
+                                &s_bloomDown.descSets[frameIdx * s_bloomDown.setsPerFrame + k], 0, NULL);
+        vkCmdPushConstants(cmd, s_bloomDown.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, (dw + 7) / 8, (dh + 7) / 8, 1);
+    }
+
+    // --- Up: mip[k+1] blended into mip[k], coarsest first -------------------------
+    for (int k = mips - 2; k >= 0; k--)
+    {
+        uint32_t sw, sh, dw, dh;
+        VK_RT_BloomLevelValid(k + 1, &sw, &sh);
+        VK_RT_BloomLevelValid(k, &dw, &dh);
+
+        const VkImageView srcView = s_bloomMip[frameIdx][k + 1].view;
+        VK_RT_WriteBloomDescriptors(s_bloomUp, frameIdx, (uint32_t)k, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    &srcView, 1, s_bloomMip[frameIdx][k].view);
+
+        BloomUpPC pc;
+        pc.srcValid[0] = (int32_t)sw;
+        pc.srcValid[1] = (int32_t)sh;
+        pc.srcImage[0] = (int32_t)s_bloomMip[frameIdx][k + 1].width;
+        pc.srcImage[1] = (int32_t)s_bloomMip[frameIdx][k + 1].height;
+        pc.dstValid[0] = (int32_t)dw;
+        pc.dstValid[1] = (int32_t)dh;
+        pc.radius = BLOOM_UP_RADIUS;
+        pc.scatter = BLOOM_UP_SCATTER;
+
+        VK_RT_BloomChainBarrier(cmd);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomUp.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomUp.layout, 0, 1,
+                                &s_bloomUp.descSets[frameIdx * s_bloomUp.setsPerFrame + k], 0, NULL);
+        vkCmdPushConstants(cmd, s_bloomUp.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, (dw + 7) / 8, (dh + 7) / 8, 1);
+    }
+
+    // --- Composite: hdrScene += mip[0] * strength, at display resolution ----------
+    {
+        uint32_t sw, sh;
+        VK_RT_BloomLevelValid(0, &sw, &sh);
+
+        const VkImageView srcView = s_bloomMip[frameIdx][0].view;
+        VK_RT_WriteBloomDescriptors(s_bloomComposite, frameIdx, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &srcView,
+                                    1, vkRT.hdrScene[frameIdx].view);
+
+        // Read-modify-write of hdrScene, so both access bits.
+        VK_RT_BloomSceneToGeneral(cmd, frameIdx, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        VK_RT_BloomChainBarrier(cmd);
+
+        BloomCompositePC pc;
+        pc.srcValid[0] = (int32_t)sw;
+        pc.srcValid[1] = (int32_t)sh;
+        pc.srcImage[0] = (int32_t)s_bloomMip[frameIdx][0].width;
+        pc.srcImage[1] = (int32_t)s_bloomMip[frameIdx][0].height;
+        pc.displayExtent[0] = (int32_t)dispW;
+        pc.displayExtent[1] = (int32_t)dispH;
+        pc.strength = r_rtBloomStrength.GetFloat();
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomComposite.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomComposite.layout, 0, 1,
+                                &s_bloomComposite.descSets[frameIdx * s_bloomComposite.setsPerFrame], 0, NULL);
+        vkCmdPushConstants(cmd, s_bloomComposite.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+        vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+
+        VK_RT_BloomSceneToAttachment(cmd, frameIdx, VK_ACCESS_SHADER_WRITE_BIT);
+
+        if (r_vkLogRT.GetInteger() >= 1)
+            common->Printf("VK RT Bloom: chain mips=%d src=%ux%u disp=%ux%u strength=%.3f slot=%d\n", mips, sw, sh,
+                           dispW, dispH, pc.strength, frameIdx);
+    }
 }
 
 bool VK_RT_BloomDebugActive(void)
@@ -633,7 +843,7 @@ void VK_RT_DispatchBloomDebug(VkCommandBuffer cmd)
     const uint32_t dispH = vk.swapchainExtent.height;
 
     const VkImageView srcView = s_bloomMip[frameIdx][0].view;
-    VK_RT_WriteBloomDescriptors(s_bloomDebug, frameIdx, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &srcView, 1,
+    VK_RT_WriteBloomDescriptors(s_bloomDebug, frameIdx, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &srcView, 1,
                                 vkRT.hdrScene[frameIdx].view);
 
     VK_RT_BloomSceneToGeneral(cmd, frameIdx, VK_ACCESS_SHADER_WRITE_BIT);
@@ -658,7 +868,7 @@ void VK_RT_DispatchBloomDebug(VkCommandBuffer cmd)
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomDebug.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s_bloomDebug.layout, 0, 1,
-                            &s_bloomDebug.descSets[frameIdx], 0, NULL);
+                            &s_bloomDebug.descSets[frameIdx * s_bloomDebug.setsPerFrame], 0, NULL);
     vkCmdPushConstants(cmd, s_bloomDebug.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
     vkCmdDispatch(cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
 
@@ -678,10 +888,23 @@ void VK_RT_InitBloom(void)
     s_debugReady = VK_RT_CreateBloomPass(s_bloomDebug, "glprogs/glsl/bloom_debug.comp.spv",
                                          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(BloomDebugPC), 1);
 
+    // The down and up passes run once per level, each against a different pair of
+    // views, so they need one descriptor set per level per frame slot.
+    s_chainReady = VK_RT_CreateBloomPass(s_bloomDown, "glprogs/glsl/bloom_down.comp.spv",
+                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(BloomDownPC), 1,
+                                         VK_BLOOM_MAX_MIPS) &&
+                   VK_RT_CreateBloomPass(s_bloomUp, "glprogs/glsl/bloom_up.comp.spv",
+                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(BloomUpPC), 1,
+                                         VK_BLOOM_MAX_MIPS) &&
+                   VK_RT_CreateBloomPass(s_bloomComposite, "glprogs/glsl/bloom_composite.comp.spv",
+                                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, sizeof(BloomCompositePC), 1);
+
     if (!s_prepassReady || !s_extractReady)
         common->Warning("VK RT Bloom: source capture unavailable — r_rtBloom will do nothing");
     if (!s_debugReady)
         common->Warning("VK RT Bloom: bloom_debug.comp failed to load — r_rtBloomDebug 2 unavailable");
+    if (!s_chainReady)
+        common->Warning("VK RT Bloom: blur chain unavailable — r_rtBloom will capture but not composite");
 }
 
 void VK_RT_ResizeBloom(uint32_t width, uint32_t height)
@@ -724,9 +947,13 @@ void VK_RT_ShutdownBloom(void)
     VK_RT_DestroyBloomPass(s_bloomPrepass);
     VK_RT_DestroyBloomPass(s_bloomExtract);
     VK_RT_DestroyBloomPass(s_bloomDebug);
+    VK_RT_DestroyBloomPass(s_bloomDown);
+    VK_RT_DestroyBloomPass(s_bloomUp);
+    VK_RT_DestroyBloomPass(s_bloomComposite);
     s_prepassReady = false;
     s_extractReady = false;
     s_debugReady = false;
+    s_chainReady = false;
 
     if (s_bloomSampler != VK_NULL_HANDLE)
     {

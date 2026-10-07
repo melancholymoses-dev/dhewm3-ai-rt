@@ -1,0 +1,59 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — bloom_composite.comp — B2 additive composite into hdrScene.
+
+    hdrScene += bilinear(bloomMip[0]) * strength
+
+Runs at DISPLAY resolution, after the upscale resolve and before the GUI/HUD draws.
+Both ends of that sandwich matter.  After the resolve because AMD's guidance is to
+bloom post-upscale, and because it makes the glow's size on screen independent of
+r_fsrRenderScale: the source sub-rect is mapped across the full display rect, so a
+0.67-scale frame magnifies its bloom by the same factor as the scene it came from.
+Before the GUI because the tonemap runs in VK_RB_SwapBuffers, by which point the
+HUD and menus have already drawn into hdrScene and would bloom too.
+
+Descriptors (set 0):
+  binding 0 — srcTex combined image sampler (bloomMip[0], linear clamp)
+  binding 1 — dstOut rgba16f storage image  (hdrScene, read-modify-write)
+
+docs/plans/20260906_bloom_plan.md B2.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcTex;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dstOut;
+
+layout(push_constant) uniform PC {
+    ivec2 srcValid;      // valid sub-rect of bloomMip[0]
+    ivec2 srcImage;      // allocated size of bloomMip[0]
+    ivec2 displayExtent; // output extent
+    float strength;      // r_rtBloomStrength
+} pc;
+
+void main()
+{
+    ivec2 d = ivec2(gl_GlobalInvocationID.xy);
+    if (d.x >= pc.displayExtent.x || d.y >= pc.displayExtent.y)
+        return;
+
+    // Stretch the valid sub-rect across the whole display rect.  This is what keeps
+    // the glow the same size on screen at every render scale.
+    vec2 frac = (vec2(d) + 0.5) / vec2(pc.displayExtent);
+    vec2 texel = clamp(frac * vec2(pc.srcValid), vec2(0.5), vec2(pc.srcValid) - 0.5);
+    vec3 bloom = texture(srcTex, texel / vec2(pc.srcImage)).rgb;
+
+    vec4 scene = imageLoad(dstOut, d);
+    imageStore(dstOut, d, vec4(scene.rgb + bloom * pc.strength, scene.a));
+}
