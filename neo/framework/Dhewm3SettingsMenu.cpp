@@ -2556,6 +2556,17 @@ struct RTCVars
     idCVar *rtTonemapLinStart = nullptr;
     idCVar *rtTonemapLinLen = nullptr;
 
+    // Bloom (docs/plans/20260906_bloom_plan.md) — sits under tonemapping because the
+    // filmic toe is what decides how much of the glow survives.
+    idCVar *rtBloom = nullptr;
+    idCVar *rtBloomStrength = nullptr;
+    idCVar *rtBloomEmissiveThreshold = nullptr;
+    idCVar *rtBloomThreshold = nullptr;
+    idCVar *rtBloomKnee = nullptr;
+    idCVar *rtBloomLitWeight = nullptr;
+    idCVar *rtBloomMips = nullptr;
+    idCVar *rtBloomDebug = nullptr;
+
     // Froxel and GI Probe Toggles
     idCVar *rtVolFroxel = nullptr;
     idCVar *rtGIProbes = nullptr;
@@ -2659,6 +2670,15 @@ static void InitRTOptionsMenu()
     rtCVars.rtTonemapToe = cvarSystem->Find("r_rtTonemapToe");
     rtCVars.rtTonemapLinStart = cvarSystem->Find("r_rtTonemapLinStart");
     rtCVars.rtTonemapLinLen = cvarSystem->Find("r_rtTonemapLinLen");
+
+    rtCVars.rtBloom = cvarSystem->Find("r_rtBloom");
+    rtCVars.rtBloomStrength = cvarSystem->Find("r_rtBloomStrength");
+    rtCVars.rtBloomEmissiveThreshold = cvarSystem->Find("r_rtBloomEmissiveThreshold");
+    rtCVars.rtBloomThreshold = cvarSystem->Find("r_rtBloomThreshold");
+    rtCVars.rtBloomKnee = cvarSystem->Find("r_rtBloomKnee");
+    rtCVars.rtBloomLitWeight = cvarSystem->Find("r_rtBloomLitWeight");
+    rtCVars.rtBloomMips = cvarSystem->Find("r_rtBloomMips");
+    rtCVars.rtBloomDebug = cvarSystem->Find("r_rtBloomDebug");
     rtCVars.rtVolFroxel = cvarSystem->Find("r_rtVolFroxel");
     rtCVars.rtGIProbes = cvarSystem->Find("r_rtGIProbes");
     rtCVars.rtGIProbeHysteresis = cvarSystem->Find("r_rtGIProbeHysteresis");
@@ -2917,6 +2937,60 @@ static void DrawRTOptionsMenu()
     RTSliderFloat("Linear Start", rtCVars.rtTonemapLinStart, 0.1f, 0.5f, "%.3f");
     RTSliderFloat("Linear Length", rtCVars.rtTonemapLinLen, 0.0f, 1.0f, "%.3f");
     ImGui::EndDisabled(); // !tonemapOn
+
+    // ---- Bloom (docs/plans/20260906_bloom_plan.md) ---------------------------
+    // Under tonemapping on purpose: the glow is additive in linear HDR and the toe
+    // decides how much of it survives, so the two are tuned together.
+    //
+    // The !rtEnabled disable is lifted across this block and restored after it. Bloom
+    // traces nothing — it diffs hdrScene, which is the colour attachment whether or not
+    // r_useRayTracing is on — so greying it out with RT off would be wrong. (The
+    // tonemap sliders above are RT-independent for the same reason and are still gated;
+    // left alone rather than changed as a side effect.)
+    ImGui::EndDisabled(); // lift !rtEnabled
+    ImGui::Spacing();
+    ImGui::SeparatorText("Bloom");
+    RTCheckbox("Enable Bloom (glow around light-emitting surfaces)", rtCVars.rtBloom);
+    ImGui::TextDisabled("Sourced from what the blend stages add, not from scene brightness,\n"
+                        "so lit walls do not glow.");
+
+    const bool bloomOn = rtCVars.rtBloom && rtCVars.rtBloom->GetBool();
+    ImGui::BeginDisabled(!bloomOn);
+    // Range reaches 4, not the 1 the plan first guessed: at the shipped toe of 2.7 a
+    // strength below ~1 is swallowed by the curve in exactly the dark surroundings
+    // where the glow should read.
+    RTSliderFloat("Strength", rtCVars.rtBloomStrength, 0.0f, 4.0f, "%.2f");
+    RTSliderFloat("Emissive Threshold (raise to keep smoke out)", rtCVars.rtBloomEmissiveThreshold, 0.0f, 2.0f, "%.2f");
+    RTSliderFloat("Knee (0 = hard cutoff)", rtCVars.rtBloomKnee, 0.0f, 1.0f, "%.2f");
+    RTSliderInt("Radius (blur levels)", rtCVars.rtBloomMips, 2, 6);
+    ImGui::TextDisabled("Radius changes spread only — brightness stays with Strength.");
+
+    if (ImGui::TreeNode("Lit-surface term (advanced)"))
+    {
+        ImGui::TextDisabled("Blooms by scene brightness instead of emission. Off by default:\n"
+                            "r_lightScale 2 overbright puts lit walls above most fixtures,\n"
+                            "so this glows the walls first. Check Debug Mode 1 before raising.");
+        RTSliderFloat("Lit Weight", rtCVars.rtBloomLitWeight, 0.0f, 1.0f, "%.2f");
+        ImGui::BeginDisabled(!rtCVars.rtBloomLitWeight || rtCVars.rtBloomLitWeight->GetFloat() <= 0.0f);
+        RTSliderFloat("Lit Threshold", rtCVars.rtBloomThreshold, 0.2f, 4.0f, "%.2f");
+        ImGui::EndDisabled();
+        ImGui::TreePop();
+    }
+    ImGui::EndDisabled(); // !bloomOn
+
+    // Outside the !bloomOn guard: mode 1 reads the frame's brightness bands and is what
+    // tells you where to put the thresholds, so it has to work before bloom is switched on.
+    static const char *const bloomDebugModes[] = {"Off", "1: Brightness bands of the frame",
+                                                  "2: Bloom source (bloomMip[0])"};
+    RTCombo("Debug Mode", rtCVars.rtBloomDebug, bloomDebugModes, IM_ARRAYSIZE(bloomDebugModes));
+    if (rtCVars.rtBloomDebug && rtCVars.rtBloomDebug->GetInteger() == 1)
+        ImGui::TextDisabled("max(r,g,b), pre-exposure: <0.5 black, 0.5-1 blue, 1-2 green, 2-4 yellow, >4 red.\n"
+                            "Same units as the thresholds below.");
+    else if (rtCVars.rtBloomDebug && rtCVars.rtBloomDebug->GetInteger() == 2)
+        ImGui::TextDisabled("Gain x4, pre-tonemap. Judge black vs not-black, not magnitude.\n"
+                            "Suspends the blur and composite so this is the raw extract.");
+
+    ImGui::BeginDisabled(!rtEnabled); // restore for Auto-Relight below
 
     // ---- Auto-Relight (docs/plans/auto_relight.md) ---------------------------
     // Independent of the GI toggle above — synthesized lights feed shadows/GI/vol

@@ -1,0 +1,122 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — bloom_down.comp — B2 downsample, bloomMip[k] -> bloomMip[k+1].
+
+The COD / Jimenez 13-tap downsample (SIGGRAPH 2014, "Next Generation Post
+Processing in Call of Duty: Advanced Warfare").  Each tap is a bilinear fetch
+sitting on a 2x2 texel corner, so 13 fetches cover an effective 36 texels and the
+chain stays free of the pulsing a naive box produces under camera motion.
+
+  a b e
+   l m
+  f g h     g is the centre; c and d are taken by the coordinate locals below
+   n o
+  i j k
+
+With karis != 0 the taps are grouped into five 2x2 blocks and each block is
+averaged with a 1/(1+lum) weight before the blocks are combined.  That is set only
+for mip0 -> mip1: it is the one level where a single blown texel still occupies a
+whole output pixel.  The extract could not do it — it diffs two box averages and
+a weighted average on one side would break the subtraction — so the chain's first
+level is where it lands.  See docs/plans/20260906_bloom_plan.md.
+
+Sub-rect aware: bloom images are allocated at half the DISPLAY extent but only the
+top-left renderExtent-derived corner is valid, so srcValid and srcImage differ
+whenever r_fsrRenderScale is below 1.
+
+Descriptors (set 0):
+  binding 0 — srcTex combined image sampler (bloomMip[k], linear clamp)
+  binding 1 — dstOut rgba16f storage image  (bloomMip[k+1])
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcTex;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dstOut;
+
+layout(push_constant) uniform PC {
+    ivec2 srcValid;  // valid sub-rect of bloomMip[k]
+    ivec2 srcImage;  // allocated size of bloomMip[k]
+    ivec2 dstValid;  // valid sub-rect of bloomMip[k+1]
+    int   karis;     // 1 on mip0 -> mip1 only
+} pc;
+
+const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
+
+// Offset `o` is in source texels.  Clamped to the valid sub-rect, not the image:
+// everything outside it is stale.  The half-texel inset keeps the bilinear
+// footprint inside that region too.
+vec3 Tap(vec2 centerTexel, vec2 o)
+{
+    vec2 t = clamp(centerTexel + o, vec2(0.5), vec2(pc.srcValid) - 0.5);
+    return texture(srcTex, t / vec2(pc.srcImage)).rgb;
+}
+
+vec3 KarisBlock(vec3 c0, vec3 c1, vec3 c2, vec3 c3)
+{
+    float w0 = 1.0 / (1.0 + dot(c0, LUMINANCE_WEIGHTS));
+    float w1 = 1.0 / (1.0 + dot(c1, LUMINANCE_WEIGHTS));
+    float w2 = 1.0 / (1.0 + dot(c2, LUMINANCE_WEIGHTS));
+    float w3 = 1.0 / (1.0 + dot(c3, LUMINANCE_WEIGHTS));
+    return (c0 * w0 + c1 * w1 + c2 * w2 + c3 * w3) / max(w0 + w1 + w2 + w3, 1e-4);
+}
+
+void main()
+{
+    ivec2 d = ivec2(gl_GlobalInvocationID.xy);
+    if (d.x >= pc.dstValid.x || d.y >= pc.dstValid.y)
+        return;
+
+    // The destination texel's centre in source texel space.  Lands on a 2x2 corner,
+    // which is what makes every tap below a bilinear 2x2 average.
+    vec2 c = (vec2(d) + 0.5) * 2.0;
+
+    vec3 a = Tap(c, vec2(-2.0, -2.0));
+    vec3 b = Tap(c, vec2( 0.0, -2.0));
+    vec3 e = Tap(c, vec2( 2.0, -2.0));
+
+    vec3 f = Tap(c, vec2(-2.0,  0.0));
+    vec3 g = Tap(c, vec2( 0.0,  0.0));
+    vec3 h = Tap(c, vec2( 2.0,  0.0));
+
+    vec3 i = Tap(c, vec2(-2.0,  2.0));
+    vec3 j = Tap(c, vec2( 0.0,  2.0));
+    vec3 k = Tap(c, vec2( 2.0,  2.0));
+
+    vec3 l = Tap(c, vec2(-1.0, -1.0));
+    vec3 m = Tap(c, vec2( 1.0, -1.0));
+    vec3 n = Tap(c, vec2(-1.0,  1.0));
+    vec3 o = Tap(c, vec2( 1.0,  1.0));
+
+    vec3 result;
+    if (pc.karis != 0)
+    {
+        // Five 2x2 blocks: four corners at 0.125 and the centre at 0.5.
+        result = KarisBlock(a, b, f, g) * 0.125 +
+                 KarisBlock(b, e, g, h) * 0.125 +
+                 KarisBlock(f, g, i, j) * 0.125 +
+                 KarisBlock(g, h, j, k) * 0.125 +
+                 KarisBlock(l, m, n, o) * 0.5;
+    }
+    else
+    {
+        // Weights sum to 1: centre 0.125, inner 4x0.125, edges 4x0.0625, corners 4x0.03125.
+        result = g * 0.125 +
+                 (a + e + i + k) * 0.03125 +
+                 (b + f + h + j) * 0.0625 +
+                 (l + m + n + o) * 0.125;
+    }
+
+    imageStore(dstOut, d, vec4(result, 1.0));
+}

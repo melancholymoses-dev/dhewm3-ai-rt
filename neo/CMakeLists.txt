@@ -698,6 +698,7 @@ list(APPEND src_vulkan
 	renderer/Vulkan/vk_vol.cpp
 	renderer/Vulkan/vk_vol_froxel.cpp
 	renderer/Vulkan/vk_tonemap.cpp
+	renderer/Vulkan/vk_bloom.cpp
 	renderer/Vulkan/vk_gbuffer.cpp
 	renderer/Vulkan/vk_material_table.cpp
 	renderer/Vulkan/vk_auto_relight.cpp
@@ -785,6 +786,12 @@ list(APPEND GLSL_SHADER_SOURCES
 	renderer/glsl/fsr2_bleed_debug.comp
 	renderer/glsl/fsr_tc_mask.comp
 	renderer/glsl/fsr_mask_debug.comp
+	renderer/glsl/bloom_prepass.comp
+	renderer/glsl/bloom_extract.comp
+	renderer/glsl/bloom_down.comp
+	renderer/glsl/bloom_up.comp
+	renderer/glsl/bloom_composite.comp
+	renderer/glsl/bloom_debug.comp
 )
 
 

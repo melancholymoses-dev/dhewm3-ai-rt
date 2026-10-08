@@ -17,6 +17,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/tr_local.h"
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_bloom.h"
 
 // Defined in vk_backend.cpp
 void VK_SetWindowMinimized(bool minimized);
@@ -640,6 +641,11 @@ void VK_RecreateSwapchain(int width, int height)
     VK_RT_ResizeTonemap(vk.swapchainExtent.width, vk.swapchainExtent.height);
 
     VK_RT_ResizeUpscale(vk.swapchainExtent.width, vk.swapchainExtent.height);
+    // Guarded where the two above are not: hdrScene is the main render target for every
+    // Vulkan draw, RT or not, but the bloom images are touched only by RT-gated passes.
+    // Unguarded this allocates ~75 MiB at 4K that can never be read.
+    if (vk.rayTracingSupported)
+        VK_RT_ResizeBloom(vk.swapchainExtent.width, vk.swapchainExtent.height);
     // Swapchain is healthy again; clear any minimized flag set during the
     // previous (aborted) recreation when the surface was 0x0.
     VK_SetWindowMinimized(false);

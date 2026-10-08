@@ -1,0 +1,76 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — bloom_up.comp — B2 upsample, bloomMip[k+1] blended into bloomMip[k].
+
+3x3 tent filter on the smaller mip, blended into the larger one.  The blend is a
+mix, not an add:
+
+    dst = mix(dst, tent(src), scatter)
+
+A plain add would make the finished glow brighter as r_rtBloomMips rises, which
+turns a radius control into a brightness control.  With the mix every level
+contributes a share of a total that stays at 1, so r_rtBloomMips changes how far
+the energy spreads and nothing else — and r_rtBloomStrength stays the one
+brightness knob.
+
+dst is read and written by the same invocation at the same texel, so the
+read-modify-write needs no extra synchronisation.
+
+Descriptors (set 0):
+  binding 0 — srcTex combined image sampler (bloomMip[k+1], linear clamp)
+  binding 1 — dstOut rgba16f storage image  (bloomMip[k], read-modify-write)
+
+docs/plans/20260906_bloom_plan.md B2.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcTex;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dstOut;
+
+layout(push_constant) uniform PC {
+    ivec2 srcValid;  // valid sub-rect of bloomMip[k+1]
+    ivec2 srcImage;  // allocated size of bloomMip[k+1]
+    ivec2 dstValid;  // valid sub-rect of bloomMip[k]
+    float radius;    // tap offset in source texels
+    float scatter;   // mix weight toward the blurred lower mip
+} pc;
+
+vec3 Tap(vec2 centerTexel, vec2 o)
+{
+    vec2 t = clamp(centerTexel + o * pc.radius, vec2(0.5), vec2(pc.srcValid) - 0.5);
+    return texture(srcTex, t / vec2(pc.srcImage)).rgb;
+}
+
+void main()
+{
+    ivec2 d = ivec2(gl_GlobalInvocationID.xy);
+    if (d.x >= pc.dstValid.x || d.y >= pc.dstValid.y)
+        return;
+
+    // The destination is twice the source's size, so a dst texel centre maps to
+    // half its coordinate in src texel space.
+    vec2 c = (vec2(d) + 0.5) * 0.5;
+
+    // 1 2 1
+    // 2 4 2  / 16
+    // 1 2 1
+    vec3 t = Tap(c, vec2(-1.0, -1.0)) * 1.0 + Tap(c, vec2( 0.0, -1.0)) * 2.0 + Tap(c, vec2( 1.0, -1.0)) * 1.0 +
+             Tap(c, vec2(-1.0,  0.0)) * 2.0 + Tap(c, vec2( 0.0,  0.0)) * 4.0 + Tap(c, vec2( 1.0,  0.0)) * 2.0 +
+             Tap(c, vec2(-1.0,  1.0)) * 1.0 + Tap(c, vec2( 0.0,  1.0)) * 2.0 + Tap(c, vec2( 1.0,  1.0)) * 1.0;
+    t *= (1.0 / 16.0);
+
+    vec3 dst = imageLoad(dstOut, d).rgb;
+    imageStore(dstOut, d, vec4(mix(dst, t, pc.scatter), 1.0));
+}

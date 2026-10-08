@@ -20,6 +20,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_common.h"
 #include "renderer/Vulkan/vk_raytracing.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_bloom.h"
 
 #include <string.h>
 #include <SDL.h>
@@ -2296,6 +2297,9 @@ void VK_RT_Shutdown(void)
 
     // Upscaling
     VK_RT_ShutdownUpscale();
+
+    // Bloom images and source-capture pipelines (bloom plan B1)
+    VK_RT_ShutdownBloom();
 
     // Material table SSBOs and bindless descriptor set (Phase 5.4)
     VK_RT_ShutdownMaterialTable();

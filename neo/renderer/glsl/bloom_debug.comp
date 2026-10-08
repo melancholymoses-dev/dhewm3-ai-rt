@@ -1,0 +1,60 @@
+/*
+===========================================================================
+
+dhewm3-rt Vulkan — bloom_debug.comp — r_rtBloomDebug 2, the bloom source view.
+
+Magnifies bloomMip[0]'s valid sub-rect over the whole display and writes it into
+hdrScene, replacing the frame.  Dispatched from VK_RB_SwapBuffers after the
+resolve, so it draws crisp at display resolution.
+
+The gain exists because hdrScene is still pre-tonemap: the Uchimura curve
+downstream would otherwise crush a dim source into the toe and read as "the
+extract produced nothing".  Judge black-vs-not-black from this view, not
+magnitude.
+
+Descriptors (set 0):
+  binding 0 — srcTex combined image sampler (bloomMip[0], linear clamp)
+  binding 1 — dstOut rgba16f storage image (hdrScene)
+
+docs/plans/20260906_bloom_plan.md B1.
+
+This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
+and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
+Code.
+
+It is distributed under the same modified GNU General Public License Version 3 of the original Doom 3 GPL Source
+Code release.
+
+===========================================================================
+*/
+
+#version 460
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcTex;
+layout(set = 0, binding = 1, rgba16f) uniform image2D dstOut;
+
+layout(push_constant) uniform PC {
+    ivec2 srcExtent;      // valid sub-rect of bloomMip[0]
+    ivec2 srcImageExtent; // full allocated size of bloomMip[0]
+    ivec2 displayExtent;  // output extent
+    float gain;
+} pc;
+
+void main()
+{
+    ivec2 d = ivec2(gl_GlobalInvocationID.xy);
+    if (d.x >= pc.displayExtent.x || d.y >= pc.displayExtent.y)
+        return;
+
+    // Map the display pixel into the sub-rect, then into the full image's UV space.
+    // Half-texel inset keeps the bilinear taps off the undefined margin outside
+    // srcExtent, which nothing wrote this frame.
+    vec2 frac = (vec2(d) + 0.5) / vec2(pc.displayExtent);
+    vec2 texel = frac * vec2(pc.srcExtent);
+    texel = clamp(texel, vec2(0.5), vec2(pc.srcExtent) - 0.5);
+    vec2 uv = texel / vec2(pc.srcImageExtent);
+
+    vec3 c = texture(srcTex, uv).rgb * pc.gain;
+    imageStore(dstOut, d, vec4(c, 1.0));
+}

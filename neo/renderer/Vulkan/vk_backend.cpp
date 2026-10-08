@@ -27,6 +27,7 @@ of the original Doom 3 GPL Source Code release.
 #include "renderer/Vulkan/vk_image.h"
 #include "renderer/Vulkan/vk_buffer.h"
 #include "renderer/Vulkan/vk_upscale.h"
+#include "renderer/Vulkan/vk_bloom.h"
 #include "renderer/Vulkan/vk_gbuffer.h"
 #include "renderer/Vulkan/vk_rt_emitters.h"
 #include "sys/sys_imgui.h"
@@ -42,6 +43,10 @@ static bool s_frameNeedsImageAcquireWait = false;
 // FSR U0: set once the render sub-rect has been resolved to display resolution.
 // Everything drawn after this point (UI, HUD, ImGui) uses the full display extent.
 static bool s_upscaleDone = false;
+
+// Bloom B2: set once the blur chain and composite have run, so the SwapBuffers
+// fallback does not composite a second time on a frame that had a GUI overlay view.
+static bool s_bloomDone = false;
 
 // The extent every raster draw must use *right now*.  The 3D scene renders into
 // the top-left renderExtent sub-rect; once VK_RT_DispatchUpscale has resolved it
@@ -379,6 +384,7 @@ enum vkRTProfilePhase_t
     VK_RTPROF_PHASE_SHADER_PASSES,
     VK_RTPROF_PHASE_FOG_LIGHTS,
     VK_RTPROF_PHASE_UPSCALE,
+    VK_RTPROF_PHASE_BLOOM,
     VK_RTPROF_PHASE_TONEMAP,
 
     // Nested sub-spans of a phase above: printed, but excluded from total=/raster=.
@@ -474,6 +480,8 @@ static const char *VK_RTProfilePhaseName(vkRTProfilePhase_t phase)
         return "FogLights";
     case VK_RTPROF_PHASE_UPSCALE:
         return "Upscale";
+    case VK_RTPROF_PHASE_BLOOM:
+        return "Bloom";
     case VK_RTPROF_PHASE_TONEMAP:
         return "Tonemap";
     case VK_RTPROF_PHASE_BLAS:
@@ -4794,6 +4802,9 @@ void VK_RB_DrawView(const void *data)
         // what makes VK_CurrentDrawExtent below return the right answer.
         const bool firstIsGui = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
         s_upscaleDone = firstIsGui;
+        // Same reasoning for bloom: a frame that opens on the 2D overlay has no 3D
+        // content, so there is nothing to glow and the menu must stay clean.
+        s_bloomDone = firstIsGui;
         const VkExtent2D drawExtent = VK_CurrentDrawExtent();
 
         VkRenderPassBeginInfo rpBegin = {};
@@ -4836,17 +4847,38 @@ void VK_RB_DrawView(const void *data)
         // The 2D GUI/HUD overlay arrives as a second RC_DRAW_VIEW with a zeroed
         // viewaxis.  That is the boundary between 3D (render resolution) and UI
         // (display resolution), so resolve the sub-rect here, before the UI draws.
+        // Bloom's composite belongs to the same boundary, and unlike the resolve it runs
+        // at every render scale — the glow has to land before the UI does whether or not
+        // anything was upscaled.  So the two share one end/resume, entered if EITHER
+        // wants it.
         const bool isGuiOverlay = backEnd.viewDef->renderView.viewaxis[0].LengthSqr() <= 0.0001f;
-        if (isGuiOverlay && !s_upscaleDone && VK_RT_UpscaleActive())
+        const bool needUpscale = !s_upscaleDone && VK_RT_UpscaleActive();
+        const bool needBloom = !s_bloomDone && VK_RT_BloomCompositeActive();
+        if (isGuiOverlay && (needUpscale || needBloom))
         {
             vkCmdEndRenderPass(s_frameCmdBuf);
-            VK_SetRenderStage("RT_Upscale");
-            const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
-            int profUp = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_UPSCALE);
-            VK_RT_DispatchUpscale(s_frameCmdBuf);
-            VK_RTProfile_PhaseEnd(s_frameCmdBuf, profUp);
-            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
-            s_upscaleDone = true;
+            if (needUpscale)
+            {
+                VK_SetRenderStage("RT_Upscale");
+                const uint64_t cpuUpStart = VK_RTProfile_CPUStamp();
+                int profUp = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_UPSCALE);
+                VK_RT_DispatchUpscale(s_frameCmdBuf);
+                VK_RTProfile_PhaseEnd(s_frameCmdBuf, profUp);
+                VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_UPSCALE, cpuUpStart);
+                s_upscaleDone = true;
+            }
+            // Strictly after the resolve: AMD's guidance, and it is what makes the glow
+            // the same size on screen at every r_fsrRenderScale.
+            if (needBloom)
+            {
+                VK_SetRenderStage("RT_Bloom");
+                const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+                int profBloom = VK_RTProfile_PhaseBegin(s_frameCmdBuf, VK_RTPROF_PHASE_BLOOM);
+                VK_RT_DispatchBloom(s_frameCmdBuf);
+                VK_RTProfile_PhaseEnd(s_frameCmdBuf, profBloom);
+                VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+                s_bloomDone = true;
+            }
 
             // NULL scissor: s_viewScissor for this view is computed just below, and the
             // viewport is set there too.
@@ -5364,13 +5396,33 @@ void VK_RB_DrawView(const void *data)
     // Same real-camera gate as the RT dispatches above: the 2D overlay view arrives as a
     // second RC_DRAW_VIEW with a zeroed viewaxis and has nothing pre-alpha about it, and a
     // mirror/subview would overwrite the primary view's masks with its own.
-    if ((VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask()) &&
+    //
+    // Bloom B1a shares the same slot and the same gate for the same reasons: its
+    // snapshot is only meaningful before the blend stages, it is a compute dispatch
+    // that cannot be recorded inside a render pass, and a mirror/subview would
+    // overwrite the primary view's snapshot with its own.  One end/resume covers both.
+    const bool fsrWantsCapture = VK_RT_UpscaleNeedsReactiveMask() || VK_RT_UpscaleNeedsTcMask();
+    const bool bloomWantsCapture = VK_RT_BloomActive();
+    if ((fsrWantsCapture || bloomWantsCapture) &&
         backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f && !backEnd.viewDef->isSubview &&
         !backEnd.viewDef->isMirror)
     {
-        VK_SetRenderStage("FSR_MaskCapture");
+        VK_SetRenderStage("PreAlphaCapture");
         vkCmdEndRenderPass(cmdBuf);
-        VK_RT_CaptureReactiveInputs(cmdBuf);
+        if (fsrWantsCapture)
+        {
+            VK_SetRenderStage("FSR_MaskCapture");
+            VK_RT_CaptureReactiveInputs(cmdBuf);
+        }
+        if (bloomWantsCapture)
+        {
+            VK_SetRenderStage("Bloom_Prepass");
+            const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+            int profBloom = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_BLOOM);
+            VK_RT_BloomPrepass(cmdBuf);
+            VK_RTProfile_PhaseEnd(cmdBuf, profBloom);
+            VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+        }
         VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
     }
 
@@ -5388,6 +5440,24 @@ void VK_RB_DrawView(const void *data)
     {
         if (!VK_DebugSplitSubmit(&cmdBuf, "SplitSubmit_AfterShaderPasses", true))
             return;
+    }
+
+    // Bloom B1b: diff against the B1a snapshot while the frame holds exactly the
+    // interactions plus the blend stages.  Everything after this point — the late vol
+    // composite and Doom 3's fog lights — is a separate medium that must not bloom, so
+    // this is the last honest moment.  Same real-camera gate as the prepass; compute,
+    // so it needs the pass closed.
+    if (VK_RT_BloomActive() && backEnd.viewDef->renderView.viewaxis[0].LengthSqr() > 0.0001f &&
+        !backEnd.viewDef->isSubview && !backEnd.viewDef->isMirror)
+    {
+        VK_SetRenderStage("Bloom_Extract");
+        vkCmdEndRenderPass(cmdBuf);
+        const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+        int profBloom = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_BLOOM);
+        VK_RT_BloomExtract(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profBloom);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+        VK_ResumeHdrRenderPass(cmdBuf, &s_viewScissor);
     }
 
     // F6 late composite site: after interactions and blend stages (surface radiance,
@@ -5687,6 +5757,20 @@ void VK_RB_SwapBuffers()
         s_upscaleDone = true;
     }
 
+    // Bloom B2 fallback, same shape and the same cause as the resolve above: a frame
+    // with no 2D overlay view never reached the 3D->GUI boundary.  Still after the
+    // resolve, and still before the tonemap.
+    if (!s_bloomDone && VK_RT_BloomCompositeActive())
+    {
+        VK_SetRenderStage("RT_Bloom");
+        const uint64_t cpuBloomStart = VK_RTProfile_CPUStamp();
+        int profBloom = VK_RTProfile_PhaseBegin(cmdBuf, VK_RTPROF_PHASE_BLOOM);
+        VK_RT_DispatchBloom(cmdBuf);
+        VK_RTProfile_PhaseEnd(cmdBuf, profBloom);
+        VK_RTProfile_AccumulateCPU(VK_RTPROF_PHASE_BLOOM, cpuBloomStart);
+        s_bloomDone = true;
+    }
+
     // U2 motion-vector overlay (r_fsrDebug 7).  After the resolve so it draws crisp at
     // display resolution, before the tonemap so hdrScene is still the thing being read.
     // No-op unless the mode is selected.
@@ -5697,6 +5781,12 @@ void VK_RB_SwapBuffers()
     // mutually exclusive, so ordering between them does not matter.
     VK_SetRenderStage("RT_MaskDebug");
     VK_RT_DispatchMaskDebug(cmdBuf);
+
+    // Bloom source overlay (r_rtBloomDebug 2).  Same slot again: after the resolve so it
+    // magnifies crisply at display resolution, before the tonemap so hdrScene is still
+    // what gets read.  No-op unless the mode is selected.
+    VK_SetRenderStage("RT_BloomDebug");
+    VK_RT_DispatchBloomDebug(cmdBuf);
 
     // Tonemap: read hdrScene (RGBA16F), apply Uchimura filmic curve, blit to swapchain.
     // After this call the swapchain image is in PRESENT_SRC_KHR.
@@ -5994,6 +6084,9 @@ void VKimp_PostInit(int width, int height)
         common->Printf("VK: initializing RT tonemapping\n");
         VK_RT_InitTonemap();
         VK_RT_InitUpscale();
+        // After the upscale: bloom's images are sized off the swapchain extent, but its
+        // dispatches read vk.renderExtent, which VK_RT_InitUpscale establishes.
+        VK_RT_InitBloom();
     }
 
     common->Printf("VK: Backend ready\n");
