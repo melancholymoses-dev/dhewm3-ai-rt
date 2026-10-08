@@ -1,7 +1,7 @@
 # First-Person Player Body Plan
 
 **Date:** 2026-04-04  
-**Status:** Planned  
+**Status:** Asset done (`base/models/sp_player.md5mesh`); engine hook-up not started.  
 **Scope:** Local first-person body visibility (torso/legs), while keeping normal third-person and mirror rendering behavior.
 
 ---
@@ -43,30 +43,110 @@ Why separate model is preferred:
 
 ---
 
-## Proposed Technical Approach
+## FP Mesh Asset (Done)
 
-### 1. Keep current world player model path unchanged
-- Do not alter normal third-person, multiplayer, or mirror model path.
-- Keep existing suppression rules for current world model behavior.
+`base/models/sp_player.md5mesh` — engine path `models/sp_player.md5mesh`.
 
-### 2. Add a local-only first-person body render entity
-- Add an additional render entity (or attachment) for local player only.
-- Set visibility gates so it appears only in local first-person view:
-  - `allowSurfaceInViewID = entityNumber + 1`.
-- Ensure it does not leak into mirrors/subviews:
-  - mirror/subviews use `viewID = 0`, so local-only gating naturally hides it.
+| Property | Value |
+|---|---|
+| Source | `spplayer.md5mesh`, trimmed in Blender above Z≈60 (below `Shoulders` at 61.9) |
+| Joints | 75, names/order/parents/bind pose identical to source — all 19 stock `.md5anim` remain valid |
+| Meshes | 1 (`models/characters/player/body`); `soldier` and `marine2` arm mesh removed |
+| Verts / tris | 1071 / 2082 |
+| Weighted joints | 19: legs, `Hips`, `Waist`, `Belly`, `Chest`, `Lrib`/`Rrib`, `Lshldr`/`Rshldr` |
+| Unweighted but present | 56, incl. `Head`, `Loneck`, arms, fingers, all `*_ATTACHER` |
+| Export settings | `Reorient: False; Scale: 1.0` — reuse verbatim for any re-export |
+| Blender source | `base/models/doom3_sp.blend` |
 
-### 3. Animation/pose sync
-- Drive first-person body from same player animator state as world body.
-- Preserve leg motion and torso orientation coherence with local movement.
+Eye is at Z=68 (`pm_normalviewheight`), i.e. at `Loneck` — hence the shoulder-height cut.
+Crouched eye is Z=32 (`pm_crouchviewheight`), the worst case for camera/chest overlap.
 
-### 4. Head/upper body handling
-- Start with head hidden (or headless fp mesh) to avoid camera overlap.
-- Keep a small camera-safe exclusion volume around eye point.
+---
 
-### 5. Shadows and RT participation (conservative first)
-- Start with conservative shadow behavior for fp body to avoid artifacts.
-- Enable/adjust shadows after visual validation in representative scenes.
+## Current RT Participation of the World Body
+
+Established by inspection, and the basis for keeping the fp body out of RT entirely:
+
+| Pass | Site | World body included? |
+|---|---|---|
+| TLAS pass 1 (viewEntitys) | [vk_accelstruct.cpp:1164](../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1164) | Yes — `g_showPlayerShadow` defaults to **1**, so `suppressShadowInViewID` is 0 |
+| TLAS pass 2 (cached static) | [vk_accelstruct.cpp:1474](../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1474) | No — skips `dynamicModel` |
+| TLAS pass 3 (nearby dynamic) | [vk_accelstruct.cpp:1570](../../neo/renderer/Vulkan/vk_accelstruct.cpp#L1570) | Yes — only `weaponDepthHack` is excluded |
+
+Pass 1's `suppressShadowInViewID` skip is a bare `continue` that does **not** set
+`blasFrameCount`, so pass 3 re-adds the body even with `g_showPlayerShadow 0`. That is why
+the body reaches reflections at all, and why the fp body needs excluding in both passes.
+
+---
+
+## Implementation: Hook-Up and Animation
+
+### 1. Keep the world player model path unchanged
+Do not alter third-person, multiplayer, or mirror model paths, or existing suppression rules.
+
+### 2. Own a bare render entity on idPlayer
+Pattern after [PlayerIcon.cpp:165-185](../../neo/game/PlayerIcon.cpp#L165) — a `renderEntity_t`
+plus `qhandle_t`, not an `idAnimatedEntity`. A second entity would need a second animator and
+could desync from the world pose.
+
+| Field | Value | Reason |
+|---|---|---|
+| `hModel` | `FindModel("models/sp_player.md5mesh")` | |
+| `allowSurfaceInViewID` | `entityNumber + 1` | local view only; mirrors/subviews use viewID 0. Same trick as [Weapon.cpp:2148](../../neo/game/Weapon.cpp#L2148) |
+| `origin` / `axis` | copied from `renderEntity` after `Present()` | inherits the `offset ( 0 0 1 )` from `model_sp_marine` without re-deriving it |
+| `callback` | `NULL` | see stage 3 |
+| `noShadow`, `noSelfShadow` | `true` | keep out of the stencil path |
+| `weaponDepthHack` | `false` | plan requires world depth, not view depth |
+
+Lifecycle: `AddEntityDef` on spawn, `UpdateEntityDef` each `Think`, `FreeEntityDef` on
+destructor / `pm_showFirstPersonBody 0`. Do not save the handle — recreate it in `Restore`.
+
+### 3. Share the player's joint array
+`sp_player.md5mesh` has the same 75 joints in the same order, so the animator's output is
+directly usable: no second animation evaluation, and pose desync is impossible by construction.
+
+In `idPlayer::Think`, after the existing `UpdateAnimation(); Present();`
+([Player.cpp:7919](../../neo/game/Player.cpp#L7919)):
+
+```
+animator.CreateFrame( gameLocal.time, false );            // no-op if already current
+animator.GetJoints( &fpBody.numJoints, &fpBody.joints );  // re-fetch; array can realloc
+fpBody.origin = renderEntity.origin;
+fpBody.axis   = renderEntity.axis;
+gameRenderWorld->UpdateEntityDef( fpBodyHandle, &fpBody );
+```
+
+`CreateFrame` must be explicit. The world body is dropped from `viewEntitys` by
+`suppressSurfaceInViewID` ([RenderWorld_portals.cpp:682](../../neo/renderer/RenderWorld_portals.cpp#L682)),
+so its `ModelCallback` never fires in the local view and the joint array would otherwise go
+stale. Leaving `fpBody.callback` NULL avoids `ModelCallback`'s `renderEntity->entityNum`
+lookup, which would resolve to the world entity on a game-unowned render entity.
+
+If `numJoints != 75`, [Model_md5.cpp:836](../../neo/renderer/Model_md5.cpp#L836) prints a
+joint-count mismatch and returns no model — that is the first thing to check if nothing draws.
+
+### 4. Exclude from the TLAS
+One predicate, added to TLAS passes 1 and 3 alongside the existing `weaponDepthHack` checks.
+Pass 2 needs no change (static only).
+
+```
+// View-local-only entities (fp body, view weapon) are duplicates of world
+// geometry that is already in the TLAS; they must never be RT occluders.
+if ( ent->parms.allowSurfaceInViewID ) {
+    ent->blasFrameCount = tr.frameCount;   // pass 1 only, so pass 3 also skips
+    continue;
+}
+```
+
+`allowSurfaceInViewID` is currently set only by the view weapon, which is already excluded via
+`weaponDepthHack` — so this is a strict superset of today's behaviour, not a change to it.
+
+Check: `r_showPrimitives` / BLAS frame stats instance count must not rise when
+`pm_showFirstPersonBody` is toggled on.
+
+### 5. Head/upper body handling
+The mesh is already cut at the shoulders, so no runtime head hiding is needed. Retain pitch
+and offset tuning as a fallback if crouch still clips.
 
 ---
 
@@ -122,28 +202,43 @@ Suggested cvars:
 2. Weapon/body depth fighting
 - Mitigation: keep weapon in existing weapon-depth-hack path; keep fp body in world depth path.
 
-3. Self-shadow oddities in first-person
-- Mitigation: conservative defaults, then incremental shadow enable with logs and captures.
+3. **Predicted first artifact: fp body shadowed black by the world body.** The fp body now
+   writes depth in the local view, and the world body sits in the TLAS at the same place.
+   Shadow rays traced from fp-body pixels hit the world body's chest almost immediately.
+- Mitigation: the knob already exists — `r_rtShadowPlayerExcludeDist`
+  ([vk_shadows.cpp:1007](../../neo/renderer/Vulkan/vk_shadows.cpp#L1007)) forces
+  `rayCullMask = 0xFE`, dropping player instances (`inst.mask = 0x01`). Currently applied only
+  when the light is nearer than that distance; may need to key off the fp-body pixel instead.
+- Diagnose with `r_rtShadowDebugMode` before changing anything — a solid black torso with
+  correct world shadows around it confirms this cause.
 
 4. Mirror leakage of fp-only body
 - Mitigation: strict `allowSurfaceInViewID` gating and validation in mirrors/cameras.
+
+5. GI/reflections double-counting the body
+- The fp body is excluded from the TLAS, so it contributes nothing — but it still *receives*
+  screen-space GI and shadow-mask lookups, which is intended. Verify the received lighting
+  looks continuous with the floor rather than flat-lit.
+- The fp body does appear in the G-buffer, so FSR motion vectors pick it up automatically.
 
 ---
 
 ## Implementation Phases
 
-### Phase A: Spike (2-4 days)
-- Add fp body entity behind a cvar.
-- Local-view-only visibility gating.
-- Reuse current assets to validate concept.
+### Phase 0: FP asset — **done**
+`base/models/sp_player.md5mesh` exported and verified against the stock skeleton.
+
+### Phase A: Spike
+Stages 2-4 above, behind `pm_showFirstPersonBody`.
 
 Exit criteria:
 - Looking down shows torso/legs in first-person.
 - Mirrors and third-person still show normal model behavior.
+- TLAS instance count unchanged when the cvar is toggled.
 
-### Phase B: Production Asset + Pose Polish (3-7 days)
-- Introduce dedicated fp body mesh/skin.
-- Improve animation coherence and camera-safe tuning.
+### Phase B: Pose Polish
+- Camera-safe tuning at crouch and extreme pitch.
+- Resolve risk 3 (world-body self-shadowing) and risk 5 (received lighting continuity).
 
 Exit criteria:
 - Minimal clipping in normal gameplay movement and look ranges.
@@ -176,7 +271,12 @@ Recommendation: isolate as a clear fp-body feature path with explicit cvars and 
 5. Weapon render remains stable (no new z artifacts).
 6. No severe clipping at extreme pitch angles.
 7. Performance check in AI-heavy and light-heavy scenes.
-8. Save/load and map transitions preserve expected behavior.
+8. Save/load and map transitions preserve expected behavior (handle recreated, not saved).
+9. TLAS instance count identical with `pm_showFirstPersonBody` 0 vs 1.
+10. `g_showPlayerShadow 0` — fp body behaviour must not change, since that cvar only moves the
+    *world* body between TLAS passes 1 and 3.
+11. Mirror check must be done while standing in front of one: the fp body must be absent and the
+    world body present, both in the same frame.
 
 ---
 
@@ -255,7 +355,12 @@ Key declarations to know:
 
 Practical interpretation:
 1. If replacing the normal SP body globally, change the mesh path inside `model_sp_marine`.
-2. If implementing the planned first-person-only body path, keep `player_doommarine -> model_sp_marine` as-is for world/mirror views, and add a separate fp model block that code spawns only for local first-person view.
+2. For the fp path, keep `player_doommarine -> model_sp_marine` untouched.
+
+**No fp `model` def block is needed.** Because the fp entity borrows the player animator's joint
+array (stage 3), it needs no anim bindings, no channel setup and no skin — just the raw
+`idRenderModel` from `renderModelManager->FindModel()`. A def block would only add a second
+`idDeclModelDef` whose anims never play.
 
 Important packaging note:
 - Treat `pak_assets` as the source/reference for discovery.
