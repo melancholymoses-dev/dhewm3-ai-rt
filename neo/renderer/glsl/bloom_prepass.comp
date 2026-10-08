@@ -8,6 +8,12 @@ interactions and before the blend stages, so bloomPre holds the scene with direc
 light, GI and reflections but nothing emissive-additive.  bloom_extract.comp then
 subtracts it to isolate the blend stages.
 
+The destination is half the DISPLAY extent while the source is the render
+sub-rect, so the box centre is mapped by the render-scale ratio rather than
+stepping two source texels at a time.  This pass and the extract are the only
+two that see render resolution at all; everything downstream is display-space,
+which is what makes the glow radius independent of r_fsrRenderScale.
+
 The box must stay a plain average: bloom_extract runs the identical box over the
 current frame and diffs the two, and a weighted average would make the two
 operators disagree.
@@ -36,7 +42,7 @@ layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D preOut;
 
 layout(push_constant) uniform PC {
     ivec2 srcExtent; // valid render sub-rect of hdrIn
-    ivec2 dstExtent; // (srcExtent + 1) / 2
+    ivec2 dstExtent; // half the display extent — NOT derived from srcExtent
 } pc;
 
 void main()
@@ -48,12 +54,17 @@ void main()
     // Clamp to the sub-rect, not the image: hdrScene outside renderExtent was
     // never written this frame.
     ivec2 maxS = pc.srcExtent - 1;
-    ivec2 s = d * 2;
 
-    vec3 sum = imageLoad(hdrIn, min(s, maxS)).rgb +
-               imageLoad(hdrIn, min(s + ivec2(1, 0), maxS)).rgb +
-               imageLoad(hdrIn, min(s + ivec2(0, 1), maxS)).rgb +
-               imageLoad(hdrIn, min(s + ivec2(1, 1), maxS)).rgb;
+    // Top-left of the 2x2 box.  Reduces to d * 2 at render scale 1.0; below it the
+    // boxes overlap instead of tiling, which is fine for a blur source so long as
+    // bloom_extract.comp derives its taps the same way.
+    vec2 c = (vec2(d) + 0.5) * vec2(pc.srcExtent) / vec2(pc.dstExtent);
+    ivec2 s = ivec2(floor(c - 0.5));
+
+    vec3 sum = imageLoad(hdrIn, clamp(s, ivec2(0), maxS)).rgb +
+               imageLoad(hdrIn, clamp(s + ivec2(1, 0), ivec2(0), maxS)).rgb +
+               imageLoad(hdrIn, clamp(s + ivec2(0, 1), ivec2(0), maxS)).rgb +
+               imageLoad(hdrIn, clamp(s + ivec2(1, 1), ivec2(0), maxS)).rgb;
 
     imageStore(preOut, d, vec4(sum * 0.25, 1.0));
 }

@@ -21,7 +21,7 @@ Push constants (20 bytes, matches TonemapPC in vk_tonemap.cpp):
   float toeStrength   — r_rtTonemapToe       (default 2.0)
   float linearStart   — r_rtTonemapLinStart  (default 0.22)
   float linearLength  — r_rtTonemapLinLen    (default 0.40)
-  int   debugMode     — r_rtBloomDebug == 1 selects the luminance-band view
+  int   debugMode     — r_rtBloomDebug == 1 selects the brightness-band view
 
 Phase 8.1 — Tonemapping.  B0 of the bloom plan added the band overlay.
 
@@ -46,24 +46,28 @@ layout(push_constant) uniform PC {
     float toeStrength;   // r_rtTonemapToe        (default 2.0 — moderate black crush)
     float linearStart;   // r_rtTonemapLinStart   (default 0.22)
     float linearLength;  // r_rtTonemapLinLen     (default 0.40)
-    int   debugMode;     // 1 = luminance bands (bloom plan B0), 0 = normal
+    int   debugMode;     // 1 = brightness bands (bloom plan B0), 0 = normal
 } pc;
 
 // Rec. 709 / sRGB luminance weights.
 const vec3 LUMINANCE_WEIGHTS = vec3(0.2126, 0.7152, 0.0722);
 
-// B0: which luminance band does this pixel sit in, before exposure?  Bloom's
-// thresholds are quoted in these same pre-exposure units, so the bands read
-// directly as threshold candidates.
+// B0: which brightness band does this pixel sit in, before exposure?
+//
+// The metric is max(r,g,b), NOT Rec. 709 luminance, because bloom_extract.comp's soft
+// knee thresholds on max(r,g,b).  Banding by luminance instead would put a saturated
+// blue screen (lum 0.07, max 1.0) in the black band while the extract blooms it — the
+// one view meant to calibrate the thresholds would misreport exactly the saturated
+// emissives Doom 3 is full of.
 //
 // Written straight to the LDR output, bypassing the Uchimura curve — a band
 // pushed through the toe would no longer be distinguishable from its neighbour.
-vec3 LuminanceBand(float lum)
+vec3 BrightnessBand(float br)
 {
-    if (lum < 0.5)  return vec3(0.0, 0.0, 0.0);  // below any useful threshold
-    if (lum < 1.0)  return vec3(0.0, 0.0, 1.0);  // blend-add stages sit near here
-    if (lum < 2.0)  return vec3(0.0, 1.0, 0.0);  // r_lightScale 2 overbright walls
-    if (lum < 4.0)  return vec3(1.0, 1.0, 0.0);
+    if (br < 0.5)  return vec3(0.0, 0.0, 0.0);  // below any useful threshold
+    if (br < 1.0)  return vec3(0.0, 0.0, 1.0);  // blend-add stages sit near here
+    if (br < 2.0)  return vec3(0.0, 1.0, 0.0);  // r_lightScale 2 overbright walls
+    if (br < 4.0)  return vec3(1.0, 1.0, 0.0);
     return vec3(1.0, 0.0, 0.0);
 }
 
@@ -106,7 +110,7 @@ void main()
 
     if (pc.debugMode == 1)
     {
-        imageStore(ldrOut, coord, vec4(LuminanceBand(dot(raw, LUMINANCE_WEIGHTS)), 1.0));
+        imageStore(ldrOut, coord, vec4(BrightnessBand(max(raw.r, max(raw.g, raw.b))), 1.0));
         return;
     }
 

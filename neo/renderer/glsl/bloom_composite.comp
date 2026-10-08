@@ -48,8 +48,9 @@ void main()
     if (d.x >= pc.displayExtent.x || d.y >= pc.displayExtent.y)
         return;
 
-    // Stretch the valid sub-rect across the whole display rect.  This is what keeps
-    // the glow the same size on screen at every render scale.
+    // Plain 2x stretch of mip 0 to display.  srcValid equals srcImage here — the
+    // render-scale fixup already happened in bloom_extract.comp — but the two stay
+    // separate so a future partial-rect source does not need this shader changed.
     vec2 frac = (vec2(d) + 0.5) / vec2(pc.displayExtent);
     vec2 texel = clamp(frac * vec2(pc.srcValid), vec2(0.5), vec2(pc.srcValid) - 0.5);
     vec3 bloom = texture(srcTex, texel / vec2(pc.srcImage)).rgb;

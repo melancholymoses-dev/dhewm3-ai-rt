@@ -8,10 +8,11 @@ r_rtBloomDebug 2 source view.  See vk_bloom.h for the frame ordering and
 docs/plans/20260906_bloom_plan.md for why the source is a diff rather than a
 luminance threshold.
 
-Images are allocated at half the DISPLAY extent, with only the top-left
-(renderExtent / 2) sub-rect valid — the same convention every other U0 buffer
-follows.  That keeps r_fsrRenderScale a per-frame push constant instead of a
-reallocation.
+Images are allocated and fully used at half the DISPLAY extent, which is NOT the
+usual U0 convention of a valid render sub-rect inside a display-sized image.  The
+extract resamples hdrScene's render sub-rect up to half display, so r_fsrRenderScale
+is absorbed in one place and the blur chain is display-space throughout.  Anything
+else makes the glow radius, in screen pixels, a function of the render scale.
 
 This file is a new addition with dhewm3-rt.  It was created with the aid of GenAI,
 and may reference the existing Dhewm3 OpenGL and vkDoom3 Vulkan updates of the Doom 3 GPL Source
@@ -40,12 +41,11 @@ extern idCVar r_vkLogRT;
 
 idCVar r_rtBloom("r_rtBloom", "0", CVAR_RENDERER | CVAR_BOOL | CVAR_ARCHIVE,
                  "Screen-space bloom around light-emitting surfaces.  Sourced from what the blend "
-                 "stages add to the frame, not from a luminance threshold, so lit walls do not glow.  "
-                 "B2's blur and composite are not built yet: for now this only drives the source "
-                 "capture that r_rtBloomDebug 2 views.");
+                 "stages add to the frame, not from a brightness threshold, so lit walls do not glow.");
 idCVar r_rtBloomThreshold("r_rtBloomThreshold", "0.8", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                          "Soft-knee threshold on the lit term, in pre-exposure HDR luminance.  Idle while "
-                          "r_rtBloomLitWeight is 0.  Read the bands from r_rtBloomDebug 1 before changing it.");
+                          "Soft-knee threshold on the lit term, in pre-exposure HDR max(r,g,b) — the same units "
+                          "r_rtBloomDebug 1 bands, so a saturated blue screen counts as 1.0, not 0.07.  Idle "
+                          "while r_rtBloomLitWeight is 0.");
 idCVar r_rtBloomEmissiveThreshold("r_rtBloomEmissiveThreshold", "0.5", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
                                   "Soft-knee threshold on the emissive diff.  Keeps blend-add smoke and alpha "
                                   "smoke over dark backgrounds out of the bloom source, which a threshold on the "
@@ -57,14 +57,15 @@ idCVar r_rtBloomLitWeight("r_rtBloomLitWeight", "0", CVAR_RENDERER | CVAR_FLOAT 
                           "default because r_lightScale 2 overbright would otherwise bloom lit walls before "
                           "fixtures.  Raise only if r_rtBloomDebug 1 shows the two in separate bands.");
 idCVar r_rtBloomStrength("r_rtBloomStrength", "0.15", CVAR_RENDERER | CVAR_FLOAT | CVAR_ARCHIVE,
-                         "Additive weight of the blurred bloom over the scene.  Consumed by B2's composite, "
-                         "which is not built yet.");
+                         "Additive weight of the blurred bloom over the scene.  The one brightness knob: the "
+                         "upsample mixes rather than adds, so r_rtBloomMips does not change brightness.");
 idCVar r_rtBloomMips("r_rtBloomMips", "4", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                     "Levels in the bloom blur chain, i.e. the glow radius.  Consumed by B2.  Keep tight: a "
-                     "wide radius lifts dark regions.");
+                     "Levels in the bloom blur chain, i.e. the glow radius, in display pixels at any "
+                     "r_fsrRenderScale.  Keep tight: a wide radius lifts dark regions.");
 idCVar r_rtBloomDebug("r_rtBloomDebug", "0", CVAR_RENDERER | CVAR_INTEGER | CVAR_ARCHIVE,
-                      "Bloom debug view.  1 = luminance bands of the finished frame (<0.5 black, 0.5-1 blue, "
-                      "1-2 green, 2-4 yellow, >4 red), 2 = bloomMip[0], the extracted source.");
+                      "Bloom debug view.  1 = max(r,g,b) bands of the finished frame (<0.5 black, 0.5-1 blue, "
+                      "1-2 green, 2-4 yellow, >4 red), works with r_rtTonemap 0 too.  2 = bloomMip[0], the "
+                      "extracted source; suspends the blur and composite so the view is the raw extract.");
 
 // ---------------------------------------------------------------------------
 // Resources.  File-static: vk_bloom.cpp is the only translation unit that
@@ -85,6 +86,14 @@ struct bloomPass_t
     // overwrite the descriptors an earlier, still-unsubmitted dispatch points at.
     // Indexed [frameIdx * setsPerFrame + level].
     VkDescriptorSet descSets[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS];
+    // What each set was last written with.  A frame can reach the capture sites twice —
+    // RoE's portal sky issues a second full RenderScene (d3xp/PlayerView.cpp) and both
+    // views pass the capture gate — and rewriting a set already bound to a recorded
+    // dispatch is undefined without UPDATE_AFTER_BIND.  The second write is always
+    // identical, so skipping it is both correct and enough.
+    // Cleared by VK_RT_ResizeBloom: a recreated view can land on the same handle value.
+    VkImageView lastSrc[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS][BLOOM_PASS_MAX_SRC];
+    VkImageView lastDst[VK_MAX_FRAMES_IN_FLIGHT * VK_BLOOM_MAX_MIPS];
     uint32_t numSrc;
     uint32_t setsPerFrame;
 };
@@ -199,13 +208,15 @@ static uint32_t VK_RT_BloomMipDim(uint32_t displayDim, int mip)
     return d > 0 ? d : 1;
 }
 
-// The VALID sub-rect of mip `mip`, derived from the render extent rather than the
-// allocated (display-derived) size.  The two only agree at render scale 1.0, and
-// every chain dispatch has to bound itself by this one.
-static void VK_RT_BloomLevelValid(int mip, uint32_t *w, uint32_t *h)
+// Extent of mip `mip`.  Display-derived, so every level is fully valid: the extract
+// resamples the render sub-rect up to half display, which is what keeps the blur
+// radius a fixed number of display pixels at any r_fsrRenderScale.  A chain bounded
+// by the render extent instead would widen the glow as the render scale dropped,
+// because a mip-0 texel would cover more of the screen.
+static void VK_RT_BloomLevelExtent(int mip, uint32_t *w, uint32_t *h)
 {
-    *w = VK_RT_BloomMipDim(vk.renderExtent.width, mip);
-    *h = VK_RT_BloomMipDim(vk.renderExtent.height, mip);
+    *w = VK_RT_BloomMipDim(vk.swapchainExtent.width, mip);
+    *h = VK_RT_BloomMipDim(vk.swapchainExtent.height, mip);
 }
 
 // r_rtBloomMips, clamped to what is allocated and to the 2 levels the chain needs
@@ -308,9 +319,9 @@ static void VK_RT_CreateBloomImage(vkRTImage_t &img, uint32_t width, uint32_t he
         vkCmdPipelineBarrier(tmpCmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0,
                              NULL, 1, &barrier);
 
-        // Clear to black: a frame that reads a mip before anything wrote it (the first
-        // frame, or the margin outside the render sub-rect) must read "no bloom here"
-        // rather than uninitialised memory, which in fp16 can be NaN.
+        // Clear to black: a frame that reads a mip before anything wrote it — the first
+        // frame, or a level above r_rtBloomMips — must read "no bloom here" rather than
+        // uninitialised memory, which in fp16 can be NaN.
         VkClearColorValue clearBlack = {};
         vkCmdClearColorImage(tmpCmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clearBlack, 1, &subRange);
 
@@ -459,21 +470,30 @@ static void VK_RT_DestroyBloomPass(bloomPass_t &pass)
     memset(&pass, 0, sizeof(pass));
 }
 
-// Rewritten every dispatch: a handful of writes per frame is nothing, and the views
-// change on every resize.  Safe because the sets are per frame-in-flight and the
-// slot's fence has already been waited on.
 // `level` picks among this pass's per-frame sets; 0 for the single-dispatch passes.
-static VkDescriptorSet VK_RT_BloomSet(const bloomPass_t &pass, int frameIdx, uint32_t level)
+static uint32_t VK_RT_BloomSetIndex(const bloomPass_t &pass, int frameIdx, uint32_t level)
 {
-    return pass.descSets[frameIdx * pass.setsPerFrame + level];
+    return (uint32_t)frameIdx * pass.setsPerFrame + level;
 }
 
-static void VK_RT_WriteBloomDescriptors(const bloomPass_t &pass, int frameIdx, uint32_t level, VkDescriptorType srcType,
+// Rewritten whenever the views change, which in practice is the first dispatch after a
+// resize.  Safe because the sets are per frame-in-flight and the slot's fence has
+// already been waited on; the unchanged case must be skipped, not rewritten, because a
+// second view in the same frame would otherwise update a bound set mid-recording.
+static void VK_RT_WriteBloomDescriptors(bloomPass_t &pass, int frameIdx, uint32_t level, VkDescriptorType srcType,
                                         const VkImageView *srcViews, uint32_t numSrc, VkImageView dstView)
 {
+    const uint32_t setIdx = VK_RT_BloomSetIndex(pass, frameIdx, level);
+
+    bool unchanged = pass.lastDst[setIdx] == dstView;
+    for (uint32_t s = 0; s < numSrc && unchanged; s++)
+        unchanged = pass.lastSrc[setIdx][s] == srcViews[s];
+    if (unchanged)
+        return;
+
     VkDescriptorImageInfo srcInfo[BLOOM_PASS_MAX_SRC] = {};
     VkWriteDescriptorSet writes[BLOOM_PASS_MAX_SRC + 1] = {};
-    const VkDescriptorSet set = VK_RT_BloomSet(pass, frameIdx, level);
+    const VkDescriptorSet set = pass.descSets[setIdx];
 
     for (uint32_t s = 0; s < numSrc; s++)
     {
@@ -501,6 +521,10 @@ static void VK_RT_WriteBloomDescriptors(const bloomPass_t &pass, int frameIdx, u
     writes[numSrc].pImageInfo = &dstInfo;
 
     vkUpdateDescriptorSets(vk.device, numSrc + 1, writes, 0, NULL);
+
+    for (uint32_t s = 0; s < numSrc; s++)
+        pass.lastSrc[setIdx][s] = srcViews[s];
+    pass.lastDst[setIdx] = dstView;
 }
 
 static void VK_RT_CreateBloomSampler(void)
@@ -587,8 +611,10 @@ void VK_RT_BloomPrepass(VkCommandBuffer cmd)
     const int frameIdx = (int)vk.currentFrame;
     const uint32_t srcW = vk.renderExtent.width;
     const uint32_t srcH = vk.renderExtent.height;
-    const uint32_t dstW = (srcW + 1) / 2;
-    const uint32_t dstH = (srcH + 1) / 2;
+    // Half DISPLAY, not half render: the snapshot and the extract resample, so the
+    // chain below them never sees render resolution.
+    uint32_t dstW, dstH;
+    VK_RT_BloomLevelExtent(0, &dstW, &dstH);
 
     const VkImageView srcView = vkRT.hdrScene[frameIdx].view;
     VK_RT_WriteBloomDescriptors(s_bloomPrepass, frameIdx, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &srcView, 1,
@@ -637,8 +663,9 @@ void VK_RT_BloomExtract(VkCommandBuffer cmd)
 
     const uint32_t srcW = vk.renderExtent.width;
     const uint32_t srcH = vk.renderExtent.height;
-    const uint32_t dstW = (srcW + 1) / 2;
-    const uint32_t dstH = (srcH + 1) / 2;
+    // Same extents as the prepass, or the diff would compare different texels.
+    uint32_t dstW, dstH;
+    VK_RT_BloomLevelExtent(0, &dstW, &dstH);
 
     const VkImageView srcViews[2] = {vkRT.hdrScene[frameIdx].view, s_bloomPre[frameIdx].view};
     VK_RT_WriteBloomDescriptors(s_bloomExtract, frameIdx, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, srcViews, 2,
@@ -694,6 +721,12 @@ bool VK_RT_BloomCompositeActive(void)
     // compositing glow the user switched off.
     if (!r_rtBloom.GetBool() || !s_chainReady)
         return false;
+    // Mode 2 views bloomMip[0], which the up chain's last level writes into.  Letting
+    // the chain run would hand the overlay blurred, chain-accumulated glow and call it
+    // the extracted source — useless for calibrating the thresholds, which is the only
+    // thing that view is for.
+    if (r_rtBloomDebug.GetInteger() == 2)
+        return false;
     if (!VK_RT_BloomActive())
         return false;
     // The chain reads what the extract wrote this frame in this slot.  Without a
@@ -730,8 +763,8 @@ void VK_RT_DispatchBloom(VkCommandBuffer cmd)
     for (int k = 0; k + 1 < mips; k++)
     {
         uint32_t sw, sh, dw, dh;
-        VK_RT_BloomLevelValid(k, &sw, &sh);
-        VK_RT_BloomLevelValid(k + 1, &dw, &dh);
+        VK_RT_BloomLevelExtent(k, &sw, &sh);
+        VK_RT_BloomLevelExtent(k + 1, &dw, &dh);
 
         const VkImageView srcView = s_bloomMip[frameIdx][k].view;
         VK_RT_WriteBloomDescriptors(s_bloomDown, frameIdx, (uint32_t)k, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -759,8 +792,8 @@ void VK_RT_DispatchBloom(VkCommandBuffer cmd)
     for (int k = mips - 2; k >= 0; k--)
     {
         uint32_t sw, sh, dw, dh;
-        VK_RT_BloomLevelValid(k + 1, &sw, &sh);
-        VK_RT_BloomLevelValid(k, &dw, &dh);
+        VK_RT_BloomLevelExtent(k + 1, &sw, &sh);
+        VK_RT_BloomLevelExtent(k, &dw, &dh);
 
         const VkImageView srcView = s_bloomMip[frameIdx][k + 1].view;
         VK_RT_WriteBloomDescriptors(s_bloomUp, frameIdx, (uint32_t)k, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -787,7 +820,7 @@ void VK_RT_DispatchBloom(VkCommandBuffer cmd)
     // --- Composite: hdrScene += mip[0] * strength, at display resolution ----------
     {
         uint32_t sw, sh;
-        VK_RT_BloomLevelValid(0, &sw, &sh);
+        VK_RT_BloomLevelExtent(0, &sw, &sh);
 
         const VkImageView srcView = s_bloomMip[frameIdx][0].view;
         VK_RT_WriteBloomDescriptors(s_bloomComposite, frameIdx, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &srcView,
@@ -856,10 +889,14 @@ void VK_RT_DispatchBloomDebug(VkCommandBuffer cmd)
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
                          &mipDone, 0, NULL, 0, NULL);
 
+    uint32_t srcW, srcH;
+    VK_RT_BloomLevelExtent(0, &srcW, &srcH);
+
     BloomDebugPC pc;
-    // Valid sub-rect, which tracks renderExtent, not the allocated image.
-    pc.srcExtent[0] = (int32_t)((vk.renderExtent.width + 1) / 2);
-    pc.srcExtent[1] = (int32_t)((vk.renderExtent.height + 1) / 2);
+    // Every texel of mip 0 is written now that the extract resamples, so the valid
+    // rect is the whole image.
+    pc.srcExtent[0] = (int32_t)srcW;
+    pc.srcExtent[1] = (int32_t)srcH;
     pc.srcImageExtent[0] = (int32_t)s_bloomMip[frameIdx][0].width;
     pc.srcImageExtent[1] = (int32_t)s_bloomMip[frameIdx][0].height;
     pc.displayExtent[0] = (int32_t)dispW;
@@ -907,9 +944,25 @@ void VK_RT_InitBloom(void)
         common->Warning("VK RT Bloom: blur chain unavailable — r_rtBloom will capture but not composite");
 }
 
+// Every image view bloom's descriptors point at — its own and hdrScene's — has just been
+// destroyed and recreated.  Vulkan is free to hand back the same handle values, so the
+// view-comparison cache in VK_RT_WriteBloomDescriptors cannot tell and would skip the
+// rewrite, leaving descriptors resolved against freed resources.
+static void VK_RT_InvalidateBloomDescriptorCache(void)
+{
+    bloomPass_t *passes[] = {&s_bloomPrepass, &s_bloomExtract, &s_bloomDebug,
+                             &s_bloomDown,    &s_bloomUp,      &s_bloomComposite};
+    for (int i = 0; i < (int)(sizeof(passes) / sizeof(passes[0])); i++)
+    {
+        memset(passes[i]->lastSrc, 0, sizeof(passes[i]->lastSrc));
+        memset(passes[i]->lastDst, 0, sizeof(passes[i]->lastDst));
+    }
+}
+
 void VK_RT_ResizeBloom(uint32_t width, uint32_t height)
 {
     vkDeviceWaitIdle(vk.device);
+    VK_RT_InvalidateBloomDescriptorCache();
 
     for (int i = 0; i < VK_MAX_FRAMES_IN_FLIGHT; i++)
     {

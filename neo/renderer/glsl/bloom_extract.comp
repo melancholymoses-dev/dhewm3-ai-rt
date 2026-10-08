@@ -9,6 +9,10 @@ positive remainder into bloomMip[0].  What survives is what the blend stages
 added: fixture glows, screens, flames, muzzle flashes, projectiles, plus the
 deferred glass overlays.
 
+Destination is half the DISPLAY extent, so this pass absorbs the render-scale
+ratio and the blur chain below it is entirely display-space.  See
+bloom_prepass.comp for the tap mapping, which this file has to match exactly.
+
 Two terms, weighted separately:
   emissive — softKnee(max(curr - pre, 0)), the diff.  Default weight 1.
   lit      — softKnee(curr), a plain luminance threshold.  Default weight 0,
@@ -46,7 +50,7 @@ layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D mipOut;
 
 layout(push_constant) uniform PC {
     ivec2 srcExtent;          // valid render sub-rect of hdrIn
-    ivec2 dstExtent;          // (srcExtent + 1) / 2
+    ivec2 dstExtent;          // half the display extent — NOT derived from srcExtent
     float threshold;          // r_rtBloomThreshold, on the lit term
     float emissiveThreshold;  // r_rtBloomEmissiveThreshold, on the diff
     float knee;               // r_rtBloomKnee, a fraction of each threshold
@@ -75,12 +79,16 @@ void main()
         return;
 
     ivec2 maxS = pc.srcExtent - 1;
-    ivec2 s = d * 2;
 
-    vec3 t0 = imageLoad(hdrIn, min(s, maxS)).rgb;
-    vec3 t1 = imageLoad(hdrIn, min(s + ivec2(1, 0), maxS)).rgb;
-    vec3 t2 = imageLoad(hdrIn, min(s + ivec2(0, 1), maxS)).rgb;
-    vec3 t3 = imageLoad(hdrIn, min(s + ivec2(1, 1), maxS)).rgb;
+    // Must match bloom_prepass.comp texel for texel — the diff below is only
+    // meaningful if both passes boxed the same four source texels.
+    vec2 c = (vec2(d) + 0.5) * vec2(pc.srcExtent) / vec2(pc.dstExtent);
+    ivec2 s = ivec2(floor(c - 0.5));
+
+    vec3 t0 = imageLoad(hdrIn, clamp(s, ivec2(0), maxS)).rgb;
+    vec3 t1 = imageLoad(hdrIn, clamp(s + ivec2(1, 0), ivec2(0), maxS)).rgb;
+    vec3 t2 = imageLoad(hdrIn, clamp(s + ivec2(0, 1), ivec2(0), maxS)).rgb;
+    vec3 t3 = imageLoad(hdrIn, clamp(s + ivec2(1, 1), ivec2(0), maxS)).rgb;
 
     vec3 src = vec3(0.0);
 

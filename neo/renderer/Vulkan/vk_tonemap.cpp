@@ -552,7 +552,11 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
     const int frameIdx = (int)vk.currentFrame;
     const uint32_t swapIdx = vk.currentImageIdx;
 
-    const bool tonemapEnabled = r_rtTonemap.GetBool() && vkRT.tonemapPipeline != VK_NULL_HANDLE &&
+    // The band view is written by the tonemap shader, so it needs the compute path even
+    // with the curve switched off — otherwise selecting it under r_rtTonemap 0 silently
+    // shows the ordinary clipped frame.
+    const bool bandView = r_rtBloomDebug.GetInteger() == 1;
+    const bool tonemapEnabled = (r_rtTonemap.GetBool() || bandView) && vkRT.tonemapPipeline != VK_NULL_HANDLE &&
                                 vkRT.tonemapResolve[0].image != VK_NULL_HANDLE;
 
     if (!tonemapEnabled)
@@ -676,10 +680,10 @@ void VK_RT_DispatchTonemap(VkCommandBuffer cmd)
     pc.toeStrength = r_rtTonemapToe.GetFloat();
     pc.linearStart = r_rtTonemapLinStart.GetFloat();
     pc.linearLength = r_rtTonemapLinLen.GetFloat();
-    // B0 luminance bands.  The tonemap is the only pass that sees the finished frame
+    // B0 brightness bands.  The tonemap is the only pass that sees the finished frame
     // and writes LDR, so the bands go here rather than in vk_bloom.cpp; mode 2 and up
     // belong to the bloom passes themselves.
-    pc.debugMode = (r_rtBloomDebug.GetInteger() == 1) ? 1 : 0;
+    pc.debugMode = bandView ? 1 : 0;
 
     // 4. Bind pipeline and dispatch (8×8 workgroups).
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, vkRT.tonemapPipeline);

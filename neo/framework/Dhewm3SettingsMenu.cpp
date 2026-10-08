@@ -2978,15 +2978,17 @@ static void DrawRTOptionsMenu()
     }
     ImGui::EndDisabled(); // !bloomOn
 
-    // Outside the !bloomOn guard: mode 1 reads the frame's luminance bands and is what
+    // Outside the !bloomOn guard: mode 1 reads the frame's brightness bands and is what
     // tells you where to put the thresholds, so it has to work before bloom is switched on.
-    static const char *const bloomDebugModes[] = {"Off", "1: Luminance bands of the frame",
+    static const char *const bloomDebugModes[] = {"Off", "1: Brightness bands of the frame",
                                                   "2: Bloom source (bloomMip[0])"};
     RTCombo("Debug Mode", rtCVars.rtBloomDebug, bloomDebugModes, IM_ARRAYSIZE(bloomDebugModes));
     if (rtCVars.rtBloomDebug && rtCVars.rtBloomDebug->GetInteger() == 1)
-        ImGui::TextDisabled("<0.5 black, 0.5-1 blue, 1-2 green, 2-4 yellow, >4 red (pre-exposure).");
+        ImGui::TextDisabled("max(r,g,b), pre-exposure: <0.5 black, 0.5-1 blue, 1-2 green, 2-4 yellow, >4 red.\n"
+                            "Same units as the thresholds below.");
     else if (rtCVars.rtBloomDebug && rtCVars.rtBloomDebug->GetInteger() == 2)
-        ImGui::TextDisabled("Gain x4, pre-tonemap. Judge black vs not-black, not magnitude.");
+        ImGui::TextDisabled("Gain x4, pre-tonemap. Judge black vs not-black, not magnitude.\n"
+                            "Suspends the blur and composite so this is the raw extract.");
 
     ImGui::BeginDisabled(!rtEnabled); // restore for Auto-Relight below
 

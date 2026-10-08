@@ -92,10 +92,18 @@ later; the emissive path is built either way.
 | Images per frame slot: `bloomPre`, `bloomMip[0..5]`, all rgba16f, permanently `GENERAL` | new `vk_bloom.cpp/.h` |
 | `VK_RTPROF_PHASE_BLOOM` (pulled forward from B2; both dispatches accumulate into it) | `vk_backend.cpp` |
 
-Sizing: images are **half the display extent** with only the top-left `renderExtent/2`
-sub-rect valid — the convention every other U0 buffer follows, so `r_fsrRenderScale` stays a
-push constant instead of a reallocation. All six mips are allocated regardless of
-`r_rtBloomMips`, for the same reason.
+Sizing: images are **half the display extent and fully written** — deliberately *not* the U0
+convention of a valid `renderExtent` sub-rect. The prepass and extract map a 2×2 box by the
+render-scale ratio, so they absorb `r_fsrRenderScale` and everything downstream is
+display-space. A chain bounded by the render extent instead keeps a constant radius in
+*render* texels, which is a radius in display pixels proportional to `1/renderScale` — the
+glow doubles in width at scale 0.5. Both passes must derive their taps identically or the
+diff compares different texels. All six mips are allocated regardless of `r_rtBloomMips`, so
+that cvar stays a dispatch count rather than a reallocation.
+
+Cost consequence: the chain runs at half display at every render scale, so lowering
+`r_fsrRenderScale` no longer makes bloom cheaper. The composite already ran at display extent
+and dominates.
 
 The extract refuses to run unless a prepass filled the same slot on the same `tr.frameCount`;
 a stale snapshot would diff as a bloom source smeared over everything that moved. That also
@@ -128,9 +136,37 @@ was switched off.
 The down and up passes need one descriptor set *per level per frame slot*: a later level
 would otherwise overwrite the descriptors an earlier, still-unsubmitted dispatch points at.
 
-Check: HUD, PDA and main menu show no bloom. `r_fsr 0/1/2` and `r_fsrRenderScale 0.67/1.0`
-give the same glow size on screen. `r_rtBloomMips` 2 vs 6 changes radius but not brightness.
-`r_vkRTProfile 1` reports `Bloom=`.
+Check: HUD, PDA and main menu show no bloom. `r_fsr 0/1/2` and `r_fsrRenderScale 0.5/0.67/1.0`
+give the same glow **radius** on screen — compare a single fixture at 0.5 against 1.0, not the
+whole frame. `r_rtBloomMips` 2 vs 6 changes radius but not brightness. `r_vkRTProfile 1`
+reports `Bloom=`, and unlike the other phases it does not shrink with render scale.
+
+## Review fixes 2026-10-07 — unvalidated
+
+Six findings from the B0–B2 review, all landed in one pass.
+
+| Finding | Fix | Where |
+|---|---|---|
+| Blur chain worked in render texels, so glow radius scaled with `1/renderScale` | Prepass and extract resample to half **display**; chain is display-space throughout | `bloom_prepass/extract.comp`, `vk_bloom.cpp` |
+| `r_rtBloomDebug 2` showed blurred glow — the up chain's last level writes `bloomMip[0]` | `VK_RT_BloomCompositeActive()` stands the chain down in mode 2 | `vk_bloom.cpp` |
+| `r_rtBloomDebug 1` dead under `r_rtTonemap 0` (bypass blit returns first) | Band view also enables the compute path | `vk_tonemap.cpp` |
+| Band view used Rec. 709 luminance; the extract thresholds `max(r,g,b)` | Bands switched to `max(r,g,b)` — see below | `tonemap.comp` |
+| RoE portal sky gives two capture-gated views per frame, rewriting bound descriptor sets | Per-set view cache; skip the identical rewrite | `vk_bloom.cpp` |
+| `VK_RT_ResizeBloom` unguarded — ~75 MiB at 4K on devices that cannot run bloom | Guarded on `vk.rayTracingSupported` | `vk_swapchain.cpp` |
+
+**Bands follow the threshold, not the other way round.** `max(r,g,b)` is what the soft knee
+tests, and that is the right metric to keep: a saturated blue screen is luminance 0.07 but
+`max` 1.0, and it *should* bloom. Banding by luminance would have hidden exactly the
+saturated emissives the game is full of. The threshold cvar help now states the units.
+
+The descriptor cache must be cleared in `VK_RT_ResizeBloom`: every view it compares has just
+been recreated and Vulkan may reuse handle values, so an uncleared cache would skip the
+rewrite and leave descriptors resolved against freed resources. Every (pass, set) pair maps to
+a fixed view pair, so after the first frame the cache always hits.
+
+Check: `r_rtBloomDebug 2` with `r_rtBloom 1` shows hard-edged extract, not soft glow.
+`r_rtBloomDebug 1` works at `r_rtTonemap 0/1`. A blue monitor lands in the blue band, not the
+black one. Validation layers stay quiet on a RoE portal-sky map (`erebus1`-style outdoor view).
 
 ## B3 — Debug + menu
 
