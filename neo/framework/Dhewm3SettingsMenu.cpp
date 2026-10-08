@@ -3431,6 +3431,7 @@ static CVarOption gameOptions[] = {
     CVarOption("g_showHud", "Show HUD", OT_BOOL),
     CVarOption("com_showFPS", "Show Framerate (FPS)", OT_BOOL),
     CVarOption("ui_showGun", "Show Gun Model", OT_BOOL),
+    CVarOption("pm_showFirstPersonBody", "Show Own Body in First Person (torso and legs)", OT_BOOL),
     CVarOption("g_decals", "Show Decals", OT_BOOL),
     CVarOption("g_bloodEffects", "Show Blood and Gibs", OT_BOOL),
     CVarOption("g_doubleVision", "Show Double Vision when Taking Damage", OT_BOOL),

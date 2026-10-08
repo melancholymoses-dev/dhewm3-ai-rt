@@ -1,7 +1,8 @@
 # First-Person Player Body Plan
 
 **Date:** 2026-04-04  
-**Status:** Asset done (`base/models/sp_player.md5mesh`); engine hook-up not started.  
+**Status:** Asset done. Stages 2-3 implemented, **not yet validated in-game**. Stage 4 (RT
+exclusion) is the next chunk — until it lands the fp body *is* in the TLAS.  
 **Scope:** Local first-person body visibility (torso/legs), while keeping normal third-person and mirror rendering behavior.
 
 ---
@@ -12,6 +13,20 @@ Show a player body when looking down in first-person (torso/legs), but:
 - Keep the normal player model behavior for third-person and mirror/subviews.
 - Keep rendering/performance stable on Vulkan + RT path.
 - Avoid camera-inside-mesh and clipping artifacts.
+
+---
+
+## Gotchas / Current State
+
+Each was established by inspection, not assumption. If one turns out false, the stage it
+supports is wrong.
+
+| Fact | Why it matters | Detail |
+|---|---|---|
+| `g_showPlayerShadow` defaults to **1** here (stock Doom 3 ships `0`) | It is the reason the world body is in TLAS pass 1 at all, i.e. the reason RT lighting "is handled by the third-person model" | [RT Participation](#current-rt-participation-of-the-world-body) |
+| Pass 1's `suppressShadowInViewID` skip does **not** stamp `blasFrameCount`, so pass 3 re-adds the entity | The fp body must be excluded in both passes *with* the stamp, or pass 3 silently puts it back | [RT Participation](#current-rt-participation-of-the-world-body) |
+| The world body's `ModelCallback` never fires in the local view (dropped from `viewEntitys` by `suppressSurfaceInViewID`) | The animator joint array goes stale unless `CreateFrame` is called explicitly | [Stage 3](#3-share-the-players-joint-array) |
+| `allowSurfaceInViewID` is set only by the view weapon today | Makes it safe to overload as the RT-exclusion predicate | [Stage 4](#4-exclude-from-the-tlas) |
 
 ---
 
@@ -125,6 +140,30 @@ lookup, which would resolve to the world entity on a game-unowned render entity.
 If `numJoints != 75`, [Model_md5.cpp:836](../../neo/renderer/Model_md5.cpp#L836) prints a
 joint-count mismatch and returns no model — that is the first thing to check if nothing draws.
 
+### Stages 2-3: landed
+
+Stages 2 and 3 are one chunk — stage 2 alone cannot be tested, because an MD5 render entity
+with NULL joints is rejected at [Model_md5.cpp:828](../../neo/renderer/Model_md5.cpp#L828).
+
+| File | Change |
+|---|---|
+| `gamesys/SysCvar.{h,cpp}` ×2 | `pm_showFirstPersonBody` (archived, default 0), `pm_firstPersonBodyDebug` |
+| `Player.h` ×2 | `fpBodyRenderEnt`, `fpBodyHandle`, `fpBodyJointsWarned`; `UpdateFirstPersonBody`/`FreeFirstPersonBody` |
+| `Player.cpp` ×2 | both functions; ctor init; `FreeFirstPersonBody()` in dtor; `UpdateFirstPersonBody()` in `Think` after the `g_stopTime` block; `renderer/ModelManager.h` include |
+| `framework/Dhewm3SettingsMenu.cpp` | "Show Own Body in First Person" under Game → Visual |
+| `neo/CMakeLists.txt` | `deploy_base_overrides` now copies `base/models/sp_player.md5mesh` |
+| `.gitignore` | `!/base/models/sp_player.md5mesh` negation |
+
+`.gitignore` blanket-ignores `*.md5mesh`/`*.md5anim`/`*.blend*` so extracted pak assets stay
+out of the repo. Only the fp mesh is un-ignored; the Blender source and the stock `.md5anim`
+working copies remain local-only, and `deploy_base_overrides` lists models file-by-file rather
+than `copy_directory` for the same reason.
+
+Nothing was added to `Save`/`Restore` — the handle is rebuilt by the next `Think`, so the
+savegame format is unchanged.
+
+Not saved to the def: no `model` block was added, per the Asset Touchpoints note below.
+
 ### 4. Exclude from the TLAS
 One predicate, added to TLAS passes 1 and 3 alongside the existing `weaponDepthHack` checks.
 Pass 2 needs no change (static only).
@@ -147,6 +186,19 @@ Check: `r_showPrimitives` / BLAS frame stats instance count must not rise when
 ### 5. Head/upper body handling
 The mesh is already cut at the shoulders, so no runtime head hiding is needed. Retain pitch
 and offset tuning as a fallback if crouch still clips.
+
+### First-response table
+
+| Symptom | Check first | Fix |
+|---|---|---|
+| Nothing draws | Console for `renderEntity has different number of joints` ([Model_md5.cpp:836](../../neo/renderer/Model_md5.cpp#L836)) | `numJoints` must be 75; re-fetch from `animator.GetJoints` each frame, don't cache the pointer |
+| Nothing draws, no console output | `r_skipSuppress 1` — if the body appears, gating is the cause | `allowSurfaceInViewID` must equal `renderView.viewID`, i.e. `entityNumber + 1` |
+| Body frozen in bind pose | Is `animator.CreateFrame` called explicitly in `Think`? | See stage 3 — the world body's callback does not fire in the local view |
+| Body one frame behind | `UpdateEntityDef` ordering vs `Present()` | Update after `Present()`, so `renderEntity.origin`/`axis` are current |
+| Torso solid black, world shadows correct | `r_rtShadowDebugMode` | Risk 3 — `r_rtShadowPlayerExcludeDist` / `rayCullMask` |
+| Body visible in a mirror | `allowSurfaceInViewID` is non-zero and mirror `viewID` is 0 | If it still leaks, the subview is not resetting `viewID`; check [Player.cpp:8917](../../neo/game/Player.cpp#L8917) |
+| TLAS instance count rises when cvar toggles on | Stage 4 predicate present in **both** pass 1 and pass 3? | Pass 1 must also stamp `blasFrameCount` |
+| Body lit flat, detached from the floor | Risk 5 — it should receive screen-space GI | Exclusion is TLAS-only; it must stay in the G-buffer |
 
 ---
 
@@ -209,8 +261,6 @@ Suggested cvars:
   ([vk_shadows.cpp:1007](../../neo/renderer/Vulkan/vk_shadows.cpp#L1007)) forces
   `rayCullMask = 0xFE`, dropping player instances (`inst.mask = 0x01`). Currently applied only
   when the light is nearer than that distance; may need to key off the fp-body pixel instead.
-- Diagnose with `r_rtShadowDebugMode` before changing anything — a solid black torso with
-  correct world shadows around it confirms this cause.
 
 4. Mirror leakage of fp-only body
 - Mitigation: strict `allowSurfaceInViewID` gating and validation in mirrors/cameras.

@@ -1650,6 +1650,9 @@ endif()
 	set(BASE_MAPS_SRC_DIR "${CMAKE_SOURCE_DIR}/../base/maps")
 	set(BASE_MAPS_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/maps")
 	set(BASE_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base")
+	# Models are listed file-by-file rather than copy_directory: base/models also holds
+	# the Blender source and the stock md5anim working copies, which must not deploy.
+	set(BASE_MODELS_EXE_DIR "$<TARGET_FILE_DIR:${DHEWM3BINARY}>/base/models")
 	add_custom_target(deploy_base_overrides ALL
 		COMMAND "${CMAKE_COMMAND}" -E make_directory "${BASE_DEF_EXE_DIR}"
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory
@@ -1667,11 +1670,15 @@ endif()
 		COMMAND "${CMAKE_COMMAND}" -E copy_directory
 				"${BASE_MAPS_SRC_DIR}"
 				"${BASE_MAPS_EXE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E make_directory "${BASE_MODELS_EXE_DIR}"
+		COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+				"${CMAKE_SOURCE_DIR}/../base/models/sp_player.md5mesh"
+				"${BASE_MODELS_EXE_DIR}"
 		COMMAND "${CMAKE_COMMAND}" -E copy_if_different
 				"${CMAKE_SOURCE_DIR}/../base/gamepad.cfg"
 				"${CMAKE_SOURCE_DIR}/../base/gamepad-d3xp.cfg"
 				"${BASE_EXE_DIR}"
-		COMMENT "Copying loose base/def, base/materials, base/guis, base/maps and gamepad cfgs to exe/base/ for self-contained dev builds"
+		COMMENT "Copying loose base/def, base/materials, base/guis, base/maps, base/models and gamepad cfgs to exe/base/ for self-contained dev builds"
 	)
 
 	# Deploy to the user config base dir whenever any SPV changes — not tied to

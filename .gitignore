@@ -20,6 +20,8 @@ mailmap.txt
 .claude
 *.md5mesh
 *.md5anim
+# first-person body mesh is an authored dhewm3-rt asset, not an extracted pak file
+!/base/models/sp_player.md5mesh
 
 *.bak
 *darkradiant*

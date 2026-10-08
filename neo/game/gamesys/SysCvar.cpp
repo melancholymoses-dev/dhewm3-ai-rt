@@ -335,6 +335,12 @@ idCVar pm_deadheight("pm_deadheight", "20", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_
                      "height of player's bounding box while dead");
 idCVar pm_deadviewheight("pm_deadviewheight", "10", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                          "height of player's view while dead");
+// dhewm3-rt: local first-person body (models/sp_player.md5mesh).  Off by default
+// until the artifact/perf criteria in docs/plans are met.
+idCVar pm_showFirstPersonBody("pm_showFirstPersonBody", "0", CVAR_GAME | CVAR_ARCHIVE | CVAR_BOOL,
+                              "show the player's own torso and legs in first person");
+idCVar pm_firstPersonBodyDebug("pm_firstPersonBodyDebug", "0", CVAR_GAME | CVAR_BOOL,
+                               "log first-person body create/free and pose diagnostics");
 idCVar pm_crouchrate("pm_crouchrate", "0.87", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
                      "time it takes for player's view to change from standing to crouching");
 idCVar pm_bboxwidth("pm_bboxwidth", "32", CVAR_GAME | CVAR_NETWORKSYNC | CVAR_FLOAT,
