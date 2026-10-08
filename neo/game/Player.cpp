@@ -6113,10 +6113,20 @@ void idPlayer::UpdateViewAngles(void)
     }
     else
     {
-        if (viewAngles.pitch > pm_maxviewpitch.GetFloat())
+        // dhewm3-rt: the fp body now gives those feet geometry, so the clamp below has to
+        // tighten further — the view is on the spine, and past ~70 degrees you are looking
+        // at the backs of your own legs from an angle no neck reaches.
+        float maxPitch = pm_maxviewpitch.GetFloat();
+        const float fpMaxPitch = pm_firstPersonBodyMaxPitch.GetFloat();
+        if (pm_showFirstPersonBody.GetBool() && fpMaxPitch < maxPitch)
+        {
+            maxPitch = fpMaxPitch;
+        }
+
+        if (viewAngles.pitch > maxPitch)
         {
             // don't let the player look down enough to see the shadow of his (non-existant) feet
-            viewAngles.pitch = pm_maxviewpitch.GetFloat();
+            viewAngles.pitch = maxPitch;
         }
         else if (viewAngles.pitch < pm_minviewpitch.GetFloat())
         {
@@ -7786,6 +7796,13 @@ void idPlayer::UpdateFirstPersonBody(void)
     fpBodyRenderEnt.joints = joints;
     fpBodyRenderEnt.origin = renderEntity.origin;
     fpBodyRenderEnt.axis = renderEntity.axis;
+    // Horizontal only.  axis[0] is the body's forward vector, so this tracks yaw; a vertical
+    // shift is deliberately not offered because it would sink the feet through the floor.
+    const float fpOffset = pm_firstPersonBodyOffset.GetFloat();
+    if (fpOffset != 0.0f)
+    {
+        fpBodyRenderEnt.origin += renderEntity.axis[0] * fpOffset;
+    }
     // World-body bounds are a superset of the trimmed mesh, so culling stays conservative.
     fpBodyRenderEnt.bounds = renderEntity.bounds;
     // Track the world body's skin/parms so influence and powerup effects match.

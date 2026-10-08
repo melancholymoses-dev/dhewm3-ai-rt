@@ -193,6 +193,8 @@ extern idCVar pm_normalviewheight;
 extern idCVar pm_deadheight;
 extern idCVar pm_deadviewheight;
 extern idCVar pm_showFirstPersonBody;
+extern idCVar pm_firstPersonBodyOffset;
+extern idCVar pm_firstPersonBodyMaxPitch;
 extern idCVar pm_firstPersonBodyDebug;
 extern idCVar pm_crouchrate;
 extern idCVar pm_bboxwidth;

@@ -1,8 +1,8 @@
 # First-Person Player Body Plan
 
 **Date:** 2026-04-04  
-**Status:** Asset done. Stages 2-3 implemented, **not yet validated in-game**. Stage 4 (RT
-exclusion) is the next chunk — until it lands the fp body *is* in the TLAS.  
+**Status:** Visible and animating in-game. Stages 2-3 landed plus `pm_firstPersonBodyOffset`.
+Open issues below; stage 4 (RT exclusion) still pending, so the fp body *is* in the TLAS.  
 **Scope:** Local first-person body visibility (torso/legs), while keeping normal third-person and mirror rendering behavior.
 
 ---
@@ -75,6 +75,15 @@ Why separate model is preferred:
 
 Eye is at Z=68 (`pm_normalviewheight`), i.e. at `Loneck` — hence the shoulder-height cut.
 Crouched eye is Z=32 (`pm_crouchviewheight`), the worst case for camera/chest overlap.
+
+**The shoulder cut must be left open — do not cap it.** A cap face at Z≈60 sits below the
+standing eye at Z=68, so it occludes the abs and legs entirely while standing (only the
+crouched camera gets below it). It also renders near-black: MD5 carries no normals, and a
+cap built by filling the rim inherits the rim's outward-facing vertex normals, which are
+perpendicular to the cap surface. Leaving it open costs nothing — `noShadow` keeps the fp
+entity out of the stencil shadow-volume path, and backface culling hides the torso interior,
+so looking down reads as a hollow shell with the legs visible below. A concave "scooped"
+mesh is unnecessary for the same reason.
 
 ---
 
@@ -164,24 +173,26 @@ savegame format is unchanged.
 
 Not saved to the def: no `model` block was added, per the Asset Touchpoints note below.
 
-### 4. Exclude from the TLAS
-One predicate, added to TLAS passes 1 and 3 alongside the existing `weaponDepthHack` checks.
-Pass 2 needs no change (static only).
+### 4. Exclude from the TLAS — landed
 
-```
-// View-local-only entities (fp body, view weapon) are duplicates of world
-// geometry that is already in the TLAS; they must never be RT occluders.
-if ( ent->parms.allowSurfaceInViewID ) {
-    ent->blasFrameCount = tr.frameCount;   // pass 1 only, so pass 3 also skips
-    continue;
-}
-```
+`if ( ent->parms.allowSurfaceInViewID ) continue;` added to all three passes in
+[vk_accelstruct.cpp](../../neo/renderer/Vulkan/vk_accelstruct.cpp) — lines 1178, 1488, 1611.
+Pass 1 also stamps `ent->blasFrameCount = tr.frameCount`, matching the `weaponDepthHack`
+branch above it, so pass 3's dedup check skips the entity as well.
 
-`allowSurfaceInViewID` is currently set only by the view weapon, which is already excluded via
-`weaponDepthHack` — so this is a strict superset of today's behaviour, not a change to it.
+Pass 2 technically did not need it: it already rejects anything with `ent->dynamicModel` set,
+and the fp body is a dynamic MD5. The check is there anyway so the invariant holds uniformly
+across all three passes rather than resting on an incidental property of pass 2's filter.
 
-Check: `r_showPrimitives` / BLAS frame stats instance count must not rise when
-`pm_showFirstPersonBody` is toggled on.
+`allowSurfaceInViewID` is set only by the view weapon and the fp body. The weapon was already
+excluded via `weaponDepthHack`, so this is a strict superset of prior behaviour.
+
+**Why this stopped being a pure perf item.** At offset 0 the fp body sat exactly inside the
+world body and its duplicate shadow was indistinguishable from the real one. Once
+`pm_firstPersonBodyOffset` moves it, the duplicate separates and casts a visibly displaced
+second shadow. The exclusion is now a visual fix as well as a saved per-frame BLAS rebuild.
+
+Check: BLAS frame stats instance count must not rise when `pm_showFirstPersonBody` toggles on.
 
 ### 5. Head/upper body handling
 The mesh is already cut at the shoulders, so no runtime head hiding is needed. Retain pitch
@@ -239,10 +250,32 @@ Mitigations:
 - Add cvar toggles for controlled rollout and profiling.
 - Validate in heavy scenes before default enable.
 
-Suggested cvars:
-- `pm_showFirstPersonBody` (0/1)
-- `pm_firstPersonBodyShadows` (0/1)
-- Optional: `pm_firstPersonBodyDebug` for bounds/pose diagnostics
+Cvars (implemented):
+- `pm_showFirstPersonBody` (0/1, archived, default 0)
+- `pm_firstPersonBodyOffset` (float, archived, default **-4**) — see below
+- `pm_firstPersonBodyMaxPitch` (float, archived, default **70**) — clamps downward pitch, but
+  only while the body is shown, so vanilla `pm_maxviewpitch` 89 is untouched when it is off
+- `pm_firstPersonBodyDebug` (0/1) — create/free and pose diagnostics
+
+### Why the body needs a horizontal offset
+
+`pm_normalviewheight 68` puts the view at `Loneck` — the base of the neck, centred
+front-to-back on the spine. Real eyes sit ~8-12 units forward of the spine, so the engine
+hangs the body symmetrically around the camera and the pelvis reads as "looking at your own
+backside": it sits ~10 back and ~23 down, only ~23° off straight-down and well inside the
+view cone at pitch.
+
+`pm_firstPersonBodyOffset` shifts the fp entity along `renderEntity.axis[0]` (body forward,
+so it tracks yaw). ~-12 to -15 pushes the rear past ~45° off vertical, out of frame, while
+the thighs stay visible. The feet land 12-15 units behind true position but `pm_bboxwidth` is
+32 (half-width 16), so they stay inside the collision hull.
+
+Horizontal only, deliberately. The camera is also ~5 units below the model's eye height, but
+shifting the body down sinks the feet through the floor, and raising `pm_normalviewheight`
+would change crouch, collision and the game's framing. That mismatch is accepted.
+
+Distinct from the run-cycle lean: the lean is a *rotation* about the waist, which no constant
+offset can cancel. See the torso-channel note under Open Issues.
 
 ---
 
@@ -270,6 +303,72 @@ Suggested cvars:
   screen-space GI and shadow-mask lookups, which is intended. Verify the received lighting
   looks continuous with the floor rather than flat-lit.
 - The fp body does appear in the G-buffer, so FSR motion vectors pick it up automatically.
+
+---
+
+## Open Issues (in-game testing, 2026-10-07)
+
+| # | Finding | Status |
+|---|---|---|
+| 1 | Capped shoulder rim rendered black and occluded everything below it | Fixed — cap deleted, mesh re-exported (2042 tris) |
+| 2 | Run cycle leans the torso into view; you see your own back | Fix by cutting the mesh to the hip line (Z≈47-48) — see below |
+| 3 | Body renders **pitch black** under a light, not merely shadowed | Root cause found — see below. Still open |
+| 6 | Pitch to 89° shows the backs of your own legs | Fixed — `pm_firstPersonBodyMaxPitch` 70 |
+| 4 | Pelvis visible when looking down ("seeing your own backside") | Prefer trimming the mesh's rear over offsetting — see below |
+| 5 | Offset body cast a second, displaced shadow | Fixed — stage 4 landed, fp body out of the TLAS |
+
+**On #4 — trim the backside rather than shift the body.** `pm_firstPersonBodyOffset` works but
+costs alignment: the world body stays at the true position, so its shadow sits ahead of the fp
+body's feet. Shifting the world body to match is not an option — one `renderEntity.origin`
+serves every view, so it would displace the body in mirrors, in RT reflections (which pass 3
+includes during first-person play) and for other clients in multiplayer.
+
+Deleting the rear of the pelvis from the fp mesh keeps the body at its true position, so the
+shadow, reflections and collision hull all stay correct, and the offset can return to 0. The
+fp mesh is only ever viewed by its own player from above; the backside has no job. Do it in
+the same Blender pass as the hip-line cut.
+
+**On #2 — the asset fix replaces the code fix.** `player.def` splits the rig
+`channel torso ( *Waist )` / `channel legs ( *origin -*Waist ... )`, and the entire lean lives
+in the torso channel. Cutting below `Waist` (Z=45.7) leaves only `Hips`- and leg-driven
+geometry, making the lean structurally impossible rather than merely suppressed. This cancels
+the planned torso-channel joint lock, which would have required the fp entity to own a copy of
+the joint array instead of sharing the animator's pointer.
+
+Joint heights for the cut: `Chest` 54.1, `Belly` 47.4, `Waist`/`SPINNER` 45.7, `Hips` 45.0
+(legs channel), `Lupleg`/`Rupleg` 43.2. Pass criterion: `Chest` and `Belly` drive zero
+vertices, `Waist` near zero.
+
+Current mesh (930 verts / 1762 tris) does **not** meet it — `Chest` 13, `Belly` 20,
+`Waist` 136 weights remain, so the cut landed at the waist rather than below it. The lean is
+roughly 90% reduced (`Chest` was 140) but not structurally gone. Cut below Z=45.7 if the run
+cycle still shows it.
+
+**On #3 — direct *and* indirect are killed by the same occluder.** The fp body sits inside the
+world body, which must stay in the TLAS because it carries the RT lighting. Every ray leaving
+an fp-body surface hits the world body within a couple of units:
+
+| Ray | Cull mask | Player instances (`mask 0x01`) |
+|---|---|---|
+| Shadow ([vk_shadows.cpp:1012](../../neo/renderer/Vulkan/vk_shadows.cpp#L1012)) | `0xFE` only when light-to-camera < `r_rtShadowPlayerExcludeDist` | usually **included** |
+| GI ([gi_ray.rgen:164](../../neo/renderer/glsl/gi_ray.rgen#L164)) | `0xFF` | **included** |
+| Probe GI ([gi_probe_trace.rgen:97](../../neo/renderer/glsl/gi_probe_trace.rgen#L97)) | `0xFF` | **included** |
+
+So direct light is shadowed to zero and the bounce that would otherwise lift it is occluded
+too. That is why it reads pitch black rather than dim — it is not tonemapping, and the body
+is not excluded from GI; GI reaches it and returns nothing.
+
+`r_rtShadowPlayerExcludeDist` is not the fix. It keys off **light-to-camera** distance, so a
+ceiling light 80-150 units up never engages it however high the value — only the 400 test
+value was large enough to cover everything, and raising the default that far also loses the
+world body's shadow cast on the floor.
+
+Real fix: flag fp-body pixels in the G-buffer and force cull mask `0xFE` for rays originating
+there — shadow *and* GI, not just shadow. Its own chunk.
+
+**The fp body has no collision.** `AddEntityDef` creates a render entity only; the player's
+clip model is still `idPhysics_Player`'s bbox plus `SetCombatModel()`. Enabling the body
+cannot change what can occupy the player's volume.
 
 ---
 
@@ -505,12 +604,12 @@ Route player body TLAS instances to a dedicated closest-hit shader by setting
 | 5 | hit  | player_reflect.rchit (opaque) | player body, main ray |
 | 6 | hit  | placeholder (never fires) | player body, glass probe |
 
-**player_reflect.rchit behaviour:**
-- Hit distance < 80 units (exceeds ~56-unit player height): pass-through — sets
-  `transmittance = 1.0` and continues the ray past the body. Prevents floor-bounce
-  rays from hitting the body from inside/below.
-- Hit distance ≥ 80 units (mirror at distance): samples the player diffuse texture and
-  returns its colour, so the player appears in the mirror.
+**player_reflect.rchit behaviour (as built, 2026-10-07):**
+- Always opaque: samples the player diffuse texture, applies shadowed irradiance through the
+  shared `rt_light_eval.glsl` loop with self-shadow mask `0xFE`, and sets `transmittance = 0.0`.
+- There is **no distance pass-through**. An earlier revision of this section described an
+  80-unit threshold; the shader has never contained one. Floor-bounce rays are kept off the
+  body by the instance mask instead.
 
 **Glass probe exclusion via instance mask:**
 The glass probe `traceRayEXT` call uses cull mask `0xFE`. Player TLAS instances have
@@ -526,7 +625,7 @@ routing is purely SBT-based.
 **Trade-offs:**
 - Cleanest separation: world shaders have no player-specific branches.
 - Extra pipeline size: 7 groups vs 5. Minor cost.
-- The 80-unit threshold is tuned to player height; may need adjustment if weapon arms
-  extend beyond this in certain poses.
+- Because the body is opaque to the main reflection ray, a *second* co-located player
+  instance (the fp body, before stage 4 lands) is visually indistinguishable from the first.
 
 ---
